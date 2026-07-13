@@ -452,6 +452,19 @@ target_include_directories(dusklight PRIVATE ${miniz_SOURCE_DIR})
 target_link_libraries(dusklight PRIVATE aurora::main ${GAME_LIBS} ${JSYSTEM_LINK_LIBRARIES})
 target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/include/dusk_pch.hpp>")
 
+# Fast, game-data-free validation for the canonical automation tape format.
+# Kept out of the default build so normal packaging remains unchanged.
+add_executable(dusk_input_tape_test EXCLUDE_FROM_ALL
+    tests/input_tape_test.cpp
+    src/dusk/automation/input_tape.cpp
+)
+target_include_directories(dusk_input_tape_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/extern/aurora/include
+)
+target_compile_definitions(dusk_input_tape_test PRIVATE TARGET_PC=1 AURORA=1)
+set_target_properties(dusk_input_tape_test PROPERTIES FOLDER "Tests")
+
 if (DUSK_ENABLE_CODE_MODS)
     include(cmake/SymbolManifest.cmake)
     if (WIN32)
