@@ -261,6 +261,63 @@ void testPlayerConditionTimeoutIsTerminal() {
     REQUIRE(gStatuses[0].button == 0);
 }
 
+void testPlayerPulsesConditionedInputUntilSatisfied() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    name_entry_observer().endSession();
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 4;
+    tape.frames[0].pads[0].buttons = PAD_BUTTON_A;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_B;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_A);
+    player.tick();
+    REQUIRE(gStatuses[0].button == 0);
+
+    name_entry_observer().beginSession();
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_B);
+    name_entry_observer().endSession();
+}
+
+void testSatisfiedPulseDoesNotApplyItsAction() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    name_entry_observer().beginSession();
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 2;
+    tape.frames[0].pads[0].buttons = PAD_BUTTON_A;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_B;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_B);
+    name_entry_observer().endSession();
+}
+
 void testPlayerWaitsForInteractiveCharacterSelection() {
     using namespace dusk::automation;
 
@@ -508,6 +565,8 @@ int main() {
     testPlayerOwnsAndReleasesPorts();
     testPlayerWaitsNeutrallyForCondition();
     testPlayerConditionTimeoutIsTerminal();
+    testPlayerPulsesConditionedInputUntilSatisfied();
+    testSatisfiedPulseDoesNotApplyItsAction();
     testPlayerWaitsForInteractiveCharacterSelection();
     testPlayerWaitsForStableNameEntryInputHandler();
     testPlayerWaitsForNoSavePromptHandler();

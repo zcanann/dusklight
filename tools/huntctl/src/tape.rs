@@ -146,7 +146,6 @@ pub enum TapeError {
     InvalidPadFlags,
     InvalidWaitCondition,
     InvalidWaitTimeout,
-    InvalidWaitInput,
     TrailingData,
     TooManyFrames,
 }
@@ -164,7 +163,6 @@ impl fmt::Display for TapeError {
             Self::InvalidPadFlags => "input tape contains unknown controller flags",
             Self::InvalidWaitCondition => "input tape contains an unknown wait condition",
             Self::InvalidWaitTimeout => "input tape wait timeout is invalid",
-            Self::InvalidWaitInput => "input tape wait frame contains non-neutral input",
             Self::TrailingData => "input tape contains trailing data",
             Self::TooManyFrames => "input tape frame count is too large",
         })
@@ -186,11 +184,6 @@ impl InputTape {
                 (WaitCondition::None, 0) => {}
                 (WaitCondition::None, _) | (_, 0) => return Err(TapeError::InvalidWaitTimeout),
                 _ => {}
-            }
-            if frame.wait_condition != WaitCondition::None
-                && frame.pads.iter().any(|pad| *pad != RawPadState::default())
-            {
-                return Err(TapeError::InvalidWaitInput);
             }
         }
         Ok(())
@@ -305,11 +298,6 @@ impl InputTape {
                 let pad_start = 4 + port * PAD_SIZE;
                 frame.pads[port] =
                     decode_pad(&source[pad_start..pad_start + PAD_SIZE], version.minor)?;
-            }
-            if wait_condition != WaitCondition::None
-                && frame.pads.iter().any(|pad| *pad != RawPadState::default())
-            {
-                return Err(TapeError::InvalidWaitInput);
             }
             frames.push(frame);
         }
@@ -524,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_input_on_wait_frames() {
+    fn conditioned_pulse_frames_round_trip() {
         let frame = InputFrame {
             wait_condition: WaitCondition::NameEntryActive,
             wait_timeout_ticks: 1,
@@ -543,7 +531,7 @@ mod tests {
             frames: vec![frame],
             ..InputTape::default()
         };
-        assert_eq!(tape.validate(), Err(TapeError::InvalidWaitInput));
+        assert_eq!(tape.validate(), Ok(()));
 
         let mut bytes = InputTape {
             frames: vec![InputFrame {
@@ -556,9 +544,7 @@ mod tests {
         .encode()
         .unwrap();
         bytes[36] = 1;
-        assert_eq!(
-            InputTape::decode(&bytes).unwrap_err(),
-            TapeError::InvalidWaitInput
-        );
+        let decoded = InputTape::decode(&bytes).unwrap();
+        assert_eq!(decoded.tape.frames[0].pads[0].buttons, 1);
     }
 }

@@ -100,13 +100,9 @@
       "name": "continue-without-saving"
     },
     {
-      "op": "wait_until",
-      "condition": "file_select_accept_ready",
-      "timeout_ticks": 1800
-    },
-    {
-      "op": "repeat",
-      "count": 2,
+      "op": "pulse_until",
+      "condition": "name_entry_input_ready",
+      "timeout_ticks": 1800,
       "frame": {
         "pads": {
           "0": {
@@ -114,11 +110,6 @@
           }
         }
       }
-    },
-    {
-      "op": "wait_until",
-      "condition": "name_entry_input_ready",
-      "timeout_ticks": 1800
     },
     {
       "op": "marker",

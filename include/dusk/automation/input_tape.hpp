@@ -72,8 +72,9 @@ struct RawPadState {
 struct InputFrame {
     // Bit N means automation owns controller port N for this tick.
     std::uint8_t ownedPorts = 0;
-    // A conditioned frame owns the declared ports with neutral input until the
-    // condition is true, then advances to the next frame in the same tick.
+    // Until the condition is true, a conditioned frame alternates its declared
+    // input with an owned-neutral tick. Neutral frames are ordinary waits;
+    // non-neutral frames are trigger-safe pulses. A satisfied frame is skipped.
     InputFrameCondition condition = InputFrameCondition::None;
     std::uint16_t timeoutTicks = 0;
     std::array<RawPadState, kInputPortCount> pads{};
@@ -157,6 +158,7 @@ private:
     bool mPlaying = false;
     bool mReleasePending = false;
     std::uint16_t mConditionWaitTicks = 0;
+    bool mConditionPulseNeutral = false;
     InputTapePlaybackError mPlaybackError = InputTapePlaybackError::None;
     std::size_t mFailedFrame = 0;
     InputFrameCondition mFailedCondition = InputFrameCondition::None;

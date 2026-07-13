@@ -32,10 +32,7 @@ bool valid_condition_frame(const InputFrame& frame) {
     if (frame.condition == InputFrameCondition::None) {
         return frame.timeoutTicks == 0;
     }
-    const RawPadState neutral{};
-    return frame.timeoutTicks != 0 &&
-           std::all_of(frame.pads.begin(), frame.pads.end(),
-                       [&neutral](const RawPadState& pad) { return pad == neutral; });
+    return frame.timeoutTicks != 0;
 }
 
 std::uint16_t read_u16(const std::uint8_t* input) {
@@ -334,6 +331,7 @@ bool InputTapePlayer::start(const TapeEndBehavior endBehavior) {
     mEndBehavior = endBehavior;
     mReleasePending = false;
     mConditionWaitTicks = 0;
+    mConditionPulseNeutral = false;
     mPlaybackError = InputTapePlaybackError::None;
     mFailedFrame = 0;
     mFailedCondition = InputFrameCondition::None;
@@ -347,6 +345,7 @@ void InputTapePlayer::stop() {
     mPlaying = false;
     mReleasePending = false;
     mConditionWaitTicks = 0;
+    mConditionPulseNeutral = false;
     mPlaybackError = InputTapePlaybackError::None;
     mFailedFrame = 0;
     mFailedCondition = InputFrameCondition::None;
@@ -367,6 +366,7 @@ void InputTapePlayer::tick() {
         if (frame.condition != InputFrameCondition::None) {
             if (conditionSatisfied(frame.condition)) {
                 mConditionWaitTicks = 0;
+                mConditionPulseNeutral = false;
                 advanceFrame();
                 ++satisfiedConditions;
                 if (mPlaying && satisfiedConditions >= mTape.frames.size()) {
@@ -379,7 +379,12 @@ void InputTapePlayer::tick() {
                 continue;
             }
 
-            applyNeutral(frame.ownedPorts);
+            if (mConditionPulseNeutral) {
+                applyNeutral(frame.ownedPorts);
+            } else {
+                apply(frame);
+            }
+            mConditionPulseNeutral = !mConditionPulseNeutral;
             ++mConditionWaitTicks;
             if (mConditionWaitTicks >= frame.timeoutTicks) {
                 mPlaying = false;
@@ -413,6 +418,7 @@ void InputTapePlayer::advanceFrame() {
     case TapeEndBehavior::Loop:
         mNextFrame = 0;
         mConditionWaitTicks = 0;
+        mConditionPulseNeutral = false;
         break;
     }
 }

@@ -55,6 +55,11 @@ pub enum Step {
         condition: ProgramWaitCondition,
         timeout_ticks: u16,
     },
+    PulseUntil {
+        condition: ProgramWaitCondition,
+        timeout_ticks: u16,
+        frame: FrameSpec,
+    },
     Marker {
         name: String,
     },
@@ -192,7 +197,9 @@ impl fmt::Display for ProgramError {
             Self::ZeroCount => f.write_str("repeat, cycle, and hold counts must be nonzero"),
             Self::EmptyCycle => f.write_str("cycle frames must not be empty"),
             Self::HoldBeforeFrame => f.write_str("hold requires a previously emitted frame"),
-            Self::ZeroWaitTimeout => f.write_str("wait_until timeout_ticks must be nonzero"),
+            Self::ZeroWaitTimeout => {
+                f.write_str("wait_until and pulse_until timeout_ticks must be nonzero")
+            }
             Self::EmptyMarker => f.write_str("marker names must not be empty"),
             Self::DuplicateMarker(name) => write!(f, "marker name {name:?} is duplicated"),
             Self::TooManyFrames => write!(f, "program expands beyond {MAX_EXPANDED_FRAMES} frames"),
@@ -275,6 +282,19 @@ impl TapeProgram {
                         },
                         1,
                     )?;
+                }
+                Step::PulseUntil {
+                    condition,
+                    timeout_ticks,
+                    frame,
+                } => {
+                    if timeout_ticks == 0 {
+                        return Err(ProgramError::ZeroWaitTimeout);
+                    }
+                    let mut frame = materialize(frame, self.default_owned_ports)?;
+                    frame.wait_condition = condition.into();
+                    frame.wait_timeout_ticks = timeout_ticks;
+                    push_repeated(&mut frames, frame, 1)?;
                 }
                 Step::Marker { name } => {
                     if name.is_empty() {
@@ -488,6 +508,32 @@ mod tests {
                 tick: 2
             }]
         );
+    }
+
+    #[test]
+    fn compiles_conditioned_input_pulses() {
+        let program = TapeProgram::from_json(
+            r#"{
+          "schema":"dusktape-program/v1", "default_owned_ports":1,
+          "steps":[{
+            "op":"pulse_until",
+            "condition":"name_entry_input_ready",
+            "timeout_ticks":1800,
+            "frame":{"pads":{"0":{"buttons":["A"]}}}
+          }]
+        }"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        assert_eq!(program.tape.frames.len(), 1);
+        assert_eq!(program.tape.frames[0].owned_ports, 1);
+        assert_eq!(
+            program.tape.frames[0].wait_condition,
+            WaitCondition::NameEntryInputReady
+        );
+        assert_eq!(program.tape.frames[0].wait_timeout_ticks, 1800);
+        assert_eq!(program.tape.frames[0].pads[0].buttons, 0x0100);
     }
 
     #[test]
