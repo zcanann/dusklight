@@ -2,12 +2,6 @@
     "version": "0.2.0",
     "inputs": [
         {
-            "id": "glitchHuntDvd",
-            "type": "promptString",
-            "description": "DVD image path (relative to the repository or absolute)",
-            "default": "orig/GZ2E01/GZ2E01.iso"
-        },
-        {
             "id": "glitchHuntTape",
             "type": "promptString",
             "description": "DUSKTAPE path (relative to the repository or absolute)",
@@ -21,15 +15,21 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
             "args": [
-                "--dvd", "${input:glitchHuntDvd}",
+                "--configured-dvd",
                 "--input-tape", "${input:glitchHuntTape}",
-                "--input-tape-end", "release",
+                "--input-tape-end", "hold",
+                "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
+                "--cvar", "game.instantSaves=true",
+                "--cvar", "backend.cardFileType=1",
+                "--cvar", "backend.wasPresetChosen=true",
+                "--cvar", "game.enableMenuPointer=false",
                 "--develop",
                 "--console"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS"
+            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS",
+            "postDebugTask": "Glitch Hunt: Clean Visual TAS State"
         },
         {
             "name": "(gdb) Launch Dusklight MSVC",

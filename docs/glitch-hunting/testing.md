@@ -37,11 +37,16 @@ Visual Studio developer shell.
 The pre-launch task builds Dusklight and compiles
 `tests/fixtures/automation/boot_start_smoke.json` into
 `build/boot_start_smoke.tape`. The game then runs with its normal visible
-renderer and normal pacing. Exclusive automation input begins on the first game
-tick. The smoke tape sends two-tick Start pulses at ticks 180, 300, and 420,
-with neutral input between them. The delayed pulses remain visible and useful
-across normal boot/loading timing; playback hands back a neutral controller when
-the tape ends.
+renderer and normal pacing. The smoke tape sends delayed Start pulses through
+the title sequence, selects the freshly-created first save, and stops in active
+character-name entry with the default name `Link`. It owns all four emulated
+controller ports and holds a neutral final frame after the tape ends.
+
+While a tape is loaded, Dusklight quarantines host keyboard, mouse, touch, pen,
+joystick, and gamepad events from both the game and its UI. Mouse-camera and
+gyro polling are also disabled. Window lifecycle events still work, so the
+window can be closed normally. This prevents a real controller or an accidental
+key press from perturbing playback.
 
 Before launching, the wrapper removes copied surrounding quotes, resolves
 relative paths against the repository, and verifies that both files exist. It
@@ -49,10 +54,24 @@ prints the exact absolute paths it passes to Dusklight. A missing or stale DVD
 prompt falls back to Dusklight's last valid manual selection rather than
 silently opening the prelaunch screen.
 
+Every task-launched playback receives a unique writable data root under
+`build/automation-state/ephemeral`. That root contains the run's configuration,
+memory card, logs, achievements, caches, and controller preferences, and is
+removed when the process exits. The normal Dusklight profile and memory card
+are never opened for writing. To preserve a run deliberately, invoke the script
+with `-StatePath`; that directory is writable and survives process exit:
+
+```powershell
+.\tools\glitch-hunting\play-visual-tas.ps1 `
+  -TapePath 'build\boot_start_smoke.tape' `
+  -StatePath 'build\automation-state\saved-runs\my-run'
+```
+
 This is live game playback, not video rendering of a previous run. To attach a
 debugger and use breakpoints, choose **Glitch Hunt: Visual TAS Playback** under
-**Run and Debug** and press F5 instead. That configuration uses the same build,
-fixture, and path prompts and requires VS Code's `cppvsdbg` debugger support.
+**Run and Debug** and press F5 instead. That configuration copies only the last
+configured DVD path into a fresh debug data root before launch, then deletes the
+root after debugging. It requires VS Code's `cppvsdbg` debugger support.
 
 The checked launcher is also directly callable. Surrounding quotes pasted as
 part of either path are accepted:
@@ -62,6 +81,11 @@ part of either path are accepted:
   -DvdPath 'C:\path with spaces\game.iso' `
   -TapePath 'build\boot_start_smoke.tape'
 ```
+
+Direct automated launches are strict: if `--dvd` or `--configured-dvd` cannot
+open a valid image, Dusklight exits with an error instead of falling back to the
+interactive prelaunch screen. `--automation-data-root` likewise requires an
+input tape and an existing directory.
 
 ## Authoring a custom tape
 
@@ -85,8 +109,14 @@ the same tape, run:
 
 ```powershell
 .\build\windows-clang-debug\dusklight.exe --headless --dvd game.iso `
-  --input-tape build/my-test.tape --exit-after-tape
+  --input-tape build/my-test.tape --input-tape-end hold `
+  --automation-data-root build/automation-state/my-headless-run `
+  --exit-after-tape
 ```
+
+Create that data directory before a direct launch. The checked PowerShell
+launcher does this automatically and is the safer default when fresh-state
+cleanup matters.
 
 The current tape starts at process boot. Direct stage/save initialization can
 still be supplied with the existing `--stage` and `--load-save` CLI options,

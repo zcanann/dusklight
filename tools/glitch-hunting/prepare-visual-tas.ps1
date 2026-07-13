@@ -8,6 +8,10 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $fixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.json"
 $output = Join-Path $repoRoot "build\boot_start_smoke.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
+$debugState = [System.IO.Path]::GetFullPath(
+    (Join-Path $repoRoot "build\automation-state\vscode-debug"))
+$automationStateRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $repoRoot "build\automation-state"))
 
 function Invoke-Checked {
     param([string]$FilePath, [string[]]$Arguments)
@@ -35,6 +39,21 @@ try {
         "run", "--quiet", "--manifest-path", $manifest, "--",
         "tape", "compile", $fixture, $output
     )
+
+    $debugStateWithSeparator = $debugState.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $stateRootWithSeparator = $automationStateRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $debugStateWithSeparator.StartsWith(
+            $stateRootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to reset debug state outside the automation-state root: $debugState"
+    }
+    if (Test-Path -LiteralPath $debugState) {
+        Remove-Item -LiteralPath $debugState -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $debugState -Force | Out-Null
+    $normalConfig = Join-Path $env:APPDATA "TwilitRealm\Dusklight\config.json"
+    if (Test-Path -LiteralPath $normalConfig -PathType Leaf) {
+        Copy-Item -LiteralPath $normalConfig -Destination (Join-Path $debugState "config.json")
+    }
 
     Write-Host "`nVisual TAS build ready: $output" -ForegroundColor Green
 } finally {

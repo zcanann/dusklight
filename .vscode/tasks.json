@@ -98,6 +98,23 @@
       }
     },
     {
+      "label": "Glitch Hunt: Clean Visual TAS State",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\cleanup-visual-tas.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "Glitch Hunt: Play Visual TAS",
       "type": "process",
       "command": "powershell.exe",

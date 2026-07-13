@@ -6,6 +6,10 @@ param(
 
     [string]$Preset = "windows-clang-debug",
 
+    [string]$StatePath,
+
+    [string]$NameEntryTracePath,
+
     [switch]$ExitAfterTape
 )
 
@@ -80,24 +84,64 @@ if (-not (Test-Path -LiteralPath $game -PathType Leaf)) {
     throw "Dusklight executable does not exist: $game. Run the prepare task first."
 }
 
+$ephemeralState = [string]::IsNullOrWhiteSpace($StatePath)
+$ephemeralStateBase = [System.IO.Path]::GetFullPath(
+    (Join-Path $repoRoot "build\automation-state\ephemeral"))
+if ($ephemeralState) {
+    New-Item -ItemType Directory -Path $ephemeralStateBase -Force | Out-Null
+    $resolvedState = Join-Path $ephemeralStateBase ([Guid]::NewGuid().ToString("N"))
+} else {
+    $resolvedState = ConvertTo-AbsolutePath $StatePath
+}
+New-Item -ItemType Directory -Path $resolvedState -Force | Out-Null
+$resolvedState = (Resolve-Path -LiteralPath $resolvedState).Path
+
 $gameArguments = @(
     "--dvd", $resolvedDvd,
     "--input-tape", $resolvedTape,
-    "--input-tape-end", "release",
-    "--develop",
+    "--input-tape-end", "hold",
+    "--automation-data-root", $resolvedState,
+    "--cvar", "game.instantSaves=true",
+    "--cvar", "backend.cardFileType=1",
+    "--cvar", "backend.wasPresetChosen=true",
+    "--cvar", "game.enableMenuPointer=false",
     "--console"
 )
 if ($ExitAfterTape) {
     $gameArguments += "--exit-after-tape"
 }
+if (-not [string]::IsNullOrWhiteSpace($NameEntryTracePath)) {
+    $resolvedTrace = ConvertTo-AbsolutePath $NameEntryTracePath
+    New-Item -ItemType Directory -Path (Split-Path $resolvedTrace) -Force | Out-Null
+    $gameArguments += @("--name-entry-trace", $resolvedTrace)
+}
 
 Write-Host "DVD:  $resolvedDvd" -ForegroundColor Cyan
 Write-Host "Tape: $resolvedTape" -ForegroundColor Cyan
+Write-Host "State: $resolvedState ($(if ($ephemeralState) { 'ephemeral' } else { 'persistent' }))" -ForegroundColor Cyan
 Write-Host "Starting visible TAS playback..." -ForegroundColor Green
 
-$argumentLine = ($gameArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
-$process = Start-Process -FilePath $game -ArgumentList $argumentLine `
-    -WorkingDirectory $repoRoot -Wait -PassThru
-if ($process.ExitCode -ne 0) {
-    throw "Dusklight exited with code $($process.ExitCode). Check the newest log under '$env:APPDATA\TwilitRealm\Dusklight\logs'."
+try {
+    $argumentLine = ($gameArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+    $process = Start-Process -FilePath $game -ArgumentList $argumentLine `
+        -WorkingDirectory $repoRoot -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        $logHint = if ($ephemeralState) {
+            "The isolated state and logs will be removed after this error."
+        } else {
+            "Check the logs under '$resolvedState\logs'."
+        }
+        throw "Dusklight exited with code $($process.ExitCode). $logHint"
+    }
+} finally {
+    if ($ephemeralState) {
+        $resolvedStateWithSeparator = $resolvedState.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $ephemeralBaseWithSeparator = $ephemeralStateBase.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedStateWithSeparator.StartsWith(
+                $ephemeralBaseWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove automation state outside its ephemeral root: $resolvedState"
+        }
+        Remove-Item -LiteralPath $resolvedState -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed ephemeral playback state: $resolvedState" -ForegroundColor DarkGray
+    }
 }
