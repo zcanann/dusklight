@@ -51,6 +51,7 @@
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/name_entry_trace.hpp"
 #include "dusk/automation/worker.hpp"
 #include "dusk/crash_handler.h"
 #include "dusk/crash_reporting.h"
@@ -209,6 +210,7 @@ bool launchUILoop() {
 
 static bool finish_input_tape_tick();
 static bool unpacedMainLoop;
+static void write_name_entry_trace_on_exit();
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -379,6 +381,7 @@ void main01(void) {
     } while (dusk::IsRunning);
 
     exit:;
+    write_name_entry_trace_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -486,6 +489,8 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool headlessMainLoop;
+static std::filesystem::path nameEntryTracePath;
+static bool nameEntryTraceWriteFailed;
 
 static bool finish_input_tape_tick() {
     if (!exitAfterInputTape || dusk::automation::input_tape_player().isPlaying()) {
@@ -494,6 +499,26 @@ static bool finish_input_tape_tick() {
 
     dusk::IsRunning = false;
     return true;
+}
+
+static void write_name_entry_trace_on_exit() {
+    if (nameEntryTracePath.empty()) {
+        return;
+    }
+
+    auto artifact = dusk::automation::drain_name_entry_trace(
+        dusk::automation::name_entry_observer());
+    std::string error;
+    if (!dusk::automation::write_name_entry_trace(nameEntryTracePath, artifact, error)) {
+        DuskLog.error("Failed to write name-entry trace '{}': {}",
+                      dusk::io::fs_path_to_string(nameEntryTracePath), error);
+        nameEntryTraceWriteFailed = true;
+        return;
+    }
+
+    DuskLog.info("Wrote name-entry trace '{}' ({} events, {} dropped)",
+                 dusk::io::fs_path_to_string(nameEntryTracePath), artifact.events.size(),
+                 artifact.droppedEventCount);
 }
 
 static u8 selectedLanguage;
@@ -561,6 +586,8 @@ int game_main(int argc, char* argv[]) {
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
+            ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
             ("stage", "Upon launching, load a stage, room, spawn point, and layer. When using --load-save, it uses the specified save on the loaded stage. Format (STAGE,ROOM,POINT,LAYER). Example: (STAGE) or (STAGE,0,0,-1)", cxxopts::value<std::string>());
 
@@ -627,6 +654,29 @@ int game_main(int argc, char* argv[]) {
     dusk::game_clock::set_main_loop_mode(
         unpacedMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
                          : dusk::game_clock::MainLoopMode::Realtime);
+
+    const bool cursorBreakoutShadow = parsed_arg_options["cursor-breakout-shadow"].as<bool>();
+    const bool hasNameEntryTrace = parsed_arg_options.count("name-entry-trace") != 0;
+    if (cursorBreakoutShadow && !hasNameEntryTrace) {
+        fprintf(stderr,
+                "Name Entry Error: --cursor-breakout-shadow requires --name-entry-trace PATH\n");
+        return 1;
+    }
+    if (hasNameEntryTrace) {
+        const std::string tracePath = parsed_arg_options["name-entry-trace"].as<std::string>();
+        if (tracePath.empty()) {
+            fprintf(stderr, "Name Entry Error: --name-entry-trace PATH cannot be empty\n");
+            return 1;
+        }
+        nameEntryTracePath = std::filesystem::u8path(tracePath);
+    }
+
+    auto& nameEntryObserver = dusk::automation::name_entry_observer();
+    nameEntryObserver.clearEvents();
+    nameEntryObserver.setFidelityProfile(
+        cursorBreakoutShadow
+            ? dusk::automation::NameEntryFidelityProfile::CursorBreakoutShadow
+            : dusk::automation::NameEntryFidelityProfile::ObserveOnly);
 
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
@@ -719,6 +769,11 @@ int game_main(int argc, char* argv[]) {
     log_build_info();
     if (unpacedMainLoop) {
         DuskLog.info("Automation timing: fixed 30 Hz step (headless={})", headlessMainLoop);
+    }
+    if (hasNameEntryTrace) {
+        DuskLog.info("Name-entry trace: {} (fidelity={})",
+                     dusk::io::fs_path_to_string(nameEntryTracePath),
+                     cursorBreakoutShadow ? "cursor_breakout_shadow" : "observe_only");
     }
     if (hasInputTape) {
         DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
@@ -1105,7 +1160,7 @@ int game_main(int argc, char* argv[]) {
     dusk::config::shutdown();
     aurora_shutdown();
 
-    return 0;
+    return nameEntryTraceWriteFailed ? 1 : 0;
 }
 
 
