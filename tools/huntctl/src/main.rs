@@ -6,6 +6,7 @@ use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::transport::ProcessTransport;
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -196,6 +197,15 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .frames
                     .iter()
                     .fold(0, |mask, frame| mask | frame.owned_ports);
+                let mut wait_conditions = BTreeMap::new();
+                for frame in &decoded.tape.frames {
+                    if frame.wait_condition != huntctl::tape::WaitCondition::None {
+                        *wait_conditions
+                            .entry(frame.wait_condition.as_str())
+                            .or_insert(0_usize) += 1;
+                    }
+                }
+                let wait_frame_count: usize = wait_conditions.values().sum();
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&json!({
@@ -207,6 +217,8 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
                         },
                         "frame_count": decoded.tape.frames.len(),
                         "owned_ports_union": owned_ports,
+                        "wait_frame_count": wait_frame_count,
+                        "wait_conditions": wait_conditions,
                         "duration_seconds": decoded.tape.frames.len() as f64
                             * decoded.tape.tick_rate_denominator as f64
                             / decoded.tape.tick_rate_numerator as f64

@@ -21,6 +21,7 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
       "steps":[
         {"op":"marker","name":"start"},
         {"op":"repeat","count":2,"frame":{"pads":{"0":{"buttons":["START"]}}}},
+        {"op":"wait_until","condition":"name_entry_active","timeout_ticks":900},
         {"op":"frame","frame":{}}
       ]
     }"#,
@@ -42,8 +43,9 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
         String::from_utf8_lossy(&compile.stderr)
     );
     let decoded = InputTape::decode(&fs::read(&tape).unwrap()).unwrap();
-    assert_eq!(decoded.tape.frames.len(), 3);
+    assert_eq!(decoded.tape.frames.len(), 4);
     assert_eq!(decoded.tape.frames[0].pads[0].buttons, 0x1000);
+    assert_eq!(decoded.tape.frames[2].wait_timeout_ticks, 900);
     assert!(
         fs::read_to_string(format!("{}.markers.json", tape.display()))
             .unwrap()
@@ -55,10 +57,10 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
         .output()
         .unwrap();
     assert!(inspect.status.success());
-    assert!(
-        String::from_utf8(inspect.stdout)
-            .unwrap()
-            .contains("\"frame_count\": 3")
-    );
+    let summary: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(summary["source_version"]["minor"], 2);
+    assert_eq!(summary["frame_count"], 4);
+    assert_eq!(summary["wait_frame_count"], 1);
+    assert_eq!(summary["wait_conditions"]["name_entry_active"], 1);
     fs::remove_dir_all(directory).unwrap();
 }

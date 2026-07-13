@@ -4,13 +4,45 @@ use std::fmt;
 
 pub const MAGIC: [u8; 8] = *b"DUSKTAPE";
 pub const MAJOR_VERSION: u16 = 1;
-pub const MINOR_VERSION: u16 = 1;
+pub const MINOR_VERSION: u16 = 2;
 pub const HEADER_SIZE: usize = 32;
 pub const PAD_SIZE: usize = 12;
 pub const FRAME_SIZE: usize = 52;
 pub const PORT_COUNT: usize = 4;
 const ALL_PORTS: u8 = (1 << PORT_COUNT) - 1;
 const CONNECTED_FLAG: u8 = 1;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitCondition {
+    #[default]
+    None,
+    NameEntryActive,
+}
+
+impl WaitCondition {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::NameEntryActive => "name_entry_active",
+        }
+    }
+
+    const fn encode(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::NameEntryActive => 1,
+        }
+    }
+
+    fn decode(value: u8) -> Result<Self, TapeError> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::NameEntryActive),
+            _ => Err(TapeError::InvalidWaitCondition),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TapeVersion {
@@ -54,6 +86,8 @@ impl Default for RawPadState {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct InputFrame {
     pub owned_ports: u8,
+    pub wait_condition: WaitCondition,
+    pub wait_timeout_ticks: u16,
     pub pads: [RawPadState; PORT_COUNT],
 }
 
@@ -90,6 +124,9 @@ pub enum TapeError {
     InvalidTickRate,
     InvalidOwnedPorts,
     InvalidPadFlags,
+    InvalidWaitCondition,
+    InvalidWaitTimeout,
+    InvalidWaitInput,
     TrailingData,
     TooManyFrames,
 }
@@ -105,6 +142,9 @@ impl fmt::Display for TapeError {
             Self::InvalidTickRate => "input tape tick rate is invalid",
             Self::InvalidOwnedPorts => "input tape owns an invalid controller port",
             Self::InvalidPadFlags => "input tape contains unknown controller flags",
+            Self::InvalidWaitCondition => "input tape contains an unknown wait condition",
+            Self::InvalidWaitTimeout => "input tape wait timeout is invalid",
+            Self::InvalidWaitInput => "input tape wait frame contains non-neutral input",
             Self::TrailingData => "input tape contains trailing data",
             Self::TooManyFrames => "input tape frame count is too large",
         })
@@ -122,11 +162,21 @@ impl InputTape {
             if frame.owned_ports & !ALL_PORTS != 0 {
                 return Err(TapeError::InvalidOwnedPorts);
             }
+            match (frame.wait_condition, frame.wait_timeout_ticks) {
+                (WaitCondition::None, 0) => {}
+                (WaitCondition::None, _) | (_, 0) => return Err(TapeError::InvalidWaitTimeout),
+                _ => {}
+            }
+            if frame.wait_condition != WaitCondition::None
+                && frame.pads.iter().any(|pad| *pad != RawPadState::default())
+            {
+                return Err(TapeError::InvalidWaitInput);
+            }
         }
         Ok(())
     }
 
-    /// Encodes canonical DUSKTAPE v1.1 bytes.
+    /// Encodes canonical DUSKTAPE v1.2 bytes.
     pub fn encode(&self) -> Result<Vec<u8>, TapeError> {
         self.validate()?;
         let payload_size = self
@@ -150,6 +200,11 @@ impl InputTape {
         for (frame_index, frame) in self.frames.iter().enumerate() {
             let frame_start = HEADER_SIZE + frame_index * FRAME_SIZE;
             output[frame_start] = frame.owned_ports;
+            output[frame_start + 1] = frame.wait_condition.encode();
+            put_u16(
+                &mut output[frame_start + 2..frame_start + 4],
+                frame.wait_timeout_ticks,
+            );
             for (port, pad) in frame.pads.iter().enumerate() {
                 let start = frame_start + 4 + port * PAD_SIZE;
                 encode_pad(pad, &mut output[start..start + PAD_SIZE]);
@@ -210,17 +265,31 @@ impl InputTape {
             if source[0] & !ALL_PORTS != 0 {
                 return Err(TapeError::InvalidOwnedPorts);
             }
-            if source[1..4] != [0, 0, 0] {
+            if version.minor < 2 && source[1..4] != [0, 0, 0] {
                 return Err(TapeError::InvalidFrameSize);
+            }
+            let wait_condition = WaitCondition::decode(source[1])?;
+            let wait_timeout_ticks = get_u16(&source[2..4]);
+            match (wait_condition, wait_timeout_ticks) {
+                (WaitCondition::None, 0) => {}
+                (WaitCondition::None, _) | (_, 0) => return Err(TapeError::InvalidWaitTimeout),
+                _ => {}
             }
             let mut frame = InputFrame {
                 owned_ports: source[0],
+                wait_condition,
+                wait_timeout_ticks,
                 ..InputFrame::default()
             };
             for port in 0..PORT_COUNT {
                 let pad_start = 4 + port * PAD_SIZE;
                 frame.pads[port] =
                     decode_pad(&source[pad_start..pad_start + PAD_SIZE], version.minor)?;
+            }
+            if wait_condition != WaitCondition::None
+                && frame.pads.iter().any(|pad| *pad != RawPadState::default())
+            {
+                return Err(TapeError::InvalidWaitInput);
             }
             frames.push(frame);
         }
@@ -297,7 +366,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cpp_v1_1_golden_bytes() {
+    fn v1_2_golden_bytes() {
         let mut frame = InputFrame {
             owned_ports: 1,
             ..InputFrame::default()
@@ -323,7 +392,7 @@ mod tests {
         .encode()
         .unwrap();
         let mut expected = vec![
-            0x44, 0x55, 0x53, 0x4b, 0x54, 0x41, 0x50, 0x45, 0x01, 0x00, 0x01, 0x00, 0x20, 0x00,
+            0x44, 0x55, 0x53, 0x4b, 0x54, 0x41, 0x50, 0x45, 0x01, 0x00, 0x02, 0x00, 0x20, 0x00,
             0x34, 0x00, 0x30, 0x75, 0x00, 0x00, 0xe9, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x11, 0x80, 0x7f, 0xfe, 0x03,
             0x04, 0x05, 0x06, 0x07, 0x01, 0xfd,
@@ -356,7 +425,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_reserved_frame_bytes() {
+    fn wait_frame_round_trips() {
+        let frame = InputFrame {
+            owned_ports: 0x0f,
+            wait_condition: WaitCondition::NameEntryActive,
+            wait_timeout_ticks: 900,
+            ..InputFrame::default()
+        };
+        let bytes = InputTape {
+            frames: vec![frame.clone()],
+            ..InputTape::default()
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(&bytes[32..36], &[0x0f, 1, 0x84, 0x03]);
+        assert_eq!(InputTape::decode(&bytes).unwrap().tape.frames[0], frame);
+    }
+
+    #[test]
+    fn rejects_invalid_wait_metadata() {
         let mut bytes = InputTape {
             frames: vec![InputFrame::default()],
             ..InputTape::default()
@@ -366,7 +453,92 @@ mod tests {
         bytes[33] = 1;
         assert_eq!(
             InputTape::decode(&bytes).unwrap_err(),
+            TapeError::InvalidWaitTimeout
+        );
+
+        bytes[33] = 2;
+        assert_eq!(
+            InputTape::decode(&bytes).unwrap_err(),
+            TapeError::InvalidWaitCondition
+        );
+
+        let invalid = InputTape {
+            frames: vec![InputFrame {
+                wait_timeout_ticks: 1,
+                ..InputFrame::default()
+            }],
+            ..InputTape::default()
+        };
+        assert_eq!(invalid.validate(), Err(TapeError::InvalidWaitTimeout));
+    }
+
+    #[test]
+    fn legacy_versions_require_zero_reserved_frame_bytes() {
+        let mut bytes = InputTape {
+            frames: vec![InputFrame::default()],
+            ..InputTape::default()
+        }
+        .encode()
+        .unwrap();
+        bytes[10] = 1;
+        bytes[33] = 1;
+        bytes[34] = 1;
+        assert_eq!(
+            InputTape::decode(&bytes).unwrap_err(),
             TapeError::InvalidFrameSize
+        );
+    }
+
+    #[test]
+    fn legacy_v1_1_tape_decodes() {
+        let mut bytes = InputTape {
+            frames: vec![InputFrame::default()],
+            ..InputTape::default()
+        }
+        .encode()
+        .unwrap();
+        bytes[10] = 1;
+        let decoded = InputTape::decode(&bytes).unwrap();
+        assert_eq!(decoded.source_version.minor, 1);
+        assert_eq!(decoded.tape.frames[0].wait_condition, WaitCondition::None);
+    }
+
+    #[test]
+    fn rejects_input_on_wait_frames() {
+        let frame = InputFrame {
+            wait_condition: WaitCondition::NameEntryActive,
+            wait_timeout_ticks: 1,
+            pads: [
+                RawPadState {
+                    buttons: 1,
+                    ..RawPadState::default()
+                },
+                RawPadState::default(),
+                RawPadState::default(),
+                RawPadState::default(),
+            ],
+            ..InputFrame::default()
+        };
+        let tape = InputTape {
+            frames: vec![frame],
+            ..InputTape::default()
+        };
+        assert_eq!(tape.validate(), Err(TapeError::InvalidWaitInput));
+
+        let mut bytes = InputTape {
+            frames: vec![InputFrame {
+                wait_condition: WaitCondition::NameEntryActive,
+                wait_timeout_ticks: 1,
+                ..InputFrame::default()
+            }],
+            ..InputTape::default()
+        }
+        .encode()
+        .unwrap();
+        bytes[36] = 1;
+        assert_eq!(
+            InputTape::decode(&bytes).unwrap_err(),
+            TapeError::InvalidWaitInput
         );
     }
 }

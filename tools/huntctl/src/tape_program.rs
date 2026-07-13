@@ -1,4 +1,4 @@
-use crate::tape::{InputFrame, InputTape, PORT_COUNT, RawPadState};
+use crate::tape::{InputFrame, InputTape, PORT_COUNT, RawPadState, WaitCondition};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
@@ -37,11 +37,41 @@ impl Default for TickRate {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Step {
-    Frame { frame: FrameSpec },
-    Repeat { count: u64, frame: FrameSpec },
-    Cycle { count: u64, frames: Vec<FrameSpec> },
-    Hold { count: u64 },
-    Marker { name: String },
+    Frame {
+        frame: FrameSpec,
+    },
+    Repeat {
+        count: u64,
+        frame: FrameSpec,
+    },
+    Cycle {
+        count: u64,
+        frames: Vec<FrameSpec>,
+    },
+    Hold {
+        count: u64,
+    },
+    WaitUntil {
+        condition: ProgramWaitCondition,
+        timeout_ticks: u16,
+    },
+    Marker {
+        name: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgramWaitCondition {
+    NameEntryActive,
+}
+
+impl From<ProgramWaitCondition> for WaitCondition {
+    fn from(value: ProgramWaitCondition) -> Self {
+        match value {
+            ProgramWaitCondition::NameEntryActive => Self::NameEntryActive,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -129,6 +159,7 @@ pub enum ProgramError {
     ZeroCount,
     EmptyCycle,
     HoldBeforeFrame,
+    ZeroWaitTimeout,
     EmptyMarker,
     DuplicateMarker(String),
     TooManyFrames,
@@ -151,6 +182,7 @@ impl fmt::Display for ProgramError {
             Self::ZeroCount => f.write_str("repeat, cycle, and hold counts must be nonzero"),
             Self::EmptyCycle => f.write_str("cycle frames must not be empty"),
             Self::HoldBeforeFrame => f.write_str("hold requires a previously emitted frame"),
+            Self::ZeroWaitTimeout => f.write_str("wait_until timeout_ticks must be nonzero"),
             Self::EmptyMarker => f.write_str("marker names must not be empty"),
             Self::DuplicateMarker(name) => write!(f, "marker name {name:?} is duplicated"),
             Self::TooManyFrames => write!(f, "program expands beyond {MAX_EXPANDED_FRAMES} frames"),
@@ -215,6 +247,24 @@ impl TapeProgram {
                         .cloned()
                         .ok_or(ProgramError::HoldBeforeFrame)?;
                     push_repeated(&mut frames, frame, count)?;
+                }
+                Step::WaitUntil {
+                    condition,
+                    timeout_ticks,
+                } => {
+                    if timeout_ticks == 0 {
+                        return Err(ProgramError::ZeroWaitTimeout);
+                    }
+                    push_repeated(
+                        &mut frames,
+                        InputFrame {
+                            owned_ports: self.default_owned_ports,
+                            wait_condition: condition.into(),
+                            wait_timeout_ticks: timeout_ticks,
+                            ..InputFrame::default()
+                        },
+                        1,
+                    )?;
                 }
                 Step::Marker { name } => {
                     if name.is_empty() {
@@ -398,6 +448,7 @@ mod tests {
             {"op":"repeat","count":2,"frame":{"pads":{"0":{"buttons":["A","RIGHT"],"stick_x":-7}}}},
             {"op":"marker","name":"pressed"},
             {"op":"hold","count":3},
+            {"op":"wait_until","condition":"name_entry_active","timeout_ticks":900},
             {"op":"cycle","count":2,"frames":[{"pads":{"0":{"buttons":["B"]}}},{}]},
             {"op":"frame","frame":{}}
           ]
@@ -406,13 +457,20 @@ mod tests {
         .unwrap()
         .compile()
         .unwrap();
-        assert_eq!(program.tape.frames.len(), 10);
+        assert_eq!(program.tape.frames.len(), 11);
         assert_eq!(program.tape.frames[0].pads[0].buttons, 0x0102);
         assert_eq!(program.tape.frames[4].pads[0].stick_x, -7);
-        assert_eq!(program.tape.frames[5].pads[0].buttons, 0x0200);
-        assert_eq!(program.tape.frames[6].pads[0].buttons, 0);
-        assert_eq!(program.tape.frames[7].pads[0].buttons, 0x0200);
-        assert_eq!(program.tape.frames[9].pads[0].buttons, 0);
+        assert_eq!(program.tape.frames[5].owned_ports, 1);
+        assert_eq!(
+            program.tape.frames[5].wait_condition,
+            WaitCondition::NameEntryActive
+        );
+        assert_eq!(program.tape.frames[5].wait_timeout_ticks, 900);
+        assert_eq!(program.tape.frames[5].pads, [RawPadState::default(); 4]);
+        assert_eq!(program.tape.frames[6].pads[0].buttons, 0x0200);
+        assert_eq!(program.tape.frames[7].pads[0].buttons, 0);
+        assert_eq!(program.tape.frames[8].pads[0].buttons, 0x0200);
+        assert_eq!(program.tape.frames[10].pads[0].buttons, 0);
         assert_eq!(
             program.markers,
             vec![Marker {
@@ -446,5 +504,13 @@ mod tests {
         .compile()
         .unwrap_err();
         assert!(matches!(error, ProgramError::EmptyCycle));
+
+        let error = TapeProgram::from_json(
+            r#"{"schema":"dusktape-program/v1","steps":[{"op":"wait_until","condition":"name_entry_active","timeout_ticks":0}]}"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap_err();
+        assert!(matches!(error, ProgramError::ZeroWaitTimeout));
     }
 }
