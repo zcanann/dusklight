@@ -16,6 +16,8 @@
         "name-entry",
         "name-entry-trace",
         "rng",
+        "eye-shredder-oracle",
+        "eye-shredder",
         "aurora-card",
         "aurora-time",
         "rust",
@@ -74,6 +76,25 @@
       ],
       "problemMatcher": "$msCompile",
       "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Glitch Hunt: Eye Shredder Visual",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\run-eye-shredder.ps1",
+        "-Visual"
+      ],
+      "problemMatcher": [],
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",

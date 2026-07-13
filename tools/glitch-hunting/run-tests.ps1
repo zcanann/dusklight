@@ -8,6 +8,8 @@ param(
         "name-entry",
         "name-entry-trace",
         "rng",
+        "eye-shredder-oracle",
+        "eye-shredder",
         "aurora-card",
         "aurora-time",
         "rust",
@@ -75,6 +77,7 @@ $nativeTests = [ordered]@{
     "name-entry"       = @("dusk_name_entry_observer_test", "dusk_name_entry_observer_test.exe")
     "name-entry-trace" = @("dusk_name_entry_trace_test", "dusk_name_entry_trace_test.exe")
     "rng"              = @("dusk_rng_test", "dusk_rng_test.exe")
+    "eye-shredder-oracle" = @("dusk_eye_shredder_oracle_test", "dusk_eye_shredder_oracle_test.exe")
     "aurora-card"      = @("card_tests", "extern\aurora\tests\card_tests.exe")
     "aurora-time"      = @("os_time_tests", "extern\aurora\tests\os_time_tests.exe")
 }
@@ -145,6 +148,9 @@ try {
         }
         "pool-smoke" {
             Invoke-WorkerSmoke -Pool
+        }
+        "eye-shredder" {
+            & (Join-Path $repoRoot "tools\glitch-hunting\run-eye-shredder.ps1") -Preset $Preset
         }
         default {
             Invoke-NativeTests @($Test)

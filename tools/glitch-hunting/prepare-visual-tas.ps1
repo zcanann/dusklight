@@ -5,8 +5,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$fixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.json"
-$output = Join-Path $repoRoot "build\boot_start_smoke.tape"
+$bootFixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.json"
+$bootOutput = Join-Path $repoRoot "build\boot_start_smoke.tape"
+$eyeShredderFixture = Join-Path $repoRoot "tests\fixtures\automation\eye_shredder.json"
+$eyeShredderOutput = Join-Path $repoRoot "build\eye_shredder.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
 $debugState = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot "build\automation-state\vscode-debug"))
@@ -34,10 +36,14 @@ try {
         "--target", "dusklight", "--", "-j$([Environment]::ProcessorCount)"
     )
 
-    New-Item -ItemType Directory -Path (Split-Path $output) -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path $bootOutput) -Force | Out-Null
     Invoke-Checked "cargo" @(
         "run", "--quiet", "--manifest-path", $manifest, "--",
-        "tape", "compile", $fixture, $output
+        "tape", "compile", $bootFixture, $bootOutput
+    )
+    Invoke-Checked "cargo" @(
+        "run", "--quiet", "--manifest-path", $manifest, "--",
+        "tape", "compile", $eyeShredderFixture, $eyeShredderOutput
     )
 
     $debugStateWithSeparator = $debugState.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
@@ -64,7 +70,9 @@ try {
         }
     }
 
-    Write-Host "`nVisual TAS build ready: $output" -ForegroundColor Green
+    Write-Host "`nVisual TAS tapes ready:" -ForegroundColor Green
+    Write-Host "  $bootOutput" -ForegroundColor Green
+    Write-Host "  $eyeShredderOutput" -ForegroundColor Green
 } finally {
     Pop-Location
 }
