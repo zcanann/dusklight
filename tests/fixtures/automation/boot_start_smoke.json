@@ -12,15 +12,16 @@
     },
     {
       "op": "repeat",
-      "count": 30,
+      "count": 180,
       "frame": {}
     },
     {
       "op": "marker",
-      "name": "start-press"
+      "name": "start-pulse-1"
     },
     {
-      "op": "frame",
+      "op": "repeat",
+      "count": 2,
       "frame": {
         "pads": {
           "0": {
@@ -33,7 +34,51 @@
     },
     {
       "op": "repeat",
-      "count": 30,
+      "count": 118,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-pulse-2"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": [
+              "START"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 118,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-pulse-3"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": [
+              "START"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 120,
       "frame": {}
     }
   ]

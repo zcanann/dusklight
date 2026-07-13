@@ -38,8 +38,10 @@ The pre-launch task builds Dusklight and compiles
 `tests/fixtures/automation/boot_start_smoke.json` into
 `build/boot_start_smoke.tape`. The game then runs with its normal visible
 renderer and normal pacing. Exclusive automation input begins on the first game
-tick. The smoke tape waits 30 ticks, presses Start for one tick, then releases
-the controller; playback hands back a neutral controller when the tape ends.
+tick. The smoke tape sends two-tick Start pulses at ticks 180, 300, and 420,
+with neutral input between them. The delayed pulses remain visible and useful
+across normal boot/loading timing; playback hands back a neutral controller when
+the tape ends.
 
 Before launching, the wrapper removes copied surrounding quotes, resolves
 relative paths against the repository, and verifies that both files exist. It
