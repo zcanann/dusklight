@@ -1,0 +1,40 @@
+{
+  "schema": "dusktape-program/v1",
+  "tick_rate": {
+    "numerator": 30,
+    "denominator": 1
+  },
+  "default_owned_ports": 1,
+  "steps": [
+    {
+      "op": "marker",
+      "name": "process-start"
+    },
+    {
+      "op": "repeat",
+      "count": 30,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-press"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": [
+              "START"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 30,
+      "frame": {}
+    }
+  ]
+}
