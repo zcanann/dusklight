@@ -1097,6 +1097,7 @@ int game_main(int argc, char* argv[]) {
         config.pauseOnFocusLost = headlessMainLoop ? false : dusk::getSettings().game.pauseOnFocusLost;
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
+        config.disablePresentation = headlessMainLoop;
         auroraInfo = aurora_initialize(argc, argv, &config);
     }
 
