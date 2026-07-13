@@ -33,6 +33,8 @@ state hashes, and the reason it was classified as interesting.
 
 ## Documents
 
+- [Implementation status](status.md) records working commands, tests, and
+  current fidelity/validation limits.
 - [Architecture](architecture.md) describes the Rust/C++ boundary, worker
   model, headless execution, and headful promotion.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
@@ -56,10 +58,12 @@ Dusklight already has several useful pieces:
   player position/velocity inspection; and
 - an original-style JKR heap hierarchy backed by Aurora's MEM1 arena.
 
-These are foundations, not yet an automation API. Input injection currently
-merges with physical input, the null backend does not run the game, wall-clock
-time remains live, and the current state packet is a scenario seed rather than
-a full process snapshot.
+The fork now adds an exclusive automation input source, canonical tape
+recording/playback, a fixed-step null-render launch mode, and a Rust controller.
+Ordinary virtual input still merges by design. Fixed-step runs now control
+`OSGetTime`, but alarm dispatch, other asynchronous subsystems, engine-session
+worker commands, and portable checkpoints remain unfinished; the current state
+packet is a scenario seed rather than a full process snapshot.
 
 ## Scope
 

@@ -21,11 +21,14 @@ place workers on different cores. They also avoid exposing a large unstable C++
 ABI to Rust. A worker stays alive across many candidates and executes batches
 in-process, so process startup and IPC are not paid per run or per frame.
 
-The initial protocol can use a versioned binary control stream over local pipes
-or sockets. Add memory-mapped command/result rings only after measurements show
-that result transfer is material. Never send every controller frame through
-IPC: upload a tape or controller program once, then ask the worker to run a
-range of ticks.
+The bootstrap protocol is versioned NDJSON over local pipes because its current
+messages are small (`hello`, `ping`, and `shutdown`) and inspectability is useful
+while the boundary settles. The Rust control plane already defines an explicit
+little-endian binary model for future tape batches and replay results. Add that
+or memory-mapped blob references when engine-session commands land and
+measurements justify them. Never send every controller frame through IPC:
+upload a tape or controller program once, then ask the worker to run a range of
+ticks.
 
 ## Responsibilities
 
