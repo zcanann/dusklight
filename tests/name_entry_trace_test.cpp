@@ -27,6 +27,7 @@ int main() {
 
     NameEntryObserver observer;
     observer.setFidelityProfile(NameEntryFidelityProfile::CursorBreakoutShadow);
+    observer.setTickContext(12, 7);
     observer.beginSession();
     std::array<NameEntryCharacterObservation, NameEntryOriginalLayout::CharacterCount> characters{};
     observer.observe(9, 8, 8, 0, 2, 3, 4, characters);
@@ -38,17 +39,23 @@ int main() {
     REQUIRE(artifact.events.size() == 3);
 
     const auto root = nlohmann::json::parse(serialize_name_entry_trace(artifact));
-    REQUIRE(root["schema"]["version"] == 1);
+    REQUIRE(root["schema"]["version"] == 2);
     REQUIRE(root["fidelity_profile"] == "cursor_breakout_shadow");
     REQUIRE(root["snapshot"]["logical_cursor"] == 9);
+    REQUIRE(root["snapshot"]["sim_tick"] == 12);
+    REQUIRE(root["snapshot"]["tape_frame"] == 7);
     REQUIRE(root["snapshot"]["counters"]["out_of_range_move_attempts"] == 1);
     REQUIRE(root["snapshot"]["counters"]["out_of_range_write_attempts"] == 1);
     REQUIRE(root["snapshot"]["shadow"]["bytes"][8] == 2);
     REQUIRE(root["snapshot"]["shadow"]["bytes"][15] == 0x44);
+    REQUIRE(root["snapshot"]["shadow"]["end_offset"] == 0xA9C);
+    REQUIRE(root["snapshot"]["last_write"]["character_index"] == 9);
     REQUIRE(root["event_stream"]["dropped_count"] == 0);
     REQUIRE(root["event_stream"]["drained_count"] == 3);
     REQUIRE(root["event_stream"]["events"][2]["kind"] == "character_write_attempt");
     REQUIRE(root["event_stream"]["events"][2]["original_offset"] == 0x314);
+    REQUIRE(root["event_stream"]["events"][2]["sim_tick"] == 12);
+    REQUIRE(root["event_stream"]["events"][2]["tape_frame"] == 7);
 
     const std::filesystem::path outputPath =
         std::filesystem::temp_directory_path() / "dusklight-name-entry-trace-test.json";

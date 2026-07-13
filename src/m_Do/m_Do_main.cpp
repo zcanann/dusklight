@@ -51,6 +51,7 @@
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
 #include "dusk/automation/worker.hpp"
 #include "dusk/crash_handler.h"
@@ -213,7 +214,11 @@ bool launchUILoop() {
 
 static bool finish_input_tape_tick();
 static bool finish_simulation_tick();
+static void begin_automation_simulation_tick();
+static bool finish_automation_oracle_tick();
+static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
+static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 
 void main01(void) {
@@ -255,6 +260,10 @@ void main01(void) {
     OSReport("Entering Main Loop (main01)...\n");
 
     dusk::game_clock::ensure_initialized();
+
+    if (automation_oracle_rejected_before_loop()) {
+        goto exit;
+    }
 
     do {
         // 1. Update Window Events
@@ -317,6 +326,7 @@ void main01(void) {
                 for (int sim_tick = 0; sim_tick < pacing.sim_ticks_to_run; ++sim_tick) {
                     dusk::frame_interp::begin_sim_tick();
                     mDoCPd_c::read();
+                    begin_automation_simulation_tick();
                     if (!automationInputQuarantine) {
                         dusk::mouse::read();
                         dusk::gyro::read(pacing.sim_pace);
@@ -325,6 +335,9 @@ void main01(void) {
                     mDoAud_Execute();
                     dusk::game_clock::commit_sim_tick();
                     if (!finish_simulation_tick()) {
+                        break;
+                    }
+                    if (finish_automation_oracle_tick()) {
                         break;
                     }
                     if (finish_input_tape_tick()) {
@@ -348,6 +361,7 @@ void main01(void) {
 
             // Game Inputs
             mDoCPd_c::read();
+            begin_automation_simulation_tick();
             if (!automationInputQuarantine) {
                 dusk::mouse::read();
                 dusk::gyro::read(pacing.presentation_dt_seconds);
@@ -359,7 +373,9 @@ void main01(void) {
 
             mDoAud_Execute();
             if (finish_simulation_tick()) {
-                finish_input_tape_tick();
+                if (!finish_automation_oracle_tick()) {
+                    finish_input_tape_tick();
+                }
             }
         }
 
@@ -394,6 +410,7 @@ void main01(void) {
     } while (dusk::IsRunning);
 
     exit:;
+    write_automation_oracle_result_on_exit();
     write_name_entry_trace_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
@@ -505,14 +522,82 @@ static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
+static bool eyeShredderOracleEnabled;
+static dusk::automation::EyeShredderOracle eyeShredderOracle;
+static std::filesystem::path eyeShredderOracleResultPath;
+static bool eyeShredderOracleResultWriteFailed;
+static std::uint64_t automationSimulationTick;
+static std::uint64_t automationTapeFrame = dusk::automation::NameEntryNoTick;
 
-static bool finish_input_tape_tick() {
-    if (!exitAfterInputTape || dusk::automation::input_tape_player().isPlaying()) {
+static bool automation_oracle_rejected_before_loop() {
+    return eyeShredderOracleEnabled && eyeShredderOracle.isTerminal();
+}
+
+static void begin_automation_simulation_tick() {
+    const std::size_t nextFrame = dusk::automation::input_tape_player().nextFrameIndex();
+    automationTapeFrame = nextFrame == 0
+                              ? dusk::automation::NameEntryNoTick
+                              : static_cast<std::uint64_t>(nextFrame - 1);
+    dusk::automation::name_entry_observer().setTickContext(automationSimulationTick,
+                                                            automationTapeFrame);
+}
+
+static bool finish_automation_oracle_tick() {
+    if (!eyeShredderOracleEnabled) {
+        ++automationSimulationTick;
+        return false;
+    }
+
+    eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
+                               automationSimulationTick, automationTapeFrame);
+    ++automationSimulationTick;
+    if (!eyeShredderOracle.isTerminal()) {
         return false;
     }
 
     dusk::IsRunning = false;
     return true;
+}
+
+static bool finish_input_tape_tick() {
+    if (dusk::automation::input_tape_player().isPlaying()) {
+        return false;
+    }
+
+    if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
+        eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
+        dusk::IsRunning = false;
+        return true;
+    }
+    if (!exitAfterInputTape) {
+        return false;
+    }
+
+    dusk::IsRunning = false;
+    return true;
+}
+
+static void write_automation_oracle_result_on_exit() {
+    if (!eyeShredderOracleEnabled) {
+        return;
+    }
+    if (!eyeShredderOracle.isTerminal()) {
+        eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
+    }
+
+    std::string error;
+    if (!dusk::automation::write_eye_shredder_oracle_result(
+            eyeShredderOracleResultPath, eyeShredderOracle.result(), error)) {
+        DuskLog.error("Failed to write Eye Shredder oracle result '{}': {}",
+                      dusk::io::fs_path_to_string(eyeShredderOracleResultPath), error);
+        eyeShredderOracleResultWriteFailed = true;
+        return;
+    }
+
+    DuskLog.info("Eye Shredder oracle result: {} ({})",
+                 dusk::automation::serialize_eye_shredder_oracle_result(
+                     eyeShredderOracle.result()),
+                 dusk::io::fs_path_to_string(eyeShredderOracleResultPath));
 }
 
 static bool finish_simulation_tick() {
@@ -625,6 +710,8 @@ int game_main(int argc, char* argv[]) {
             ("automation-card-root", "Use an explicit memory-card root for this tape run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
+            ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
             ("stage", "Upon launching, load a stage, room, spawn point, and layer. When using --load-save, it uses the specified save on the loaded stage. Format (STAGE,ROOM,POINT,LAYER). Example: (STAGE) or (STAGE,0,0,-1)", cxxopts::value<std::string>());
 
@@ -816,6 +903,50 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
 
+    const bool hasAutomationOracle = parsed_arg_options.count("automation-oracle") != 0;
+    const bool hasAutomationOracleResult =
+        parsed_arg_options.count("automation-oracle-result") != 0;
+    if (hasAutomationOracle != hasAutomationOracleResult) {
+        fprintf(stderr,
+                "Automation Oracle Error: --automation-oracle NAME and --automation-oracle-result PATH must be used together\n");
+        return 1;
+    }
+    if (hasAutomationOracle) {
+        const std::string oracleName =
+            parsed_arg_options["automation-oracle"].as<std::string>();
+        if (oracleName != "eye-shredder") {
+            fprintf(stderr,
+                    "Automation Oracle Error: unsupported oracle '%s' (expected eye-shredder)\n",
+                    oracleName.c_str());
+            return 1;
+        }
+        if (!hasInputTape) {
+            fprintf(stderr,
+                    "Automation Oracle Error: eye-shredder requires --input-tape PATH\n");
+            return 1;
+        }
+        if (!cursorBreakoutShadow) {
+            fprintf(stderr,
+                    "Automation Oracle Error: eye-shredder requires --cursor-breakout-shadow\n");
+            return 1;
+        }
+        if (inputTapeEndBehavior == dusk::automation::TapeEndBehavior::Loop) {
+            fprintf(stderr,
+                    "Automation Oracle Error: eye-shredder cannot use --input-tape-end loop\n");
+            return 1;
+        }
+        const std::string resultPath =
+            parsed_arg_options["automation-oracle-result"].as<std::string>();
+        if (resultPath.empty()) {
+            fprintf(stderr,
+                    "Automation Oracle Error: --automation-oracle-result PATH cannot be empty\n");
+            return 1;
+        }
+        eyeShredderOracleEnabled = true;
+        eyeShredderOracleResultPath = std::filesystem::u8path(resultPath);
+        eyeShredderOracle.start();
+    }
+
     if (hasInputTape) {
         inputTapePath = parsed_arg_options["input-tape"].as<std::string>();
 
@@ -895,6 +1026,10 @@ int game_main(int argc, char* argv[]) {
         DuskLog.info("Name-entry trace: {} (fidelity={})",
                      dusk::io::fs_path_to_string(nameEntryTracePath),
                      cursorBreakoutShadow ? "cursor_breakout_shadow" : "observe_only");
+    }
+    if (eyeShredderOracleEnabled) {
+        DuskLog.info("Automation oracle: eye-shredder -> {}",
+                     dusk::io::fs_path_to_string(eyeShredderOracleResultPath));
     }
     if (hasInputTape) {
         DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
@@ -1206,6 +1341,14 @@ int game_main(int argc, char* argv[]) {
     }
 
     dusk::version::init();
+    if (eyeShredderOracleEnabled &&
+        dusk::version::getGameVersion() != dusk::version::GameVersion::GcnUsa) {
+        const std::string reason =
+            "Eye Shredder oracle requires a GameCube USA disc; its expected address and bytes are specific to a fresh NTSC-U file";
+        DuskLog.error("{}", reason);
+        eyeShredderOracle.reject(reason);
+        dusk::IsRunning = false;
+    }
     LanguageInit();
 
     OSInit();
@@ -1306,7 +1449,14 @@ int game_main(int argc, char* argv[]) {
         deterministicTimeEnabled = false;
     }
 
-    return nameEntryTraceWriteFailed || deterministicTimeAdvanceFailed ? 1 : 0;
+    const bool eyeShredderOracleFailed =
+        eyeShredderOracleEnabled &&
+        eyeShredderOracle.result().status !=
+            dusk::automation::EyeShredderOracleStatus::Passed;
+    return nameEntryTraceWriteFailed || eyeShredderOracleResultWriteFailed ||
+                   eyeShredderOracleFailed || deterministicTimeAdvanceFailed
+               ? 1
+               : 0;
 }
 
 

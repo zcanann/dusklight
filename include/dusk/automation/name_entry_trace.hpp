@@ -9,7 +9,7 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t NameEntryTraceSchemaVersion = 1;
+inline constexpr std::uint32_t NameEntryTraceSchemaVersion = 2;
 
 struct NameEntryTraceArtifact {
     NameEntryFidelityProfile fidelityProfile = NameEntryFidelityProfile::ObserveOnly;

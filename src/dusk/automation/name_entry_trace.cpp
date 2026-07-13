@@ -61,6 +61,8 @@ json event_json(const NameEntryEvent& event) {
 
     return {
         {"sequence", event.sequence},
+        {"sim_tick", event.simTick},
+        {"tape_frame", event.tapeFrame},
         {"kind", event_kind_name(event.kind)},
         {"flags_raw", event.flags},
         {"flags", std::move(flags)},
@@ -72,6 +74,22 @@ json event_json(const NameEntryEvent& event) {
         {"access_size", event.accessSize},
         {"direction", event.direction},
         {"character", event.character},
+    };
+}
+
+json write_observation_json(const NameEntryWriteObservation& write) {
+    json bytes = json::array();
+    for (const std::uint8_t byte : write.bytes) {
+        bytes.push_back(byte);
+    }
+    return {
+        {"attempt", write.attempt},
+        {"sim_tick", write.simTick},
+        {"tape_frame", write.tapeFrame},
+        {"character_index", write.characterIndex},
+        {"original_offset", write.originalOffset},
+        {"flags_raw", write.flags},
+        {"bytes", std::move(bytes)},
     };
 }
 
@@ -98,7 +116,7 @@ std::string serialize_name_entry_trace(const NameEntryTraceArtifact& artifact) {
     }
 
     json shadowBytes = json::array();
-    for (const std::uint8_t byte : snapshot.modeledNeighborBytes) {
+    for (const std::uint8_t byte : snapshot.modeledRetailBytes) {
         shadowBytes.push_back(byte);
     }
 
@@ -115,6 +133,8 @@ std::string serialize_name_entry_trace(const NameEntryTraceArtifact& artifact) {
         {"snapshot",
          {
              {"revision", snapshot.revision},
+             {"sim_tick", snapshot.simTick},
+             {"tape_frame", snapshot.tapeFrame},
              {"active", snapshot.active != 0},
              {"logical_cursor", snapshot.logicalCursor},
              {"last_logical_cursor", snapshot.lastLogicalCursor},
@@ -131,9 +151,11 @@ std::string serialize_name_entry_trace(const NameEntryTraceArtifact& artifact) {
                   {"blocked_read_attempts", snapshot.blockedReadAttempts},
               }},
              {"characters", std::move(characters)},
+             {"last_write", write_observation_json(snapshot.lastWrite)},
              {"shadow",
               {
                   {"original_offset", NameEntryOriginalLayout::NeighborWindow},
+                  {"end_offset", NameEntryOriginalLayout::EyeShredderWindowEnd},
                   {"bytes", std::move(shadowBytes)},
               }},
          }},

@@ -1,4 +1,5 @@
 #include "dusk/automation/name_entry_observer.hpp"
+#include "dusk/automation/eye_shredder_oracle.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -20,6 +21,7 @@ void testSnapshotAndOutOfRangeEvents() {
     using namespace dusk::automation;
 
     NameEntryObserver observer;
+    observer.setTickContext(42, 17);
     REQUIRE(observer.fidelityProfile() == NameEntryFidelityProfile::ObserveOnly);
     observer.beginSession();
     observer.updateVisualCursor(7);
@@ -31,6 +33,8 @@ void testSnapshotAndOutOfRangeEvents() {
 
     const NameEntryObservation& snapshot = observer.latest();
     REQUIRE(snapshot.active == 1);
+    REQUIRE(snapshot.simTick == 42);
+    REQUIRE(snapshot.tapeFrame == 17);
     REQUIRE(snapshot.logicalCursor == 8);
     REQUIRE(snapshot.visualCursor == 7);
     REQUIRE(snapshot.characters[7].character == 'Z');
@@ -43,6 +47,8 @@ void testSnapshotAndOutOfRangeEvents() {
     REQUIRE((events[1].flags & NameEntryEventOutOfRange) != 0);
     REQUIRE(events[1].cursorBefore == 8);
     REQUIRE(events[1].cursorRequested == 9);
+    REQUIRE(events[1].simTick == 42);
+    REQUIRE(events[1].tapeFrame == 17);
 }
 
 void testOriginalLayoutWritesStayInShadowMemory() {
@@ -53,13 +59,13 @@ void testOriginalLayoutWritesStayInShadowMemory() {
 
     // Observe-only mode reports the attempt but cannot mutate the model.
     REQUIRE(!observer.noteCharacterWrite(9, 2, 3, 4, 0x11223344, false, true));
-    for (std::uint8_t byte : observer.latest().modeledNeighborBytes) {
+    for (std::uint8_t byte : observer.latest().modeledRetailBytes) {
         REQUIRE(byte == 0);
     }
 
     observer.setFidelityProfile(NameEntryFidelityProfile::CursorBreakoutShadow);
     REQUIRE(observer.noteCharacterWrite(9, 2, 3, 4, 0x11223344, true, true));
-    const auto& shadow = observer.latest().modeledNeighborBytes;
+    const auto& shadow = observer.latest().modeledRetailBytes;
     // ChrInfo[9] is 0x314, eight bytes into the 0x30C neighbor window.
     REQUIRE(shadow[8] == 2);
     REQUIRE(shadow[9] == 3);
@@ -76,6 +82,21 @@ void testOriginalLayoutWritesStayInShadowMemory() {
     REQUIRE((events[2].flags & NameEntryEventOutOfRange) != 0);
     REQUIRE((events[2].flags & NameEntryEventShadowModeled) != 0);
     REQUIRE(observer.latest().outOfRangeWriteAttempts == 2);
+
+    observer.setTickContext(100, 99);
+    REQUIRE(observer.noteCharacterWrite(113, 12, 0, 2, 'M', true, true));
+    constexpr std::size_t eyeShredderOffset =
+        EyeShredderExpectedWrite::OriginalOffset - NameEntryOriginalLayout::NeighborWindow;
+    const auto& eyeShredderShadow = observer.latest().modeledRetailBytes;
+    REQUIRE(eyeShredderShadow[eyeShredderOffset] == 0x0C);
+    REQUIRE(eyeShredderShadow[eyeShredderOffset + 1] == 0x00);
+    REQUIRE(eyeShredderShadow[eyeShredderOffset + 2] == 0x02);
+    REQUIRE(eyeShredderShadow[eyeShredderOffset + 3] == 0x01);
+    REQUIRE(eyeShredderShadow[eyeShredderOffset + 7] == 0x4D);
+    REQUIRE(observer.latest().lastWrite.characterIndex == 113);
+    REQUIRE(observer.latest().lastWrite.originalOffset == 0x654);
+    REQUIRE(observer.latest().lastWrite.simTick == 100);
+    REQUIRE(observer.latest().lastWrite.tapeFrame == 99);
 }
 
 void testEventRingIsBounded() {

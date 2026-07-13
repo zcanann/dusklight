@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 
 namespace dusk::automation {
@@ -22,8 +23,17 @@ struct NameEntryOriginalLayout {
     static constexpr std::uint16_t NextNameString = 0x31C;
     static constexpr std::uint16_t NextNameStringSize = 24;
     static constexpr std::uint16_t ObjectEnd = 0x334;
-    static constexpr std::size_t NeighborWindowSize = ObjectEnd - NeighborWindow;
+    // Eye Shredder's documented valid write positions extend through index
+    // 249. Model that retail address range explicitly without touching native
+    // memory beyond dName_c.
+    static constexpr std::uint16_t EyeShredderLastIndex = 249;
+    static constexpr std::uint16_t EyeShredderWindowEnd =
+        CharacterInfo + (EyeShredderLastIndex + 1) * CharacterInfoSize;
+    static constexpr std::size_t EyeShredderWindowSize =
+        EyeShredderWindowEnd - NeighborWindow;
 };
+
+inline constexpr std::uint64_t NameEntryNoTick = std::numeric_limits<std::uint64_t>::max();
 
 enum class NameEntryFidelityProfile : std::uint8_t {
     ObserveOnly = 0,
@@ -67,8 +77,20 @@ struct NameEntryCharacterObservation {
     bool operator==(const NameEntryCharacterObservation&) const = default;
 };
 
+struct NameEntryWriteObservation {
+    std::uint64_t attempt = 0;
+    std::uint64_t simTick = NameEntryNoTick;
+    std::uint64_t tapeFrame = NameEntryNoTick;
+    std::uint8_t characterIndex = 0;
+    std::uint16_t originalOffset = 0;
+    std::uint8_t flags = 0;
+    std::array<std::uint8_t, NameEntryOriginalLayout::CharacterInfoSize> bytes{};
+};
+
 struct NameEntryObservation {
     std::uint64_t revision = 0;
+    std::uint64_t simTick = NameEntryNoTick;
+    std::uint64_t tapeFrame = NameEntryNoTick;
     std::uint8_t active = 0;
     std::uint8_t logicalCursor = 0;
     std::uint8_t lastLogicalCursor = 0;
@@ -82,13 +104,18 @@ struct NameEntryObservation {
     std::uint64_t outOfRangeWriteAttempts = 0;
     std::uint64_t blockedReadAttempts = 0;
     std::array<NameEntryCharacterObservation, NameEntryOriginalLayout::CharacterCount> characters{};
-    // What original-layout writes at indices 8..12 would do to field_0x30c
-    // and mNextNameStr. This is diagnostic state, not native object memory.
-    std::array<std::uint8_t, NameEntryOriginalLayout::NeighborWindowSize> modeledNeighborBytes{};
+    NameEntryWriteObservation lastWrite{};
+    // Retail-layout shadow state beginning at field_0x30c and extending
+    // through Eye Shredder position 249. This is diagnostic state, not native
+    // object memory.
+    std::array<std::uint8_t, NameEntryOriginalLayout::EyeShredderWindowSize>
+        modeledRetailBytes{};
 };
 
 struct NameEntryEvent {
     std::uint64_t sequence = 0;
+    std::uint64_t simTick = NameEntryNoTick;
+    std::uint64_t tapeFrame = NameEntryNoTick;
     NameEntryEventKind kind = NameEntryEventKind::SessionStarted;
     std::uint8_t flags = 0;
     std::uint8_t cursorBefore = 0;
@@ -114,6 +141,7 @@ public:
 
     void beginSession();
     void endSession();
+    void setTickContext(std::uint64_t simTick, std::uint64_t tapeFrame);
     void updateVisualCursor(std::uint8_t visualCursor);
     void observe(std::uint8_t logicalCursor, std::uint8_t lastLogicalCursor,
                  std::uint8_t nameLength, std::uint8_t selectionProcedure,
@@ -144,6 +172,9 @@ private:
     std::size_t mEventCount = 0;
     std::uint64_t mNextSequence = 1;
     std::uint64_t mDroppedEvents = 0;
+    std::uint64_t mCurrentSimTick = NameEntryNoTick;
+    std::uint64_t mCurrentTapeFrame = NameEntryNoTick;
+    std::uint64_t mWriteAttemptCount = 0;
     NameEntryFidelityProfile mProfile = NameEntryFidelityProfile::ObserveOnly;
 };
 

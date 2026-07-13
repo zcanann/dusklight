@@ -26,11 +26,20 @@ void NameEntryObserver::setFidelityProfile(const NameEntryFidelityProfile profil
 
 void NameEntryObserver::beginSession() {
     mLatest = {};
+    mLatest.simTick = mCurrentSimTick;
+    mLatest.tapeFrame = mCurrentTapeFrame;
     mLatest.active = 1;
     mLatest.revision = 1;
+    mWriteAttemptCount = 0;
     NameEntryEvent event;
     event.kind = NameEntryEventKind::SessionStarted;
     push(event);
+}
+
+void NameEntryObserver::setTickContext(const std::uint64_t simTick,
+                                       const std::uint64_t tapeFrame) {
+    mCurrentSimTick = simTick;
+    mCurrentTapeFrame = tapeFrame;
 }
 
 void NameEntryObserver::endSession() {
@@ -57,6 +66,8 @@ void NameEntryObserver::observe(
     const std::span<const NameEntryCharacterObservation,
                     NameEntryOriginalLayout::CharacterCount> characters) {
     mLatest.active = 1;
+    mLatest.simTick = mCurrentSimTick;
+    mLatest.tapeFrame = mCurrentTapeFrame;
     mLatest.logicalCursor = logicalCursor;
     mLatest.lastLogicalCursor = lastLogicalCursor;
     mLatest.nameLength = nameLength;
@@ -109,25 +120,26 @@ bool NameEntryObserver::noteCharacterWrite(
         ++mLatest.revision;
     }
 
+    const std::array<std::uint8_t, NameEntryOriginalLayout::CharacterInfoSize> bytes{
+        column,
+        row,
+        characterSet,
+        1,
+        static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 24),
+        static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 16),
+        static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 8),
+        static_cast<std::uint8_t>(character),
+    };
+
     bool modeled = false;
     if (modelOriginalLayout && cursorBreakoutShadowEnabled() &&
         character_index_out_of_range(index)) {
         const std::uint16_t target = character_offset(index);
-        const std::array<std::uint8_t, NameEntryOriginalLayout::CharacterInfoSize> bytes{
-            column,
-            row,
-            characterSet,
-            1,
-            static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 24),
-            static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 16),
-            static_cast<std::uint8_t>(static_cast<std::uint32_t>(character) >> 8),
-            static_cast<std::uint8_t>(character),
-        };
         for (std::size_t i = 0; i < bytes.size(); ++i) {
             const std::uint32_t offset = static_cast<std::uint32_t>(target) + i;
             if (offset >= NameEntryOriginalLayout::NeighborWindow &&
-                offset < NameEntryOriginalLayout::ObjectEnd) {
-                mLatest.modeledNeighborBytes[offset - NameEntryOriginalLayout::NeighborWindow] = bytes[i];
+                offset < NameEntryOriginalLayout::EyeShredderWindowEnd) {
+                mLatest.modeledRetailBytes[offset - NameEntryOriginalLayout::NeighborWindow] = bytes[i];
                 modeled = true;
             }
         }
@@ -136,6 +148,13 @@ bool NameEntryObserver::noteCharacterWrite(
         event.flags |= NameEntryEventShadowModeled;
         ++mLatest.revision;
     }
+    mLatest.lastWrite.attempt = ++mWriteAttemptCount;
+    mLatest.lastWrite.simTick = mCurrentSimTick;
+    mLatest.lastWrite.tapeFrame = mCurrentTapeFrame;
+    mLatest.lastWrite.characterIndex = index;
+    mLatest.lastWrite.originalOffset = event.originalOffset;
+    mLatest.lastWrite.flags = event.flags;
+    mLatest.lastWrite.bytes = bytes;
     push(event);
     return modeled;
 }
@@ -171,6 +190,8 @@ void NameEntryObserver::clearEvents() {
 
 void NameEntryObserver::push(NameEntryEvent event) {
     event.sequence = mNextSequence++;
+    event.simTick = mCurrentSimTick;
+    event.tapeFrame = mCurrentTapeFrame;
     if (mEventCount == EventCapacity) {
         mEventHead = (mEventHead + 1) % EventCapacity;
         --mEventCount;
