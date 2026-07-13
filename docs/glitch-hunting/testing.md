@@ -9,7 +9,9 @@ Run **Tasks: Run Test Task** from the command palette and choose
   two-worker smoke run;
 - `native`: every game-data-free C++ and Aurora test;
 - `input-tape`, `game-clock`, `name-entry`, `name-entry-trace`, `rng`,
-  `aurora-card`, or `aurora-time`: one native suite;
+  `eye-shredder-oracle`, `aurora-card`, or `aurora-time`: one native suite;
+- `eye-shredder`: build and run the real isolated Eye Shredder tape three times
+  headlessly against the last configured GCN USA image;
 - `rust` or `rust-lint`: the control-plane tests or formatting/Clippy; and
 - `worker-smoke` or `pool-smoke`: real native process protocol tests.
 
@@ -26,6 +28,15 @@ the automation tests usable from ordinary PowerShell rather than requiring a
 Visual Studio developer shell.
 
 ## Visible TAS playback
+
+For the named Eye Shredder benchmark, run **Tasks: Run Task → Glitch Hunt: Eye
+Shredder Visual**. It resolves the last manually selected image, builds the
+fixture, runs the same two-stage memory/renderer oracle, and preserves the
+result/trace under `build/test-results/eye-shredder`. Playback owns all four
+controller ports, waits on observed file-select/name-entry readiness instead of
+wall-clock sleeps, and lingers on Aurora's latched XF=12/BP=4 shredded
+diagnostic before consuming the final Start inputs. The diagnostic is synthetic;
+pixel-perfect console raster corruption is not claimed.
 
 1. Put a supported Twilight Princess disc image somewhere on your machine.
    `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by
