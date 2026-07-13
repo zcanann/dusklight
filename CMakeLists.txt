@@ -485,6 +485,14 @@ target_include_directories(dusk_name_entry_trace_test PRIVATE ${CMAKE_SOURCE_DIR
 target_link_libraries(dusk_name_entry_trace_test PRIVATE nlohmann_json::nlohmann_json)
 set_target_properties(dusk_name_entry_trace_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_rng_test EXCLUDE_FROM_ALL
+    tests/rng_test.cpp
+    src/SSystem/SComponent/c_math_rng.cpp
+    src/dusk/automation/rng.cpp
+)
+target_include_directories(dusk_rng_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(dusk_rng_test PROPERTIES FOLDER "Tests")
+
 if (DUSK_ENABLE_CODE_MODS)
     include(cmake/SymbolManifest.cmake)
     if (WIN32)

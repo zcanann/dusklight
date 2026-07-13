@@ -292,6 +292,8 @@ set(SSYSTEM_FILES
         src/SSystem/SComponent/c_xyz.cpp
         src/SSystem/SComponent/c_sxyz.cpp
         src/SSystem/SComponent/c_math.cpp
+        include/SSystem/SComponent/c_math_rng.h
+        src/SSystem/SComponent/c_math_rng.cpp
         src/SSystem/SComponent/c_bg_s_chk.cpp
         src/SSystem/SComponent/c_bg_s_gnd_chk.cpp
         src/SSystem/SComponent/c_bg_s_lin_chk.cpp
@@ -1427,6 +1429,8 @@ set(DUSK_FILES
         src/dusk/automation/input_tape.cpp
         include/dusk/automation/name_entry_observer.hpp
         src/dusk/automation/name_entry_observer.cpp
+        include/dusk/automation/rng.hpp
+        src/dusk/automation/rng.cpp
         include/dusk/automation/name_entry_trace.hpp
         src/dusk/automation/name_entry_trace.cpp
         include/dusk/automation/worker.hpp
