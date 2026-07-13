@@ -78,6 +78,7 @@
 
 #include <aurora/aurora.h>
 #include <aurora/event.h>
+#include <aurora/gfx.h>
 #include <aurora/main.h>
 #include <aurora/dvd.h>
 #include <dolphin/card.h>
@@ -176,6 +177,8 @@ AuroraInfo auroraInfo;
 AuroraStats dusk::lastFrameAuroraStats;
 float dusk::frameUsagePct = 0.0f;
 
+static void finish_automation_renderer_frame();
+
 bool launchUILoop() {
     while (dusk::IsRunning && !dusk::IsGameLaunched) {
         const AuroraEvent* event = aurora_update();
@@ -207,6 +210,7 @@ bool launchUILoop() {
         dusk::g_imguiConsole.PostDraw();
 
         aurora_end_frame();
+        finish_automation_renderer_frame();
     }
 
     return dusk::IsRunning;
@@ -380,6 +384,7 @@ void main01(void) {
         }
 
         aurora_end_frame();
+        finish_automation_renderer_frame();
 
         FrameMark;
 
@@ -518,6 +523,7 @@ static constexpr PADDefaultMapping defaultPadMapping = {
 static bool mainCalled = false;
 
 static bool exitAfterInputTape;
+static bool inputTapePlaybackFailed;
 static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
@@ -570,9 +576,50 @@ static bool finish_automation_oracle_tick() {
     return true;
 }
 
+static void finish_automation_renderer_frame() {
+    if (!eyeShredderOracleEnabled) {
+        return;
+    }
+
+    AuroraGXChannelCountTelemetry source{};
+    aurora_get_gx_channel_count_telemetry(&source);
+    const dusk::automation::EyeShredderRendererTelemetry telemetry{
+        .xfNumChansRaw = source.lastMismatchXfNumChansRaw,
+        .bpNumChansRaw = source.lastMismatchBpNumChansRaw,
+        .mismatchLatched = source.mismatchLatched != 0,
+        .eyeShredderMismatchLatched = source.eyeShredderMismatchLatched != 0,
+        .mismatchDrawCount = source.mismatchDrawCount,
+    };
+    eyeShredderOracle.observeRendererTelemetry(
+        telemetry, automationSimulationTick, automationTapeFrame);
+
+    if (!automationOracleContinueOnPass &&
+        eyeShredderOracle.result().status ==
+            dusk::automation::EyeShredderOracleStatus::Passed)
+    {
+        dusk::IsRunning = false;
+    }
+}
+
 static bool finish_input_tape_tick() {
-    if (dusk::automation::input_tape_player().isPlaying()) {
+    auto& player = dusk::automation::input_tape_player();
+    if (player.isPlaying()) {
         return false;
+    }
+
+    if (player.hasFailed()) {
+        const std::string reason = fmt::format(
+            "{} at frame {} waiting for {}",
+            dusk::automation::input_tape_playback_error_message(player.playbackError()),
+            player.failedFrameIndex(),
+            dusk::automation::input_frame_condition_name(player.failedCondition()));
+        DuskLog.error("Input tape playback failed: {}", reason);
+        inputTapePlaybackFailed = true;
+        if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
+            eyeShredderOracle.reject(reason);
+        }
+        dusk::IsRunning = false;
+        return true;
     }
 
     if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
@@ -964,6 +1011,7 @@ int game_main(int argc, char* argv[]) {
         eyeShredderOracleEnabled = true;
         eyeShredderOracleResultPath = std::filesystem::u8path(resultPath);
         eyeShredderOracle.start();
+        aurora_reset_gx_channel_count_telemetry();
     }
 
     if (hasInputTape) {
@@ -1475,7 +1523,8 @@ int game_main(int argc, char* argv[]) {
         eyeShredderOracle.result().status !=
             dusk::automation::EyeShredderOracleStatus::Passed;
     return nameEntryTraceWriteFailed || eyeShredderOracleResultWriteFailed ||
-                   eyeShredderOracleFailed || deterministicTimeAdvanceFailed
+                   eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||
+                   inputTapePlaybackFailed
                ? 1
                : 0;
 }
