@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
@@ -12,7 +12,7 @@ pub const PORT_COUNT: usize = 4;
 const ALL_PORTS: u8 = (1 << PORT_COUNT) - 1;
 const CONNECTED_FLAG: u8 = 1;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TapeVersion {
     pub major: u16,
     pub minor: u16,

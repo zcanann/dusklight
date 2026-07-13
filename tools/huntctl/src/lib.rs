@@ -2,6 +2,7 @@
 
 pub mod artifact;
 pub mod client;
+pub mod corpus;
 pub mod pool;
 pub mod protocol;
 pub mod tape;

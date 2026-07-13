@@ -1,3 +1,4 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
@@ -53,8 +54,22 @@ impl FromStr for Digest {
     }
 }
 
+impl Serialize for Digest {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Digest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Everything that can invalidate a deterministic replay.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildIdentity {
     pub dusklight_commit: String,
     pub aurora_commit: String,
@@ -69,7 +84,8 @@ pub struct BuildIdentity {
 
 /// Portable identity for a corpus artifact. It contains no host paths or
 /// native pointers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ArtifactIdentity {
     pub schema_version: u16,
     pub content_digest: Digest,

@@ -1,8 +1,10 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
+use huntctl::corpus::Corpus;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::tape::InputTape;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::transport::ProcessTransport;
+use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
 use std::env;
 use std::error::Error;
@@ -26,11 +28,76 @@ fn run() -> Result<(), Box<dyn Error>> {
         "hello" => command_hello(&args[1..]),
         "ping" => command_ping(&args[1..]),
         "pool" => command_pool(&args[1..]),
+        "corpus" => command_corpus(&args[1..]),
         "tape" => command_tape(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_corpus(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("init") if args.len() == 2 => {
+            let corpus = Corpus::initialize(&args[1])?;
+            println!("initialized {}", corpus.root().display());
+            Ok(())
+        }
+        Some("ingest") if args.len() >= 2 => {
+            let corpus = Corpus::open(&args[1])?;
+            let tape_path = required_path(args, "--tape")?;
+            let build_path = required_path(args, "--build")?;
+            let scenario = option(args, "--scenario").ok_or("missing required --scenario ID")?;
+            let build: BuildIdentity = serde_json::from_slice(&fs::read(build_path)?)?;
+            let metadata = if let Some(path) = option(args, "--scenario-json") {
+                serde_json::from_slice(&fs::read(path)?)?
+            } else {
+                json!({})
+            };
+            let result = corpus.ingest(&fs::read(tape_path)?, build, scenario, metadata)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "artifact_id": result.artifact_id,
+                    "tape_digest": result.tape_digest,
+                    "created": result.created
+                }))?
+            );
+            Ok(())
+        }
+        Some("list") if args.len() == 2 => {
+            let artifacts: Vec<Value> = Corpus::open(&args[1])?
+                .list()?
+                .into_iter()
+                .map(|artifact| {
+                    json!({
+                        "artifact_id": artifact.artifact_id,
+                        "scenario": artifact.manifest.scenario.id,
+                        "frame_count": artifact.manifest.frame_count,
+                        "tape_digest": artifact.manifest.tape.digest
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&artifacts)?);
+            Ok(())
+        }
+        Some("show") if args.len() == 3 => {
+            let artifact_id: Digest = args[2].parse()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Corpus::open(&args[1])?.show(artifact_id)?)?
+            );
+            Ok(())
+        }
+        Some("verify") if args.len() == 2 => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&Corpus::open(&args[1])?.verify()?)?
+            );
             Ok(())
         }
         _ => usage_error(),
@@ -254,7 +321,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.json OUTPUT.tape\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nTape program schema: {PROGRAM_SCHEMA}"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.json OUTPUT.tape\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nTape program schema: {PROGRAM_SCHEMA}"
     );
 }
 

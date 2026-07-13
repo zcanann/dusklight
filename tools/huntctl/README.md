@@ -129,3 +129,32 @@ external `OUTPUT.tape.markers.json` sidecar, keeping the replay bytes canonical
 while preserving source markers at exact tick offsets. Unknown JSON fields,
 invalid ports, zero counts, duplicate/empty markers, and expansions beyond ten
 million frames are rejected.
+
+## Content-addressed corpus
+
+Initialize and populate an append-only local corpus with:
+
+```console
+huntctl corpus init corpus
+huntctl corpus ingest corpus --tape boot.tape --scenario boot-title \
+  --build build.json --scenario-json scenario.json
+huntctl corpus list corpus
+huntctl corpus show corpus ARTIFACT_SHA256
+huntctl corpus verify corpus
+```
+
+`build.json` contains the `BuildIdentity` fields used by run manifests:
+Dusklight and Aurora commits, compiler, target, profile, SHA-256 feature/game
+digests, optional dirty-tree digest, and fidelity profile. Scenario metadata is
+a JSON object; omitting `--scenario-json` stores an empty object.
+
+Canonical tape bytes live under `blobs/sha256/<prefix>/<remainder>`. Versioned
+run manifests are addressed by the real SHA-256 of their canonical JSON and
+stored under `runs/<sha256>.json`. Writes use a synced temporary file and
+atomic rename; existing content is compared and never overwritten by the
+store. Duplicate ingest returns the same artifact ID with `created: false`.
+
+`corpus verify` checks manifest filenames and schemas, referenced sizes, every
+referenced tape, and every blob hash. Corruption, malformed digest paths, and
+unknown schemas are errors. Manifests contain stable digests and metadata only;
+they never record native pointers or implicit host paths.
