@@ -8,6 +8,7 @@ param(
         "name-entry",
         "name-entry-trace",
         "rng",
+        "aurora-card",
         "aurora-time",
         "rust",
         "rust-lint",
@@ -74,6 +75,7 @@ $nativeTests = [ordered]@{
     "name-entry"       = @("dusk_name_entry_observer_test", "dusk_name_entry_observer_test.exe")
     "name-entry-trace" = @("dusk_name_entry_trace_test", "dusk_name_entry_trace_test.exe")
     "rng"              = @("dusk_rng_test", "dusk_rng_test.exe")
+    "aurora-card"      = @("card_tests", "extern\aurora\tests\card_tests.exe")
     "aurora-time"      = @("os_time_tests", "extern\aurora\tests\os_time_tests.exe")
 }
 

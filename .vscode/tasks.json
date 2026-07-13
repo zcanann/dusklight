@@ -16,6 +16,7 @@
         "name-entry",
         "name-entry-trace",
         "rng",
+        "aurora-card",
         "aurora-time",
         "rust",
         "rust-lint",

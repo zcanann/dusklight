@@ -5,11 +5,11 @@
 Run **Tasks: Run Test Task** from the command palette and choose
 **Glitch Hunt: Run Selected Test**. VS Code presents one fixed selector:
 
-- `all`: native automation, Aurora time, Rust tests/lint, and a real two-worker
-  smoke run;
+- `all`: native automation, Aurora card/time, Rust tests/lint, and a real
+  two-worker smoke run;
 - `native`: every game-data-free C++ and Aurora test;
-- `input-tape`, `game-clock`, `name-entry`, `name-entry-trace`, `rng`, or
-  `aurora-time`: one native suite;
+- `input-tape`, `game-clock`, `name-entry`, `name-entry-trace`, `rng`,
+  `aurora-card`, or `aurora-time`: one native suite;
 - `rust` or `rust-lint`: the control-plane tests or formatting/Clippy; and
 - `worker-smoke` or `pool-smoke`: real native process protocol tests.
 
