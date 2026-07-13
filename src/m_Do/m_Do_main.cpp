@@ -79,6 +79,7 @@
 #include <aurora/event.h>
 #include <aurora/main.h>
 #include <aurora/dvd.h>
+#include <dolphin/card.h>
 #include <dolphin/dvd.h>
 
 #include "SDL3/SDL_init.h"
@@ -135,6 +136,7 @@ uint8_t dusk::SaveRequested = 0;
 dusk::StageRequest dusk::StageRequested = {"",false};
 std::filesystem::path dusk::ConfigPath;
 std::filesystem::path dusk::CachePath;
+static bool automationInputQuarantine;
 #endif
 
 void dusk::RequestRestart() noexcept {
@@ -315,8 +317,10 @@ void main01(void) {
                 for (int sim_tick = 0; sim_tick < pacing.sim_ticks_to_run; ++sim_tick) {
                     dusk::frame_interp::begin_sim_tick();
                     mDoCPd_c::read();
-                    dusk::mouse::read();
-                    dusk::gyro::read(pacing.sim_pace);
+                    if (!automationInputQuarantine) {
+                        dusk::mouse::read();
+                        dusk::gyro::read(pacing.sim_pace);
+                    }
                     fapGm_Execute();
                     mDoAud_Execute();
                     dusk::game_clock::commit_sim_tick();
@@ -344,8 +348,10 @@ void main01(void) {
 
             // Game Inputs
             mDoCPd_c::read();
-            dusk::mouse::read();
-            dusk::gyro::read(pacing.presentation_dt_seconds);
+            if (!automationInputQuarantine) {
+                dusk::mouse::read();
+                dusk::gyro::read(pacing.presentation_dt_seconds);
+            }
 
             // EXECUTE GAME LOGIC & RENDER
             // This calls mDoGph_Painter -> JFWDisplay -> GX Functions
@@ -602,6 +608,7 @@ int game_main(int argc, char* argv[]) {
             ("h,help", "Print usage")
             ("console", "Show the Windows console window for logs", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("dvd", "Path to DVD image file", cxxopts::value<std::string>())
+            ("configured-dvd", "Open the last configured DVD image directly without showing prelaunch", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("mods", "Path to mods directory", cxxopts::value<std::string>())
             ("backend", "Graphics API backend to use (auto, d3d12, d3d11, metal, vulkan, null)", cxxopts::value<std::string>())
             ("cvar", "Override configuration variables without modifying config", cxxopts::value<std::vector<std::string>>())
@@ -614,6 +621,8 @@ int game_main(int argc, char* argv[]) {
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("automation-data-root", "Isolate all writable Dusklight state for this tape run", cxxopts::value<std::string>())
+            ("automation-card-root", "Use an explicit memory-card root for this tape run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
@@ -670,6 +679,11 @@ int game_main(int argc, char* argv[]) {
 
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
     unpacedMainLoop = headlessMainLoop || parsed_arg_options["unpaced"].as<bool>();
+    const bool useConfiguredDvd = parsed_arg_options["configured-dvd"].as<bool>();
+    if (useConfiguredDvd && parsed_arg_options.count("dvd")) {
+        fprintf(stderr, "DVD Error: --configured-dvd cannot be combined with --dvd PATH\n");
+        return 1;
+    }
     const bool hasDeterministicTimeStart = parsed_arg_options.count("deterministic-time-start") != 0;
     if (hasDeterministicTimeStart && !unpacedMainLoop) {
         fprintf(stderr,
@@ -726,6 +740,58 @@ int game_main(int argc, char* argv[]) {
 
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
+
+    std::filesystem::path automationCardRoot;
+    std::filesystem::path automationDataRoot;
+    if (parsed_arg_options.count("automation-data-root")) {
+        if (!hasInputTape) {
+            fprintf(stderr,
+                    "Automation State Error: --automation-data-root requires --input-tape PATH\n");
+            return 1;
+        }
+        automationDataRoot =
+            std::filesystem::u8path(parsed_arg_options["automation-data-root"].as<std::string>());
+        std::error_code dataRootError;
+        if (!std::filesystem::is_directory(automationDataRoot, dataRootError)) {
+            fprintf(stderr, "Automation State Error: data root '%s' is not a directory%s%s\n",
+                    dusk::io::fs_path_to_string(automationDataRoot).c_str(),
+                    dataRootError ? ": " : "", dataRootError ? dataRootError.message().c_str() : "");
+            return 1;
+        }
+        automationDataRoot = std::filesystem::absolute(automationDataRoot, dataRootError);
+        if (dataRootError) {
+            fprintf(stderr, "Automation State Error: cannot resolve data root: %s\n",
+                    dataRootError.message().c_str());
+            return 1;
+        }
+    }
+    if (parsed_arg_options.count("automation-card-root")) {
+        if (!hasInputTape) {
+            fprintf(stderr,
+                    "Memory Card Error: --automation-card-root requires --input-tape PATH\n");
+            return 1;
+        }
+        automationCardRoot =
+            std::filesystem::u8path(parsed_arg_options["automation-card-root"].as<std::string>());
+        std::error_code cardRootError;
+        if (!std::filesystem::is_directory(automationCardRoot, cardRootError)) {
+            fprintf(stderr, "Memory Card Error: automation card root '%s' is not a directory%s%s\n",
+                    dusk::io::fs_path_to_string(automationCardRoot).c_str(),
+                    cardRootError ? ": " : "", cardRootError ? cardRootError.message().c_str() : "");
+            return 1;
+        }
+        automationCardRoot = std::filesystem::absolute(automationCardRoot, cardRootError);
+        if (cardRootError) {
+            fprintf(stderr, "Memory Card Error: cannot resolve automation card root: %s\n",
+                    cardRootError.message().c_str());
+            return 1;
+        }
+    }
+    if (!automationDataRoot.empty() && !automationCardRoot.empty()) {
+        fprintf(stderr,
+                "Automation State Error: --automation-data-root and --automation-card-root are mutually exclusive\n");
+        return 1;
+    }
 
     const std::string inputTapeEnd = parsed_arg_options["input-tape-end"].as<std::string>();
     if (inputTapeEnd == "release") {
@@ -801,10 +867,16 @@ int game_main(int argc, char* argv[]) {
 
     const auto startupLogLevel =
         static_cast<AuroraLogLevel>(parsed_arg_options["log-level"].as<uint8_t>());
-    const auto dataPaths = dusk::data::initialize_data();
+    const auto dataPaths = automationDataRoot.empty()
+                               ? dusk::data::initialize_data()
+                               : dusk::data::initialize_automation_data(automationDataRoot);
     dusk::ConfigPath = dataPaths.userPath;
     dusk::CachePath = dataPaths.cachePath;
     dusk::InitializeFileLogging(dusk::CachePath, startupLogLevel);
+    if (!automationDataRoot.empty()) {
+        DuskLog.info("Automation data root: {}",
+                     dusk::io::fs_path_to_string(automationDataRoot));
+    }
 
     // Development Mode
     if (parsed_arg_options.count("develop")) {
@@ -891,6 +963,13 @@ int game_main(int argc, char* argv[]) {
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
         auroraInfo = aurora_initialize(argc, argv, &config);
+    }
+
+    automationInputQuarantine = hasInputTape;
+    aurora_set_automation_input_quarantine(automationInputQuarantine);
+    if (automationInputQuarantine) {
+        DuskLog.info("Automation input quarantine enabled; host keyboard, mouse, touch, gamepad UI, "
+                     "mouse camera, and gyro input are suppressed until process exit");
     }
 
     if (headlessMainLoop) {
@@ -992,10 +1071,13 @@ int game_main(int argc, char* argv[]) {
 
     std::string dvd_path = dusk::getSettings().backend.isoPath;
     bool dvd_opened = false;
-    if (parsed_arg_options.count("dvd")) {
-        dvd_path = parsed_arg_options["dvd"].as<std::string>();
+    if (parsed_arg_options.count("dvd") || useConfiguredDvd) {
+        if (parsed_arg_options.count("dvd")) {
+            dvd_path = parsed_arg_options["dvd"].as<std::string>();
+        }
         if (dusk::iso::inspect(dvd_path.c_str(), discInfo) == dusk::iso::ValidationError::Success) {
-            DuskLog.info("Loading DVD image from command line: {}", dvd_path);
+            DuskLog.info("Loading DVD image {}: {}",
+                         useConfiguredDvd ? "from configured path" : "from command line", dvd_path);
             dvd_opened = aurora_dvd_open(dvd_path.c_str());
             if (!dvd_opened) {
                 if (headlessMainLoop) {
@@ -1021,8 +1103,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
-    if (headlessMainLoop && !dvd_opened) {
-        DuskLog.error("Headless mode could not validate and open the explicit DVD image: {}", dvd_path);
+    if ((headlessMainLoop || useConfiguredDvd || hasInputTape) && !dvd_opened) {
+        DuskLog.error("{} could not validate and open the requested DVD image: {}",
+                      headlessMainLoop ? "Headless mode" : "Configured DVD boot", dvd_path);
         dusk::crash_reporting::shutdown();
         dusk::ShutdownFileLogging();
 #ifdef DUSK_DISCORD
@@ -1101,6 +1184,15 @@ int game_main(int argc, char* argv[]) {
         }
 
         dusk::IsGameLaunched = true;
+    }
+
+    if (!automationCardRoot.empty()) {
+        CARDSetLoadType(
+            static_cast<CARDFileType>(dusk::getSettings().backend.cardFileType.getValue()));
+        const auto cardRootUtf8 = automationCardRoot.u8string();
+        CARDSetBasePath(reinterpret_cast<const char*>(cardRootUtf8.c_str()), -1);
+        DuskLog.info("Automation memory-card root: {}",
+                     dusk::io::fs_path_to_string(automationCardRoot));
     }
 
 #if DUSK_ENABLE_SENTRY_NATIVE

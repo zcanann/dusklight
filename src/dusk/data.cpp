@@ -1005,4 +1005,17 @@ Paths initialize_data() {
     };
 }
 
+Paths initialize_automation_data(const std::filesystem::path& root) {
+    const auto normalizedRoot = normalized_path(root);
+    ensure_data_directory(normalizedRoot);
+    sActivePrefPath = normalizedRoot;
+    sActiveDescriptorPath.reset();
+    sConfiguredDataPath = normalizedRoot;
+
+    return Paths{
+        .userPath = normalizedRoot,
+        .cachePath = normalizedRoot,
+    };
+}
+
 }  // namespace dusk::data
