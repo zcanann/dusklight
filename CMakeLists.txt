@@ -465,6 +465,10 @@ target_include_directories(dusk_input_tape_test PRIVATE
 target_compile_definitions(dusk_input_tape_test PRIVATE TARGET_PC=1 AURORA=1)
 set_target_properties(dusk_input_tape_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
+target_include_directories(dusk_game_clock_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(dusk_game_clock_test PROPERTIES FOLDER "Tests")
+
 if (DUSK_ENABLE_CODE_MODS)
     include(cmake/SymbolManifest.cmake)
     if (WIN32)

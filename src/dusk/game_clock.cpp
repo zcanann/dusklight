@@ -11,6 +11,7 @@ namespace dusk::game_clock {
 using clock = std::chrono::steady_clock;
 
 bool s_initialized = false;
+MainLoopMode s_mainLoopMode = MainLoopMode::Realtime;
 clock::time_point s_previous_sample{};
 clock::time_point s_current_snapshot_time{};
 
@@ -35,8 +36,26 @@ void reset_frame_timer() {
     s_current_snapshot_time = s_previous_sample - kSimPeriodDuration;
 }
 
+void set_main_loop_mode(const MainLoopMode mode) {
+    if (s_mainLoopMode == mode) {
+        return;
+    }
+
+    s_mainLoopMode = mode;
+    reset_frame_timer();
+    s_interval_last_sample.clear();
+}
+
+MainLoopMode main_loop_mode() {
+    return s_mainLoopMode;
+}
+
 MainLoopPacer advance_main_loop() {
     ensure_initialized();
+
+    if (s_mainLoopMode == MainLoopMode::FixedStep) {
+        return fixed_step_pacer();
+    }
 
     const clock::time_point now = clock::now();
     const clock::duration frame_gap = now - s_previous_sample;
@@ -82,6 +101,9 @@ void commit_sim_tick() {
 
 float sample_interpolation_step() {
     ensure_initialized();
+    if (s_mainLoopMode == MainLoopMode::FixedStep) {
+        return 0.0f;
+    }
     const float step =
         std::chrono::duration<float>(clock::now() - s_current_snapshot_time).count() / sim_pace();
     return std::clamp(step, 0.0f, 1.0f);
@@ -89,6 +111,9 @@ float sample_interpolation_step() {
 
 float consume_interval(const void* consumer) {
     ensure_initialized();
+    if (s_mainLoopMode == MainLoopMode::FixedStep) {
+        return sim_pace();
+    }
     const uintptr_t key = reinterpret_cast<uintptr_t>(consumer);
     const clock::time_point now = clock::now();
 

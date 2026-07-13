@@ -2,8 +2,15 @@
 
 namespace dusk::game_clock {
 
+enum class MainLoopMode {
+    Realtime,
+    FixedStep,
+};
+
 void ensure_initialized();
 void reset_frame_timer();
+void set_main_loop_mode(MainLoopMode mode);
+MainLoopMode main_loop_mode();
 
 constexpr float sim_pace() { return 1.0f / 30.0f; }
 constexpr float period_for_original_frames(float frame_count) { return frame_count * sim_pace(); }
@@ -16,6 +23,15 @@ struct MainLoopPacer {
     int sim_ticks_to_run;
     float sim_pace;
 };
+
+constexpr MainLoopPacer fixed_step_pacer() {
+    return {
+        .presentation_dt_seconds = sim_pace(),
+        .is_interpolating = false,
+        .sim_ticks_to_run = 1,
+        .sim_pace = sim_pace(),
+    };
+}
 
 MainLoopPacer advance_main_loop();
 void commit_sim_tick();

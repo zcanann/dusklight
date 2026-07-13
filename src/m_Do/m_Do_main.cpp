@@ -83,6 +83,7 @@
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_iostream.h"
 #include "SDL3/SDL_misc.h"
+#include "SDL3/SDL_video.h"
 #include "cxxopts.hpp"
 #include "d/actor/d_a_movie_player.h"
 #include "dusk/audio/DuskAudioSystem.h"
@@ -207,6 +208,7 @@ bool launchUILoop() {
 }
 
 static bool finish_input_tape_tick();
+static bool unpacedMainLoop;
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -359,7 +361,9 @@ void main01(void) {
         static double last_fps_setting = 0.0;
         static Limiter::duration_t target_ns = 0;
 
-        if (dusk::getSettings().game.enableFrameInterpolation.getValue() == dusk::FrameInterpMode::Capped && !dusk::getTransientSettings().skipFrameRateLimit) {
+        if (!unpacedMainLoop &&
+            dusk::getSettings().game.enableFrameInterpolation.getValue() == dusk::FrameInterpMode::Capped &&
+            !dusk::getTransientSettings().skipFrameRateLimit) {
             ZoneScopedN("Frame limiter");
             double current_fps = dusk::getSettings().video.maxFrameRate.getValue();
             if (current_fps != last_fps_setting) {
@@ -481,6 +485,7 @@ static constexpr PADDefaultMapping defaultPadMapping = {
 static bool mainCalled = false;
 
 static bool exitAfterInputTape;
+static bool headlessMainLoop;
 
 static bool finish_input_tape_tick() {
     if (!exitAfterInputTape || dusk::automation::input_tape_player().isPlaying()) {
@@ -551,6 +556,8 @@ int game_main(int argc, char* argv[]) {
             ("develop", "Enable the game's developer mode and OSReport for debugging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
+            ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("headless", "Use the null render backend with an invisible window; implies --unpaced and requires --dvd", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -606,6 +613,21 @@ int game_main(int argc, char* argv[]) {
         exit(1);
     }
 
+    headlessMainLoop = parsed_arg_options["headless"].as<bool>();
+    unpacedMainLoop = headlessMainLoop || parsed_arg_options["unpaced"].as<bool>();
+    if (headlessMainLoop && !parsed_arg_options.count("dvd")) {
+        fprintf(stderr, "Headless Error: --headless requires an explicit --dvd PATH\n");
+        return 1;
+    }
+    if (headlessMainLoop && parsed_arg_options.count("backend") &&
+        parsed_arg_options["backend"].as<std::string>() != "null") {
+        fprintf(stderr, "Headless Error: --headless only supports --backend null\n");
+        return 1;
+    }
+    dusk::game_clock::set_main_loop_mode(
+        unpacedMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
+                         : dusk::game_clock::MainLoopMode::Realtime);
+
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
 
@@ -658,7 +680,7 @@ int game_main(int argc, char* argv[]) {
         if (static_cast<std::uint64_t>(inputTape.tickRateNumerator) !=
             static_cast<std::uint64_t>(inputTape.tickRateDenominator) * 30u) {
             fprintf(stderr,
-                    "Input Tape Error: '%s' declares a %u/%u Hz tick rate; headful playback requires 30/1 Hz\n",
+                    "Input Tape Error: '%s' declares a %u/%u Hz tick rate; playback requires 30/1 Hz\n",
                     inputTapePath.c_str(), inputTape.tickRateNumerator, inputTape.tickRateDenominator);
             return 1;
         }
@@ -695,6 +717,9 @@ int game_main(int argc, char* argv[]) {
     }
 
     log_build_info();
+    if (unpacedMainLoop) {
+        DuskLog.info("Automation timing: fixed 30 Hz step (headless={})", headlessMainLoop);
+    }
     if (hasInputTape) {
         DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
                      inputTapeFrameCount, inputTapeEnd, exitAfterInputTape);
@@ -736,8 +761,8 @@ int game_main(int argc, char* argv[]) {
 #ifdef DUSK_ASSET_DIR
         config.resourcesPath = DUSK_ASSET_DIR;
 #endif
-        config.vsync = dusk::getSettings().video.enableVsync;
-        config.startFullscreen = dusk::getSettings().video.enableFullscreen;
+        config.vsync = unpacedMainLoop ? false : dusk::getSettings().video.enableVsync;
+        config.startFullscreen = headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
         config.windowPosX = -1;
         config.windowPosY = -1;
 
@@ -752,16 +777,39 @@ int game_main(int argc, char* argv[]) {
             config.windowHeight = defaultWindowHeight * 2;
         }
 
-        config.desiredBackend = ResolveDesiredBackend(parsed_arg_options);
+        config.desiredBackend = headlessMainLoop ? BACKEND_NULL : ResolveDesiredBackend(parsed_arg_options);
         config.logCallback = &aurora_log_callback;
         config.logLevel = startupLogLevel;
         config.mem1Size = 256 * 1024 * 1024;
         config.mem2Size = 24 * 1024 * 1024;
         config.allowJoystickBackgroundEvents = dusk::getSettings().game.allowBackgroundInput;
-        config.pauseOnFocusLost = dusk::getSettings().game.pauseOnFocusLost;
+        config.pauseOnFocusLost = headlessMainLoop ? false : dusk::getSettings().game.pauseOnFocusLost;
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
         auroraInfo = aurora_initialize(argc, argv, &config);
+    }
+
+    if (headlessMainLoop) {
+        if (auroraInfo.backend != BACKEND_NULL) {
+            DuskLog.error("Headless mode requested the null backend, but Aurora selected {}",
+                          dusk::backend_name(auroraInfo.backend));
+            dusk::crash_reporting::shutdown();
+            dusk::ShutdownFileLogging();
+            dusk::config::shutdown();
+            aurora_shutdown();
+            return 1;
+        }
+        // Aurora's null backend still needs a presentable SDL window to drain
+        // the GX render traversal. Opacity suppresses that window without
+        // setting SDL_WINDOW_HIDDEN, which would pause Aurora's frame sink.
+        if (!SDL_SetWindowOpacity(auroraInfo.window, 0.0f)) {
+            DuskLog.error("Failed to suppress the headless SDL window: {}", SDL_GetError());
+            dusk::crash_reporting::shutdown();
+            dusk::ShutdownFileLogging();
+            dusk::config::shutdown();
+            aurora_shutdown();
+            return 1;
+        }
     }
 
     // Apply after aurora_initialize: speedrun mode mutates cvars whose change callbacks push
@@ -771,7 +819,7 @@ int game_main(int argc, char* argv[]) {
     }
 
 #ifdef DUSK_DISCORD
-    if (dusk::getSettings().game.enableDiscordPresence) {
+    if (!headlessMainLoop && dusk::getSettings().game.enableDiscordPresence) {
         dusk::discord::initialize();
     }
 #endif
@@ -801,7 +849,7 @@ int game_main(int argc, char* argv[]) {
     dusk::audio::EnableHrtf = dusk::getSettings().audio.enableHrtf;
 
     // Run ImGui UI loop if Aurora couldn't initialize a backend
-    if (auroraInfo.backend == BACKEND_NULL) {
+    if (auroraInfo.backend == BACKEND_NULL && !headlessMainLoop) {
         launchUILoop();
         dusk::crash_reporting::shutdown();
         dusk::ShutdownFileLogging();
@@ -846,7 +894,11 @@ int game_main(int argc, char* argv[]) {
             DuskLog.info("Loading DVD image from command line: {}", dvd_path);
             dvd_opened = aurora_dvd_open(dvd_path.c_str());
             if (!dvd_opened) {
-                DuskLog.warn("Failed to open DVD image from command line: {}, opening prelaunch UI", dvd_path);
+                if (headlessMainLoop) {
+                    DuskLog.warn("Failed to open DVD image from command line in headless mode: {}", dvd_path);
+                } else {
+                    DuskLog.warn("Failed to open DVD image from command line: {}, opening prelaunch UI", dvd_path);
+                }
                 forcePreLaunchUI = true;
             } else {
                 dusk::getSettings().backend.isoPath.setValue(dvd_path);
@@ -856,9 +908,27 @@ int game_main(int argc, char* argv[]) {
                 dusk::IsGameLaunched = true;
             }
         } else {
-            DuskLog.warn("DVD image from command line failed validation: {}, opening prelaunch UI", dvd_path);
+            if (headlessMainLoop) {
+                DuskLog.warn("DVD image from command line failed validation in headless mode: {}", dvd_path);
+            } else {
+                DuskLog.warn("DVD image from command line failed validation: {}, opening prelaunch UI", dvd_path);
+            }
             forcePreLaunchUI = true;
         }
+    }
+
+    if (headlessMainLoop && !dvd_opened) {
+        DuskLog.error("Headless mode could not validate and open the explicit DVD image: {}", dvd_path);
+        dusk::crash_reporting::shutdown();
+        dusk::ShutdownFileLogging();
+#ifdef DUSK_DISCORD
+        dusk::discord::shutdown();
+#endif
+        dusk::ui::shutdown();
+        dusk::texture_replacements::shutdown();
+        dusk::config::shutdown();
+        aurora_shutdown();
+        return 1;
     }
 
     bool skipPreLaunchUI = dusk::getSettings().backend.skipPreLaunchUI.getValue();

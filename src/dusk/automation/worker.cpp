@@ -77,9 +77,9 @@ json hello_response() {
     response["capabilities"] = {
         {"persistent_control", true},
         {"engine_session", false},
-        {"headless", false},
+        {"headless", true},
         {"scenario_load", false},
-        {"input_tape", false},
+        {"input_tape", true},
         {"batch_run", false},
         {"commands", {"hello", "ping", "shutdown"}},
     };
