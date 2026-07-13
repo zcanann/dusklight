@@ -39,6 +39,27 @@ response. Worker stderr is inherited; stdout is reserved for the protocol.
 fail clearly because the native endpoint advertises no engine session or input
 tape support yet.
 
+## Persistent worker pools
+
+Start a pool once and schedule parallel health jobs across its persistent
+processes with:
+
+```console
+huntctl pool health --worker path/to/dusklight \
+  --worker-arg --automation-worker --workers 8 --checks 64
+```
+
+Every worker is spawned and negotiated independently. Spawn and protocol
+failures are reported per worker while compatible siblings remain usable. By
+default, the pool requires the complete reported build identity to match the
+first healthy worker. Pass `--allow-mixed-builds` only when deliberately
+comparing builds; metadata retains each worker's identity.
+
+Each worker owns one control thread and accepts coarse jobs through a channel.
+Jobs on one worker remain ordered while different workers run concurrently.
+The pool sends no per-tick IPC, and clean shutdown is attempted for every
+accepted worker even if another worker fails.
+
 ## Mock worker
 
 The binary includes a compatible mock worker for process-level tests:
