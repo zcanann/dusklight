@@ -50,6 +50,7 @@
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
+#include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/worker.hpp"
 #include "dusk/crash_handler.h"
 #include "dusk/crash_reporting.h"
@@ -205,6 +206,8 @@ bool launchUILoop() {
     return dusk::IsRunning;
 }
 
+static bool finish_input_tape_tick();
+
 void main01(void) {
     OS_REPORT("\x1b[m");
 
@@ -311,6 +314,9 @@ void main01(void) {
                     fapGm_Execute();
                     mDoAud_Execute();
                     dusk::game_clock::commit_sim_tick();
+                    if (finish_input_tape_tick()) {
+                        break;
+                    }
                 }
             }
 
@@ -337,6 +343,7 @@ void main01(void) {
             fapGm_Execute();
 
             mDoAud_Execute();
+            finish_input_tape_tick();
         }
 
         aurora_end_frame();
@@ -473,6 +480,17 @@ static constexpr PADDefaultMapping defaultPadMapping = {
 
 static bool mainCalled = false;
 
+static bool exitAfterInputTape;
+
+static bool finish_input_tape_tick() {
+    if (!exitAfterInputTape || dusk::automation::input_tape_player().isPlaying()) {
+        return false;
+    }
+
+    dusk::IsRunning = false;
+    return true;
+}
+
 static u8 selectedLanguage;
 
 u8 OSGetLanguage() {
@@ -514,6 +532,10 @@ int game_main(int argc, char* argv[]) {
     }
 
     cxxopts::ParseResult parsed_arg_options;
+    std::string inputTapePath;
+    std::size_t inputTapeFrameCount = 0;
+    dusk::automation::TapeEndBehavior inputTapeEndBehavior =
+        dusk::automation::TapeEndBehavior::Release;
 
     try {
         cxxopts::Options arg_options("Dusklight", "PC Port of a classic adventure game");
@@ -529,6 +551,9 @@ int game_main(int argc, char* argv[]) {
             ("develop", "Enable the game's developer mode and OSReport for debugging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
+            ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
+            ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
+            ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
             ("stage", "Upon launching, load a stage, room, spawn point, and layer. When using --load-save, it uses the specified save on the loaded stage. Format (STAGE,ROOM,POINT,LAYER). Example: (STAGE) or (STAGE,0,0,-1)", cxxopts::value<std::string>());
 
@@ -581,6 +606,72 @@ int game_main(int argc, char* argv[]) {
         exit(1);
     }
 
+    const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
+    exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
+
+    const std::string inputTapeEnd = parsed_arg_options["input-tape-end"].as<std::string>();
+    if (inputTapeEnd == "release") {
+        inputTapeEndBehavior = dusk::automation::TapeEndBehavior::Release;
+    } else if (inputTapeEnd == "hold") {
+        inputTapeEndBehavior = dusk::automation::TapeEndBehavior::Hold;
+    } else if (inputTapeEnd == "loop") {
+        inputTapeEndBehavior = dusk::automation::TapeEndBehavior::Loop;
+    } else {
+        fprintf(stderr,
+                "Input Tape Error: invalid --input-tape-end value '%s' (expected release, hold, or loop)\n",
+                inputTapeEnd.c_str());
+        return 1;
+    }
+
+    if (!hasInputTape && (exitAfterInputTape || inputTapeEnd != "release")) {
+        fprintf(stderr, "Input Tape Error: --input-tape-end and --exit-after-tape require --input-tape PATH\n");
+        return 1;
+    }
+    if (exitAfterInputTape && inputTapeEndBehavior == dusk::automation::TapeEndBehavior::Loop) {
+        fprintf(stderr, "Input Tape Error: --exit-after-tape cannot be combined with --input-tape-end loop\n");
+        return 1;
+    }
+
+    if (hasInputTape) {
+        inputTapePath = parsed_arg_options["input-tape"].as<std::string>();
+
+        std::vector<u8> inputTapeBytes;
+        try {
+            inputTapeBytes = dusk::io::FileStream::ReadAllBytes(inputTapePath.c_str());
+        } catch (const std::exception& e) {
+            fprintf(stderr, "Input Tape Error: cannot read '%s': %s\n", inputTapePath.c_str(), e.what());
+            return 1;
+        }
+
+        dusk::automation::InputTape inputTape;
+        const dusk::automation::InputTapeError tapeError =
+            dusk::automation::decode_input_tape(inputTapeBytes, inputTape);
+        if (tapeError != dusk::automation::InputTapeError::None) {
+            fprintf(stderr, "Input Tape Error: cannot load '%s': %s\n", inputTapePath.c_str(),
+                    dusk::automation::input_tape_error_message(tapeError));
+            return 1;
+        }
+        if (inputTape.frames.empty()) {
+            fprintf(stderr, "Input Tape Error: '%s' contains no input frames\n", inputTapePath.c_str());
+            return 1;
+        }
+        if (static_cast<std::uint64_t>(inputTape.tickRateNumerator) !=
+            static_cast<std::uint64_t>(inputTape.tickRateDenominator) * 30u) {
+            fprintf(stderr,
+                    "Input Tape Error: '%s' declares a %u/%u Hz tick rate; headful playback requires 30/1 Hz\n",
+                    inputTapePath.c_str(), inputTape.tickRateNumerator, inputTape.tickRateDenominator);
+            return 1;
+        }
+
+        inputTapeFrameCount = inputTape.frames.size();
+        auto& inputTapePlayer = dusk::automation::input_tape_player();
+        inputTapePlayer.install(std::move(inputTape));
+        if (!inputTapePlayer.start(inputTapeEndBehavior)) {
+            fprintf(stderr, "Input Tape Error: failed to start '%s'\n", inputTapePath.c_str());
+            return 1;
+        }
+    }
+
     if (parsed_arg_options.contains("load-save")){
         uint8_t slot = parsed_arg_options["load-save"].as<uint8_t>();
         if (slot >= 1 && slot <= 3) {
@@ -604,6 +695,10 @@ int game_main(int argc, char* argv[]) {
     }
 
     log_build_info();
+    if (hasInputTape) {
+        DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
+                     inputTapeFrameCount, inputTapeEnd, exitAfterInputTape);
+    }
 
     dusk::config::load_from_user_preferences();
     ApplyCVarOverrides(parsed_arg_options["cvar"]);
