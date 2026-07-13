@@ -26,8 +26,8 @@
     {
       "id": "glitchHuntDvd",
       "type": "promptString",
-      "description": "DVD image path (relative to the repository or absolute)",
-      "default": "orig/GZ2E01/GZ2E01.iso"
+      "description": "DVD image path; blank uses Dusklight's last manual selection",
+      "default": ""
     },
     {
       "id": "glitchHuntTape",
@@ -100,16 +100,17 @@
     {
       "label": "Glitch Hunt: Play Visual TAS",
       "type": "process",
-      "command": "${workspaceFolder}\\build\\windows-clang-debug\\dusklight.exe",
+      "command": "powershell.exe",
       "args": [
-        "--dvd",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\play-visual-tas.ps1",
+        "-DvdPath",
         "${input:glitchHuntDvd}",
-        "--input-tape",
-        "${input:glitchHuntTape}",
-        "--input-tape-end",
-        "release",
-        "--develop",
-        "--console"
+        "-TapePath",
+        "${input:glitchHuntTape}"
       ],
       "dependsOrder": "sequence",
       "dependsOn": "Glitch Hunt: Prepare Visual TAS",

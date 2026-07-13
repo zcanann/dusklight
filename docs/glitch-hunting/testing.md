@@ -31,7 +31,8 @@ Visual Studio developer shell.
    `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by
    Git.
 2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual TAS**.
-3. Confirm or replace the prompted DVD and DUSKTAPE paths.
+3. Enter the DVD path and confirm or replace the DUSKTAPE path. Leaving the DVD
+   prompt blank uses the last image selected through Dusklight's Browse screen.
 
 The pre-launch task builds Dusklight and compiles
 `tests/fixtures/automation/boot_start_smoke.json` into
@@ -40,10 +41,25 @@ renderer and normal pacing. Exclusive automation input begins on the first game
 tick. The smoke tape waits 30 ticks, presses Start for one tick, then releases
 the controller; playback hands back a neutral controller when the tape ends.
 
+Before launching, the wrapper removes copied surrounding quotes, resolves
+relative paths against the repository, and verifies that both files exist. It
+prints the exact absolute paths it passes to Dusklight. A missing or stale DVD
+prompt falls back to Dusklight's last valid manual selection rather than
+silently opening the prelaunch screen.
+
 This is live game playback, not video rendering of a previous run. To attach a
 debugger and use breakpoints, choose **Glitch Hunt: Visual TAS Playback** under
 **Run and Debug** and press F5 instead. That configuration uses the same build,
 fixture, and path prompts and requires VS Code's `cppvsdbg` debugger support.
+
+The checked launcher is also directly callable. Surrounding quotes pasted as
+part of either path are accepted:
+
+```powershell
+.\tools\glitch-hunting\play-visual-tas.ps1 `
+  -DvdPath 'C:\path with spaces\game.iso' `
+  -TapePath 'build\boot_start_smoke.tape'
+```
 
 ## Authoring a custom tape
 
