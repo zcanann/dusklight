@@ -1421,6 +1421,8 @@ set(DUSK_FILES
         src/dusk/android_frame_rate.hpp
         src/dusk/android_frame_rate.cpp
         src/dusk/asserts.cpp
+        include/dusk/automation/input_tape.hpp
+        src/dusk/automation/input_tape.cpp
         src/dusk/batch.cpp
         src/dusk/batch.hpp
         src/dusk/config.cpp

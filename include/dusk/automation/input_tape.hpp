@@ -1,0 +1,129 @@
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <vector>
+
+namespace dusk::automation {
+
+inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
+    'D', 'U', 'S', 'K', 'T', 'A', 'P', 'E',
+};
+inline constexpr std::uint16_t kInputTapeMajorVersion = 1;
+inline constexpr std::uint16_t kInputTapeMinorVersion = 0;
+inline constexpr std::size_t kInputTapeHeaderSize = 32;
+inline constexpr std::size_t kRawPadStateSize = 12;
+inline constexpr std::size_t kInputFrameSize = 52;
+inline constexpr std::size_t kInputPortCount = 4;
+
+enum class RawPadFlags : std::uint8_t {
+    None = 0,
+    Connected = 1 << 0,
+};
+
+constexpr RawPadFlags operator|(RawPadFlags lhs, RawPadFlags rhs) {
+    return static_cast<RawPadFlags>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+}
+
+constexpr bool has_flag(RawPadFlags value, RawPadFlags flag) {
+    return (static_cast<std::uint8_t>(value) & static_cast<std::uint8_t>(flag)) != 0;
+}
+
+/**
+ * Canonical controller state stored in a tape.
+ *
+ * This deliberately does not embed or serialize PADStatus. Its fields and
+ * widths are part of the tape format and therefore remain stable when the
+ * native platform ABI or Aurora's host-only input extensions change.
+ */
+struct RawPadState {
+    std::uint16_t buttons = 0;
+    std::int8_t stickX = 0;
+    std::int8_t stickY = 0;
+    std::int8_t substickX = 0;
+    std::int8_t substickY = 0;
+    std::uint8_t triggerLeft = 0;
+    std::uint8_t triggerRight = 0;
+    std::uint8_t analogA = 0;
+    std::uint8_t analogB = 0;
+    RawPadFlags flags = RawPadFlags::Connected;
+
+    bool operator==(const RawPadState&) const = default;
+};
+
+struct InputFrame {
+    // Bit N means automation owns controller port N for this tick.
+    std::uint8_t ownedPorts = 0;
+    std::array<RawPadState, kInputPortCount> pads{};
+
+    bool operator==(const InputFrame&) const = default;
+};
+
+struct InputTape {
+    std::uint32_t tickRateNumerator = 30;
+    std::uint32_t tickRateDenominator = 1;
+    std::vector<InputFrame> frames;
+
+    bool operator==(const InputTape&) const = default;
+};
+
+enum class InputTapeError {
+    None,
+    Truncated,
+    BadMagic,
+    UnsupportedVersion,
+    InvalidHeaderSize,
+    InvalidFrameSize,
+    InvalidTickRate,
+    InvalidOwnedPorts,
+    InvalidPadFlags,
+    TrailingData,
+    TooManyFrames,
+};
+
+const char* input_tape_error_message(InputTapeError error);
+InputTapeError validate_input_tape(const InputTape& tape);
+InputTapeError decode_input_tape(std::span<const std::uint8_t> bytes, InputTape& output);
+InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t>& output);
+
+enum class TapeEndBehavior {
+    Release,
+    Hold,
+    Loop,
+};
+
+/**
+ * Game-thread tape player. Loading may allocate; tick() never does.
+ */
+class InputTapePlayer {
+public:
+    void install(InputTape tape);
+    InputTapeError install(std::span<const std::uint8_t> bytes);
+
+    bool start(TapeEndBehavior endBehavior = TapeEndBehavior::Release);
+    void stop();
+    void tick();
+
+    bool isPlaying() const { return mPlaying; }
+    std::size_t nextFrameIndex() const { return mNextFrame; }
+    std::size_t frameCount() const { return mTape.frames.size(); }
+    const InputTape& tape() const { return mTape; }
+
+private:
+    void apply(const InputFrame& frame);
+    void releaseOwnedPorts();
+
+    InputTape mTape;
+    std::size_t mNextFrame = 0;
+    std::uint8_t mOwnedPorts = 0;
+    TapeEndBehavior mEndBehavior = TapeEndBehavior::Release;
+    bool mPlaying = false;
+    bool mReleasePending = false;
+};
+
+// The main game input read advances this process-wide player once per tick.
+InputTapePlayer& input_tape_player();
+
+} // namespace dusk::automation

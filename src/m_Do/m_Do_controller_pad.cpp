@@ -13,6 +13,7 @@
 #include "tracy/Tracy.hpp"
 
 #if TARGET_PC
+#include "dusk/automation/input_tape.hpp"
 #include "dusk/menu_pointer.h"
 #include "dusk/ui/touch_controls.hpp"
 #endif
@@ -65,6 +66,7 @@ void mDoCPd_c::read() {
     ZoneScoped;
 #if TARGET_PC
     dusk::ui::sync_virtual_input();
+    dusk::automation::input_tape_player().tick();
 #endif
     JUTGamePad::read();
 
