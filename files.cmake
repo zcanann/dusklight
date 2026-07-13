@@ -1425,6 +1425,8 @@ set(DUSK_FILES
         src/dusk/automation/build_identity.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_tape.cpp
+        include/dusk/automation/name_entry_observer.hpp
+        src/dusk/automation/name_entry_observer.cpp
         include/dusk/automation/worker.hpp
         src/dusk/automation/worker.cpp
         src/dusk/batch.cpp

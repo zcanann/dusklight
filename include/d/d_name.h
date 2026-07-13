@@ -141,6 +141,8 @@ public:
 
     #if TARGET_PC
     void nameWide();
+    bool automationCursorMove();
+    void automationObserve();
     #endif
 
     void _draw();

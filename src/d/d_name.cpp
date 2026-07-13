@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
+#include "dusk/automation/name_entry_observer.hpp"
 #include "dusk/version.hpp"
 #include "f_op/f_op_msg_mng.h"
 
@@ -132,10 +133,16 @@ dNm_HIO_c::dNm_HIO_c() {
 dName_c::dName_c(J2DPane* pane) {
     nameIn.field_0xc = pane;
     _create();
+#if TARGET_PC
+    dusk::automation::name_entry_observer().beginSession();
+#endif
     init();
 }
 
 dName_c::~dName_c() {
+#if TARGET_PC
+    dusk::automation::name_entry_observer().endSession();
+#endif
     JKR_DELETE(stick);
     JKR_DELETE(nameIn.NameInScr);
     mDoExt_removeMesgFont();
@@ -214,6 +221,9 @@ void dName_c::init() {
     mPrevSelMenu = MENU_END;
     #endif
     mojiListChange();
+#if TARGET_PC
+    automationObserve();
+#endif
 }
 
 void dName_c::initial() {
@@ -287,6 +297,12 @@ void dName_c::_move() {
     #if TARGET_PC || REGION_JPN
     if (IF_DUSK(dusk::version::isRegionJpn() &&) mDoCPd_c::getTrigX(PAD_1)) {
         if (mCurPos != 0) {
+            #if TARGET_PC
+            if (mCurPos > 8 && dusk::automation::name_entry_observer().cursorBreakoutShadowEnabled()) {
+                dusk::automation::name_entry_observer().noteCharacterReadBlocked(mCurPos - 1);
+                mDoAud_seStart(Z2SE_SYS_ERROR, 0, 0, 0);
+            } else
+            #endif
             if (mojiChange(mCurPos - 1) == 1) {
                 mDoAud_seStart(Z2SE_SY_DUMMY, 0, 0, 0);
             } else {
@@ -295,6 +311,10 @@ void dName_c::_move() {
         }
     } else {
     #endif
+#if TARGET_PC
+    if (automationCursorMove()) {
+    } else
+#endif
 #if !TARGET_PC
     if (mDoCPd_c::getTrigRight(PAD_1)) {
         // BUG: this check only fails if the cursor is at exactly 7
@@ -366,7 +386,62 @@ void dName_c::_move() {
     #endif
 
     cursorAnm();
+#if TARGET_PC
+    automationObserve();
+#endif
 }
+
+#if TARGET_PC
+bool dName_c::automationCursorMove() {
+    auto& observer = dusk::automation::name_entry_observer();
+    if (!observer.cursorBreakoutShadowEnabled()) {
+        return false;
+    }
+
+    if (mDoCPd_c::getTrigRight(PAD_1)) {
+        const u8 before = mCurPos;
+        const u8 requested = static_cast<u8>(before + 1);
+        const bool accepted = before != 7;
+        observer.noteCursorMove(before, requested, 1, accepted);
+        if (accepted) {
+            mDoAud_seStart(Z2SE_SY_DUMMY, 0, 0, 0);
+            mLastCurPos = mCurPos;
+            mCurPos++;
+            nameCursorMove();
+        }
+        return true;
+    }
+    if (mDoCPd_c::getTrigLeft(PAD_1)) {
+        const u8 before = mCurPos;
+        const u8 requested = static_cast<u8>(before - 1);
+        const bool accepted = before != 0;
+        observer.noteCursorMove(before, requested, -1, accepted);
+        if (accepted) {
+            mDoAud_seStart(Z2SE_SY_DUMMY, 0, 0, 0);
+            mLastCurPos = mCurPos;
+            mCurPos--;
+            nameCursorMove();
+        }
+        return true;
+    }
+    return false;
+}
+
+void dName_c::automationObserve() {
+    std::array<dusk::automation::NameEntryCharacterObservation,
+               dusk::automation::NameEntryOriginalLayout::CharacterCount> characters;
+    for (std::size_t i = 0; i < characters.size(); ++i) {
+        characters[i].column = mChrInfo[i].mColumn;
+        characters[i].row = mChrInfo[i].mRow;
+        characters[i].characterSet = mChrInfo[i].mMojiSet;
+        characters[i].active = mChrInfo[i].field_0x3;
+        characters[i].character = mChrInfo[i].mCharacter;
+    }
+    dusk::automation::name_entry_observer().observe(
+        mCurPos, mLastCurPos, static_cast<u8>(nameCheck()), mSelProc,
+        mCharColumn, mCharRow, mMojiSet, characters);
+}
+#endif
 
 int dName_c::nameCheck() {
     for (int i = 8, len = 7; i > 0; i--) {
@@ -852,6 +927,25 @@ int dName_c::getMoji() {
 #endif
 
 void dName_c::setMoji(int moji) {
+#if TARGET_PC
+    auto& observer = dusk::automation::name_entry_observer();
+    const bool shadowWrite = mCurPos > 8 && observer.cursorBreakoutShadowEnabled();
+    observer.noteCharacterWrite(mCurPos, mCharColumn, mCharRow, mMojiSet,
+                                CHAR_TRUNC(moji), mCurPos < 8 || shadowWrite,
+                                shadowWrite);
+    if (mCurPos > 8) {
+        if (shadowWrite) {
+            mDoAud_seStart(Z2SE_SY_NAME_INPUT, NULL, 0, 0);
+            mLastCurPos = mCurPos;
+            mCurPos++;
+            nameCursorMove();
+        } else {
+            mDoAud_seStart(Z2SE_SYS_ERROR, NULL, 0, 0);
+        }
+        automationObserve();
+        return;
+    }
+#endif
     if (mCurPos == 8 || nameCheck() == 8) {
         mDoAud_seStart(Z2SE_SYS_ERROR, NULL, 0, 0);
     } else {
@@ -949,6 +1043,9 @@ void dName_c::nameCursorMove() {
         }
 
         mNameCursor[position]->show();
+#if TARGET_PC
+        dusk::automation::name_entry_observer().updateVisualCursor(position);
+#endif
     }
 }
 

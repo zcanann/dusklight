@@ -469,6 +469,13 @@ add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
 target_include_directories(dusk_game_clock_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(dusk_game_clock_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_name_entry_observer_test EXCLUDE_FROM_ALL
+    tests/name_entry_observer_test.cpp
+    src/dusk/automation/name_entry_observer.cpp
+)
+target_include_directories(dusk_name_entry_observer_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(dusk_name_entry_observer_test PROPERTIES FOLDER "Tests")
+
 if (DUSK_ENABLE_CODE_MODS)
     include(cmake/SymbolManifest.cmake)
     if (WIN32)
