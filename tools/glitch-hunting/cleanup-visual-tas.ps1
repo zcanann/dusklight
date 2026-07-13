@@ -16,6 +16,9 @@ if (-not $debugStateWithSeparator.StartsWith(
 }
 
 if (Test-Path -LiteralPath $debugState) {
-    Remove-Item -LiteralPath $debugState -Recurse -Force
+    Remove-Item -LiteralPath $debugState -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $debugState) {
+        throw "Visual TAS debug state still exists after cleanup: $debugState"
+    }
     Write-Host "Removed Visual TAS debug state: $debugState" -ForegroundColor DarkGray
 }

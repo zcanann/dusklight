@@ -141,7 +141,10 @@ try {
                 $ephemeralBaseWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Refusing to remove automation state outside its ephemeral root: $resolvedState"
         }
-        Remove-Item -LiteralPath $resolvedState -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $resolvedState -Recurse -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $resolvedState) {
+            throw "Ephemeral playback state still exists after cleanup: $resolvedState"
+        }
         Write-Host "Removed ephemeral playback state: $resolvedState" -ForegroundColor DarkGray
     }
 }

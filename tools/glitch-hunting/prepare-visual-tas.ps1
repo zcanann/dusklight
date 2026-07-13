@@ -52,7 +52,16 @@ try {
     New-Item -ItemType Directory -Path $debugState -Force | Out-Null
     $normalConfig = Join-Path $env:APPDATA "TwilitRealm\Dusklight\config.json"
     if (Test-Path -LiteralPath $normalConfig -PathType Leaf) {
-        Copy-Item -LiteralPath $normalConfig -Destination (Join-Path $debugState "config.json")
+        $configuredDvd = (Get-Content -Raw -LiteralPath $normalConfig | ConvertFrom-Json).'backend.isoPath'
+        if (-not [string]::IsNullOrWhiteSpace($configuredDvd)) {
+            $debugConfig = [ordered]@{
+                'backend.isoPath' = [string]$configuredDvd
+            } | ConvertTo-Json
+            [System.IO.File]::WriteAllText(
+                (Join-Path $debugState "config.json"),
+                $debugConfig,
+                [System.Text.UTF8Encoding]::new($false))
+        }
     }
 
     Write-Host "`nVisual TAS build ready: $output" -ForegroundColor Green
