@@ -4,6 +4,38 @@
   "version": "2.0.0",
   "inputs": [
     {
+      "id": "glitchHuntTest",
+      "type": "pickString",
+      "description": "Glitch-hunting test suite",
+      "default": "all",
+      "options": [
+        "all",
+        "native",
+        "input-tape",
+        "game-clock",
+        "name-entry",
+        "name-entry-trace",
+        "rng",
+        "aurora-time",
+        "rust",
+        "rust-lint",
+        "worker-smoke",
+        "pool-smoke"
+      ]
+    },
+    {
+      "id": "glitchHuntDvd",
+      "type": "promptString",
+      "description": "DVD image path (relative to the repository or absolute)",
+      "default": "orig/GZ2E01/GZ2E01.iso"
+    },
+    {
+      "id": "glitchHuntTape",
+      "type": "promptString",
+      "description": "DUSKTAPE path (relative to the repository or absolute)",
+      "default": "build/boot_start_smoke.tape"
+    },
+    {
         "id": "gameVersion",
         "type": "pickString",
         "options": [
@@ -26,6 +58,68 @@
     },
   ],
   "tasks": [
+    {
+      "label": "Glitch Hunt: Run Selected Test",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\run-tests.ps1",
+        "-Test",
+        "${input:glitchHuntTest}"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Glitch Hunt: Prepare Visual TAS",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\prepare-visual-tas.ps1"
+      ],
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Glitch Hunt: Play Visual TAS",
+      "type": "process",
+      "command": "${workspaceFolder}\\build\\windows-clang-debug\\dusklight.exe",
+      "args": [
+        "--dvd",
+        "${input:glitchHuntDvd}",
+        "--input-tape",
+        "${input:glitchHuntTape}",
+        "--input-tape-end",
+        "release",
+        "--develop",
+        "--console"
+      ],
+      "dependsOrder": "sequence",
+      "dependsOn": "Glitch Hunt: Prepare Visual TAS",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
     {
       "label": "ninja",
       "type": "shell",

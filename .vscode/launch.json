@@ -1,6 +1,36 @@
 {
     "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "glitchHuntDvd",
+            "type": "promptString",
+            "description": "DVD image path (relative to the repository or absolute)",
+            "default": "orig/GZ2E01/GZ2E01.iso"
+        },
+        {
+            "id": "glitchHuntTape",
+            "type": "promptString",
+            "description": "DUSKTAPE path (relative to the repository or absolute)",
+            "default": "build/boot_start_smoke.tape"
+        }
+    ],
     "configurations": [
+        {
+            "name": "Glitch Hunt: Visual TAS Playback",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+            "args": [
+                "--dvd", "${input:glitchHuntDvd}",
+                "--input-tape", "${input:glitchHuntTape}",
+                "--input-tape-end", "release",
+                "--develop",
+                "--console"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS"
+        },
         {
             "name": "(gdb) Launch Dusklight MSVC",
             "type": "cppvsdbg",

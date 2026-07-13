@@ -35,6 +35,8 @@ state hashes, and the reason it was classified as interesting.
 
 - [Implementation status](status.md) records working commands, tests, and
   current fidelity/validation limits.
+- [Testing and visual TAS playback](testing.md) documents the VS Code selector,
+  command-line runner, and visible replay workflow.
 - [Architecture](architecture.md) describes the Rust/C++ boundary, worker
   model, headless execution, and headful promotion.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
