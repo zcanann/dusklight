@@ -14,6 +14,7 @@
 
 #ifdef TARGET_PC
 #include "dusk/dusk.h"
+#include "dusk/game_clock.h"
 #include "dusk/gx_helper.h"
 #include "dusk/logging.h"
 #include "dusk/settings.h"
@@ -379,6 +380,12 @@ static void waitPrecise(Limiter& limiter, Limiter::duration_t targetNs) {
 static void waitForTick(u32 p1, u16 p2) {
 #if TARGET_PC
     static Limiter limiter;
+
+    if (dusk::game_clock::main_loop_mode() == dusk::game_clock::MainLoopMode::FixedStep) {
+        limiter.Reset();
+        dusk::frameUsagePct = 100.0f;
+        return;
+    }
 
     if (dusk::frame_interp::is_enabled() && !dusk::getTransientSettings().skipFrameRateLimit) {
         dusk::frameUsagePct = 0.f; 
