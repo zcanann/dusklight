@@ -25,6 +25,8 @@ protected:
     bool handle_nav_command(Rml::Event& event, NavCommand cmd) override;
 
 private:
+    void launch_game();
+
     bool mEntranceAnimationStarted = false;
     bool mRestartSuppressed = false;
     std::vector<std::unique_ptr<Button> > mMenuButtons;

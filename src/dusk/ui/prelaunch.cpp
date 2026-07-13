@@ -702,23 +702,7 @@ Prelaunch::Prelaunch()
                 return;
             }
 
-            mDoAud_seStartMenu(kSoundPlay);
-            show_menu_notification();
-
-            if (getSettings().audio.menuSounds) {
-                JAISoundHandle* handle = g_mEnvSeMgr.field_0x144.getHandle();
-                if (*handle) {
-                    (*handle)->stop(60);
-                    (*handle)->releaseHandle();
-                }
-            }
-
-            if (g_mDoMemCd_control.mCardCommand == mDoMemCd_Ctrl_c::Command_e::COMM_NONE_e) {
-                mDoMemCd_ThdInit();
-            }
-
-            IsGameLaunched = true;
-            pop();
+            launch_game();
         });
         apply_intro_animation(mMenuButtons.back()->root(), "delay-1");
 
@@ -775,6 +759,30 @@ Prelaunch::Prelaunch()
             target->SetClass("anim-done", true);
         }
     });
+}
+
+void Prelaunch::launch_game() {
+    if (IsGameLaunched) {
+        return;
+    }
+
+    mDoAud_seStartMenu(kSoundPlay);
+    show_menu_notification();
+
+    if (getSettings().audio.menuSounds) {
+        JAISoundHandle* handle = g_mEnvSeMgr.field_0x144.getHandle();
+        if (*handle) {
+            (*handle)->stop(60);
+            (*handle)->releaseHandle();
+        }
+    }
+
+    if (g_mDoMemCd_control.mCardCommand == mDoMemCd_Ctrl_c::Command_e::COMM_NONE_e) {
+        mDoMemCd_ThdInit();
+    }
+
+    IsGameLaunched = true;
+    pop();
 }
 
 void Prelaunch::show() {
@@ -846,8 +854,8 @@ void Prelaunch::update() {
     const bool discRestartPending =
         activeDiscLoaded && state.configuredDiscPath != state.activeDiscPath;
     mDocument->SetClass("disc-ready", IsGameLaunched);
-    if (canLaunchConfiguredDisc) {
-        IsGameLaunched = true;
+    if (canLaunchConfiguredDisc && !IsGameLaunched) {
+        launch_game();
     }
 
     if (!mEntranceAnimationStarted && mDocument != nullptr) {
