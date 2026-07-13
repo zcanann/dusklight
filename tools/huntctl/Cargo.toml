@@ -1,0 +1,22 @@
+[package]
+name = "dusklight-huntctl"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Control plane for deterministic Dusklight glitch-hunting workers"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "huntctl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "huntctl"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
