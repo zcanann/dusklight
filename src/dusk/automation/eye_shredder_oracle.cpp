@@ -49,6 +49,16 @@ json write_json(const NameEntryWriteObservation& write) {
     };
 }
 
+json renderer_telemetry_json(const EyeShredderRendererTelemetry& telemetry) {
+    return {
+        {"xf_num_chans_raw", telemetry.xfNumChansRaw},
+        {"bp_num_chans_raw", telemetry.bpNumChansRaw},
+        {"mismatch_latched", telemetry.mismatchLatched},
+        {"eye_shredder_mismatch_latched", telemetry.eyeShredderMismatchLatched},
+        {"mismatch_draw_count", telemetry.mismatchDrawCount},
+    };
+}
+
 }  // namespace
 
 void EyeShredderOracle::start() {
@@ -56,6 +66,7 @@ void EyeShredderOracle::start() {
     mResult.status = EyeShredderOracleStatus::Running;
     mResult.reason = "waiting for retail-layout shadow write at Eye Shredder position 113";
     mLastWriteAttempt = 0;
+    mRendererMismatchDrawCountAtMemoryMatch = 0;
     mSawNameEntry = false;
 }
 
@@ -67,6 +78,10 @@ void EyeShredderOracle::evaluate(const NameEntryObservation& observation,
 
     mResult.simTick = simTick;
     mResult.tapeFrame = tapeFrame;
+    if (mResult.memoryMatched) {
+        return;
+    }
+
     if (observation.active != 0) {
         mSawNameEntry = true;
     } else if (mSawNameEntry) {
@@ -119,8 +134,43 @@ void EyeShredderOracle::evaluate(const NameEntryObservation& observation,
         return;
     }
 
+    mResult.memoryMatched = true;
+    mResult.memoryMatchSimTick = actual.simTick;
+    mResult.memoryMatchTapeFrame = actual.tapeFrame;
+    mRendererMismatchDrawCountAtMemoryMatch =
+        mResult.hasRendererTelemetry ? mResult.rendererTelemetry.mismatchDrawCount : 0;
+    mResult.reason =
+        "matched Eye Shredder memory write; waiting for an exact XF=12 / BP=4 renderer draw";
+}
+
+void EyeShredderOracle::observeRendererTelemetry(
+    const EyeShredderRendererTelemetry& telemetry, const std::uint64_t simTick,
+    const std::uint64_t tapeFrame) {
+    if (mResult.status != EyeShredderOracleStatus::Running) {
+        return;
+    }
+
+    mResult.hasRendererTelemetry = true;
+    mResult.rendererTelemetry = telemetry;
+    mResult.simTick = simTick;
+    mResult.tapeFrame = tapeFrame;
+
+    const bool observedNewMismatchDraw =
+        telemetry.mismatchDrawCount > mRendererMismatchDrawCountAtMemoryMatch;
+    if (!mResult.memoryMatched || !observedNewMismatchDraw) {
+        return;
+    }
+    if (!telemetry.mismatchLatched || !telemetry.eyeShredderMismatchLatched ||
+        telemetry.xfNumChansRaw != 12 || telemetry.bpNumChansRaw != 4) {
+        return;
+    }
+
+    mResult.rendererMatched = true;
+    mResult.rendererMatchSimTick = simTick;
+    mResult.rendererMatchTapeFrame = tapeFrame;
     mResult.status = EyeShredderOracleStatus::Passed;
-    mResult.reason = "matched bounded retail-layout Eye Shredder write at dName_c+0x654";
+    mResult.reason =
+        "matched Eye Shredder memory write and exact XF=12 / BP=4 renderer draw";
 }
 
 void EyeShredderOracle::finish(const std::uint64_t simTick, const std::uint64_t tapeFrame) {
@@ -128,8 +178,14 @@ void EyeShredderOracle::finish(const std::uint64_t simTick, const std::uint64_t 
         return;
     }
     mResult.status = EyeShredderOracleStatus::Incomplete;
-    mResult.reason = mSawNameEntry ? "input ended before the expected Eye Shredder write" :
-                                     "input ended before reaching the name-entry session";
+    if (mResult.memoryMatched) {
+        mResult.reason =
+            "matched Eye Shredder memory write but input ended before a subsequent exact "
+            "XF=12 / BP=4 renderer draw";
+    } else {
+        mResult.reason = mSawNameEntry ? "input ended before the expected Eye Shredder write" :
+                                         "input ended before reaching the name-entry session";
+    }
     mResult.simTick = simTick;
     mResult.tapeFrame = tapeFrame;
 }
@@ -166,6 +222,10 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
     if (result.hasActualWrite) {
         actual = write_json(result.actualWrite);
     }
+    json rendererTelemetry = nullptr;
+    if (result.hasRendererTelemetry) {
+        rendererTelemetry = renderer_telemetry_json(result.rendererTelemetry);
+    }
 
     const json root = {
         {"schema", {{"name", "dusklight.eye_shredder_oracle"},
@@ -178,13 +238,28 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
         {"memory_model", "bounded_retail_dname_shadow"},
         {"retail_profile", "fresh_gcn_ntsc_u"},
         {"j2d_leak", false},
-        {"renderer_effect", "console_only_not_reproduced"},
+        {"renderer_effect",
+            result.rendererMatched ? "exact_xf_bp_draw_observed" : "not_observed"},
         {"emulator_diagnostic", "Mismatched configuration between XF and BP stages"},
         {"expected",
             {{"character_index", EyeShredderExpectedWrite::CharacterIndex},
                 {"original_offset", EyeShredderExpectedWrite::OriginalOffset},
                 {"fresh_usa_gc_cached_address", EyeShredderExpectedWrite::FreshUsaGcCachedAddress},
-                {"bytes", bytes_json(EyeShredderExpectedWrite::Bytes)}}},
+                {"bytes", bytes_json(EyeShredderExpectedWrite::Bytes)},
+                {"renderer_draw",
+                    {{"xf_num_chans_raw", 12}, {"bp_num_chans_raw", 4},
+                        {"eye_shredder_mismatch_latched", true}}}}},
+        {"stages",
+            {{"memory",
+                 {{"matched", result.memoryMatched},
+                     {"sim_tick", result.memoryMatchSimTick},
+                     {"tape_frame", result.memoryMatchTapeFrame},
+                     {"actual", actual}}},
+                {"renderer",
+                    {{"matched", result.rendererMatched},
+                        {"sim_tick", result.rendererMatchSimTick},
+                        {"tape_frame", result.rendererMatchTapeFrame},
+                        {"telemetry", std::move(rendererTelemetry)}}}}},
         {"actual", std::move(actual)},
     };
     return root.dump(2) + '\n';

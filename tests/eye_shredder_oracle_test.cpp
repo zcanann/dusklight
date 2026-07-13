@@ -28,34 +28,69 @@ dusk::automation::NameEntryObservation make_write(const std::uint8_t index,
     return observer.latest();
 }
 
-void testExactRetailShadowWritePasses() {
+[[nodiscard]] dusk::automation::EyeShredderRendererTelemetry make_renderer_telemetry(
+    const std::uint64_t mismatchDrawCount, const bool exactLatch = true) {
+    return {
+        .xfNumChansRaw = 12,
+        .bpNumChansRaw = 4,
+        .mismatchLatched = true,
+        .eyeShredderMismatchLatched = exactLatch,
+        .mismatchDrawCount = mismatchDrawCount,
+    };
+}
+
+void testExactRetailShadowWriteArmsUntilRendererDraw() {
     using namespace dusk::automation;
     EyeShredderOracle oracle;
     oracle.start();
     const NameEntryObservation observation = make_write(113, 12, 'M', true);
     oracle.evaluate(observation, 900, 700);
 
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
+    REQUIRE(!oracle.isTerminal());
+    REQUIRE(oracle.result().memoryMatched);
+    REQUIRE(!oracle.result().rendererMatched);
+    REQUIRE(oracle.result().memoryMatchSimTick == 900);
+    REQUIRE(oracle.result().memoryMatchTapeFrame == 700);
+    REQUIRE(oracle.result().reason.find("waiting for an exact XF=12 / BP=4 renderer draw") !=
+            std::string::npos);
+
+    oracle.observeRendererTelemetry(make_renderer_telemetry(1), 901, 701);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
+    REQUIRE(oracle.result().rendererMatched);
     REQUIRE(oracle.result().hasActualWrite);
+    REQUIRE(oracle.result().hasRendererTelemetry);
     REQUIRE(oracle.result().actualWrite.characterIndex == 113);
     REQUIRE(oracle.result().actualWrite.originalOffset == 0x654);
     REQUIRE(oracle.result().actualWrite.bytes == EyeShredderExpectedWrite::Bytes);
-    REQUIRE(oracle.result().simTick == 900);
-    REQUIRE(oracle.result().tapeFrame == 700);
+    REQUIRE(oracle.result().simTick == 901);
+    REQUIRE(oracle.result().tapeFrame == 701);
 
     const auto json = nlohmann::json::parse(serialize_eye_shredder_oracle_result(oracle.result()));
+    REQUIRE(json["schema"]["version"] == 2);
     REQUIRE(json["status"] == "pass");
     REQUIRE(json["memory_model"] == "bounded_retail_dname_shadow");
     REQUIRE(json["retail_profile"] == "fresh_gcn_ntsc_u");
     REQUIRE(json["j2d_leak"] == false);
-    REQUIRE(json["renderer_effect"] == "console_only_not_reproduced");
+    REQUIRE(json["renderer_effect"] == "exact_xf_bp_draw_observed");
     REQUIRE(json["emulator_diagnostic"] == "Mismatched configuration between XF and BP stages");
     REQUIRE(json["expected"]["character_index"] == 113);
     REQUIRE(json["expected"]["original_offset"] == 0x654);
     REQUIRE(json["expected"]["fresh_usa_gc_cached_address"] == 0x81457688);
     REQUIRE(json["expected"]["bytes"][0] == 0x0C);
     REQUIRE(json["expected"]["bytes"][7] == 0x4D);
+    REQUIRE(json["expected"]["renderer_draw"]["xf_num_chans_raw"] == 12);
+    REQUIRE(json["expected"]["renderer_draw"]["bp_num_chans_raw"] == 4);
     REQUIRE(json["actual"]["bytes"] == json["expected"]["bytes"]);
+    REQUIRE(json["stages"]["memory"]["matched"] == true);
+    REQUIRE(json["stages"]["memory"]["actual"] == json["actual"]);
+    REQUIRE(json["stages"]["renderer"]["matched"] == true);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["xf_num_chans_raw"] == 12);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["bp_num_chans_raw"] == 4);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_latched"] == true);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["eye_shredder_mismatch_latched"] ==
+            true);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_draw_count"] == 1);
 }
 
 void testWrongSignatureFails() {
@@ -78,7 +113,56 @@ void testUnmodeledWriteFails() {
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Failed);
 }
 
-void testTapeEndIsIncomplete() {
+void testRendererLatchMustBeObservedAfterMemoryMatch() {
+    using namespace dusk::automation;
+    EyeShredderOracle oracle;
+    oracle.start();
+
+    oracle.observeRendererTelemetry(make_renderer_telemetry(1), 899, 699);
+    oracle.evaluate(make_write(113, 12, 'M', true), 900, 700);
+    oracle.observeRendererTelemetry(make_renderer_telemetry(1), 901, 701);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
+
+    oracle.observeRendererTelemetry(make_renderer_telemetry(2), 902, 702);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
+    REQUIRE(oracle.result().rendererMatchSimTick == 902);
+    REQUIRE(oracle.result().rendererMatchTapeFrame == 702);
+}
+
+void testExactRawCountsWithoutExactDrawLatchDoNotPass() {
+    using namespace dusk::automation;
+    EyeShredderOracle oracle;
+    oracle.start();
+    oracle.evaluate(make_write(113, 12, 'M', true), 900, 700);
+    oracle.observeRendererTelemetry(make_renderer_telemetry(1, false), 901, 701);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
+
+    oracle.finish(902, 702);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Incomplete);
+    REQUIRE(oracle.result().reason.find("before a subsequent exact XF=12 / BP=4 renderer draw") !=
+            std::string::npos);
+
+    const auto json = nlohmann::json::parse(serialize_eye_shredder_oracle_result(oracle.result()));
+    REQUIRE(json["stages"]["memory"]["matched"] == true);
+    REQUIRE(json["stages"]["renderer"]["matched"] == false);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_draw_count"] == 1);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["eye_shredder_mismatch_latched"] ==
+            false);
+}
+
+void testExactLatchWithNonExactRawCountsDoesNotPass() {
+    using namespace dusk::automation;
+    EyeShredderOracle oracle;
+    oracle.start();
+    oracle.evaluate(make_write(113, 12, 'M', true), 900, 700);
+
+    EyeShredderRendererTelemetry telemetry = make_renderer_telemetry(1);
+    telemetry.bpNumChansRaw = 3;
+    oracle.observeRendererTelemetry(telemetry, 901, 701);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
+}
+
+void testTapeEndBeforeMemoryIsDistinctlyIncomplete() {
     using namespace dusk::automation;
     EyeShredderOracle oracle;
     oracle.start();
@@ -88,15 +172,20 @@ void testTapeEndIsIncomplete() {
     oracle.finish(51, 51);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Incomplete);
     REQUIRE(oracle.isTerminal());
+    REQUIRE(!oracle.result().memoryMatched);
+    REQUIRE(oracle.result().reason == "input ended before the expected Eye Shredder write");
 }
 
 }  // namespace
 
 int main() {
-    testExactRetailShadowWritePasses();
+    testExactRetailShadowWriteArmsUntilRendererDraw();
     testWrongSignatureFails();
     testUnmodeledWriteFails();
-    testTapeEndIsIncomplete();
+    testRendererLatchMustBeObservedAfterMemoryMatch();
+    testExactRawCountsWithoutExactDrawLatchDoNotPass();
+    testExactLatchWithNonExactRawCountsDoesNotPass();
+    testTapeEndBeforeMemoryIsDistinctlyIncomplete();
     std::cout << "eye shredder oracle tests passed\n";
     return 0;
 }

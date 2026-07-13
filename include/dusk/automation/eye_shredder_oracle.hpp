@@ -9,7 +9,7 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 1;
+inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 2;
 
 struct EyeShredderExpectedWrite {
     static constexpr std::uint8_t CharacterIndex = 113;
@@ -38,11 +38,29 @@ enum class EyeShredderOracleStatus : std::uint8_t {
     Incomplete,
 };
 
+// Deliberately independent of Aurora's public ABI. The runtime may copy any
+// renderer telemetry source into this stable oracle-facing snapshot.
+struct EyeShredderRendererTelemetry {
+    std::uint32_t xfNumChansRaw = 0;
+    std::uint32_t bpNumChansRaw = 0;
+    bool mismatchLatched = false;
+    bool eyeShredderMismatchLatched = false;
+    std::uint64_t mismatchDrawCount = 0;
+};
+
 struct EyeShredderOracleResult {
     EyeShredderOracleStatus status = EyeShredderOracleStatus::Idle;
     std::string reason;
+    bool memoryMatched = false;
     bool hasActualWrite = false;
     NameEntryWriteObservation actualWrite{};
+    std::uint64_t memoryMatchSimTick = NameEntryNoTick;
+    std::uint64_t memoryMatchTapeFrame = NameEntryNoTick;
+    bool rendererMatched = false;
+    bool hasRendererTelemetry = false;
+    EyeShredderRendererTelemetry rendererTelemetry{};
+    std::uint64_t rendererMatchSimTick = NameEntryNoTick;
+    std::uint64_t rendererMatchTapeFrame = NameEntryNoTick;
     std::uint64_t simTick = NameEntryNoTick;
     std::uint64_t tapeFrame = NameEntryNoTick;
 };
@@ -52,6 +70,8 @@ public:
     void start();
     void evaluate(
         const NameEntryObservation& observation, std::uint64_t simTick, std::uint64_t tapeFrame);
+    void observeRendererTelemetry(const EyeShredderRendererTelemetry& telemetry,
+        std::uint64_t simTick, std::uint64_t tapeFrame);
     void finish(std::uint64_t simTick, std::uint64_t tapeFrame);
     void reject(std::string reason);
 
@@ -64,6 +84,7 @@ private:
 
     EyeShredderOracleResult mResult{};
     std::uint64_t mLastWriteAttempt = 0;
+    std::uint64_t mRendererMismatchDrawCountAtMemoryMatch = 0;
     bool mSawNameEntry = false;
 };
 
