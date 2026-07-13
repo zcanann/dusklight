@@ -53,6 +53,7 @@ void testCanonicalRoundTrip() {
         .flags = RawPadFlags::Connected,
     };
     tape.frames[0].pads[2].flags = RawPadFlags::None;
+    tape.frames[0].pads[2].error = PAD_ERR_NO_CONTROLLER;
 
     std::vector<std::uint8_t> bytes;
     REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
@@ -105,6 +106,24 @@ void testMalformedTapesAreRejected() {
     REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::InvalidOwnedPorts);
 }
 
+void testMinorZeroConnectionErrorsRemainCompatible() {
+    using namespace dusk::automation;
+
+    InputTape tape;
+    tape.frames.resize(1);
+    tape.frames[0].pads[0].flags = RawPadFlags::None;
+    tape.frames[0].pads[0].error = PAD_ERR_NO_CONTROLLER;
+    std::vector<std::uint8_t> bytes;
+    REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
+
+    bytes[10] = 0; // Minor version 0.
+    bytes[11] = 0;
+    bytes[kInputTapeHeaderSize + 4 + 11] = 0; // This byte was reserved in v1.0.
+    InputTape decoded;
+    REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
+    REQUIRE(decoded.frames[0].pads[0].error == PAD_ERR_NO_CONTROLLER);
+}
+
 void testPlayerOwnsAndReleasesPorts() {
     using namespace dusk::automation;
 
@@ -117,6 +136,7 @@ void testPlayerOwnsAndReleasesPorts() {
     tape.frames[1].ownedPorts = 1 << 1;
     tape.frames[1].pads[1].buttons = PAD_BUTTON_START;
     tape.frames[1].pads[1].flags = RawPadFlags::None;
+    tape.frames[1].pads[1].error = PAD_ERR_NO_CONTROLLER;
 
     InputTapePlayer player;
     player.install(std::move(tape));
@@ -144,6 +164,53 @@ void testPlayerOwnsAndReleasesPorts() {
     REQUIRE(gClearCalls[1] == 1);
 }
 
+void testRecorderCapturesAllPortsWithoutGrowing() {
+    using namespace dusk::automation;
+
+    std::array<PADStatus, kInputPortCount> statuses{};
+    statuses[0].button = PAD_BUTTON_A;
+    statuses[0].stickX = -71;
+    statuses[0].triggerRight = 193;
+    statuses[0].err = PAD_ERR_NONE;
+    statuses[1].button = PAD_BUTTON_B;
+    statuses[1].substickY = 54;
+    statuses[1].err = PAD_ERR_NONE;
+    statuses[2].err = PAD_ERR_NO_CONTROLLER;
+    statuses[3].err = PAD_ERR_TRANSFER;
+
+    InputTapeRecorder recorder;
+    REQUIRE(recorder.start(0b0011, 2, 60, 2) == InputTapeError::None);
+    REQUIRE(recorder.isRecording());
+    REQUIRE(recorder.frameCapacity() == 2);
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::Recorded);
+
+    statuses[0].button = PAD_BUTTON_START;
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::Recorded);
+    REQUIRE(recorder.frameCount() == 2);
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::CapacityExhausted);
+    REQUIRE(!recorder.isRecording());
+    REQUIRE(recorder.capacityExhausted());
+
+    InputTape tape = recorder.take();
+    REQUIRE(tape.tickRateNumerator == 60);
+    REQUIRE(tape.tickRateDenominator == 2);
+    REQUIRE(tape.frames.size() == 2);
+    REQUIRE(tape.frames.capacity() >= 2);
+    REQUIRE(tape.frames[0].ownedPorts == 0b0011);
+    REQUIRE(tape.frames[0].pads[0].buttons == PAD_BUTTON_A);
+    REQUIRE(tape.frames[0].pads[0].stickX == -71);
+    REQUIRE(tape.frames[0].pads[0].triggerRight == 193);
+    REQUIRE(tape.frames[0].pads[1].buttons == PAD_BUTTON_B);
+    REQUIRE(tape.frames[0].pads[1].substickY == 54);
+    // Unowned ports are still captured so ownership can be changed when a
+    // recording is edited or minimized later.
+    REQUIRE(tape.frames[0].pads[2].error == PAD_ERR_NO_CONTROLLER);
+    REQUIRE(tape.frames[0].pads[3].error == PAD_ERR_TRANSFER);
+    REQUIRE(tape.frames[1].pads[0].buttons == PAD_BUTTON_START);
+    REQUIRE(!recorder.capacityExhausted());
+    REQUIRE(recorder.frameCount() == 0);
+}
+
 } // namespace
 
 extern "C" void PADSetAutomationStatus(const u32 port, const PADStatus* status) {
@@ -164,7 +231,9 @@ extern "C" void PADClearAutomationStatus(const u32 port) {
 int main() {
     testCanonicalRoundTrip();
     testMalformedTapesAreRejected();
+    testMinorZeroConnectionErrorsRemainCompatible();
     testPlayerOwnsAndReleasesPorts();
+    testRecorderCapturesAllPortsWithoutGrowing();
     std::cout << "input tape tests passed\n";
     return 0;
 }

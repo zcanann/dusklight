@@ -55,6 +55,7 @@ RawPadState decode_pad(const std::uint8_t* input) {
     pad.analogA = input[8];
     pad.analogB = input[9];
     pad.flags = static_cast<RawPadFlags>(input[10]);
+    pad.error = static_cast<std::int8_t>(input[11]);
     return pad;
 }
 
@@ -69,7 +70,7 @@ void encode_pad(const RawPadState& pad, std::uint8_t* output) {
     output[8] = pad.analogA;
     output[9] = pad.analogB;
     output[10] = static_cast<std::uint8_t>(pad.flags);
-    output[11] = 0;
+    output[11] = static_cast<std::uint8_t>(pad.error);
 }
 
 PADStatus to_pad_status(const RawPadState& input) {
@@ -83,7 +84,23 @@ PADStatus to_pad_status(const RawPadState& input) {
     status.triggerRight = input.triggerRight;
     status.analogA = input.analogA;
     status.analogB = input.analogB;
-    status.err = has_flag(input.flags, RawPadFlags::Connected) ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
+    status.err = input.error;
+    return status;
+}
+
+RawPadState from_pad_status(const PADStatus& input) {
+    RawPadState status;
+    status.buttons = input.button;
+    status.stickX = input.stickX;
+    status.stickY = input.stickY;
+    status.substickX = input.substickX;
+    status.substickY = input.substickY;
+    status.triggerLeft = input.triggerLeft;
+    status.triggerRight = input.triggerRight;
+    status.analogA = input.analogA;
+    status.analogB = input.analogB;
+    status.flags = input.err == PAD_ERR_NONE ? RawPadFlags::Connected : RawPadFlags::None;
+    status.error = input.err;
     return status;
 }
 
@@ -145,7 +162,7 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
 
     const std::uint16_t majorVersion = read_u16(bytes.data() + 8);
     const std::uint16_t minorVersion = read_u16(bytes.data() + 10);
-    if (majorVersion != kInputTapeMajorVersion || minorVersion != kInputTapeMinorVersion) {
+    if (majorVersion != kInputTapeMajorVersion || minorVersion > kInputTapeMinorVersion) {
         return InputTapeError::UnsupportedVersion;
     }
     if (read_u16(bytes.data() + 12) != kInputTapeHeaderSize) {
@@ -189,8 +206,11 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
 
         for (RawPadState& pad : frame.pads) {
             pad = decode_pad(input);
-            if ((static_cast<std::uint8_t>(pad.flags) & ~kKnownPadFlags) != 0 || input[11] != 0) {
+            if ((static_cast<std::uint8_t>(pad.flags) & ~kKnownPadFlags) != 0) {
                 return InputTapeError::InvalidPadFlags;
+            }
+            if (minorVersion == 0) {
+                pad.error = has_flag(pad.flags, RawPadFlags::Connected) ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
             }
             input += kRawPadStateSize;
         }
@@ -317,6 +337,70 @@ void InputTapePlayer::releaseOwnedPorts() {
 InputTapePlayer& input_tape_player() {
     static InputTapePlayer player;
     return player;
+}
+
+InputTapeError InputTapeRecorder::start(const std::uint8_t ownedPorts, const std::size_t frameCapacity,
+                                        const std::uint32_t tickRateNumerator,
+                                        const std::uint32_t tickRateDenominator) {
+    stop();
+    if ((ownedPorts & ~kAllPortsMask) != 0) {
+        return InputTapeError::InvalidOwnedPorts;
+    }
+    if (tickRateNumerator == 0 || tickRateDenominator == 0) {
+        return InputTapeError::InvalidTickRate;
+    }
+    if (frameCapacity > mTape.frames.max_size()) {
+        return InputTapeError::TooManyFrames;
+    }
+
+    mTape = {};
+    mTape.tickRateNumerator = tickRateNumerator;
+    mTape.tickRateDenominator = tickRateDenominator;
+    mTape.frames.reserve(frameCapacity);
+    mFrameCapacity = frameCapacity;
+    mOwnedPorts = ownedPorts;
+    mCapacityExhausted = false;
+    mRecording = true;
+    return InputTapeError::None;
+}
+
+InputRecordResult InputTapeRecorder::recordTick(
+    const std::span<const PADStatus, kInputPortCount> statuses) {
+    if (!mRecording) {
+        return InputRecordResult::Inactive;
+    }
+    if (mTape.frames.size() >= mFrameCapacity) {
+        mRecording = false;
+        mCapacityExhausted = true;
+        return InputRecordResult::CapacityExhausted;
+    }
+
+    InputFrame frame;
+    frame.ownedPorts = mOwnedPorts;
+    for (std::size_t port = 0; port < kInputPortCount; ++port) {
+        frame.pads[port] = from_pad_status(statuses[port]);
+    }
+    mTape.frames.push_back(frame);
+    return InputRecordResult::Recorded;
+}
+
+void InputTapeRecorder::stop() {
+    mRecording = false;
+}
+
+InputTape InputTapeRecorder::take() {
+    stop();
+    InputTape tape = std::move(mTape);
+    mTape = {};
+    mFrameCapacity = 0;
+    mOwnedPorts = 0;
+    mCapacityExhausted = false;
+    return tape;
+}
+
+InputTapeRecorder& input_tape_recorder() {
+    static InputTapeRecorder recorder;
+    return recorder;
 }
 
 } // namespace dusk::automation

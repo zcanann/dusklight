@@ -6,13 +6,15 @@
 #include <span>
 #include <vector>
 
+struct PADStatus;
+
 namespace dusk::automation {
 
 inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
     'D', 'U', 'S', 'K', 'T', 'A', 'P', 'E',
 };
 inline constexpr std::uint16_t kInputTapeMajorVersion = 1;
-inline constexpr std::uint16_t kInputTapeMinorVersion = 0;
+inline constexpr std::uint16_t kInputTapeMinorVersion = 1;
 inline constexpr std::size_t kInputTapeHeaderSize = 32;
 inline constexpr std::size_t kRawPadStateSize = 12;
 inline constexpr std::size_t kInputFrameSize = 52;
@@ -49,6 +51,8 @@ struct RawPadState {
     std::uint8_t analogA = 0;
     std::uint8_t analogB = 0;
     RawPadFlags flags = RawPadFlags::Connected;
+    // Exact PAD error value. Minor version 0 tapes derive this from flags.
+    std::int8_t error = 0;
 
     bool operator==(const RawPadState&) const = default;
 };
@@ -125,5 +129,43 @@ private:
 
 // The main game input read advances this process-wide player once per tick.
 InputTapePlayer& input_tape_player();
+
+enum class InputRecordResult {
+    Recorded,
+    Inactive,
+    CapacityExhausted,
+};
+
+/**
+ * Records the post-PADRead, post-clamp state used by JUTGamePad.
+ *
+ * start() performs the only reservation. recordTick(), stop(), and take() do
+ * not allocate; when the configured frame capacity is reached, recording
+ * stops and reports CapacityExhausted.
+ */
+class InputTapeRecorder {
+public:
+    InputTapeError start(std::uint8_t ownedPorts, std::size_t frameCapacity,
+                         std::uint32_t tickRateNumerator = 30, std::uint32_t tickRateDenominator = 1);
+    InputRecordResult recordTick(std::span<const PADStatus, kInputPortCount> statuses);
+    void stop();
+    InputTape take();
+
+    bool isRecording() const { return mRecording; }
+    bool capacityExhausted() const { return mCapacityExhausted; }
+    std::size_t frameCount() const { return mTape.frames.size(); }
+    std::size_t frameCapacity() const { return mFrameCapacity; }
+    std::uint8_t ownedPorts() const { return mOwnedPorts; }
+
+private:
+    InputTape mTape;
+    std::size_t mFrameCapacity = 0;
+    std::uint8_t mOwnedPorts = 0;
+    bool mRecording = false;
+    bool mCapacityExhausted = false;
+};
+
+// The main game input read samples this process-wide recorder once per tick.
+InputTapeRecorder& input_tape_recorder();
 
 } // namespace dusk::automation
