@@ -7,9 +7,8 @@ __pycache__
 .mypy_cache
 .cache/
 
-# Original files
-orig/*/*
-!orig/*/.gitkeep
+# Original extracted game files
+orig/
 *.dol
 *.rel
 *.elf

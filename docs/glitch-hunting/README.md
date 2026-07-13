@@ -1,0 +1,70 @@
+# Glitch-hunting platform
+
+This directory defines the fork-specific work needed to turn Dusklight into a
+deterministic, high-throughput platform for reproducing and discovering
+Twilight Princess glitches.
+
+The platform should make a run useful in three different ways:
+
+1. replay the same raw controller input exactly;
+2. execute it as quickly as possible without changing logical time; and
+3. promote an interesting headless run into a visible client at any chosen
+   tick.
+
+The guiding rule is that every result is an artifact, not an anecdote. A found
+glitch should carry its scenario, input tape, build identity, observations,
+state hashes, and the reason it was classified as interesting.
+
+## Core decisions
+
+- Rust owns orchestration, scheduling, corpus management, and the CLI.
+- C++ inside Dusklight owns each simulation tick, input application,
+  observations, checkpoints, and game-specific instrumentation.
+- Workers are long-lived native processes. We do not start a process or cross
+  an FFI/IPC boundary for every frame.
+- Headless means presentation-free and unpaced, not a different update rate.
+- Raw input tapes are the replay authority. Splines, macros, search policies,
+  and learned policies compile down to tapes.
+- Fidelity is explicit. Native safety fixes, original bugs, relative heap
+  layout, absolute GameCube addresses, and console rendering are different
+  capabilities and must not be conflated.
+- Python may be useful for offline notebooks, plots, and one-off corpus
+  analysis, but it is not part of the execution hot path.
+
+## Documents
+
+- [Architecture](architecture.md) describes the Rust/C++ boundary, worker
+  model, headless execution, and headful promotion.
+- [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
+  programs, observations, events, oracles, checkpoints, and run artifacts.
+- [Determinism and memory fidelity](determinism-and-memory.md) records what
+  Aurora's MEM1 model does and does not preserve, plus the sources of
+  nondeterminism that need to be controlled.
+- [Eye Shredder benchmark](benchmarks/eye-shredder.md) defines the first
+  boot-tape and fidelity probe.
+- [Roadmap](roadmap.md) breaks implementation into independently verifiable
+  milestones.
+
+## Existing foundations
+
+Dusklight already has several useful pieces:
+
+- direct save and stage CLI options in `src/m_Do/m_Do_main.cpp`;
+- virtual controller injection through Aurora's `PADSetVirtualStatus`;
+- an in-game state-sharing packet containing stage and save data;
+- map definitions, an actor spawner, process inspection, collision views, and
+  player position/velocity inspection; and
+- an original-style JKR heap hierarchy backed by Aurora's MEM1 arena.
+
+These are foundations, not yet an automation API. Input injection currently
+merges with physical input, the null backend does not run the game, wall-clock
+time remains live, and the current state packet is a scenario seed rather than
+a full process snapshot.
+
+## Scope
+
+The first target is repeatable gameplay and UI behavior in this native port.
+Exact PowerPC execution and hardware-accurate GX rendering would require an
+emulator and are outside the initial platform. When a glitch depends on those
+properties, the platform should identify that limitation clearly and still
+produce a console-transferable input artifact where possible.
