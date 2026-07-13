@@ -97,6 +97,31 @@
     },
     {
       "op": "marker",
+      "name": "continue-without-saving"
+    },
+    {
+      "op": "wait_until",
+      "condition": "file_select_accept_ready",
+      "timeout_ticks": 1800
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["A"]
+          }
+        }
+      }
+    },
+    {
+      "op": "wait_until",
+      "condition": "name_entry_input_ready",
+      "timeout_ticks": 1800
+    },
+    {
+      "op": "marker",
       "name": "remove-carried-name-character"
     },
     {
@@ -121,7 +146,7 @@
     },
     {
       "op": "cycle",
-      "count": 3,
+      "count": 4,
       "frames": [
         {
           "pads": {
@@ -193,7 +218,7 @@
     },
     {
       "op": "cycle",
-      "count": 6,
+      "count": 7,
       "frames": [
         {
           "pads": {
@@ -204,6 +229,11 @@
         },
         {}
       ]
+    },
+    {
+      "op": "wait_until",
+      "condition": "name_entry_character_select",
+      "timeout_ticks": 300
     },
     {
       "op": "marker",
@@ -221,6 +251,15 @@
     },
     {
       "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "observe-eye-shredder"
+    },
+    {
+      "op": "repeat",
+      "count": 180,
       "frame": {}
     },
     {
