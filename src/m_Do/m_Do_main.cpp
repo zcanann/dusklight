@@ -50,6 +50,7 @@
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
+#include "dusk/automation/worker.hpp"
 #include "dusk/crash_handler.h"
 #include "dusk/crash_reporting.h"
 #include "dusk/data.hpp"
@@ -505,6 +506,13 @@ int game_main(int argc, char* argv[]) {
     }
     mainCalled = true;
 
+    // Automation control modes intentionally run before settings, SDL, Aurora,
+    // logging, or the game are initialized. This keeps the protocol usable by
+    // process supervisors even on machines without a display or game image.
+    if (const auto automationResult = dusk::automation::run_from_command_line(argc, argv)) {
+        return *automationResult;
+    }
+
     cxxopts::ParseResult parsed_arg_options;
 
     try {
@@ -519,6 +527,8 @@ int game_main(int argc, char* argv[]) {
             ("backend", "Graphics API backend to use (auto, d3d12, d3d11, metal, vulkan, null)", cxxopts::value<std::string>())
             ("cvar", "Override configuration variables without modifying config", cxxopts::value<std::vector<std::string>>())
             ("develop", "Enable the game's developer mode and OSReport for debugging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
+            ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
             ("stage", "Upon launching, load a stage, room, spawn point, and layer. When using --load-save, it uses the specified save on the loaded stage. Format (STAGE,ROOM,POINT,LAYER). Example: (STAGE) or (STAGE,0,0,-1)", cxxopts::value<std::string>());
 

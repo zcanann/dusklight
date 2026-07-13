@@ -1421,8 +1421,12 @@ set(DUSK_FILES
         src/dusk/android_frame_rate.hpp
         src/dusk/android_frame_rate.cpp
         src/dusk/asserts.cpp
+        include/dusk/automation/build_identity.hpp
+        src/dusk/automation/build_identity.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_tape.cpp
+        include/dusk/automation/worker.hpp
+        src/dusk/automation/worker.cpp
         src/dusk/batch.cpp
         src/dusk/batch.hpp
         src/dusk/config.cpp
