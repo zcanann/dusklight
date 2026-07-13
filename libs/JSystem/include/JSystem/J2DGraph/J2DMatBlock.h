@@ -1084,6 +1084,7 @@ public:
     }
     void setCullMode(u8 mode) { mCullMode = mode; }
     void setColorChanNum(u8 num) { mColorChanNum = num; }
+    u8 getColorChanNum() const { return mColorChanNum; }
     void setMatColor(u32 i, JUtility::TColor color) {
         J3D_PANIC(48, i < 2, "Error : range over.");
         mMatColor[i] = color;

@@ -10,6 +10,9 @@
 #include <cstring>
 
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
+#include "JSystem/J2DGraph/J2DMaterial.h"
+#include "JSystem/J2DGraph/J2DScreen.h"
+#include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
 #include "dusk/version.hpp"
 #include "f_op/f_op_msg_mng.h"
@@ -930,9 +933,30 @@ void dName_c::setMoji(int moji) {
 #if TARGET_PC
     auto& observer = dusk::automation::name_entry_observer();
     const bool shadowWrite = mCurPos > 8 && observer.cursorBreakoutShadowEnabled();
-    observer.noteCharacterWrite(mCurPos, mCharColumn, mCharRow, mMojiSet,
-                                CHAR_TRUNC(moji), mCurPos < 8 || shadowWrite,
-                                shadowWrite);
+    const bool modeledWrite = observer.noteCharacterWrite(
+        mCurPos, mCharColumn, mCharRow, mMojiSet, CHAR_TRUNC(moji),
+        mCurPos < 8 || shadowWrite, shadowWrite);
+
+    // In the fresh NTSC-U retail allocation, this exact cursor-breakout write
+    // lands on material 0's color-channel count. Reproduce that relationship
+    // explicitly: native allocations and pointer sizes cannot safely mirror the
+    // original heap adjacency.
+    const auto& observedWrite = observer.latest().lastWrite;
+    if (modeledWrite &&
+        dusk::version::getGameVersion() == dusk::version::GameVersion::GcnUsa &&
+        observedWrite.characterIndex ==
+            dusk::automation::EyeShredderExpectedWrite::CharacterIndex &&
+        observedWrite.originalOffset ==
+            dusk::automation::EyeShredderExpectedWrite::OriginalOffset &&
+        observedWrite.bytes == dusk::automation::EyeShredderExpectedWrite::Bytes &&
+        nameIn.NameInScr != NULL && nameIn.NameInScr->mMaterials != NULL &&
+        nameIn.NameInScr->mMaterialNum > 0)
+    {
+        J2DColorBlock* colorBlock = nameIn.NameInScr->mMaterials[0].getColorBlock();
+        if (colorBlock->getColorChanNum() == 1) {
+            colorBlock->setColorChanNum(12);
+        }
+    }
     if (mCurPos > 8) {
         if (shadowWrite) {
             mDoAud_seStart(Z2SE_SY_NAME_INPUT, NULL, 0, 0);

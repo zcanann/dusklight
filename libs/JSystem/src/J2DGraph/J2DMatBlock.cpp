@@ -27,8 +27,13 @@ void J2DColorBlock::setGX() {
     GXSetNumChans(mColorChanNum);
     const GXChannelID mapping[4] = {GX_COLOR0, GX_ALPHA0, GX_COLOR1, GX_ALPHA1};
     for (int i = 0; i < mColorChanNum << 1; i++) {
-        GXColorSrc mat_src = (GXColorSrc)mColorChan[i].getMatSrc();
-        GXSetChanCtrl(mapping[i], GX_DISABLE, GX_SRC_REG, mat_src, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+        // Retail continues emitting controls when a corrupted channel count exceeds
+        // the four color/alpha controls. Cycle those controls deterministically so
+        // fidelity profiles preserve the command count without reading host memory
+        // outside either four-entry array.
+        const int channel = i & 3;
+        GXColorSrc mat_src = (GXColorSrc)mColorChan[channel].getMatSrc();
+        GXSetChanCtrl(mapping[channel], GX_DISABLE, GX_SRC_REG, mat_src, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
     }
     GXSetCullMode((GXCullMode)mCullMode);
 }
