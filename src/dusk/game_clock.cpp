@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
+#include <dolphin/os/OSTime.h>
 #include <dusk/frame_interpolation.h>
 
 namespace dusk::game_clock {
@@ -97,6 +98,13 @@ MainLoopPacer advance_main_loop() {
 void commit_sim_tick() {
     ensure_initialized();
     s_current_snapshot_time += kSimPeriodDuration;
+}
+
+bool complete_sim_tick() {
+    if (s_mainLoopMode != MainLoopMode::FixedStep) {
+        return true;
+    }
+    return AuroraAdvanceDeterministicTime(1) != FALSE;
 }
 
 float sample_interpolation_step() {

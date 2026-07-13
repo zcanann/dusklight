@@ -92,6 +92,7 @@
 #include "dusk/config.hpp"
 #include "dusk/speedrun.h"
 #include "dusk/settings.h"
+#include "dusk/scope_guard.hpp"
 #include "dusk/texture_replacements.hpp"
 #include "dusk/io.hpp"
 #include "dusk/version.hpp"
@@ -209,6 +210,7 @@ bool launchUILoop() {
 }
 
 static bool finish_input_tape_tick();
+static bool finish_simulation_tick();
 static bool unpacedMainLoop;
 static void write_name_entry_trace_on_exit();
 
@@ -318,6 +320,9 @@ void main01(void) {
                     fapGm_Execute();
                     mDoAud_Execute();
                     dusk::game_clock::commit_sim_tick();
+                    if (!finish_simulation_tick()) {
+                        break;
+                    }
                     if (finish_input_tape_tick()) {
                         break;
                     }
@@ -347,7 +352,9 @@ void main01(void) {
             fapGm_Execute();
 
             mDoAud_Execute();
-            finish_input_tape_tick();
+            if (finish_simulation_tick()) {
+                finish_input_tape_tick();
+            }
         }
 
         aurora_end_frame();
@@ -489,6 +496,7 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool headlessMainLoop;
+static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 
@@ -499,6 +507,18 @@ static bool finish_input_tape_tick() {
 
     dusk::IsRunning = false;
     return true;
+}
+
+static bool finish_simulation_tick() {
+    if (dusk::game_clock::complete_sim_tick()) {
+        return true;
+    }
+
+    DuskLog.error("Deterministic OS time failed to advance after a completed simulation tick "
+                  "(clock disabled or OSTime overflow)");
+    deterministicTimeAdvanceFailed = true;
+    dusk::IsRunning = false;
+    return false;
 }
 
 static void write_name_entry_trace_on_exit() {
@@ -561,6 +581,13 @@ int game_main(int argc, char* argv[]) {
         return *automationResult;
     }
 
+    bool deterministicTimeEnabled = false;
+    SimpleScopeGuard deterministicTimeGuard([&deterministicTimeEnabled] {
+        if (deterministicTimeEnabled) {
+            AuroraDisableDeterministicTime();
+        }
+    });
+
     cxxopts::ParseResult parsed_arg_options;
     std::string inputTapePath;
     std::size_t inputTapeFrameCount = 0;
@@ -583,6 +610,7 @@ int game_main(int argc, char* argv[]) {
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
             ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("headless", "Use the null render backend with an invisible window; implies --unpaced and requires --dvd", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("deterministic-time-start", "Initial signed OS timer tick for --unpaced/--headless (default 0)", cxxopts::value<std::int64_t>())
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -642,6 +670,12 @@ int game_main(int argc, char* argv[]) {
 
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
     unpacedMainLoop = headlessMainLoop || parsed_arg_options["unpaced"].as<bool>();
+    const bool hasDeterministicTimeStart = parsed_arg_options.count("deterministic-time-start") != 0;
+    if (hasDeterministicTimeStart && !unpacedMainLoop) {
+        fprintf(stderr,
+                "Time Error: --deterministic-time-start requires --unpaced or --headless\n");
+        return 1;
+    }
     if (headlessMainLoop && !parsed_arg_options.count("dvd")) {
         fprintf(stderr, "Headless Error: --headless requires an explicit --dvd PATH\n");
         return 1;
@@ -650,6 +684,18 @@ int game_main(int argc, char* argv[]) {
         parsed_arg_options["backend"].as<std::string>() != "null") {
         fprintf(stderr, "Headless Error: --headless only supports --backend null\n");
         return 1;
+    }
+    const OSTime deterministicInitialTicks = hasDeterministicTimeStart
+                                                 ? parsed_arg_options["deterministic-time-start"].as<std::int64_t>()
+                                                 : 0;
+    if (unpacedMainLoop) {
+        if (!AuroraEnableDeterministicTime(deterministicInitialTicks, 30, 1)) {
+            fprintf(stderr,
+                    "Time Error: failed to enable deterministic OS time at tick %lld (30/1 Hz)\n",
+                    static_cast<long long>(deterministicInitialTicks));
+            return 1;
+        }
+        deterministicTimeEnabled = true;
     }
     dusk::game_clock::set_main_loop_mode(
         unpacedMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
@@ -768,7 +814,10 @@ int game_main(int argc, char* argv[]) {
 
     log_build_info();
     if (unpacedMainLoop) {
-        DuskLog.info("Automation timing: fixed 30 Hz step (headless={})", headlessMainLoop);
+        DuskLog.info("Automation timing: fixed 30 Hz step (headless={}, initial_os_tick={})",
+                     headlessMainLoop, deterministicInitialTicks);
+        DuskLog.warn("Deterministic OS time does not dispatch OSAlarm callbacks; pre-loop time "
+                     "remains fixed at the declared initial tick until the first completed simulation tick");
     }
     if (hasNameEntryTrace) {
         DuskLog.info("Name-entry trace: {} (fidelity={})",
@@ -1160,7 +1209,12 @@ int game_main(int argc, char* argv[]) {
     dusk::config::shutdown();
     aurora_shutdown();
 
-    return nameEntryTraceWriteFailed ? 1 : 0;
+    if (deterministicTimeEnabled) {
+        AuroraDisableDeterministicTime();
+        deterministicTimeEnabled = false;
+    }
+
+    return nameEntryTraceWriteFailed || deterministicTimeAdvanceFailed ? 1 : 0;
 }
 
 

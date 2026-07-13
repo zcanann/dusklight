@@ -35,6 +35,8 @@ constexpr MainLoopPacer fixed_step_pacer() {
 
 MainLoopPacer advance_main_loop();
 void commit_sim_tick();
+/** Advances deterministic OS time after one completed game simulation tick. */
+bool complete_sim_tick();
 float sample_interpolation_step();
 
 float consume_interval(const void* consumer);
