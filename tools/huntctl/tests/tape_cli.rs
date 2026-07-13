@@ -59,8 +59,10 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
     assert!(inspect.status.success());
     let summary: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
     assert_eq!(summary["source_version"]["minor"], 2);
-    assert_eq!(summary["frame_count"], 4);
+    assert_eq!(summary["nominal_frame_count"], 4);
     assert_eq!(summary["wait_frame_count"], 1);
+    assert_eq!(summary["minimum_tick_count"], 3);
+    assert_eq!(summary["minimum_duration_seconds"], 0.1);
     assert_eq!(summary["wait_conditions"]["name_entry_active"], 1);
     fs::remove_dir_all(directory).unwrap();
 }

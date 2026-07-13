@@ -206,6 +206,7 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
                     }
                 }
                 let wait_frame_count: usize = wait_conditions.values().sum();
+                let minimum_tick_count = decoded.tape.frames.len() - wait_frame_count;
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&json!({
@@ -215,11 +216,12 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
                             "numerator": decoded.tape.tick_rate_numerator,
                             "denominator": decoded.tape.tick_rate_denominator
                         },
-                        "frame_count": decoded.tape.frames.len(),
+                        "nominal_frame_count": decoded.tape.frames.len(),
                         "owned_ports_union": owned_ports,
                         "wait_frame_count": wait_frame_count,
                         "wait_conditions": wait_conditions,
-                        "duration_seconds": decoded.tape.frames.len() as f64
+                        "minimum_tick_count": minimum_tick_count,
+                        "minimum_duration_seconds": minimum_tick_count as f64
                             * decoded.tape.tick_rate_denominator as f64
                             / decoded.tape.tick_rate_numerator as f64
                     }))?
