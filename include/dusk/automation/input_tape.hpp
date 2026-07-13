@@ -14,7 +14,7 @@ inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
     'D', 'U', 'S', 'K', 'T', 'A', 'P', 'E',
 };
 inline constexpr std::uint16_t kInputTapeMajorVersion = 1;
-inline constexpr std::uint16_t kInputTapeMinorVersion = 1;
+inline constexpr std::uint16_t kInputTapeMinorVersion = 2;
 inline constexpr std::size_t kInputTapeHeaderSize = 32;
 inline constexpr std::size_t kRawPadStateSize = 12;
 inline constexpr std::size_t kInputFrameSize = 52;
@@ -24,6 +24,13 @@ enum class RawPadFlags : std::uint8_t {
     None = 0,
     Connected = 1 << 0,
 };
+
+enum class InputFrameCondition : std::uint8_t {
+    None = 0,
+    NameEntryActive = 1,
+};
+
+const char* input_frame_condition_name(InputFrameCondition condition);
 
 constexpr RawPadFlags operator|(RawPadFlags lhs, RawPadFlags rhs) {
     return static_cast<RawPadFlags>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
@@ -60,6 +67,10 @@ struct RawPadState {
 struct InputFrame {
     // Bit N means automation owns controller port N for this tick.
     std::uint8_t ownedPorts = 0;
+    // A conditioned frame owns the declared ports with neutral input until the
+    // condition is true, then advances to the next frame in the same tick.
+    InputFrameCondition condition = InputFrameCondition::None;
+    std::uint16_t timeoutTicks = 0;
     std::array<RawPadState, kInputPortCount> pads{};
 
     bool operator==(const InputFrame&) const = default;
@@ -82,6 +93,7 @@ enum class InputTapeError {
     InvalidFrameSize,
     InvalidTickRate,
     InvalidOwnedPorts,
+    InvalidFrameCondition,
     InvalidPadFlags,
     TrailingData,
     TooManyFrames,
@@ -98,6 +110,13 @@ enum class TapeEndBehavior {
     Loop,
 };
 
+enum class InputTapePlaybackError {
+    None,
+    ConditionTimedOut,
+};
+
+const char* input_tape_playback_error_message(InputTapePlaybackError error);
+
 /**
  * Game-thread tape player. Loading may allocate; tick() never does.
  */
@@ -111,12 +130,19 @@ public:
     void tick();
 
     bool isPlaying() const { return mPlaying; }
+    bool hasFailed() const { return mPlaybackError != InputTapePlaybackError::None; }
+    InputTapePlaybackError playbackError() const { return mPlaybackError; }
+    std::size_t failedFrameIndex() const { return mFailedFrame; }
+    InputFrameCondition failedCondition() const { return mFailedCondition; }
     std::size_t nextFrameIndex() const { return mNextFrame; }
     std::size_t frameCount() const { return mTape.frames.size(); }
     const InputTape& tape() const { return mTape; }
 
 private:
     void apply(const InputFrame& frame);
+    void applyNeutral(std::uint8_t ownedPorts);
+    bool conditionSatisfied(InputFrameCondition condition) const;
+    void advanceFrame();
     void releaseOwnedPorts();
 
     InputTape mTape;
@@ -125,6 +151,10 @@ private:
     TapeEndBehavior mEndBehavior = TapeEndBehavior::Release;
     bool mPlaying = false;
     bool mReleasePending = false;
+    std::uint16_t mConditionWaitTicks = 0;
+    InputTapePlaybackError mPlaybackError = InputTapePlaybackError::None;
+    std::size_t mFailedFrame = 0;
+    InputFrameCondition mFailedCondition = InputFrameCondition::None;
 };
 
 // The main game input read advances this process-wide player once per tick.

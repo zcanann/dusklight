@@ -1,5 +1,7 @@
 #include "dusk/automation/input_tape.hpp"
 
+#include "dusk/automation/name_entry_observer.hpp"
+
 #include <dolphin/pad.h>
 
 #include <algorithm>
@@ -11,6 +13,24 @@ namespace {
 
 constexpr std::uint8_t kAllPortsMask = (1u << kInputPortCount) - 1u;
 constexpr std::uint8_t kKnownPadFlags = static_cast<std::uint8_t>(RawPadFlags::Connected);
+
+bool valid_frame_condition(const InputFrameCondition condition) {
+    return condition == InputFrameCondition::None ||
+           condition == InputFrameCondition::NameEntryActive;
+}
+
+bool valid_condition_frame(const InputFrame& frame) {
+    if (!valid_frame_condition(frame.condition)) {
+        return false;
+    }
+    if (frame.condition == InputFrameCondition::None) {
+        return frame.timeoutTicks == 0;
+    }
+    const RawPadState neutral{};
+    return frame.timeoutTicks != 0 &&
+           std::all_of(frame.pads.begin(), frame.pads.end(),
+                       [&neutral](const RawPadState& pad) { return pad == neutral; });
+}
 
 std::uint16_t read_u16(const std::uint8_t* input) {
     return static_cast<std::uint16_t>(input[0]) | (static_cast<std::uint16_t>(input[1]) << 8);
@@ -124,6 +144,8 @@ const char* input_tape_error_message(const InputTapeError error) {
         return "input tape tick rate is invalid";
     case InputTapeError::InvalidOwnedPorts:
         return "input tape owns an invalid controller port";
+    case InputTapeError::InvalidFrameCondition:
+        return "input tape contains an invalid conditioned frame";
     case InputTapeError::InvalidPadFlags:
         return "input tape contains unknown controller flags";
     case InputTapeError::TrailingData:
@@ -134,6 +156,16 @@ const char* input_tape_error_message(const InputTapeError error) {
     return "unknown input tape error";
 }
 
+const char* input_frame_condition_name(const InputFrameCondition condition) {
+    switch (condition) {
+    case InputFrameCondition::None:
+        return "none";
+    case InputFrameCondition::NameEntryActive:
+        return "name_entry_active";
+    }
+    return "unknown";
+}
+
 InputTapeError validate_input_tape(const InputTape& tape) {
     if (tape.tickRateNumerator == 0 || tape.tickRateDenominator == 0) {
         return InputTapeError::InvalidTickRate;
@@ -142,6 +174,9 @@ InputTapeError validate_input_tape(const InputTape& tape) {
     for (const InputFrame& frame : tape.frames) {
         if ((frame.ownedPorts & ~kAllPortsMask) != 0) {
             return InputTapeError::InvalidOwnedPorts;
+        }
+        if (!valid_condition_frame(frame)) {
+            return InputTapeError::InvalidFrameCondition;
         }
         for (const RawPadState& pad : frame.pads) {
             if ((static_cast<std::uint8_t>(pad.flags) & ~kKnownPadFlags) != 0) {
@@ -199,8 +234,13 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
         if ((frame.ownedPorts & ~kAllPortsMask) != 0) {
             return InputTapeError::InvalidOwnedPorts;
         }
-        if (input[1] != 0 || input[2] != 0 || input[3] != 0) {
-            return InputTapeError::InvalidFrameSize;
+        if (minorVersion < 2) {
+            if (input[1] != 0 || input[2] != 0 || input[3] != 0) {
+                return InputTapeError::InvalidFrameSize;
+            }
+        } else {
+            frame.condition = static_cast<InputFrameCondition>(input[1]);
+            frame.timeoutTicks = read_u16(input + 2);
         }
         input += 4;
 
@@ -213,6 +253,9 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
                 pad.error = has_flag(pad.flags, RawPadFlags::Connected) ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
             }
             input += kRawPadStateSize;
+        }
+        if (!valid_condition_frame(frame)) {
+            return InputTapeError::InvalidFrameCondition;
         }
     }
 
@@ -242,6 +285,8 @@ InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t
     std::uint8_t* destination = encoded.data() + kInputTapeHeaderSize;
     for (const InputFrame& frame : tape.frames) {
         destination[0] = frame.ownedPorts;
+        destination[1] = static_cast<std::uint8_t>(frame.condition);
+        write_u16(destination + 2, frame.timeoutTicks);
         destination += 4;
         for (const RawPadState& pad : frame.pads) {
             encode_pad(pad, destination);
@@ -272,6 +317,10 @@ bool InputTapePlayer::start(const TapeEndBehavior endBehavior) {
     mNextFrame = 0;
     mEndBehavior = endBehavior;
     mReleasePending = false;
+    mConditionWaitTicks = 0;
+    mPlaybackError = InputTapePlaybackError::None;
+    mFailedFrame = 0;
+    mFailedCondition = InputFrameCondition::None;
     mPlaying = !mTape.frames.empty();
     return mPlaying;
 }
@@ -281,6 +330,10 @@ void InputTapePlayer::stop() {
     mNextFrame = 0;
     mPlaying = false;
     mReleasePending = false;
+    mConditionWaitTicks = 0;
+    mPlaybackError = InputTapePlaybackError::None;
+    mFailedFrame = 0;
+    mFailedCondition = InputFrameCondition::None;
 }
 
 void InputTapePlayer::tick() {
@@ -292,7 +345,42 @@ void InputTapePlayer::tick() {
         return;
     }
 
-    apply(mTape.frames[mNextFrame]);
+    std::size_t satisfiedConditions = 0;
+    while (mPlaying) {
+        const InputFrame& frame = mTape.frames[mNextFrame];
+        if (frame.condition != InputFrameCondition::None) {
+            if (conditionSatisfied(frame.condition)) {
+                mConditionWaitTicks = 0;
+                advanceFrame();
+                ++satisfiedConditions;
+                if (mPlaying && satisfiedConditions >= mTape.frames.size()) {
+                    // A looping tape made entirely of already-satisfied gates
+                    // has no input frame to consume this tick. Keep ownership
+                    // neutral and resume from the wrapped frame next tick.
+                    applyNeutral(mTape.frames[mNextFrame].ownedPorts);
+                    return;
+                }
+                continue;
+            }
+
+            applyNeutral(frame.ownedPorts);
+            ++mConditionWaitTicks;
+            if (mConditionWaitTicks >= frame.timeoutTicks) {
+                mPlaying = false;
+                mPlaybackError = InputTapePlaybackError::ConditionTimedOut;
+                mFailedFrame = mNextFrame;
+                mFailedCondition = frame.condition;
+            }
+            return;
+        }
+
+        apply(frame);
+        advanceFrame();
+        return;
+    }
+}
+
+void InputTapePlayer::advanceFrame() {
     ++mNextFrame;
     if (mNextFrame < mTape.frames.size()) {
         return;
@@ -308,8 +396,19 @@ void InputTapePlayer::tick() {
         break;
     case TapeEndBehavior::Loop:
         mNextFrame = 0;
+        mConditionWaitTicks = 0;
         break;
     }
+}
+
+const char* input_tape_playback_error_message(const InputTapePlaybackError error) {
+    switch (error) {
+    case InputTapePlaybackError::None:
+        return "no error";
+    case InputTapePlaybackError::ConditionTimedOut:
+        return "input tape condition timed out";
+    }
+    return "unknown input tape playback error";
 }
 
 void InputTapePlayer::apply(const InputFrame& frame) {
@@ -323,6 +422,22 @@ void InputTapePlayer::apply(const InputFrame& frame) {
         }
     }
     mOwnedPorts = frame.ownedPorts;
+}
+
+void InputTapePlayer::applyNeutral(const std::uint8_t ownedPorts) {
+    InputFrame neutral;
+    neutral.ownedPorts = ownedPorts;
+    apply(neutral);
+}
+
+bool InputTapePlayer::conditionSatisfied(const InputFrameCondition condition) const {
+    switch (condition) {
+    case InputFrameCondition::None:
+        return true;
+    case InputFrameCondition::NameEntryActive:
+        return name_entry_observer().latest().active != 0;
+    }
+    return false;
 }
 
 void InputTapePlayer::releaseOwnedPorts() {

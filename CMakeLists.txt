@@ -457,6 +457,7 @@ target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_S
 add_executable(dusk_input_tape_test EXCLUDE_FROM_ALL
     tests/input_tape_test.cpp
     src/dusk/automation/input_tape.cpp
+    src/dusk/automation/name_entry_observer.cpp
 )
 target_include_directories(dusk_input_tape_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include

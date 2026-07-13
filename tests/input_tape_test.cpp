@@ -1,4 +1,5 @@
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/name_entry_observer.hpp"
 
 #include <dolphin/pad.h>
 
@@ -60,6 +61,7 @@ void testCanonicalRoundTrip() {
     REQUIRE(bytes.size() == kInputTapeHeaderSize + kInputFrameSize);
     REQUIRE(std::equal(kInputTapeMagic.begin(), kInputTapeMagic.end(), bytes.begin()));
     REQUIRE(bytes[8] == 1 && bytes[9] == 0);
+    REQUIRE(bytes[10] == kInputTapeMinorVersion && bytes[11] == 0);
     REQUIRE(bytes[12] == kInputTapeHeaderSize && bytes[13] == 0);
     REQUIRE(bytes[14] == kInputFrameSize && bytes[15] == 0);
     REQUIRE(bytes[16] == 60 && bytes[20] == 2);
@@ -102,6 +104,15 @@ void testMalformedTapesAreRejected() {
     malformed[kInputTapeHeaderSize + 4 + 10] = 0x80;
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidPadFlags);
 
+    malformed = bytes;
+    malformed[kInputTapeHeaderSize + 1] = 0xff;
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidFrameCondition);
+
+    malformed = bytes;
+    malformed[kInputTapeHeaderSize + 1] =
+        static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive);
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidFrameCondition);
+
     tape.frames[0].ownedPorts = 0x80;
     REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::InvalidOwnedPorts);
 }
@@ -122,6 +133,28 @@ void testMinorZeroConnectionErrorsRemainCompatible() {
     InputTape decoded;
     REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
     REQUIRE(decoded.frames[0].pads[0].error == PAD_ERR_NO_CONTROLLER);
+}
+
+void testConditionedFrameRoundTrip() {
+    using namespace dusk::automation;
+
+    InputTape tape;
+    tape.frames.resize(1);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 1234;
+
+    std::vector<std::uint8_t> bytes;
+    REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
+    REQUIRE(bytes[kInputTapeHeaderSize] == 0x0f);
+    REQUIRE(bytes[kInputTapeHeaderSize + 1] ==
+            static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive));
+    REQUIRE(bytes[kInputTapeHeaderSize + 2] == 0xd2);
+    REQUIRE(bytes[kInputTapeHeaderSize + 3] == 0x04);
+
+    InputTape decoded;
+    REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
+    REQUIRE(decoded == tape);
 }
 
 void testPlayerOwnsAndReleasesPorts() {
@@ -162,6 +195,93 @@ void testPlayerOwnsAndReleasesPorts() {
     player.tick();
     REQUIRE(!gActive[1]);
     REQUIRE(gClearCalls[1] == 1);
+}
+
+void testPlayerWaitsNeutrallyForCondition() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    name_entry_observer().endSession();
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 3;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_B;
+
+    InputTapePlayer player;
+    player.install(tape);
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+
+    player.tick();
+    REQUIRE(player.isPlaying());
+    REQUIRE(player.nextFrameIndex() == 0);
+    for (std::size_t port = 0; port < PAD_CHANMAX; ++port) {
+        REQUIRE(gActive[port]);
+        REQUIRE(gStatuses[port].button == 0);
+        REQUIRE(gStatuses[port].stickX == 0);
+    }
+
+    name_entry_observer().beginSession();
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(player.nextFrameIndex() == 2);
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_B);
+    name_entry_observer().endSession();
+}
+
+void testPlayerConditionTimeoutIsTerminal() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    name_entry_observer().endSession();
+
+    InputTape tape;
+    tape.frames.resize(1);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 2;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    REQUIRE(player.isPlaying());
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(player.hasFailed());
+    REQUIRE(player.playbackError() == InputTapePlaybackError::ConditionTimedOut);
+    REQUIRE(player.failedFrameIndex() == 0);
+    REQUIRE(player.failedCondition() == InputFrameCondition::NameEntryActive);
+    REQUIRE(gActive[0]);
+    REQUIRE(gStatuses[0].button == 0);
+}
+
+void testSatisfiedConditionOnlyLoopConsumesOneTick() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    name_entry_observer().beginSession();
+
+    InputTape tape;
+    tape.frames.resize(1);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[0].timeoutTicks = 2;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Loop));
+    player.tick();
+    REQUIRE(player.isPlaying());
+    REQUIRE(player.nextFrameIndex() == 0);
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gSetCalls[0] == 1);
+    REQUIRE(gStatuses[0].button == 0);
+    name_entry_observer().endSession();
 }
 
 void testRecorderCapturesAllPortsWithoutGrowing() {
@@ -232,7 +352,11 @@ int main() {
     testCanonicalRoundTrip();
     testMalformedTapesAreRejected();
     testMinorZeroConnectionErrorsRemainCompatible();
+    testConditionedFrameRoundTrip();
     testPlayerOwnsAndReleasesPorts();
+    testPlayerWaitsNeutrallyForCondition();
+    testPlayerConditionTimeoutIsTerminal();
+    testSatisfiedConditionOnlyLoopConsumesOneTick();
     testRecorderCapturesAllPortsWithoutGrowing();
     std::cout << "input tape tests passed\n";
     return 0;
