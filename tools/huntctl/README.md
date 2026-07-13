@@ -61,3 +61,50 @@ The model sends complete tapes or candidate batches. It never serializes Rust
 or C++ memory layouts and never performs per-tick IPC. Large traces and images
 will remain content-addressed artifacts; shared-memory blob references can be
 added after profiling without changing the coarse scheduling interface.
+
+## DUSKTAPE authoring
+
+The tape codec is byte-compatible with native DUSKTAPE v1.1 and decodes legacy
+v1.0 tapes, including v1.0's derived controller error values. Inspect a tape or
+expand its exact frames as JSON with:
+
+```console
+huntctl tape inspect run.tape
+huntctl tape inspect run.tape --frames
+```
+
+Compile a strict `dusktape-program/v1` JSON program with:
+
+```console
+huntctl tape compile boot.json boot.tape
+```
+
+Example:
+
+```json
+{
+  "schema": "dusktape-program/v1",
+  "tick_rate": { "numerator": 30, "denominator": 1 },
+  "default_owned_ports": 1,
+  "steps": [
+    { "op": "marker", "name": "boot" },
+    { "op": "repeat", "count": 60, "frame": {} },
+    { "op": "frame", "frame": { "pads": { "0": { "buttons": ["START"] } } } },
+    { "op": "hold", "count": 1 },
+    { "op": "repeat", "count": 30, "frame": {} }
+  ]
+}
+```
+
+`frame` emits one exact frame. `repeat` emits `count` copies of its exact frame.
+`hold` emits `count` additional copies of the last emitted frame. Missing pad
+fields are neutral; missing pads are neutral and connected. `owned_ports` is a
+four-bit mask and may be overridden per frame. Buttons accept either a raw
+`u16` mask or names: `LEFT`, `RIGHT`, `DOWN`, `UP`, `Z`, `R`, `L`, `A`, `B`,
+`X`, `Y`, and `START`/`MENU`.
+
+The binary tape has no marker channel. Compilation therefore always writes an
+external `OUTPUT.tape.markers.json` sidecar, keeping the replay bytes canonical
+while preserving source markers at exact tick offsets. Unknown JSON fields,
+invalid ports, zero counts, duplicate/empty markers, and expansions beyond ten
+million frames are rejected.

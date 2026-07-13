@@ -1,8 +1,11 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
+use huntctl::tape::InputTape;
+use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::transport::ProcessTransport;
 use serde_json::{Value, json};
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
@@ -21,10 +24,70 @@ fn run() -> Result<(), Box<dyn Error>> {
     match command {
         "hello" => command_hello(&args[1..]),
         "ping" => command_ping(&args[1..]),
+        "tape" => command_tape(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("inspect") if args.len() == 2 || (args.len() == 3 && args[2] == "--frames") => {
+            let bytes = fs::read(&args[1])?;
+            let decoded = InputTape::decode(&bytes)?;
+            if args.get(2).is_some_and(|value| value == "--frames") {
+                println!("{}", serde_json::to_string_pretty(&decoded)?);
+            } else {
+                let owned_ports = decoded
+                    .tape
+                    .frames
+                    .iter()
+                    .fold(0, |mask, frame| mask | frame.owned_ports);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "format": "DUSKTAPE",
+                        "source_version": decoded.source_version,
+                        "tick_rate": {
+                            "numerator": decoded.tape.tick_rate_numerator,
+                            "denominator": decoded.tape.tick_rate_denominator
+                        },
+                        "frame_count": decoded.tape.frames.len(),
+                        "owned_ports_union": owned_ports,
+                        "duration_seconds": decoded.tape.frames.len() as f64
+                            * decoded.tape.tick_rate_denominator as f64
+                            / decoded.tape.tick_rate_numerator as f64
+                    }))?
+                );
+            }
+            Ok(())
+        }
+        Some("compile") if args.len() == 3 => {
+            let source = fs::read_to_string(&args[1])?;
+            let compiled = TapeProgram::from_json(&source)?.compile()?;
+            let bytes = compiled.tape.encode()?;
+            fs::write(&args[2], &bytes)?;
+            let marker_path = format!("{}.markers.json", args[2]);
+            fs::write(
+                &marker_path,
+                serde_json::to_vec_pretty(&json!({
+                    "schema": "dusktape-markers/v1",
+                    "tape": args[2],
+                    "markers": compiled.markers
+                }))?,
+            )?;
+            println!(
+                "wrote {} frames ({} bytes) to {}; markers: {}",
+                compiled.tape.frames.len(),
+                bytes.len(),
+                args[2],
+                marker_path
+            );
             Ok(())
         }
         _ => usage_error(),
@@ -110,7 +173,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.json OUTPUT.tape\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker\n\nTape program schema: {PROGRAM_SCHEMA}"
     );
 }
 

@@ -3,6 +3,8 @@
 pub mod artifact;
 pub mod client;
 pub mod protocol;
+pub mod tape;
+pub mod tape_program;
 pub mod transport;
 
 pub use artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};
