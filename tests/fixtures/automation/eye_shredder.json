@@ -1,0 +1,250 @@
+{
+  "schema": "dusktape-program/v1",
+  "tick_rate": {
+    "numerator": 30,
+    "denominator": 1
+  },
+  "default_owned_ports": 15,
+  "steps": [
+    {
+      "op": "marker",
+      "name": "process-start"
+    },
+    {
+      "op": "repeat",
+      "count": 180,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-pulse-1"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 118,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-pulse-2"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 118,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "start-pulse-3"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 178,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "select-first-save"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["A"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 30,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "remove-carried-name-character"
+    },
+    {
+      "op": "repeat",
+      "count": 2,
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["B"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 148,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "move-to-final-name-slot"
+    },
+    {
+      "op": "cycle",
+      "count": 3,
+      "frames": [
+        {
+          "pads": {
+            "0": {
+              "buttons": ["RIGHT"]
+            }
+          }
+        },
+        {}
+      ]
+    },
+    {
+      "op": "marker",
+      "name": "fill-final-name-slot"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["A"]
+          }
+        }
+      }
+    },
+    {
+      "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "cursor-breakout-right-106"
+    },
+    {
+      "op": "cycle",
+      "count": 106,
+      "frames": [
+        {
+          "pads": {
+            "0": {
+              "buttons": ["RIGHT"]
+            }
+          }
+        },
+        {}
+      ]
+    },
+    {
+      "op": "marker",
+      "name": "cursor-114-backspace-to-113"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["B"]
+          }
+        }
+      }
+    },
+    {
+      "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "select-uppercase-m"
+    },
+    {
+      "op": "cycle",
+      "count": 6,
+      "frames": [
+        {
+          "pads": {
+            "0": {
+              "stick_x": -127
+            }
+          }
+        },
+        {}
+      ]
+    },
+    {
+      "op": "marker",
+      "name": "eye-shredder-write-113"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["A"]
+          }
+        }
+      }
+    },
+    {
+      "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "confirm-corrupted-file"
+    },
+    {
+      "op": "cycle",
+      "count": 3,
+      "frames": [
+        {
+          "pads": {
+            "0": {
+              "buttons": ["START"]
+            }
+          }
+        },
+        {}
+      ]
+    },
+    {
+      "op": "repeat",
+      "count": 30,
+      "frame": {}
+    }
+  ]
+}

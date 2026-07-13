@@ -39,6 +39,7 @@ impl Default for TickRate {
 pub enum Step {
     Frame { frame: FrameSpec },
     Repeat { count: u64, frame: FrameSpec },
+    Cycle { count: u64, frames: Vec<FrameSpec> },
     Hold { count: u64 },
     Marker { name: String },
 }
@@ -126,6 +127,7 @@ pub enum ProgramError {
     InvalidOwnedPorts(u8),
     InvalidPort(String),
     ZeroCount,
+    EmptyCycle,
     HoldBeforeFrame,
     EmptyMarker,
     DuplicateMarker(String),
@@ -146,7 +148,8 @@ impl fmt::Display for ProgramError {
                 write!(f, "owned_ports mask 0x{mask:02x} addresses ports above 3")
             }
             Self::InvalidPort(port) => write!(f, "pad port {port:?} is outside 0..=3"),
-            Self::ZeroCount => f.write_str("repeat and hold counts must be nonzero"),
+            Self::ZeroCount => f.write_str("repeat, cycle, and hold counts must be nonzero"),
+            Self::EmptyCycle => f.write_str("cycle frames must not be empty"),
             Self::HoldBeforeFrame => f.write_str("hold requires a previously emitted frame"),
             Self::EmptyMarker => f.write_str("marker names must not be empty"),
             Self::DuplicateMarker(name) => write!(f, "marker name {name:?} is duplicated"),
@@ -193,6 +196,16 @@ impl TapeProgram {
                         count,
                     )?;
                 }
+                Step::Cycle {
+                    count,
+                    frames: cycle,
+                } => {
+                    let cycle = cycle
+                        .into_iter()
+                        .map(|frame| materialize(frame, self.default_owned_ports))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    push_cycle(&mut frames, cycle, count)?;
+                }
                 Step::Hold { count } => {
                     if count == 0 {
                         return Err(ProgramError::ZeroCount);
@@ -226,6 +239,36 @@ impl TapeProgram {
             markers,
         })
     }
+}
+
+fn push_cycle(
+    frames: &mut Vec<InputFrame>,
+    cycle: Vec<InputFrame>,
+    count: u64,
+) -> Result<(), ProgramError> {
+    if count == 0 {
+        return Err(ProgramError::ZeroCount);
+    }
+    if cycle.is_empty() {
+        return Err(ProgramError::EmptyCycle);
+    }
+    let count = usize::try_from(count).map_err(|_| ProgramError::TooManyFrames)?;
+    let additional = cycle
+        .len()
+        .checked_mul(count)
+        .ok_or(ProgramError::TooManyFrames)?;
+    let target = frames
+        .len()
+        .checked_add(additional)
+        .ok_or(ProgramError::TooManyFrames)?;
+    if target > MAX_EXPANDED_FRAMES {
+        return Err(ProgramError::TooManyFrames);
+    }
+    frames.reserve(additional);
+    for _ in 0..count {
+        frames.extend(cycle.iter().cloned());
+    }
+    Ok(())
 }
 
 fn materialize(spec: FrameSpec, default_owned_ports: u8) -> Result<InputFrame, ProgramError> {
@@ -347,7 +390,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compiles_frames_repeats_holds_and_markers() {
+    fn compiles_frames_repeats_cycles_holds_and_markers() {
         let program = TapeProgram::from_json(
             r#"{
           "schema":"dusktape-program/v1", "default_owned_ports":1,
@@ -355,6 +398,7 @@ mod tests {
             {"op":"repeat","count":2,"frame":{"pads":{"0":{"buttons":["A","RIGHT"],"stick_x":-7}}}},
             {"op":"marker","name":"pressed"},
             {"op":"hold","count":3},
+            {"op":"cycle","count":2,"frames":[{"pads":{"0":{"buttons":["B"]}}},{}]},
             {"op":"frame","frame":{}}
           ]
         }"#,
@@ -362,10 +406,13 @@ mod tests {
         .unwrap()
         .compile()
         .unwrap();
-        assert_eq!(program.tape.frames.len(), 6);
+        assert_eq!(program.tape.frames.len(), 10);
         assert_eq!(program.tape.frames[0].pads[0].buttons, 0x0102);
         assert_eq!(program.tape.frames[4].pads[0].stick_x, -7);
-        assert_eq!(program.tape.frames[5].pads[0].buttons, 0);
+        assert_eq!(program.tape.frames[5].pads[0].buttons, 0x0200);
+        assert_eq!(program.tape.frames[6].pads[0].buttons, 0);
+        assert_eq!(program.tape.frames[7].pads[0].buttons, 0x0200);
+        assert_eq!(program.tape.frames[9].pads[0].buttons, 0);
         assert_eq!(
             program.markers,
             vec![Marker {
@@ -391,5 +438,13 @@ mod tests {
         .compile()
         .unwrap_err();
         assert!(matches!(error, ProgramError::TooManyFrames));
+
+        let error = TapeProgram::from_json(
+            r#"{"schema":"dusktape-program/v1","steps":[{"op":"cycle","count":1,"frames":[]}]}"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap_err();
+        assert!(matches!(error, ProgramError::EmptyCycle));
     }
 }
