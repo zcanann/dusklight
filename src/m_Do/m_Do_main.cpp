@@ -523,6 +523,7 @@ static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static bool eyeShredderOracleEnabled;
+static bool automationOracleContinueOnPass;
 static dusk::automation::EyeShredderOracle eyeShredderOracle;
 static std::filesystem::path eyeShredderOracleResultPath;
 static bool eyeShredderOracleResultWriteFailed;
@@ -530,7 +531,10 @@ static std::uint64_t automationSimulationTick;
 static std::uint64_t automationTapeFrame = dusk::automation::NameEntryNoTick;
 
 static bool automation_oracle_rejected_before_loop() {
-    return eyeShredderOracleEnabled && eyeShredderOracle.isTerminal();
+    return eyeShredderOracleEnabled && eyeShredderOracle.isTerminal() &&
+           !(automationOracleContinueOnPass &&
+             eyeShredderOracle.result().status ==
+                 dusk::automation::EyeShredderOracleStatus::Passed);
 }
 
 static void begin_automation_simulation_tick() {
@@ -552,6 +556,13 @@ static bool finish_automation_oracle_tick() {
                                automationSimulationTick, automationTapeFrame);
     ++automationSimulationTick;
     if (!eyeShredderOracle.isTerminal()) {
+        return false;
+    }
+
+    if (automationOracleContinueOnPass &&
+        eyeShredderOracle.result().status ==
+            dusk::automation::EyeShredderOracleStatus::Passed)
+    {
         return false;
     }
 
@@ -712,6 +723,7 @@ int game_main(int argc, char* argv[]) {
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
             ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
+            ("automation-oracle-continue-on-pass", "Keep playing after an automation oracle passes; failures still stop immediately", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("load-save", "Skip the opening and load a save from slot 1-3", cxxopts::value<uint8_t>()->default_value("0"))
             ("stage", "Upon launching, load a stage, room, spawn point, and layer. When using --load-save, it uses the specified save on the loaded stage. Format (STAGE,ROOM,POINT,LAYER). Example: (STAGE) or (STAGE,0,0,-1)", cxxopts::value<std::string>());
 
@@ -906,6 +918,13 @@ int game_main(int argc, char* argv[]) {
     const bool hasAutomationOracle = parsed_arg_options.count("automation-oracle") != 0;
     const bool hasAutomationOracleResult =
         parsed_arg_options.count("automation-oracle-result") != 0;
+    automationOracleContinueOnPass =
+        parsed_arg_options["automation-oracle-continue-on-pass"].as<bool>();
+    if (automationOracleContinueOnPass && !hasAutomationOracle) {
+        fprintf(stderr,
+                "Automation Oracle Error: --automation-oracle-continue-on-pass requires --automation-oracle NAME\n");
+        return 1;
+    }
     if (hasAutomationOracle != hasAutomationOracleResult) {
         fprintf(stderr,
                 "Automation Oracle Error: --automation-oracle NAME and --automation-oracle-result PATH must be used together\n");
@@ -1028,8 +1047,9 @@ int game_main(int argc, char* argv[]) {
                      cursorBreakoutShadow ? "cursor_breakout_shadow" : "observe_only");
     }
     if (eyeShredderOracleEnabled) {
-        DuskLog.info("Automation oracle: eye-shredder -> {}",
-                     dusk::io::fs_path_to_string(eyeShredderOracleResultPath));
+        DuskLog.info("Automation oracle: eye-shredder -> {} (continue_on_pass={})",
+                     dusk::io::fs_path_to_string(eyeShredderOracleResultPath),
+                     automationOracleContinueOnPass);
     }
     if (hasInputTape) {
         DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
