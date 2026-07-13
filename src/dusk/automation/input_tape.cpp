@@ -1,5 +1,6 @@
 #include "dusk/automation/input_tape.hpp"
 
+#include "dusk/automation/file_select_observer.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
 
 #include <dolphin/pad.h>
@@ -16,7 +17,12 @@ constexpr std::uint8_t kKnownPadFlags = static_cast<std::uint8_t>(RawPadFlags::C
 
 bool valid_frame_condition(const InputFrameCondition condition) {
     return condition == InputFrameCondition::None ||
-           condition == InputFrameCondition::NameEntryActive;
+           condition == InputFrameCondition::NameEntryActive ||
+           condition == InputFrameCondition::NameEntryCharacterSelect ||
+           condition == InputFrameCondition::NameEntryInputReady ||
+           condition == InputFrameCondition::FileSelectNoSaveReady ||
+           condition == InputFrameCondition::FileSelectDataSelectReady ||
+           condition == InputFrameCondition::FileSelectAcceptReady;
 }
 
 bool valid_condition_frame(const InputFrame& frame) {
@@ -162,6 +168,16 @@ const char* input_frame_condition_name(const InputFrameCondition condition) {
         return "none";
     case InputFrameCondition::NameEntryActive:
         return "name_entry_active";
+    case InputFrameCondition::NameEntryCharacterSelect:
+        return "name_entry_character_select";
+    case InputFrameCondition::NameEntryInputReady:
+        return "name_entry_input_ready";
+    case InputFrameCondition::FileSelectNoSaveReady:
+        return "file_select_no_save_ready";
+    case InputFrameCondition::FileSelectDataSelectReady:
+        return "file_select_data_select_ready";
+    case InputFrameCondition::FileSelectAcceptReady:
+        return "file_select_accept_ready";
     }
     return "unknown";
 }
@@ -436,6 +452,22 @@ bool InputTapePlayer::conditionSatisfied(const InputFrameCondition condition) co
         return true;
     case InputFrameCondition::NameEntryActive:
         return name_entry_observer().latest().active != 0;
+    case InputFrameCondition::NameEntryCharacterSelect: {
+        const NameEntryObservation& observation = name_entry_observer().latest();
+        return observation.active != 0 && name_entry_observer().inputProcessed() &&
+               observation.selectionProcedure == 0;
+    }
+    case InputFrameCondition::NameEntryInputReady: {
+        const NameEntryObservation& observation = name_entry_observer().latest();
+        return observation.active != 0 && name_entry_observer().inputProcessed() &&
+               (observation.selectionProcedure == 0 || observation.selectionProcedure == 4);
+    }
+    case InputFrameCondition::FileSelectNoSaveReady:
+        return file_select_observer().noSavePromptReady();
+    case InputFrameCondition::FileSelectDataSelectReady:
+        return file_select_observer().dataSelectReady();
+    case InputFrameCondition::FileSelectAcceptReady:
+        return file_select_observer().acceptReady();
     }
     return false;
 }

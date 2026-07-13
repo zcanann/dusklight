@@ -24,6 +24,9 @@ void testSnapshotAndOutOfRangeEvents() {
     observer.setTickContext(42, 17);
     REQUIRE(observer.fidelityProfile() == NameEntryFidelityProfile::ObserveOnly);
     observer.beginSession();
+    REQUIRE(!observer.inputProcessed());
+    observer.markInputProcessed();
+    REQUIRE(observer.inputProcessed());
     observer.updateVisualCursor(7);
 
     std::array<NameEntryCharacterObservation, NameEntryOriginalLayout::CharacterCount> characters{};
@@ -49,6 +52,8 @@ void testSnapshotAndOutOfRangeEvents() {
     REQUIRE(events[1].cursorRequested == 9);
     REQUIRE(events[1].simTick == 42);
     REQUIRE(events[1].tapeFrame == 17);
+    observer.endSession();
+    REQUIRE(!observer.inputProcessed());
 }
 
 void testOriginalLayoutWritesStayInShadowMemory() {

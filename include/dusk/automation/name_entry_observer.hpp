@@ -141,6 +141,8 @@ public:
 
     void beginSession();
     void endSession();
+    void markInputProcessed() { mInputProcessed = true; }
+    bool inputProcessed() const { return mInputProcessed; }
     void setTickContext(std::uint64_t simTick, std::uint64_t tapeFrame);
     void updateVisualCursor(std::uint8_t visualCursor);
     void observe(std::uint8_t logicalCursor, std::uint8_t lastLogicalCursor,
@@ -175,6 +177,7 @@ private:
     std::uint64_t mCurrentSimTick = NameEntryNoTick;
     std::uint64_t mCurrentTapeFrame = NameEntryNoTick;
     std::uint64_t mWriteAttemptCount = 0;
+    bool mInputProcessed = false;
     NameEntryFidelityProfile mProfile = NameEntryFidelityProfile::ObserveOnly;
 };
 

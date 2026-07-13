@@ -64,12 +64,22 @@ pub enum Step {
 #[serde(rename_all = "snake_case")]
 pub enum ProgramWaitCondition {
     NameEntryActive,
+    NameEntryCharacterSelect,
+    NameEntryInputReady,
+    FileSelectNoSaveReady,
+    FileSelectDataSelectReady,
+    FileSelectAcceptReady,
 }
 
 impl From<ProgramWaitCondition> for WaitCondition {
     fn from(value: ProgramWaitCondition) -> Self {
         match value {
             ProgramWaitCondition::NameEntryActive => Self::NameEntryActive,
+            ProgramWaitCondition::NameEntryCharacterSelect => Self::NameEntryCharacterSelect,
+            ProgramWaitCondition::NameEntryInputReady => Self::NameEntryInputReady,
+            ProgramWaitCondition::FileSelectNoSaveReady => Self::FileSelectNoSaveReady,
+            ProgramWaitCondition::FileSelectDataSelectReady => Self::FileSelectDataSelectReady,
+            ProgramWaitCondition::FileSelectAcceptReady => Self::FileSelectAcceptReady,
         }
     }
 }

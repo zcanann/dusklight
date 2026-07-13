@@ -18,6 +18,11 @@ pub enum WaitCondition {
     #[default]
     None,
     NameEntryActive,
+    NameEntryCharacterSelect,
+    NameEntryInputReady,
+    FileSelectNoSaveReady,
+    FileSelectDataSelectReady,
+    FileSelectAcceptReady,
 }
 
 impl WaitCondition {
@@ -25,6 +30,11 @@ impl WaitCondition {
         match self {
             Self::None => "none",
             Self::NameEntryActive => "name_entry_active",
+            Self::NameEntryCharacterSelect => "name_entry_character_select",
+            Self::NameEntryInputReady => "name_entry_input_ready",
+            Self::FileSelectNoSaveReady => "file_select_no_save_ready",
+            Self::FileSelectDataSelectReady => "file_select_data_select_ready",
+            Self::FileSelectAcceptReady => "file_select_accept_ready",
         }
     }
 
@@ -32,6 +42,11 @@ impl WaitCondition {
         match self {
             Self::None => 0,
             Self::NameEntryActive => 1,
+            Self::NameEntryCharacterSelect => 2,
+            Self::NameEntryInputReady => 3,
+            Self::FileSelectNoSaveReady => 4,
+            Self::FileSelectDataSelectReady => 5,
+            Self::FileSelectAcceptReady => 6,
         }
     }
 
@@ -39,6 +54,11 @@ impl WaitCondition {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::NameEntryActive),
+            2 => Ok(Self::NameEntryCharacterSelect),
+            3 => Ok(Self::NameEntryInputReady),
+            4 => Ok(Self::FileSelectNoSaveReady),
+            5 => Ok(Self::FileSelectDataSelectReady),
+            6 => Ok(Self::FileSelectAcceptReady),
             _ => Err(TapeError::InvalidWaitCondition),
         }
     }
@@ -456,7 +476,7 @@ mod tests {
             TapeError::InvalidWaitTimeout
         );
 
-        bytes[33] = 2;
+        bytes[33] = 7;
         assert_eq!(
             InputTape::decode(&bytes).unwrap_err(),
             TapeError::InvalidWaitCondition

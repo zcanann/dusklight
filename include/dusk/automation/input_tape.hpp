@@ -28,6 +28,11 @@ enum class RawPadFlags : std::uint8_t {
 enum class InputFrameCondition : std::uint8_t {
     None = 0,
     NameEntryActive = 1,
+    NameEntryCharacterSelect = 2,
+    NameEntryInputReady = 3,
+    FileSelectNoSaveReady = 4,
+    FileSelectDataSelectReady = 5,
+    FileSelectAcceptReady = 6,
 };
 
 const char* input_frame_condition_name(InputFrameCondition condition);

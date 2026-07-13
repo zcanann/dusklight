@@ -1,4 +1,5 @@
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/file_select_observer.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
 
 #include <dolphin/pad.h>
@@ -260,6 +261,157 @@ void testPlayerConditionTimeoutIsTerminal() {
     REQUIRE(gStatuses[0].button == 0);
 }
 
+void testPlayerWaitsForInteractiveCharacterSelection() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    auto& observer = name_entry_observer();
+    observer.endSession();
+    observer.beginSession();
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryCharacterSelect;
+    tape.frames[0].timeoutTicks = 4;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_A;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+    std::array<NameEntryCharacterObservation, NameEntryOriginalLayout::CharacterCount>
+        characters{};
+    observer.observe(0, 0, 0, 4, 0, 0, 0, characters);
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+    REQUIRE(gStatuses[0].button == 0);
+
+    observer.observe(0, 0, 0, 0, 0, 0, 0, characters);
+    observer.markInputProcessed();
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_A);
+    observer.endSession();
+}
+
+void testPlayerWaitsForStableNameEntryInputHandler() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    auto& observer = name_entry_observer();
+    observer.endSession();
+    observer.beginSession();
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::NameEntryInputReady;
+    tape.frames[0].timeoutTicks = 4;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_B;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+
+    std::array<NameEntryCharacterObservation, NameEntryOriginalLayout::CharacterCount>
+        characters{};
+    observer.observe(0, 0, 0, 2, 0, 0, 0, characters);
+    observer.markInputProcessed();
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+    REQUIRE(gStatuses[0].button == 0);
+
+    observer.observe(0, 0, 0, 4, 0, 0, 0, characters);
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_B);
+    observer.endSession();
+}
+
+void testPlayerWaitsForNoSavePromptHandler() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    file_select_observer().setNoSavePromptReady(false);
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::FileSelectNoSaveReady;
+    tape.frames[0].timeoutTicks = 3;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_A;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+    REQUIRE(gStatuses[0].button == 0);
+
+    file_select_observer().setNoSavePromptReady(true);
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_A);
+    file_select_observer().setNoSavePromptReady(false);
+}
+
+void testPlayerWaitsForStableFileDataSelection() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    file_select_observer().setDataSelectReady(false);
+
+    InputTape tape;
+    tape.frames.resize(2);
+    tape.frames[0].ownedPorts = 0x0f;
+    tape.frames[0].condition = InputFrameCondition::FileSelectDataSelectReady;
+    tape.frames[0].timeoutTicks = 3;
+    tape.frames[1].ownedPorts = 0x0f;
+    tape.frames[1].pads[0].buttons = PAD_BUTTON_A;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 0);
+
+    file_select_observer().setDataSelectReady(true);
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(gStatuses[0].button == PAD_BUTTON_A);
+    file_select_observer().setDataSelectReady(false);
+}
+
+void testFileSelectAcceptReadyCoversStableHandlers() {
+    using namespace dusk::automation;
+
+    auto& observer = file_select_observer();
+    observer.setNoSavePromptReady(false);
+    observer.setDataSelectReady(false);
+    observer.setKeyWaitReady(false);
+    observer.setYesNoSelectReady(false);
+    REQUIRE(!observer.acceptReady());
+    observer.setKeyWaitReady(true);
+    REQUIRE(observer.acceptReady());
+    observer.setKeyWaitReady(false);
+    observer.setNoSavePromptReady(true);
+    REQUIRE(observer.acceptReady());
+    observer.setNoSavePromptReady(false);
+    observer.setYesNoSelectReady(true);
+    REQUIRE(observer.acceptReady());
+    observer.setYesNoSelectReady(false);
+}
+
 void testSatisfiedConditionOnlyLoopConsumesOneTick() {
     using namespace dusk::automation;
 
@@ -356,6 +508,11 @@ int main() {
     testPlayerOwnsAndReleasesPorts();
     testPlayerWaitsNeutrallyForCondition();
     testPlayerConditionTimeoutIsTerminal();
+    testPlayerWaitsForInteractiveCharacterSelection();
+    testPlayerWaitsForStableNameEntryInputHandler();
+    testPlayerWaitsForNoSavePromptHandler();
+    testPlayerWaitsForStableFileDataSelection();
+    testFileSelectAcceptReadyCoversStableHandlers();
     testSatisfiedConditionOnlyLoopConsumesOneTick();
     testRecorderCapturesAllPortsWithoutGrowing();
     std::cout << "input tape tests passed\n";

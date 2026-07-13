@@ -31,6 +31,7 @@ void NameEntryObserver::beginSession() {
     mLatest.active = 1;
     mLatest.revision = 1;
     mWriteAttemptCount = 0;
+    mInputProcessed = false;
     NameEntryEvent event;
     event.kind = NameEntryEventKind::SessionStarted;
     push(event);
@@ -47,6 +48,7 @@ void NameEntryObserver::endSession() {
         return;
     }
     mLatest.active = 0;
+    mInputProcessed = false;
     ++mLatest.revision;
     NameEntryEvent event;
     event.kind = NameEntryEventKind::SessionEnded;

@@ -12,6 +12,7 @@
 #include "JSystem/JKernel/JKRSolidHeap.h"
 #include "d/d_file_sel_info.h"
 #include "d/d_file_select.h"
+#include "dusk/automation/file_select_observer.hpp"
 #include "d/d_lib.h"
 #include "d/d_meter2_info.h"
 #include "d/d_msg_string.h"
@@ -146,11 +147,19 @@ void dFs_HIO_c::genMessage(JORMContext* mctx) {
 static dFs_HIO_c g_fsHIO;
 
 dFile_select_c::dFile_select_c(JKRArchive* i_archiveP) {
+    dusk::automation::file_select_observer().setNoSavePromptReady(false);
+    dusk::automation::file_select_observer().setDataSelectReady(false);
+    dusk::automation::file_select_observer().setKeyWaitReady(false);
+    dusk::automation::file_select_observer().setYesNoSelectReady(false);
     mpArchive = i_archiveP;
     mpFileSelect3d = JKR_NEW dFile_select3D_c();
 }
 
 dFile_select_c::~dFile_select_c() {
+    dusk::automation::file_select_observer().setNoSavePromptReady(false);
+    dusk::automation::file_select_observer().setDataSelectReady(false);
+    dusk::automation::file_select_observer().setKeyWaitReady(false);
+    dusk::automation::file_select_observer().setYesNoSelectReady(false);
     int i;
 
     for (i = 0; i < 3; i++) {
@@ -384,6 +393,8 @@ void dFile_select_c::_move() {
     #endif
 
     (this->*DataSelProc[mDataSelProc])();
+    dusk::automation::file_select_observer().setYesNoSelectReady(
+        mDataSelProc == DATASELPROC_YES_NO_SELECT);
 
     selFileWakuAnm();
     bookIconAnm();
@@ -905,6 +916,7 @@ bool dFile_select_c::pointerYesNoSelect(bool errorSelect) {
 
 // handles switching between quest logs
 void dFile_select_c::dataSelect() {
+    dusk::automation::file_select_observer().setDataSelectReady(true);
 #if TARGET_PC
     if (pointerDataSelect()) {
         return;
@@ -924,6 +936,7 @@ void dFile_select_c::dataSelect() {
             mSelectNum--;
             dataSelectAnmSet();  // run the quest log selection animation
             mDataSelProc = DATASELPROC_DATA_SELECT_MOVE_ANIME;
+            dusk::automation::file_select_observer().setDataSelectReady(false);
         }
     } else if (stick->checkDownTrigger()) {
         // if we're not on the bottom quest log
@@ -933,6 +946,7 @@ void dFile_select_c::dataSelect() {
             mSelectNum++;
             dataSelectAnmSet();  // run the quest log selection animation
             mDataSelProc = DATASELPROC_DATA_SELECT_MOVE_ANIME;
+            dusk::automation::file_select_observer().setDataSelectReady(false);
         }
     }
 }
@@ -954,6 +968,7 @@ static u16 msgTbl[3] = {
 };
 
 void dFile_select_c::dataSelectStart() {
+    dusk::automation::file_select_observer().setDataSelectReady(false);
 #if TARGET_PC
     dusk::menu_pointer::clear_deferred_activation(dusk::menu_pointer::Context::FileSelect);
 #endif
@@ -4949,7 +4964,10 @@ void dFile_select_c::loadNandFile() {
 #endif
 
 void dFile_select_c::MemCardErrMsgWaitKey() {
-    if (cAPICPad_ANY_BUTTON(PAD_1) != 0 && dMeter2Info_getMsgKeyWaitTimer() == 0) {
+    const bool ready = dMeter2Info_getMsgKeyWaitTimer() == 0;
+    dusk::automation::file_select_observer().setKeyWaitReady(ready);
+    if (cAPICPad_ANY_BUTTON(PAD_1) != 0 && ready) {
+        dusk::automation::file_select_observer().setKeyWaitReady(false);
         if (mKeyWaitMsgDispCb != NULL) {
             (this->*mKeyWaitMsgDispCb)();
         }
@@ -5044,6 +5062,7 @@ void dFile_select_c::noSaveSelDispInit() {
 }
 
 void dFile_select_c::MemCardNoSaveSelDisp() {
+    dusk::automation::file_select_observer().setNoSavePromptReady(false);
     bool iVar1 = errorTxtChangeAnm();
     bool iVar3 = true;
     bool iVar2 = true;
@@ -5061,13 +5080,16 @@ void dFile_select_c::MemCardNoSaveSelDisp() {
             yesnoCursorShow();
         }
         mCardCheckProc = MEMCARDCHECKPROC_ERRMSG_WAIT_NO_SAVE_SEL;
+        dusk::automation::file_select_observer().setNoSavePromptReady(true);
     }
 }
 
 void dFile_select_c::MemCardErrMsgWaitNoSaveSel() {
+    dusk::automation::file_select_observer().setNoSavePromptReady(true);
     if (!errYesNoSelect()) {
         return;
     }
+    dusk::automation::file_select_observer().setNoSavePromptReady(false);
 
     if (field_0x0268 != 0) {
         setInitSaveData();

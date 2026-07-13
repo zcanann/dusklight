@@ -391,6 +391,7 @@ void dName_c::_move() {
     cursorAnm();
 #if TARGET_PC
     automationObserve();
+    dusk::automation::name_entry_observer().markInputProcessed();
 #endif
 }
 
