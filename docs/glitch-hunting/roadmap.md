@@ -90,8 +90,9 @@ oracle, not only a visual assertion.
 - Add parameterized stick arcs/splines, roll-spacing programs, and
   observation-feedback controllers.
 - Add novelty signatures over events and quantized semantic state.
-- Start with coverage-guided fuzzing, structured enumeration, and evolutionary
-  search before adding learned policies.
+- Retain structured enumeration and exact reduction as promotion tools. Use the
+  native fitted-Q transition corpus and a return-and-explore archive to propose
+  candidates only after trace-v2 state and episode-level validation exist.
 
 Acceptance: the system rediscovers at least one withheld known glitch from a
 coarse scenario/program and produces a smaller deterministic artifact.

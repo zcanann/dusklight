@@ -41,6 +41,9 @@ state hashes, and the reason it was classified as interesting.
   model, headless execution, and headful promotion.
 - [Milestone-backed route search](search.md) documents typed controller
   candidates, population evaluation, lexicographic scoring, and evolution.
+- [Native offline reinforcement learning](offline-rl.md) documents the compact
+  transition corpus, tree-based fitted Q iteration, trace extraction, and its
+  current non-authoritative boundary.
 - [Route timelines, variants, and Git](timelines.md) documents the visual route
   workbench, curated segment variants, exact boundary dependencies, and Git-owned
   lineages.

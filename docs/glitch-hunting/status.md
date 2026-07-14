@@ -41,6 +41,10 @@ roadmap documents describe the larger target.
 - `huntctl corpus` stores immutable tapes and run metadata under real SHA-256
   names, uses atomic replacement for manifests, and verifies blobs against
   corruption or tampering.
+- `huntctl learn` stores authenticated binary transition batches, runs a native
+  deterministic tree-based fitted-Q learner, and extracts explicitly
+  non-authoritative per-frame movement transitions from absolute tape/trace
+  pairs with correct post-tick alignment.
 - Name-entry instrumentation exposes stable logical/visual cursor snapshots,
   original-layout offsets, and a bounded event ring. Its off-by-default Eye
   Shredder shadow profile models original big-endian neighboring writes without
