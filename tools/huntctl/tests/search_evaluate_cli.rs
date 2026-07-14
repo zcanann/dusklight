@@ -375,6 +375,22 @@ fn boot_minimizer_ddmins_a_dense_contiguous_mash_and_proves_trim() {
     };
     let candidate_path = root.join("dense.candidate.json");
     fs::write(&candidate_path, serde_json::to_vec_pretty(&dense).unwrap()).unwrap();
+    let rejected = run(&[
+        "search",
+        "minimize-boot",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        root.join("single-sample").to_str().unwrap(),
+        "--repetitions",
+        "1",
+    ]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("at least two repetitions"));
     let output_root = root.join("minimized");
     let output = run(&[
         "search",
@@ -419,5 +435,109 @@ fn boot_minimizer_ddmins_a_dense_contiguous_mash_and_proves_trim() {
         .tape;
     assert_eq!(minimized.compile().unwrap(), tape);
     assert_eq!(tape.frames.len(), 78);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn boot_timing_golfer_keeps_same_tick_move_that_unlocks_faster_pair() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-boot-golf-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let source = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        actions: vec![
+            MacroAction::Neutral { frames: 10 },
+            MacroAction::Press {
+                buttons: vec![ControllerButton::A],
+                hold_frames: 1,
+                neutral_frames: 9,
+            },
+            MacroAction::Press {
+                buttons: vec![ControllerButton::Start],
+                hold_frames: 1,
+                neutral_frames: 99,
+            },
+        ],
+        ancestry: Ancestry::default(),
+    };
+    let candidate_path = root.join("source.candidate.json");
+    fs::write(&candidate_path, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+    let rejected = run(&[
+        "search",
+        "golf-boot",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        root.join("single-sample").to_str().unwrap(),
+        "--repetitions",
+        "1",
+    ]);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("at least two repetitions"));
+    let output_root = root.join("golfed");
+    let output = run(&[
+        "search",
+        "golf-boot",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--game-arg",
+        "mock-search-worker",
+        "--game-arg",
+        "--mock-mode",
+        "--game-arg",
+        "coordinate-golf",
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        output_root.to_str().unwrap(),
+        "--workers",
+        "4",
+        "--repetitions",
+        "2",
+        "--timeout-ms",
+        "2000",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-boot-timing-golf/v1");
+    assert_eq!(summary["source_goal_sim_tick"], 100);
+    assert_eq!(summary["goal_sim_tick"], 90);
+    assert_eq!(
+        summary["source_pulse_timestamps"],
+        serde_json::json!([10, 20])
+    );
+    assert_eq!(
+        summary["golfed_pulse_timestamps"],
+        serde_json::json!([9, 19])
+    );
+    assert_eq!(summary["accepted_moves"], 2);
+    assert_eq!(summary["goal_boundary_fingerprint"], "1".repeat(32));
+    assert!(output_root.join("golfed.candidate.json").is_file());
+    assert!(output_root.join("golfed.tape").is_file());
+    assert!(output_root.join("proof.json").is_file());
+    assert!(output_root.join("golf.summary.json").is_file());
+    let golfed: Candidate =
+        serde_json::from_slice(&fs::read(output_root.join("golfed.candidate.json")).unwrap())
+            .unwrap();
+    let tape = InputTape::decode(&fs::read(output_root.join("golfed.tape")).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(golfed.compile().unwrap(), tape);
     fs::remove_dir_all(root).unwrap();
 }

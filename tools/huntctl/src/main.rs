@@ -9,8 +9,8 @@ use huntctl::search::{
     rank_population, write_seed_population,
 };
 use huntctl::search_evaluator::{
-    BootMinimizeConfig, EvaluateConfig, SearchRunConfig, evaluate_population, minimize_boot,
-    run_search,
+    BootGolfConfig, BootMinimizeConfig, EvaluateConfig, SearchRunConfig, evaluate_population,
+    golf_boot, minimize_boot, run_search,
 };
 use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
@@ -452,6 +452,27 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
             candidate.validate()?;
             let summary = minimize_boot(&BootMinimizeConfig {
+                candidate,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("golf-boot") => {
+            let search_args = &args[1..];
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            candidate.validate()?;
+            let summary = golf_boot(&BootGolfConfig {
                 candidate,
                 game: required_path(search_args, "--game")?,
                 dvd: required_path(search_args, "--dvd")?,
@@ -1043,7 +1064,7 @@ fn print_usage() {
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
-        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
 }
 
@@ -1104,7 +1125,28 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
     let second_attempt = state_root.contains("attempt-002");
     let unstable_miss = mode == "unstable-goal" && second_attempt;
-    let hit_goal = mode != "miss" && !unstable_miss;
+    let coordinate_golf_tick = if mode == "coordinate-golf" {
+        let tape_path = required_path(args, "--input-tape")?;
+        let tape = InputTape::decode(&fs::read(tape_path)?)?.tape;
+        let pulse_timestamps: Vec<_> = tape
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| (frame.pads[0].buttons != 0).then_some(index))
+            .collect();
+        match pulse_timestamps.as_slice() {
+            [10, 20] | [10, 19] => Some(100_u64),
+            [9, 19] => Some(90_u64),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let hit_goal = if mode == "coordinate-golf" {
+        coordinate_golf_tick.is_some()
+    } else {
+        mode != "miss" && !unstable_miss
+    };
     let milestones: Vec<Value> = requested
         .split(',')
         .map(|id| {
@@ -1113,7 +1155,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                     && id == "gameplay-ready-f-sp103"
                     && goal == "entered-f-sp104");
             let base_tick = match id {
-                "gameplay-ready-f-sp103" => 77,
+                "gameplay-ready-f-sp103" => coordinate_golf_tick.unwrap_or(77),
                 "exit-f-sp103-to-f-sp104" => 572,
                 "entered-f-sp104" => 603,
                 _ => 0,
@@ -1157,7 +1199,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             "milestones": milestones
         }))?,
     )?;
-    if mode == "miss" || unstable_miss {
+    if mode == "miss" || unstable_miss || (mode == "coordinate-golf" && !hit_goal) {
         return Err("mock worker goal miss".into());
     }
     Ok(())

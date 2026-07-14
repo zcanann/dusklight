@@ -97,6 +97,32 @@ artifact again. The output contains `minimized.candidate.json`,
 `minimized.tape`, `proof.json`, and `minimize.summary.json`; intermediate ddmin
 rounds remain under the output root for audit.
 
+After reduction, golf the absolute timing of the surviving boot pulses without
+changing their order:
+
+    huntctl search golf-boot --candidate build/search/boot-minimized/minimized.candidate.json --game build/windows-clang-debug/dusklight.exe --dvd orig/GZ2E01/GZ2E01.iso --output build/search/boot-golfed --workers 16 --repetitions 3
+
+This is exhaustive coordinate descent, not evolution or random sampling. Each
+round tests every legal earlier absolute frame for every existing pulse,
+starting with the final pulse. A candidate is eligible only when all repeated
+runs agree exactly, it reaches the source proof's boundary fingerprint, and it
+does not regress the current goal tick. Selection minimizes goal tick first,
+then the sum and lexicographic vector of pulse timestamps. Consequently an
+earlier same-tick move is retained: it may open space for an earlier neighboring
+pulse and expose a faster pair on the next round. Golfing stops only when no
+single coordinate has an eligible earlier move, then runs a separate exact
+proof after truncating the winner to `goal tape_frame + 1`.
+
+The output contains `golfed.candidate.json`, `golfed.tape`, `proof.json`, and
+`golf.summary.json`. Every tested round remains below `rounds/`, including the
+source proof, manifests, per-attempt evidence, and results. This proves a local
+single-coordinate minimum for the fixed ordered pulse sequence; it does not
+claim a global optimum across different buttons, added/deleted pulses, or
+coordinated moves that require a temporarily later goal tick.
+
+Both boot proof tools require at least two repetitions; `--repetitions 1` is
+rejected rather than silently weakening determinism into a single observation.
+
 Individual primitives remain available:
 
     huntctl search seed --segment fsp103_to_fsp104 --output build/search/g0 --size 16 --rng-seed 1

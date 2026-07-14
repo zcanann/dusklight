@@ -153,6 +153,38 @@ pub struct BootMinimizeSummary {
     pub output_root: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct BootGolfConfig {
+    pub candidate: Candidate,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BootGolfSummary {
+    pub schema: &'static str,
+    pub source_candidate_id: String,
+    pub golfed_candidate_id: String,
+    pub source_goal_sim_tick: u64,
+    pub goal_sim_tick: u64,
+    pub goal_tape_frame: u64,
+    pub goal_boundary_fingerprint: String,
+    pub source_pulse_timestamps: Vec<u64>,
+    pub golfed_pulse_timestamps: Vec<u64>,
+    pub accepted_moves: u32,
+    pub evaluated_candidates: usize,
+    pub candidate: PathBuf,
+    pub tape: PathBuf,
+    pub proof: PathBuf,
+    pub output_root: PathBuf,
+}
+
 pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, EvaluateError> {
     let config = normalize_evaluate_config(config)?;
     validate_evaluate_config(&config)?;
@@ -403,12 +435,12 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
         || !config.dvd.is_file()
         || !config.working_directory.is_dir()
         || config.workers == 0
-        || config.repetitions == 0
+        || config.repetitions < 2
         || config.timeout.is_zero()
         || directory_is_nonempty(&config.output_root)?
     {
         return Err(EvaluateError::InvalidConfig(
-            "game, DVD, working directory, positive execution limits, and a new/empty output root are required"
+            "game, DVD, working directory, at least two repetitions, positive execution limits, and a new/empty output root are required"
                 .into(),
         ));
     }
@@ -589,6 +621,270 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
     };
     write_json(&config.output_root.join("minimize.summary.json"), &summary)?;
     Ok(summary)
+}
+
+/// Systematically moves the existing boot pulse sequence to earlier absolute
+/// frames. This is coordinate descent over every legal earlier timestamp, not
+/// a stochastic search: a move may be retained without improving the goal tick
+/// when its earlier timestamp can expose a coordinated improvement on a later
+/// pass.
+pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateError> {
+    if config.candidate.segment != SegmentProfile::BootToFsp103 {
+        return Err(EvaluateError::InvalidConfig(
+            "boot timing golf requires a boot_to_fsp103 candidate".into(),
+        ));
+    }
+    config.candidate.validate()?;
+    if !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.timeout.is_zero()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "game, DVD, working directory, at least two repetitions, positive execution limits, and a new/empty output root are required"
+                .into(),
+        ));
+    }
+    fs::create_dir_all(&config.output_root)?;
+    let evaluation = BootMinimizeConfig {
+        candidate: config.candidate.clone(),
+        game: config.game.clone(),
+        dvd: config.dvd.clone(),
+        output_root: config.output_root.clone(),
+        working_directory: config.working_directory.clone(),
+        game_args_prefix: config.game_args_prefix.clone(),
+        workers: config.workers,
+        repetitions: config.repetitions,
+        timeout: config.timeout,
+    };
+    let source_id = config.candidate.id()?;
+    let mut round = 0_u32;
+    let mut evaluated_candidates = 1_usize;
+    let initial = evaluate_boot_batch(
+        &evaluation,
+        vec![config.candidate.clone()],
+        &config
+            .output_root
+            .join("rounds")
+            .join(format!("{round:04}")),
+        round,
+    )?
+    .into_iter()
+    .next()
+    .ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the starting candidate did not reach gameplay-ready-f-sp103".into(),
+        )
+    })?;
+    let source_goal_sim_tick = initial.sim_tick;
+    let source_fingerprint = initial.boundary_fingerprint.clone();
+    let source_pulse_timestamps = pulse_timestamps(&initial.tape)?;
+    if source_pulse_timestamps.is_empty() {
+        return Err(EvaluateError::InvalidConfig(
+            "boot timing golf requires at least one pulse frame".into(),
+        ));
+    }
+    let mut current = initial;
+    let mut accepted_moves = 0_u32;
+    round += 1;
+
+    loop {
+        let timestamps = pulse_timestamps(&current.tape)?;
+        let mut candidates = Vec::new();
+        // Last-to-first ordering makes the menu/cutscene pulses most likely to
+        // occupy the first worker slots while retaining deterministic results.
+        for pulse_index in (0..timestamps.len()).rev() {
+            let earliest = if pulse_index == 0 {
+                0
+            } else {
+                timestamps[pulse_index - 1]
+                    .checked_add(1)
+                    .ok_or_else(|| EvaluateError::InvalidResult("pulse frame overflowed".into()))?
+            };
+            for timestamp in (earliest..timestamps[pulse_index]).rev() {
+                candidates.push(candidate_with_shifted_pulse(
+                    &current,
+                    pulse_index,
+                    timestamp,
+                    round,
+                )?);
+            }
+        }
+        if candidates.is_empty() {
+            break;
+        }
+        evaluated_candidates = evaluated_candidates
+            .checked_add(candidates.len())
+            .ok_or_else(|| EvaluateError::InvalidResult("candidate count overflowed".into()))?;
+        let mut proven = evaluate_boot_batch(
+            &evaluation,
+            candidates,
+            &config
+                .output_root
+                .join("rounds")
+                .join(format!("{round:04}")),
+            round,
+        )?;
+        proven.retain(|candidate| {
+            candidate.boundary_fingerprint == source_fingerprint
+                && candidate.sim_tick <= current.sim_tick
+                && boot_golf_cmp(candidate, &current).is_lt()
+        });
+        let Some(best) = proven.into_iter().min_by(boot_golf_cmp) else {
+            break;
+        };
+        current = best;
+        accepted_moves = accepted_moves
+            .checked_add(1)
+            .ok_or_else(|| EvaluateError::InvalidResult("accepted move count overflowed".into()))?;
+        round += 1;
+    }
+
+    let exact_target = BootReductionTarget {
+        sim_tick: current.sim_tick,
+        tape_frame: current.tape_frame,
+        boundary_fingerprint: source_fingerprint.clone(),
+    };
+    let required_frames = usize::try_from(current.tape_frame)
+        .map_err(|_| EvaluateError::InvalidResult("goal tape frame is too large".into()))?
+        .checked_add(1)
+        .ok_or_else(|| EvaluateError::InvalidResult("goal tape frame overflowed".into()))?;
+    if required_frames > current.tape.frames.len() {
+        return Err(EvaluateError::InvalidResult(
+            "goal tape frame lies outside the candidate tape".into(),
+        ));
+    }
+    let mut trimmed_tape = current.tape.clone();
+    trimmed_tape.frames.truncate(required_frames);
+    let mut trimmed = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &trimmed_tape)?;
+    trimmed.ancestry = crate::search::Ancestry {
+        generation: round,
+        parent_id: Some(current.candidate.id()?),
+        mutation: Some("trim after exact goal tape frame".into()),
+    };
+    let proof_root = config.output_root.join("proof");
+    let (mut proof_candidates, proof_report) =
+        evaluate_boot_batch_with_report(&evaluation, vec![trimmed], &proof_root, round)?;
+    evaluated_candidates = evaluated_candidates
+        .checked_add(1)
+        .ok_or_else(|| EvaluateError::InvalidResult("candidate count overflowed".into()))?;
+    proof_candidates.retain(|candidate| exact_target.accepts(candidate));
+    let golfed = proof_candidates.into_iter().next().ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the final boot timing candidate did not reproduce its exact proof".into(),
+        )
+    })?;
+
+    let candidate_path = config.output_root.join("golfed.candidate.json");
+    let tape_path = config.output_root.join("golfed.tape");
+    let proof_path = config.output_root.join("proof.json");
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&golfed.candidate)?,
+    )?;
+    fs::write(&tape_path, golfed.tape.encode()?)?;
+    write_json(&proof_path, &proof_report)?;
+    let summary = BootGolfSummary {
+        schema: "dusklight-boot-timing-golf/v1",
+        source_candidate_id: source_id,
+        golfed_candidate_id: golfed.candidate.id()?,
+        source_goal_sim_tick,
+        goal_sim_tick: golfed.sim_tick,
+        goal_tape_frame: golfed.tape_frame,
+        goal_boundary_fingerprint: source_fingerprint.digest,
+        source_pulse_timestamps,
+        golfed_pulse_timestamps: pulse_timestamps(&golfed.tape)?,
+        accepted_moves,
+        evaluated_candidates,
+        candidate: candidate_path,
+        tape: tape_path,
+        proof: proof_path,
+        output_root: config.output_root.clone(),
+    };
+    write_json(&config.output_root.join("golf.summary.json"), &summary)?;
+    Ok(summary)
+}
+
+fn pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
+    tape.frames
+        .iter()
+        .enumerate()
+        .filter(|(_, frame)| frame.pads[0].buttons != 0)
+        .map(|(index, _)| {
+            u64::try_from(index).map_err(|_| {
+                EvaluateError::InvalidResult("pulse timestamp does not fit in u64".into())
+            })
+        })
+        .collect()
+}
+
+fn pulse_timestamp_sum(tape: &InputTape) -> Result<u64, EvaluateError> {
+    pulse_timestamps(tape)?
+        .into_iter()
+        .try_fold(0_u64, |sum, timestamp| {
+            sum.checked_add(timestamp).ok_or_else(|| {
+                EvaluateError::InvalidResult("pulse timestamp sum overflowed".into())
+            })
+        })
+}
+
+fn boot_golf_cmp(left: &ProvenBootCandidate, right: &ProvenBootCandidate) -> std::cmp::Ordering {
+    let left_timestamps = pulse_timestamps(&left.tape).expect("validated candidate timestamps");
+    let right_timestamps = pulse_timestamps(&right.tape).expect("validated candidate timestamps");
+    left.sim_tick
+        .cmp(&right.sim_tick)
+        .then_with(|| {
+            pulse_timestamp_sum(&left.tape)
+                .expect("validated candidate timestamp sum")
+                .cmp(&pulse_timestamp_sum(&right.tape).expect("validated candidate timestamp sum"))
+        })
+        .then(left_timestamps.cmp(&right_timestamps))
+        .then_with(|| {
+            left.candidate
+                .id()
+                .unwrap()
+                .cmp(&right.candidate.id().unwrap())
+        })
+}
+
+fn candidate_with_shifted_pulse(
+    parent: &ProvenBootCandidate,
+    pulse_index: usize,
+    new_timestamp: u64,
+    generation: u32,
+) -> Result<Candidate, EvaluateError> {
+    let timestamps = pulse_timestamps(&parent.tape)?;
+    let old_timestamp = *timestamps.get(pulse_index).ok_or_else(|| {
+        EvaluateError::InvalidResult(format!("pulse index {pulse_index} is out of range"))
+    })?;
+    let new_index = usize::try_from(new_timestamp)
+        .map_err(|_| EvaluateError::InvalidResult("new pulse timestamp is too large".into()))?;
+    let old_index = usize::try_from(old_timestamp)
+        .map_err(|_| EvaluateError::InvalidResult("old pulse timestamp is too large".into()))?;
+    if new_timestamp >= old_timestamp
+        || parent.tape.frames[new_index].pads[0].buttons != 0
+        || (pulse_index > 0 && new_timestamp <= timestamps[pulse_index - 1])
+    {
+        return Err(EvaluateError::InvalidResult(
+            "shifted pulse does not preserve strict input order".into(),
+        ));
+    }
+    let mut tape = parent.tape.clone();
+    let pad = tape.frames[old_index].pads[0];
+    tape.frames[old_index].pads[0] = RawPadState::default();
+    tape.frames[new_index].pads[0] = pad;
+    let mut candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape)?;
+    candidate.ancestry = crate::search::Ancestry {
+        generation,
+        parent_id: Some(parent.candidate.id()?),
+        mutation: Some(format!(
+            "move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+        )),
+    };
+    Ok(candidate)
 }
 
 fn pulse_frame_count(tape: &InputTape) -> usize {
