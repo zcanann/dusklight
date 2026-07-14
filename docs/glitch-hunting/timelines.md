@@ -57,8 +57,10 @@ then opens a local browser view of the checked-in route graph.
 On Windows, the launcher prefers Brave when it is installed and otherwise uses
 the system default browser.
 
-The workbench renders milestones as a vertical tree and each checked-in segment
-variant as a card. **Play** runs the selected chain and releases controller
+The workbench follows the route topology from root milestones through outgoing
+segments, variant frontiers, shared destinations, and recursive draft children;
+the declaration order is not treated as route structure. **Play** runs the
+selected chain and releases controller
 ownership when its tape ends. **Record** does the same deterministic replay,
 then records live port-0 input beginning with the first PAD read after handoff.
 Each launch gets a fresh isolated writable state directory.
@@ -82,6 +84,32 @@ extended. Future promotion into the checked-in timeline must attach a native
 boundary predicate/fingerprint. Zero-frame, capacity-exhausted, corrupt,
 detached, or failed recordings remain visible for diagnosis but cannot become
 parents.
+
+**Delete** is available only on ignored drafts. It first previews the selected
+draft and every recursive draft descendant, then asks for confirmation of that
+exact impact set. Apply rechecks the full draft-graph revision, refuses active
+recordings and path escapes, and atomically moves each affected directory into
+`build/automation-state/route-workbench/trash/drafts/`. This is recoverable
+workspace cleanup, not deletion or mutation of checked-in timeline objects.
+
+When a timeline declares `milestone_program`, each milestone node also exposes
+**Edit predicate**. The editor works on the complete DSL source because the
+program is compiled and identified as one unit. The browser never supplies or
+sees a filesystem path: the server resolves only the path configured in the
+timeline, rejects symbolic-link and repository-root escapes, and returns the
+source with its SHA-256 revision and parsed phase/stability/expression summary.
+Save requires that exact source revision, parses and compiles the replacement,
+and requires definition names and order to remain identical to the timeline.
+It then uses an adjacent flushed temporary file and rollback backup. A stale
+editor receives a conflict instead of overwriting a newer filesystem edit.
+
+Variants pin both the compiled program identity and the destination milestone's
+compiled definition identity. Editing a predicate intentionally makes those
+proof pins stale. Such variants remain available for visual playback, but the
+workbench labels the proof stale and withholds record/continuation anchors until
+a native replay establishes and checks in new proof hashes. The editor changes
+only predicate source; topology, curated variants, game memory, and native game
+state remain read-only.
 
 Ready draft cards expose two presentation origins. **Play from boot** displays
 the complete composed chain. **Play from parent** executes that same complete
@@ -133,10 +161,11 @@ The line-oriented format uses declarations such as:
 
 ```text
 timeline intro
+milestone_program intro/milestones.milestones
 milestone process_boot
 milestone link_control
 segment boot_to_link from process_boot to link_control profile boot_to_fsp103
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 ticks 439
+variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 continuation main starts root@process-clean-v1
 continue main with boot_to_link.golf439 after root@process-clean-v1
 branch experiment from main at link_control

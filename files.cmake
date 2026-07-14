@@ -1434,6 +1434,9 @@ set(DUSK_FILES
         src/dusk/automation/gameplay_trace.cpp
         include/dusk/automation/milestones.hpp
         src/dusk/automation/milestones.cpp
+        include/dusk/automation/milestone_program.hpp
+        src/dusk/automation/milestone_program.cpp
+        src/dusk/automation/milestone_program_game.cpp
         include/dusk/automation/eye_shredder_oracle.hpp
         src/dusk/automation/eye_shredder_oracle.cpp
         include/dusk/automation/name_entry_observer.hpp

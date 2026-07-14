@@ -326,6 +326,7 @@ impl RouteStore {
         lineage_name: &str,
         source_root: &Path,
     ) -> Result<ObjectId, StoreError> {
+        timeline.validate_artifacts(Some(source_root))?;
         let parent = self.resolve_ref(reference)?;
         if !matches!(self.read(&parent)?.value, RouteObject::Lineage { .. }) {
             return Err(StoreError::RefNotLineage(reference.into()));
@@ -351,6 +352,7 @@ impl RouteStore {
         lineage_name: &str,
         source_root: &Path,
     ) -> Result<ObjectId, StoreError> {
+        timeline.validate_artifacts(Some(source_root))?;
         let parent = self.resolve_ref(from_reference)?;
         if !matches!(self.read(&parent)?.value, RouteObject::Lineage { .. }) {
             return Err(StoreError::RefNotLineage(from_reference.into()));

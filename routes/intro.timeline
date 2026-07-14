@@ -2,13 +2,14 @@
 # pre-cutscene control predicate and are retained in Git history, not as active
 # lineage. New downstream work must begin at the proven boundary below.
 timeline intro
+milestone_program intro/milestones.milestones
 
 milestone process_boot
 milestone link_control
 
 segment boot_to_link from process_boot to link_control profile boot_to_fsp103
 
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 ticks 439
+variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 program 10e0592eb001145ab860271f1d667789aace1e1aa1442ba750b20bd2453829d2 predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
 
 continuation main starts root@process-clean-v1
 continue main with boot_to_link.golf439 after root@process-clean-v1

@@ -5,6 +5,7 @@ use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_ITERATIONS, MAX_FQI_TRANSITIONS,
     MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
+use huntctl::milestone_dsl;
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
     movement_feature_schema_digest_v1,
@@ -60,6 +61,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "pool" => command_pool(&args[1..]),
         "corpus" => command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
+        "milestone" => command_milestone(&args[1..]),
         "tape" => command_tape(&args[1..]),
         "trace" => command_trace(&args[1..]),
         "timeline" => command_timeline(&args[1..]),
@@ -70,6 +72,63 @@ fn run() -> Result<(), Box<dyn Error>> {
         "mock-search-worker" => mock_search_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_milestone(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("compile") if args.len() == 3 => {
+            let source = fs::read_to_string(&args[1])?;
+            let compiled = milestone_dsl::compile_source(&source)?;
+            let output = PathBuf::from(&args[2]);
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &compiled.bytes)?;
+            println!(
+                "wrote {} milestones ({} bytes, sha256 {}) to {}",
+                compiled.definitions.len(),
+                compiled.bytes.len(),
+                Digest(compiled.program_sha256),
+                output.display()
+            );
+            Ok(())
+        }
+        Some("inspect") if args.len() == 2 => {
+            let decoded = milestone_dsl::decode(&fs::read(&args[1])?)?;
+            let definitions = decoded
+                .definitions
+                .iter()
+                .map(|definition| {
+                    json!({
+                        "id": definition.name,
+                        "sha256": Digest(definition.sha256),
+                    })
+                })
+                .collect::<Vec<_>>();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "format": "DMSP",
+                    "program_sha256": Digest(decoded.program_sha256),
+                    "definitions": definitions,
+                    "source": milestone_dsl::format(&decoded.program)?,
+                }))?
+            );
+            Ok(())
+        }
+        Some("format") if args.len() == 2 => {
+            let source = fs::read_to_string(&args[1])?;
+            println!(
+                "{}",
+                milestone_dsl::format(&milestone_dsl::parse(&source)?)?
+            );
             Ok(())
         }
         _ => usage_error(),
@@ -467,7 +526,9 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
 fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("parse") if args.len() == 2 => {
-            let timeline = load_timeline(&args[1])?;
+            let path = PathBuf::from(&args[1]);
+            let timeline = load_timeline(&path)?;
+            timeline.validate_artifacts(path.parent())?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -493,6 +554,7 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
             let timeline_args = &args[1..];
             let path = required_path(timeline_args, "--timeline")?;
             let timeline = load_timeline(&path)?;
+            timeline.validate_artifacts(path.parent())?;
             let selections = timeline_selections(timeline_args)?;
             let status = timeline.status(
                 option(timeline_args, "--continuation").as_deref(),
@@ -508,7 +570,8 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("rebase-compatible") => {
             let timeline_args = &args[1..];
             let path = required_path(timeline_args, "--timeline")?;
-            let timeline = load_timeline(path)?;
+            let timeline = load_timeline(&path)?;
+            timeline.validate_artifacts(path.parent())?;
             let continuation = option(timeline_args, "--continuation")
                 .ok_or("missing required --continuation NAME")?;
             let name = option(timeline_args, "--name")
@@ -1461,7 +1524,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"

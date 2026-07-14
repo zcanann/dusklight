@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "dusk/automation/rng.hpp"
+#include "dusk/automation/milestone_program.hpp"
 
 namespace dusk::automation {
 
@@ -118,6 +119,20 @@ struct MilestoneHit {
     MilestoneEvidence evidence;
 };
 
+struct AuthoredMilestoneHit {
+    std::string id;
+    MilestoneProgramPhase phase = MilestoneProgramPhase::PostSim;
+    std::uint16_t stableTicks = 1;
+    std::uint16_t consecutiveTicks = 0;
+    std::string definitionDigest;
+    std::string programDigest;
+    bool hit = false;
+    std::uint64_t boundaryIndex = 0;
+    std::uint64_t simulationTick = 0;
+    std::uint64_t tapeFrame = MilestoneNoTapeFrame;
+    MilestoneEvidence evidence;
+};
+
 std::span<const MilestoneDefinition> milestone_definitions();
 const MilestoneDefinition* find_milestone(MilestoneId id);
 const MilestoneDefinition* find_milestone(std::string_view name);
@@ -135,6 +150,8 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
 /** Parse a comma-separated list of stable milestone IDs. */
 bool parse_milestone_list(
     std::string_view text, std::vector<MilestoneId>& output, std::string& error);
+bool parse_milestone_name_list(
+    std::string_view text, std::vector<std::string>& output, std::string& error);
 
 class MilestoneTracker {
 public:
@@ -144,18 +161,31 @@ public:
      */
     bool configure(std::span<const MilestoneId> requested, std::optional<MilestoneId> goal,
         std::string& error);
+    bool configureNames(std::span<const std::string> requested, std::optional<std::string> goal,
+        const MilestoneProgram& program, std::string& error);
     void reset();
     void observe(const MilestoneObservation& observation, std::uint64_t simulationTick,
         std::uint64_t tapeFrame);
+    void observeBoundary(const MilestoneObservation& observation, MilestoneProgramPhase phase,
+        MilestoneBoundaryKind boundaryKind, std::uint64_t boundaryIndex,
+        std::uint64_t simulationTick, std::uint64_t tapeFrame);
 
-    bool active() const { return !mHits.empty(); }
+    bool active() const { return !mHits.empty() || !mAuthoredHits.empty(); }
     bool goalReached() const;
+    bool goalConfigured() const { return mGoalName.has_value(); }
+    std::optional<std::string_view> goalName() const;
     std::optional<MilestoneId> goal() const { return mGoal; }
     const std::vector<MilestoneHit>& hits() const { return mHits; }
+    const std::vector<AuthoredMilestoneHit>& authoredHits() const { return mAuthoredHits; }
+    std::string_view programDigest() const { return mProgramDigest; }
 
 private:
     std::vector<MilestoneHit> mHits;
+    std::vector<AuthoredMilestoneHit> mAuthoredHits;
     std::optional<MilestoneId> mGoal;
+    std::optional<std::string> mGoalName;
+    const MilestoneProgram* mProgram = nullptr;
+    std::string mProgramDigest;
 };
 
 MilestoneTracker& milestone_tracker();

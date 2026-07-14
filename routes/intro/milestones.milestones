@@ -1,0 +1,13 @@
+milestones 1.0
+
+# Boundary zero exists before the first emulated controller input is read.
+milestone process_boot {
+  phase pre_input
+  when boundary.kind == "boot" && boundary.index == 0
+}
+
+# Strict authored equivalent of the original native gameplay-ready predicate.
+milestone link_control {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 && player.exists && player.is_link && !event.running && event.id == -1
+}

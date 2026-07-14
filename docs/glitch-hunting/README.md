@@ -51,6 +51,8 @@ state hashes, and the reason it was classified as interesting.
 - [Reactive input controllers](reactive-controllers.md) documents the bounded
   timeline DSL, native evaluator, read-only observation boundary, and realized
   tape promotion path.
+- [Authored milestones](milestones.md) documents typed milestone predicates,
+  exact tick-boundary semantics, stability, and proof identities.
 - [Experimental interventions](interventions.md) defines the separately gated
   mutation-tape boundary for causal glitch-hunting experiments.
 - [Route timelines, variants, and Git](timelines.md) documents the visual route

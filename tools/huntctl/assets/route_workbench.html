@@ -21,7 +21,7 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
-    button { font: inherit; }
+    button, textarea { font: inherit; }
     header {
       position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px;
       min-height: 64px; padding: 12px 24px; border-bottom: 1px solid var(--line);
@@ -40,12 +40,18 @@
     .intro { margin-bottom: 28px; }
     .intro h1 { margin: 0 0 8px; font-size: 25px; }
     .intro p { margin: 0; color: var(--muted); line-height: 1.55; }
-    .tree { position: relative; }
-    .tree::before { content: ""; position: absolute; left: 25px; top: 26px; bottom: 26px; width: 2px; background: var(--line); }
+    .tree { display: grid; gap: 14px; }
+    .route-branch { margin: 10px 0 4px 25px; padding: 4px 0 4px 26px; border-left: 2px solid var(--line); }
+    .route-branch > .segment { margin-left: 0; }
+    .route-destination { margin: 12px 0 0 16px; }
+    .milestone-ref { margin: 8px 0; padding: 9px 12px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); font-size: 12px; }
     .milestone { position: relative; display: flex; align-items: center; gap: 16px; min-height: 52px; }
     .node-dot { position: relative; z-index: 1; width: 52px; height: 52px; flex: 0 0 52px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; background: #101722; color: var(--blue); font-size: 13px; font-weight: 800; }
     .node-copy strong { display: block; font-size: 16px; text-transform: capitalize; }
     .node-copy span { color: var(--muted); font-size: 12px; }
+    .node-copy .predicate-summary { display: block; margin-top: 4px; color: #bac6d8; font-size: 11px; }
+    .edit-predicate { margin-left: auto; padding: 8px 11px; border: 1px solid rgba(128,170,255,.55); border-radius: 8px; background: rgba(128,170,255,.1); color: var(--blue); cursor: pointer; }
+    .edit-predicate:hover { background: var(--blue); color: #07101e; }
     .segment { position: relative; margin: 14px 0 18px 25px; padding: 4px 0 12px 43px; border-left: 2px solid var(--line); }
     .segment::before { content: ""; position: absolute; left: -2px; top: 23px; width: 28px; height: 2px; background: var(--line); }
     .segment-head { margin: 0 0 10px; }
@@ -60,15 +66,20 @@
     .badge { padding: 3px 7px; border-radius: 999px; background: #222d3d; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
     .badge.incumbent { color: var(--blue); }
     .badge.score { color: var(--amber); }
+    .badge.proof-verified { color: var(--cyan); }
+    .badge.proof-missing, .badge.proof-stale { color: var(--red); }
     .variant-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 7px; color: var(--muted); font-size: 11px; }
     .variant-meta code { color: #bdc8d8; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
-    .play, .record { min-width: 112px; padding: 10px 13px; border-radius: 8px; font-weight: 750; cursor: pointer; }
+    .play, .record, .delete { min-width: 112px; padding: 10px 13px; border-radius: 8px; font-weight: 750; cursor: pointer; }
     .play { border: 1px solid rgba(109, 225, 210, .55); background: rgba(109, 225, 210, .1); color: var(--cyan); }
     .record { border: 1px solid rgba(240, 195, 107, .55); background: rgba(240, 195, 107, .1); color: var(--amber); }
+    .delete { border: 1px solid rgba(255,126,145,.5); background: rgba(255,126,145,.08); color: var(--red); }
     .play:hover:not(:disabled) { background: var(--cyan); color: #07100f; }
     .record:hover:not(:disabled) { background: var(--amber); color: #171005; }
-    .play:disabled, .record:disabled { border-color: var(--line); background: #141923; color: #68768a; cursor: not-allowed; }
+    .delete:hover:not(:disabled) { background: var(--red); color: #1b080c; }
+    .play:disabled, .record:disabled, .delete:disabled { border-color: var(--line); background: #141923; color: #68768a; cursor: not-allowed; }
+    .frontier-label { margin: 8px 0; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .draft-children { margin: 9px 0 0 24px; padding-left: 14px; border-left: 2px solid #39465a; display: grid; gap: 9px; }
     .draft { border-color: rgba(240,195,107,.32); }
     .error-note { margin-top: 7px; color: var(--red); font-size: 11px; }
@@ -84,6 +95,17 @@
     .toast { position: fixed; right: 20px; bottom: 20px; max-width: 440px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 10px; background: #151c27; box-shadow: 0 18px 50px rgba(0,0,0,.45); color: var(--text); font-size: 13px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }
     .toast.show { opacity: 1; transform: translateY(0); }
     .toast.error { border-color: rgba(255,126,145,.5); color: #ffc2cb; }
+    dialog { width: min(860px, calc(100% - 28px)); padding: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(0,0,0,.7); }
+    dialog::backdrop { background: rgba(3,5,8,.78); backdrop-filter: blur(4px); }
+    .editor { display: grid; gap: 14px; padding: 20px; }
+    .editor h2 { margin: 0; font-size: 18px; }
+    .editor p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .editor textarea { width: 100%; min-height: min(62vh, 620px); resize: vertical; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #090d13; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
+    .editor textarea:focus { outline: 2px solid rgba(128,170,255,.45); border-color: var(--blue); }
+    .editor-error { min-height: 18px; color: var(--red); font-size: 12px; white-space: pre-wrap; }
+    .editor-actions { display: flex; justify-content: flex-end; gap: 9px; }
+    .editor-actions button { padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px; background: #151c27; color: var(--text); cursor: pointer; }
+    .editor-actions .save { border-color: rgba(109,225,210,.55); color: var(--cyan); }
     @media (max-width: 650px) {
       header { padding: 10px 14px; }
       main { width: min(100% - 20px, 980px); }
@@ -114,12 +136,22 @@
       <div id="lineageList" class="lineage-list"></div>
     </section>
   </main>
+  <dialog id="predicateEditor">
+    <form id="predicateForm" class="editor" method="dialog">
+      <h2 id="predicateTitle">Edit milestone predicates</h2>
+      <p>The whole configured predicate program is edited and compiled together. Definition names and order must continue to match the timeline.</p>
+      <textarea id="predicateSource" spellcheck="false" aria-label="Milestone predicate DSL source"></textarea>
+      <div id="predicateError" class="editor-error" role="alert"></div>
+      <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="savePredicate" class="save" value="default" type="button">Validate &amp; save</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script>
   (() => {
     'use strict';
     const $ = id => document.getElementById(id);
     let graph = null;
+    let predicateEditRevision = null;
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const label = value => String(value ?? '').replaceAll('_', ' ');
     const short = value => { const text=String(value ?? ''); return text.length > 20 ? `${text.slice(0,8)}…${text.slice(-7)}` : text; };
@@ -140,37 +172,83 @@
       return children.length?`<div class="draft-children">${children.map(draft=>draftCard(draft,next)).join('')}</div>`:'';
     }
     function draftCard(draft,seen=new Set()) {
-      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button><button class="play" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button><button class="record" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
+      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button><button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
     }
     function variantCard(variant) {
       const artifact=variant.artifact||{};
       const score=variant.first_hit_tick ?? variant.ticks;
       const disabled=!variant.playable;
+      const proof=variant.predicate_proof||'not_required';
+      const proofBadge=proof==='not_required'?'':`<span class="badge proof-${escapeHtml(proof)}">predicate proof ${escapeHtml(proof)}</span>`;
       return `<article class="variant${variant.incumbent?' incumbent':''}">
         <div>
-          <div class="variant-title"><strong>${escapeHtml(variant.name||variant.id)}</strong>${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}</div>
+          <div class="variant-title"><strong>${escapeHtml(variant.name||variant.id)}</strong>${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${proofBadge}</div>
           <div class="variant-meta"><span>${escapeHtml(artifact.kind||'artifact')}: <code>${escapeHtml(artifact.value||'—')}</code></span><span title="${escapeHtml(variant.start_fingerprint)}">in <code>${escapeHtml(short(variant.start_fingerprint))}</code></span><span title="${escapeHtml(variant.boundary_fingerprint)}">out <code>${escapeHtml(short(variant.boundary_fingerprint))}</code></span></div>
           ${variant.error?`<div class="error-note">${escapeHtml(variant.error)}</div>`:''}
         </div>
         <div class="actions"><button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" ${disabled?'disabled':''}>${disabled?'Unavailable':'Play'}</button>${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}">Record · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
       </article>${draftChildren('variant',variant.id)}`;
     }
+    function milestoneNode(id) {
+      const predicate=graph.milestone_program?.definitions?.find(item=>item.name===id);
+      const summary=predicate?`<span class="predicate-summary">${escapeHtml(label(predicate.phase))} · stable ${escapeHtml(predicate.stable_ticks)} · <code>${escapeHtml(short(predicate.definition_sha256))}</code></span>`:'';
+      const edit=predicate?`<button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(id)}">Edit predicate…</button>`:'';
+      return `<section class="milestone"><div class="node-dot">◆</div><div class="node-copy"><strong>${escapeHtml(label(id))}</strong><span>${escapeHtml(id)}</span>${summary}</div>${edit}</section>`;
+    }
+    function renderMilestone(id,path,rendered) {
+      if(path.has(id))return `<div class="milestone-ref">Cycle back to <code>${escapeHtml(id)}</code></div>`;
+      if(rendered.has(id))return `<div class="milestone-ref">Shared route continues at <code>${escapeHtml(id)}</code></div>`;
+      rendered.add(id);
+      const nextPath=new Set(path); nextPath.add(id);
+      const outgoing=graph.segments.filter(segment=>segment.from===id).sort((a,b)=>a.id.localeCompare(b.id));
+      const branches=outgoing.map(segment=>{
+        const variants=graph.variants.filter(variant=>variant.segment===segment.id).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
+        return `<div class="route-branch"><section class="segment"><div class="segment-head"><strong>${escapeHtml(label(segment.id))}</strong><span>${escapeHtml(id)} → ${escapeHtml(segment.to)}</span></div><div class="frontier-label">Variant frontier</div><div class="variants">${variants.length?variants.map(variantCard).join(''):'<div class="empty">No checked-in variants</div>'}</div></section><div class="route-destination">${renderMilestone(segment.to,nextPath,rendered)}</div></div>`;
+      }).join('');
+      return `<div>${milestoneNode(id)}${branches}</div>`;
+    }
     function render() {
       $('timelineName').textContent=`${graph.timeline} · Git timeline`;
-      const milestones=[...graph.milestones].sort((a,b)=>a.ordinal-b.ordinal);
-      let html='';
-      milestones.forEach((milestone,index)=>{
-        html+=`<section class="milestone"><div class="node-dot">${index+1}</div><div class="node-copy"><strong>${escapeHtml(label(milestone.id))}</strong><span>${escapeHtml(milestone.id)}</span></div></section>`;
-        graph.segments.filter(segment=>segment.from===milestone.id).forEach(segment=>{
-          const variants=graph.variants.filter(variant=>variant.segment===segment.id);
-          html+=`<section class="segment"><div class="segment-head"><strong>${escapeHtml(label(segment.id))}</strong><span>→ ${escapeHtml(label(segment.to))}</span></div><div class="variants">${variants.length?variants.map(variantCard).join(''):'<div class="empty">No checked-in variants</div>'}</div></section>`;
-        });
-      });
+      const incoming=new Set(graph.segments.map(segment=>segment.to));
+      const roots=graph.milestones.map(item=>item.id).filter(id=>!incoming.has(id)).sort();
+      const rendered=new Set();
+      let html=(roots.length?roots:[...graph.milestones.map(item=>item.id)].sort().slice(0,1)).map(id=>renderMilestone(id,new Set(),rendered)).join('');
+      graph.milestones.map(item=>item.id).sort().filter(id=>!rendered.has(id)).forEach(id=>html+=renderMilestone(id,new Set(),rendered));
       $('tree').innerHTML=html||'<div class="empty">This timeline has no milestones.</div>';
       $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button.dataset.playKind,button.dataset.id,button.dataset.playOrigin||'boot',button)));
       $('tree').querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
+      $('tree').querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
+      $('tree').querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
       $('lineages').hidden=graph.lineages.length===0;
       $('lineageList').innerHTML=graph.lineages.map(lineage=>`<div class="lineage"><strong>${escapeHtml(lineage.name)}</strong> <span class="badge">${escapeHtml(lineage.kind||'lineage')}</span><br><code>${escapeHtml((lineage.steps||[]).map(step=>step.variant||step).join(' → '))}</code>${lineage.error?`<div class="reason">${escapeHtml(lineage.error)}</div>`:''}</div>`).join('');
+    }
+    function editPredicate(id) {
+      if(!graph.milestone_program)return;
+      $('predicateTitle').textContent=`Edit predicate · ${label(id)}`;
+      $('predicateSource').value=graph.milestone_program.source;
+      predicateEditRevision=graph.milestone_program.revision_sha256;
+      $('predicateError').textContent='';
+      $('predicateEditor').showModal();
+      $('predicateSource').focus();
+    }
+    async function savePredicate() {
+      if(!graph.milestone_program)return;
+      const button=$('savePredicate'); button.disabled=true; button.textContent='Compiling…';
+      $('predicateError').textContent='';
+      try {
+        const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value})});
+        const body=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        graph.milestone_program=body;
+        predicateEditRevision=null;
+        $('predicateEditor').close();
+        toast('Predicate program compiled and saved. Variant proof badges now reflect the new definition identities.');
+        await load();
+      } catch(error) {
+        $('predicateError').textContent=error.message;
+      } finally {
+        button.disabled=false; button.textContent='Validate & save';
+      }
     }
     async function play(kind,id,origin,button) {
       const variant=kind==='variant'&&graph.variants.find(item=>item.id===id);
@@ -192,6 +270,27 @@
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
         button.disabled=!(variant?.playable||draft?.playable); button.textContent=variant?'Play':origin==='parent'?'Play from parent':'Play from boot';
+      }
+    }
+    async function deleteDraft(id,button) {
+      button.disabled=true; button.textContent='Checking…';
+      try {
+        const previewResponse=await fetch('/api/drafts/delete/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+        const preview=await previewResponse.json().catch(()=>({}));
+        if(!previewResponse.ok)throw new Error(preview.error||`HTTP ${previewResponse.status}`);
+        const impacts=(preview.drafts||[]).map(item=>`• ${item.label||item.id} (${item.id})`).join('\n');
+        const count=(preview.drafts||[]).length;
+        if(!window.confirm(`Move ${count} draft${count===1?'':'s'} to recoverable trash?\n\n${impacts}\n\nChecked-in variants and timeline files are not affected.`))return;
+        button.textContent='Moving…';
+        const applyResponse=await fetch('/api/drafts/delete/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,confirmation_token:preview.confirmation_token})});
+        const result=await applyResponse.json().catch(()=>({}));
+        if(!applyResponse.ok)throw new Error(result.error||`HTTP ${applyResponse.status}`);
+        toast(`Moved ${(result.drafts||[]).length} draft${(result.drafts||[]).length===1?'':'s'} to recoverable trash.`);
+        await load();
+      } catch(error) {
+        $('status').textContent='Delete failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=false; button.textContent='Delete…';
       }
     }
     async function record(button) {
@@ -222,6 +321,8 @@
       }
     }
     $('reload').addEventListener('click',load);
+    $('savePredicate').addEventListener('click',savePredicate);
+    $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
     load();
   })();
   </script>

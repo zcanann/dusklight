@@ -1,14 +1,15 @@
 //! Local, Git-backed route workbench primitives.
 //!
 //! Authored `.timeline` files and the artifacts they name are authoritative.
-//! This module deliberately does not mutate timelines or introduce another
-//! version-control layer. It only projects them as graph JSON and materializes
-//! exact, pinned lineages for visual playback.
+//! This module never mutates timeline topology or curated variants. It projects
+//! them as graph JSON, materializes exact pinned lineages, and offers one
+//! revision-checked source edit for the timeline-configured milestone program.
 
 use crate::search::Candidate;
 use crate::tape::InputTape;
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
 use crate::timeline::{ArtifactSource, LineageKind, ResolvedLineage, Timeline, Variant};
+use crate::{milestone_dsl, milestone_dsl::MilestoneProgram};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +30,10 @@ const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
 const DRAFT_LAUNCH: &str = "launch.json";
 const DRAFT_TAPE: &str = "continuation.tape";
+const DRAFT_TRASH_DIRECTORY: &str = "trash";
+const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-preview.v1";
+const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
+const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
 const MAX_HTTP_BODY: usize = 1024 * 1024;
@@ -36,6 +41,11 @@ const MAX_HTTP_BODY: usize = 1024 * 1024;
 fn active_recordings() -> &'static Mutex<BTreeSet<String>> {
     static ACTIVE: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+fn milestone_program_edits() -> &'static Mutex<()> {
+    static EDITS: OnceLock<Mutex<()>> = OnceLock::new();
+    EDITS.get_or_init(|| Mutex::new(()))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -47,6 +57,26 @@ pub struct WorkbenchGraph {
     pub variants: Vec<GraphVariant>,
     pub lineages: Vec<GraphLineage>,
     pub drafts: Vec<GraphDraft>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_program: Option<GraphMilestoneProgram>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphMilestoneProgram {
+    pub schema: String,
+    pub source: String,
+    pub revision_sha256: String,
+    pub program_sha256: String,
+    pub definitions: Vec<GraphMilestonePredicate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphMilestonePredicate {
+    pub name: String,
+    pub phase: milestone_dsl::EvaluationPhase,
+    pub stable_ticks: u16,
+    pub expression: milestone_dsl::Expression,
+    pub definition_sha256: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,6 +209,11 @@ pub struct GraphVariant {
     pub artifact: GraphArtifact,
     pub start_fingerprint: String,
     pub boundary_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_program_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_definition_sha256: Option<String>,
+    pub predicate_proof: String,
     pub first_hit_tick: Option<u64>,
     pub frame_count: Option<u64>,
     pub start_tick: u64,
@@ -281,6 +316,51 @@ pub struct BrowserRecordRequest {
     pub parent: BrowserRecordParent,
     #[serde(default)]
     pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserDraftDeletePreviewRequest {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserDraftDeleteApplyRequest {
+    pub id: String,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserMilestoneProgramUpdateRequest {
+    pub expected_revision_sha256: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DraftDeleteImpact {
+    pub id: String,
+    pub label: String,
+    pub status: DraftStatus,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DraftDeletePreview {
+    pub schema: String,
+    pub id: String,
+    pub graph_revision: String,
+    pub drafts: Vec<DraftDeleteImpact>,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DraftDeleteResult {
+    pub schema: String,
+    pub id: String,
+    pub graph_revision: String,
+    pub drafts: Vec<String>,
+    pub trash_transaction: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -402,6 +482,354 @@ pub fn load_authoritative_timeline(path: &Path) -> Result<Timeline, WorkbenchErr
     Timeline::parse(&source).map_err(|error| WorkbenchError::new(error.to_string()))
 }
 
+fn source_revision(source: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(source))
+}
+
+fn validate_milestone_program_source(
+    timeline: &Timeline,
+    source: &str,
+) -> Result<(MilestoneProgram, milestone_dsl::CompiledMilestones), WorkbenchError> {
+    let program = milestone_dsl::parse(source)
+        .map_err(|error| WorkbenchError::new(format!("invalid milestone program: {error}")))?;
+    let authored = program
+        .definitions
+        .iter()
+        .map(|definition| definition.name.as_str())
+        .collect::<Vec<_>>();
+    let declared = timeline
+        .milestones
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if authored != declared {
+        return Err(WorkbenchError::new(format!(
+            "milestone program defines {authored:?}, but the timeline declares {declared:?}; names and order must match"
+        )));
+    }
+    let compiled = milestone_dsl::compile(&program).map_err(|error| {
+        WorkbenchError::new(format!("cannot compile milestone program: {error}"))
+    })?;
+    Ok((program, compiled))
+}
+
+fn validated_milestone_program_path(
+    timeline: &Timeline,
+    root: &Path,
+) -> Result<Option<PathBuf>, WorkbenchError> {
+    let Some(relative) = &timeline.milestone_program else {
+        return Ok(None);
+    };
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(WorkbenchError::new(
+            "configured milestone program is not a contained relative path",
+        ));
+    }
+    let root = fs::canonicalize(root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve milestone program root {}: {error}",
+            root.display()
+        ))
+    })?;
+    let mut candidate = root.clone();
+    for component in relative.components() {
+        candidate.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect configured milestone program path {}: {error}",
+                candidate.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(WorkbenchError::new(format!(
+                "configured milestone program path {} contains a symbolic link",
+                candidate.display()
+            )));
+        }
+    }
+    let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot inspect configured milestone program {}: {error}",
+            candidate.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(WorkbenchError::new(format!(
+            "configured milestone program {} is not a regular file",
+            candidate.display()
+        )));
+    }
+    let resolved = fs::canonicalize(&candidate).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve configured milestone program {}: {error}",
+            candidate.display()
+        ))
+    })?;
+    if !resolved.starts_with(&root) {
+        return Err(WorkbenchError::new(format!(
+            "configured milestone program {} escapes root {}",
+            resolved.display(),
+            root.display()
+        )));
+    }
+    Ok(Some(resolved))
+}
+
+fn milestone_program_projection(
+    timeline: &Timeline,
+    root: &Path,
+) -> Result<Option<GraphMilestoneProgram>, WorkbenchError> {
+    let Some(path) = validated_milestone_program_path(timeline, root)? else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read configured milestone program {}: {error}",
+            path.display()
+        ))
+    })?;
+    let source = String::from_utf8(bytes.clone()).map_err(|_| {
+        WorkbenchError::new(format!(
+            "configured milestone program {} is not UTF-8",
+            path.display()
+        ))
+    })?;
+    let (program, compiled) = validate_milestone_program_source(timeline, &source)?;
+    let definition_digests = compiled
+        .definitions
+        .into_iter()
+        .map(|definition| {
+            let digest = definition
+                .sha256
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            (definition.name, digest)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let program_sha256 = compiled
+        .program_sha256
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(Some(GraphMilestoneProgram {
+        schema: MILESTONE_PROGRAM_SCHEMA.into(),
+        source,
+        revision_sha256: source_revision(&bytes),
+        program_sha256,
+        definitions: program
+            .definitions
+            .into_iter()
+            .map(|definition| GraphMilestonePredicate {
+                definition_sha256: definition_digests[&definition.name].clone(),
+                name: definition.name,
+                phase: definition.phase,
+                stable_ticks: definition.stable_ticks,
+                expression: definition.when,
+            })
+            .collect(),
+    }))
+}
+
+#[derive(Debug)]
+enum MilestoneProgramUpdateError {
+    Stale { expected: String, actual: String },
+    Invalid(WorkbenchError),
+}
+
+impl fmt::Display for MilestoneProgramUpdateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stale { expected, actual } => write!(
+                formatter,
+                "milestone program edit is stale: expected revision {expected}, current revision is {actual}"
+            ),
+            Self::Invalid(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<WorkbenchError> for MilestoneProgramUpdateError {
+    fn from(error: WorkbenchError) -> Self {
+        Self::Invalid(error)
+    }
+}
+
+struct RemoveFileOnDrop(Option<PathBuf>);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn rollback_milestone_program(backup: &Path, target: &Path) -> Result<(), WorkbenchError> {
+    if target.exists() {
+        return Err(WorkbenchError::new(format!(
+            "cannot restore milestone program backup {} because {} now exists",
+            backup.display(),
+            target.display()
+        )));
+    }
+    fs::rename(backup, target).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot restore milestone program backup {} to {}: {error}",
+            backup.display(),
+            target.display()
+        ))
+    })
+}
+
+fn update_milestone_program(
+    timeline: &Timeline,
+    root: &Path,
+    request: &BrowserMilestoneProgramUpdateRequest,
+) -> Result<GraphMilestoneProgram, MilestoneProgramUpdateError> {
+    let _edit = milestone_program_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("milestone program edit lock is poisoned"))?;
+    let path = validated_milestone_program_path(timeline, root)?
+        .ok_or_else(|| WorkbenchError::new("timeline has no configured milestone program"))?;
+    let current = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read configured milestone program {}: {error}",
+            path.display()
+        ))
+    })?;
+    let current_revision = source_revision(&current);
+    if request.expected_revision_sha256 != current_revision {
+        return Err(MilestoneProgramUpdateError::Stale {
+            expected: request.expected_revision_sha256.clone(),
+            actual: current_revision,
+        });
+    }
+    validate_milestone_program_source(timeline, &request.source)?;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("milestone program has no parent directory"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| WorkbenchError::new("milestone program filename is not UTF-8"))?;
+    let nonce = random_session_token()?;
+    let temporary = parent.join(format!(".{name}.{nonce}.tmp"));
+    let backup = parent.join(format!(".{name}.{nonce}.rollback"));
+    let mut temporary_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create adjacent milestone program temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    if let Err(error) = temporary_file
+        .write_all(request.source.as_bytes())
+        .and_then(|()| temporary_file.sync_all())
+    {
+        return Err(WorkbenchError::new(format!(
+            "cannot flush milestone program temporary file {}: {error}",
+            temporary.display()
+        ))
+        .into());
+    }
+    drop(temporary_file);
+
+    let revalidated = validated_milestone_program_path(timeline, root)?
+        .ok_or_else(|| WorkbenchError::new("timeline lost its configured milestone program"))?;
+    if revalidated != path {
+        return Err(WorkbenchError::new(
+            "configured milestone program path changed while preparing the edit",
+        )
+        .into());
+    }
+    let before_replace = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot re-read configured milestone program {}: {error}",
+            path.display()
+        ))
+    })?;
+    let before_replace_revision = source_revision(&before_replace);
+    if request.expected_revision_sha256 != before_replace_revision {
+        return Err(MilestoneProgramUpdateError::Stale {
+            expected: request.expected_revision_sha256.clone(),
+            actual: before_replace_revision,
+        });
+    }
+
+    if let Err(error) = fs::rename(&path, &backup) {
+        return Err(WorkbenchError::new(format!(
+            "cannot stage milestone program rollback backup {}: {error}",
+            backup.display()
+        ))
+        .into());
+    }
+    let moved_revision = fs::symlink_metadata(&backup)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect milestone program rollback backup {}: {error}",
+                backup.display()
+            ))
+        })
+        .and_then(|metadata| {
+            if metadata.is_file() && !metadata.file_type().is_symlink() {
+                Ok(())
+            } else {
+                Err(WorkbenchError::new(format!(
+                    "milestone program changed to a non-regular file during replacement: {}",
+                    backup.display()
+                )))
+            }
+        })
+        .and_then(|()| fs::read(&backup).map_err(|error| WorkbenchError::new(error.to_string())))
+        .map(|bytes| source_revision(&bytes))
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot verify milestone program rollback backup {}: {error}",
+                backup.display()
+            ))
+        });
+    match moved_revision {
+        Ok(actual) if actual == request.expected_revision_sha256 => {}
+        result => {
+            let rollback = rollback_milestone_program(&backup, &path);
+            rollback?;
+            return match result {
+                Ok(actual) => Err(MilestoneProgramUpdateError::Stale {
+                    expected: request.expected_revision_sha256.clone(),
+                    actual,
+                }),
+                Err(error) => Err(error.into()),
+            };
+        }
+    }
+    if let Err(error) = fs::rename(&temporary, &path) {
+        let rollback = rollback_milestone_program(&backup, &path);
+        rollback?;
+        return Err(WorkbenchError::new(format!(
+            "cannot replace milestone program {}: {error}",
+            path.display()
+        ))
+        .into());
+    }
+    temporary_cleanup.0 = None;
+    let _ = fs::remove_file(&backup);
+
+    milestone_program_projection(timeline, root)?
+        .ok_or_else(|| WorkbenchError::new("timeline lost its configured milestone program"))
+        .map_err(Into::into)
+}
+
 /// Build the JSON-ready graph projection used by the visual selector.
 /// Missing or unsupported artifacts remain visible with `playable: false`.
 pub fn graph_from_timeline(
@@ -411,6 +839,22 @@ pub fn graph_from_timeline(
     let inspection = timeline
         .inspect()
         .map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let milestone_program = milestone_program_projection(timeline, repository_root)?;
+    let predicate_digests = milestone_program
+        .as_ref()
+        .map(|program| {
+            program
+                .definitions
+                .iter()
+                .map(|definition| {
+                    (
+                        definition.name.as_str(),
+                        definition.definition_sha256.as_str(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     let milestones = timeline
         .milestones
         .iter()
@@ -436,9 +880,30 @@ pub fn graph_from_timeline(
         .values()
         .map(|variant| {
             let loaded = load_variant_tape(timeline, variant, repository_root);
-            let record_anchors =
+            let destination = &timeline.segments[&variant.segment].to;
+            let (predicate_proof, predicate_verified) = if let Some(program) = &milestone_program {
+                let current_program = &program.program_sha256;
+                let current = predicate_digests
+                    .get(destination.as_str())
+                    .expect("milestone source topology is validated");
+                match (
+                    variant.milestone_program_sha256.as_deref(),
+                    variant.milestone_definition_sha256.as_deref(),
+                ) {
+                    (None, _) | (_, None) => ("missing", false),
+                    (Some(program), Some(definition))
+                        if program == current_program && definition == *current =>
+                    {
+                        ("verified", true)
+                    }
+                    (Some(_), Some(_)) => ("stale", false),
+                }
+            } else {
+                ("not_required", true)
+            };
+            let mut record_anchors =
                 record_anchors_for_variant(timeline, &inspection.lineages, &variant.id);
-            let record_anchors = record_anchors
+            record_anchors = record_anchors
                 .into_iter()
                 .filter(|anchor| {
                     materialize_lineage(
@@ -456,6 +921,9 @@ pub fn graph_from_timeline(
                     })
                 })
                 .collect::<Vec<_>>();
+            if !predicate_verified {
+                record_anchors.clear();
+            }
             GraphVariant {
                 id: variant.id.clone(),
                 segment: variant.segment.clone(),
@@ -464,6 +932,9 @@ pub fn graph_from_timeline(
                 artifact: graph_artifact(&variant.artifact),
                 start_fingerprint: variant.start_fingerprint.clone(),
                 boundary_fingerprint: variant.boundary_fingerprint.clone(),
+                milestone_program_sha256: variant.milestone_program_sha256.clone(),
+                milestone_definition_sha256: variant.milestone_definition_sha256.clone(),
+                predicate_proof: predicate_proof.into(),
                 first_hit_tick: variant.first_hit_tick,
                 frame_count: loaded.as_ref().ok().map(|tape| tape.frames.len() as u64),
                 start_tick: 0,
@@ -474,7 +945,8 @@ pub fn graph_from_timeline(
                 ticks: variant.first_hit_tick,
                 playable: loaded.is_ok(),
                 lineage_composable: artifact_is_canonical_payload(&variant.artifact)
-                    && fingerprints_are_exact(variant),
+                    && fingerprints_are_exact(variant)
+                    && predicate_verified,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
                 record_anchors,
                 error: loaded.err().map(|error| error.to_string()),
@@ -494,6 +966,7 @@ pub fn graph_from_timeline(
         variants,
         lineages,
         drafts: Vec::new(),
+        milestone_program,
     })
 }
 
@@ -565,10 +1038,55 @@ fn drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
     })
 }
 
+fn validated_drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
+    fs::create_dir_all(state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create state root {}: {error}",
+            state_root.display()
+        ))
+    })?;
+    let state_root = fs::canonicalize(state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve state root {}: {error}",
+            state_root.display()
+        ))
+    })?;
+    let expected = state_root.join("drafts");
+    fs::create_dir_all(&expected).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create draft root {}: {error}",
+            expected.display()
+        ))
+    })?;
+    let metadata = fs::symlink_metadata(&expected).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot inspect draft root {}: {error}",
+            expected.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(WorkbenchError::new(
+            "draft root is not a contained physical directory",
+        ));
+    }
+    let resolved = fs::canonicalize(&expected).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve draft root {}: {error}",
+            expected.display()
+        ))
+    })?;
+    if resolved != expected || resolved.parent() != Some(state_root.as_path()) {
+        return Err(WorkbenchError::new(
+            "draft root escapes the route workbench state root",
+        ));
+    }
+    Ok(resolved)
+}
+
 fn scan_draft_manifests(
     state_root: &Path,
 ) -> Result<BTreeMap<String, DraftManifest>, WorkbenchError> {
-    let root = drafts_root(state_root)?;
+    let root = validated_drafts_root(state_root)?;
     let mut manifests = BTreeMap::new();
     let mut entries = fs::read_dir(&root)
         .map_err(|error| WorkbenchError::new(format!("cannot scan {}: {error}", root.display())))?
@@ -665,6 +1183,255 @@ fn scan_draft_manifests(
         manifests.insert(id, manifest);
     }
     Ok(manifests)
+}
+
+fn draft_descendants(
+    manifests: &BTreeMap<String, DraftManifest>,
+    id: &str,
+) -> Result<BTreeSet<String>, WorkbenchError> {
+    if !valid_draft_id(id) || !manifests.contains_key(id) {
+        return Err(WorkbenchError::new(format!("unknown draft {id:?}")));
+    }
+    let mut children = BTreeMap::<&str, Vec<&str>>::new();
+    for manifest in manifests.values() {
+        if let DraftParent::Draft { id: parent, .. } = &manifest.parent {
+            children
+                .entry(parent.as_str())
+                .or_default()
+                .push(manifest.id.as_str());
+        }
+    }
+    let mut deletion = BTreeSet::new();
+    let mut pending = vec![id];
+    while let Some(next) = pending.pop() {
+        if !deletion.insert(next.to_owned()) {
+            continue;
+        }
+        if let Some(descendants) = children.get(next) {
+            pending.extend(descendants.iter().copied());
+        }
+    }
+    Ok(deletion)
+}
+
+fn draft_graph_revision(
+    manifests: &BTreeMap<String, DraftManifest>,
+) -> Result<String, WorkbenchError> {
+    let mut digest = Sha256::new();
+    digest.update(b"dusklight.route-workbench.draft-graph.v1\0");
+    for (id, manifest) in manifests {
+        let encoded = serde_json::to_vec(manifest).map_err(|error| {
+            WorkbenchError::new(format!("cannot encode draft graph revision: {error}"))
+        })?;
+        digest.update((id.len() as u64).to_le_bytes());
+        digest.update(id.as_bytes());
+        digest.update((encoded.len() as u64).to_le_bytes());
+        digest.update(encoded);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn draft_delete_confirmation_token(graph_revision: &str, deletion: &BTreeSet<String>) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"dusklight.route-workbench.draft-delete.v1\0");
+    digest.update(graph_revision.as_bytes());
+    for id in deletion {
+        digest.update((id.len() as u64).to_le_bytes());
+        digest.update(id.as_bytes());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn draft_is_active(directory: &Path, manifest: &DraftManifest, active: &BTreeSet<String>) -> bool {
+    active.contains(&manifest.id)
+        || matches!(
+            manifest.status,
+            DraftStatus::Preparing | DraftStatus::Recording
+        )
+        || read_draft_launch(directory, manifest).is_some_and(|launch| process_is_alive(launch.pid))
+}
+
+fn draft_delete_preview_locked(
+    state_root: &Path,
+    id: &str,
+    manifests: &BTreeMap<String, DraftManifest>,
+    active: &BTreeSet<String>,
+) -> Result<DraftDeletePreview, WorkbenchError> {
+    let deletion = draft_descendants(manifests, id)?;
+    let root = validated_drafts_root(state_root)?;
+    for draft_id in &deletion {
+        let manifest = &manifests[draft_id];
+        if draft_is_active(&root.join(draft_id), manifest, active) {
+            return Err(WorkbenchError::new(format!(
+                "cannot delete draft {id:?}: recording {draft_id:?} is active"
+            )));
+        }
+    }
+    let graph_revision = draft_graph_revision(manifests)?;
+    let confirmation_token = draft_delete_confirmation_token(&graph_revision, &deletion);
+    let drafts = deletion
+        .iter()
+        .map(|draft_id| {
+            let manifest = &manifests[draft_id];
+            DraftDeleteImpact {
+                id: draft_id.clone(),
+                label: manifest.label.clone(),
+                status: manifest.status,
+            }
+        })
+        .collect();
+    Ok(DraftDeletePreview {
+        schema: DRAFT_DELETE_PREVIEW_SCHEMA.into(),
+        id: id.into(),
+        graph_revision,
+        drafts,
+        confirmation_token,
+    })
+}
+
+fn preview_draft_deletion(
+    state_root: &Path,
+    id: &str,
+) -> Result<DraftDeletePreview, WorkbenchError> {
+    let manifests = scan_draft_manifests(state_root)?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    draft_delete_preview_locked(state_root, id, &manifests, &active)
+}
+
+fn validated_draft_directory(root: &Path, id: &str) -> Result<PathBuf, WorkbenchError> {
+    if !valid_draft_id(id) {
+        return Err(WorkbenchError::new(format!("invalid draft id {id:?}")));
+    }
+    let expected = root.join(id);
+    let metadata = fs::symlink_metadata(&expected)
+        .map_err(|error| WorkbenchError::new(format!("cannot inspect draft {id:?}: {error}")))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(WorkbenchError::new(format!(
+            "draft {id:?} is not a contained physical directory"
+        )));
+    }
+    let resolved = fs::canonicalize(&expected)
+        .map_err(|error| WorkbenchError::new(format!("cannot resolve draft {id:?}: {error}")))?;
+    if resolved != expected || resolved.parent() != Some(root) {
+        return Err(WorkbenchError::new(format!(
+            "draft {id:?} directory escapes the draft store"
+        )));
+    }
+    Ok(resolved)
+}
+
+fn draft_trash_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
+    fs::create_dir_all(state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create state root {}: {error}",
+            state_root.display()
+        ))
+    })?;
+    let state_root = fs::canonicalize(state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve state root {}: {error}",
+            state_root.display()
+        ))
+    })?;
+    let trash = state_root.join(DRAFT_TRASH_DIRECTORY).join("drafts");
+    fs::create_dir_all(&trash).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create draft trash {}: {error}",
+            trash.display()
+        ))
+    })?;
+    let trash = fs::canonicalize(&trash).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve draft trash {}: {error}",
+            trash.display()
+        ))
+    })?;
+    if !trash.starts_with(&state_root) || trash == state_root {
+        return Err(WorkbenchError::new("draft trash escapes the state root"));
+    }
+    Ok(trash)
+}
+
+fn apply_draft_deletion(
+    state_root: &Path,
+    request: &BrowserDraftDeleteApplyRequest,
+) -> Result<DraftDeleteResult, WorkbenchError> {
+    let manifests = scan_draft_manifests(state_root)?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let preview = draft_delete_preview_locked(state_root, &request.id, &manifests, &active)?;
+    if request.confirmation_token != preview.confirmation_token {
+        return Err(WorkbenchError::new(
+            "draft graph changed after preview; request a new deletion preview",
+        ));
+    }
+
+    let root = validated_drafts_root(state_root)?;
+    let mut sources = Vec::with_capacity(preview.drafts.len());
+    for draft in &preview.drafts {
+        sources.push((
+            draft.id.clone(),
+            validated_draft_directory(&root, &draft.id)?,
+        ));
+    }
+    let trash = draft_trash_root(state_root)?;
+    let nonce = random_session_token()?;
+    let transaction = trash.join(format!(
+        "{}-{}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        &preview.confirmation_token[..16],
+        nonce
+    ));
+    fs::create_dir(&transaction).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create draft trash transaction {}: {error}",
+            transaction.display()
+        ))
+    })?;
+    let transaction = fs::canonicalize(&transaction).map_err(|error| {
+        WorkbenchError::new(format!("cannot resolve draft trash transaction: {error}"))
+    })?;
+    if transaction.parent() != Some(trash.as_path()) {
+        return Err(WorkbenchError::new(
+            "draft trash transaction escapes the trash root",
+        ));
+    }
+
+    let mut moved = Vec::new();
+    for (draft_id, source) in &sources {
+        let destination = transaction.join(draft_id);
+        if let Err(error) = fs::rename(source, &destination) {
+            let mut rollback_errors = Vec::new();
+            for (moved_id, moved_path) in moved.iter().rev() {
+                if let Err(rollback) = fs::rename(moved_path, root.join(moved_id)) {
+                    rollback_errors.push(format!("{moved_id}: {rollback}"));
+                }
+            }
+            let suffix = if rollback_errors.is_empty() {
+                String::new()
+            } else {
+                format!("; rollback failures: {}", rollback_errors.join(", "))
+            };
+            return Err(WorkbenchError::new(format!(
+                "cannot move draft {draft_id:?} into recoverable trash: {error}{suffix}"
+            )));
+        }
+        moved.push((draft_id.clone(), destination));
+    }
+
+    Ok(DraftDeleteResult {
+        schema: DRAFT_DELETE_RESULT_SCHEMA.into(),
+        id: request.id.clone(),
+        graph_revision: preview.graph_revision,
+        drafts: preview.drafts.into_iter().map(|draft| draft.id).collect(),
+        trash_transaction: transaction,
+    })
 }
 
 fn read_draft_launch(directory: &Path, manifest: &DraftManifest) -> Option<DraftLaunch> {
@@ -1142,6 +1909,7 @@ pub fn play(
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_play_request(timeline, &artifact_root, request)?;
     launch_materialized(
+        timeline,
         config,
         materialized,
         request.takeover,
@@ -1151,6 +1919,7 @@ pub fn play(
 }
 
 fn launch_materialized(
+    timeline: &Timeline,
     config: &WorkbenchConfig,
     materialized: MaterializedPlayback,
     takeover: bool,
@@ -1203,6 +1972,8 @@ fn launch_materialized(
         materialized.seed_stage,
         fast_forward_frames,
     );
+    let artifact_root = configured_artifact_root(config)?;
+    append_authored_milestone_args(timeline, &artifact_root, &state_root, &mut command, None)?;
     let child = command
         .spawn()
         .map_err(|error| WorkbenchError::new(format!("cannot launch Dusklight: {error}")))?;
@@ -1239,7 +2010,14 @@ fn play_draft(
             materialized.tape.frames.len() as u64,
         )?),
     };
-    launch_materialized(config, materialized, true, origin, fast_forward_frames)
+    launch_materialized(
+        timeline,
+        config,
+        materialized,
+        true,
+        origin,
+        fast_forward_frames,
+    )
 }
 
 fn draft_parent_frame_count(
@@ -1347,6 +2125,47 @@ fn validate_parent_boundary(
     }
 }
 
+fn append_authored_milestone_args(
+    timeline: &Timeline,
+    artifact_root: &Path,
+    state_root: &Path,
+    command: &mut Command,
+    additional_builtin: Option<&str>,
+) -> Result<(), WorkbenchError> {
+    let Some(source_path) = validated_milestone_program_path(timeline, artifact_root)? else {
+        return Ok(());
+    };
+    let source = fs::read_to_string(&source_path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read configured milestone program {}: {error}",
+            source_path.display()
+        ))
+    })?;
+    let (_, compiled) = validate_milestone_program_source(timeline, &source)?;
+    let program_path = state_root.join("route-milestones.dmsp");
+    let result_path = state_root.join("route-milestones.json");
+    fs::write(&program_path, &compiled.bytes).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot write compiled milestone program {}: {error}",
+            program_path.display()
+        ))
+    })?;
+    let mut requested = timeline.milestones.clone();
+    if let Some(id) = additional_builtin
+        && !requested.iter().any(|existing| existing == id)
+    {
+        requested.push(id.to_owned());
+    }
+    command
+        .arg("--milestone-program")
+        .arg(program_path)
+        .arg("--milestones")
+        .arg(requested.join(","))
+        .arg("--milestone-result")
+        .arg(result_path);
+    Ok(())
+}
+
 fn append_playback_args(
     command: &mut Command,
     dvd: &Path,
@@ -1419,14 +2238,12 @@ fn record_continuation(
                 .variants
                 .get(&id)
                 .ok_or_else(|| WorkbenchError::new(format!("unknown variant {id:?}")))?;
-            let anchors = record_anchors_for_variant(
-                timeline,
-                &timeline
-                    .inspect()
-                    .map_err(|error| WorkbenchError::new(error.to_string()))?
-                    .lineages,
-                &id,
-            );
+            let anchors = graph_from_timeline(timeline, &artifact_root)?
+                .variants
+                .into_iter()
+                .find(|candidate| candidate.id == id)
+                .expect("timeline variant must appear in its graph")
+                .record_anchors;
             if !anchors.iter().any(|anchor| {
                 anchor.lineage == lineage
                     && anchor.step_index == step_index
@@ -1588,6 +2405,13 @@ fn record_continuation(
     if let Some(stage) = materialized.seed_stage {
         command.arg("--stage").arg(stage);
     }
+    append_authored_milestone_args(
+        timeline,
+        &artifact_root,
+        &state,
+        &mut command,
+        expected_start_milestone.as_deref(),
+    )?;
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -2546,6 +3370,68 @@ fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/drafts/delete/preview") => {
+                    let result =
+                        serde_json::from_slice::<BrowserDraftDeletePreviewRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid delete preview request: {error}"
+                                ))
+                            })
+                            .and_then(|delete_request| {
+                                preview_draft_deletion(&config.state_root, &delete_request.id)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/drafts/delete/apply") => {
+                    let result =
+                        serde_json::from_slice::<BrowserDraftDeleteApplyRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid delete apply request: {error}"
+                                ))
+                            })
+                            .and_then(|delete_request| {
+                                apply_draft_deletion(&config.state_root, &delete_request)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/milestone-program") => {
+                    let result = serde_json::from_slice::<BrowserMilestoneProgramUpdateRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        MilestoneProgramUpdateError::Invalid(WorkbenchError::new(format!(
+                            "invalid milestone program update request: {error}"
+                        )))
+                    })
+                    .and_then(|update_request| {
+                        let timeline = load_authoritative_timeline(&config.timeline_path)
+                            .map_err(MilestoneProgramUpdateError::Invalid)?;
+                        let artifact_root = configured_artifact_root(config)
+                            .map_err(MilestoneProgramUpdateError::Invalid)?;
+                        update_milestone_program(&timeline, &artifact_root, &update_request)
+                    });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error @ MilestoneProgramUpdateError::Stale { .. }) => {
+                            json_error(409, "Conflict", &error.to_string())
+                        }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 _ => json_error(404, "Not Found", "unknown route workbench endpoint"),
             }
         }
@@ -2782,6 +3668,124 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         .unwrap()
     }
 
+    const MILESTONE_SOURCE: &str = r#"milestones 1.0
+
+milestone boot {
+  phase pre_input
+  when boundary.kind == "boot"
+}
+
+milestone control {
+  phase post_sim
+  when stage.name == "F_SP103" && player.exists
+}
+
+milestone exit {
+  phase post_sim
+  stable 2
+  when stage.name == "F_SP104"
+}
+"#;
+
+    fn hex_digest(bytes: &[u8; 32]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn milestone_timeline_source() -> String {
+        let compiled = milestone_dsl::compile_source(MILESTONE_SOURCE).unwrap();
+        let program = hex_digest(&compiled.program_sha256);
+        let control = hex_digest(
+            &compiled
+                .definitions
+                .iter()
+                .find(|definition| definition.name == "control")
+                .unwrap()
+                .sha256,
+        );
+        let exit = hex_digest(
+            &compiled
+                .definitions
+                .iter()
+                .find(|definition| definition.name == "exit")
+                .unwrap()
+                .sha256,
+        );
+        format!(
+            r#"
+timeline test
+milestone_program route.milestones
+milestone boot
+milestone control
+milestone exit
+segment boot_link from boot to control profile boot_to_fsp103
+segment link_exit from control to exit profile fsp103_to_fsp104
+variant boot_link.one incumbent uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa program {program} predicate {control} ticks 2
+variant link_exit.one incumbent uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb program {program} predicate {exit} ticks 1
+continuation main starts root@clean
+continue main with boot_link.one after root@clean
+continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"#
+        )
+    }
+
+    fn timeline_with_milestone_program(root: &Path) -> Timeline {
+        fs::write(root.join("route.milestones"), MILESTONE_SOURCE).unwrap();
+        Timeline::parse(&milestone_timeline_source()).unwrap()
+    }
+
+    fn call_http(config: &WorkbenchConfig, method: &str, path: &str, body: &[u8]) -> HttpResponse {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let body = body.to_vec();
+        let client = thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+            stream.shutdown(std::net::Shutdown::Write).unwrap();
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let response = handle_http(&mut stream, address, config);
+        client.join().unwrap();
+        response
+    }
+
+    #[test]
+    fn launches_use_the_compiled_authored_program_and_native_result_stream() {
+        let root = temporary_root("milestone-launch");
+        let route = timeline_with_milestone_program(&root);
+        let state = root.join("state");
+        fs::create_dir(&state).unwrap();
+        let mut command = Command::new("game");
+        append_authored_milestone_args(
+            &route,
+            &root,
+            &state,
+            &mut command,
+            Some("gameplay-ready-f-sp103"),
+        )
+        .unwrap();
+
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments[0], "--milestone-program");
+        assert_eq!(arguments[2], "--milestones");
+        assert_eq!(arguments[3], "boot,control,exit,gameplay-ready-f-sp103");
+        assert_eq!(arguments[4], "--milestone-result");
+        let decoded = milestone_dsl::decode(&fs::read(&arguments[1]).unwrap()).unwrap();
+        assert_eq!(decoded.definitions.len(), 3);
+        assert_eq!(
+            arguments[5],
+            state.join("route-milestones.json").display().to_string()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn graph_exposes_timeline_shape_and_scrub_ranges() {
         let root = temporary_root("graph");
@@ -2796,6 +3800,238 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         assert_eq!(graph.lineages[0].frame_count, Some(7));
         assert_eq!(graph.lineages[0].steps[1].chain_start_frame, Some(4));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn graph_exposes_predicate_source_summaries_and_proof_identity() {
+        let root = temporary_root("milestone-graph");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let route = timeline_with_milestone_program(&root);
+        let graph = graph_from_timeline(&route, &root).unwrap();
+        let program = graph.milestone_program.as_ref().unwrap();
+        assert_eq!(program.source, MILESTONE_SOURCE);
+        assert_eq!(
+            program.revision_sha256,
+            source_revision(MILESTONE_SOURCE.as_bytes())
+        );
+        assert_eq!(program.definitions.len(), route.milestones.len());
+        assert_eq!(program.definitions[1].name, "control");
+        assert_eq!(program.definitions[1].stable_ticks, 1);
+        assert!(
+            serde_json::to_value(&program.definitions[1].expression)
+                .unwrap()
+                .is_object()
+        );
+        assert!(graph.variants.iter().all(|variant| variant.playable));
+        assert!(
+            graph
+                .variants
+                .iter()
+                .all(|variant| variant.predicate_proof == "verified")
+        );
+        assert!(graph.variants.iter().all(|variant| variant.recordable));
+
+        let changed = MILESTONE_SOURCE.replace("F_SP104", "F_SP105");
+        fs::write(root.join("route.milestones"), changed).unwrap();
+        let stale = graph_from_timeline(&route, &root).unwrap();
+        assert!(stale.variants.iter().all(|variant| variant.playable));
+        assert!(
+            stale
+                .variants
+                .iter()
+                .all(|variant| variant.predicate_proof == "stale")
+        );
+        assert!(stale.variants.iter().all(|variant| !variant.recordable));
+        assert!(
+            stale
+                .variants
+                .iter()
+                .all(|variant| variant.record_anchors.is_empty())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn forged_record_request_cannot_bypass_stale_predicate_proof() {
+        let root = temporary_root("milestone-record-proof");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let route = timeline_with_milestone_program(&root);
+        fs::write(root.join("route.timeline"), milestone_timeline_source()).unwrap();
+        fs::write(
+            root.join("route.milestones"),
+            MILESTONE_SOURCE.replace("F_SP103", "F_SP105"),
+        )
+        .unwrap();
+        fs::write(root.join("game"), b"game").unwrap();
+        fs::write(root.join("disc"), b"disc").unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: root.join("route.timeline"),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: root.join("game"),
+            dvd: root.join("disc"),
+            state_root: root.join("state"),
+        };
+        let error = record_continuation(
+            &route,
+            &config,
+            BrowserRecordRequest {
+                parent: BrowserRecordParent::Variant {
+                    id: "boot_link.one".into(),
+                    lineage: "main".into(),
+                    step_index: 0,
+                    terminal_milestone: "control".into(),
+                },
+                label: String::new(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("advertised by the graph"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn milestone_program_update_validates_parser_topology_and_stale_revision() {
+        let root = temporary_root("milestone-update");
+        let route = timeline_with_milestone_program(&root);
+        let initial = milestone_program_projection(&route, &root)
+            .unwrap()
+            .unwrap();
+        let replacement = MILESTONE_SOURCE.replace("stable 2", "stable 3");
+        let updated = update_milestone_program(
+            &route,
+            &root,
+            &BrowserMilestoneProgramUpdateRequest {
+                expected_revision_sha256: initial.revision_sha256.clone(),
+                source: replacement.clone(),
+            },
+        )
+        .unwrap();
+        assert_ne!(updated.revision_sha256, initial.revision_sha256);
+        assert_eq!(
+            fs::read_to_string(root.join("route.milestones")).unwrap(),
+            replacement
+        );
+        assert_eq!(updated.definitions[2].stable_ticks, 3);
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            !name.ends_with(".tmp") && !name.ends_with(".rollback")
+        }));
+
+        let stale = update_milestone_program(
+            &route,
+            &root,
+            &BrowserMilestoneProgramUpdateRequest {
+                expected_revision_sha256: initial.revision_sha256,
+                source: MILESTONE_SOURCE.into(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(stale, MilestoneProgramUpdateError::Stale { .. }));
+
+        for invalid in [
+            "milestones 1.0\nmilestone boot { phase pre_input when }".to_string(),
+            replacement.replace("milestone control", "milestone wrong_name"),
+        ] {
+            let error = update_milestone_program(
+                &route,
+                &root,
+                &BrowserMilestoneProgramUpdateRequest {
+                    expected_revision_sha256: updated.revision_sha256.clone(),
+                    source: invalid,
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(error, MilestoneProgramUpdateError::Invalid(_)));
+            assert_eq!(
+                fs::read_to_string(root.join("route.milestones")).unwrap(),
+                replacement
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn milestone_program_http_api_has_no_path_and_returns_conflict_for_stale_edits() {
+        let root = temporary_root("milestone-http");
+        fs::write(root.join("route.milestones"), MILESTONE_SOURCE).unwrap();
+        fs::write(root.join("route.timeline"), milestone_timeline_source()).unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: root.join("route.timeline"),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: root.join("unused-game"),
+            dvd: root.join("unused-dvd"),
+            state_root: root.join("state"),
+        };
+        let initial_revision = source_revision(MILESTONE_SOURCE.as_bytes());
+        let smuggled_path = serde_json::json!({
+            "expected_revision_sha256": initial_revision,
+            "source": MILESTONE_SOURCE,
+            "path": "../outside.milestones"
+        });
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/milestone-program",
+            &serde_json::to_vec(&smuggled_path).unwrap(),
+        );
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            fs::read_to_string(root.join("route.milestones")).unwrap(),
+            MILESTONE_SOURCE
+        );
+
+        let replacement = MILESTONE_SOURCE.replace("stable 2", "stable 4");
+        let request = BrowserMilestoneProgramUpdateRequest {
+            expected_revision_sha256: initial_revision.clone(),
+            source: replacement.clone(),
+        };
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/milestone-program",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(response.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["source"], replacement);
+        assert!(body.get("path").is_none());
+
+        let stale = call_http(
+            &config,
+            "POST",
+            "/api/milestone-program",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(stale.status, 409);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn milestone_program_edit_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root("milestone-symlink");
+        let outside = temporary_root("milestone-symlink-outside");
+        fs::write(outside.join("outside.milestones"), MILESTONE_SOURCE).unwrap();
+        symlink(
+            outside.join("outside.milestones"),
+            root.join("route.milestones"),
+        )
+        .unwrap();
+        let route = Timeline::parse(&milestone_timeline_source()).unwrap();
+        let error = milestone_program_projection(&route, &root).unwrap_err();
+        assert!(error.to_string().contains("symbolic link"));
+        assert_eq!(
+            fs::read_to_string(outside.join("outside.milestones")).unwrap(),
+            MILESTONE_SOURCE
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
@@ -2919,7 +4155,7 @@ continue main with boot_link.tas after root@clean
     }
 
     #[test]
-    fn checked_in_intro_exposes_exact_main_record_anchor() {
+    fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
@@ -2932,11 +4168,11 @@ continue main with boot_link.tas after root@clean
             .iter()
             .find(|variant| variant.id == "boot_to_link.golf439")
             .unwrap();
+        assert!(variant.playable);
         assert!(variant.recordable);
+        assert!(variant.lineage_composable);
+        assert_eq!(variant.predicate_proof, "verified");
         assert_eq!(variant.record_anchors.len(), 1);
-        assert_eq!(variant.record_anchors[0].lineage, "main");
-        assert_eq!(variant.record_anchors[0].step_index, 0);
-        assert_eq!(variant.record_anchors[0].terminal_milestone, "link_control");
     }
 
     fn install_ready_draft(
@@ -3506,6 +4742,153 @@ continue main with boot_link.tas after root@clean
         let exited = graph_with_drafts(&timeline(), &root, &state).unwrap();
         assert_eq!(exited.drafts[0].status, DraftStatus::Ready);
         assert!(exited.drafts[0].playable);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_delete_moves_only_selected_subtree_to_recoverable_trash() {
+        let root = temporary_root("draft-delete-subtree");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let base = install_ready_draft(&root, &state, "draft-delete-base", &[8]);
+        let mut selected = install_ready_draft(&root, &state, "draft-delete-selected", &[9]);
+        let mut sibling = install_ready_draft(&root, &state, "draft-delete-sibling", &[10]);
+        let mut descendant = install_ready_draft(&root, &state, "draft-delete-descendant", &[11]);
+        for child in [&mut selected, &mut sibling] {
+            child.parent = DraftParent::Draft {
+                id: base.id.clone(),
+                parent_tape_sha256: base.result_tape_sha256.clone().unwrap(),
+            };
+            child.parent_tape_sha256 = base.result_tape_sha256.clone().unwrap();
+        }
+        descendant.parent = DraftParent::Draft {
+            id: selected.id.clone(),
+            parent_tape_sha256: selected.result_tape_sha256.clone().unwrap(),
+        };
+        descendant.parent_tape_sha256 = selected.result_tape_sha256.clone().unwrap();
+        for manifest in [&selected, &sibling, &descendant] {
+            let directory = drafts_root(&state).unwrap().join(&manifest.id);
+            fs::remove_file(directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+            write_draft_manifest(&directory, manifest, true).unwrap();
+        }
+
+        let preview = preview_draft_deletion(&state, &selected.id).unwrap();
+        assert_eq!(
+            preview
+                .drafts
+                .iter()
+                .map(|draft| draft.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([selected.id.as_str(), descendant.id.as_str()])
+        );
+        let result = apply_draft_deletion(
+            &state,
+            &BrowserDraftDeleteApplyRequest {
+                id: selected.id.clone(),
+                confirmation_token: preview.confirmation_token,
+            },
+        )
+        .unwrap();
+        let draft_root = drafts_root(&state).unwrap();
+        assert!(draft_root.join(&base.id).is_dir());
+        assert!(draft_root.join(&sibling.id).is_dir());
+        assert!(!draft_root.join(&selected.id).exists());
+        assert!(!draft_root.join(&descendant.id).exists());
+        assert!(result.trash_transaction.join(&selected.id).is_dir());
+        assert!(result.trash_transaction.join(&descendant.id).is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_delete_rejects_active_recordings_and_stale_graph_tokens() {
+        let root = temporary_root("draft-delete-stale");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let id = "draft-delete-stale";
+        let mut manifest = install_ready_draft(&root, &state, id, &[8]);
+
+        active_recordings().lock().unwrap().insert(id.into());
+        let active_result = preview_draft_deletion(&state, id);
+        active_recordings().lock().unwrap().remove(id);
+        assert!(active_result.unwrap_err().to_string().contains("active"));
+
+        let preview = preview_draft_deletion(&state, id).unwrap();
+        manifest.label = "changed after preview".into();
+        let directory = drafts_root(&state).unwrap().join(id);
+        fs::remove_file(directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&directory, &manifest, true).unwrap();
+        let apply = apply_draft_deletion(
+            &state,
+            &BrowserDraftDeleteApplyRequest {
+                id: id.into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        );
+        assert!(
+            apply
+                .unwrap_err()
+                .to_string()
+                .contains("changed after preview")
+        );
+        assert!(directory.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_delete_descendant_closure_is_cycle_safe() {
+        let root = temporary_root("draft-delete-cycle");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let mut left = install_ready_draft(&root, &state, "draft-delete-cycle-left", &[8]);
+        let mut right = install_ready_draft(&root, &state, "draft-delete-cycle-right", &[9]);
+        left.parent = DraftParent::Draft {
+            id: right.id.clone(),
+            parent_tape_sha256: right.result_tape_sha256.clone().unwrap(),
+        };
+        right.parent = DraftParent::Draft {
+            id: left.id.clone(),
+            parent_tape_sha256: left.result_tape_sha256.clone().unwrap(),
+        };
+        for manifest in [&left, &right] {
+            let directory = drafts_root(&state).unwrap().join(&manifest.id);
+            fs::remove_file(directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+            write_draft_manifest(&directory, manifest, true).unwrap();
+        }
+        let preview = preview_draft_deletion(&state, &left.id).unwrap();
+        assert_eq!(preview.drafts.len(), 2);
+        assert!(preview.drafts.iter().any(|draft| draft.id == left.id));
+        assert!(preview.drafts.iter().any(|draft| draft.id == right.id));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn draft_delete_refuses_directory_symlink_escape_after_preview() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root("draft-delete-symlink");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let id = "draft-delete-symlink";
+        install_ready_draft(&root, &state, id, &[8]);
+        let preview = preview_draft_deletion(&state, id).unwrap();
+        let directory = drafts_root(&state).unwrap().join(id);
+        let escaped = root.join("escaped-draft");
+        fs::rename(&directory, &escaped).unwrap();
+        symlink(&escaped, &directory).unwrap();
+        let result = apply_draft_deletion(
+            &state,
+            &BrowserDraftDeleteApplyRequest {
+                id: id.into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        );
+        assert!(result.is_err());
+        assert!(escaped.is_dir());
         fs::remove_dir_all(root).unwrap();
     }
 }

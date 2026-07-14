@@ -1,5 +1,6 @@
 //! Authored route timelines and immutable variant lineages.
 
+use crate::milestone_dsl::{self, CompiledMilestones};
 use crate::search::{Candidate, SegmentProfile};
 use crate::tape::InputTape;
 use crate::tape_dsl;
@@ -8,11 +9,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Timeline {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_program: Option<PathBuf>,
     pub milestones: Vec<String>,
     pub segments: BTreeMap<String, Segment>,
     pub variants: BTreeMap<String, Variant>,
@@ -39,6 +42,10 @@ pub struct Variant {
     pub artifact: ArtifactSource,
     pub start_fingerprint: String,
     pub boundary_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_program_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_definition_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_hit_tick: Option<u64>,
     #[serde(skip)]
@@ -214,11 +221,155 @@ impl Timeline {
         })
     }
 
+    pub fn compile_milestones(
+        &self,
+        root: &Path,
+    ) -> Result<Option<CompiledMilestones>, TimelineError> {
+        let Some(relative) = &self.milestone_program else {
+            return Ok(None);
+        };
+        let root = if root.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            root
+        };
+        let root = fs::canonicalize(root).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot resolve timeline artifact root {}: {error}",
+                root.display()
+            ))
+        })?;
+        let path = fs::canonicalize(root.join(relative)).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot resolve milestone program {}: {error}",
+                root.join(relative).display()
+            ))
+        })?;
+        if !path.starts_with(&root) || !path.is_file() {
+            return Err(TimelineError::new(format!(
+                "milestone program {} escapes the timeline artifact root",
+                path.display()
+            )));
+        }
+        let source = fs::read_to_string(&path).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot read milestone program {}: {error}",
+                path.display()
+            ))
+        })?;
+        let program = milestone_dsl::parse(&source).map_err(|error| {
+            TimelineError::new(format!(
+                "invalid milestone program {}: {error}",
+                path.display()
+            ))
+        })?;
+        let authored = program
+            .definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>();
+        let declared = self
+            .milestones
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if authored != declared {
+            return Err(TimelineError::new(format!(
+                "milestone program {} defines {:?}, but the timeline declares {:?}; names and order must match",
+                path.display(),
+                authored,
+                declared
+            )));
+        }
+        milestone_dsl::compile(&program).map(Some).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot compile milestone program {}: {error}",
+                path.display()
+            ))
+        })
+    }
+
     pub fn validate_artifacts(&self, root: Option<&Path>) -> Result<(), TimelineError> {
         self.validate_structure()?;
         let Some(root) = root else {
             return Ok(());
         };
+        if let Some(compiled) = self.compile_milestones(root)? {
+            let program_sha256 = compiled
+                .program_sha256
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            for variant in self.variants.values() {
+                let expected_program =
+                    variant.milestone_program_sha256.as_ref().ok_or_else(|| {
+                        TimelineError::at(
+                            variant.line,
+                            1,
+                            format!(
+                                "variant {} has no milestone program proof; replay it against {}",
+                                variant.id, program_sha256
+                            ),
+                        )
+                    })?;
+                let expected = variant
+                    .milestone_definition_sha256
+                    .as_ref()
+                    .ok_or_else(|| {
+                        TimelineError::at(
+                            variant.line,
+                            1,
+                            format!(
+                                "variant {} has no milestone predicate proof; replay it against the authored program",
+                                variant.id
+                            ),
+                        )
+                    })?;
+                let milestone = &self.segments[&variant.segment].to;
+                let actual = compiled
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.name == *milestone)
+                    .expect("compile_milestones requires exact topology parity");
+                let actual = actual
+                    .sha256
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                if *expected_program != program_sha256 {
+                    return Err(TimelineError::at(
+                        variant.line,
+                        1,
+                        format!(
+                            "variant {} proves stale milestone program {}; current program is {}",
+                            variant.id, expected_program, program_sha256
+                        ),
+                    ));
+                }
+                if *expected != actual {
+                    return Err(TimelineError::at(
+                        variant.line,
+                        1,
+                        format!(
+                            "variant {} proves stale predicate {} for milestone {}; current predicate is {}",
+                            variant.id, expected, milestone, actual
+                        ),
+                    ));
+                }
+            }
+        } else if let Some(variant) = self.variants.values().find(|variant| {
+            variant.milestone_program_sha256.is_some()
+                || variant.milestone_definition_sha256.is_some()
+        }) {
+            return Err(TimelineError::at(
+                variant.line,
+                1,
+                format!(
+                    "variant {} claims milestone proof without a milestone_program declaration",
+                    variant.id
+                ),
+            ));
+        }
         for variant in self.variants.values() {
             let profile = self.segments[&variant.segment].profile;
             match &variant.artifact {
@@ -635,6 +786,18 @@ impl Timeline {
                     format!("variant {} has an empty boundary fingerprint", variant.id),
                 ));
             }
+            if variant.milestone_program_sha256.is_some()
+                != variant.milestone_definition_sha256.is_some()
+            {
+                return Err(TimelineError::at(
+                    variant.line,
+                    1,
+                    format!(
+                        "variant {} must pin milestone program and predicate SHA-256 together",
+                        variant.id
+                    ),
+                ));
+            }
             if variant.incumbent {
                 *incumbent_counts.entry(&variant.segment).or_default() += 1;
             }
@@ -818,6 +981,7 @@ impl Timeline {
 struct Parser<'a> {
     source: &'a str,
     timeline_name: Option<String>,
+    milestone_program: Option<PathBuf>,
     milestones: Vec<String>,
     segments: BTreeMap<String, Segment>,
     variants: BTreeMap<String, Variant>,
@@ -830,6 +994,7 @@ impl<'a> Parser<'a> {
         Self {
             source,
             timeline_name: None,
+            milestone_program: None,
             milestones: Vec::new(),
             segments: BTreeMap::new(),
             variants: BTreeMap::new(),
@@ -847,6 +1012,7 @@ impl<'a> Parser<'a> {
             }
             match tokens[0].as_str() {
                 "timeline" => self.parse_timeline(&tokens, line_number)?,
+                "milestone_program" => self.parse_milestone_program(&tokens, line_number)?,
                 "milestone" => self.parse_milestone(&tokens, line_number)?,
                 "segment" => self.parse_segment(&tokens, line_number)?,
                 "variant" => self.parse_variant(&tokens, line_number)?,
@@ -866,6 +1032,7 @@ impl<'a> Parser<'a> {
             name: self
                 .timeline_name
                 .ok_or_else(|| TimelineError::new("missing timeline declaration"))?,
+            milestone_program: self.milestone_program,
             milestones: self.milestones,
             segments: self.segments,
             variants: self.variants,
@@ -880,6 +1047,35 @@ impl<'a> Parser<'a> {
         exact_len(tokens, 2, line, "timeline NAME")?;
         if self.timeline_name.replace(tokens[1].clone()).is_some() {
             return Err(TimelineError::at(line, 1, "duplicate timeline declaration"));
+        }
+        Ok(())
+    }
+
+    fn parse_milestone_program(
+        &mut self,
+        tokens: &[String],
+        line: usize,
+    ) -> Result<(), TimelineError> {
+        exact_len(tokens, 2, line, "milestone_program PATH")?;
+        let path = PathBuf::from(&tokens[1]);
+        if path.as_os_str().is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "milestone program must be a contained relative path",
+            ));
+        }
+        if self.milestone_program.replace(path).is_some() {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "duplicate milestone_program declaration",
+            ));
         }
         Ok(())
     }
@@ -934,7 +1130,7 @@ impl<'a> Parser<'a> {
             return Err(TimelineError::at(
                 line,
                 1,
-                "expected variant SEGMENT.NAME [incumbent] uses KIND VALUE starts FINGERPRINT produces FINGERPRINT [ticks N]",
+                "expected variant SEGMENT.NAME [incumbent] uses KIND VALUE starts FINGERPRINT produces FINGERPRINT [program SHA256 predicate SHA256] [ticks N]",
             ));
         }
         let id = tokens[1].clone();
@@ -974,6 +1170,25 @@ impl<'a> Parser<'a> {
         let boundary_fingerprint =
             required_token(tokens, cursor + 1, line, "boundary fingerprint")?;
         cursor += 2;
+        let milestone_program_sha256 = if tokens.get(cursor).is_some_and(|token| token == "program")
+        {
+            let digest = required_token(tokens, cursor + 1, line, "milestone program SHA-256")?;
+            validate_sha256(&digest, line, "milestone program")?;
+            cursor += 2;
+            Some(digest)
+        } else {
+            None
+        };
+        let milestone_definition_sha256 =
+            if tokens.get(cursor).is_some_and(|token| token == "predicate") {
+                let digest =
+                    required_token(tokens, cursor + 1, line, "milestone definition SHA-256")?;
+                validate_sha256(&digest, line, "milestone definition")?;
+                cursor += 2;
+                Some(digest)
+            } else {
+                None
+            };
         let first_hit_tick = if cursor < tokens.len() {
             expect(tokens, cursor, "ticks", line)?;
             let value = required_token(tokens, cursor + 1, line, "tick count")?;
@@ -999,6 +1214,8 @@ impl<'a> Parser<'a> {
             artifact,
             start_fingerprint,
             boundary_fingerprint,
+            milestone_program_sha256,
+            milestone_definition_sha256,
             first_hit_tick,
             line,
         };
@@ -1238,6 +1455,22 @@ fn required_token(
         .ok_or_else(|| TimelineError::at(line, 1, format!("missing {description}")))
 }
 
+fn validate_sha256(value: &str, line: usize, description: &str) -> Result<(), TimelineError> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        Err(TimelineError::at(
+            line,
+            1,
+            format!("{description} SHA-256 must be 64 lowercase hexadecimal characters"),
+        ))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TimelineError {
     pub line: Option<usize>,
@@ -1328,6 +1561,60 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
     }
 
     #[test]
+    fn variant_can_pin_the_milestone_predicate_identity() {
+        let program_digest = "2".repeat(64);
+        let digest = "1".repeat(64);
+        let source = ROUTE.replace(
+            "produces control-rng1 ticks 700",
+            &format!("produces control-rng1 program {program_digest} predicate {digest} ticks 700"),
+        );
+        let timeline = Timeline::parse(&source).unwrap();
+        assert_eq!(
+            timeline.variants["boot_link.safe"]
+                .milestone_program_sha256
+                .as_deref(),
+            Some(program_digest.as_str())
+        );
+        assert_eq!(
+            timeline.variants["boot_link.safe"]
+                .milestone_definition_sha256
+                .as_deref(),
+            Some(digest.as_str())
+        );
+
+        let invalid = ROUTE.replace(
+            "produces control-rng1 ticks 700",
+            "produces control-rng1 program NOT-A-DIGEST predicate 1111111111111111111111111111111111111111111111111111111111111111 ticks 700",
+        );
+        assert!(
+            Timeline::parse(&invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("64 lowercase hexadecimal")
+        );
+
+        let one_sided = ROUTE.replace(
+            "produces control-rng1 ticks 700",
+            &format!("produces control-rng1 program {program_digest} ticks 700"),
+        );
+        assert!(
+            Timeline::parse(&one_sided)
+                .unwrap_err()
+                .to_string()
+                .contains("program and predicate SHA-256 together")
+        );
+
+        let orphan = Timeline::parse(&source).unwrap();
+        assert!(
+            orphan
+                .validate_artifacts(Some(Path::new(".")))
+                .unwrap_err()
+                .to_string()
+                .contains("without a milestone_program")
+        );
+    }
+
+    #[test]
     fn incumbent_change_does_not_stale_immutable_lineage() {
         let mut source = ROUTE.replace("boot_link.safe incumbent", "boot_link.safe");
         source = source.replace("boot_link.fast uses", "boot_link.fast incumbent uses");
@@ -1400,6 +1687,142 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
         let error = Timeline::parse("timeline \"unterminated").unwrap_err();
         assert_eq!(error.line, Some(1));
         assert!(error.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn parses_one_relative_milestone_program() {
+        let source = ROUTE.replacen(
+            "timeline intro",
+            "timeline intro\nmilestone_program intro/milestones.duskmilestone",
+            1,
+        );
+        let timeline = Timeline::parse(&source).unwrap();
+        assert_eq!(
+            timeline.milestone_program.as_deref(),
+            Some(Path::new("intro/milestones.duskmilestone"))
+        );
+
+        let absolute =
+            Timeline::parse("timeline bad\nmilestone_program C:/bad/program").unwrap_err();
+        assert!(absolute.to_string().contains("contained relative path"));
+        let traversal = Timeline::parse("timeline bad\nmilestone_program ../outside").unwrap_err();
+        assert!(traversal.to_string().contains("contained relative path"));
+        let duplicate =
+            Timeline::parse("timeline bad\nmilestone_program a\nmilestone_program b").unwrap_err();
+        assert!(
+            duplicate
+                .to_string()
+                .contains("duplicate milestone_program")
+        );
+    }
+
+    #[test]
+    fn compiles_declared_milestones_and_rejects_topology_drift() {
+        let root = std::env::temp_dir().join(format!(
+            "huntctl-timeline-milestones-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("route.milestones"),
+            r#"milestones 1.0
+milestone process_boot {
+  phase pre_input
+  when boundary.kind == "boot" && boundary.index == 0
+}
+milestone link_control {
+  phase post_sim
+  when stage.name == "F_SP103" && player.exists
+}
+"#,
+        )
+        .unwrap();
+        let timeline = Timeline::parse(
+            r#"timeline route
+milestone_program route.milestones
+milestone process_boot
+milestone link_control
+segment boot from process_boot to link_control profile boot_to_fsp103
+variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control
+continuation main starts root@clean
+continue main with boot.test after root@clean
+"#,
+        )
+        .unwrap();
+        let compiled = timeline.compile_milestones(&root).unwrap().unwrap();
+        assert_eq!(compiled.definitions.len(), 2);
+        assert!(
+            timeline
+                .validate_artifacts(Some(&root))
+                .unwrap_err()
+                .to_string()
+                .contains("no milestone program proof")
+        );
+
+        let program_digest = compiled
+            .program_sha256
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let predicate_digest = compiled
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "link_control")
+            .unwrap()
+            .sha256
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let pinned = Timeline::parse(&format!(
+            r#"timeline route
+milestone_program route.milestones
+milestone process_boot
+milestone link_control
+segment boot from process_boot to link_control profile boot_to_fsp103
+variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control program {program_digest} predicate {predicate_digest}
+continuation main starts root@clean
+continue main with boot.test after root@clean
+"#
+        ))
+        .unwrap();
+        pinned.validate_artifacts(Some(&root)).unwrap();
+
+        let changed = fs::read_to_string(root.join("route.milestones"))
+            .unwrap()
+            .replace(
+                "phase post_sim\n  when",
+                "phase post_sim\n  stable 2\n  when",
+            );
+        fs::write(root.join("route.milestones"), changed).unwrap();
+        assert!(
+            pinned
+                .validate_artifacts(Some(&root))
+                .unwrap_err()
+                .to_string()
+                .contains("stale milestone program")
+        );
+
+        let drifted = Timeline::parse(
+            r#"timeline route
+milestone_program route.milestones
+milestone link_control
+milestone process_boot
+segment boot from process_boot to link_control profile boot_to_fsp103
+variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control
+continuation main starts root@clean
+continue main with boot.test after root@clean
+"#,
+        )
+        .unwrap();
+        assert!(
+            drifted
+                .compile_milestones(&root)
+                .unwrap_err()
+                .to_string()
+                .contains("names and order must match")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

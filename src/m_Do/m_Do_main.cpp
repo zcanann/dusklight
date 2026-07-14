@@ -49,6 +49,7 @@
 #include <sstream>
 
 #include <filesystem>
+#include <fstream>
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -66,6 +67,7 @@
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/milestone_program.hpp"
 #include "dusk/automation/rng.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
@@ -238,6 +240,7 @@ static bool finalize_input_tape_fast_forward_reveal();
 static bool finish_simulation_tick();
 static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
+static bool record_milestone_pre_input_boundary();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
@@ -355,6 +358,10 @@ void main01(void) {
 
                 for (int sim_tick = 0; sim_tick < pacing.sim_ticks_to_run; ++sim_tick) {
                     dusk::frame_interp::begin_sim_tick();
+                    if (record_milestone_pre_input_boundary()) {
+                        dusk::IsRunning = false;
+                        break;
+                    }
                     mDoCPd_c::read();
                     begin_automation_simulation_tick();
                     if (auxiliary_live_input_enabled()) {
@@ -389,22 +396,26 @@ void main01(void) {
             dusk::frame_interp::begin_frame(dusk::FrameInterpMode::Off, true, 0.0f);
             dusk::frame_interp::set_ui_tick_pending(true);
 
-            // Game Inputs
-            mDoCPd_c::read();
-            begin_automation_simulation_tick();
-            if (auxiliary_live_input_enabled()) {
-                dusk::mouse::read();
-                dusk::gyro::read(pacing.presentation_dt_seconds);
-            }
+            if (record_milestone_pre_input_boundary()) {
+                dusk::IsRunning = false;
+            } else {
+                // Game Inputs
+                mDoCPd_c::read();
+                begin_automation_simulation_tick();
+                if (auxiliary_live_input_enabled()) {
+                    dusk::mouse::read();
+                    dusk::gyro::read(pacing.presentation_dt_seconds);
+                }
 
-            // EXECUTE GAME LOGIC & RENDER
-            // This calls mDoGph_Painter -> JFWDisplay -> GX Functions
-            fapGm_Execute();
+                // EXECUTE GAME LOGIC & RENDER
+                // This calls mDoGph_Painter -> JFWDisplay -> GX Functions
+                fapGm_Execute();
 
-            mDoAud_Execute();
-            if (finish_simulation_tick()) {
-                if (!finish_automation_oracle_tick()) {
-                    finish_input_tape_tick();
+                mDoAud_Execute();
+                if (finish_simulation_tick()) {
+                    if (!finish_automation_oracle_tick()) {
+                        finish_input_tape_tick();
+                    }
                 }
             }
         }
@@ -908,12 +919,7 @@ static void record_gameplay_trace_tick() {
     recorder.record(sample);
 }
 
-static bool record_milestone_tick() {
-    auto& tracker = dusk::automation::milestone_tracker();
-    if (!tracker.active()) {
-        return false;
-    }
-
+static dusk::automation::MilestoneObservation capture_milestone_observation() {
     fopAc_ac_c* player = dComIfGp_getPlayer(0);
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
     const auto* link = playerIsLink ? static_cast<daAlink_c*>(player) : nullptr;
@@ -927,9 +933,7 @@ static bool record_milestone_tick() {
             eventNameHash = (eventNameHash ^ *cursor) * 16777619u;
         }
     }
-    const bool goalReachedBefore = tracker.goalReached();
-    tracker.observe(
-        {
+    return {
             .stageName = dComIfGp_getStartStageName(),
             .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
             .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
@@ -972,15 +976,42 @@ static bool record_milestone_tick() {
             .nextLayer = static_cast<std::int8_t>(dComIfGp_getNextStageLayer()),
             .nextPoint = dComIfGp_getNextStagePoint(),
             .rng = dusk::automation::capture_game_rng_snapshot(),
-        },
-        automationSimulationTick, automationTapeFrame);
+    };
+}
+
+static bool record_milestone_boundary(const dusk::automation::MilestoneProgramPhase phase,
+    const dusk::automation::MilestoneBoundaryKind kind, const std::uint64_t boundaryIndex,
+    const std::uint64_t tapeFrame) {
+    auto& tracker = dusk::automation::milestone_tracker();
+    if (!tracker.active()) return false;
+    const bool goalReachedBefore = tracker.goalReached();
+    // Boundary zero precedes the first PAD read and therefore also precedes any completed game
+    // tick. Keep non-boundary fields unavailable/default instead of manufacturing a frame-zero
+    // game observation.
+    const auto observation = kind == dusk::automation::MilestoneBoundaryKind::Boot
+                                 ? dusk::automation::MilestoneObservation{}
+                                 : capture_milestone_observation();
+    tracker.observeBoundary(observation, phase, kind, boundaryIndex, automationSimulationTick,
+        tapeFrame);
     if (!goalReachedBefore && tracker.goalReached()) {
-        DuskLog.info("Automation milestone goal '{}' reached at simulation tick {}, tape frame {}",
-                     dusk::automation::milestone_name(*tracker.goal()),
-                     automationSimulationTick, automationTapeFrame);
+        DuskLog.info("Automation milestone goal '{}' reached at boundary {}, simulation tick {}, tape frame {}",
+                     *tracker.goalName(), boundaryIndex, automationSimulationTick, tapeFrame);
         return true;
     }
     return false;
+}
+
+static bool record_milestone_pre_input_boundary() {
+    return record_milestone_boundary(dusk::automation::MilestoneProgramPhase::PreInput,
+        automationSimulationTick == 0 ? dusk::automation::MilestoneBoundaryKind::Boot
+                                      : dusk::automation::MilestoneBoundaryKind::Tick,
+        automationSimulationTick, automationTapeFrame);
+}
+
+static bool record_milestone_tick() {
+    return record_milestone_boundary(dusk::automation::MilestoneProgramPhase::PostSim,
+        dusk::automation::MilestoneBoundaryKind::Tick, automationSimulationTick + 1,
+        automationTapeFrame);
 }
 
 static bool finish_automation_oracle_tick() {
@@ -1578,6 +1609,7 @@ int game_main(int argc, char* argv[]) {
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
             ("milestones", "Evaluate comma-separated memory-backed milestone IDs", cxxopts::value<std::string>())
+            ("milestone-program", "Load a compiled read-only DMSP milestone predicate program", cxxopts::value<std::string>())
             ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
             ("milestone-result", "Write versioned memory-backed milestone results as JSON", cxxopts::value<std::string>())
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -1891,6 +1923,7 @@ int game_main(int argc, char* argv[]) {
     const bool hasMilestones = parsed_arg_options.count("milestones") != 0;
     const bool hasMilestoneResult = parsed_arg_options.count("milestone-result") != 0;
     const bool hasMilestoneGoal = parsed_arg_options.count("milestone-goal") != 0;
+    const bool hasMilestoneProgram = parsed_arg_options.count("milestone-program") != 0;
     if (hasMilestones != hasMilestoneResult) {
         fprintf(stderr,
                 "Milestone Error: --milestones LIST and --milestone-result PATH must be used together\n");
@@ -1898,6 +1931,10 @@ int game_main(int argc, char* argv[]) {
     }
     if (hasMilestoneGoal && !hasMilestones) {
         fprintf(stderr, "Milestone Error: --milestone-goal ID requires --milestones LIST\n");
+        return 1;
+    }
+    if (hasMilestoneProgram && !hasMilestones) {
+        fprintf(stderr, "Milestone Error: --milestone-program PATH requires --milestones LIST\n");
         return 1;
     }
     if (hasRecordInputTape && hasMilestoneGoal) {
@@ -1911,25 +1948,48 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
 
-        std::vector<dusk::automation::MilestoneId> requestedMilestones;
         std::string milestoneError;
-        if (!dusk::automation::parse_milestone_list(
+        auto& program = dusk::automation::milestone_program();
+        if (hasMilestoneProgram) {
+            const std::filesystem::path path = std::filesystem::u8path(
+                parsed_arg_options["milestone-program"].as<std::string>());
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+            if (sizeError || size > dusk::automation::kMilestoneProgramMaximumBytes) {
+                fprintf(stderr, "Milestone Error: cannot read bounded program '%s'%s%s\n",
+                    dusk::io::fs_path_to_string(path).c_str(), sizeError ? ": " : "",
+                    sizeError ? sizeError.message().c_str() : " (exceeds 1 MiB)");
+                return 1;
+            }
+            std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+            std::ifstream stream(path, std::ios::binary);
+            if (!stream || !stream.read(reinterpret_cast<char*>(bytes.data()),
+                               static_cast<std::streamsize>(bytes.size()))) {
+                fprintf(stderr, "Milestone Error: failed to read program '%s'\n",
+                    dusk::io::fs_path_to_string(path).c_str());
+                return 1;
+            }
+            const auto decodeError = dusk::automation::decode_milestone_program(bytes,
+                dusk::automation::resolve_game_milestone_symbol, program);
+            if (decodeError != dusk::automation::MilestoneProgramError::None) {
+                fprintf(stderr, "Milestone Error: invalid program '%s': %s\n",
+                    dusk::io::fs_path_to_string(path).c_str(),
+                    dusk::automation::milestone_program_error_message(decodeError));
+                return 1;
+            }
+        }
+
+        std::vector<std::string> requestedMilestones;
+        if (!dusk::automation::parse_milestone_name_list(
                 parsed_arg_options["milestones"].as<std::string>(), requestedMilestones,
                 milestoneError)) {
             fprintf(stderr, "Milestone Error: %s\n", milestoneError.c_str());
             return 1;
         }
 
-        std::optional<dusk::automation::MilestoneId> milestoneGoal;
+        std::optional<std::string> milestoneGoal;
         if (hasMilestoneGoal) {
-            const std::string goalName =
-                parsed_arg_options["milestone-goal"].as<std::string>();
-            const auto* definition = dusk::automation::find_milestone(goalName);
-            if (definition == nullptr) {
-                fprintf(stderr, "Milestone Error: unknown goal '%s'\n", goalName.c_str());
-                return 1;
-            }
-            milestoneGoal = definition->id;
+            milestoneGoal = parsed_arg_options["milestone-goal"].as<std::string>();
         }
 
         const std::string resultPath =
@@ -1938,8 +1998,8 @@ int game_main(int argc, char* argv[]) {
             fprintf(stderr, "Milestone Error: --milestone-result PATH cannot be empty\n");
             return 1;
         }
-        if (!dusk::automation::milestone_tracker().configure(
-                requestedMilestones, milestoneGoal, milestoneError)) {
+        if (!dusk::automation::milestone_tracker().configureNames(
+                requestedMilestones, milestoneGoal, program, milestoneError)) {
             fprintf(stderr, "Milestone Error: %s\n", milestoneError.c_str());
             return 1;
         }
@@ -2799,7 +2859,7 @@ int game_main(int argc, char* argv[]) {
             dusk::automation::EyeShredderOracleStatus::Passed;
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
-        milestoneTracker.goal().has_value() && !milestoneTracker.goalReached();
+        milestoneTracker.goalConfigured() && !milestoneTracker.goalReached();
     const bool processFailedBeforeRecording =
         nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
         realizedInputTapeWriteFailed || actorCatalogWriteFailed ||

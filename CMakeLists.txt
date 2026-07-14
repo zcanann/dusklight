@@ -506,6 +506,7 @@ set_target_properties(dusk_eye_shredder_oracle_test PROPERTIES FOLDER "Tests")
 add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
     tests/milestones_test.cpp
     src/dusk/automation/milestones.cpp
+    src/dusk/automation/milestone_program.cpp
 )
 target_include_directories(dusk_milestones_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json xxHash::xxhash)

@@ -5,6 +5,7 @@ pub mod client;
 pub mod controller_program;
 pub mod corpus;
 pub mod fqi;
+pub mod milestone_dsl;
 pub mod offline_rl;
 pub mod pool;
 pub mod protocol;

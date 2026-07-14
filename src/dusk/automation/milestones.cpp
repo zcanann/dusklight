@@ -291,10 +291,38 @@ bool parse_milestone_list(
     return true;
 }
 
+bool parse_milestone_name_list(
+    const std::string_view text, std::vector<std::string>& output, std::string& error) {
+    output.clear();
+    if (text.empty()) {
+        error = "milestone list cannot be empty";
+        return false;
+    }
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t end = text.find(',', begin);
+        const std::string_view name = text.substr(
+            begin, end == std::string_view::npos ? text.size() - begin : end - begin);
+        if (name.empty()) {
+            error = "milestone names cannot be empty";
+            output.clear();
+            return false;
+        }
+        if (std::ranges::find(output, name) == output.end()) output.emplace_back(name);
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+    }
+    return true;
+}
+
 bool MilestoneTracker::configure(const std::span<const MilestoneId> requested,
     const std::optional<MilestoneId> goal, std::string& error) {
     mHits.clear();
+    mAuthoredHits.clear();
     mGoal.reset();
+    mGoalName.reset();
+    mProgram = nullptr;
+    mProgramDigest.clear();
     if (requested.empty()) {
         error = "at least one milestone must be requested";
         return false;
@@ -315,6 +343,52 @@ bool MilestoneTracker::configure(const std::span<const MilestoneId> requested,
         return false;
     }
     mGoal = goal;
+    if (goal.has_value()) mGoalName = std::string(milestone_name(*goal));
+    return true;
+}
+
+bool MilestoneTracker::configureNames(const std::span<const std::string> requested,
+    const std::optional<std::string> goal, const MilestoneProgram& program, std::string& error) {
+    mHits.clear();
+    mAuthoredHits.clear();
+    mGoal.reset();
+    mGoalName.reset();
+    mProgram = &program;
+    mProgramDigest = std::string(program.digest());
+    if (requested.empty()) {
+        error = "at least one milestone must be requested";
+        return false;
+    }
+    for (const std::string& name : requested) {
+        if (const MilestoneDefinition* builtin = find_milestone(name); builtin != nullptr) {
+            mHits.push_back({.id = builtin->id});
+        } else if (const MilestoneProgramDefinition* authored = program.find(name);
+                   authored != nullptr) {
+            mAuthoredHits.push_back({
+                .id = authored->id,
+                .phase = authored->phase,
+                .stableTicks = authored->stableTicks,
+                .definitionDigest = authored->definitionDigest,
+                .programDigest = std::string(program.digest()),
+            });
+        } else {
+            error = "unknown milestone '" + name + "'";
+            mHits.clear();
+            mAuthoredHits.clear();
+            return false;
+        }
+    }
+    if (goal.has_value() && std::ranges::find(requested, *goal) == requested.end()) {
+        error = "goal '" + *goal + "' was not requested";
+        mHits.clear();
+        mAuthoredHits.clear();
+        return false;
+    }
+    if (goal.has_value()) {
+        mGoalName = goal;
+        if (const MilestoneDefinition* builtin = find_milestone(*goal); builtin != nullptr)
+            mGoal = builtin->id;
+    }
     return true;
 }
 
@@ -325,10 +399,27 @@ void MilestoneTracker::reset() {
         hit.tapeFrame = MilestoneNoTapeFrame;
         hit.evidence = {};
     }
+    for (AuthoredMilestoneHit& hit : mAuthoredHits) {
+        hit.consecutiveTicks = 0;
+        hit.hit = false;
+        hit.boundaryIndex = 0;
+        hit.simulationTick = 0;
+        hit.tapeFrame = MilestoneNoTapeFrame;
+        hit.evidence = {};
+    }
 }
 
 void MilestoneTracker::observe(const MilestoneObservation& observation,
     const std::uint64_t simulationTick, const std::uint64_t tapeFrame) {
+    observeBoundary(observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick,
+        simulationTick + 1, simulationTick, tapeFrame);
+}
+
+void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
+    const MilestoneProgramPhase phase, const MilestoneBoundaryKind boundaryKind,
+    const std::uint64_t boundaryIndex, const std::uint64_t simulationTick,
+    const std::uint64_t tapeFrame) {
+    if (phase == MilestoneProgramPhase::PostSim) {
     for (MilestoneHit& hit : mHits) {
         if (hit.hit) {
             continue;
@@ -342,14 +433,50 @@ void MilestoneTracker::observe(const MilestoneObservation& observation,
             hit.evidence.boundaryFingerprint = compute_milestone_boundary_fingerprint(hit.evidence);
         }
     }
+    }
+    if (mProgram == nullptr) return;
+    for (AuthoredMilestoneHit& hit : mAuthoredHits) {
+        if (hit.hit || hit.phase != phase) continue;
+        const MilestoneProgramDefinition* definition = mProgram->find(hit.id);
+        const bool matches = definition != nullptr && definition->evaluate({
+            .observation = observation,
+            .phase = phase,
+            .boundaryKind = boundaryKind,
+            .boundaryIndex = boundaryIndex,
+            .tapeFrame = tapeFrame == MilestoneNoTapeFrame
+                             ? std::nullopt
+                             : std::optional<std::uint64_t>(tapeFrame),
+        });
+        if (!matches) {
+            hit.consecutiveTicks = 0;
+            continue;
+        }
+        if (hit.consecutiveTicks < hit.stableTicks) ++hit.consecutiveTicks;
+        if (hit.consecutiveTicks != hit.stableTicks) continue;
+        hit.hit = true;
+        hit.boundaryIndex = boundaryIndex;
+        hit.simulationTick = simulationTick;
+        hit.tapeFrame = tapeFrame;
+        hit.evidence = capture_evidence(observation);
+        hit.evidence.boundaryFingerprint = compute_milestone_boundary_fingerprint(hit.evidence);
+    }
 }
 
 bool MilestoneTracker::goalReached() const {
-    if (!mGoal.has_value()) {
+    if (!mGoalName.has_value()) {
         return false;
     }
-    const auto found = std::ranges::find(mHits, *mGoal, &MilestoneHit::id);
-    return found != mHits.end() && found->hit;
+    if (mGoal.has_value()) {
+        const auto found = std::ranges::find(mHits, *mGoal, &MilestoneHit::id);
+        return found != mHits.end() && found->hit;
+    }
+    const auto found = std::ranges::find(mAuthoredHits, *mGoalName, &AuthoredMilestoneHit::id);
+    return found != mAuthoredHits.end() && found->hit;
+}
+
+std::optional<std::string_view> MilestoneTracker::goalName() const {
+    if (!mGoalName.has_value()) return std::nullopt;
+    return *mGoalName;
 }
 
 MilestoneTracker& milestone_tracker() {
@@ -376,6 +503,30 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
         }
         milestones.push_back(std::move(item));
     }
+    for (const AuthoredMilestoneHit& hit : tracker.authoredHits()) {
+        json item{
+            {"id", hit.id},
+            {"hit", hit.hit},
+            {"phase", hit.phase == MilestoneProgramPhase::PreInput ? "pre_input" : "post_sim"},
+            {"stable_ticks", hit.stableTicks},
+            {"definition_digest", hit.definitionDigest},
+            {"program_digest", hit.programDigest},
+        };
+        if (hit.hit) {
+            item["boundary_index"] = hit.boundaryIndex;
+            item["sim_tick"] = hit.simulationTick;
+            item["tape_frame"] = hit.tapeFrame == MilestoneNoTapeFrame
+                                      ? json(nullptr)
+                                      : json(hit.tapeFrame);
+            item["evidence"] = evidence_json(hit.evidence);
+        } else {
+            item["boundary_index"] = nullptr;
+            item["sim_tick"] = nullptr;
+            item["tape_frame"] = nullptr;
+            item["evidence"] = nullptr;
+        }
+        milestones.push_back(std::move(item));
+    }
 
     return json{
         {"schema",
@@ -383,9 +534,10 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
                 {"name", "dusklight.automation.milestones"},
                 {"version", MilestoneResultSchemaVersion},
             }},
-        {"goal",
-            tracker.goal().has_value() ? json(milestone_name(*tracker.goal())) : json(nullptr)},
+        {"goal", tracker.goalName().has_value() ? json(*tracker.goalName()) : json(nullptr)},
         {"goal_reached", tracker.goalReached()},
+        {"program_digest", tracker.programDigest().empty() ? json(nullptr)
+                                                            : json(tracker.programDigest())},
         {"milestones", std::move(milestones)},
     }
         .dump(2);

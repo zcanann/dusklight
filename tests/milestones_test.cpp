@@ -1,6 +1,7 @@
 #include "dusk/automation/milestones.hpp"
 
 #include <bit>
+#include <array>
 #include <cstdlib>
 #include <iostream>
 
@@ -16,6 +17,13 @@ void require(const bool condition, const char* expression, const int line) {
 }
 
 #define REQUIRE(expression) require((expression), #expression, __LINE__)
+
+constexpr std::array<std::uint8_t, 252> IntroProgram{
+0x44,0x4d,0x53,0x50,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0xc8,0x00,0x00,0x00,0x10,0xe0,0x59,0x2e,0xb0,0x01,0x14,0x5a,0xb8,0x60,0x27,0x1f,0x1d,0x66,0x77,0x89,0xaa,0xce,0x1e,0x1a,0xa1,0x44,0x2b,0xa7,0x50,0xb2,0x0b,0xd2,0x45,0x38,0x29,0xd2,0x4e,0x00,0x00,0x00,0x0c,0x00,0x70,0x72,0x6f,0x63,0x65,0x73,0x73,0x5f,0x62,0x6f,0x6f,0x74,0x00,0x00,0x01,0x00,0x07,0x00,0x16,0x00,0x00,0x00,0x45,0xdc,0x09,0x9d,0x98,0x3f,0xb5,0x8b,0x7a,0x85,0x6f,0x7e,0x83,0x10,0xe5,0xd2,0xec,0xba,0xc3,0xcd,0xb3,0xa4,0xd7,0xa4,0xc0,0xa2,0x9e,0x75,0x7d,0x3b,0xa5,0xca,0x01,0x01,0x15,0x04,0x62,0x6f,0x6f,0x74,0x20,0x01,0x02,0x12,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x20,0x31,0x72,0x00,0x00,0x00,0x0c,0x00,0x6c,0x69,0x6e,0x6b,0x5f,0x63,0x6f,0x6e,0x74,0x72,0x6f,0x6c,0x01,0x00,0x01,0x00,0x1c,0x00,0x3a,0x00,0x00,0x00,0x78,0x84,0x86,0x28,0x9a,0xa6,0x01,0x35,0x5d,0x3a,0x43,0x6b,0x58,0x25,0xd2,0xf2,0xbd,0xf3,0xe2,0xea,0x2d,0x77,0x04,0x8a,0xcf,0x5b,0x19,0xc0,0x1d,0x9d,0x56,0x15,0x01,0x04,0x15,0x07,0x46,0x5f,0x53,0x50,0x31,0x30,0x33,0x20,0x01,0x05,0x13,0x01,0x00,0x00,0x00,0x20,0x31,0x01,0x07,0x13,0x01,0x00,0x00,0x00,0x20,0x31,0x01,0x08,0x10,0x01,0x20,0x31,0x01,0x15,0x10,0x01,0x20,0x31,0x01,0x0e,0x10,0x01,0x20,0x30,0x31,0x01,0x0f,0x13,0xff,0xff,0xff,0xff,0x20,0x31};
+
+bool noSymbols(dusk::automation::MilestoneProgramSymbolKind, std::string_view, std::uint32_t&) {
+    return false;
+}
 
 dusk::automation::MilestoneObservation f_sp103() {
     dusk::automation::MilestoneObservation observation{
@@ -216,6 +224,62 @@ void testGoalMustBeRequested() {
     REQUIRE(error.find("was not requested") != std::string::npos);
 }
 
+void testAuthoredBootStableAndExactFirstHit() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(program.digest() == "10e0592eb001145ab860271f1d667789aace1e1aa1442ba750b20bd2453829d2");
+    REQUIRE(program.find("process_boot")->definitionDigest ==
+            "45dc099d983fb58b7a856f7e8310e5d2ecbac3cdb3a4d7a4c0a29e757d3ba5ca");
+
+    MilestoneTracker bootTracker;
+    const std::vector<std::string> bootNames{"process_boot"};
+    std::string error;
+    REQUIRE(bootTracker.configureNames(bootNames, std::string("process_boot"), program, error));
+    MilestoneObservation empty;
+    bootTracker.observeBoundary(empty, MilestoneProgramPhase::PreInput,
+        MilestoneBoundaryKind::Boot, 0, 0, MilestoneNoTapeFrame);
+    REQUIRE(bootTracker.goalReached());
+    REQUIRE(bootTracker.authoredHits()[0].boundaryIndex == 0);
+    REQUIRE(bootTracker.authoredHits()[0].tapeFrame == MilestoneNoTapeFrame);
+
+    // Stable evaluation records the boundary on which the required run completes, never its start.
+    auto* link = const_cast<MilestoneProgramDefinition*>(program.find("link_control"));
+    link->stableTicks = 2;
+    MilestoneTracker tracker;
+    const std::vector<std::string> names{"link_control"};
+    REQUIRE(tracker.configureNames(names, std::string("link_control"), program, error));
+    MilestoneObservation observation = f_sp103();
+    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+        MilestoneBoundaryKind::Tick, 11, 10, 7);
+    REQUIRE(!tracker.goalReached());
+    observation.eventRunning = true;
+    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+        MilestoneBoundaryKind::Tick, 12, 11, 8);
+    observation.eventRunning = false;
+    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+        MilestoneBoundaryKind::Tick, 13, 12, 9);
+    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+        MilestoneBoundaryKind::Tick, 14, 13, 10);
+    REQUIRE(tracker.goalReached());
+    REQUIRE(tracker.authoredHits()[0].boundaryIndex == 14);
+    REQUIRE(tracker.authoredHits()[0].tapeFrame == 10);
+    const auto result = nlohmann::json::parse(serialize_milestone_result(tracker));
+    REQUIRE(result["program_digest"] == std::string(program.digest()));
+    REQUIRE(result["milestones"][0]["definition_digest"] ==
+            "788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615");
+}
+
+void testMalformedAuthoredProgramIsRejected() {
+    using namespace dusk::automation;
+    auto corrupt = IntroProgram;
+    corrupt.back() ^= 1;
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(corrupt, noSymbols, program) ==
+            MilestoneProgramError::InvalidProgramDigest);
+    REQUIRE(program.empty());
+}
+
 }  // namespace
 
 int main() {
@@ -225,6 +289,8 @@ int main() {
     testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence();
     testBoundaryFingerprintIsStableAndSensitiveToExplicitState();
     testGoalMustBeRequested();
+    testAuthoredBootStableAndExactFirstHit();
+    testMalformedAuthoredProgramIsRejected();
     std::cout << "milestone tests passed\n";
     return 0;
 }
