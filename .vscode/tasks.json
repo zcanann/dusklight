@@ -34,9 +34,13 @@
     },
     {
       "id": "glitchHuntTape",
-      "type": "promptString",
-      "description": "DUSKTAPE path (relative to the repository or absolute)",
-      "default": "build/boot_start_smoke.tape"
+      "type": "pickString",
+      "description": "Visual TAS tape",
+      "default": "eye_shredder.tape",
+      "options": [
+        "eye_shredder.tape",
+        "boot_start_smoke.tape"
+      ]
     },
     {
         "id": "gameVersion",
@@ -137,7 +141,7 @@
       }
     },
     {
-      "label": "Glitch Hunt: Play Visual TAS",
+      "label": "Glitch Hunt: Play Visual TAS (Select Tape)",
       "type": "process",
       "command": "powershell.exe",
       "args": [
@@ -149,7 +153,7 @@
         "-DvdPath",
         "${input:glitchHuntDvd}",
         "-TapePath",
-        "${input:glitchHuntTape}"
+        "build/${input:glitchHuntTape}"
       ],
       "dependsOrder": "sequence",
       "dependsOn": "Glitch Hunt: Prepare Visual TAS",

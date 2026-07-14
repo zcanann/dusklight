@@ -44,17 +44,17 @@ pixel-perfect console raster corruption is not claimed.
 1. Put a supported Twilight Princess disc image somewhere on your machine.
    `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by
    Git.
-2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual TAS**.
-3. Enter the DVD path and confirm or replace the DUSKTAPE path. Leaving the DVD
+2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual TAS (Select
+   Tape)**.
+3. Choose `eye_shredder.tape` from the fixed dropdown. It is the default;
+   `boot_start_smoke.tape` is only a short boot/menu diagnostic. Leaving the DVD
    prompt blank uses the last image selected through Dusklight's Browse screen.
 
-The pre-launch task builds Dusklight and compiles
-`tests/fixtures/automation/boot_start_smoke.json` into
-`build/boot_start_smoke.tape`. The game then runs with its normal visible
-renderer and normal pacing. The smoke tape sends delayed Start pulses through
-the title sequence, selects the freshly-created first save, and stops in active
-character-name entry with the default name `Link`. It owns all four emulated
-controller ports and holds a neutral final frame after the tape ends.
+The pre-launch task builds Dusklight and compiles both checked TAS fixtures.
+Eye Shredder is the normal selection. The smoke tape is retained only for
+diagnosing early boot and menu input: it sends delayed Start pulses through the
+title sequence, selects the freshly-created first save, and stops in active
+character-name entry with the default name `Link`.
 
 While a tape is loaded, Dusklight quarantines host keyboard, mouse, touch, pen,
 joystick, and gamepad events from both the game and its UI. Mouse-camera and
@@ -82,10 +82,12 @@ with `-StatePath`; that directory is writable and survives process exit:
 ```
 
 This is live game playback, not video rendering of a previous run. To attach a
-debugger and use breakpoints, choose **Glitch Hunt: Visual TAS Playback** under
-**Run and Debug** and press F5 instead. That configuration copies only the last
-configured DVD path into a fresh debug data root before launch, then deletes the
-root after debugging. It requires VS Code's `cppvsdbg` debugger support.
+debugger and use breakpoints, choose **Glitch Hunt: Visual TAS Playback (Select
+Tape)** under **Run and Debug** and press F5 instead. It uses the same fixed
+dropdown with Eye Shredder selected by default. That configuration copies only
+the last configured DVD path into a fresh debug data root before launch, then
+deletes the root after debugging. It requires VS Code's `cppvsdbg` debugger
+support.
 
 The checked launcher is also directly callable. Surrounding quotes pasted as
 part of either path are accepted:

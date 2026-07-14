@@ -2,7 +2,7 @@
 param(
     [string]$DvdPath,
 
-    [string]$TapePath = "build/boot_start_smoke.tape",
+    [string]$TapePath = "build/eye_shredder.tape",
 
     [string]$Preset = "windows-clang-debug",
 

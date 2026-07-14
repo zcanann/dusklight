@@ -71,8 +71,8 @@ try {
     }
 
     Write-Host "`nVisual TAS tapes ready:" -ForegroundColor Green
-    Write-Host "  $bootOutput" -ForegroundColor Green
     Write-Host "  $eyeShredderOutput" -ForegroundColor Green
+    Write-Host "  $bootOutput" -ForegroundColor DarkGray
 } finally {
     Pop-Location
 }

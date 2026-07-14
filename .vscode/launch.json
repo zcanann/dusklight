@@ -3,21 +3,25 @@
     "inputs": [
         {
             "id": "glitchHuntTape",
-            "type": "promptString",
-            "description": "DUSKTAPE path (relative to the repository or absolute)",
-            "default": "build/boot_start_smoke.tape"
+            "type": "pickString",
+            "description": "Visual TAS tape",
+            "default": "eye_shredder.tape",
+            "options": [
+                "eye_shredder.tape",
+                "boot_start_smoke.tape"
+            ]
         }
     ],
     "configurations": [
         {
-            "name": "Glitch Hunt: Visual TAS Playback",
+            "name": "Glitch Hunt: Visual TAS Playback (Select Tape)",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
             "args": [
                 "--configured-dvd",
-                "--input-tape", "${input:glitchHuntTape}",
-                "--input-tape-end", "hold",
+                "--input-tape", "${workspaceFolder}/build/${input:glitchHuntTape}",
+                "--input-tape-end", "release",
                 "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
                 "--cvar", "game.instantSaves=true",
                 "--cvar", "backend.cardFileType=1",
