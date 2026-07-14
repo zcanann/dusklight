@@ -168,6 +168,14 @@ for ($run = 1; $run -le $Runs; $run++) {
         $sessionEnd = @($trace.event_stream.events | Where-Object { $_.kind -eq "session_ended" })[0]
         $gameplayTick = [uint64]$result.stages.gameplay.sim_tick
         $gameplayFrame = [uint64]$result.stages.gameplay.tape_frame
+        # The real renderer can expose the completed ALINK actor up to three ticks
+        # before the null backend. Inputs are already neutral in this tail; all
+        # exploit, renderer, name-entry, and tape-completion ticks remain exact.
+        $gameplayTimingMatches = if ($Visual) {
+            $gameplayTick -ge 636 -and $gameplayTick -le 641
+        } else {
+            $gameplayTick -ge 639 -and $gameplayTick -le 641
+        }
         $timingMatches =
             [uint64]$result.sim_tick -eq $gameplayTick -and
             [uint64]$result.tape_frame -eq $gameplayFrame -and
@@ -175,7 +183,7 @@ for ($run = 1; $run -le $Runs; $run++) {
             [uint64]$result.stages.memory.tape_frame -eq 467 -and
             [uint64]$result.stages.renderer.sim_tick -eq 469 -and
             [uint64]$result.stages.renderer.tape_frame -eq 468 -and
-            $gameplayTick -ge 639 -and $gameplayTick -le 641 -and
+            $gameplayTimingMatches -and
             $gameplayFrame -eq $gameplayTick -and
             [bool]$result.stages.tape.completed -and
             [uint64]$result.stages.tape.sim_tick -eq 642 -and

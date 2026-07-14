@@ -230,6 +230,9 @@ void EyeShredderOracle::observeGameplayTelemetry(const EyeShredderGameplayTeleme
 
 void EyeShredderOracle::observeTapeCompletion(
     const std::uint64_t simTick, const std::uint64_t tapeFrame) {
+    if (mResult.tapeCompleted) {
+        return;
+    }
     mResult.tapeCompleted = true;
     mResult.tapeCompletionSimTick = simTick;
     mResult.tapeCompletionFrame = tapeFrame;

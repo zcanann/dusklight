@@ -41,20 +41,23 @@ instead of delaying or retrying input. After the 642-frame tape reaches normal
 restored. Aurora's XF=12/BP=4 shredded diagnostic remains synthetic;
 pixel-perfect console raster corruption is not claimed.
 
-1. Put a supported Twilight Princess disc image somewhere on your machine.
-   `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by
+1. Put a supported Twilight Princess disc image somewhere on your machine. A
+   repository-local image such as `orig/GZ2E01/GZ2E01.iso` remains ignored by
    Git.
-2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual TAS (Select
-   Tape)**.
-3. Choose `eye_shredder.tape` from the fixed dropdown. It is the default;
-   `boot_start_smoke.tape` is only a short boot/menu diagnostic. Leaving the DVD
+2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual Scenario**.
+3. Choose `eye-shredder` from the fixed dropdown. It is the default;
+   `boot-start-smoke` is only a short boot/menu diagnostic. Leaving the DVD
    prompt blank uses the last image selected through Dusklight's Browse screen.
 
 The pre-launch task builds Dusklight and compiles both checked TAS fixtures.
-Eye Shredder is the normal selection. The smoke tape is retained only for
-diagnosing early boot and menu input: it sends delayed Start pulses through the
-title sequence, selects the freshly-created first save, and stops in active
-character-name entry with the default name `Link`.
+The selector dispatches named scenarios rather than treating every tape as
+interchangeable. Eye Shredder uses the checked Eye runner, fixed-step timing,
+the bounded Cursor Breakout model, semantic oracle, trace, isolated state, and
+clean live-controller handoff. The smoke scenario uses the generic fixed-step
+player. It is retained only for diagnosing early boot and menu input: it sends
+delayed Start pulses through the title sequence, selects the freshly-created
+first save, and stops in active character-name entry with the default name
+`Link`.
 
 While a tape is loaded, Dusklight quarantines host keyboard, mouse, touch, pen,
 joystick, and gamepad events from both the game and its UI. Mouse-camera and
@@ -81,22 +84,39 @@ with `-StatePath`; that directory is writable and survives process exit:
   -StatePath 'build\automation-state\saved-runs\my-run'
 ```
 
-This is live game playback, not video rendering of a previous run. To attach a
-debugger and use breakpoints, choose **Glitch Hunt: Visual TAS Playback (Select
-Tape)** under **Run and Debug** and press F5 instead. It uses the same fixed
-dropdown with Eye Shredder selected by default. That configuration copies only
-the last configured DVD path into a fresh debug data root before launch, then
-deletes the root after debugging. It requires VS Code's `cppvsdbg` debugger
-support.
+This is live game playback, not video rendering of a previous run. After a
+successful finite visual tape completes, the task intentionally remains active:
+Dusklight releases automation ownership and hands control to the live controller
+until the window is closed. The Eye runner finalizes and validates its oracle
+and trace after process exit.
 
-The checked launcher is also directly callable. Surrounding quotes pasted as
-part of either path are accepted:
+To attach a debugger and use breakpoints, choose **Glitch Hunt: Eye Shredder
+Visual Debug** or **Glitch Hunt: Boot Start Smoke Visual Debug** under **Run and
+Debug**, then press F5. They are separate because Eye Shredder requires its
+fixed-step shadow-memory and oracle flags; silently launching it as a generic
+tape does not reproduce the exploit. Each configuration copies only the last
+configured DVD path into a fresh debug data root before launch, then deletes the
+root after debugging. They require VS Code's `cppvsdbg` debugger support.
+
+The named dispatcher is also directly callable. Surrounding quotes pasted as
+part of the DVD path are accepted:
+
+```powershell
+.\tools\glitch-hunting\play-visual-scenario.ps1 `
+  -Scenario eye-shredder `
+  -DvdPath 'C:\path with spaces\game.iso'
+```
+
+The generic launcher remains available for custom and smoke tapes:
 
 ```powershell
 .\tools\glitch-hunting\play-visual-tas.ps1 `
   -DvdPath 'C:\path with spaces\game.iso' `
   -TapePath 'build\boot_start_smoke.tape'
 ```
+
+Use `-DryRun` with either visual script to inspect routing or engine arguments
+without launching Dusklight.
 
 Direct automated launches are strict: if `--dvd` or `--configured-dvd` cannot
 open a valid image, Dusklight exits with an error instead of falling back to the
@@ -105,14 +125,15 @@ input tape and an existing directory.
 
 ## Authoring a custom tape
 
-Copy the smoke JSON fixture, add exact frames/repeats/holds, and compile it:
+Copy the smoke `.tas` fixture, define reusable controller states, add exact
+frames/repeats/cycles, and compile it:
 
 ```powershell
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile `
-  my-test.json build/my-test.tape
+  my-test.tas build/my-test.tape
 ```
 
-Select `build/my-test.tape` when starting the visual TAS configuration. Inspect
+Pass `build/my-test.tape` to the generic visual TAS script. Inspect
 the expanded controller frames before playback with:
 
 ```powershell

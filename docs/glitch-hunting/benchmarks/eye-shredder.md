@@ -99,9 +99,12 @@ The minimized boot and exploit trajectory starts name entry at simulation tick
 182, performs the position-113 write at tick 467, proves the renderer mismatch
 at tick 469, and ends name entry at tick 531. It then accepts the default Epona
 name, skips the opening, and reaches controllable `F_SP103` gameplay at tick
-639, 640, or 641 as native actor creation converges. Tape completion is fixed
-at tick 642. The final neutral frame is required: a 641-frame candidate failed
-two of three cold runs, while the 642-frame tape passed ten of ten. The complete
+639, 640, or 641 through the null renderer as native actor creation converges.
+The real D3D12 renderer has exposed the completed actor as early as tick 636;
+the input tail is neutral throughout this bounded renderer-dependent interval.
+Tape completion is fixed at tick 642. The final neutral frame is required: a
+641-frame candidate failed two of three cold runs, while the 642-frame tape
+passed ten of ten. The complete
 name-entry event trace remains byte-identical across repeat runs.
 
 The current native implementation under audit is

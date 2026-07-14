@@ -2,7 +2,8 @@
 param(
     [string]$DvdPath,
 
-    [string]$TapePath = "build/eye_shredder.tape",
+    [Parameter(Mandatory = $true)]
+    [string]$TapePath,
 
     [string]$Preset = "windows-clang-debug",
 
@@ -10,7 +11,9 @@ param(
 
     [string]$NameEntryTracePath,
 
-    [switch]$ExitAfterTape
+    [switch]$ExitAfterTape,
+
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -99,7 +102,8 @@ $resolvedState = (Resolve-Path -LiteralPath $resolvedState).Path
 $gameArguments = @(
     "--dvd", $resolvedDvd,
     "--input-tape", $resolvedTape,
-    "--input-tape-end", "hold",
+    "--input-tape-end", "release",
+    "--fixed-step",
     "--automation-data-root", $resolvedState,
     "--cvar", "game.instantSaves=true",
     "--cvar", "backend.cardFileType=1",
@@ -122,6 +126,16 @@ Write-Host "State: $resolvedState ($(if ($ephemeralState) { 'ephemeral' } else {
 Write-Host "Starting visible TAS playback..." -ForegroundColor Green
 
 try {
+    if ($DryRun) {
+        [ordered]@{
+            program = $game
+            arguments = @($gameArguments)
+            state = $resolvedState
+            ephemeral_state = $ephemeralState
+        } | ConvertTo-Json -Depth 3
+        return
+    }
+
     $argumentLine = ($gameArguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
     $process = Start-Process -FilePath $game -ArgumentList $argumentLine `
         -WorkingDirectory $repoRoot -Wait -PassThru

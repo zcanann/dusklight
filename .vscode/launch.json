@@ -1,27 +1,44 @@
 {
     "version": "0.2.0",
-    "inputs": [
-        {
-            "id": "glitchHuntTape",
-            "type": "pickString",
-            "description": "Visual TAS tape",
-            "default": "eye_shredder.tape",
-            "options": [
-                "eye_shredder.tape",
-                "boot_start_smoke.tape"
-            ]
-        }
-    ],
     "configurations": [
         {
-            "name": "Glitch Hunt: Visual TAS Playback (Select Tape)",
+            "name": "Glitch Hunt: Eye Shredder Visual Debug",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
             "args": [
                 "--configured-dvd",
-                "--input-tape", "${workspaceFolder}/build/${input:glitchHuntTape}",
+                "--input-tape", "${workspaceFolder}/build/eye_shredder.tape",
                 "--input-tape-end", "release",
+                "--fixed-step",
+                "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
+                "--cursor-breakout-shadow",
+                "--name-entry-trace", "${workspaceFolder}/build/automation-state/vscode-debug/eye-shredder.trace.json",
+                "--automation-oracle", "eye-shredder",
+                "--automation-oracle-result", "${workspaceFolder}/build/automation-state/vscode-debug/eye-shredder.oracle.json",
+                "--automation-oracle-continue-on-pass",
+                "--cvar", "game.instantSaves=true",
+                "--cvar", "backend.cardFileType=1",
+                "--cvar", "backend.wasPresetChosen=true",
+                "--cvar", "game.enableMenuPointer=false",
+                "--develop",
+                "--console"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS",
+            "postDebugTask": "Glitch Hunt: Clean Visual TAS State"
+        },
+        {
+            "name": "Glitch Hunt: Boot Start Smoke Visual Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+            "args": [
+                "--configured-dvd",
+                "--input-tape", "${workspaceFolder}/build/boot_start_smoke.tape",
+                "--input-tape-end", "release",
+                "--fixed-step",
                 "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
                 "--cvar", "game.instantSaves=true",
                 "--cvar", "backend.cardFileType=1",

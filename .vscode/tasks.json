@@ -33,13 +33,13 @@
       "default": ""
     },
     {
-      "id": "glitchHuntTape",
+      "id": "glitchHuntScenario",
       "type": "pickString",
-      "description": "Visual TAS tape",
-      "default": "eye_shredder.tape",
+      "description": "Visual glitch-hunting scenario",
+      "default": "eye-shredder",
       "options": [
-        "eye_shredder.tape",
-        "boot_start_smoke.tape"
+        "eye-shredder",
+        "boot-start-smoke"
       ]
     },
     {
@@ -141,7 +141,7 @@
       }
     },
     {
-      "label": "Glitch Hunt: Play Visual TAS (Select Tape)",
+      "label": "Glitch Hunt: Play Visual Scenario",
       "type": "process",
       "command": "powershell.exe",
       "args": [
@@ -149,11 +149,12 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}\\tools\\glitch-hunting\\play-visual-tas.ps1",
+        "${workspaceFolder}\\tools\\glitch-hunting\\play-visual-scenario.ps1",
         "-DvdPath",
         "${input:glitchHuntDvd}",
-        "-TapePath",
-        "build/${input:glitchHuntTape}"
+        "-Scenario",
+        "${input:glitchHuntScenario}",
+        "-SkipBuild"
       ],
       "dependsOrder": "sequence",
       "dependsOn": "Glitch Hunt: Prepare Visual TAS",

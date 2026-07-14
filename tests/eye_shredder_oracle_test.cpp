@@ -87,6 +87,7 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
     REQUIRE(oracle.result().gameplayMatched);
     oracle.observeTapeCompletion(906, 705);
+    oracle.observeTapeCompletion(1200, 705);
     REQUIRE(oracle.result().tapeCompleted);
     REQUIRE(oracle.result().simTick == 905);
     REQUIRE(oracle.result().tapeFrame == 705);
