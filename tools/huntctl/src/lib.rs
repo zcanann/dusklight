@@ -3,6 +3,8 @@
 pub mod artifact;
 pub mod client;
 pub mod corpus;
+pub mod fqi;
+pub mod offline_rl;
 pub mod pool;
 pub mod protocol;
 pub mod route_store;
@@ -15,6 +17,7 @@ pub mod tape_dsl;
 pub mod tape_program;
 pub mod timeline;
 pub mod trace;
+pub mod transition_corpus;
 pub mod transport;
 
 pub use artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};

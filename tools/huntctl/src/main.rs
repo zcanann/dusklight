@@ -1,5 +1,13 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::corpus::Corpus;
+use huntctl::fqi::{
+    FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_ITERATIONS, MAX_FQI_TRANSITIONS,
+    MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
+};
+use huntctl::offline_rl::{
+    ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
+    movement_feature_schema_digest_v1,
+};
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::route_store::{ObjectId, RouteStore};
 use huntctl::route_workbench::{WorkbenchConfig, serve as serve_route_workbench};
@@ -16,9 +24,11 @@ use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::timeline::Timeline;
+use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transport::ProcessTransport;
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
+use sha2::{Digest as ShaDigest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -28,6 +38,8 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
+
+const MAX_LEARN_INPUT_CORPORA: usize = 64;
 
 fn main() {
     if let Err(error) = run() {
@@ -50,11 +62,356 @@ fn run() -> Result<(), Box<dyn Error>> {
         "trace" => command_trace(&args[1..]),
         "timeline" => command_timeline(&args[1..]),
         "search" => command_search(&args[1..]),
+        "learn" => command_learn(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "mock-search-worker" => mock_search_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("extract-trace") => {
+            let learn_args = &args[1..];
+            let trace_path = required_path(learn_args, "--trace")?;
+            let tape_path = required_path(learn_args, "--tape")?;
+            let output = required_path(learn_args, "--output")?;
+            let start_tape_frame: u64 = option(learn_args, "--start-frame")
+                .ok_or("missing required --start-frame N")?
+                .parse()?;
+            let end_tape_frame: u64 = option(learn_args, "--end-frame")
+                .ok_or("missing required --end-frame N")?
+                .parse()?;
+            let trace_bytes = fs::read(&trace_path)?;
+            let tape_bytes = fs::read(&tape_path)?;
+            let episode_digest = if let Some(value) = option(learn_args, "--episode-digest") {
+                value.parse::<Digest>()?
+            } else {
+                let mut hasher = Sha256::new();
+                hasher.update(b"dusklight.exploratory-offline-episode/v1\0");
+                hasher.update((trace_bytes.len() as u64).to_le_bytes());
+                hasher.update(&trace_bytes);
+                hasher.update((tape_bytes.len() as u64).to_le_bytes());
+                hasher.update(&tape_bytes);
+                Digest(hasher.finalize().into())
+            };
+            let end_is_terminal = learn_args.iter().any(|arg| arg == "--terminal");
+            let corpus = extract_exploratory_from_bytes(
+                &trace_bytes,
+                &tape_bytes,
+                ExploratoryExtractConfig {
+                    episode_digest,
+                    start_tape_frame,
+                    end_tape_frame,
+                    start_reference: None,
+                    terminal_reference: None,
+                    end_is_terminal,
+                },
+            )?;
+            let compression_level: i32 = option(learn_args, "--compression-level")
+                .map(|value| value.parse())
+                .transpose()?
+                .unwrap_or(3);
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let content_digest = corpus.write_zstd_file(&output, compression_level)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-exploratory-extraction/v1",
+                    "authoritative": false,
+                    "limitations": [
+                        "trace-v1 omits per-tick RNG and collision state",
+                        "the batch contains observed behavior, not counterfactual actions",
+                        "explicit frame bounds are not native milestone proof"
+                    ],
+                    "trace": trace_path,
+                    "tape": tape_path,
+                    "output": output,
+                    "episode_digest": episode_digest,
+                    "content_digest": content_digest,
+                    "feature_schema": corpus.feature_schema,
+                    "action_schema": corpus.action_schema,
+                    "feature_count": corpus.feature_count,
+                    "transitions": corpus.transitions.len(),
+                    "start_frame": start_tape_frame,
+                    "end_frame": end_tape_frame,
+                    "terminal": end_is_terminal,
+                }))?
+            );
+            Ok(())
+        }
+        Some("inspect") => {
+            let corpus = TransitionCorpus::read_zstd_file(required_path(&args[1..], "--input")?)?;
+            let mut action_counts = BTreeMap::<u32, usize>::new();
+            let mut terminal_transitions = 0_usize;
+            for transition in &corpus.transitions {
+                *action_counts
+                    .entry(transition.action.action_id)
+                    .or_default() += 1;
+                terminal_transitions += usize::from(transition.terminal);
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-transition-inspection/v1",
+                    "content_digest": corpus.content_digest()?,
+                    "feature_schema": corpus.feature_schema,
+                    "action_schema": corpus.action_schema,
+                    "feature_count": corpus.feature_count,
+                    "transitions": corpus.transitions.len(),
+                    "terminal_transitions": terminal_transitions,
+                    "action_counts": action_counts,
+                }))?
+            );
+            Ok(())
+        }
+        Some("fit") => {
+            let learn_args = &args[1..];
+            let inputs = repeated_option(learn_args, "--input");
+            if inputs.is_empty() {
+                return Err("learn fit requires at least one --input FILE".into());
+            }
+            if inputs.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn fit accepts at most {MAX_LEARN_INPUT_CORPORA} input corpora; received {}",
+                    inputs.len()
+                )
+                .into());
+            }
+            let mut config = FqiConfig {
+                iterations: usize_option(learn_args, "--iterations", 24)?,
+                trees_per_action: usize_option(learn_args, "--trees", 31)?,
+                max_tree_depth: usize_option(learn_args, "--max-depth", 8)?,
+                seed: u64_option(learn_args, "--seed", FqiConfig::default().seed)?,
+                ..FqiConfig::default()
+            };
+            if config.iterations > MAX_FQI_ITERATIONS {
+                return Err(format!(
+                    "--iterations must not exceed {MAX_FQI_ITERATIONS}; received {}",
+                    config.iterations
+                )
+                .into());
+            }
+            if config.trees_per_action > MAX_FQI_TREES_PER_ACTION {
+                return Err(format!(
+                    "--trees must not exceed {MAX_FQI_TREES_PER_ACTION}; received {}",
+                    config.trees_per_action
+                )
+                .into());
+            }
+            if config.max_tree_depth > MAX_FQI_TREE_DEPTH {
+                return Err(format!(
+                    "--max-depth must not exceed {MAX_FQI_TREE_DEPTH}; received {}",
+                    config.max_tree_depth
+                )
+                .into());
+            }
+            let mut feature_schema = None;
+            let mut action_schema = None;
+            let mut feature_count = None;
+            let mut transitions = Vec::new();
+            let mut action_support = BTreeMap::<u32, usize>::new();
+            for input in &inputs {
+                let corpus = TransitionCorpus::read_zstd_file(input)?;
+                if feature_schema.is_some_and(|value| value != corpus.feature_schema)
+                    || action_schema.is_some_and(|value| value != corpus.action_schema)
+                    || feature_count.is_some_and(|value| value != corpus.feature_count)
+                {
+                    return Err(
+                        "transition corpora use incompatible feature or action schemas".into(),
+                    );
+                }
+                feature_schema = Some(corpus.feature_schema);
+                action_schema = Some(corpus.action_schema);
+                feature_count = Some(corpus.feature_count);
+                let merged_count = transitions
+                    .len()
+                    .checked_add(corpus.transitions.len())
+                    .ok_or("learn fit merged transition count overflow")?;
+                if merged_count > MAX_FQI_TRANSITIONS {
+                    return Err(format!(
+                        "learn fit accepts at most {MAX_FQI_TRANSITIONS} merged transitions; received at least {merged_count}"
+                    )
+                    .into());
+                }
+                transitions.reserve(corpus.transitions.len());
+                for transition in corpus.transitions {
+                    let action = transition.action.action_id;
+                    if !action_support.contains_key(&action)
+                        && action_support.len() >= MAX_FQI_ACTIONS
+                    {
+                        return Err(format!(
+                            "learn fit accepts at most {MAX_FQI_ACTIONS} distinct actions; encountered action {action} after reaching the limit"
+                        )
+                        .into());
+                    }
+                    *action_support.entry(action).or_default() += 1;
+                    transitions.push(FqiTransition {
+                        state: transition.state,
+                        action,
+                        duration: transition.duration_ticks,
+                        reward: transition.reward,
+                        next_state: transition.next_state,
+                        terminal: transition.terminal,
+                    });
+                }
+            }
+            let declared_categorical = repeated_option(learn_args, "--categorical-feature")
+                .into_iter()
+                .map(|value| value.parse::<usize>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let declared_all_continuous = learn_args.iter().any(|arg| arg == "--all-continuous");
+            if declared_all_continuous && !declared_categorical.is_empty() {
+                return Err(
+                    "--all-continuous and --categorical-feature cannot be used together".into(),
+                );
+            }
+            if feature_schema == Some(movement_feature_schema_digest_v1()) {
+                if declared_all_continuous || !declared_categorical.is_empty() {
+                    return Err(
+                        "the authenticated movement schema owns its categorical feature map; do not override it"
+                            .into(),
+                    );
+                }
+                config.categorical_features = MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec();
+            } else if declared_all_continuous {
+                config.categorical_features.clear();
+            } else if !declared_categorical.is_empty() {
+                config.categorical_features = declared_categorical;
+            } else {
+                return Err(
+                    "unknown feature schema: declare --all-continuous or repeat --categorical-feature N"
+                        .into(),
+                );
+            }
+            let actions: Vec<u32> = action_support.keys().copied().collect();
+            let query_index = usize_option(learn_args, "--query-transition", 0)?;
+            let query_transition = transitions
+                .get(query_index)
+                .ok_or("--query-transition is outside the merged transition batch")?;
+            let query_side = option(learn_args, "--query-side").unwrap_or_else(|| "state".into());
+            let query_state = match query_side.as_str() {
+                "state" => query_transition.state.clone(),
+                "next-state" => query_transition.next_state.clone(),
+                _ => return Err("--query-side must be state or next-state".into()),
+            };
+            let model = FittedQ::fit(
+                feature_count.ok_or("transition corpus has no feature width")? as usize,
+                &actions,
+                &transitions,
+                &config,
+            )?;
+            let ranking: Vec<_> = model
+                .rank_actions(&query_state)?
+                .into_iter()
+                .map(|estimate| {
+                    json!({
+                        "action": estimate.action,
+                        "mean_q": estimate.mean,
+                        "ensemble_variance": estimate.variance,
+                        "support": action_support[&estimate.action],
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-fitted-q-ranking/v1",
+                    "feature_schema": feature_schema,
+                    "action_schema": action_schema,
+                    "input_corpora": inputs,
+                    "transition_count": transitions.len(),
+                    "query_transition": query_index,
+                    "query_side": query_side,
+                    "iterations": config.iterations,
+                    "trees_per_action": config.trees_per_action,
+                    "categorical_features": config.categorical_features,
+                    "seed": config.seed,
+                    "ranking": ranking,
+                }))?
+            );
+            Ok(())
+        }
+        Some("benchmark") => {
+            const ADVANCE: u32 = 3;
+            const WAIT: u32 = 9;
+            let mut transitions = Vec::new();
+            for nuisance in [-1.0, 1.0] {
+                transitions.extend([
+                    FqiTransition {
+                        state: vec![0.0, nuisance],
+                        action: ADVANCE,
+                        duration: 1,
+                        reward: 0.0,
+                        next_state: vec![1.0, nuisance],
+                        terminal: false,
+                    },
+                    FqiTransition {
+                        state: vec![0.0, nuisance],
+                        action: WAIT,
+                        duration: 1,
+                        reward: -1.0,
+                        next_state: vec![0.0, nuisance],
+                        terminal: false,
+                    },
+                    FqiTransition {
+                        state: vec![1.0, nuisance],
+                        action: ADVANCE,
+                        duration: 1,
+                        reward: 10.0,
+                        next_state: vec![2.0, nuisance],
+                        terminal: true,
+                    },
+                    FqiTransition {
+                        state: vec![1.0, nuisance],
+                        action: WAIT,
+                        duration: 1,
+                        reward: -1.0,
+                        next_state: vec![1.0, nuisance],
+                        terminal: false,
+                    },
+                ]);
+            }
+            let config = FqiConfig {
+                iterations: 16,
+                trees_per_action: 7,
+                max_tree_depth: 3,
+                features_per_split: 2,
+                discount: 0.9,
+                bootstrap: false,
+                ..FqiConfig::default()
+            };
+            let model = FittedQ::fit(2, &[WAIT, ADVANCE], &transitions, &config)?;
+            let held_out = [[0.0, 0.0], [1.0, 0.0]];
+            let selected: Vec<u32> = held_out
+                .iter()
+                .map(|state| model.best_action(state).map(|estimate| estimate.action))
+                .collect::<Result<_, _>>()?;
+            let passed = selected == [ADVANCE, ADVANCE];
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-fqi-benchmark/v1",
+                    "training_transitions": transitions.len(),
+                    "held_out_states": held_out,
+                    "selected_actions": selected,
+                    "expected_actions": [ADVANCE, ADVANCE],
+                    "passed": passed,
+                }))?
+            );
+            if !passed {
+                return Err("fitted-Q benchmark failed its fixed acceptance threshold".into());
+            }
             Ok(())
         }
         _ => usage_error(),
@@ -1065,6 +1422,9 @@ fn print_usage() {
     );
     eprintln!(
         "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+    );
+    eprintln!(
+        "\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
     );
 }
 
