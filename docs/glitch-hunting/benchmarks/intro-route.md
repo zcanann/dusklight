@@ -75,6 +75,12 @@ scene-exit actor on every completed simulation tick. `huntctl trace inspect`
 extracts the milestones; `timeline` exposes state changes and input frames;
 `compare` ranks several traces by milestone depth and tick.
 
+The first-control milestone also requires event ID `-1`. Checking only
+`eventRunning == false` is insufficient because player construction briefly
+precedes the opening event; that transient gap is not durable controller
+handoff. Results captured with the older predicate are invalid for boot golf
+and must be rescored.
+
 ## Baseline and scoring
 
 One checked cold matrix on July 13, 2026 completed `intro-cutscene` 10/10 times

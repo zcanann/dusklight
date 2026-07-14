@@ -84,6 +84,9 @@ void testGameplayReadinessRequiresExactMemoryState() {
     observation.eventRunning = true;
     REQUIRE(!definition->predicate(observation));
     observation.eventRunning = false;
+    observation.eventId = 2305;  // Pre-opening gap: Link exists but is not durably controllable.
+    REQUIRE(!definition->predicate(observation));
+    observation.eventId = -1;
     observation.playerIsLink = false;
     REQUIRE(!definition->predicate(observation));
     observation.playerIsLink = true;

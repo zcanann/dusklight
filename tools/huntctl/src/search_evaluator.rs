@@ -3,9 +3,9 @@
 use crate::search::{
     Candidate, CandidateResult, EvolutionConfig, POPULATION_SCHEMA, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population, rank_population,
-    write_seed_population,
+    write_explicit_population, write_seed_population,
 };
-use crate::tape::InputTape;
+use crate::tape::{InputTape, RawPadState};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
@@ -39,6 +39,7 @@ pub struct EvaluateConfig {
 #[derive(Clone, Debug)]
 pub struct SearchRunConfig {
     pub segment: SegmentProfile,
+    pub seed_candidate: Option<Candidate>,
     pub game: PathBuf,
     pub dvd: PathBuf,
     pub output_root: PathBuf,
@@ -92,13 +93,13 @@ pub struct AttemptEvidence {
     pub boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MilestoneObservation {
     pub sim_tick: u64,
     pub tape_frame: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BoundaryFingerprint {
     pub schema: String,
     pub algorithm: String,
@@ -115,8 +116,39 @@ pub struct SearchRunSummary {
     pub repetitions: u32,
     pub rng_seed: u64,
     pub champion_id: String,
+    pub champion_candidate: PathBuf,
     pub champion_tape: PathBuf,
     pub score: crate::search::LexicographicScore,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct BootMinimizeConfig {
+    pub candidate: Candidate,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BootMinimizeSummary {
+    pub schema: &'static str,
+    pub source_candidate_id: String,
+    pub minimized_candidate_id: String,
+    pub source_frames: u64,
+    pub minimized_frames: u64,
+    pub source_pulse_frames: usize,
+    pub minimized_pulse_frames: usize,
+    pub goal_sim_tick: u64,
+    pub goal_tape_frame: u64,
+    pub candidate: PathBuf,
+    pub tape: PathBuf,
+    pub proof: PathBuf,
     pub output_root: PathBuf,
 }
 
@@ -250,10 +282,20 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
         ));
     }
     fs::create_dir_all(&config.output_root)?;
+    let seed_candidate = config
+        .seed_candidate
+        .clone()
+        .unwrap_or_else(|| Candidate::baseline(config.segment));
+    if seed_candidate.segment != config.segment {
+        return Err(EvaluateError::InvalidConfig(
+            "seed candidate segment does not match the search segment".into(),
+        ));
+    }
+    seed_candidate.validate()?;
     let mut population_root = config.output_root.join("g000");
     let mut manifest = write_seed_population(
         &population_root,
-        Candidate::baseline(config.segment),
+        seed_candidate,
         config.population_size,
         config.rng_seed,
     )?;
@@ -303,6 +345,11 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
     let source = population_root.join(&member.tape_file);
     let champion_tape = config.output_root.join("champion.tape");
     fs::copy(source, &champion_tape)?;
+    let champion_candidate = config.output_root.join("champion.candidate.json");
+    fs::copy(
+        population_root.join(&member.candidate_file),
+        &champion_candidate,
+    )?;
     let summary = SearchRunSummary {
         schema: SEARCH_RUN_SCHEMA,
         segment: config.segment,
@@ -311,6 +358,7 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
         repetitions: config.repetitions,
         rng_seed: config.rng_seed,
         champion_id: champion.candidate_id.clone(),
+        champion_candidate,
         champion_tape,
         score: champion.score,
         output_root: config.output_root.clone(),
@@ -698,36 +746,40 @@ fn aggregate_results(
                 member.candidate_id
             )));
         }
-        let depth = samples
-            .iter()
-            .map(|sample| sample.milestone_depth)
-            .max()
-            .unwrap_or(0);
-        let winning: Vec<_> = if depth == 0 {
+        let reference = samples[0];
+        if samples.iter().skip(1).any(|sample| {
+            sample.milestone_depth != reference.milestone_depth
+                || sample.deepest_milestone != reference.deepest_milestone
+                || sample.first_hit_tick != reference.first_hit_tick
+                || sample.goal_reached != reference.goal_reached
+                || sample.milestone_observations != reference.milestone_observations
+                || sample.boundary_fingerprints != reference.boundary_fingerprints
+        }) {
+            return Err(EvaluateError::InvalidResult(format!(
+                "candidate {} produced nondeterministic milestone evidence across identical trials",
+                member.candidate_id
+            )));
+        }
+        let depth = reference.milestone_depth;
+        let ticks = if depth == 0 {
             Vec::new()
         } else {
-            samples
-                .iter()
-                .filter(|sample| sample.milestone_depth == depth)
-                .collect()
-        };
-        let ticks = winning
-            .iter()
-            .map(|sample| {
-                sample.first_hit_tick.ok_or_else(|| {
+            vec![
+                reference.first_hit_tick.ok_or_else(|| {
                     EvaluateError::InvalidResult(format!(
                         "candidate {} reached depth {depth} without a score tick",
                         member.candidate_id
                     ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                })?;
+                samples.len()
+            ]
+        };
         candidates.insert(
             member.candidate_id.clone(),
             CandidateResult {
                 milestone_depth: depth,
                 attempts: samples.len() as u32,
-                successes: winning.len() as u32,
+                successes: if depth == 0 { 0 } else { samples.len() as u32 },
                 first_hit_ticks: ticks,
             },
         );

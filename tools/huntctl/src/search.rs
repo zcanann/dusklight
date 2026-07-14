@@ -474,6 +474,12 @@ impl CandidateResult {
         if self.attempts == 0
             || self.successes > self.attempts
             || self.first_hit_ticks.len() != self.successes as usize
+            || !(self.successes == 0 || self.successes == self.attempts)
+            || (self.milestone_depth == 0) != (self.successes == 0)
+            || self
+                .first_hit_ticks
+                .windows(2)
+                .any(|ticks| ticks[0] != ticks[1])
         {
             return Err(SearchError::InvalidResult);
         }
@@ -499,7 +505,8 @@ impl CandidateResult {
     }
 }
 
-/// Higher is better under `Ord`: depth, success ratio, then earlier first hit.
+/// Higher is better under `Ord`: depth, then earlier first hit. Repeat
+/// stability is an evaluator invariant and never a ranking dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct LexicographicScore {
     pub milestone_depth: u16,
@@ -513,10 +520,6 @@ impl Ord for LexicographicScore {
     fn cmp(&self, other: &Self) -> Ordering {
         self.milestone_depth
             .cmp(&other.milestone_depth)
-            .then_with(|| {
-                (u64::from(self.successes) * u64::from(other.attempts))
-                    .cmp(&(u64::from(other.successes) * u64::from(self.attempts)))
-            })
             .then_with(|| other.median_first_hit_tick.cmp(&self.median_first_hit_tick))
             .then_with(|| other.best_first_hit_tick.cmp(&self.best_first_hit_tick))
     }
@@ -611,31 +614,24 @@ pub fn collect_results(
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
                 let current = entry.get_mut();
+                if current.milestone_depth != artifact.search_result.milestone_depth
+                    || (current.successes == 0) != (artifact.search_result.successes == 0)
+                    || current.first_hit_ticks.first()
+                        != artifact.search_result.first_hit_ticks.first()
+                {
+                    return Err(SearchError::InvalidResult);
+                }
                 let total_attempts = current
                     .attempts
                     .checked_add(artifact.search_result.attempts)
                     .ok_or(SearchError::InvalidResult)?;
-                match artifact
-                    .search_result
-                    .milestone_depth
-                    .cmp(&current.milestone_depth)
-                {
-                    Ordering::Greater => {
-                        current.milestone_depth = artifact.search_result.milestone_depth;
-                        current.successes = artifact.search_result.successes;
-                        current.first_hit_ticks = artifact.search_result.first_hit_ticks;
-                    }
-                    Ordering::Equal => {
-                        current.successes = current
-                            .successes
-                            .checked_add(artifact.search_result.successes)
-                            .ok_or(SearchError::InvalidResult)?;
-                        current
-                            .first_hit_ticks
-                            .extend(artifact.search_result.first_hit_ticks);
-                    }
-                    Ordering::Less => {}
-                }
+                current.successes = current
+                    .successes
+                    .checked_add(artifact.search_result.successes)
+                    .ok_or(SearchError::InvalidResult)?;
+                current
+                    .first_hit_ticks
+                    .extend(artifact.search_result.first_hit_ticks);
                 current.attempts = total_attempts;
                 current.validate()?;
             }
@@ -673,6 +669,27 @@ pub fn write_seed_population(
         }
     }
     write_population(output, base.segment, 0, rng_seed, candidates)
+}
+
+/// Writes an exact, caller-supplied population without applying mutation.
+/// This is used by deterministic reducers which construct every candidate.
+pub fn write_explicit_population(
+    output: &Path,
+    segment: SegmentProfile,
+    generation: u32,
+    candidates: Vec<Candidate>,
+) -> Result<PopulationManifest, SearchError> {
+    if candidates.is_empty() {
+        return Err(SearchError::InvalidPopulation);
+    }
+    let mut ids = HashSet::new();
+    for candidate in &candidates {
+        candidate.validate()?;
+        if candidate.segment != segment || !ids.insert(candidate.id()?) {
+            return Err(SearchError::InvalidPopulation);
+        }
+    }
+    write_population(output, segment, generation, 0, candidates)
 }
 
 pub fn evolve_population(
@@ -812,6 +829,23 @@ fn mutate(
             change_duration(&mut child.actions[index], delta);
             description = format!("duration[{index}]{delta:+}");
         }
+        1 if !route => {
+            let presses: Vec<_> = child
+                .actions
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| matches!(action, MacroAction::Press { .. }))
+                .map(|(index, _)| index)
+                .collect();
+            if presses.is_empty() {
+                return Err(SearchError::PopulationStalled);
+            }
+            let index = presses[rng.usize(presses.len())];
+            let delta_limit = (32_i32 - i32::try_from(generation.min(24)).unwrap()).max(8);
+            let delta = rng.signed(delta_limit);
+            change_duration(&mut child.actions[index], delta);
+            description = format!("boot_gap[{index}]{delta:+}");
+        }
         1 if route => {
             let movable: Vec<_> = child
                 .actions
@@ -830,6 +864,24 @@ fn mutate(
             let delta = rng.signed(delta_limit);
             change_angle(&mut child.actions[index], delta);
             description = format!("angle[{index}]{delta:+}");
+        }
+        2 if !route => {
+            let shrinkable: Vec<_> = child
+                .actions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, action)| match action {
+                    MacroAction::Press { neutral_frames, .. } if *neutral_frames > 0 => Some(index),
+                    _ => None,
+                })
+                .collect();
+            if shrinkable.is_empty() {
+                return Err(SearchError::PopulationStalled);
+            }
+            let index = shrinkable[rng.usize(shrinkable.len())];
+            let delta = -i32::try_from(1 + rng.usize(48)).unwrap();
+            change_duration(&mut child.actions[index], delta);
+            description = format!("boot_shrink[{index}]{delta:+}");
         }
         2 if route => {
             let movable: Vec<_> = child
@@ -1249,7 +1301,36 @@ mod tests {
     }
 
     #[test]
-    fn score_is_depth_then_success_rate_then_tick() {
+    fn boot_mutation_directly_targets_press_gaps() {
+        let parent = Candidate::baseline(SegmentProfile::BootToFsp103);
+        let mut rng = SplitMix64::new(0x5eed);
+        let mut gap_mutations = 0;
+        let mut shrink_mutations = 0;
+        for _ in 0..256 {
+            let child = mutate(&parent, 0, &mut rng).unwrap();
+            let mutation = child.ancestry.mutation.as_deref().unwrap();
+            if mutation.starts_with("boot_gap[") || mutation.starts_with("boot_shrink[") {
+                let changed: Vec<_> = parent
+                    .actions
+                    .iter()
+                    .zip(&child.actions)
+                    .enumerate()
+                    .filter(|(_, (before, after))| before != after)
+                    .collect();
+                assert!(changed.len() <= 1);
+                if let Some((_, (_, action))) = changed.first() {
+                    assert!(matches!(action, MacroAction::Press { .. }));
+                }
+            }
+            gap_mutations += usize::from(mutation.starts_with("boot_gap["));
+            shrink_mutations += usize::from(mutation.starts_with("boot_shrink["));
+        }
+        assert!(gap_mutations > 50);
+        assert!(shrink_mutations > 50);
+    }
+
+    #[test]
+    fn score_is_depth_then_tick_and_fractional_repeats_are_invalid() {
         let score = |depth, successes, attempts, ticks| {
             CandidateResult {
                 milestone_depth: depth,
@@ -1260,13 +1341,22 @@ mod tests {
             .score()
             .unwrap()
         };
-        assert!(score(4, 1, 10, vec![500]) > score(3, 10, 10, vec![1; 10]));
-        assert!(score(4, 9, 10, vec![500; 9]) > score(4, 8, 10, vec![1; 8]));
+        assert!(score(4, 10, 10, vec![500; 10]) > score(3, 10, 10, vec![1; 10]));
         assert!(score(4, 10, 10, vec![99; 10]) > score(4, 10, 10, vec![100; 10]));
+        assert!(matches!(
+            CandidateResult {
+                milestone_depth: 4,
+                attempts: 10,
+                successes: 9,
+                first_hit_ticks: vec![500; 9],
+            }
+            .score(),
+            Err(SearchError::InvalidResult)
+        ));
     }
 
     #[test]
-    fn evaluator_trials_merge_at_the_deepest_milestone() {
+    fn evaluator_trials_reject_disagreement() {
         let candidate = Candidate::baseline(SegmentProfile::Fsp103ToFsp104);
         let candidate_id = candidate.id().unwrap();
         let manifest = PopulationManifest {
@@ -1292,12 +1382,10 @@ mod tests {
                 first_hit_ticks: vec![tick],
             },
         };
-        let results = collect_results(&manifest, [artifact(3, 570), artifact(4, 603)]).unwrap();
-        let merged = &results.candidates[&candidate_id];
-        assert_eq!(merged.milestone_depth, 4);
-        assert_eq!(merged.attempts, 2);
-        assert_eq!(merged.successes, 1);
-        assert_eq!(merged.first_hit_ticks, vec![603]);
+        assert!(matches!(
+            collect_results(&manifest, [artifact(3, 570), artifact(4, 603)]),
+            Err(SearchError::InvalidResult)
+        ));
     }
 
     #[test]

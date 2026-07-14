@@ -71,8 +71,11 @@ The native command owns seed, evaluate, rank, evolve, and champion promotion:
     huntctl search run --segment fsp103_to_fsp104 --game build/windows-clang-debug/dusklight.exe --dvd orig/GZ2E01/GZ2E01.iso --output build/search/intro --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
 Each generation contains its manifest, candidates, compact tapes, isolated
-attempt evidence, results, and leaderboard. The final root contains
-champion.tape and run.summary.json.
+attempt evidence, results, and leaderboard. The final root contains the exact
+`champion.candidate.json`, its compiled `champion.tape`, and `run.summary.json`.
+To continue mining from an existing candidate instead of restarting from the
+built-in baseline, pass `--candidate FILE` to `search run`. The candidate is
+validated and must match `--segment`.
 
 Individual primitives remain available:
 
@@ -80,13 +83,17 @@ Individual primitives remain available:
     huntctl search rank --population build/search/g0/manifest.json --results build/search/g0/results.json
     huntctl search evolve --population build/search/g0/manifest.json --results build/search/g0/results.json --output build/search/g1 --size 16 --elites 4 --rng-seed 2
 
-Ranking is lexicographic: deepest verified milestone, success rate across
-repeated isolated trials, median first-hit tick, best first-hit tick, then
-shorter tape. A candidate that merely approaches an exit cannot outrank one
-which activates the exact F_SP103 to F_SP104 transition.
+Ranking is lexicographic: deepest verified milestone, first-hit tick, then
+shorter tape. Repetitions are a hard determinism check, not a probabilistic
+ranking dimension: identical trials must agree on milestone depth, goal
+outcome, every hit's simulation tick and tape frame, and boundary fingerprints.
+Any disagreement rejects the evaluation. Deterministic all-miss candidates are
+valid evidence and remain below candidates that reach a milestone.
 
 Current mutations adjust macro duration, analog heading and magnitude, insert
-rolls, split/delete movement segments, and shrink explicit waits. Candidate IDs
-hash segment plus input program, so identical tapes deduplicate even if separate
-search branches rediscover them; ancestry records the retained parent and
-mutation for every generation.
+rolls, split/delete movement segments, and shrink explicit waits. Boot mutation
+directly shifts and shrinks the neutral gaps attached to menu button presses;
+it does not spend most samples perturbing only the initial boot wait. Candidate
+IDs hash segment plus input program, so identical tapes deduplicate even if
+separate search branches rediscover them; ancestry records the retained parent
+and mutation for every generation.

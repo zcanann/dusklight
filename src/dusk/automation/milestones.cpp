@@ -44,7 +44,7 @@ bool stage_is(const char* actual, const char* expected) {
 bool gameplay_ready_f_sp103(const MilestoneObservation& observation) {
     return stage_is(observation.stageName, "F_SP103") && observation.room == 1 &&
            observation.point == 1 && observation.playerPresent && observation.playerIsLink &&
-           !observation.eventRunning;
+           !observation.eventRunning && observation.eventId == -1;
 }
 
 bool exit_f_sp103_to_f_sp104(const MilestoneObservation& observation) {

@@ -410,10 +410,21 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let segment: SegmentProfile = option(search_args, "--segment")
                 .ok_or("missing required --segment ID")?
                 .parse()?;
+            let seed_candidate = if let Some(path) = option(search_args, "--candidate") {
+                let candidate: Candidate = serde_json::from_slice(&fs::read(path)?)?;
+                candidate.validate()?;
+                if candidate.segment != segment {
+                    return Err("candidate segment does not match --segment".into());
+                }
+                Some(candidate)
+            } else {
+                None
+            };
             let output = required_path(search_args, "--output")?;
             let size = usize_option(search_args, "--size", 16)?;
             let summary = run_search(&SearchRunConfig {
                 segment,
+                seed_candidate,
                 game: required_path(search_args, "--game")?,
                 dvd: required_path(search_args, "--dvd")?,
                 output_root: output,
@@ -1008,7 +1019,7 @@ fn print_usage() {
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
-        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
 }
 
@@ -1066,29 +1077,39 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
     let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
     let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
-    let hit_goal = mode != "miss";
+    let state_root = option(args, "--automation-data-root").unwrap_or_default();
+    let second_attempt = state_root.contains("attempt-002");
+    let unstable_miss = mode == "unstable-goal" && second_attempt;
+    let hit_goal = mode != "miss" && !unstable_miss;
     let milestones: Vec<Value> = requested
         .split(',')
         .map(|id| {
             let hit = hit_goal
-                || (mode == "miss" && id == "gameplay-ready-f-sp103" && goal == "entered-f-sp104");
-            let tick = match id {
+                || ((mode == "miss" || unstable_miss)
+                    && id == "gameplay-ready-f-sp103"
+                    && goal == "entered-f-sp104");
+            let base_tick = match id {
                 "gameplay-ready-f-sp103" => 77,
                 "exit-f-sp103-to-f-sp104" => 572,
                 "entered-f-sp104" => 603,
                 _ => 0,
             };
-            let digest_character = match id {
+            let tick = base_tick + u64::from(mode == "unstable-tick" && second_attempt);
+            let tape_frame = tick + u64::from(mode == "unstable-frame" && second_attempt);
+            let mut digest_character = match id {
                 "gameplay-ready-f-sp103" => "1",
                 "exit-f-sp103-to-f-sp104" => "2",
                 "entered-f-sp104" => "3",
                 _ => "0",
             };
+            if mode == "unstable-fingerprint" && second_attempt {
+                digest_character = "a";
+            }
             json!({
                 "id": id,
                 "hit": hit,
                 "sim_tick": hit.then_some(tick),
-                "tape_frame": hit.then_some(tick),
+                "tape_frame": hit.then_some(tape_frame),
                 "evidence": hit.then(|| json!({
                     "boundary_fingerprint": {
                         "schema": "dusklight.milestone-boundary/v1",
@@ -1112,7 +1133,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             "milestones": milestones
         }))?,
     )?;
-    if mode == "miss" {
+    if mode == "miss" || unstable_miss {
         return Err("mock worker goal miss".into());
     }
     Ok(())
