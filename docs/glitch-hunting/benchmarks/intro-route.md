@@ -81,6 +81,21 @@ precedes the opening event; that transient gap is not durable controller
 handoff. Results captured with the older predicate are invalid for boot golf
 and must be rescored.
 
+The current curated boot frontier reaches durable control at simulation/tape
+frame 439 with boundary fingerprint
+`5f3f489f2cf561844564368fbc427d85`. It was obtained by reducing an 800-frame
+alternating A/Start baseline while holding that tick and fingerprint immutable.
+The resulting absolute tape has eight non-neutral frames and reproduced the
+same proof in 20/20 independent cold boots. Generated populations and evidence
+remain ignored under `build/`; the compact TAS source is checked in at
+`routes/intro/variants/boot_to_link/golf-439.tas`.
+
+The fixed `intro-first-exit` selector now uses this same prefix. A three-run
+end-to-end regression reached control at tick 439, the first exit trigger at
+827, and the `F_SP104` load at 858 on every run. That validates composition
+with the existing movement tail; it is not a claim that the movement tail is
+golfed.
+
 ## Baseline and scoring
 
 One checked cold matrix on July 13, 2026 completed `intro-cutscene` 10/10 times

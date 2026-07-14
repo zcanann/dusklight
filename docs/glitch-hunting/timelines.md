@@ -91,10 +91,10 @@ timeline intro
 milestone process_boot
 milestone link_control
 segment boot_to_link from process_boot to link_control profile boot_to_fsp103
-variant boot_to_link.golf uses candidate intro/variants/boot_to_link/golf-661.candidate.json starts process-clean-v1 produces control-rng1 ticks 644
-continuation golf_boot starts root@process-clean-v1
-continue golf_boot with boot_to_link.golf after root@process-clean-v1
-branch experiment from golf_boot at link_control
+variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 ticks 439
+continuation main starts root@process-clean-v1
+continue main with boot_to_link.golf439 after root@process-clean-v1
+branch experiment from main at link_control
 ```
 
 Artifact forms are `uses candidate`, `uses tas`, and `uses tape`. Baselines are
@@ -109,7 +109,7 @@ Preview an upstream substitution without changing files:
 cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline status `
   --timeline routes/intro.timeline `
   --continuation main `
-  --select boot_to_link.golf
+  --select boot_to_link.golf439
 ```
 
 `timeline rebase-compatible` can emit the text for a boundary-compatible

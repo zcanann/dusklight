@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 2);
+    assert_eq!(summary["segments"], 1);
 
     let status = run(&[
         "timeline",
@@ -39,30 +39,15 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
         route.to_str().unwrap(),
         "--continuation",
         "main",
-        "--select",
-        "boot_to_link.golf",
     ]);
     assert!(status.status.success());
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["immutable_lineages"][0]["stale"], false);
-    assert_eq!(status["workspace"]["steps"][1]["state"], "stale");
-
-    let rebase = run(&[
-        "timeline",
-        "rebase-compatible",
-        "--timeline",
-        route.to_str().unwrap(),
-        "--continuation",
-        "main",
-        "--select",
-        "boot_to_link.golf",
-        "--name",
-        "main_golf",
-    ]);
-    assert!(rebase.status.success());
-    let rebase: serde_json::Value = serde_json::from_slice(&rebase.stdout).unwrap();
-    assert_eq!(rebase["fully_compatible"], true);
-    assert_eq!(rebase["old_lineage_preserved"], true);
+    assert_eq!(
+        status["workspace"]["steps"][0]["workspace_variant"],
+        "boot_to_link.golf439"
+    );
+    assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

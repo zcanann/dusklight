@@ -21,42 +21,31 @@ repeat 31 neutral
 
 marker start-pulse-2
 frame start
-# Cold title-scene streaming has completed as late as tick 318. Keep the
-# first context-sensitive A press beyond that boundary; golf this only against
-# a cold-run distribution, never a warm run.
-repeat 252 neutral
+repeat 79 neutral
 
 marker continue-without-saving
-frame accept
+frame start
 repeat 7 neutral
 
 marker accept-default-link
 frame start
-repeat 29 neutral
+frame neutral
 
 marker select-default-epona-menu
 frame start
-frame neutral
+repeat 30 neutral
 
 marker accept-default-epona
-frame start
-repeat 67 neutral
+frame accept
+repeat 68 neutral
 
-marker skip-opening-event-arm
+marker skip-opening-event
 frame start
 frame neutral
 
-marker skip-opening-event-confirm
+marker skip-opening-cutscene
 frame start
-repeat 65 neutral
-
-marker skip-opening-cutscene-arm
-frame start
-frame neutral
-
-marker skip-opening-cutscene-confirm
-frame start
-repeat 115 neutral
+repeat 100 neutral
 
 marker route-to-first-exit
 repeat 45 move_forward
