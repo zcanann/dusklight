@@ -26,6 +26,13 @@ The same selector works without VS Code:
 .\tools\glitch-hunting\run-tests.ps1 -Test pool-smoke
 ```
 
+The two intro scenarios currently double as cold timing-leak probes. Their
+input is absolute and branch-free, but the unpaced PC title event can remain
+active past the checked menu press while host work is outstanding. A failure
+preserves its isolated writable state and trace under `build/test-results`; it
+must not be hidden with a reactive tape wait. See the
+[intro route benchmark](benchmarks/intro-route.md) for the current boundary.
+
 The runner configures `windows-clang-debug` with code mods disabled. This keeps
 the automation tests usable from ordinary PowerShell rather than requiring a
 Visual Studio developer shell.

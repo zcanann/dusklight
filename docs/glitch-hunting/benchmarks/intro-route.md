@@ -35,7 +35,7 @@ extracts the milestones; `timeline` exposes state changes and input frames;
 
 ## Baseline and scoring
 
-The checked cold matrix on July 13, 2026 completed `intro-cutscene` 10/10 times
+One checked cold matrix on July 13, 2026 completed `intro-cutscene` 10/10 times
 with isolated config, card, and cache roots:
 
 - route control: tick 682–684;
@@ -58,10 +58,12 @@ completed the route.
 
 Synchronous DVD and memory-card dispatch, fixed OS time, and absolute input do
 not yet make the whole PC port deterministic. In cold isolated runs, the title
-event has ended anywhere from tick 181 to tick 318. Advancing the simulation
-while host work is outstanding changes which UI receives a fixed press. The
-checked normal boot therefore puts its first context-sensitive A press at tick
-400. This is a conservative barrier in the tape, not a reactive wait.
+event has ended anywhere from tick 181 to beyond tick 400. Advancing the
+simulation while host work is outstanding changes which UI receives a fixed
+press. The checked normal boot puts its first context-sensitive A press at tick
+400, but a later cold run proved this is only a useful baseline, not a durable
+barrier. No larger guessed frame number can prove an unbounded host task is
+finished.
 
 Small physics populations also remain: identical input from identical reported
 control coordinates reaches the first exit within a four-tick band. The runner
@@ -70,8 +72,10 @@ milestones. It does not claim false single-tick determinism.
 
 The durable fix is an engine-level loading/readiness barrier that stalls logical
 time while deterministic automation work is outstanding. Until that exists,
-boot-frame minimization must be proven with cold matrices. Route exploration
-should normally begin from an explicit stage/save/checkpoint seed.
+the console-boot scenarios are timing-leak probes rather than non-flaky CI
+tests. Route frame golf and roll-spacing exploration should begin from an
+explicit stage/save/checkpoint seed, then promote a candidate back to cold
+process-boot replay after the barrier exists.
 
 ## Running and watching
 
@@ -87,7 +91,9 @@ names for headless checked runs.
 Each run writes its compact trace and JSON milestone summary beneath
 `build/test-results/<scenario>/<timestamp>`. The matrix also writes
 `matrix.summary.json`, finishes all requested runs before failing, and never
-reuses the temporary memory card or cache.
+reuses the temporary memory card or cache. A failed run also copies its isolated
+writable state beside the trace before cleanup so logs, card, and cache evidence
+are available for diagnosis.
 
 ## Local search primitives
 

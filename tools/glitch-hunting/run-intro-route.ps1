@@ -69,6 +69,7 @@ $failures = @()
 
 for ($run = 1; $run -le $Runs; $run++) {
     $runName = "run-{0:D3}" -f $run
+    $failure = $null
     $state = Join-Path $stateBase ([Guid]::NewGuid().ToString("N"))
     $tracePath = Join-Path $artifactRoot "$runName.gameplay.trace"
     $summaryPath = Join-Path $artifactRoot "$runName.summary.json"
@@ -126,6 +127,11 @@ for ($run = 1; $run -le $Runs; $run++) {
             throw "Refusing to remove Intro Route state outside $stateBase"
         }
         if (Test-Path -LiteralPath $resolvedState) {
+            if ($null -ne $failure) {
+                Copy-Item -LiteralPath $resolvedState `
+                    -Destination (Join-Path $artifactRoot "$runName.failed-state") `
+                    -Recurse -Force
+            }
             Remove-Item -LiteralPath $resolvedState -Recurse -Force
         }
     }
