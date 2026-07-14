@@ -50,7 +50,7 @@ root are command-line parameters. A native timeout, crash, or malformed result
 fails the round; it is never silently counted as a poor candidate. A legitimate
 goal miss remains a scored partial sample.
 
-After the round, run `Glitch Hunt: TAS Playback` and select
+After the round, run the VS Code task `Glitch Hunt: Play Visual Scenario` and select
 `route-search-champion` or `boot-search-champion`. The former recreates the
 direct `F_SP103,1,1,3` search start; the latter replays from a cold process boot.
 
