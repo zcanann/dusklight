@@ -20,8 +20,7 @@
       "name": "start-pulse-1"
     },
     {
-      "op": "repeat",
-      "count": 2,
+      "op": "frame",
       "frame": {
         "pads": {
           "0": {
@@ -40,8 +39,7 @@
       "name": "start-pulse-2"
     },
     {
-      "op": "repeat",
-      "count": 2,
+      "op": "frame",
       "frame": {
         "pads": {
           "0": {
@@ -52,47 +50,7 @@
     },
     {
       "op": "repeat",
-      "count": 118,
-      "frame": {}
-    },
-    {
-      "op": "marker",
-      "name": "start-pulse-3"
-    },
-    {
-      "op": "repeat",
-      "count": 2,
-      "frame": {
-        "pads": {
-          "0": {
-            "buttons": ["START"]
-          }
-        }
-      }
-    },
-    {
-      "op": "repeat",
-      "count": 178,
-      "frame": {}
-    },
-    {
-      "op": "marker",
-      "name": "select-first-save"
-    },
-    {
-      "op": "repeat",
-      "count": 2,
-      "frame": {
-        "pads": {
-          "0": {
-            "buttons": ["A"]
-          }
-        }
-      }
-    },
-    {
-      "op": "repeat",
-      "count": 30,
+      "count": 150,
       "frame": {}
     },
     {
@@ -100,9 +58,7 @@
       "name": "continue-without-saving"
     },
     {
-      "op": "pulse_until",
-      "condition": "name_entry_input_ready",
-      "timeout_ticks": 1800,
+      "op": "frame",
       "frame": {
         "pads": {
           "0": {
@@ -112,23 +68,8 @@
       }
     },
     {
-      "op": "marker",
-      "name": "remove-carried-name-character"
-    },
-    {
       "op": "repeat",
-      "count": 2,
-      "frame": {
-        "pads": {
-          "0": {
-            "buttons": ["B"]
-          }
-        }
-      }
-    },
-    {
-      "op": "repeat",
-      "count": 148,
+      "count": 7,
       "frame": {}
     },
     {
@@ -137,7 +78,7 @@
     },
     {
       "op": "cycle",
-      "count": 4,
+      "count": 3,
       "frames": [
         {
           "pads": {
@@ -209,7 +150,7 @@
     },
     {
       "op": "cycle",
-      "count": 7,
+      "count": 6,
       "frames": [
         {
           "pads": {
@@ -220,11 +161,6 @@
         },
         {}
       ]
-    },
-    {
-      "op": "wait_until",
-      "condition": "name_entry_character_select",
-      "timeout_ticks": 300
     },
     {
       "op": "marker",
@@ -251,29 +187,6 @@
     {
       "op": "repeat",
       "count": 180,
-      "frame": {}
-    },
-    {
-      "op": "marker",
-      "name": "confirm-corrupted-file"
-    },
-    {
-      "op": "cycle",
-      "count": 3,
-      "frames": [
-        {
-          "pads": {
-            "0": {
-              "buttons": ["START"]
-            }
-          }
-        },
-        {}
-      ]
-    },
-    {
-      "op": "repeat",
-      "count": 30,
       "frame": {}
     }
   ]
