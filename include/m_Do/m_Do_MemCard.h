@@ -65,6 +65,8 @@ public:
 
     void ThdInit();
     void main();
+    void executePendingCommand();
+    void dispatchPendingCommand();
     void update();
     void load();
     void restore();

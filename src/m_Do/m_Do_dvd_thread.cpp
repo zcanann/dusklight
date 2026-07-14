@@ -11,6 +11,7 @@
 #include "JSystem/JKernel/JKRExpHeap.h"
 #include "JSystem/JKernel/JKRMemArchive.h"
 #include "dusk/os.h"
+#include "dusk/automation/io_mode.hpp"
 #include "m_Do/m_Do_Reset.h"
 #include "m_Do/m_Do_controller_pad.h"
 #include "m_Do/m_Do_ext.h"
@@ -136,6 +137,13 @@ mDoDvdThd_command_c* mDoDvdThd_param_c::getFirstCommand() {
 }
 
 void mDoDvdThd_param_c::addition(mDoDvdThd_command_c* pCommand) {
+    if (dusk::automation::synchronous_io_enabled()) {
+        if (pCommand->execute() != 1) {
+            OSReport_Error("mDoDvdThd_param_c::addition() deterministic command execution failed.\n");
+        }
+        return;
+    }
+
     OSLockMutex(&mMutext);
     cLs_Addition(&mNodeList, pCommand);
     OSUnlockMutex(&mMutext);

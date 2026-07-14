@@ -13,6 +13,7 @@
 #include "dusk/os.h"
 #include "dusk/main.h"
 #include "dusk/version.hpp"
+#include "dusk/automation/io_mode.hpp"
 
 #if PLATFORM_WII || PLATFORM_SHIELD
 #include <revolution/nand.h>
@@ -101,6 +102,11 @@ void mDoMemCd_Ctrl_c::ThdInit() {
 
     OSInitMutex(&mMutex);
     OSInitCond(&mCond);
+    if (dusk::automation::synchronous_io_enabled()) {
+        dispatchPendingCommand();
+        OS_REPORT("Memory card deterministic calling-thread dispatch enabled\n");
+        return;
+    }
     OSCreateThread(&MemCardThread, (void*(*)(void*))mDoMemCd_main, NULL, MemCardStack + sizeof(MemCardStack),
                    sizeof(MemCardStack), OSGetThreadPriority(OSGetCurrentThread()) + 1, 1);
     OSResumeThread(&MemCardThread);
@@ -127,7 +133,16 @@ void mDoMemCd_Ctrl_c::main() {
         }
 #endif
 
-        switch (mCardCommand) {
+        executePendingCommand();
+
+        OSLockMutex(&mMutex);
+        mCardCommand = COMM_NONE_e;
+        OSUnlockMutex(&mMutex);
+    } while (true);
+}
+
+void mDoMemCd_Ctrl_c::executePendingCommand() {
+    switch (mCardCommand) {
         #if PLATFORM_GCN || PLATFORM_WII
         case COMM_RESTORE_e:
             restore();
@@ -164,12 +179,18 @@ void mDoMemCd_Ctrl_c::main() {
             storeSetUpNAND();
             break;
         #endif
-        }
+    }
+}
 
+void mDoMemCd_Ctrl_c::dispatchPendingCommand() {
+    if (dusk::automation::synchronous_io_enabled()) {
+        executePendingCommand();
         OSLockMutex(&mMutex);
         mCardCommand = COMM_NONE_e;
         OSUnlockMutex(&mMutex);
-    } while (true);
+        return;
+    }
+    OSSignalCond(&mCond);
 }
 
 void mDoMemCd_Ctrl_c::update() {
@@ -178,7 +199,7 @@ void mDoMemCd_Ctrl_c::update() {
         mCardCommand = COMM_DETACH_e;
         mProbeStat = 3;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     } else if (getStatus(0) != 14) {
         #if PLATFORM_GCN || PLATFORM_WII
         if (CARDProbe(SLOT_A) && getStatus(0) == 0) {
@@ -187,14 +208,14 @@ void mDoMemCd_Ctrl_c::update() {
             mCardState = CARD_STATE_13_e;
             mCardCommand = COMM_ATTACH_e;
             OSUnlockMutex(&mMutex);
-            OSSignalCond(&mCond);
+            dispatchPendingCommand();
         } else if (!CARDProbe(SLOT_A) && getStatus(0) != 0) {
             OSLockMutex(&mMutex);
             mProbeStat = 1;
             mCardState = CARD_STATE_13_e;
             mCardCommand = COMM_DETACH_e;
             OSUnlockMutex(&mMutex);
-            OSSignalCond(&mCond);
+            dispatchPendingCommand();
         }
         #endif
     }
@@ -205,7 +226,7 @@ void mDoMemCd_Ctrl_c::load() {
         field_0x1fc8 = 0;
         mCardCommand = COMM_RESTORE_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 
@@ -261,7 +282,7 @@ void mDoMemCd_Ctrl_c::save(void* i_buffer, u32 i_size, u32 i_position) {
         field_0x1fc8 = 0;
         mCardCommand = COMM_STORE_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 
@@ -389,7 +410,7 @@ void mDoMemCd_Ctrl_c::command_format() {
     if (OSTryLockMutex(&mMutex)) {
         mCardCommand = COMM_FORMAT_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 
@@ -475,7 +496,7 @@ void mDoMemCd_Ctrl_c::command_attach() {
         mCardState = CARD_STATE_13_e;
         mCardCommand = COMM_ATTACH_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 
@@ -588,7 +609,7 @@ void mDoMemCd_Ctrl_c::loadNAND() {
         field_0x1fc8 = 0;
         mCardCommand = COMM_RESTORE_NAND_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 
@@ -643,7 +664,7 @@ void mDoMemCd_Ctrl_c::saveNAND(void* i_buffer, u32 i_size, u32 i_position) {
         field_0x1fc8 = 0;
         mCardCommand = COMM_STORE_NAND_e;
         OSUnlockMutex(&mMutex);
-        OSSignalCond(&mCond);
+        dispatchPendingCommand();
     }
 }
 

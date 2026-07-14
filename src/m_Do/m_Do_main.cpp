@@ -51,6 +51,7 @@
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
 #include "dusk/automation/worker.hpp"
@@ -1054,6 +1055,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
+    const bool deterministicAutomationIo = hasInputTape && unpacedMainLoop;
+    dusk::automation::set_synchronous_io_enabled(deterministicAutomationIo);
+
     if (parsed_arg_options.contains("load-save")){
         uint8_t slot = parsed_arg_options["load-save"].as<uint8_t>();
         if (slot >= 1 && slot <= 3) {
@@ -1167,6 +1171,11 @@ int game_main(int argc, char* argv[]) {
         config.allowTextureDumps = false;
         config.disablePresentation = headlessMainLoop;
         auroraInfo = aurora_initialize(argc, argv, &config);
+    }
+
+    aurora_dvd_set_synchronous(deterministicAutomationIo);
+    if (deterministicAutomationIo) {
+        DuskLog.info("Automation I/O: DVD and memory-card commands complete on the simulation thread");
     }
 
     automationInputQuarantine = hasInputTape;
