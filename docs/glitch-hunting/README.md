@@ -41,6 +41,8 @@ state hashes, and the reason it was classified as interesting.
   model, headless execution, and headful promotion.
 - [Milestone-backed route search](search.md) documents typed controller
   candidates, population evaluation, lexicographic scoring, and evolution.
+- [Route timelines and immutable lineage](timelines.md) documents authored
+  route DAGs, exact boundary dependencies, branches, and the route object store.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
   programs, observations, events, oracles, checkpoints, and run artifacts.
 - [Determinism and memory fidelity](determinism-and-memory.md) records what

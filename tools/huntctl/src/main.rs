@@ -1,6 +1,7 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::corpus::Corpus;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
+use huntctl::route_store::{ObjectId, RouteStore};
 use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
@@ -9,6 +10,7 @@ use huntctl::search::{
 use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
+use huntctl::timeline::Timeline;
 use huntctl::transport::ProcessTransport;
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
@@ -38,6 +40,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "corpus" => command_corpus(&args[1..]),
         "tape" => command_tape(&args[1..]),
         "trace" => command_trace(&args[1..]),
+        "timeline" => command_timeline(&args[1..]),
         "search" => command_search(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
@@ -47,6 +50,223 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         _ => usage_error(),
     }
+}
+
+fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("parse") if args.len() == 2 => {
+            let timeline = load_timeline(&args[1])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "valid": true,
+                    "timeline": timeline.name,
+                    "milestones": timeline.milestones.len(),
+                    "segments": timeline.segments.len(),
+                    "variants": timeline.variants.len(),
+                    "continuations": timeline.continuations.len(),
+                    "branches": timeline.branches.len(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("inspect") if args.len() == 2 => {
+            let path = PathBuf::from(&args[1]);
+            let timeline = load_timeline(&path)?;
+            timeline.validate_artifacts(path.parent())?;
+            println!("{}", serde_json::to_string_pretty(&timeline.inspect()?)?);
+            Ok(())
+        }
+        Some("status") => {
+            let timeline_args = &args[1..];
+            let path = required_path(timeline_args, "--timeline")?;
+            let timeline = load_timeline(&path)?;
+            let selections = timeline_selections(timeline_args)?;
+            let status = timeline.status(
+                option(timeline_args, "--continuation").as_deref(),
+                &selections,
+            )?;
+            let output = serde_json::to_vec_pretty(&status)?;
+            if let Some(path) = option(timeline_args, "--output") {
+                fs::write(path, &output)?;
+            }
+            println!("{}", String::from_utf8(output)?);
+            Ok(())
+        }
+        Some("rebase-compatible") => {
+            let timeline_args = &args[1..];
+            let path = required_path(timeline_args, "--timeline")?;
+            let timeline = load_timeline(path)?;
+            let continuation = option(timeline_args, "--continuation")
+                .ok_or("missing required --continuation NAME")?;
+            let name = option(timeline_args, "--name")
+                .ok_or("missing required --name NEW_CONTINUATION")?;
+            let selections = timeline_selections(timeline_args)?;
+            if selections.is_empty() {
+                return Err("rebase-compatible requires at least one --select VARIANT".into());
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&timeline.rebase_compatible(
+                    &continuation,
+                    &selections,
+                    &name,
+                )?)?
+            );
+            Ok(())
+        }
+        Some("store") => command_timeline_store(&args[1..]),
+        _ => usage_error(),
+    }
+}
+
+fn command_timeline_store(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("init") if args.len() == 2 => {
+            RouteStore::initialize(&args[1])?;
+            println!("initialized {}", args[1]);
+            Ok(())
+        }
+        Some("import") => {
+            let store_args = &args[1..];
+            let root = required_path(store_args, "--store")?;
+            let path = required_path(store_args, "--timeline")?;
+            let reference = option(store_args, "--ref").ok_or("missing required --ref NAME")?;
+            let timeline = load_timeline(&path)?;
+            let result = RouteStore::open(root)?.import_timeline(
+                &timeline,
+                path.parent().unwrap_or_else(|| std::path::Path::new(".")),
+                &reference,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Some("fork") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let from = option(store_args, "--from").ok_or("missing required --from REF")?;
+            let to = option(store_args, "--to").ok_or("missing required --to REF")?;
+            let id = if let Some(lineage) = option(store_args, "--lineage") {
+                store.fork_lineage(&from, &lineage, &to)?
+            } else {
+                store.fork(&from, &to)?
+            };
+            println!("{id}");
+            Ok(())
+        }
+        Some("import-evaluation") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let path = required_path(store_args, "--evaluation")?;
+            let milestone =
+                option(store_args, "--milestone").ok_or("missing required --milestone NAME")?;
+            let fingerprint = option(store_args, "--fingerprint")
+                .ok_or("missing required --fingerprint VALUE")?;
+            let reference = option(store_args, "--ref");
+            let id =
+                store.import_evaluation(&path, &milestone, &fingerprint, reference.as_deref())?;
+            println!("{id}");
+            Ok(())
+        }
+        Some("append") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let reference = option(store_args, "--ref").ok_or("missing required --ref REF")?;
+            let path = required_path(store_args, "--timeline")?;
+            let continuation = option(store_args, "--continuation")
+                .ok_or("missing required --continuation NAME")?;
+            let timeline = load_timeline(&path)?;
+            let id = store.append_lineage(
+                &reference,
+                &timeline,
+                &continuation,
+                path.parent().unwrap_or_else(|| std::path::Path::new(".")),
+            )?;
+            println!("{id}");
+            Ok(())
+        }
+        Some("replay-repair") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let from = option(store_args, "--from").ok_or("missing required --from REF")?;
+            let to = option(store_args, "--to").ok_or("missing required --to REF")?;
+            let path = required_path(store_args, "--timeline")?;
+            let continuation = option(store_args, "--continuation")
+                .ok_or("missing required --continuation NAME")?;
+            let timeline = load_timeline(&path)?;
+            let id = store.replay_repair(
+                &from,
+                &to,
+                &timeline,
+                &continuation,
+                path.parent().unwrap_or_else(|| std::path::Path::new(".")),
+            )?;
+            println!("{id}");
+            Ok(())
+        }
+        Some("promote") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let reference = option(store_args, "--ref").ok_or("missing required --ref REF")?;
+            let object: ObjectId = option(store_args, "--object")
+                .ok_or("missing required --object ID")?
+                .parse()?;
+            store.promote(&reference, &object)?;
+            println!("{object}");
+            Ok(())
+        }
+        Some("resolve") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let reference = option(store_args, "--ref").ok_or("missing required --ref REF")?;
+            println!("{}", store.resolve_ref(&reference)?);
+            Ok(())
+        }
+        Some("show") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let object: ObjectId = option(store_args, "--object")
+                .ok_or("missing required --object ID")?
+                .parse()?;
+            println!("{}", serde_json::to_string_pretty(&store.read(&object)?)?);
+            Ok(())
+        }
+        Some("verify") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"valid": true, "objects": store.verify()?}))?
+            );
+            Ok(())
+        }
+        Some("gc") => {
+            let store_args = &args[1..];
+            let store = RouteStore::open(required_path(store_args, "--store")?)?;
+            let apply = store_args.iter().any(|arg| arg == "--apply");
+            println!("{}", serde_json::to_string_pretty(&store.gc(apply)?)?);
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn load_timeline(path: impl AsRef<std::path::Path>) -> Result<Timeline, Box<dyn Error>> {
+    Ok(Timeline::parse(&fs::read_to_string(path)?)?)
+}
+
+fn timeline_selections(args: &[String]) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
+    let mut output = BTreeMap::new();
+    for variant in repeated_option(args, "--select") {
+        let (segment, _) = variant
+            .rsplit_once('.')
+            .ok_or("--select must be a qualified SEGMENT.VARIANT")?;
+        let segment = segment.to_string();
+        if output.insert(segment.clone(), variant).is_some() {
+            return Err(format!("duplicate selection for segment {segment}").into());
+        }
+    }
+    Ok(output)
 }
 
 fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -577,7 +797,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
 }
 

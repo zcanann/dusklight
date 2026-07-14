@@ -5,11 +5,13 @@ pub mod client;
 pub mod corpus;
 pub mod pool;
 pub mod protocol;
+pub mod route_store;
 pub mod search;
 pub mod tape;
 pub mod tape_chain;
 pub mod tape_dsl;
 pub mod tape_program;
+pub mod timeline;
 pub mod trace;
 pub mod transport;
 

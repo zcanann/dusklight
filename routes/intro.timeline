@@ -1,0 +1,24 @@
+# Authored intent for the first two speed milestones. Immutable variants are
+# composed into exact continuations; changing an incumbent does not rewrite or
+# invalidate an existing continuation.
+timeline intro
+
+milestone process_boot
+milestone link_control
+milestone f_sp104
+
+segment boot_to_link from process_boot to link_control profile boot_to_fsp103
+segment link_to_fsp104 from link_control to f_sp104 profile fsp103_to_fsp104
+
+variant boot_to_link.safe incumbent uses baseline boot_to_fsp103 starts process-clean-v1 produces fsp103-control-rng-unknown-v1
+variant boot_to_link.golf uses baseline boot_to_fsp103 starts process-clean-v1 produces fsp103-control-rng-unknown-v1
+
+variant link_to_fsp104.baseline incumbent uses baseline fsp103_to_fsp104 starts fsp103-control-rng-unknown-v1 produces fsp104-point0-rng-unknown-v1 ticks 603
+variant link_to_fsp104.rolls uses baseline fsp103_to_fsp104 starts fsp103-control-rng-unknown-v1 produces fsp104-point0-rng-unknown-v1
+
+continuation main starts root@process-clean-v1
+continue main with boot_to_link.safe after root@process-clean-v1
+continue main with link_to_fsp104.baseline after boot_to_link.safe@fsp103-control-rng-unknown-v1
+
+branch exit_roll_experiment from main at link_control
+continue exit_roll_experiment with link_to_fsp104.rolls after boot_to_link.safe@fsp103-control-rng-unknown-v1
