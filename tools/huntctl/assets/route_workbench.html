@@ -5,117 +5,85 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dusklight Route Tree</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #090c11;
-      --panel: #11161f;
-      --panel-2: #171e29;
-      --line: #293445;
-      --text: #edf2fa;
-      --muted: #94a2b7;
-      --cyan: #6de1d2;
-      --blue: #80aaff;
-      --amber: #f0c36b;
-      --red: #ff7e91;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
-    button, textarea { font: inherit; }
-    header {
-      position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px;
-      min-height: 64px; padding: 12px 24px; border-bottom: 1px solid var(--line);
-      background: rgba(9, 12, 17, .94); backdrop-filter: blur(12px);
-    }
-    .mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--cyan); color: #07100f; font-weight: 900; }
-    .title strong { display: block; font-size: 15px; letter-spacing: .04em; }
-    .title span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
-    .spacer { flex: 1; }
-    .status { color: var(--muted); font-size: 12px; }
-    .status.ok { color: var(--cyan); }
-    .status.error { color: var(--red); }
-    .reload { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; }
-    .reload:hover { border-color: #4b5c74; }
-    main { width: min(980px, calc(100% - 32px)); margin: 28px auto 80px; }
-    .intro { margin-bottom: 28px; }
-    .intro h1 { margin: 0 0 8px; font-size: 25px; }
-    .intro p { margin: 0; color: var(--muted); line-height: 1.55; }
-    .tree { display: grid; gap: 14px; }
-    .route-branch { margin: 10px 0 4px 25px; padding: 4px 0 4px 26px; border-left: 2px solid var(--line); }
-    .route-branch > .segment { margin-left: 0; }
-    .route-destination { margin: 12px 0 0 16px; }
-    .milestone-ref { margin: 8px 0; padding: 9px 12px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); font-size: 12px; }
-    .milestone { position: relative; display: flex; align-items: center; gap: 16px; min-height: 52px; }
-    .node-dot { position: relative; z-index: 1; width: 52px; height: 52px; flex: 0 0 52px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; background: #101722; color: var(--blue); font-size: 13px; font-weight: 800; }
-    .node-copy strong { display: block; font-size: 16px; text-transform: capitalize; }
-    .node-copy span { color: var(--muted); font-size: 12px; }
-    .node-copy .predicate-summary { display: block; margin-top: 4px; color: #bac6d8; font-size: 11px; }
-    .edit-predicate { margin-left: auto; padding: 8px 11px; border: 1px solid rgba(128,170,255,.55); border-radius: 8px; background: rgba(128,170,255,.1); color: var(--blue); cursor: pointer; }
-    .edit-predicate:hover { background: var(--blue); color: #07101e; }
-    .segment { position: relative; margin: 14px 0 18px 25px; padding: 4px 0 12px 43px; border-left: 2px solid var(--line); }
-    .segment::before { content: ""; position: absolute; left: -2px; top: 23px; width: 28px; height: 2px; background: var(--line); }
-    .segment-head { margin: 0 0 10px; }
-    .segment-head strong { font-size: 14px; }
-    .segment-head span { margin-left: 8px; color: var(--muted); font-size: 12px; }
-    .variants { display: grid; gap: 10px; }
-    .variant { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
-    .variant.incumbent { border-color: rgba(128, 170, 255, .55); }
-    .variant:hover { background: var(--panel-2); }
-    .variant-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-    .variant-title strong { font-size: 14px; }
-    .badge { padding: 3px 7px; border-radius: 999px; background: #222d3d; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
-    .badge.incumbent { color: var(--blue); }
-    .badge.score { color: var(--amber); }
-    .badge.proof-verified { color: var(--cyan); }
-    .badge.proof-missing, .badge.proof-stale { color: var(--red); }
-    .variant-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 7px; color: var(--muted); font-size: 11px; }
-    .variant-meta code { color: #bdc8d8; }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
-    .play, .record, .rename, .delete { min-width: 112px; padding: 10px 13px; border-radius: 8px; font-weight: 750; cursor: pointer; }
-    .play { border: 1px solid rgba(109, 225, 210, .55); background: rgba(109, 225, 210, .1); color: var(--cyan); }
-    .record { border: 1px solid rgba(240, 195, 107, .55); background: rgba(240, 195, 107, .1); color: var(--amber); }
-    .rename { border: 1px solid rgba(128,170,255,.55); background: rgba(128,170,255,.1); color: var(--blue); }
-    .delete { border: 1px solid rgba(255,126,145,.5); background: rgba(255,126,145,.08); color: var(--red); }
-    .play:hover:not(:disabled) { background: var(--cyan); color: #07100f; }
-    .record:hover:not(:disabled) { background: var(--amber); color: #171005; }
-    .rename:hover:not(:disabled) { background: var(--blue); color: #07101e; }
-    .delete:hover:not(:disabled) { background: var(--red); color: #1b080c; }
-    .play:disabled, .record:disabled, .rename:disabled, .delete:disabled { border-color: var(--line); background: #141923; color: #68768a; cursor: not-allowed; }
-    .frontier-label { margin: 8px 0; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-    .draft-children { margin: 9px 0 0 24px; padding-left: 14px; border-left: 2px solid #39465a; display: grid; gap: 9px; }
-    .draft { border-color: rgba(240,195,107,.32); }
-    .error-note { margin-top: 7px; color: var(--red); font-size: 11px; }
-    .lineages { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--line); }
-    .lineages h2 { margin: 0 0 6px; font-size: 17px; }
-    .lineages > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
-    .lineage-list { display: grid; gap: 8px; }
-    .lineage { padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
-    .lineage strong { font-size: 13px; }
-    .lineage code { color: var(--muted); font-size: 11px; }
-    .lineage .reason { margin-top: 5px; color: var(--amber); font-size: 11px; line-height: 1.4; }
-    .empty { padding: 28px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
-    .toast { position: fixed; right: 20px; bottom: 20px; max-width: 440px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 10px; background: #151c27; box-shadow: 0 18px 50px rgba(0,0,0,.45); color: var(--text); font-size: 13px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }
-    .toast.show { opacity: 1; transform: translateY(0); }
-    .toast.error { border-color: rgba(255,126,145,.5); color: #ffc2cb; }
-    dialog { width: min(860px, calc(100% - 28px)); padding: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(0,0,0,.7); }
-    dialog::backdrop { background: rgba(3,5,8,.78); backdrop-filter: blur(4px); }
-    .editor { display: grid; gap: 14px; padding: 20px; }
-    .editor h2 { margin: 0; font-size: 18px; }
-    .editor p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-    .editor textarea { width: 100%; min-height: min(62vh, 620px); resize: vertical; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #090d13; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
-    .editor textarea:focus { outline: 2px solid rgba(128,170,255,.45); border-color: var(--blue); }
-    .editor-error { min-height: 18px; color: var(--red); font-size: 12px; white-space: pre-wrap; }
-    .editor-actions { display: flex; justify-content: flex-end; gap: 9px; }
-    .editor-actions button { padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px; background: #151c27; color: var(--text); cursor: pointer; }
-    .editor-actions .save { border-color: rgba(109,225,210,.55); color: var(--cyan); }
-    @media (max-width: 650px) {
-      header { padding: 10px 14px; }
-      main { width: min(100% - 20px, 980px); }
-      .status { display: none; }
-      .segment { padding-left: 26px; }
-      .variant { grid-template-columns: 1fr; }
-      .play { width: 100%; }
-    }
+    :root { color-scheme: dark; --bg:#0b0e13; --panel:#121720; --panel2:#171e29; --line:#293241; --text:#e8edf5; --muted:#8c98aa; --cyan:#6dd8cb; --blue:#86aefb; --amber:#e7bd68; --red:#f1788c; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--text); }
+    button,textarea { font:inherit; }
+    header { height:48px; display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--line); background:#0d1117; }
+    .mark { width:24px; height:24px; display:grid; place-items:center; border-radius:5px; background:var(--cyan); color:#07100f; font-size:12px; font-weight:900; }
+    .title strong { display:block; font-size:13px; }
+    .title span { display:block; color:var(--muted); font-size:10px; }
+    .spacer { flex:1; }
+    .status { color:var(--muted); font-size:11px; }
+    .status.ok { color:var(--cyan); }
+    .status.error,.error-note { color:var(--red); }
+    .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
+    main { height:calc(100vh - 48px); display:grid; grid-template-columns:minmax(300px,420px) minmax(420px,1fr); }
+    .browser { min-width:0; overflow:auto; border-right:1px solid var(--line); }
+    .pane-title { position:sticky; top:0; z-index:2; height:34px; display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--line); background:#0f141c; color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+    .tree { padding:6px; font-size:12px; }
+    .tree-children { margin-left:13px; padding-left:8px; border-left:1px solid #242d3a; }
+    .tree-row { min-height:27px; display:flex; align-items:center; gap:5px; padding:2px 6px 2px 2px; border-radius:4px; color:#cfd6e2; cursor:default; user-select:none; }
+    .tree-row:hover { background:#151c26; }
+    .tree-row.selected { background:#20314a; color:#fff; }
+    .disclosure { width:18px; height:22px; padding:0; border:0; background:transparent; color:#738096; cursor:pointer; line-height:1; }
+    .disclosure.open { transform:rotate(90deg); }
+    .disclosure.empty { visibility:hidden; }
+    .tree-icon { width:16px; color:var(--muted); text-align:center; font-size:10px; }
+    .tree-icon.origin { color:var(--cyan); }
+    .tree-icon.segment { color:var(--blue); }
+    .tree-icon.variant { color:var(--amber); }
+    .tree-icon.draft { color:#bd8cf1; }
+    .tree-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .tree-tail { margin-left:auto; display:flex; gap:5px; align-items:center; color:var(--muted); font-size:9px; }
+    .dot { width:6px; height:6px; border-radius:50%; background:#5e6a7c; }
+    .dot.ok { background:var(--cyan); }
+    .dot.warn { background:var(--amber); }
+    .dot.bad { background:var(--red); }
+    .details { min-width:0; overflow:auto; background:var(--panel); }
+    .detail-body { width:min(720px,100%); padding:22px 26px 60px; }
+    .detail-kicker { color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+    .detail-title { margin:5px 0 4px; font-size:20px; font-weight:700; }
+    .detail-subtitle { color:var(--muted); font-size:12px; line-height:1.5; }
+    .badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+    .badge { padding:3px 7px; border-radius:999px; background:#222c3a; color:var(--muted); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .badge.incumbent,.badge.blue { color:var(--blue); }
+    .badge.score { color:var(--amber); }
+    .badge.ok,.badge.proof-verified { color:var(--cyan); }
+    .badge.bad,.badge.proof-missing,.badge.proof-stale { color:var(--red); }
+    .detail-section { margin-top:24px; }
+    .detail-section h3 { margin:0 0 9px; color:#b5c0d0; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+    .fields { display:grid; grid-template-columns:150px minmax(0,1fr); border-top:1px solid var(--line); }
+    .field-label,.field-value { min-height:34px; padding:8px 0; border-bottom:1px solid var(--line); font-size:11px; }
+    .field-label { color:var(--muted); }
+    .field-value { min-width:0; color:#dce3ee; overflow-wrap:anywhere; }
+    code,.mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .predicate { padding:11px 12px; border:1px solid var(--line); border-radius:6px; background:#0d1219; color:#bfc9d8; font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .advanced { margin-top:10px; color:var(--muted); font-size:11px; }
+    .advanced summary { cursor:pointer; }
+    .advanced .predicate { margin-top:8px; }
+    .actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:20px; }
+    .play,.record,.rename,.delete,.edit-predicate { padding:7px 10px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
+    .play { border:1px solid rgba(109,216,203,.5); background:rgba(109,216,203,.08); color:var(--cyan); }
+    .record { border:1px solid rgba(231,189,104,.5); background:rgba(231,189,104,.08); color:var(--amber); }
+    .rename,.edit-predicate { border:1px solid rgba(134,174,251,.5); background:rgba(134,174,251,.08); color:var(--blue); }
+    .delete { border:1px solid rgba(241,120,140,.5); background:rgba(241,120,140,.07); color:var(--red); }
+    .play:disabled,.record:disabled,.rename:disabled,.delete:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
+    .empty { padding:20px; color:var(--muted); font-size:11px; }
+    .toast { position:fixed; right:16px; bottom:16px; max-width:440px; padding:11px 13px; border:1px solid var(--line); border-radius:7px; background:#171e29; box-shadow:0 18px 50px rgba(0,0,0,.5); font-size:12px; opacity:0; transform:translateY(6px); pointer-events:none; transition:.15s ease; }
+    .toast.show { opacity:1; transform:none; }
+    .toast.error { border-color:rgba(241,120,140,.5); color:#ffc1cb; }
+    dialog { width:min(860px,calc(100% - 28px)); padding:0; border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--text); }
+    dialog::backdrop { background:rgba(3,5,8,.8); }
+    .editor { display:grid; gap:12px; padding:18px; }
+    .editor h2 { margin:0; font-size:17px; }
+    .editor p { margin:0; color:var(--muted); font-size:11px; line-height:1.5; }
+    .editor textarea { width:100%; min-height:min(62vh,620px); resize:vertical; padding:12px; border:1px solid var(--line); border-radius:6px; background:#090d13; color:var(--text); font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .editor-error { min-height:18px; color:var(--red); font-size:11px; white-space:pre-wrap; }
+    .editor-actions { display:flex; justify-content:flex-end; gap:7px; }
+    .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
+    .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
+    @media (max-width:760px) { body{overflow:auto} main{height:auto;min-height:calc(100vh - 48px);grid-template-columns:1fr}.browser{height:45vh;border-right:0;border-bottom:1px solid var(--line)}.details{min-height:55vh}.status{display:none}.detail-body{padding:18px}.fields{grid-template-columns:110px 1fr} }
   </style>
 </head>
 <body>
@@ -127,22 +95,20 @@
     <button id="reload" class="reload" type="button">Reload</button>
   </header>
   <main>
-    <section class="intro">
-      <h1>Route tree</h1>
-      <p>Checked-in variants remain read-only. Record starts at an exact lineage handoff and saves live input as a persistent, unverified draft child.</p>
+    <section class="browser" aria-label="Route tree">
+      <div class="pane-title">Route</div>
+      <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
     </section>
-    <div id="tree" class="tree"><div class="empty">Loading route…</div></div>
-    <section id="lineages" class="lineages" hidden>
-      <h2>Saved lineages</h2>
-      <p>Small manifests that pin variants together. Cross-segment playback stays disabled until every boundary is proven composable.</p>
-      <div id="lineageList" class="lineage-list"></div>
-    </section>
+    <aside class="details" aria-label="Selection details">
+      <div class="pane-title">Details</div>
+      <div id="detail" class="detail-body"><div class="empty">Select a route entry.</div></div>
+    </aside>
   </main>
   <dialog id="predicateEditor">
     <form id="predicateForm" class="editor" method="dialog">
-      <h2 id="predicateTitle">Edit milestone predicates</h2>
-      <p>The whole configured predicate program is edited and compiled together. Definition names and order must continue to match the timeline.</p>
-      <textarea id="predicateSource" spellcheck="false" aria-label="Milestone predicate DSL source"></textarea>
+      <h2 id="predicateTitle">Edit goal predicates</h2>
+      <p>Segment goals are compiled as one predicate program. Definition names and order must continue to match the timeline.</p>
+      <textarea id="predicateSource" spellcheck="false" aria-label="Goal predicate DSL source"></textarea>
       <div id="predicateError" class="editor-error" role="alert"></div>
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="savePredicate" class="save" value="default" type="button">Validate &amp; save</button></div>
     </form>
@@ -154,6 +120,10 @@
     const $ = id => document.getElementById(id);
     let graph = null;
     let predicateEditRevision = null;
+    let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
+    let expanded = new Set(['origin:boot']);
+    let expansionInitialized = false;
+    let occurrenceIndex = new Map();
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const label = value => String(value ?? '').replaceAll('_', ' ');
     const short = value => { const text=String(value ?? ''); return text.length > 20 ? `${text.slice(0,8)}…${text.slice(-7)}` : text; };
@@ -167,70 +137,150 @@
       const variants=Array.isArray(raw.variants)?raw.variants:Object.entries(raw.variants||{}).map(([id,item])=>({...item,id:item.id||id}));
       return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),milestones,segments,variants,lineages:raw.lineages||[],drafts:raw.drafts||[]};
     }
-    function draftChildren(kind,id,seen=new Set()) {
-      const key=`${kind}:${id}`; if(seen.has(key))return '<div class="error-note">Draft cycle rejected</div>';
-      const next=new Set(seen); next.add(key);
-      const children=graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id);
-      return children.length?`<div class="draft-children">${children.map(draft=>draftCard(draft,next)).join('')}</div>`:'';
+    const selected = occurrence => selection.occurrence===occurrence;
+    const predicateFor = id => graph.milestone_program?.definitions?.find(item=>item.name===id);
+    const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort((a,b)=>a.created_unix_ms-b.created_unix_ms);
+    const draftsUnderVariant = (id,chain) => draftsUnder('variant',id).filter(draft=>{const lineage=graph.lineages.find(item=>item.name===draft.parent.lineage);const pinned=(lineage?.steps||[]).slice(0,draft.parent.step_index+1).map(step=>step.variant);return draft.parent.step_index===chain.length-1&&pinned.length===chain.length&&pinned.every((variant,index)=>variant===chain[index]);});
+    const variantsFor = (segment,parentFingerprint=null) => graph.variants.filter(variant=>variant.segment===segment.id&&(parentFingerprint===null||variant.start_fingerprint===parentFingerprint)).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
+    function treeRow(kind,id,occurrence,name,icon,expandKey,hasChildren,tail='') {
+      const open=expanded.has(expandKey);
+      return `<div class="tree-row${selected(occurrence)?' selected':''}" role="treeitem" tabindex="0" data-select-kind="${escapeHtml(kind)}" data-select-id="${escapeHtml(id)}" data-select-occurrence="${escapeHtml(occurrence)}"><button class="disclosure${hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(expandKey)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="tree-icon ${escapeHtml(kind)}">${icon}</span><span class="tree-name">${escapeHtml(name)}</span>${tail?`<span class="tree-tail">${tail}</span>`:''}</div>`;
     }
-    function draftCard(draft,seen=new Set()) {
-      const parentPlayback=draft.parent?.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;
-      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'} title="Replay the parent hidden, muted, and unpaced, then reveal at the exact recording boundary">Record child (fast)</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
+    function renderDraftNode(draft,path=new Set(),chain=[]) {
+      if(path.has(draft.id))return '';
+      const next=new Set(path);next.add(draft.id);
+      const nextChain=[...chain,draft.id];
+      const children=draftsUnder('draft',draft.id);
+      const key=`draft:${nextChain.join('>')}`;
+      occurrenceIndex.set(key,{kind:'draft',id:draft.id,chain:nextChain});
+      const tail=`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${draft.playable?'ok':draft.error?'bad':'warn'}"></span>`;
+      const rendered=expanded.has(key)?children.map(child=>renderDraftNode(child,next,nextChain)).join(''):'';
+      return `<div>${treeRow('draft',draft.id,key,draft.label||draft.id,'◇',key,children.length>0,tail)}${rendered?`<div class="tree-children">${rendered}</div>`:''}</div>`;
     }
-    function variantCard(variant) {
-      const artifact=variant.artifact||{};
-      const score=variant.first_hit_tick ?? variant.ticks;
-      const proof=variant.predicate_proof||'not_required';
-      const proofBadge=proof==='not_required'?'':`<span class="badge proof-${escapeHtml(proof)}">predicate proof ${escapeHtml(proof)}</span>`;
-      const playButtons=(variant.play_anchors||[]).map(anchor=>{const repeated=(variant.play_anchors||[]).filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-source-milestone="${escapeHtml(anchor.source_milestone)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
-      return `<article class="variant${variant.incumbent?' incumbent':''}">
-        <div>
-          <div class="variant-title"><strong>${escapeHtml(variant.name||variant.id)}</strong>${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${proofBadge}</div>
-          <div class="variant-meta"><span>${escapeHtml(artifact.kind||'artifact')}: <code>${escapeHtml(artifact.value||'—')}</code></span><span title="${escapeHtml(variant.start_fingerprint)}">in <code>${escapeHtml(short(variant.start_fingerprint))}</code></span><span title="${escapeHtml(variant.boundary_fingerprint)}">out <code>${escapeHtml(short(variant.boundary_fingerprint))}</code></span></div>
-          ${variant.error?`<div class="error-note">${escapeHtml(variant.error)}</div>`:''}
-        </div>
-        <div class="actions">${playButtons||'<button class="play" type="button" disabled>Unavailable</button>'}${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}" title="Replay the lineage hidden, muted, and unpaced, then reveal at the exact recording boundary">Record fast · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
-      </article>${draftChildren('variant',variant.id)}`;
+    function renderVariantNode(variant,path=new Set(),chain=[]) {
+      if(path.has(variant.id)) {
+        const reference=`reference:${[...chain,variant.id].join('>')}`;
+        occurrenceIndex.set(reference,{kind:'reference',id:variant.id,chain:[...chain,variant.id]});
+        return treeRow('reference',variant.id,reference,`continues to ${variant.name||variant.id}`,'↩',reference,false);
+      }
+      const next=new Set(path);next.add(variant.id);
+      const nextChain=[...chain,variant.id];
+      const occurrence=`variant:${nextChain.join('>')}`;
+      occurrenceIndex.set(occurrence,{kind:'variant',id:variant.id,chain:nextChain});
+      const segment=graph.segments.find(item=>item.id===variant.segment);
+      const drafts=draftsUnderVariant(variant.id,nextChain);
+      const outgoing=graph.segments.filter(item=>item.from===segment?.to&&variantsFor(item,variant.boundary_fingerprint).length>0).sort((a,b)=>a.id.localeCompare(b.id));
+      const key=occurrence;
+      const score=variant.first_hit_tick??variant.ticks;
+      const state=variant.error||['stale','missing'].includes(variant.predicate_proof)?'bad':variant.playable?'ok':'warn';
+      const tail=`${variant.incumbent?'<span>★</span>':''}${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
+      const hasChildren=drafts.length>0||outgoing.length>0;
+      const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderSegmentNode(child,variant.boundary_fingerprint,next,nextChain))].join(''):'';
+      return `<div>${treeRow('variant',variant.id,occurrence,variant.name||variant.id,'●',key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
     }
-    function milestoneNode(id) {
-      const milestone=graph.milestones.find(item=>item.id===id);
-      const predicate=graph.milestone_program?.definitions?.find(item=>item.name===id);
-      const summary=predicate?`<span class="predicate-summary">${escapeHtml(label(predicate.phase))} · stable ${escapeHtml(predicate.stable_ticks)} · <code>${escapeHtml(short(predicate.definition_sha256))}</code></span>`:'';
-      const edit=predicate?`<button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(id)}">Edit predicate…</button>`:'';
-      const record=milestone?.recordable_from_boot?`<button class="record" type="button" data-record-kind="milestone" data-id="${escapeHtml(id)}">Record from Boot</button>`:'';
-      return `<section class="milestone"><div class="node-dot">◆</div><div class="node-copy"><strong>${escapeHtml(label(id))}</strong><span>${escapeHtml(id)}</span>${summary}</div><div class="actions">${record}${edit}</div></section>`;
+    function renderSegmentNode(segment,parentFingerprint=null,path=new Set(),chain=[],explicitVariants=null) {
+      const variants=explicitVariants||variantsFor(segment,parentFingerprint);
+      const key=`segment:${chain.join('>')}:${segment.id}`;
+      occurrenceIndex.set(key,{kind:'segment',id:segment.id,chain:[...chain]});
+      const children=expanded.has(key)?variants.map(variant=>renderVariantNode(variant,path,chain)).join(''):'';
+      return `<div>${treeRow('segment',segment.id,key,label(segment.id),'─',key,variants.length>0,`<span>${variants.length}</span>`)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
     }
-    function renderMilestone(id,path,rendered) {
-      if(path.has(id))return `<div class="milestone-ref">Cycle back to <code>${escapeHtml(id)}</code></div>`;
-      if(rendered.has(id))return `<div class="milestone-ref">Shared route continues at <code>${escapeHtml(id)}</code></div>`;
-      rendered.add(id);
-      const nextPath=new Set(path); nextPath.add(id);
-      const outgoing=graph.segments.filter(segment=>segment.from===id).sort((a,b)=>a.id.localeCompare(b.id));
-      const branches=outgoing.map(segment=>{
-        const variants=graph.variants.filter(variant=>variant.segment===segment.id).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
-        return `<div class="route-branch"><section class="segment"><div class="segment-head"><strong>${escapeHtml(label(segment.id))}</strong><span>${escapeHtml(id)} → ${escapeHtml(segment.to)}</span></div><div class="frontier-label">Variant frontier</div><div class="variants">${variants.length?variants.map(variantCard).join(''):'<div class="empty">No checked-in variants</div>'}</div></section><div class="route-destination">${renderMilestone(segment.to,nextPath,rendered)}</div></div>`;
-      }).join('');
-      return `<div>${milestoneNode(id)}${draftChildren('milestone',id)}${branches}</div>`;
+    function initializeExpansion() {
+      if(expansionInitialized)return;
+      expansionInitialized=true;
+      expanded.add('origin:boot');
+      const main=graph.lineages.find(lineage=>lineage.name==='main')||graph.lineages[0];
+      const chain=[];
+      (main?.steps||[]).forEach(step=>{expanded.add(`segment:${chain.join('>')}:${step.segment}`);chain.push(step.variant);expanded.add(`variant:${chain.join('>')}`);});
     }
-    function render() {
-      $('timelineName').textContent=`${graph.timeline} · Git timeline`;
-      const incoming=new Set(graph.segments.map(segment=>segment.to));
-      const roots=graph.milestones.map(item=>item.id).filter(id=>!incoming.has(id)).sort();
-      const rendered=new Set();
-      let html=(roots.length?roots:[...graph.milestones.map(item=>item.id)].sort().slice(0,1)).map(id=>renderMilestone(id,new Set(),rendered)).join('');
-      graph.milestones.map(item=>item.id).sort().filter(id=>!rendered.has(id)).forEach(id=>html+=renderMilestone(id,new Set(),rendered));
-      $('tree').innerHTML=html||'<div class="empty">This timeline has no milestones.</div>';
-      $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
-      $('tree').querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
-      $('tree').querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
-      $('tree').querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
-      $('tree').querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
-      $('lineages').hidden=graph.lineages.length===0;
-      $('lineageList').innerHTML=graph.lineages.map(lineage=>`<div class="lineage"><strong>${escapeHtml(lineage.name)}</strong> <span class="badge">${escapeHtml(lineage.kind||'lineage')}</span><br><code>${escapeHtml((lineage.steps||[]).map(step=>step.variant||step).join(' → '))}</code>${lineage.error?`<div class="reason">${escapeHtml(lineage.error)}</div>`:''}</div>`).join('');
+    function collectCompatibleDescendants(variant,output=new Set()) {
+      if(output.has(variant.id))return output;
+      output.add(variant.id);
+      const segment=graph.segments.find(item=>item.id===variant.segment);
+      graph.segments.filter(item=>item.from===segment?.to).forEach(next=>variantsFor(next,variant.boundary_fingerprint).forEach(child=>collectCompatibleDescendants(child,output)));
+      return output;
     }
+    function bootLineages() { return graph.lineages.filter(lineage=>{const first=lineage.steps?.[0];const variant=first&&graph.variants.find(item=>item.id===first.variant);return (variant?.play_anchors||[]).some(anchor=>anchor.lineage===lineage.name&&anchor.prefix_steps===0);}); }
+    function unattachedRootVariants(unreachable,preferred=[]) {
+      const remaining=new Set(unreachable.map(variant=>variant.id));const roots=[];
+      preferred.forEach(root=>{if(!roots.some(item=>item.id===root.id))roots.push(root);});
+      roots.forEach(root=>collectCompatibleDescendants(root).forEach(id=>remaining.delete(id)));
+      while(remaining.size) {
+        const candidates=graph.variants.filter(variant=>remaining.has(variant.id)&&!graph.variants.some(parent=>remaining.has(parent.id)&&graph.segments.find(item=>item.id===parent.segment)?.to===graph.segments.find(item=>item.id===variant.segment)?.from&&parent.boundary_fingerprint===variant.start_fingerprint));
+        const chosen=candidates.length?candidates:[graph.variants.filter(variant=>remaining.has(variant.id)).sort((a,b)=>a.id.localeCompare(b.id))[0]];
+        chosen.forEach(root=>{if(!remaining.has(root.id))return;roots.push(root);collectCompatibleDescendants(root).forEach(id=>remaining.delete(id));});
+      }
+      return roots;
+    }
+    function renderRootGroups(variants) {
+      const bySegment=new Map();variants.forEach(variant=>{const list=bySegment.get(variant.segment)||[];list.push(variant);bySegment.set(variant.segment,list);});
+      return [...bySegment.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([segmentId,members])=>renderSegmentNode(graph.segments.find(item=>item.id===segmentId),null,new Set(),[],members.sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id)))).join('');
+    }
+    function renderTree() {
+      initializeExpansion();
+      occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:[]});
+      const bootVariants=graph.variants.filter(variant=>(variant.play_anchors||[]).some(anchor=>anchor.prefix_steps===0));
+      const reachable=new Set();bootVariants.forEach(variant=>collectCompatibleDescendants(variant,reachable));
+      const unattached=graph.variants.filter(variant=>!reachable.has(variant.id));
+      const bootPinned=bootLineages();const bootPinnedNames=new Set(bootPinned.map(lineage=>lineage.name));
+      const nonBootLineageRoots=graph.lineages.filter(lineage=>!bootPinnedNames.has(lineage.name)).map(lineage=>graph.variants.find(variant=>variant.id===lineage.steps?.[0]?.variant)).filter(Boolean);
+      const bootDrafts=graph.drafts.filter(draft=>draft.parent?.kind==='milestone'&&graph.milestones.find(item=>item.id===draft.parent.id)?.recordable_from_boot);
+      const hasBootChildren=bootDrafts.length>0||bootVariants.length>0;
+      const children=expanded.has('origin:boot')?[...bootDrafts.map(draft=>renderDraftNode(draft)),renderRootGroups(bootVariants)].join(''):'';
+      let html=`${treeRow('origin','boot','origin:boot','Boot','◆','origin:boot',hasBootChildren,`<span>${bootPinned.length} pinned</span>`)}${children?`<div class="tree-children">${children}</div>`:''}`;
+      const otherRoots=unattachedRootVariants(unattached,nonBootLineageRoots);
+      if(otherRoots.length){const key='origin:unattached';occurrenceIndex.set(key,{kind:'origin',id:'unattached',chain:[]});const other=expanded.has(key)?renderRootGroups(otherRoots):'';html+=`${treeRow('origin','unattached',key,'Other roots','◇',key,true,`<span>${otherRoots.length} roots</span>`)}${other?`<div class="tree-children">${other}</div>`:''}`;}
+      $('tree').innerHTML=html||'<div class="empty">No route variants.</div>';
+      $('tree').querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
+      $('tree').querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;expanded.has(key)?expanded.delete(key):expanded.add(key);renderTree();}));
+    }
+    function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
+    function goalDetail(goal) {
+      const predicate=predicateFor(goal);
+      if(!predicate)return `<div class="detail-section"><h3>Objective</h3><div class="fields">${field('Goal',goal)}</div></div>`;
+      return `<div class="detail-section"><h3>Objective</h3><div class="fields">${field('Goal',goal)}${field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`)}${field('Definition',predicate.definition_sha256,true)}</div><details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details><div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal)}">Edit objective…</button></div></div>`;
+    }
+    function anchorPrefix(anchor,includeSelected=false) { const lineage=graph.lineages.find(item=>item.name===anchor.lineage);const count=includeSelected?anchor.step_index+1:anchor.prefix_steps;return (lineage?.steps||[]).slice(0,count).map(step=>step.variant); }
+    function sameChain(left,right) { return left.length===right.length&&left.every((value,index)=>value===right[index]); }
+    function variantActions(variant,chain) {
+      const scopedPlays=(variant.play_anchors||[]).filter(anchor=>sameChain([...anchorPrefix(anchor),variant.id],chain));
+      const scopedRecords=(variant.record_anchors||[]).filter(anchor=>sameChain(anchorPrefix(anchor,true),chain));
+      const plays=scopedPlays.map(anchor=>{const repeated=scopedPlays.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-source-milestone="${escapeHtml(anchor.source_milestone)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
+      const records=scopedRecords.map(anchor=>{const repeated=scopedRecords.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const recordLabel=repeated?`${anchor.lineage} @ step ${anchor.step_index}`:anchor.lineage;return `<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}">Record child · ${escapeHtml(recordLabel)}</button>`;}).join('');
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}</div>`;
+    }
+    function renderDetail() {
+      let html='';const context=occurrenceIndex.get(selection.occurrence)||selection;
+      if(selection.kind==='origin'&&selection.id==='boot') {
+        const boot=graph.milestones.find(item=>item.recordable_from_boot);const pinned=bootLineages();
+        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input. Route segments continue from here.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="milestone" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
+      } else if(selection.kind==='origin') {
+        const bootNames=new Set(bootLineages().map(lineage=>lineage.name));const pinned=graph.lineages.filter(lineage=>!bootNames.has(lineage.name));
+        html=`<div class="detail-kicker">Unattached origins</div><div class="detail-title">Other roots</div><div class="detail-subtitle">Seeded, disconnected, or cyclic route components without a verified console-Boot ancestry. They are kept visible but are never mislabeled as Boot-playable.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>`;
+      } else if(selection.kind==='segment') {
+        const segment=graph.segments.find(item=>item.id===selection.id);
+        if(segment)html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(label(segment.id))}</div><div class="detail-subtitle">A family of input variants that attempts the same objective from a compatible parent boundary.</div><div class="detail-section"><h3>Route</h3><div class="fields">${field('Starts after',segment.from)}${field('Profile',segment.profile)}${field('Checked variants',graph.variants.filter(item=>item.segment===segment.id).length)}</div></div>${goalDetail(segment.to)}`;
+      } else if(selection.kind==='variant') {
+        const variant=graph.variants.find(item=>item.id===selection.id);const segment=variant&&graph.segments.find(item=>item.id===variant.segment);const artifact=variant?.artifact||{};const score=variant&&(variant.first_hit_tick??variant.ticks);
+        if(variant&&segment)html=`<div class="detail-kicker">Segment variant</div><div class="detail-title">${escapeHtml(variant.name||variant.id)}</div><div class="detail-subtitle">${escapeHtml(label(segment.id))}</div><div class="badges">${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}<span class="badge proof-${escapeHtml(variant.predicate_proof)}">proof ${escapeHtml(label(variant.predicate_proof))}</span></div>${variantActions(variant,context.chain)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',variant.start_fingerprint,true)}${field('Output',variant.boundary_fingerprint,true)}${field('Frames',variant.frame_count)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.to)}${variant.error?`<div class="detail-section error-note">${escapeHtml(variant.error)}</div>`:''}`;
+      } else if(selection.kind==='draft') {
+        const draft=graph.drafts.find(item=>item.id===selection.id);
+        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}`;}
+      } else if(selection.kind==='reference') { const variant=graph.variants.find(item=>item.id===selection.id);html=`<div class="detail-kicker">Continuation reference</div><div class="detail-title">${escapeHtml(variant?.name||selection.id)}</div><div class="detail-subtitle">This path returns to a variant already shown above. Expansion stops here to keep cyclic routes finite.</div>`; }
+      $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
+      bindActions($('detail'));
+    }
+    function bindActions(root) {
+      root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
+      root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
+      root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
+      root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
+      root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
+    }
+    function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
     function editPredicate(id) {
       if(!graph.milestone_program)return;
-      $('predicateTitle').textContent=`Edit predicate · ${label(id)}`;
+      $('predicateTitle').textContent=`Edit objective · ${label(id)}`;
       $('predicateSource').value=graph.milestone_program.source;
       predicateEditRevision=graph.milestone_program.revision_sha256;
       $('predicateError').textContent='';
@@ -248,7 +298,7 @@
         graph.milestone_program=body;
         predicateEditRevision=null;
         $('predicateEditor').close();
-        toast('Predicate program compiled and saved. Variant proof badges now reflect the new definition identities.');
+        toast('Goal predicates compiled and saved. Variant proof badges now reflect the new definition identities.');
         await load();
       } catch(error) {
         $('predicateError').textContent=error.message;
@@ -331,10 +381,10 @@
         const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames hidden, muted, and unpaced first.`:'';
         toast(`Recording ${body.draft_id}.${prefix} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
-      finally { button.disabled=false; button.textContent=kind==='variant'?`Record fast · ${button.dataset.lineage}`:kind==='milestone'?'Record from Boot':'Record child (fast)'; }
+      finally { button.disabled=false; button.textContent=kind==='variant'?`Record child · ${button.dataset.lineage}`:kind==='milestone'?'Record from Boot':'Record child'; }
     }
     async function load() {
-      $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>';
+      $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';
       try {
         const response=await fetch('/api/graph',{cache:'no-store'});
         const body=await response.json().catch(()=>({}));
@@ -344,7 +394,7 @@
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
         $('tree').innerHTML=`<div class="empty">${escapeHtml(error.message)}<br><br>Start this page through the Route Workbench launch configuration.</div>`;
-        $('lineages').hidden=true;
+        $('detail').innerHTML='<div class="empty">No route loaded.</div>';
       }
     }
     $('reload').addEventListener('click',load);

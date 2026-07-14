@@ -38,11 +38,17 @@ A variant is one attempt at one segment. It declares:
 - its produced boundary fingerprint; and
 - optional score information such as the first-hit simulation tick.
 
+The route tree consists of segment variants and their continuations. A named
+goal condition is metadata on a segment: it defines what counts as completing
+that segment and supplies the objective function used by search and proof. It is
+not an additional node between two segments. `milestone` remains the current
+storage/runtime term for these compiled goal predicates.
+
 The input artifact contains only that segment. Stage-launch setup, search
 harness frames, and other evaluation scaffolding are not valid continuation
 payloads. The workbench never treats a segment artifact as a console-boot tape.
-It exposes Play only when it can resolve a concrete lineage boundary whose
-milestone and fingerprint exactly match the segment input, then concatenates
+It exposes Play only when it can resolve a concrete lineage boundary whose goal
+and fingerprint exactly match the segment input, then concatenates
 that prefix before launch. Explicit evaluation tooling can still inspect a
 standalone artifact.
 
@@ -59,21 +65,30 @@ then opens a local browser view of the checked-in route graph.
 On Windows, the launcher prefers Brave when it is installed and otherwise uses
 the system default browser.
 
-The workbench follows the route topology from root milestones through outgoing
-segments, variant frontiers, shared destinations, and recursive draft children;
-the declaration order is not treated as route structure. A variant can expose
-one **Play · lineage** action for each compatible prefix occurrence; siblings
-need not already be pinned into that lineage. The request carries the exact
-lineage, prefix-step count, and source milestone, and the server revalidates all
-three against the boundary fingerprint before composing the selected chain.
+The left pane is a compact continuation tree: Boot, segment families, concrete
+variants, compatible next segments, and recursive draft children. Goal
+predicates are shown only as metadata for the selected segment or variant in the
+details pane; they are not navigation nodes. Declaration order is not treated as
+route structure. A variant can expose one **Play · lineage** action for each
+compatible prefix occurrence; siblings need not already be pinned into that
+lineage. The request carries the exact lineage, prefix-step count, and source
+goal, and the server revalidates all three against the boundary fingerprint
+before composing the selected chain.
+
+Only variants with a verified zero-prefix playback anchor appear beneath Boot.
+Seeded, disconnected, and cyclic components remain visible beneath **Other
+roots** rather than being mislabeled as console-boot routes. Tree selection keeps
+the complete occurrence chain, so Play, Record, and recorded draft children are
+scoped to the exact branch that was clicked even when a variant ID occurs in
+more than one lineage.
 Playback releases controller ownership when its tape ends. **Record** does the same deterministic replay,
 then records live port-0 input beginning with the first PAD read after handoff.
 Each launch gets a fresh isolated writable state directory.
 
-Record actions belong to concrete lineage occurrences, not just milestone or
-variant names. This matters when the same variant is reachable through multiple
+Record actions belong to concrete lineage occurrences, not just goal or variant
+names. This matters when the same variant is reachable through multiple
 RNG/state prefixes. A checked-in endpoint is recordable only when its complete
-lineage is canonical and the native milestone fingerprint can be verified at
+lineage is canonical and the native goal fingerprint can be verified at
 the exact handoff frame.
 
 Closing Dusklight normally finalizes the recording. The workbench adds it as an

@@ -4986,6 +4986,37 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
+    fn browser_ui_is_a_compact_continuation_tree_with_selection_details() {
+        let html = include_str!("../assets/route_workbench.html");
+        for required in [
+            "aria-label=\"Route tree\"",
+            "id=\"tree\"",
+            "id=\"detail\"",
+            "data-select-kind",
+            "data-select-occurrence",
+            "Segment variant",
+            "Predicate structure",
+            "Other roots",
+            "draftsUnderVariant",
+            "anchor.prefix_steps===0",
+            "const children=expanded.has(key)?",
+            "unattachedRootVariants(unreachable,preferred=[])",
+            "if(!roots.some(item=>item.id===root.id))roots.push(root)",
+            "bootLineages()",
+            "chain:[...(context?.chain||[])]",
+            "const context=occurrenceIndex.get(selection.occurrence)||selection",
+        ] {
+            assert!(html.contains(required), "missing UI contract {required:?}");
+        }
+        for removed_dump in ["Variant frontier", "Saved lineages", "milestoneNode("] {
+            assert!(
+                !html.contains(removed_dump),
+                "legacy info-dump UI remains: {removed_dump:?}"
+            );
+        }
+    }
+
+    #[test]
     fn browser_rejects_unanchored_segment_and_parent_variant_origins() {
         let request = BrowserPlayRequest {
             selection: BrowserSelection::Segment {
