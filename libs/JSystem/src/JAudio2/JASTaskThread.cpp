@@ -4,6 +4,7 @@
 #include "JSystem/JAudio2/JASCalc.h"
 #include "JSystem/JAudio2/JASCriticalSection.h"
 #include "JSystem/JKernel/JKRSolidHeap.h"
+#include "dusk/automation/io_mode.hpp"
 
 JASTaskThread::JASTaskThread(int priority, int msgCount, u32 stackSize) :
     JKRThread(JASDram, stackSize, msgCount, priority)
@@ -56,6 +57,16 @@ void* JASTaskThread::allocCallStack(JASThreadCallback callback, void* msg) {
 }
 
 int JASTaskThread::sendCmdMsg(JASThreadCallback callback, const void* msg, u32 msgSize) {
+    // JASDvd is the audio system's second DVD command queue.  Letting it run on
+    // a host thread makes scene creation depend on how much CPU time that
+    // thread receives between simulation ticks.  Automation already makes the
+    // game DVD and memory-card queues synchronous; execute this sole
+    // JASTaskThread queue on the calling thread under the same mode.
+    if (dusk::automation::synchronous_io_enabled()) {
+        callback(const_cast<void*>(msg));
+        return 1;
+    }
+
     void* callstack;
 
     callstack = allocCallStack(callback, msg, msgSize);
@@ -71,6 +82,11 @@ int JASTaskThread::sendCmdMsg(JASThreadCallback callback, const void* msg, u32 m
 }
 
 int JASTaskThread::sendCmdMsg(JASThreadCallback callback, void* msg) {
+    if (dusk::automation::synchronous_io_enabled()) {
+        callback(msg);
+        return 1;
+    }
+
     void* callstack;
 
     callstack = allocCallStack(callback, msg);
