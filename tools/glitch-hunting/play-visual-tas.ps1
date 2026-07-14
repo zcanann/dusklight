@@ -11,6 +11,8 @@ param(
 
     [string]$NameEntryTracePath,
 
+    [string]$Stage,
+
     [switch]$ExitAfterTape,
 
     [switch]$DryRun
@@ -111,6 +113,9 @@ $gameArguments = @(
     "--cvar", "game.enableMenuPointer=false",
     "--console"
 )
+if (-not [string]::IsNullOrWhiteSpace($Stage)) {
+    $gameArguments += @("--stage", $Stage)
+}
 if ($ExitAfterTape) {
     $gameArguments += "--exit-after-tape"
 }

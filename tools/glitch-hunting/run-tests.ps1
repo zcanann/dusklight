@@ -12,6 +12,7 @@ param(
         "eye-shredder",
         "intro-first-exit",
         "intro-cutscene",
+        "fsp103-next-map-seed",
         "aurora-card",
         "aurora-time",
         "rust",
@@ -159,6 +160,17 @@ try {
         }
         "intro-cutscene" {
             & (Join-Path $repoRoot "tools\glitch-hunting\run-intro-route.ps1") -Preset $Preset -Goal intro-cutscene
+        }
+        "fsp103-next-map-seed" {
+            & (Join-Path $repoRoot "tools\glitch-hunting\prepare-visual-tas.ps1") -Preset $Preset
+            $evaluationText = & (Join-Path $repoRoot "tools\glitch-hunting\evaluate-candidate.ps1") `
+                -Preset $Preset `
+                -CandidateId "checked-seed" `
+                -CandidateTape (Join-Path $repoRoot "build\fsp103-next-map-seed.tape")
+            $evaluation = ($evaluationText -join [Environment]::NewLine) | ConvertFrom-Json
+            if ($evaluation.evaluation_status -ne "completed" -or -not $evaluation.success) {
+                throw "F_SP103 next-map seed missed its memory-backed goal; see $($evaluation.artifacts.evaluation)"
+            }
         }
         default {
             Invoke-NativeTests @($Test)

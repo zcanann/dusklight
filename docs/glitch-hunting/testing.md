@@ -15,6 +15,9 @@ Run **Tasks: Run Test Task** from the command palette and choose
 - `intro-first-exit`: run the normal-file first-loading-trigger golf three
   times with semantic gameplay traces;
 - `intro-cutscene`: continue the route through the fence into `demo01_04`;
+- `fsp103-next-map-seed`: start directly in `F_SP103`, evaluate the checked
+  route seed against the memory-backed `F_SP104` point-0 goal, and retain its
+  trace/result JSON;
 - `rust` or `rust-lint`: the control-plane tests or formatting/Clippy; and
 - `worker-smoke` or `pool-smoke`: real native process protocol tests.
 
@@ -56,8 +59,10 @@ pixel-perfect console raster corruption is not claimed.
    repository-local image such as `orig/GZ2E01/GZ2E01.iso` remains ignored by
    Git.
 2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual Scenario**.
-3. Choose `eye-shredder`, `intro-first-exit`, or `intro-cutscene` from the fixed
-   dropdown. Eye Shredder is the default; `boot-start-smoke` is only a short
+3. Choose `eye-shredder`, `intro-first-exit`, `intro-cutscene`, or
+   `fsp103-next-map-seed` from the fixed dropdown. The next-map seed uses a
+   direct `F_SP103,1,1,3` stage launch and is the visual route-search baseline.
+   Eye Shredder is the default; `boot-start-smoke` is only a short
    boot/menu diagnostic. Leaving the DVD
    prompt blank uses the last image selected through Dusklight's Browse screen.
 
@@ -169,6 +174,24 @@ Create that data directory before a direct launch. The checked PowerShell
 launcher does this automatically and is the safer default when fresh-state
 cleanup matters.
 
-The current tape starts at process boot. Direct stage/save initialization can
-still be supplied with the existing `--stage` and `--load-save` CLI options,
-but those fields are not yet embedded in a portable scenario artifact.
+Custom tapes can be scored against the direct-stage next-map goal without
+changing a checked scenario:
+
+```powershell
+.\tools\glitch-hunting\evaluate-candidate.ps1 `
+  -CandidateId experiment-42 `
+  -CandidateTape build\experiment-42.tape
+```
+
+The evaluator always launches an isolated writable profile, records a compact
+gameplay trace, and writes `evaluation.json` plus `trace.summary.json` under
+`build/test-results/route-search`. A movement sequence that misses the goal is
+a successful evaluation with `success: false`; setup, launch, or trace failures
+use `evaluation_status: worker_error`. This distinction lets an optimizer treat
+bad candidates as samples without hiding broken workers.
+
+The checked seed tape starts with 180 neutral frames for direct-stage loading
+and the short automatic opening event. Search candidates currently need the
+same fixed prefix. Direct stage/save initialization can also be supplied with
+the existing `--stage` and `--load-save` CLI options, but those fields are not
+yet embedded in a portable tape artifact.

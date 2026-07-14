@@ -12,6 +12,44 @@ Both sources are compact `dusktape 1` programs. Their compiled tapes contain no
 conditional/wait frames. Headful playback releases all controller ports when
 the tape ends, so a person can take over from the reached state.
 
+## Separate leaderboards
+
+Boot and movement are deliberately scored on two leaderboards:
+
+1. **Boot to route control** starts at process tick 0 and ends at the first
+   memory-backed controllable `F_SP103`, room 1, point 1 state. It includes the
+   title, file/name menus, and opening skip. This is where title-streaming and
+   readiness-barrier work competes.
+2. **`F_SP103` to `F_SP104` point 0** starts from the direct
+   `--stage F_SP103,1,1,3` seed and scores the first source-exit activation that
+   is followed by an `F_SP104` point-0 transition. This is where movement,
+   turns, rolls, splines, and route search compete.
+
+Do not add the two scores or let title I/O variance decide which movement tape
+wins. A route champion is promoted into a full process-boot tape for end-to-end
+proof, but it retains its route-local score and ancestry.
+
+The checked route-local scenario is `fsp103-next-map-seed`. Its 180-frame
+neutral prefix covers direct stage creation and the short automatic event;
+candidate movement begins at its `candidate-start` marker. On the current
+baseline, the exit activates at tape tick 572 and the `F_SP104` point-0
+transition begins at tick 603. It is a functional seed, not a speed claim.
+
+Evaluate any compiled candidate with:
+
+```powershell
+.\tools\glitch-hunting\evaluate-candidate.ps1 `
+  -CandidateId cem-generation-3-member-17 `
+  -CandidateTape build\search\g003-m017.tape
+```
+
+The stable result document contains `candidate_id`, tape path/hash, the exact
+source and destination goal, `success`, source-exit `first_hit_tick`, transition
+tick, deepest milestone, process status, and trace/result paths. The deepest
+milestone values are `none`, `fsp103_route_control`,
+`fsp103_exit_activated`, and `fsp104_point0`. This is suitable as the leaf
+evaluation record for a Rust search round or candidate ancestry DAG.
+
 ## Current route and oracle
 
 The first area starts at `F_SP103`, room 1, point 1. The tape takes the right
@@ -85,8 +123,10 @@ process-boot replay after the barrier exists.
 ```
 
 In VS Code, run **Glitch Hunt: Play Visual Scenario** and select
-`intro-first-exit` or `intro-cutscene`. The test selector exposes the same two
-names for headless checked runs.
+`intro-first-exit`, `intro-cutscene`, or `fsp103-next-map-seed`. The test
+selector exposes the same names for headless checked runs. The direct-stage
+choice is routed through the existing scenario selector; it does not add a
+launch configuration.
 
 Each run writes its compact trace and JSON milestone summary beneath
 `build/test-results/<scenario>/<timestamp>`. The matrix also writes

@@ -1,0 +1,23 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+# Search seed for the route-local F_SP103 -> F_SP104 point-0 leaderboard.
+# The scenario supplies --stage F_SP103,1,1,3; this tape intentionally does
+# not contain the title, save-file, naming, or opening-cutscene sequence.
+state neutral {}
+state move_forward { p0 stick 0 127 }
+state move_right { p0 stick 127 0 }
+
+marker stage-startup
+repeat 180 neutral
+
+marker candidate-start
+repeat 45 move_forward
+repeat 14 move_right
+repeat 20 move_forward
+repeat 10 move_right
+repeat 316 move_forward
+
+marker observe-goal
+repeat 80 neutral

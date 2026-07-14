@@ -13,6 +13,8 @@ $introRouteFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_route.
 $introRouteOutput = Join-Path $repoRoot "build\intro-cutscene.tape"
 $introFirstExitFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_first_exit.tas"
 $introFirstExitOutput = Join-Path $repoRoot "build\intro-first-exit.tape"
+$fsp103NextMapFixture = Join-Path $repoRoot "tests\fixtures\automation\fsp103_next_map_seed.tas"
+$fsp103NextMapOutput = Join-Path $repoRoot "build\fsp103-next-map-seed.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
 $debugState = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot "build\automation-state\vscode-debug"))
@@ -55,6 +57,10 @@ try {
     )
     Invoke-Checked "cargo" @(
         "run", "--quiet", "--manifest-path", $manifest, "--",
+        "tape", "compile", $fsp103NextMapFixture, $fsp103NextMapOutput
+    )
+    Invoke-Checked "cargo" @(
+        "run", "--quiet", "--manifest-path", $manifest, "--",
         "tape", "compile", $eyeShredderFixture, $eyeShredderOutput
     )
 
@@ -85,6 +91,7 @@ try {
     Write-Host "`nVisual TAS tapes ready:" -ForegroundColor Green
     Write-Host "  $eyeShredderOutput" -ForegroundColor Green
     Write-Host "  $introFirstExitOutput" -ForegroundColor Green
+    Write-Host "  $fsp103NextMapOutput" -ForegroundColor Green
     Write-Host "  $introRouteOutput" -ForegroundColor Green
     Write-Host "  $bootOutput" -ForegroundColor DarkGray
 } finally {

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("eye-shredder", "intro-first-exit", "intro-cutscene", "boot-start-smoke")]
+    [ValidateSet("eye-shredder", "intro-first-exit", "intro-cutscene", "fsp103-next-map-seed", "boot-start-smoke")]
     [string]$Scenario = "eye-shredder",
 
     [string]$DvdPath,
@@ -36,6 +36,11 @@ switch ($Scenario) {
     "intro-cutscene" {
         $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
         $runnerParameters.TapePath = Join-Path $repoRoot "build\intro-cutscene.tape"
+    }
+    "fsp103-next-map-seed" {
+        $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\fsp103-next-map-seed.tape"
+        $runnerParameters.Stage = "F_SP103,1,1,3"
     }
 }
 
