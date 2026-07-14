@@ -109,6 +109,51 @@ before promoting a result. Gameplay traces mark controller-driven frames
 separately from tape-driven frames, so offline tooling cannot accidentally
 treat a reactive run as an absolute tape.
 
+## Live continuation recording
+
+Headful playback can record the human continuation after an exact automation
+handoff:
+
+```powershell
+dusklight --dvd game.iso `
+  --input-tape build/prefix.tape `
+  --record-input-tape build/manual-continuation.tape `
+  --record-input-capacity 1080000 `
+  --record-input-session 0123456789abcdef0123456789abcdef `
+  --record-input-start-milestone gameplay-ready-f-sp103 `
+  --record-input-start-fingerprint 0123456789abcdef0123456789abcdef
+```
+
+The output is continuation-only: its first frame is the first live PAD read
+after automation releases ownership. Recording is armed during the prefix but
+does not sample it. The native hook captures host-mapped PAD state before the
+game's non-idempotent `PADClamp`; replay injects at the same boundary and
+therefore clamps exactly once. Mouse camera, gyro, and Dusklight's physical and
+virtual custom action bindings remain suppressed for the whole recording
+session because DUSKTAPE cannot represent those side channels. Action-binding
+press state still advances to release any stale hold rather than freezing it.
+
+The default capacity is 1,080,000 frames, or ten hours at 30 Hz. Reaching it is
+a hard failed draft, but the bounded partial tape is retained on clean exit.
+The destination and its sibling `<tape>.status.json` must not already exist.
+Both are written through same-directory temporary files and renamed only after
+flush; the status sidecar is the final native artifact action. Consumers must
+still wait for a successful child-process exit before marking a draft ready.
+
+The optional 32-lowercase-hex session token is echoed as `session_token` in the
+status. The start milestone and fingerprint must be supplied together. When
+present, the first hit must carry the expected fingerprint at the exact final
+automation tape frame or recording never begins. They may be omitted only for
+an exploratory child of a manual draft; that ancestry remains unverified and
+cannot be promoted until a native boundary is established.
+
+Status schema `dusklight.input-recording/v1` reports `success`, `zero_frames`,
+`never_reached_handoff`, `start_boundary_mismatch`, `capacity_exhausted`, or
+`write_failure`, along with frame count/capacity, handoff and exhaustion flags,
+session token, start-boundary fields, and an optional error. Non-success states
+exit nonzero. A normal window close is the intended way to finalize a headful
+recording; headless and exit-at-prefix modes are rejected.
+
 ## Current limits
 
 - Observation and catalog capture retain the same 256 lowest process IDs and

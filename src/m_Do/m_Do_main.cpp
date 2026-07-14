@@ -51,10 +51,12 @@
 #include <filesystem>
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <system_error>
 #include <thread>
+#include <nlohmann/json.hpp>
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
@@ -242,8 +244,10 @@ static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
 static void write_milestone_result_on_exit();
 static void write_realized_input_tape_on_exit();
+static void write_recorded_input_tape_on_exit();
 static void write_actor_catalog_on_exit();
 static void release_active_controller_on_exit();
+static bool auxiliary_live_input_enabled();
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -351,7 +355,7 @@ void main01(void) {
                     dusk::frame_interp::begin_sim_tick();
                     mDoCPd_c::read();
                     begin_automation_simulation_tick();
-                    if (!automationInputQuarantine) {
+                    if (auxiliary_live_input_enabled()) {
                         dusk::mouse::read();
                         dusk::gyro::read(pacing.sim_pace);
                     }
@@ -386,7 +390,7 @@ void main01(void) {
             // Game Inputs
             mDoCPd_c::read();
             begin_automation_simulation_tick();
-            if (!automationInputQuarantine) {
+            if (auxiliary_live_input_enabled()) {
                 dusk::mouse::read();
                 dusk::gyro::read(pacing.presentation_dt_seconds);
             }
@@ -575,6 +579,18 @@ static bool gameplayTraceWriteFailed;
 static std::filesystem::path realizedInputTapePath;
 static dusk::automation::InputTape realizedInputTape;
 static bool realizedInputTapeWriteFailed;
+static std::filesystem::path recordInputTapePath;
+static std::filesystem::path recordInputStatusPath;
+static std::size_t recordInputFrameCapacity;
+static bool recordInputHandoffReached;
+static bool recordInputFailed;
+static bool recordInputCapacityReported;
+static std::string recordInputError;
+static std::string recordInputSessionToken;
+static std::optional<dusk::automation::MilestoneId> recordInputStartMilestone;
+static std::string recordInputStartFingerprint;
+static std::optional<std::uint64_t> recordInputStartTapeFrame;
+static bool recordInputStartBoundaryMismatch;
 static std::filesystem::path actorCatalogPath;
 static bool actorCatalogWriteFailed;
 static bool actorCatalogWritten;
@@ -664,6 +680,7 @@ void release_controller_input() {
     PADClearAutomationStatus(0);
 }
 
+
 } // namespace
 
 static void release_active_controller_on_exit() {
@@ -724,6 +741,57 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
         static_cast<std::uint64_t>(inputControllerPrefixFrames) + inputControllerNextFrame;
     inputControllerFrameApplied = true;
     ++inputControllerNextFrame;
+}
+
+static bool auxiliary_live_input_enabled() {
+    const auto& recorder = dusk::automation::input_tape_recorder();
+    // A recording that allowed mouse camera or gyro updates would not be a
+    // complete replay artifact. Keep those side channels suppressed even
+    // after capacity exhaustion, while controller/keyboard PADRead stays live.
+    assert(recordInputTapePath.empty() || recorder.isArmed());
+    return !automationInputQuarantine && !recorder.isArmed();
+}
+
+static void handoff_automation_to_live_input() {
+    if (automationInputHandedOff) {
+        return;
+    }
+
+    PADPrepareAutomationHandoff();
+    if (!recordInputTapePath.empty()) {
+        if (recordInputStartMilestone.has_value()) {
+            const auto& hits = dusk::automation::milestone_tracker().hits();
+            const auto hit = std::ranges::find(
+                hits, *recordInputStartMilestone, &dusk::automation::MilestoneHit::id);
+            if (hit == hits.end() || !hit->hit || hit->tapeFrame != automationTapeFrame ||
+                hit->evidence.boundaryFingerprint != recordInputStartFingerprint) {
+                recordInputFailed = true;
+                recordInputStartBoundaryMismatch = true;
+                recordInputError = fmt::format(
+                    "recording start boundary mismatch for {} at tape frame {}",
+                    dusk::automation::milestone_name(*recordInputStartMilestone),
+                    automationTapeFrame);
+                DuskLog.error("{}", recordInputError);
+                dusk::IsRunning = false;
+                return;
+            }
+            recordInputStartTapeFrame = hit->tapeFrame;
+        }
+        auto& recorder = dusk::automation::input_tape_recorder();
+        if (!recorder.begin()) {
+            recordInputFailed = true;
+            recordInputError = "armed input recorder failed to begin at handoff";
+            DuskLog.error("Input recording failed to begin at automation handoff");
+            dusk::IsRunning = false;
+            return;
+        }
+        recordInputHandoffReached = true;
+        DuskLog.info("Input recording started at live-input handoff (capacity={} frames)",
+                     recordInputFrameCapacity);
+    }
+    automationInputQuarantine = false;
+    aurora_set_automation_input_quarantine(false);
+    automationInputHandedOff = true;
 }
 
 static bool automation_oracle_rejected_before_loop() {
@@ -980,6 +1048,16 @@ static void finish_automation_renderer_frame() {
 
 static bool finish_input_tape_tick() {
     auto& player = dusk::automation::input_tape_player();
+    auto& inputRecorder = dusk::automation::input_tape_recorder();
+    if (!recordInputTapePath.empty() && inputRecorder.capacityExhausted() &&
+        !recordInputCapacityReported) {
+        recordInputCapacityReported = true;
+        recordInputFailed = true;
+        recordInputError = "input recording capacity exhausted";
+        DuskLog.error("Input recording capacity exhausted after {} frames; the partial draft will "
+                      "be retained on clean exit",
+                      inputRecorder.frameCount());
+    }
     if (player.isPlaying()) {
         return false;
     }
@@ -1022,11 +1100,10 @@ static bool finish_input_tape_tick() {
             return true;
         }
         if (!automationInputHandedOff) {
-            PADPrepareAutomationHandoff();
-            automationInputQuarantine = false;
-            aurora_set_automation_input_quarantine(false);
-            automationInputHandedOff = true;
-            DuskLog.info("Input controller complete; live controller input resumed");
+            handoff_automation_to_live_input();
+            if (automationInputHandedOff) {
+                DuskLog.info("Input controller complete; live controller input resumed");
+            }
         }
         return false;
     }
@@ -1052,11 +1129,10 @@ static bool finish_input_tape_tick() {
     }
     if (!headlessMainLoop && !automationInputHandedOff) {
         player.handoffToLiveInput();
-        PADPrepareAutomationHandoff();
-        automationInputQuarantine = false;
-        aurora_set_automation_input_quarantine(false);
-        automationInputHandedOff = true;
-        DuskLog.info("Input tape complete; live controller input resumed");
+        handoff_automation_to_live_input();
+        if (automationInputHandedOff) {
+            DuskLog.info("Input tape complete; live controller input resumed");
+        }
     }
     return false;
 }
@@ -1165,6 +1241,145 @@ static void write_realized_input_tape_on_exit() {
     DuskLog.info("Wrote realized input tape '{}' ({} frames)",
                  dusk::io::fs_path_to_string(realizedInputTapePath),
                  realizedInputTape.frames.size());
+}
+
+static bool write_atomic_file(const std::filesystem::path& path,
+                              const std::span<const std::uint8_t> contents,
+                              std::string& error) {
+    std::filesystem::path temporary = path;
+    temporary += ".tmp";
+    std::error_code filesystemError;
+    std::filesystem::remove(temporary, filesystemError);
+    try {
+        {
+            auto output = dusk::io::FileStream::Create(temporary);
+            output.Write(reinterpret_cast<const char*>(contents.data()), contents.size());
+            output.Flush();
+        }
+        std::filesystem::rename(temporary, path, filesystemError);
+        if (filesystemError) {
+            error = filesystemError.message();
+            std::filesystem::remove(temporary, filesystemError);
+            return false;
+        }
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        std::filesystem::remove(temporary, filesystemError);
+        return false;
+    }
+    return true;
+}
+
+static bool write_input_recording_status(const std::string_view status,
+                                         const std::size_t frameCount,
+                                         const bool capacityExhausted,
+                                         const std::string& failure) {
+    const nlohmann::ordered_json document{
+        {"schema", "dusklight.input-recording/v1"},
+        {"status", status},
+        {"tape", dusk::io::fs_path_to_string(recordInputTapePath)},
+        {"frame_count", frameCount},
+        {"frame_capacity", recordInputFrameCapacity},
+        {"handoff_reached", recordInputHandoffReached},
+        {"capacity_exhausted", capacityExhausted},
+        {"session_token", recordInputSessionToken.empty()
+                              ? nlohmann::ordered_json(nullptr)
+                              : nlohmann::ordered_json(recordInputSessionToken)},
+        {"start_milestone", recordInputStartMilestone.has_value()
+                                ? nlohmann::ordered_json(dusk::automation::milestone_name(
+                                      *recordInputStartMilestone))
+                                : nlohmann::ordered_json(nullptr)},
+        {"start_fingerprint", recordInputStartFingerprint.empty()
+                                  ? nlohmann::ordered_json(nullptr)
+                                  : nlohmann::ordered_json(recordInputStartFingerprint)},
+        {"start_tape_frame", recordInputStartTapeFrame.has_value()
+                                 ? nlohmann::ordered_json(*recordInputStartTapeFrame)
+                                 : nlohmann::ordered_json(nullptr)},
+        {"error", failure.empty() ? nlohmann::ordered_json(nullptr)
+                                  : nlohmann::ordered_json(failure)},
+    };
+    const std::string serialized = document.dump(2) + '\n';
+    std::string error;
+    const bool written = write_atomic_file(
+        recordInputStatusPath,
+        std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(serialized.data()), serialized.size()),
+        error);
+    if (!written) {
+        fprintf(stderr, "Input Recording Error: failed to write status '%s': %s\n",
+                dusk::io::fs_path_to_string(recordInputStatusPath).c_str(), error.c_str());
+    }
+    return written;
+}
+
+static void write_recorded_input_tape_on_exit() {
+    if (recordInputTapePath.empty()) {
+        return;
+    }
+
+    auto& recorder = dusk::automation::input_tape_recorder();
+    recorder.stop();
+    const std::size_t frameCount = recorder.frameCount();
+    const bool capacityExhausted = recorder.capacityExhausted();
+    if (!recordInputHandoffReached) {
+        recordInputFailed = true;
+        if (recordInputError.empty()) {
+            recordInputError = "automation never reached live-input handoff";
+        }
+        const std::string_view status = recordInputStartBoundaryMismatch
+                                            ? "start_boundary_mismatch"
+                                            : "never_reached_handoff";
+        fprintf(stderr,
+                "Input Recording Error: never reached verified live-input handoff; no tape was written\n");
+        if (!write_input_recording_status(
+                status, frameCount, capacityExhausted, recordInputError)) {
+            recordInputFailed = true;
+        }
+        return;
+    }
+
+    dusk::automation::InputTape tape = recorder.take();
+    std::vector<std::uint8_t> encoded;
+    const auto encodeError = dusk::automation::encode_input_tape(tape, encoded);
+    std::string writeError;
+    bool tapeWritten = encodeError == dusk::automation::InputTapeError::None;
+    if (!tapeWritten) {
+        writeError = dusk::automation::input_tape_error_message(encodeError);
+    } else {
+        tapeWritten = write_atomic_file(recordInputTapePath, encoded, writeError);
+    }
+
+    std::string_view status;
+    std::string statusError;
+    if (!tapeWritten) {
+        recordInputFailed = true;
+        status = "write_failure";
+        statusError = writeError;
+        fprintf(stderr, "Input Recording Error: failed to write tape '%s': %s\n",
+                dusk::io::fs_path_to_string(recordInputTapePath).c_str(),
+                writeError.c_str());
+    } else if (capacityExhausted) {
+        recordInputFailed = true;
+        status = "capacity_exhausted";
+        statusError = recordInputError.empty() ? "input recording capacity exhausted"
+                                                : recordInputError;
+    } else if (frameCount == 0) {
+        recordInputFailed = true;
+        status = "zero_frames";
+        statusError = "input recording captured zero frames";
+    } else {
+        status = "success";
+    }
+
+    if (tapeWritten) {
+        fprintf(stdout, "Input Recording: wrote '%s' (%zu frames, status=%.*s)\n",
+                dusk::io::fs_path_to_string(recordInputTapePath).c_str(), frameCount,
+                static_cast<int>(status.size()), status.data());
+        fflush(stdout);
+    }
+    if (!write_input_recording_status(status, frameCount, capacityExhausted, statusError)) {
+        recordInputFailed = true;
+    }
 }
 
 static void write_actor_catalog_on_exit() {
@@ -1285,6 +1500,11 @@ int game_main(int argc, char* argv[]) {
             ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
+            ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
+            ("record-input-capacity", "Maximum live-input frames to retain (default 1080000 = 10 hours at 30 Hz)", cxxopts::value<std::size_t>()->default_value("1080000"))
+            ("record-input-session", "Optional 128-bit lowercase-hex launch token echoed in recording status", cxxopts::value<std::string>())
+            ("record-input-start-milestone", "Milestone ID required at the exact recording handoff frame", cxxopts::value<std::string>())
+            ("record-input-start-fingerprint", "Expected lowercase XXH3-128 boundary fingerprint at recording handoff", cxxopts::value<std::string>())
             ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
@@ -1416,6 +1636,14 @@ int game_main(int argc, char* argv[]) {
     const bool hasAutomationInput = hasInputTape || hasInputController;
     const bool hasRealizedInputTape =
         parsed_arg_options.count("realized-input-tape") != 0;
+    const bool hasRecordInputTape =
+        parsed_arg_options.count("record-input-tape") != 0;
+    const bool hasRecordInputSession =
+        parsed_arg_options.count("record-input-session") != 0;
+    const bool hasRecordStartMilestone =
+        parsed_arg_options.count("record-input-start-milestone") != 0;
+    const bool hasRecordStartFingerprint =
+        parsed_arg_options.count("record-input-start-fingerprint") != 0;
     const bool hasActorCatalog = parsed_arg_options.count("actor-catalog") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
     exitAfterInputController =
@@ -1434,6 +1662,110 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         realizedInputTapePath = std::filesystem::u8path(outputPath);
+    }
+    if (hasRecordInputTape) {
+        if (!hasAutomationInput) {
+            fprintf(stderr,
+                    "Input Recording Error: --record-input-tape requires --input-tape or --input-controller\n");
+            return 1;
+        }
+        if (headlessMainLoop || exitAfterInputTape || exitAfterInputController) {
+            fprintf(stderr,
+                    "Input Recording Error: recording requires headful live handoff and cannot be combined with --headless, --exit-after-tape, or --exit-after-controller\n");
+            return 1;
+        }
+        const std::string outputPath =
+            parsed_arg_options["record-input-tape"].as<std::string>();
+        if (outputPath.empty()) {
+            fprintf(stderr,
+                    "Input Recording Error: --record-input-tape PATH cannot be empty\n");
+            return 1;
+        }
+        recordInputFrameCapacity =
+            parsed_arg_options["record-input-capacity"].as<std::size_t>();
+        if (recordInputFrameCapacity == 0) {
+            fprintf(stderr,
+                    "Input Recording Error: --record-input-capacity must be greater than zero\n");
+            return 1;
+        }
+        if (hasRecordStartMilestone != hasRecordStartFingerprint) {
+            fprintf(stderr,
+                    "Input Recording Error: --record-input-start-milestone ID and --record-input-start-fingerprint DIGEST must be supplied together\n");
+            return 1;
+        }
+        const auto isLowerHex = [](const std::string_view value,
+                                   const std::size_t length) {
+            return value.size() == length &&
+                   std::ranges::all_of(value, [](const char character) {
+                       return (character >= '0' && character <= '9') ||
+                              (character >= 'a' && character <= 'f');
+                   });
+        };
+        if (hasRecordStartMilestone) {
+            const std::string startMilestoneName =
+                parsed_arg_options["record-input-start-milestone"].as<std::string>();
+            const auto* startMilestone =
+                dusk::automation::find_milestone(startMilestoneName);
+            if (startMilestone == nullptr) {
+                fprintf(stderr, "Input Recording Error: unknown start milestone '%s'\n",
+                        startMilestoneName.c_str());
+                return 1;
+            }
+            recordInputStartMilestone = startMilestone->id;
+            recordInputStartFingerprint =
+                parsed_arg_options["record-input-start-fingerprint"].as<std::string>();
+            if (!isLowerHex(recordInputStartFingerprint, 32)) {
+                fprintf(stderr,
+                        "Input Recording Error: start fingerprint must be exactly 32 lowercase hex characters\n");
+                return 1;
+            }
+        }
+        if (hasRecordInputSession) {
+            recordInputSessionToken =
+                parsed_arg_options["record-input-session"].as<std::string>();
+            if (!isLowerHex(recordInputSessionToken, 32)) {
+                fprintf(stderr,
+                        "Input Recording Error: session token must be exactly 32 lowercase hex characters\n");
+                return 1;
+            }
+        }
+        recordInputTapePath = std::filesystem::u8path(outputPath);
+        recordInputStatusPath = recordInputTapePath;
+        recordInputStatusPath += ".status.json";
+        std::error_code filesystemError;
+        const auto parent = recordInputTapePath.parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, filesystemError);
+        }
+        if (filesystemError) {
+            fprintf(stderr, "Input Recording Error: cannot create output directory: %s\n",
+                    filesystemError.message().c_str());
+            return 1;
+        }
+        const bool tapeExists =
+            std::filesystem::exists(recordInputTapePath, filesystemError);
+        if (filesystemError) {
+            fprintf(stderr, "Input Recording Error: cannot inspect output tape: %s\n",
+                    filesystemError.message().c_str());
+            return 1;
+        }
+        const bool statusExists =
+            std::filesystem::exists(recordInputStatusPath, filesystemError);
+        if (filesystemError) {
+            fprintf(stderr, "Input Recording Error: cannot inspect output status: %s\n",
+                    filesystemError.message().c_str());
+            return 1;
+        }
+        if (tapeExists || statusExists) {
+            fprintf(stderr,
+                    "Input Recording Error: output tape or status already exists; recording never overwrites a draft\n");
+            return 1;
+        }
+    } else if (hasRecordInputSession || hasRecordStartMilestone ||
+               hasRecordStartFingerprint) {
+        fprintf(stderr,
+                "Input Recording Error: recording session and start-boundary options require --record-input-tape PATH\n");
+        return 1;
     }
     if (hasActorCatalog) {
         if (!hasAutomationInput) {
@@ -1471,6 +1803,11 @@ int game_main(int argc, char* argv[]) {
     }
     if (hasMilestoneGoal && !hasMilestones) {
         fprintf(stderr, "Milestone Error: --milestone-goal ID requires --milestones LIST\n");
+        return 1;
+    }
+    if (hasRecordInputTape && hasMilestoneGoal) {
+        fprintf(stderr,
+                "Input Recording Error: --milestone-goal would stop the game before live recording handoff\n");
         return 1;
     }
     if (hasMilestones) {
@@ -1512,6 +1849,26 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         milestoneResultPath = std::filesystem::u8path(resultPath);
+    }
+    if (hasRecordInputTape && recordInputStartMilestone.has_value()) {
+        auto& tracker = dusk::automation::milestone_tracker();
+        const bool startIsObserved = std::ranges::find(
+            tracker.hits(), *recordInputStartMilestone,
+            &dusk::automation::MilestoneHit::id) != tracker.hits().end();
+        if (hasMilestones && !startIsObserved) {
+            fprintf(stderr,
+                    "Input Recording Error: --milestones LIST must include the recording start milestone\n");
+            return 1;
+        }
+        if (!hasMilestones) {
+            const std::array requested{*recordInputStartMilestone};
+            std::string milestoneError;
+            if (!tracker.configure(requested, std::nullopt, milestoneError)) {
+                fprintf(stderr, "Input Recording Error: cannot configure start milestone: %s\n",
+                        milestoneError.c_str());
+                return 1;
+            }
+        }
     }
 
     std::filesystem::path automationCardRoot;
@@ -1588,6 +1945,11 @@ int game_main(int argc, char* argv[]) {
         fprintf(stderr, "Input Tape Error: --exit-after-tape cannot be combined with --input-tape-end loop\n");
         return 1;
     }
+    if (hasRecordInputTape && inputTapeEndBehavior == dusk::automation::TapeEndBehavior::Loop) {
+        fprintf(stderr,
+                "Input Recording Error: --record-input-tape cannot follow a looping input tape\n");
+        return 1;
+    }
     if (!hasInputController && exitAfterInputController) {
         fprintf(stderr,
                 "Input Controller Error: --exit-after-controller requires --input-controller PATH\n");
@@ -1621,6 +1983,11 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     if (hasAutomationOracle) {
+        if (hasRecordInputTape) {
+            fprintf(stderr,
+                    "Input Recording Error: --record-input-tape cannot be combined with an automation oracle\n");
+            return 1;
+        }
         const std::string oracleName =
             parsed_arg_options["automation-oracle"].as<std::string>();
         if (oracleName != "eye-shredder") {
@@ -1770,6 +2137,22 @@ int game_main(int argc, char* argv[]) {
         realizedInputTape.frames.reserve(inputTapeMaximumTicks + controllerFrames);
     }
 
+    if (hasRecordInputTape) {
+        try {
+            const auto recorderError = dusk::automation::input_tape_recorder().arm(
+                1, recordInputFrameCapacity, 30, 1);
+            if (recorderError != dusk::automation::InputTapeError::None) {
+                fprintf(stderr, "Input Recording Error: cannot arm recorder: %s\n",
+                        dusk::automation::input_tape_error_message(recorderError));
+                return 1;
+            }
+        } catch (const std::exception& exception) {
+            fprintf(stderr, "Input Recording Error: cannot reserve %zu frames: %s\n",
+                    recordInputFrameCapacity, exception.what());
+            return 1;
+        }
+    }
+
     if (!gameplayTracePath.empty()) {
         const std::size_t controllerFrames =
             hasInputController ? inputControllerProgram.duration() : 0;
@@ -1847,6 +2230,12 @@ int game_main(int argc, char* argv[]) {
     if (hasRealizedInputTape) {
         DuskLog.info("Realized input tape: {} (raw pre-clamp controller output)",
                      dusk::io::fs_path_to_string(realizedInputTapePath));
+    }
+    if (hasRecordInputTape) {
+        DuskLog.info("Input recording armed: {} (capacity={} frames, status={})",
+                     dusk::io::fs_path_to_string(recordInputTapePath),
+                     recordInputFrameCapacity,
+                     dusk::io::fs_path_to_string(recordInputStatusPath));
     }
 
     dusk::config::load_from_user_preferences();
@@ -2269,6 +2658,11 @@ int game_main(int argc, char* argv[]) {
         deterministicTimeEnabled = false;
     }
 
+    // Recording status is deliberately the final artifact action. Consumers
+    // still wait for process exit before promoting a draft, but a completed
+    // sidecar can never race later game/runtime artifact writers.
+    write_recorded_input_tape_on_exit();
+
     const bool eyeShredderOracleFailed =
         eyeShredderOracleEnabled &&
         eyeShredderOracle.result().status !=
@@ -2282,7 +2676,7 @@ int game_main(int argc, char* argv[]) {
                    milestoneGoalFailed ||
                    eyeShredderOracleResultWriteFailed ||
                    eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||
-                   inputTapePlaybackFailed
+                   inputTapePlaybackFailed || recordInputFailed
                ? 1
                : 0;
 }

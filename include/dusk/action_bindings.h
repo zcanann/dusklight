@@ -32,7 +32,9 @@ ActionBindsMap& getActionBinds();
 
 bool isActionBound(ActionBinds action, u32 port);
 
-void updateActionBindings();
+// Always advances and clears the per-frame press state. When sampling is
+// disabled, neither physical nor virtual action inputs can enter gameplay.
+void updateActionBindings(bool sampleInput = true);
 
 void setVirtualActionBind(ActionBinds action, u32 port, bool pressed, bool available = true);
 

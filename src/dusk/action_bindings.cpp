@@ -41,12 +41,19 @@ bool isActionBound(ActionBinds action, u32 port) {
     return getActionBindButton(action, port) != PAD_NATIVE_BUTTON_INVALID;
 }
 
-void updateActionBindings() {
+void updateActionBindings(const bool sampleInput) {
     for (u32 port = 0; port < PAD_CHANMAX; ++port) {
         // Move the current press to the previous frame
         for (auto& pressData : actionPressData[port]) {
             pressData.pressedPrevFrame = pressData.pressedCurFrame;
             pressData.pressedCurFrame = false;
+        }
+
+        // Deterministic automation and live continuation recording cannot
+        // serialize custom host/virtual actions. Advancing the state above
+        // releases stale holds without admitting an unrecorded side channel.
+        if (!sampleInput) {
+            continue;
         }
 
         // Update current frame with whether action button is pressed

@@ -72,10 +72,6 @@ void mDoCPd_c::read() {
     mDoAutomationInputTick(tapeWasPlaying);
 #endif
     JUTGamePad::read();
-#if TARGET_PC
-    dusk::automation::input_tape_recorder().recordTick(JUTGamePad::mPadStatus);
-#endif
-
     if (!mDoRst::isReset() && mDoRst::is3ButtonReset()) {
         if (!JUTGamePad::getGamePad(mDoRst::get3ButtonResetPort())->isPushing3ButtonReset()) {
             mDoRst::off3ButtonReset();

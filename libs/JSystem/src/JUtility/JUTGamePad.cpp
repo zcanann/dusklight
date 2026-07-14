@@ -1,6 +1,9 @@
 #include "JSystem/JSystem.h" // IWYU pragma: keep
 
 #include "JSystem/JUtility/JUTGamePad.h"
+#if TARGET_PC
+#include "dusk/automation/input_tape.hpp"
+#endif
 #include <cmath>
 #include "os_report.h"
 
@@ -90,7 +93,16 @@ u32 JUTGamePad::sRumbleSupported;
 u32 JUTGamePad::read() {
     sRumbleSupported = PADRead(mPadStatus);
 #if TARGET_PC
-   dusk::updateActionBindings();
+    // Read-only cold branch when no recording is armed. Capture after host
+    // mapping and before the game's non-idempotent clamp so replay clamps the
+    // same canonical state exactly once.
+    auto& inputRecorder = dusk::automation::input_tape_recorder();
+    if (inputRecorder.isRecording()) {
+        inputRecorder.recordTick(mPadStatus);
+    }
+#endif
+#if TARGET_PC
+    dusk::updateActionBindings(!inputRecorder.isArmed());
 #endif
 
     switch (sClampMode) {

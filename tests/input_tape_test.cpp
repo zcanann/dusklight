@@ -743,6 +743,88 @@ void testRecorderCapturesAllPortsWithoutGrowing() {
     REQUIRE(tape.frames[1].pads[0].buttons == PAD_BUTTON_START);
     REQUIRE(!recorder.capacityExhausted());
     REQUIRE(recorder.frameCount() == 0);
+    REQUIRE(!recorder.isArmed());
+}
+
+void testRecorderArmsUntilExactHandoff() {
+    using namespace dusk::automation;
+
+    std::array<PADStatus, kInputPortCount> statuses{};
+    statuses[0].button = PAD_BUTTON_A;
+    statuses[0].err = PAD_ERR_NONE;
+
+    InputTapeRecorder recorder;
+    REQUIRE(recorder.arm(1, 1) == InputTapeError::None);
+    REQUIRE(recorder.isArmed());
+    REQUIRE(!recorder.isRecording());
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::Inactive);
+    REQUIRE(recorder.frameCount() == 0);
+
+    REQUIRE(recorder.begin());
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::Recorded);
+    REQUIRE(recorder.recordTick(statuses) == InputRecordResult::CapacityExhausted);
+    REQUIRE(recorder.isArmed());
+    REQUIRE(!recorder.isRecording());
+    REQUIRE(recorder.capacityExhausted());
+    // Remaining armed is a runtime guardrail: mouse and gyro must stay
+    // suppressed once subsequent PAD frames can no longer be retained.
+    REQUIRE(!recorder.begin());
+}
+
+void testRecordedRawInputReplaysThroughExactlyOneClamp() {
+    using namespace dusk::automation;
+
+    std::array<PADStatus, kInputPortCount> raw{};
+    raw[0].button = PAD_BUTTON_A | PAD_TRIGGER_Z;
+    raw[0].stickX = 72;
+    raw[0].stickY = -91;
+    raw[0].substickX = 59;
+    raw[0].substickY = -67;
+    raw[0].triggerLeft = 180;
+    raw[0].triggerRight = 93;
+    raw[0].analogA = 211;
+    raw[0].analogB = 37;
+    raw[0].err = PAD_ERR_NONE;
+    for (std::size_t port = 1; port < raw.size(); ++port) {
+        raw[port].err = PAD_ERR_NO_CONTROLLER;
+    }
+
+    auto expectedPostClamp = raw;
+    PADClamp(expectedPostClamp.data());
+    auto doubleClamped = expectedPostClamp;
+    PADClamp(doubleClamped.data());
+    REQUIRE(doubleClamped[0].stickX != expectedPostClamp[0].stickX);
+    REQUIRE(doubleClamped[0].triggerLeft != expectedPostClamp[0].triggerLeft);
+
+    InputTapeRecorder recorder;
+    REQUIRE(recorder.start(1, 1) == InputTapeError::None);
+    REQUIRE(recorder.recordTick(raw) == InputRecordResult::Recorded);
+    std::vector<std::uint8_t> encoded;
+    REQUIRE(encode_input_tape(recorder.take(), encoded) == InputTapeError::None);
+
+    InputTape decoded;
+    REQUIRE(decode_input_tape(encoded, decoded) == InputTapeError::None);
+    InputTapePlayer player;
+    player.install(std::move(decoded));
+    resetPadSpies();
+    REQUIRE(player.start(TapeEndBehavior::Release));
+    player.tick();
+    // Playback injection is the same pre-clamp state captured by PADRead.
+    REQUIRE(gStatuses[0].stickX == raw[0].stickX);
+    REQUIRE(gStatuses[0].triggerLeft == raw[0].triggerLeft);
+    PADClamp(gStatuses.data());
+
+    constexpr std::size_t port = 0;
+    REQUIRE(gStatuses[port].button == expectedPostClamp[port].button);
+    REQUIRE(gStatuses[port].stickX == expectedPostClamp[port].stickX);
+    REQUIRE(gStatuses[port].stickY == expectedPostClamp[port].stickY);
+    REQUIRE(gStatuses[port].substickX == expectedPostClamp[port].substickX);
+    REQUIRE(gStatuses[port].substickY == expectedPostClamp[port].substickY);
+    REQUIRE(gStatuses[port].triggerLeft == expectedPostClamp[port].triggerLeft);
+    REQUIRE(gStatuses[port].triggerRight == expectedPostClamp[port].triggerRight);
+    REQUIRE(gStatuses[port].analogA == expectedPostClamp[port].analogA);
+    REQUIRE(gStatuses[port].analogB == expectedPostClamp[port].analogB);
+    REQUIRE(gStatuses[port].err == expectedPostClamp[port].err);
 }
 
 } // namespace
@@ -760,6 +842,32 @@ extern "C" void PADClearAutomationStatus(const u32 port) {
     gStatuses[port] = {};
     gActive[port] = false;
     ++gClearCalls[port];
+}
+
+extern "C" void PADClamp(PADStatus* statuses) {
+    const auto clampAxis = [](const s8 value) -> s8 {
+        if (value > 15) {
+            return static_cast<s8>(value - 15);
+        }
+        if (value < -15) {
+            return static_cast<s8>(value + 15);
+        }
+        return 0;
+    };
+    const auto clampTrigger = [](const u8 value) -> u8 {
+        return value <= 30 ? 0 : static_cast<u8>(std::min<unsigned>(value, 180) - 30);
+    };
+    for (std::size_t port = 0; port < PAD_CHANMAX; ++port) {
+        if (statuses[port].err != PAD_ERR_NONE) {
+            continue;
+        }
+        statuses[port].stickX = clampAxis(statuses[port].stickX);
+        statuses[port].stickY = clampAxis(statuses[port].stickY);
+        statuses[port].substickX = clampAxis(statuses[port].substickX);
+        statuses[port].substickY = clampAxis(statuses[port].substickY);
+        statuses[port].triggerLeft = clampTrigger(statuses[port].triggerLeft);
+        statuses[port].triggerRight = clampTrigger(statuses[port].triggerRight);
+    }
 }
 
 int main() {
@@ -784,6 +892,8 @@ int main() {
     testFileSelectAcceptReadyCoversStableHandlers();
     testSatisfiedConditionOnlyLoopConsumesOneTick();
     testRecorderCapturesAllPortsWithoutGrowing();
+    testRecorderArmsUntilExactHandoff();
+    testRecordedRawInputReplaysThroughExactlyOneClamp();
     std::cout << "input tape tests passed\n";
     return 0;
 }

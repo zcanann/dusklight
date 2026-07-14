@@ -187,20 +187,31 @@ enum class InputRecordResult {
 };
 
 /**
- * Records the post-PADRead, post-clamp state used by JUTGamePad.
+ * Records the post-PADRead, pre-clamp state produced by host input mapping.
+ * Playback injects at that same boundary, then JUTGamePad applies PADClamp
+ * exactly once. Recording post-clamp would make analog replay inexact because
+ * PADClamp is intentionally not idempotent.
  *
- * start() performs the only reservation. recordTick(), stop(), and take() do
+ * arm() performs the only reservation while an automation prefix still owns
+ * input. begin() starts capture at the subsequent exact handoff. start() is a
+ * convenience for immediate recording. recordTick(), stop(), and take() do
  * not allocate; when the configured frame capacity is reached, recording
- * stops and reports CapacityExhausted.
+ * stops and reports CapacityExhausted while the session remains armed so
+ * unrecorded mouse/gyro side channels stay suppressed.
  */
 class InputTapeRecorder {
 public:
+    InputTapeError arm(std::uint8_t ownedPorts, std::size_t frameCapacity,
+                       std::uint32_t tickRateNumerator = 30,
+                       std::uint32_t tickRateDenominator = 1);
+    bool begin();
     InputTapeError start(std::uint8_t ownedPorts, std::size_t frameCapacity,
                          std::uint32_t tickRateNumerator = 30, std::uint32_t tickRateDenominator = 1);
     InputRecordResult recordTick(std::span<const PADStatus, kInputPortCount> statuses);
     void stop();
     InputTape take();
 
+    bool isArmed() const { return mArmed; }
     bool isRecording() const { return mRecording; }
     bool capacityExhausted() const { return mCapacityExhausted; }
     std::size_t frameCount() const { return mTape.frames.size(); }
@@ -211,6 +222,7 @@ private:
     InputTape mTape;
     std::size_t mFrameCapacity = 0;
     std::uint8_t mOwnedPorts = 0;
+    bool mArmed = false;
     bool mRecording = false;
     bool mCapacityExhausted = false;
 };

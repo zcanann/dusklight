@@ -620,10 +620,16 @@ InputTapePlayer& input_tape_player() {
     return player;
 }
 
-InputTapeError InputTapeRecorder::start(const std::uint8_t ownedPorts, const std::size_t frameCapacity,
-                                        const std::uint32_t tickRateNumerator,
-                                        const std::uint32_t tickRateDenominator) {
-    stop();
+InputTapeError InputTapeRecorder::arm(const std::uint8_t ownedPorts,
+                                      const std::size_t frameCapacity,
+                                      const std::uint32_t tickRateNumerator,
+                                      const std::uint32_t tickRateDenominator) {
+    mTape = {};
+    mFrameCapacity = 0;
+    mOwnedPorts = 0;
+    mArmed = false;
+    mRecording = false;
+    mCapacityExhausted = false;
     if ((ownedPorts & ~kAllPortsMask) != 0) {
         return InputTapeError::InvalidOwnedPorts;
     }
@@ -640,8 +646,28 @@ InputTapeError InputTapeRecorder::start(const std::uint8_t ownedPorts, const std
     mTape.frames.reserve(frameCapacity);
     mFrameCapacity = frameCapacity;
     mOwnedPorts = ownedPorts;
-    mCapacityExhausted = false;
+    mArmed = true;
+    return InputTapeError::None;
+}
+
+bool InputTapeRecorder::begin() {
+    if (!mArmed || mCapacityExhausted) {
+        return false;
+    }
     mRecording = true;
+    return true;
+}
+
+InputTapeError InputTapeRecorder::start(const std::uint8_t ownedPorts,
+                                        const std::size_t frameCapacity,
+                                        const std::uint32_t tickRateNumerator,
+                                        const std::uint32_t tickRateDenominator) {
+    const InputTapeError error =
+        arm(ownedPorts, frameCapacity, tickRateNumerator, tickRateDenominator);
+    if (error != InputTapeError::None) {
+        return error;
+    }
+    begin();
     return InputTapeError::None;
 }
 
@@ -675,6 +701,7 @@ InputTape InputTapeRecorder::take() {
     mTape = {};
     mFrameCapacity = 0;
     mOwnedPorts = 0;
+    mArmed = false;
     mCapacityExhausted = false;
     return tape;
 }
