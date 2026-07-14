@@ -44,18 +44,17 @@ Visual Studio developer shell.
 
 For route work, choose the single **Glitch Hunt: Route Workbench** entry under
 **Run and Debug** and press F5. VS Code builds Dusklight and the Rust workbench,
-then opens a browser containing the checked-in milestone/variant graph. Select a
-variant or lineage, scrub to a segment-local frame, and choose **Play &
-Handoff**. Playback uses absolute input frames, owns all controller ports until
-the selected prefix ends, and then releases them to live input.
+then opens a browser containing the checked-in milestone/variant tree. Every
+playable variant card has a **Play & Handoff** button. Playback uses absolute
+input frames, owns all controller ports until the segment ends, and then
+releases them to live input.
 
 The workbench replaces per-scenario launch configurations and generated-winner
 dropdown entries. Git-owned variants appear in the graph automatically; ignored
 search populations do not appear until a result is deliberately promoted into
 `routes/`.
 
-See [Route timelines, variants, and Git](timelines.md) for lineage and scrub
-semantics.
+See [Route timelines, variants, and Git](timelines.md) for lineage semantics.
 
 ## Legacy named playback
 

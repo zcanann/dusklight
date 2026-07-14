@@ -54,11 +54,13 @@ In VS Code, choose the single **Glitch Hunt: Route Workbench** entry under
 **Run and Debug**. The pre-launch task builds Dusklight and the Rust workbench,
 then opens a local browser view of the checked-in route graph.
 
-The graph can be panned, zoomed, and inspected by milestone, segment, variant,
-or lineage. Selecting a variant exposes a segment-local frame scrubber. **Play
-& Handoff** cold-replays the exact prefix through the chosen frame and then
-releases controller ownership so live input can continue. Each launch gets a
-fresh isolated writable state directory.
+On Windows, the launcher prefers Brave when it is installed and otherwise uses
+the system default browser.
+
+The workbench renders milestones as a vertical tree and each checked-in segment
+variant as a card. Every playable card has its own **Play & Handoff** button,
+which runs the complete segment and releases controller ownership when its tape
+ends. Each launch gets a fresh isolated writable state directory.
 
 The same workbench is available directly:
 
@@ -77,10 +79,8 @@ The server binds only to loopback. It rereads the timeline on every request, so
 working-tree edits appear after refreshing the graph. Game, disc, and state
 paths are server-owned and cannot be supplied by the browser.
 
-Scrubbing is replay, not a save-state claim. The UI can inspect recorded frames
-instantly, but live playback to a tick starts from the segment's proven seed and
-executes its prefix. True constant-time “play from here” requires a restorable
-checkpoint format, which is not implemented yet.
+Random-access playback can be added after a restorable checkpoint format exists.
+The initial UI deliberately exposes only complete-segment playback.
 
 ## DSL
 

@@ -3,322 +3,194 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dusklight Route Workbench</title>
+  <title>Dusklight Route Tree</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #080b10;
-      --panel: #0d1119;
-      --panel-2: #121824;
-      --line: #253044;
-      --muted: #8190a8;
-      --text: #e8edf7;
-      --cyan: #66e3d3;
-      --blue: #79a8ff;
-      --violet: #b697ff;
-      --amber: #ffc86a;
-      --danger: #ff7188;
-      --shadow: 0 24px 70px rgba(0,0,0,.42);
+      --bg: #090c11;
+      --panel: #11161f;
+      --panel-2: #171e29;
+      --line: #293445;
+      --text: #edf2fa;
+      --muted: #94a2b7;
+      --cyan: #6de1d2;
+      --blue: #80aaff;
+      --amber: #f0c36b;
+      --red: #ff7e91;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
-    body::before {
-      content: ""; position: fixed; inset: 0; pointer-events: none;
-      background:
-        radial-gradient(900px 500px at 30% -10%, rgba(72,104,177,.15), transparent 70%),
-        radial-gradient(700px 420px at 105% 80%, rgba(62,181,160,.08), transparent 70%);
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+    button { font: inherit; }
+    header {
+      position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px;
+      min-height: 64px; padding: 12px 24px; border-bottom: 1px solid var(--line);
+      background: rgba(9, 12, 17, .94); backdrop-filter: blur(12px);
     }
-    button, select, input { font: inherit; }
-    button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-    button { color: inherit; }
-    .app { position: relative; display: grid; grid-template-rows: 58px minmax(0,1fr) 220px; height: 100%; }
-    header { display: flex; align-items: center; gap: 18px; padding: 0 20px; background: rgba(10,14,21,.9); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px); z-index: 3; }
-    .brand { display: flex; align-items: center; gap: 11px; min-width: 250px; }
-    .mark { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: linear-gradient(135deg,#55dac8,#668fff); color: #07100f; font-weight: 900; box-shadow: 0 0 28px rgba(90,221,204,.22); }
-    .brand strong { font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-    .brand span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; margin-top: 2px; }
-    .crumb { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .crumb b { color: var(--text); font-weight: 600; }
-    .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-    .pill { border: 1px solid var(--line); background: #111722; color: var(--muted); border-radius: 999px; padding: 5px 9px; font-size: 11px; letter-spacing: .03em; }
-    .pill.live { color: var(--cyan); border-color: rgba(102,227,211,.35); }
-    .pill.demo { color: var(--amber); border-color: rgba(255,200,106,.38); }
-    .icon-button { width: 32px; height: 32px; border: 1px solid var(--line); background: #111722; border-radius: 8px; cursor: pointer; }
-    .icon-button:hover { border-color: #41506a; background: #171f2d; }
-
-    main { min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 306px; }
-    .viewport { position: relative; overflow: hidden; background-color: #090d14; background-image: radial-gradient(#263145 1px,transparent 1px); background-size: 24px 24px; }
-    #graph { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
-    #graph.dragging { cursor: grabbing; }
-    #world { transform-origin: 0 0; }
-    .edge { fill: none; stroke: #3b4960; stroke-width: 5; opacity: .82; cursor: pointer; transition: opacity .15s, stroke .15s, stroke-width .15s; }
-    .edge:hover, .edge.focused { stroke: var(--cyan); stroke-width: 7; opacity: 1; }
-    .edge.incumbent { stroke: #638fe4; }
-    .edge.unstable { stroke-dasharray: 9 6; stroke: var(--amber); }
-    .edge-hit { fill: none; stroke: transparent; stroke-width: 22; cursor: pointer; }
-    .variant-label { fill: #bac5d8; font-size: 12px; font-weight: 650; paint-order: stroke; stroke: #0a0e15; stroke-width: 5; stroke-linejoin: round; pointer-events: none; }
-    .tick-label { fill: #728198; font-size: 10px; pointer-events: none; }
-    .node { cursor: pointer; }
-    .node rect { fill: #111824; stroke: #344159; stroke-width: 1.5; filter: drop-shadow(0 10px 15px rgba(0,0,0,.25)); }
-    .node:hover rect, .node.focused rect { stroke: var(--cyan); }
-    .node .ring { fill: #0d121b; stroke: var(--cyan); stroke-width: 2; }
-    .node-title { fill: #eef3fb; font-weight: 700; font-size: 13px; pointer-events: none; }
-    .node-sub { fill: #7f8da3; font-size: 10px; letter-spacing: .04em; pointer-events: none; }
-    .ref-tag rect { fill: #211b34; stroke: #745aa9; }
-    .ref-tag text { fill: #cbb9f6; font-size: 10px; font-weight: 650; }
-    .graph-tools { position: absolute; left: 14px; top: 14px; display: flex; background: rgba(14,19,28,.9); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; box-shadow: var(--shadow); }
-    .graph-tools button { border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; }
-    .graph-tools button:last-child { border: 0; }
-    .legend { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 14px; padding: 7px 10px; color: var(--muted); font-size: 10px; background: rgba(14,19,28,.86); border: 1px solid var(--line); border-radius: 8px; }
-    .legend i { display: inline-block; width: 16px; height: 3px; margin-right: 5px; vertical-align: 3px; background: #638fe4; border-radius: 2px; }
-    .legend i.alt { background: #3b4960; }
-    .legend i.unstable { background: repeating-linear-gradient(90deg,var(--amber) 0 5px,transparent 5px 8px); }
-
-    aside { min-width: 0; background: rgba(13,17,25,.96); border-left: 1px solid var(--line); overflow: auto; padding: 18px; }
-    .eyebrow { color: var(--cyan); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; font-weight: 800; }
-    h1 { margin: 5px 0 4px; font-size: 19px; line-height: 1.2; overflow-wrap: anywhere; }
-    .subtitle { color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .kv { margin-top: 18px; border-top: 1px solid var(--line); }
-    .kv-row { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 8px; padding: 9px 0; border-bottom: 1px solid rgba(37,48,68,.62); font-size: 11px; }
-    .kv-row dt { color: var(--muted); }
-    .kv-row dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
-    .hash { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: #abb8cc; font-size: 10px; }
-    .ref-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
-    .ref { padding: 4px 7px; border: 1px solid #554579; background: #1c182c; color: #c9b7f6; border-radius: 5px; font-size: 10px; }
-    .empty { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 18px; }
-
-    .transport { z-index: 4; display: grid; grid-template-columns: minmax(320px,1.2fr) minmax(350px,1fr); border-top: 1px solid var(--line); background: #0b1017; box-shadow: 0 -20px 50px rgba(0,0,0,.25); }
-    .play-panel { padding: 16px 20px; min-width: 0; border-right: 1px solid var(--line); }
-    .transport-top { display: flex; align-items: center; gap: 8px; }
-    .transport-title { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .selection-kind { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
-    .scrub { display: grid; grid-template-columns: 62px minmax(0,1fr) 62px; align-items: center; gap: 10px; margin-top: 17px; }
-    .scrub output { color: var(--muted); font-family: ui-monospace, monospace; font-size: 10px; }
-    .scrub output:last-child { text-align: right; }
-    input[type=range] { appearance: none; width: 100%; height: 4px; background: linear-gradient(90deg,var(--cyan) var(--range,100%),#283348 var(--range,100%)); border-radius: 99px; }
-    input[type=range]::-webkit-slider-thumb { appearance: none; width: 15px; height: 15px; border-radius: 50%; background: #ecffff; border: 3px solid var(--cyan); box-shadow: 0 0 0 4px rgba(102,227,211,.12); cursor: ew-resize; }
-    .play-options { display: flex; align-items: end; gap: 14px; margin-top: 16px; }
-    fieldset { min-width: 0; border: 0; margin: 0; padding: 0; }
-    legend { color: var(--muted); font-size: 10px; margin-bottom: 7px; }
-    .radio-row { display: flex; gap: 10px; font-size: 11px; }
-    .radio-row label { display: flex; align-items: center; gap: 5px; color: #bdc7d8; cursor: pointer; }
-    .target-select { min-width: 160px; }
-    select { width: 100%; color: var(--text); background: #111824; border: 1px solid #344159; border-radius: 7px; padding: 8px 28px 8px 9px; font-size: 11px; }
-    .play-button { margin-left: auto; align-self: end; border: 1px solid #79ddce; background: linear-gradient(135deg,#5dd9c7,#619bea); color: #07100f; border-radius: 8px; padding: 9px 16px; font-weight: 800; font-size: 12px; cursor: pointer; box-shadow: 0 8px 26px rgba(85,203,190,.2); white-space: nowrap; }
-    .play-button:hover { filter: brightness(1.08); }
-    .play-button:disabled { filter: grayscale(.8); opacity: .45; cursor: not-allowed; }
-    .log-panel { min-width: 0; display: grid; grid-template-rows: 42px minmax(0,1fr); }
-    .log-head { display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--line); }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-    .status-dot.busy { background: var(--amber); box-shadow: 0 0 12px rgba(255,200,106,.7); }
-    .status-dot.ok { background: var(--cyan); }
-    .status-dot.error { background: var(--danger); }
-    .status-text { font-size: 11px; color: #bac5d5; }
-    .log { margin: 0; padding: 11px 16px; overflow: auto; color: #8190a7; font: 10px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
-    .log .time { color: #536178; }
-    .log .good { color: var(--cyan); }
-    .log .warn { color: var(--amber); }
-    @media (max-width: 900px) {
-      .app { grid-template-rows: 54px minmax(0,1fr) 290px; }
-      main { grid-template-columns: 1fr; }
-      aside { display: none; }
-      .transport { grid-template-columns: 1fr; overflow: auto; }
-      .play-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-      .brand { min-width: auto; }
-      .brand span, .crumb { display: none; }
+    .mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--cyan); color: #07100f; font-weight: 900; }
+    .title strong { display: block; font-size: 15px; letter-spacing: .04em; }
+    .title span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .spacer { flex: 1; }
+    .status { color: var(--muted); font-size: 12px; }
+    .status.ok { color: var(--cyan); }
+    .status.error { color: var(--red); }
+    .reload { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; }
+    .reload:hover { border-color: #4b5c74; }
+    main { width: min(980px, calc(100% - 32px)); margin: 28px auto 80px; }
+    .intro { margin-bottom: 28px; }
+    .intro h1 { margin: 0 0 8px; font-size: 25px; }
+    .intro p { margin: 0; color: var(--muted); line-height: 1.55; }
+    .tree { position: relative; }
+    .tree::before { content: ""; position: absolute; left: 25px; top: 26px; bottom: 26px; width: 2px; background: var(--line); }
+    .milestone { position: relative; display: flex; align-items: center; gap: 16px; min-height: 52px; }
+    .node-dot { position: relative; z-index: 1; width: 52px; height: 52px; flex: 0 0 52px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; background: #101722; color: var(--blue); font-size: 13px; font-weight: 800; }
+    .node-copy strong { display: block; font-size: 16px; text-transform: capitalize; }
+    .node-copy span { color: var(--muted); font-size: 12px; }
+    .segment { position: relative; margin: 14px 0 18px 25px; padding: 4px 0 12px 43px; border-left: 2px solid var(--line); }
+    .segment::before { content: ""; position: absolute; left: -2px; top: 23px; width: 28px; height: 2px; background: var(--line); }
+    .segment-head { margin: 0 0 10px; }
+    .segment-head strong { font-size: 14px; }
+    .segment-head span { margin-left: 8px; color: var(--muted); font-size: 12px; }
+    .variants { display: grid; gap: 10px; }
+    .variant { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+    .variant.incumbent { border-color: rgba(128, 170, 255, .55); }
+    .variant:hover { background: var(--panel-2); }
+    .variant-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .variant-title strong { font-size: 14px; }
+    .badge { padding: 3px 7px; border-radius: 999px; background: #222d3d; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .badge.incumbent { color: var(--blue); }
+    .badge.score { color: var(--amber); }
+    .variant-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+    .variant-meta code { color: #bdc8d8; }
+    .play { min-width: 142px; padding: 10px 13px; border: 1px solid rgba(109, 225, 210, .55); border-radius: 8px; background: rgba(109, 225, 210, .1); color: var(--cyan); font-weight: 750; cursor: pointer; }
+    .play:hover:not(:disabled) { background: var(--cyan); color: #07100f; }
+    .play:disabled { border-color: var(--line); background: #141923; color: #68768a; cursor: not-allowed; }
+    .error-note { margin-top: 7px; color: var(--red); font-size: 11px; }
+    .lineages { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .lineages h2 { margin: 0 0 6px; font-size: 17px; }
+    .lineages > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+    .lineage-list { display: grid; gap: 8px; }
+    .lineage { padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+    .lineage strong { font-size: 13px; }
+    .lineage code { color: var(--muted); font-size: 11px; }
+    .lineage .reason { margin-top: 5px; color: var(--amber); font-size: 11px; line-height: 1.4; }
+    .empty { padding: 28px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
+    .toast { position: fixed; right: 20px; bottom: 20px; max-width: 440px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 10px; background: #151c27; box-shadow: 0 18px 50px rgba(0,0,0,.45); color: var(--text); font-size: 13px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { border-color: rgba(255,126,145,.5); color: #ffc2cb; }
+    @media (max-width: 650px) {
+      header { padding: 10px 14px; }
+      main { width: min(100% - 20px, 980px); }
+      .status { display: none; }
+      .segment { padding-left: 26px; }
+      .variant { grid-template-columns: 1fr; }
+      .play { width: 100%; }
     }
   </style>
 </head>
 <body>
-<div class="app">
   <header>
-    <div class="brand"><div class="mark" aria-hidden="true">D</div><div><strong>Route Workbench</strong><span>Dusklight automation</span></div></div>
-    <div class="crumb" aria-live="polite">timeline / <b id="timelineName">loading…</b></div>
-    <div class="header-actions"><span id="sourceBadge" class="pill">connecting</span><button id="reload" class="icon-button" title="Reload graph" aria-label="Reload graph">↻</button></div>
+    <div class="mark">D</div>
+    <div class="title"><strong>Route Workbench</strong><span id="timelineName">Loading Git timeline…</span></div>
+    <div class="spacer"></div>
+    <span id="status" class="status">Connecting…</span>
+    <button id="reload" class="reload" type="button">Reload</button>
   </header>
   <main>
-    <section class="viewport" aria-label="Branching route timeline">
-      <svg id="graph" role="application" aria-label="Route graph; drag to pan and use wheel to zoom">
-        <defs><filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-        <g id="world"></g>
-      </svg>
-      <div class="graph-tools" aria-label="Graph zoom controls"><button class="icon-button" id="zoomOut" aria-label="Zoom out">−</button><button class="icon-button" id="fit" aria-label="Fit graph">⌗</button><button class="icon-button" id="zoomIn" aria-label="Zoom in">+</button></div>
-      <div class="legend" aria-hidden="true"><span><i></i>incumbent</span><span><i class="alt"></i>alternate</span><span><i class="unstable"></i>unstable</span></div>
+    <section class="intro">
+      <h1>Route tree</h1>
+      <p>Each card is one checked-in segment variant. Play runs that complete segment and hands your controller back when its tape ends.</p>
     </section>
-    <aside id="inspector" aria-label="Selection details"><div class="eyebrow">Route graph</div><h1>Choose a segment</h1><p class="empty">Select a variant edge to inspect its exact lineage, fingerprints, timing and refs. Select a milestone to target the route through that boundary.</p></aside>
+    <div id="tree" class="tree"><div class="empty">Loading route…</div></div>
+    <section id="lineages" class="lineages" hidden>
+      <h2>Saved lineages</h2>
+      <p>Small manifests that pin variants together. Cross-segment playback stays disabled until every boundary is proven composable.</p>
+      <div id="lineageList" class="lineage-list"></div>
+    </section>
   </main>
-  <section class="transport" aria-label="Playback transport">
-    <div class="play-panel">
-      <div class="transport-top"><span class="selection-kind" id="selectionKind">No selection</span><span class="transport-title" id="transportTitle">Select a variant or milestone</span></div>
-      <div class="scrub"><output id="scrubStart">0</output><input id="scrubber" type="range" min="0" max="1" value="1" disabled aria-label="Playback tick within selected segment"><output id="scrubEnd">—</output></div>
-      <div class="play-options">
-        <fieldset><legend>Stop playback</legend><div class="radio-row"><label><input type="radio" name="stop" value="milestone" checked> Through milestone</label><label><input type="radio" name="stop" value="tick"> Exact tick</label></div></fieldset>
-        <label class="target-select"><span class="selection-kind">Target</span><select id="milestoneSelect" aria-label="Target milestone" disabled></select></label>
-        <button class="play-button" id="play" disabled>▶ Play &amp; handoff</button>
-      </div>
-    </div>
-    <div class="log-panel"><div class="log-head"><span id="statusDot" class="status-dot"></span><span id="statusText" class="status-text">Ready</span></div><pre id="log" class="log" aria-live="polite"></pre></div>
-  </section>
-</div>
-<script>
-(() => {
-  'use strict';
-  const NS = 'http://www.w3.org/2000/svg';
-  const $ = id => document.getElementById(id);
-  const state = { graph: null, selected: null, api: false, scale: 1, x: 55, y: 40, dragging: false, moved: false };
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const short = value => { const s=String(value ?? '—'); return s.length > 18 ? s.slice(0,8)+'…'+s.slice(-6) : s; };
-  const now = () => new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  function log(message, kind='') { const line=document.createElement('div'); line.innerHTML=`<span class="time">${now()}</span> <span class="${kind}">${esc(message)}</span>`; $('log').append(line); $('log').scrollTop=$('log').scrollHeight; }
-  function status(text, kind='') { $('statusText').textContent=text; $('statusDot').className='status-dot '+kind; }
-  const demo = {
-    timeline:'intro',
-    milestones:[
-      {id:'process_boot',label:'Process boot',tick:0}, {id:'link_control',label:'Link control',tick:624},
-      {id:'f_sp103_exit',label:'F_SP103 exit',tick:1031}, {id:'f_sp104',label:'F_SP104',tick:1418},
-      {id:'intro_cutscene',label:'Intro cutscene',tick:2088}
-    ],
-    segments:[
-      {id:'boot_to_link',from:'process_boot',to:'link_control'}, {id:'link_to_exit',from:'link_control',to:'f_sp103_exit'},
-      {id:'exit_to_fsp104',from:'f_sp103_exit',to:'f_sp104'}, {id:'fsp104_to_intro',from:'f_sp104',to:'intro_cutscene'}
-    ],
-    variants:[
-      {id:'boot.safe',segment:'boot_to_link',name:'safe · stable',ticks:649,start_tick:0,end_tick:649,start_fingerprint:'process-clean-v1',boundary_fingerprint:'cdb3715d71f27c06f3d9db7f7d8f7c6b',success_rate:1,incumbent:false},
-      {id:'boot.golf',segment:'boot_to_link',name:'golf · 624f',ticks:624,start_tick:0,end_tick:624,start_fingerprint:'process-clean-v1',boundary_fingerprint:'99be713721e77043c968e84b1a183135',success_rate:1,incumbent:true,refs:['verified/intro','frontier/boot/rng-a']},
-      {id:'exit.baseline',segment:'link_to_exit',name:'baseline · 407f',ticks:407,start_tick:624,end_tick:1031,incumbent:true,refs:['verified/intro']},
-      {id:'exit.rolls',segment:'link_to_exit',name:'roll line · 371f',ticks:371,start_tick:624,end_tick:995,incumbent:false,success_rate:.8,refs:['experiments/roll-route']},
-      {id:'field.main',segment:'exit_to_fsp104',name:'field line · 387f',ticks:387,start_tick:1031,end_tick:1418,incumbent:true,refs:['verified/intro']},
-      {id:'field.rng-b',segment:'exit_to_fsp104',name:'rng-b · 401f',ticks:401,start_tick:995,end_tick:1396,incumbent:false,refs:['frontier/field/rng-b']},
-      {id:'intro.main',segment:'fsp104_to_intro',name:'intro · 670f',ticks:670,start_tick:1418,end_tick:2088,incumbent:true,refs:['verified/intro']}
-    ],
-    refs:{'verified/intro':'intro.main','experiments/roll-route':'exit.rolls','frontier/boot/rng-a':'boot.golf','frontier/field/rng-b':'field.rng-b'},
-    lineages:[{name:'main',steps:['boot.golf','exit.baseline','field.main','intro.main']},{name:'roll_experiment',steps:['boot.golf','exit.rolls','field.rng-b']}]
-  };
-
-  // Accepts the workbench API shape above or huntctl's serialized TimelineInspection.
-  function normalize(raw) {
-    const root=raw.timeline && typeof raw.timeline==='object' ? raw.timeline : raw;
-    const names=(root.milestones || raw.milestones || []).map(m => typeof m==='string' ? {id:m,label:m.replaceAll('_',' ')} : {...m,id:m.id||m.name,label:m.label||m.name||m.id});
-    const entries = value => Array.isArray(value) ? value : Object.entries(value||{}).map(([key,v])=>({...v,id:v.id||key,name:v.name||key}));
-    const segments=entries(root.segments || raw.segments).map(s=>({...s,id:s.id||s.name}));
-    const variants=entries(root.variants || raw.variants).map(v=>{
-      const hit=v.first_hit_tick ?? v.ticks ?? v.end_tick;
-      return {...v,id:v.id||v.name,name:v.name||v.id,ticks:v.ticks ?? hit ?? 0,end_tick:v.end_tick ?? hit ?? 0,refs:v.refs||[]};
-    });
-    const refs=raw.refs || root.refs || {};
-    Object.entries(refs).forEach(([name,target]) => { const v=variants.find(x=>x.id===(target.variant||target)); if(v&&!v.refs.includes(name))v.refs.push(name); });
-    return {timeline:root.name||raw.name||raw.timeline||'route', milestones:names, segments, variants, refs,
-      lineages:raw.lineages||[], frontiers:raw.frontiers||[]};
-  }
-
-  function svg(tag, attrs={}, text='') { const el=document.createElementNS(NS,tag); Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,v)); if(text)el.textContent=text; return el; }
-  function transform() { $('world').setAttribute('transform',`translate(${state.x} ${state.y}) scale(${state.scale})`); }
-  function renderGraph() {
-    const g=state.graph, world=$('world'); world.replaceChildren();
-    const xStep=260, baseY=150, nodeW=150, nodeH=58;
-    const pos=new Map(g.milestones.map((m,i)=>[m.id,{x:i*xStep,y:baseY,m,i}]));
-    g.segments.forEach(seg=>{
-      const a=pos.get(seg.from), b=pos.get(seg.to); if(!a||!b)return;
-      const variants=g.variants.filter(v=>v.segment===seg.id);
-      const segmentLabel=svg('g',{'data-id':seg.id,role:'button',tabindex:'0','aria-label':`Segment ${seg.name||seg.id}`});
-      const labelX=(a.x+nodeW+b.x)/2, labelY=baseY-72, labelW=Math.min(180,42+(seg.name||seg.id).length*6);
-      segmentLabel.append(svg('rect',{x:labelX-labelW/2,y:labelY-14,width:labelW,height:20,rx:10,fill:'#0d141f',stroke:'#2f3c52'}));
-      segmentLabel.append(svg('text',{x:labelX,y:labelY,'text-anchor':'middle',class:'node-sub'},seg.name||seg.id));
-      segmentLabel.addEventListener('click',e=>{e.stopPropagation();select({type:'segment',value:seg});});
-      segmentLabel.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select({type:'segment',value:seg});}});
-      world.append(segmentLabel);
-      variants.forEach((v,i)=>{
-        const offset=(i-(variants.length-1)/2)*76, x1=a.x+nodeW, x2=b.x, y1=a.y+nodeH/2, y2=b.y+nodeH/2;
-        const cy=y1+offset, d=`M ${x1} ${y1} C ${x1+75} ${cy}, ${x2-75} ${cy}, ${x2} ${y2}`;
-        const group=svg('g',{'data-id':v.id,role:'button',tabindex:'0','aria-label':`${v.name}, ${v.ticks||'unscored'} ticks`});
-        const unstable=v.success_rate!=null&&v.success_rate<1;
-        group.append(svg('path',{d,class:`edge ${v.incumbent?'incumbent':''} ${unstable?'unstable':''}`}));
-        group.append(svg('path',{d,class:'edge-hit'}));
-        const midX=(x1+x2)/2, labelY=cy+(offset>=0?18:-9);
-        group.append(svg('text',{x:midX,y:labelY,'text-anchor':'middle',class:'variant-label'},v.name));
-        group.append(svg('text',{x:midX,y:labelY+14,'text-anchor':'middle',class:'tick-label'},v.ticks?`${v.ticks} ticks`:'unscored'));
-        group.addEventListener('click',e=>{e.stopPropagation();select({type:'variant',value:v,segment:seg});});
-        group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select({type:'variant',value:v,segment:seg});}});
-        world.append(group);
-      });
-    });
-    g.milestones.forEach(m=>{
-      const p=pos.get(m.id), group=svg('g',{class:'node','data-id':m.id,role:'button',tabindex:'0','aria-label':`Milestone ${m.label}`});
-      group.append(svg('rect',{x:p.x,y:p.y,width:nodeW,height:nodeH,rx:11}));
-      group.append(svg('circle',{cx:p.x+18,cy:p.y+29,r:6,class:'ring'}));
-      group.append(svg('text',{x:p.x+34,y:p.y+25,class:'node-title'},m.label));
-      group.append(svg('text',{x:p.x+34,y:p.y+42,class:'node-sub'},m.tick!=null?`TICK ${m.tick}`:`BOUNDARY ${p.i+1}`));
-      group.addEventListener('click',e=>{e.stopPropagation();select({type:'milestone',value:m});});
-      group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select({type:'milestone',value:m});}});
-      world.append(group);
-    });
-    Object.entries(g.refs||{}).forEach(([name,target],i)=>{
-      const v=g.variants.find(x=>x.id===(target.variant||target)), seg=v&&g.segments.find(s=>s.id===v.segment), p=seg&&pos.get(seg.to); if(!p)return;
-      const y=p.y+nodeH+10+(i%3)*23, group=svg('g',{class:'ref-tag'}); const w=Math.min(160,40+name.length*5.5);
-      group.append(svg('rect',{x:p.x+nodeW-w,y,width:w,height:18,rx:4})); group.append(svg('text',{x:p.x+nodeW-w+6,y:y+12},name)); world.append(group);
-    });
-    transform(); setTimeout(fitGraph,0);
-  }
-
-  function select(sel) {
-    state.selected=sel;
-    document.querySelectorAll('.focused').forEach(e=>e.classList.remove('focused'));
-    document.querySelector(`[data-id="${CSS.escape(sel.value.id)}"]`)?.classList.add('focused');
-    const isV=sel.type==='variant', isS=sel.type==='segment', v=sel.value;
-    $('selectionKind').textContent=isV?'Variant':isS?'Segment':'Milestone'; $('transportTitle').textContent=v.name||v.label||v.id;
-    $('play').disabled=!state.api; $('play').title=state.api?'':'Start huntctl workbench server to enable playback'; $('milestoneSelect').disabled=false;
-    if(isV) {
-      const start=Number(v.start_tick||0), end=Number(v.end_tick||v.first_hit_tick||v.ticks||1);
-      $('scrubber').disabled=false; $('scrubber').min=start; $('scrubber').max=Math.max(start+1,end); $('scrubber').value=end;
-      $('scrubStart').textContent=start; $('scrubEnd').textContent=end;
-      $('milestoneSelect').value=sel.segment.to;
-      const refs=v.refs||[];
-      $('inspector').innerHTML=`<div class="eyebrow">${esc(sel.segment.from)} → ${esc(sel.segment.to)}</div><h1>${esc(v.name)}</h1><div class="subtitle">Immutable variant <span class="hash">${esc(v.id)}</span></div>${refs.length?`<div class="ref-list">${refs.map(r=>`<span class="ref">${esc(r)}</span>`).join('')}</div>`:''}<dl class="kv"><div class="kv-row"><dt>Duration</dt><dd>${esc(v.ticks||'unscored')} ticks</dd></div><div class="kv-row"><dt>Standing</dt><dd>${v.incumbent?'Incumbent':'Alternate frontier'}</dd></div><div class="kv-row"><dt>Success</dt><dd>${v.success_rate==null?'—':Math.round(v.success_rate*100)+'%'}</dd></div><div class="kv-row"><dt>Start state</dt><dd class="hash" title="${esc(v.start_fingerprint)}">${esc(short(v.start_fingerprint))}</dd></div><div class="kv-row"><dt>Output state</dt><dd class="hash" title="${esc(v.boundary_fingerprint)}">${esc(short(v.boundary_fingerprint))}</dd></div><div class="kv-row"><dt>Artifact</dt><dd class="hash">${esc(typeof v.artifact==='string'?v.artifact:JSON.stringify(v.artifact||'—'))}</dd></div></dl>`;
-    } else if(isS) {
-      const variants=state.graph.variants.filter(item=>item.segment===v.id), incumbent=variants.find(item=>item.incumbent);
-      $('scrubber').disabled=true; $('scrubber').min=0; $('scrubber').max=1; $('scrubber').value=1; $('scrubStart').textContent='0'; $('scrubEnd').textContent='—'; $('milestoneSelect').value=v.to;
-      $('inspector').innerHTML=`<div class="eyebrow">Route segment</div><h1>${esc(v.name||v.id)}</h1><div class="subtitle">${esc(v.from)} → ${esc(v.to)}. Choose a concrete edge to scrub its frames, or play this segment through its boundary.</div><dl class="kv"><div class="kv-row"><dt>Variants</dt><dd>${variants.length}</dd></div><div class="kv-row"><dt>Incumbent</dt><dd>${esc(incumbent?.name||'none')}</dd></div><div class="kv-row"><dt>Profile</dt><dd class="hash">${esc(typeof v.profile==='string'?v.profile:JSON.stringify(v.profile||'—'))}</dd></div></dl>`;
-    } else {
-      const tick=Number(v.tick||0); $('scrubber').disabled=true; $('scrubber').min=0; $('scrubber').max=Math.max(1,tick); $('scrubber').value=tick; $('scrubStart').textContent='0'; $('scrubEnd').textContent=tick||'—'; $('milestoneSelect').value=v.id;
-      const incoming=state.graph.segments.filter(s=>s.to===v.id), outgoing=state.graph.segments.filter(s=>s.from===v.id);
-      $('inspector').innerHTML=`<div class="eyebrow">Milestone boundary</div><h1>${esc(v.label)}</h1><div class="subtitle">Play the selected lineage through this boundary, or hand off control at its exact recorded tick.</div><dl class="kv"><div class="kv-row"><dt>Identifier</dt><dd class="hash">${esc(v.id)}</dd></div><div class="kv-row"><dt>Tick</dt><dd>${v.tick??'lineage-dependent'}</dd></div><div class="kv-row"><dt>Incoming</dt><dd>${incoming.length}</dd></div><div class="kv-row"><dt>Continuations</dt><dd>${outgoing.length}</dd></div></dl>`;
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script>
+  (() => {
+    'use strict';
+    const $ = id => document.getElementById(id);
+    let graph = null;
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const label = value => String(value ?? '').replaceAll('_', ' ');
+    const short = value => { const text=String(value ?? ''); return text.length > 20 ? `${text.slice(0,8)}…${text.slice(-7)}` : text; };
+    function toast(message, error=false) {
+      const element=$('toast'); element.textContent=message; element.className=`toast show${error?' error':''}`;
+      clearTimeout(toast.timer); toast.timer=setTimeout(()=>element.className='toast', 5000);
     }
-    updateRange();
-  }
-
-  function updateRange() { const r=$('scrubber'), pct=(Number(r.value)-Number(r.min))/(Number(r.max)-Number(r.min))*100; r.style.setProperty('--range',`${isFinite(pct)?pct:100}%`); if(document.querySelector('input[name=stop]:checked').value==='tick') $('scrubEnd').textContent=r.value; }
-  async function play() {
-    if(!state.selected)return;
-    const mode=document.querySelector('input[name=stop]:checked').value;
-    const payload={selection:{kind:state.selected.type,id:state.selected.value.id},stop:mode==='tick'?{kind:'tick',tick:Number($('scrubber').value)}:{kind:'milestone',milestone:$('milestoneSelect').value},handoff:true};
-    $('play').disabled=true; status('Preparing visual playback…','busy'); log(`POST /api/play ${JSON.stringify(payload)}`);
-    try { const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); const body=await response.json().catch(()=>({})); if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`); status(body.status||'Playback launched; controller handoff armed','ok'); log(body.message||`Session ${body.session_id||'started'}`,'good'); }
-    catch(error) { status('Playback could not start','error'); log(error.message,'warn'); }
-    finally { $('play').disabled=false; }
-  }
-
-  async function load() {
-    status('Loading route graph…','busy');
-    try { const response=await fetch('/api/graph',{cache:'no-store'}); if(!response.ok)throw new Error(`HTTP ${response.status}`); state.graph=normalize(await response.json()); state.api=true; $('sourceBadge').textContent='Git timeline'; $('sourceBadge').className='pill live'; status('Git-owned timeline connected','ok'); log(`Loaded ${state.graph.variants.length} variants from /api/graph`,'good'); }
-    catch(error) { state.graph=normalize(demo); state.api=false; $('sourceBadge').textContent='demo · API offline'; $('sourceBadge').className='pill demo'; status('Demo graph; server unavailable','error'); log(`/api/graph unavailable (${error.message}); showing non-playable demo data`,'warn'); }
-    $('timelineName').textContent=state.graph.timeline;
-    $('milestoneSelect').innerHTML=state.graph.milestones.map(m=>`<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
-    state.selected=null; $('play').disabled=true; renderGraph();
-  }
-
-  function zoomAt(factor,cx,cy) { const old=state.scale, next=Math.max(.35,Math.min(2.5,old*factor)); state.x=cx-(cx-state.x)*(next/old); state.y=cy-(cy-state.y)*(next/old); state.scale=next; transform(); }
-  function fitGraph() { if(!state.graph)return; const box=$('world').getBBox(), rect=$('graph').getBoundingClientRect(); if(!box.width||!rect.width)return; state.scale=Math.max(.35,Math.min(1.25,Math.min((rect.width-100)/box.width,(rect.height-100)/box.height))); state.x=(rect.width-box.width*state.scale)/2-box.x*state.scale; state.y=(rect.height-box.height*state.scale)/2-box.y*state.scale; transform(); }
-  const graph=$('graph');
-  graph.addEventListener('wheel',e=>{e.preventDefault();const r=graph.getBoundingClientRect();zoomAt(e.deltaY<0?1.12:.89,e.clientX-r.left,e.clientY-r.top);},{passive:false});
-  graph.addEventListener('pointerdown',e=>{if(e.button!==0)return;state.dragging=true;state.moved=false;state.px=e.clientX;state.py=e.clientY;graph.setPointerCapture(e.pointerId);graph.classList.add('dragging');});
-  graph.addEventListener('pointermove',e=>{if(!state.dragging)return;const dx=e.clientX-state.px,dy=e.clientY-state.py;if(Math.abs(dx)+Math.abs(dy)>2)state.moved=true;state.x+=dx;state.y+=dy;state.px=e.clientX;state.py=e.clientY;transform();});
-  graph.addEventListener('pointerup',e=>{state.dragging=false;graph.classList.remove('dragging');graph.releasePointerCapture(e.pointerId);});
-  $('zoomIn').onclick=()=>zoomAt(1.2,graph.clientWidth/2,graph.clientHeight/2); $('zoomOut').onclick=()=>zoomAt(.8,graph.clientWidth/2,graph.clientHeight/2); $('fit').onclick=fitGraph;
-  $('reload').onclick=load; $('play').onclick=play; $('scrubber').oninput=()=>{document.querySelector('input[name=stop][value=tick]').checked=true;updateRange();};
-  document.querySelectorAll('input[name=stop]').forEach(r=>r.onchange=updateRange); window.addEventListener('resize',fitGraph);
-  load();
-})();
-</script>
+    function normalize(raw) {
+      const milestones=(raw.milestones||[]).map((item,index)=>typeof item==='string'?{id:item,ordinal:index}:{...item,id:item.id||item.name,ordinal:item.ordinal??index});
+      const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
+      const variants=Array.isArray(raw.variants)?raw.variants:Object.entries(raw.variants||{}).map(([id,item])=>({...item,id:item.id||id}));
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),milestones,segments,variants,lineages:raw.lineages||[]};
+    }
+    function variantCard(variant) {
+      const artifact=variant.artifact||{};
+      const score=variant.first_hit_tick ?? variant.ticks;
+      const disabled=!variant.playable;
+      return `<article class="variant${variant.incumbent?' incumbent':''}">
+        <div>
+          <div class="variant-title"><strong>${escapeHtml(variant.name||variant.id)}</strong>${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}</div>
+          <div class="variant-meta"><span>${escapeHtml(artifact.kind||'artifact')}: <code>${escapeHtml(artifact.value||'—')}</code></span><span title="${escapeHtml(variant.start_fingerprint)}">in <code>${escapeHtml(short(variant.start_fingerprint))}</code></span><span title="${escapeHtml(variant.boundary_fingerprint)}">out <code>${escapeHtml(short(variant.boundary_fingerprint))}</code></span></div>
+          ${variant.error?`<div class="error-note">${escapeHtml(variant.error)}</div>`:''}
+        </div>
+        <button class="play" type="button" data-variant="${escapeHtml(variant.id)}" ${disabled?'disabled':''} title="${disabled?escapeHtml(variant.error||'This artifact is not playable'):''}">${disabled?'Unavailable':'Play & Handoff'}</button>
+      </article>`;
+    }
+    function render() {
+      $('timelineName').textContent=`${graph.timeline} · Git timeline`;
+      const milestones=[...graph.milestones].sort((a,b)=>a.ordinal-b.ordinal);
+      let html='';
+      milestones.forEach((milestone,index)=>{
+        html+=`<section class="milestone"><div class="node-dot">${index+1}</div><div class="node-copy"><strong>${escapeHtml(label(milestone.id))}</strong><span>${escapeHtml(milestone.id)}</span></div></section>`;
+        graph.segments.filter(segment=>segment.from===milestone.id).forEach(segment=>{
+          const variants=graph.variants.filter(variant=>variant.segment===segment.id);
+          html+=`<section class="segment"><div class="segment-head"><strong>${escapeHtml(label(segment.id))}</strong><span>→ ${escapeHtml(label(segment.to))}</span></div><div class="variants">${variants.length?variants.map(variantCard).join(''):'<div class="empty">No checked-in variants</div>'}</div></section>`;
+        });
+      });
+      $('tree').innerHTML=html||'<div class="empty">This timeline has no milestones.</div>';
+      $('tree').querySelectorAll('[data-variant]').forEach(button=>button.addEventListener('click',()=>play(button.dataset.variant,button)));
+      $('lineages').hidden=graph.lineages.length===0;
+      $('lineageList').innerHTML=graph.lineages.map(lineage=>`<div class="lineage"><strong>${escapeHtml(lineage.name)}</strong> <span class="badge">${escapeHtml(lineage.kind||'lineage')}</span><br><code>${escapeHtml((lineage.steps||[]).map(step=>step.variant||step).join(' → '))}</code>${lineage.error?`<div class="reason">${escapeHtml(lineage.error)}</div>`:''}</div>`).join('');
+    }
+    async function play(variantId, button) {
+      const variant=graph.variants.find(item=>item.id===variantId);
+      const segment=variant&&graph.segments.find(item=>item.id===variant.segment);
+      if(!variant||!segment)return;
+      button.disabled=true; button.textContent='Launching…';
+      $('status').textContent=`Launching ${variant.name||variant.id}…`; $('status').className='status';
+      const payload={selection:{kind:'variant',id:variant.id},stop:{kind:'milestone',milestone:segment.to},handoff:true};
+      try {
+        const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+        const body=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent=`Running ${variant.name||variant.id}`; $('status').className='status ok';
+        toast(`Launched ${variant.name||variant.id}. Controller handoff is armed after ${body.frames||'the selected'} frames.`);
+      } catch(error) {
+        $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=!variant.playable; button.textContent=variant.playable?'Play & Handoff':'Unavailable';
+      }
+    }
+    async function load() {
+      $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>';
+      try {
+        const response=await fetch('/api/graph',{cache:'no-store'});
+        const body=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        graph=normalize(body); render(); $('status').textContent='Ready'; $('status').className='status ok';
+      } catch(error) {
+        $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
+        $('tree').innerHTML=`<div class="empty">${escapeHtml(error.message)}<br><br>Start this page through the Route Workbench launch configuration.</div>`;
+        $('lineages').hidden=true;
+      }
+    }
+    $('reload').addEventListener('click',load);
+    load();
+  })();
+  </script>
 </body>
 </html>

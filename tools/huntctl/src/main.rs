@@ -170,9 +170,21 @@ fn command_timeline_workbench(args: &[String]) -> Result<(), Box<dyn Error>> {
 fn open_browser(url: &str) -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
+        let brave = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+            .into_iter()
+            .filter_map(env::var_os)
+            .map(PathBuf::from)
+            .map(|root| root.join("BraveSoftware/Brave-Browser/Application/brave.exe"))
+            .find(|path| path.is_file());
+        if let Some(brave) = brave {
+            let mut command = Command::new(brave);
+            command.args(["--new-tab", url]);
+            command
+        } else {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "start", "", url]);
+            command
+        }
     };
     #[cfg(target_os = "macos")]
     let mut command = {

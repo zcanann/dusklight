@@ -124,9 +124,9 @@ candidates to a cold process-boot lineage for end-to-end proof.
 ```
 
 In VS Code, run the single **Glitch Hunt: Route Workbench** launch. It displays
-checked-in segment variants and lineages, supports exact-prefix scrubbing, and
-hands live controller input back when playback ends. The fixed test selector
-still exposes `intro-first-exit`, `intro-cutscene`, and
+checked-in segment variants and lineages, plays a complete segment from its
+card, and hands live controller input back when playback ends. The fixed test
+selector still exposes `intro-first-exit`, `intro-cutscene`, and
 `fsp103-next-map-seed` for semantic regression runs.
 
 Each run writes its compact trace and JSON milestone summary beneath
