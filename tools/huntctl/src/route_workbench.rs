@@ -2686,6 +2686,7 @@ fn record_continuation(
                 match timeline.segments[segment].profile {
                     crate::search::SegmentProfile::BootToFsp103 => None,
                     crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+                    crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
                 }
             });
             let materialized = MaterializedPlayback {
@@ -2704,6 +2705,9 @@ fn record_continuation(
             let native_milestone = match timeline.segments[&variant.segment].profile {
                 crate::search::SegmentProfile::BootToFsp103 => "gameplay-ready-f-sp103",
                 crate::search::SegmentProfile::Fsp103ToFsp104 => "entered-f-sp104",
+                crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => {
+                    "tunnel_crawl_start"
+                }
             };
             (
                 materialized,
@@ -3490,6 +3494,7 @@ fn materialize_play_request(
         let seed_stage = match profile {
             crate::search::SegmentProfile::BootToFsp103 => None,
             crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+            crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
         };
         return Ok(MaterializedPlayback {
             lineage: None,
@@ -3505,6 +3510,7 @@ fn materialize_play_request(
         match timeline.segments[&step.segment].profile {
             crate::search::SegmentProfile::BootToFsp103 => None,
             crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+            crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
         }
     });
     Ok(MaterializedPlayback {
@@ -3651,6 +3657,7 @@ fn materialize_draft(
                 match timeline.segments[&step.segment].profile {
                     crate::search::SegmentProfile::BootToFsp103 => None,
                     crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+                    crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
                 }
             });
             (base_lineage_tape.tape, seed_stage, base_variant)

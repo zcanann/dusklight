@@ -6,21 +6,80 @@ use crate::search::{
     write_explicit_population, write_seed_population,
 };
 use crate::tape::{InputTape, RawPadState};
+use crate::tape_chain::{ChainSegment, concatenate};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v2";
 pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v2";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
+pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
+pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
+const ANCHORED_PROFILE: SegmentProfile = SegmentProfile::LinkControlToTunnelCrawlStart;
+
+/// Immutable proof inputs for a clean-boot suffix search. The prefix is an
+/// absolute compact tape, compiled DMSP, game executable, and DVD image;
+/// callers may materialize the route inputs through any management UX.
+#[derive(Clone, Debug)]
+pub struct AnchoredObjectiveConfig {
+    pub prefix_tape: PathBuf,
+    pub milestone_program: PathBuf,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub source_milestone: String,
+    pub source_boundary_fingerprint: String,
+    pub goal_milestone: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AnchoredEvaluateConfig {
+    pub evaluation: EvaluateConfig,
+    pub objective: AnchoredObjectiveConfig,
+}
+
+#[derive(Clone, Debug)]
+pub struct AnchoredSearchRunConfig {
+    pub search: SearchRunConfig,
+    pub objective: AnchoredObjectiveConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchoredObjectiveIdentity {
+    pub schema: String,
+    pub digest: String,
+    pub prefix_sha256: String,
+    pub prefix_frames: u64,
+    pub milestone_program_sha256: String,
+    pub game_sha256: String,
+    pub dvd_sha256: String,
+    pub source_milestone: String,
+    pub source_definition_sha256: String,
+    pub source_boundary_fingerprint: String,
+    pub source_tape_frame: u64,
+    pub source_boundary_index: u64,
+    pub goal_milestone: String,
+    pub goal_definition_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchoredSearchResults {
+    pub schema: String,
+    pub objective: AnchoredObjectiveIdentity,
+    pub results: SearchResults,
+}
 
 #[derive(Clone, Debug)]
 pub struct EvaluateConfig {
@@ -66,6 +125,8 @@ pub struct EvaluationReport {
     pub completed_attempts: usize,
     pub infrastructure_faults: usize,
     pub attempts: Vec<AttemptEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective: Option<AnchoredObjectiveIdentity>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -75,6 +136,8 @@ pub struct AttemptEvidence {
     pub attempt: u32,
     pub segment: SegmentProfile,
     pub tape: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix_tape: Option<PathBuf>,
     pub artifact_root: PathBuf,
     pub state_root: PathBuf,
     pub milestone_result: PathBuf,
@@ -97,6 +160,16 @@ pub struct AttemptEvidence {
 pub struct MilestoneObservation {
     pub sim_tick: u64,
     pub tape_frame: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary_index: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stable_ticks: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definition_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub program_digest: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -117,6 +190,23 @@ pub struct SearchRunSummary {
     pub rng_seed: u64,
     pub champion_id: String,
     pub champion_candidate: PathBuf,
+    pub champion_tape: PathBuf,
+    pub score: crate::search::LexicographicScore,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnchoredSearchRunSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub objective: AnchoredObjectiveIdentity,
+    pub generations: u32,
+    pub population_size: usize,
+    pub repetitions: u32,
+    pub rng_seed: u64,
+    pub champion_id: String,
+    pub champion_candidate: PathBuf,
+    pub champion_suffix_tape: PathBuf,
     pub champion_tape: PathBuf,
     pub score: crate::search::LexicographicScore,
     pub output_root: PathBuf,
@@ -185,12 +275,205 @@ pub struct BootGolfSummary {
     pub output_root: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+struct AuthoredDefinitionExpectation {
+    phase: String,
+    stable_ticks: u16,
+    digest: String,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedAnchoredObjective {
+    identity: AnchoredObjectiveIdentity,
+    prefix: InputTape,
+    program_bytes: Vec<u8>,
+    source: AuthoredDefinitionExpectation,
+    goal: AuthoredDefinitionExpectation,
+    runtime_program: PathBuf,
+}
+
+/// Resolve and validate all immutable inputs, returning the content identity
+/// that binds a population and its results to this exact objective.
+pub fn anchored_objective_identity(
+    config: &AnchoredObjectiveConfig,
+) -> Result<AnchoredObjectiveIdentity, EvaluateError> {
+    Ok(prepare_anchored_objective(config, PathBuf::new())?.identity)
+}
+
+fn prepare_anchored_objective(
+    config: &AnchoredObjectiveConfig,
+    runtime_program: PathBuf,
+) -> Result<PreparedAnchoredObjective, EvaluateError> {
+    if config.source_milestone.is_empty()
+        || config.goal_milestone.is_empty()
+        || config.source_milestone == config.goal_milestone
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored source and goal milestone names must be nonempty and distinct".into(),
+        ));
+    }
+    validate_lower_hex(
+        &config.source_boundary_fingerprint,
+        32,
+        "source boundary fingerprint",
+    )?;
+    let prefix_bytes = fs::read(&config.prefix_tape).map_err(|error| {
+        EvaluateError::InvalidConfig(format!(
+            "cannot read anchored prefix {}: {error}",
+            config.prefix_tape.display()
+        ))
+    })?;
+    let prefix = InputTape::decode(&prefix_bytes)?.tape;
+    if prefix.frames.is_empty() {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored prefix tape must contain at least one frame".into(),
+        ));
+    }
+    // A one-segment chain applies the same absolute/non-reactive validation as
+    // the later prefix+suffix composition.
+    concatenate(vec![ChainSegment::all(prefix.clone())])
+        .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))?;
+
+    let program_bytes = fs::read(&config.milestone_program).map_err(|error| {
+        EvaluateError::InvalidConfig(format!(
+            "cannot read authored DMSP {}: {error}",
+            config.milestone_program.display()
+        ))
+    })?;
+    let decoded = crate::milestone_dsl::decode(&program_bytes)
+        .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))?;
+    let definition = |name: &str| -> Result<AuthoredDefinitionExpectation, EvaluateError> {
+        let index = decoded
+            .program
+            .definitions
+            .iter()
+            .position(|definition| definition.name == name)
+            .ok_or_else(|| {
+                EvaluateError::InvalidConfig(format!(
+                    "authored DMSP does not define milestone {name:?}"
+                ))
+            })?;
+        let ast = &decoded.program.definitions[index];
+        let identity = &decoded.definitions[index];
+        Ok(AuthoredDefinitionExpectation {
+            phase: match ast.phase {
+                crate::milestone_dsl::EvaluationPhase::PreInput => "pre_input",
+                crate::milestone_dsl::EvaluationPhase::PostSim => "post_sim",
+            }
+            .into(),
+            stable_ticks: ast.stable_ticks,
+            digest: hex_bytes(&identity.sha256),
+        })
+    };
+    let source = definition(&config.source_milestone)?;
+    let goal = definition(&config.goal_milestone)?;
+    let prefix_frames = prefix.frames.len() as u64;
+    let source_tape_frame = prefix_frames - 1;
+    let source_boundary_index = prefix_frames;
+    let prefix_sha256 = hex_bytes(&Sha256::digest(&prefix_bytes));
+    let milestone_program_sha256 = hex_bytes(&decoded.program_sha256);
+    let game_sha256 = sha256_file(&config.game, "game executable")?;
+    let dvd_sha256 = sha256_file(&config.dvd, "DVD image")?;
+    let digest_payload = serde_json::to_vec(&serde_json::json!({
+        "schema": "dusklight-anchored-search-objective/v2",
+        "segment": ANCHORED_PROFILE,
+        "prefix_sha256": prefix_sha256,
+        "prefix_frames": prefix_frames,
+        "milestone_program_sha256": milestone_program_sha256,
+        "game_sha256": game_sha256,
+        "dvd_sha256": dvd_sha256,
+        "source_milestone": config.source_milestone,
+        "source_definition_sha256": source.digest,
+        "source_boundary_fingerprint": config.source_boundary_fingerprint,
+        "source_tape_frame": source_tape_frame,
+        "source_boundary_index": source_boundary_index,
+        "goal_milestone": config.goal_milestone,
+        "goal_definition_sha256": goal.digest,
+    }))?;
+    let identity = AnchoredObjectiveIdentity {
+        schema: "dusklight-anchored-search-objective/v2".into(),
+        digest: hex_bytes(
+            &Sha256::new()
+                .chain_update(b"dusklight.anchored-search-objective/v2\0")
+                .chain_update(digest_payload)
+                .finalize(),
+        ),
+        prefix_sha256,
+        prefix_frames,
+        milestone_program_sha256,
+        game_sha256,
+        dvd_sha256,
+        source_milestone: config.source_milestone.clone(),
+        source_definition_sha256: source.digest.clone(),
+        source_boundary_fingerprint: config.source_boundary_fingerprint.clone(),
+        source_tape_frame,
+        source_boundary_index,
+        goal_milestone: config.goal_milestone.clone(),
+        goal_definition_sha256: goal.digest.clone(),
+    };
+    Ok(PreparedAnchoredObjective {
+        identity,
+        prefix,
+        program_bytes,
+        source,
+        goal,
+        runtime_program,
+    })
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn sha256_file(path: &Path, label: &str) -> Result<String, EvaluateError> {
+    let mut file = File::open(path).map_err(|error| {
+        EvaluateError::InvalidConfig(format!(
+            "cannot read anchored {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !file.metadata()?.is_file() {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "anchored {label} is not a regular file: {}",
+            path.display()
+        )));
+    }
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(hex_bytes(&digest.finalize()))
+}
+
+fn validate_lower_hex(value: &str, length: usize, label: &str) -> Result<(), EvaluateError> {
+    if value.len() != length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "{label} must be exactly {length} lowercase hexadecimal characters"
+        )));
+    }
+    Ok(())
+}
+
 pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, EvaluateError> {
     let config = normalize_evaluate_config(config)?;
     validate_evaluate_config(&config)?;
     let population_bytes = fs::read(&config.population_path)?;
     let manifest: PopulationManifest = serde_json::from_slice(&population_bytes)?;
     validate_manifest(&manifest, &config.population_path)?;
+    if manifest.segment == ANCHORED_PROFILE {
+        return Err(EvaluateError::InvalidConfig(
+            "link_control_to_tunnel_crawl_start requires evaluate_anchored_population".into(),
+        ));
+    }
     let population_root = canonical_parent(&config.population_path)?;
     let trials = build_trials(
         &manifest,
@@ -237,7 +520,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
                     let Some(trial) = trials.get(index) else {
                         break;
                     };
-                    let mut evidence = run_trial(config, segment, trial, &cancelled);
+                    let mut evidence = run_trial(config, segment, trial, &cancelled, None);
                     if let Err(error) = write_json(&trial.root.join("attempt.json"), &evidence) {
                         evidence.infrastructure_error =
                             Some(format!("could not persist attempt evidence: {error}"));
@@ -275,6 +558,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
         completed_attempts: attempts.len(),
         infrastructure_faults: faults,
         attempts,
+        objective: None,
     };
     write_json(&config.output_root.join("evaluation.json"), &report)?;
     if faults != 0 || report.completed_attempts != report.planned_attempts {
@@ -293,6 +577,214 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     // Ranking also validates the population/result pairing and all counts.
     rank_population(&manifest, &results)?;
     Ok(report)
+}
+
+/// Evaluate a suffix population by prepending the exact immutable prefix and
+/// proving both the source boundary and authored goal from a clean process.
+pub fn evaluate_anchored_population(
+    config: &AnchoredEvaluateConfig,
+) -> Result<(EvaluationReport, AnchoredSearchResults), EvaluateError> {
+    evaluate_anchored_population_internal(config, None)
+}
+
+fn evaluate_anchored_population_internal(
+    config: &AnchoredEvaluateConfig,
+    prepared: Option<&PreparedAnchoredObjective>,
+) -> Result<(EvaluationReport, AnchoredSearchResults), EvaluateError> {
+    let base = normalize_evaluate_config(&config.evaluation)?;
+    validate_evaluate_config(&base)?;
+    validate_anchored_game_args(&base.game_args_prefix)?;
+    validate_anchored_execution_paths(&config.objective, &base.game, &base.dvd)?;
+    let manifest: PopulationManifest = serde_json::from_slice(&fs::read(&base.population_path)?)?;
+    validate_manifest(&manifest, &base.population_path)?;
+    if manifest.segment != ANCHORED_PROFILE {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "anchored evaluation requires segment {}, got {}",
+            ANCHORED_PROFILE.as_str(),
+            manifest.segment.as_str()
+        )));
+    }
+    let runtime_program = base.output_root.join("objective.dmsp");
+    let objective = if let Some(prepared) = prepared {
+        let mut objective = prepared.clone();
+        objective.runtime_program = runtime_program.clone();
+        objective
+    } else {
+        prepare_anchored_objective(&config.objective, runtime_program.clone())?
+    };
+    let population_root = canonical_parent(&base.population_path)?;
+    bind_population_objective(&population_root, &objective.identity)?;
+    fs::create_dir_all(&base.output_root)?;
+    fs::write(&runtime_program, &objective.program_bytes)?;
+    let trials = build_anchored_trials(
+        &manifest,
+        &population_root,
+        &base.output_root,
+        base.repetitions,
+        &objective,
+    )?;
+    write_json(
+        &base.output_root.join("plan.json"),
+        &serde_json::json!({
+            "schema": "dusklight-search-evaluation-plan/v3",
+            "segment": manifest.segment,
+            "objective": objective.identity,
+            "population": base.population_path,
+            "game": base.game,
+            "dvd": base.dvd,
+            "workers": base.workers,
+            "repetitions": base.repetitions,
+            "timeout_millis": base.timeout.as_millis(),
+            "attempts": trials.len(),
+            "launch_mode": "clean_boot_prefix_plus_suffix",
+        }),
+    )?;
+
+    let trials = Arc::new(trials);
+    let objective = Arc::new(objective);
+    let next = Arc::new(AtomicUsize::new(0));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let outcomes = Arc::new(Mutex::new(Vec::with_capacity(trials.len())));
+    let worker_count = base.workers.min(trials.len()).max(1);
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let trials = Arc::clone(&trials);
+            let objective = Arc::clone(&objective);
+            let next = Arc::clone(&next);
+            let cancelled = Arc::clone(&cancelled);
+            let outcomes = Arc::clone(&outcomes);
+            let base = &base;
+            scope.spawn(move || {
+                loop {
+                    if cancelled.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let index = next.fetch_add(1, Ordering::AcqRel);
+                    let Some(trial) = trials.get(index) else {
+                        break;
+                    };
+                    let mut evidence =
+                        run_trial(base, ANCHORED_PROFILE, trial, &cancelled, Some(&objective));
+                    if let Err(error) = write_json(&trial.root.join("attempt.json"), &evidence) {
+                        evidence.infrastructure_error =
+                            Some(format!("could not persist attempt evidence: {error}"));
+                    }
+                    if evidence.infrastructure_error.is_some() {
+                        cancelled.store(true, Ordering::Release);
+                    }
+                    outcomes.lock().unwrap().push(evidence);
+                }
+            });
+        }
+    });
+    let mut attempts = Arc::try_unwrap(outcomes)
+        .expect("evaluation workers still own outcomes")
+        .into_inner()
+        .unwrap();
+    attempts.sort_by(|left, right| {
+        left.candidate_id
+            .cmp(&right.candidate_id)
+            .then(left.attempt.cmp(&right.attempt))
+    });
+    let faults = attempts
+        .iter()
+        .filter(|attempt| attempt.infrastructure_error.is_some())
+        .count();
+    let report = EvaluationReport {
+        schema: EVALUATION_SCHEMA,
+        population: base.population_path.clone(),
+        results: base.results_path.clone(),
+        segment: manifest.segment,
+        workers: base.workers,
+        repetitions: base.repetitions,
+        planned_attempts: trials.len(),
+        completed_attempts: attempts.len(),
+        infrastructure_faults: faults,
+        attempts,
+        objective: Some(objective.identity.clone()),
+    };
+    write_json(&base.output_root.join("evaluation.json"), &report)?;
+    if faults != 0 || report.completed_attempts != report.planned_attempts {
+        return Err(EvaluateError::Infrastructure {
+            faults,
+            completed: report.completed_attempts,
+            planned: report.planned_attempts,
+            evidence: base.output_root.join("evaluation.json"),
+        });
+    }
+    let results = aggregate_results(&manifest, &report.attempts)?;
+    rank_population(&manifest, &results)?;
+    let anchored_results = AnchoredSearchResults {
+        schema: ANCHORED_RESULTS_SCHEMA.into(),
+        objective: objective.identity.clone(),
+        results,
+    };
+    write_json(&base.results_path, &anchored_results)?;
+    Ok((report, anchored_results))
+}
+
+fn bind_population_objective(
+    population_root: &Path,
+    identity: &AnchoredObjectiveIdentity,
+) -> Result<(), EvaluateError> {
+    let path = population_root.join("objective.json");
+    let bytes = serde_json::to_vec_pretty(identity)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = population_root.join(format!(".objective.{}.{nonce}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    match fs::hard_link(&temporary, &path) {
+        Ok(()) => {
+            fs::remove_file(&temporary)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(&temporary)?;
+            let existing: AnchoredObjectiveIdentity = serde_json::from_slice(&fs::read(&path)?)?;
+            if existing != *identity {
+                return Err(EvaluateError::InvalidManifest(format!(
+                    "population objective binding {} does not match requested objective {}",
+                    existing.digest, identity.digest
+                )));
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_anchored_game_args(arguments: &[String]) -> Result<(), EvaluateError> {
+    if !arguments.is_empty() {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored evaluation rejects game_args_prefix so CVars, timing, stage, and proof inputs cannot diverge from its execution contract".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_anchored_execution_paths(
+    objective: &AnchoredObjectiveConfig,
+    game: &Path,
+    dvd: &Path,
+) -> Result<(), EvaluateError> {
+    if fs::canonicalize(&objective.game)? != fs::canonicalize(game)?
+        || fs::canonicalize(&objective.dvd)? != fs::canonicalize(dvd)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored objective game/DVD paths do not match the launched execution paths".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, EvaluateError> {
@@ -397,6 +889,142 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
         output_root: config.output_root.clone(),
     };
     write_json(&config.output_root.join("run.summary.json"), &summary)?;
+    Ok(summary)
+}
+
+pub fn run_anchored_search(
+    config: &AnchoredSearchRunConfig,
+) -> Result<AnchoredSearchRunSummary, EvaluateError> {
+    let search = &config.search;
+    if search.segment != ANCHORED_PROFILE {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "anchored search requires segment {}",
+            ANCHORED_PROFILE.as_str()
+        )));
+    }
+    if search.generations == 0
+        || search.population_size == 0
+        || search.elite_count == 0
+        || search.elite_count > search.population_size
+        || !search.game.is_file()
+        || !search.dvd.is_file()
+        || !search.working_directory.is_dir()
+        || directory_is_nonempty(&search.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "valid execution paths, population limits, and a new/empty output root are required"
+                .into(),
+        ));
+    }
+    let seed = search.seed_candidate.clone().ok_or_else(|| {
+        EvaluateError::InvalidConfig(
+            "anchored search requires a losslessly imported observed suffix candidate; it has no synthetic baseline"
+                .into(),
+        )
+    })?;
+    if seed.segment != ANCHORED_PROFILE {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored seed candidate has the wrong segment profile".into(),
+        ));
+    }
+    seed.validate()?;
+    validate_anchored_game_args(&search.game_args_prefix)?;
+    validate_anchored_execution_paths(&config.objective, &search.game, &search.dvd)?;
+    let prepared = prepare_anchored_objective(&config.objective, PathBuf::new())?;
+    fs::create_dir_all(&search.output_root)?;
+    let mut population_root = search.output_root.join("g000");
+    let mut manifest = write_seed_population(
+        &population_root,
+        seed,
+        search.population_size,
+        search.rng_seed,
+    )?;
+    let mut final_results = None;
+    for generation in 0..search.generations {
+        let manifest_path = population_root.join("manifest.json");
+        let results_path = population_root.join("results.json");
+        let (_, results) = evaluate_anchored_population_internal(
+            &AnchoredEvaluateConfig {
+                evaluation: EvaluateConfig {
+                    population_path: manifest_path.clone(),
+                    game: search.game.clone(),
+                    dvd: search.dvd.clone(),
+                    output_root: population_root.join("evaluations"),
+                    results_path: results_path.clone(),
+                    working_directory: search.working_directory.clone(),
+                    game_args_prefix: search.game_args_prefix.clone(),
+                    workers: search.workers,
+                    repetitions: search.repetitions,
+                    timeout: search.timeout,
+                },
+                objective: config.objective.clone(),
+            },
+            Some(&prepared),
+        )?;
+        let leaderboard = rank_population(&manifest, &results.results)?;
+        write_json(&population_root.join("leaderboard.json"), &leaderboard)?;
+        final_results = Some(results);
+        if generation + 1 < search.generations {
+            let next_root = search.output_root.join(format!("g{:03}", generation + 1));
+            manifest = evolve_population(
+                &manifest_path,
+                &final_results.as_ref().unwrap().results,
+                &next_root,
+                EvolutionConfig {
+                    population_size: search.population_size,
+                    elite_count: search.elite_count,
+                    rng_seed: search.rng_seed + u64::from(generation) + 1,
+                },
+            )?;
+            population_root = next_root;
+        }
+    }
+    let results = final_results.expect("nonzero generations");
+    if results.objective != prepared.identity {
+        return Err(EvaluateError::InvalidResult(
+            "final anchored results changed objective identity".into(),
+        ));
+    }
+    let leaderboard = rank_population(&manifest, &results.results)?;
+    let champion = leaderboard.first().ok_or(EvaluateError::EmptyLeaderboard)?;
+    let member = manifest
+        .members
+        .iter()
+        .find(|member| member.candidate_id == champion.candidate_id)
+        .ok_or(EvaluateError::EmptyLeaderboard)?;
+    let source = population_root.join(&member.tape_file);
+    let suffix = InputTape::decode(&fs::read(&source)?)?.tape;
+    let full = concatenate(vec![
+        ChainSegment::all(prepared.prefix),
+        ChainSegment::all(suffix),
+    ])
+    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?
+    .tape;
+    let champion_suffix_tape = search.output_root.join("champion.suffix.tape");
+    fs::copy(source, &champion_suffix_tape)?;
+    let champion_tape = search.output_root.join("champion.tape");
+    fs::write(&champion_tape, full.encode()?)?;
+    let champion_candidate = search.output_root.join("champion.candidate.json");
+    fs::copy(
+        population_root.join(&member.candidate_file),
+        &champion_candidate,
+    )?;
+    let summary = AnchoredSearchRunSummary {
+        schema: ANCHORED_RUN_SCHEMA,
+        segment: search.segment,
+        objective: results.objective,
+        generations: search.generations,
+        population_size: search.population_size,
+        repetitions: search.repetitions,
+        rng_seed: search.rng_seed,
+        champion_id: champion.candidate_id.clone(),
+        champion_candidate,
+        champion_suffix_tape,
+        champion_tape,
+        score: champion.score,
+        output_root: search.output_root.clone(),
+    };
+    write_json(&search.output_root.join("run.summary.json"), &summary)?;
     Ok(summary)
 }
 
@@ -1030,6 +1658,7 @@ struct Trial {
     candidate_id: String,
     attempt: u32,
     tape: PathBuf,
+    suffix_tape: Option<PathBuf>,
     root: PathBuf,
     state: PathBuf,
     milestones: PathBuf,
@@ -1073,6 +1702,86 @@ fn build_trials(
                 candidate_id: member.candidate_id.clone(),
                 attempt,
                 tape: tape.clone(),
+                suffix_tape: None,
+                state: root.join("state"),
+                milestones: root.join("milestones.json"),
+                stdout: root.join("stdout.txt"),
+                stderr: root.join("stderr.txt"),
+                root,
+            });
+        }
+    }
+    Ok(trials)
+}
+
+fn build_anchored_trials(
+    manifest: &PopulationManifest,
+    population_root: &Path,
+    output_root: &Path,
+    repetitions: u32,
+    objective: &PreparedAnchoredObjective,
+) -> Result<Vec<Trial>, EvaluateError> {
+    let mut trials = Vec::with_capacity(manifest.members.len() * repetitions as usize);
+    for member in &manifest.members {
+        if member.candidate_id.is_empty()
+            || !member
+                .candidate_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate ID {:?} is unsafe",
+                member.candidate_id
+            )));
+        }
+        let suffix_path = fs::canonicalize(population_root.join(&member.tape_file))?;
+        if !suffix_path.starts_with(population_root) {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} tape escapes the population directory",
+                member.candidate_id
+            )));
+        }
+        let candidate_path = fs::canonicalize(population_root.join(&member.candidate_file))?;
+        if !candidate_path.starts_with(population_root) {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} source escapes the population directory",
+                member.candidate_id
+            )));
+        }
+        let candidate: Candidate = serde_json::from_slice(&fs::read(&candidate_path)?)?;
+        candidate.validate()?;
+        let suffix_bytes = fs::read(&suffix_path)?;
+        let suffix = InputTape::decode(&suffix_bytes)?.tape;
+        let compiled = candidate.compile()?;
+        if candidate.segment != manifest.segment
+            || candidate.id()? != member.candidate_id
+            || candidate.ancestry != member.ancestry
+            || compiled.frames.len() as u64 != member.frame_count
+            || compiled.encode()? != suffix_bytes
+        {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} ID, ancestry, frame count, source, and tape are not one content identity",
+                member.candidate_id
+            )));
+        }
+        let chained = concatenate(vec![
+            ChainSegment::all(objective.prefix.clone()),
+            ChainSegment::all(suffix),
+        ])
+        .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?;
+        for attempt in 1..=repetitions {
+            let root = output_root
+                .join("candidates")
+                .join(&member.candidate_id)
+                .join(format!("attempt-{attempt:03}"));
+            fs::create_dir_all(&root)?;
+            let full_tape = root.join("full.tape");
+            fs::write(&full_tape, chained.tape.encode()?)?;
+            trials.push(Trial {
+                candidate_id: member.candidate_id.clone(),
+                attempt,
+                tape: full_tape,
+                suffix_tape: Some(suffix_path.clone()),
                 state: root.join("state"),
                 milestones: root.join("milestones.json"),
                 stdout: root.join("stdout.txt"),
@@ -1089,6 +1798,7 @@ fn run_trial(
     segment: SegmentProfile,
     trial: &Trial,
     global_cancel: &AtomicBool,
+    anchored: Option<&PreparedAnchoredObjective>,
 ) -> AttemptEvidence {
     let started = Instant::now();
     let mut evidence = AttemptEvidence {
@@ -1097,6 +1807,7 @@ fn run_trial(
         attempt: trial.attempt,
         segment,
         tape: trial.tape.clone(),
+        suffix_tape: trial.suffix_tape.clone(),
         artifact_root: trial.root.clone(),
         state_root: trial.state.clone(),
         milestone_result: trial.milestones.clone(),
@@ -1124,18 +1835,34 @@ fn run_trial(
             .args(&config.game_args_prefix)
             .arg("--dvd")
             .arg(&config.dvd);
-        if segment == SegmentProfile::Fsp103ToFsp104 {
-            command.arg("--stage").arg("F_SP103,1,1,3");
-        }
-        let milestone_list = match segment {
-            SegmentProfile::BootToFsp103 => "gameplay-ready-f-sp103",
-            SegmentProfile::Fsp103ToFsp104 => {
-                "gameplay-ready-f-sp103,exit-f-sp103-to-f-sp104,entered-f-sp104"
+        let (milestone_list, goal) = if let Some(objective) = anchored {
+            command
+                .arg("--milestone-program")
+                .arg(&objective.runtime_program);
+            (
+                format!(
+                    "{},{}",
+                    objective.identity.source_milestone, objective.identity.goal_milestone
+                ),
+                objective.identity.goal_milestone.clone(),
+            )
+        } else {
+            if segment == SegmentProfile::Fsp103ToFsp104 {
+                command.arg("--stage").arg("F_SP103,1,1,3");
             }
-        };
-        let goal = match segment {
-            SegmentProfile::BootToFsp103 => "gameplay-ready-f-sp103",
-            SegmentProfile::Fsp103ToFsp104 => "entered-f-sp104",
+            match segment {
+                SegmentProfile::BootToFsp103 => (
+                    "gameplay-ready-f-sp103".into(),
+                    "gameplay-ready-f-sp103".into(),
+                ),
+                SegmentProfile::Fsp103ToFsp104 => (
+                    "gameplay-ready-f-sp103,exit-f-sp103-to-f-sp104,entered-f-sp104".into(),
+                    "entered-f-sp104".into(),
+                ),
+                SegmentProfile::LinkControlToTunnelCrawlStart => unreachable!(
+                    "anchored profiles are evaluated through evaluate_anchored_population"
+                ),
+            }
         };
         command
             .arg("--input-tape")
@@ -1145,9 +1872,9 @@ fn run_trial(
             .arg("--automation-data-root")
             .arg(&trial.state)
             .arg("--milestones")
-            .arg(milestone_list)
+            .arg(&milestone_list)
             .arg("--milestone-goal")
-            .arg(goal)
+            .arg(&goal)
             .arg("--milestone-result")
             .arg(&trial.milestones)
             .arg("--cvar")
@@ -1181,12 +1908,21 @@ fn run_trial(
             match child.try_wait()? {
                 Some(status) => {
                     evidence.exit_code = status.code();
+                    if anchored.is_some() && !status.success() {
+                        return Err(EvaluateError::NativeResult(format!(
+                            "worker exited unsuccessfully with status {status}"
+                        )));
+                    }
                     break;
                 }
                 None => thread::sleep(Duration::from_millis(10)),
             }
         }
-        parse_native_milestones(&trial.milestones, segment)
+        if let Some(objective) = anchored {
+            parse_anchored_milestones(&trial.milestones, objective)
+        } else {
+            parse_native_milestones(&trial.milestones, segment)
+        }
     };
     match run() {
         Ok(score) => {
@@ -1218,6 +1954,7 @@ struct NativeMilestoneResult {
     schema: NativeSchema,
     goal: Option<String>,
     goal_reached: bool,
+    program_digest: Option<String>,
     milestones: Vec<NativeMilestone>,
 }
 
@@ -1233,12 +1970,205 @@ struct NativeMilestone {
     hit: bool,
     sim_tick: Option<u64>,
     tape_frame: Option<u64>,
+    phase: Option<String>,
+    stable_ticks: Option<u16>,
+    definition_digest: Option<String>,
+    program_digest: Option<String>,
+    boundary_index: Option<u64>,
     evidence: Option<NativeEvidence>,
 }
 
 #[derive(Deserialize)]
 struct NativeEvidence {
     boundary_fingerprint: BoundaryFingerprint,
+    stage: Option<NativeStageEvidence>,
+    player: Option<NativePlayerEvidence>,
+}
+
+#[derive(Deserialize)]
+struct NativeStageEvidence {
+    name: String,
+    room: i32,
+    point: i32,
+}
+
+#[derive(Deserialize)]
+struct NativePlayerEvidence {
+    present: bool,
+    is_link: bool,
+    procedure_id: u16,
+}
+
+fn parse_anchored_milestones(
+    path: &Path,
+    objective: &PreparedAnchoredObjective,
+) -> Result<TrialScore, EvaluateError> {
+    let native: NativeMilestoneResult =
+        serde_json::from_slice(&fs::read(path).map_err(|error| {
+            EvaluateError::NativeResult(format!(
+                "worker produced no readable milestone result at {}: {error}",
+                path.display()
+            ))
+        })?)?;
+    if native.schema.name != "dusklight.automation.milestones" || native.schema.version != 1 {
+        return Err(EvaluateError::NativeResult(
+            "unsupported native milestone schema".into(),
+        ));
+    }
+    if native.program_digest.as_deref()
+        != Some(objective.identity.milestone_program_sha256.as_str())
+    {
+        return Err(EvaluateError::NativeResult(
+            "native result milestone program digest does not match the anchored objective".into(),
+        ));
+    }
+    if native.goal.as_deref() != Some(objective.identity.goal_milestone.as_str()) {
+        return Err(EvaluateError::NativeResult(format!(
+            "native result goal {:?} does not match anchored goal {}",
+            native.goal, objective.identity.goal_milestone
+        )));
+    }
+    let mut milestones = BTreeMap::new();
+    for milestone in native.milestones {
+        let id = milestone.id.clone();
+        if milestones.insert(id.clone(), milestone).is_some() {
+            return Err(EvaluateError::NativeResult(format!(
+                "duplicate native milestone {id}"
+            )));
+        }
+    }
+    let requested = [
+        objective.identity.source_milestone.as_str(),
+        objective.identity.goal_milestone.as_str(),
+    ];
+    if milestones.len() != requested.len()
+        || requested.iter().any(|id| !milestones.contains_key(*id))
+    {
+        return Err(EvaluateError::NativeResult(
+            "native result does not contain the exact anchored milestone set".into(),
+        ));
+    }
+    let expected = |id: &str| {
+        if id == objective.identity.source_milestone {
+            &objective.source
+        } else {
+            &objective.goal
+        }
+    };
+    let mut observations = BTreeMap::new();
+    let mut fingerprints = BTreeMap::new();
+    for (id, milestone) in &milestones {
+        let definition = expected(id);
+        if milestone.phase.as_deref() != Some(definition.phase.as_str())
+            || milestone.stable_ticks != Some(definition.stable_ticks)
+            || milestone.definition_digest.as_deref() != Some(definition.digest.as_str())
+            || milestone.program_digest.as_deref()
+                != Some(objective.identity.milestone_program_sha256.as_str())
+        {
+            return Err(EvaluateError::NativeResult(format!(
+                "milestone {id} authored proof metadata does not match the anchored objective"
+            )));
+        }
+        match (
+            milestone.hit,
+            milestone.boundary_index,
+            milestone.sim_tick,
+            milestone.tape_frame,
+            &milestone.evidence,
+        ) {
+            (true, Some(boundary_index), Some(sim_tick), Some(tape_frame), Some(evidence)) => {
+                if boundary_index != tape_frame.saturating_add(1)
+                    || sim_tick != tape_frame
+                {
+                    return Err(EvaluateError::NativeResult(format!(
+                        "milestone {id} tick, tape frame, and boundary index are not one absolute fixed-step boundary"
+                    )));
+                }
+                validate_fingerprint(&evidence.boundary_fingerprint)?;
+                observations.insert(
+                    id.clone(),
+                    MilestoneObservation {
+                        sim_tick,
+                        tape_frame,
+                        boundary_index: Some(boundary_index),
+                        phase: milestone.phase.clone(),
+                        stable_ticks: milestone.stable_ticks,
+                        definition_digest: milestone.definition_digest.clone(),
+                        program_digest: milestone.program_digest.clone(),
+                    },
+                );
+                fingerprints.insert(id.clone(), evidence.boundary_fingerprint.clone());
+            }
+            (false, None, None, None, None) => {}
+            _ => {
+                return Err(EvaluateError::NativeResult(format!(
+                    "milestone {id} has inconsistent authored hit evidence"
+                )));
+            }
+        }
+    }
+    let source = &milestones[&objective.identity.source_milestone];
+    if !source.hit {
+        return Err(EvaluateError::NativeResult(
+            "immutable prefix did not reproduce the anchored source milestone".into(),
+        ));
+    }
+    if source.tape_frame != Some(objective.identity.source_tape_frame)
+        || source.boundary_index != Some(objective.identity.source_boundary_index)
+        || fingerprints[&objective.identity.source_milestone].digest
+            != objective.identity.source_boundary_fingerprint
+    {
+        return Err(EvaluateError::NativeResult(
+            "immutable prefix source frame, boundary index, or fingerprint changed".into(),
+        ));
+    }
+    let goal = &milestones[&objective.identity.goal_milestone];
+    if native.goal_reached != goal.hit {
+        return Err(EvaluateError::NativeResult(
+            "goal_reached disagrees with the authored anchored goal".into(),
+        ));
+    }
+    let score_tick = if goal.hit {
+        let goal_frame = goal.tape_frame.expect("hit tuple checked above");
+        if goal_frame < objective.identity.prefix_frames {
+            return Err(EvaluateError::NativeResult(
+                "anchored goal fired inside the immutable prefix".into(),
+            ));
+        }
+        let evidence = goal.evidence.as_ref().expect("hit tuple checked above");
+        let stage = evidence.stage.as_ref().ok_or_else(|| {
+            EvaluateError::NativeResult("anchored goal evidence has no stage object".into())
+        })?;
+        let player = evidence.player.as_ref().ok_or_else(|| {
+            EvaluateError::NativeResult("anchored goal evidence has no player object".into())
+        })?;
+        if stage.name != "F_SP104"
+            || stage.room != 1
+            || stage.point != 0
+            || !player.present
+            || !player.is_link
+            || player.procedure_id != 53
+        {
+            return Err(EvaluateError::NativeResult(
+                "anchored goal evidence is not F_SP104 room 1 spawn 0 crawl_start (53)".into(),
+            ));
+        }
+        Some(goal_frame - objective.identity.source_boundary_index)
+    } else {
+        Some(0)
+    };
+    Ok(TrialScore {
+        depth: if goal.hit { 2 } else { 1 },
+        deepest: if goal.hit {
+            objective.identity.goal_milestone.clone()
+        } else {
+            objective.identity.source_milestone.clone()
+        },
+        score_tick,
+        goal_reached: goal.hit,
+        milestone_observations: observations,
+        boundary_fingerprints: fingerprints,
+    })
 }
 
 fn parse_native_milestones(
@@ -1260,6 +2190,9 @@ fn parse_native_milestones(
     let expected_goal = match segment {
         SegmentProfile::BootToFsp103 => "gameplay-ready-f-sp103",
         SegmentProfile::Fsp103ToFsp104 => "entered-f-sp104",
+        SegmentProfile::LinkControlToTunnelCrawlStart => {
+            unreachable!("anchored profiles are evaluated through evaluate_anchored_population")
+        }
     };
     if native.goal.as_deref() != Some(expected_goal) {
         return Err(EvaluateError::NativeResult(format!(
@@ -1283,6 +2216,9 @@ fn parse_native_milestones(
             "exit-f-sp103-to-f-sp104",
             "entered-f-sp104",
         ],
+        SegmentProfile::LinkControlToTunnelCrawlStart => {
+            unreachable!("anchored profiles are evaluated through evaluate_anchored_population")
+        }
     };
     if milestones.len() != requested.len()
         || requested.iter().any(|id| !milestones.contains_key(*id))
@@ -1307,6 +2243,11 @@ fn parse_native_milestones(
                     MilestoneObservation {
                         sim_tick,
                         tape_frame,
+                        boundary_index: None,
+                        phase: None,
+                        stable_ticks: None,
+                        definition_digest: None,
+                        program_digest: None,
                     },
                 );
                 fingerprints.insert(id.clone(), evidence.boundary_fingerprint.clone());
@@ -1348,6 +2289,9 @@ fn parse_native_milestones(
             (2, "gameplay-ready-f-sp103", tick("gameplay-ready-f-sp103"))
         }
         SegmentProfile::Fsp103ToFsp104 => (0, "none", None),
+        SegmentProfile::LinkControlToTunnelCrawlStart => {
+            unreachable!("anchored profiles are evaluated through evaluate_anchored_population")
+        }
     };
     if segment == SegmentProfile::Fsp103ToFsp104
         && hit("exit-f-sp103-to-f-sp104")
@@ -1640,6 +2584,7 @@ impl From<crate::tape::TapeError> for EvaluateError {
 #[cfg(test)]
 mod minimize_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
         let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
@@ -1669,5 +2614,170 @@ mod minimize_tests {
         assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
+    }
+
+    #[test]
+    fn anchored_parser_requires_exact_program_source_and_crawl_evidence() {
+        assert!(validate_anchored_game_args(&["--stage".into(), "F_SP103,1,1,3".into()]).is_err());
+        assert!(validate_anchored_game_args(&["--stage=F_SP103,1,1,3".into()]).is_err());
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("huntctl-anchored-proof-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let prefix_path = root.join("prefix.tape");
+        let prefix = InputTape {
+            tick_rate_numerator: 30,
+            tick_rate_denominator: 1,
+            frames: vec![crate::tape::InputFrame::default(); 2],
+        };
+        fs::write(&prefix_path, prefix.encode().unwrap()).unwrap();
+        let program = crate::milestone_dsl::compile_source(
+            r#"milestones 1.0
+milestone link_control {
+  phase post_sim
+  when stage.name == "F_SP103"
+}
+milestone tunnel_crawl_start {
+  phase post_sim
+  when stage.name == "F_SP104" && stage.room == 1 && stage.spawn == 0 && player.procedure == "crawl_start"
+}
+"#,
+        )
+        .unwrap();
+        let program_path = root.join("objective.dmsp");
+        fs::write(&program_path, &program.bytes).unwrap();
+        let game_path = root.join("game.exe");
+        let dvd_path = root.join("disc.iso");
+        fs::write(&game_path, b"game-build").unwrap();
+        fs::write(&dvd_path, b"disc-build").unwrap();
+        let prepared = prepare_anchored_objective(
+            &AnchoredObjectiveConfig {
+                prefix_tape: prefix_path,
+                milestone_program: program_path,
+                game: game_path,
+                dvd: dvd_path,
+                source_milestone: "link_control".into(),
+                source_boundary_fingerprint: "a".repeat(32),
+                goal_milestone: "tunnel_crawl_start".into(),
+            },
+            root.join("runtime.dmsp"),
+        )
+        .unwrap();
+        let fingerprint = |digest: String| {
+            serde_json::json!({
+                "schema": "dusklight.milestone-boundary/v1",
+                "algorithm": "xxh3-128",
+                "canonical_encoding": "little-endian-fixed-v1",
+                "digest": digest,
+            })
+        };
+        let authored = |id: &str,
+                        definition: &AuthoredDefinitionExpectation,
+                        sim_tick: u64,
+                        tape_frame: u64,
+                        boundary_index: u64,
+                        digest: String,
+                        goal: bool| {
+            serde_json::json!({
+                "id": id,
+                "hit": true,
+                "phase": definition.phase,
+                "stable_ticks": definition.stable_ticks,
+                "definition_digest": definition.digest,
+                "program_digest": prepared.identity.milestone_program_sha256,
+                "boundary_index": boundary_index,
+                "sim_tick": sim_tick,
+                "tape_frame": tape_frame,
+                "evidence": {
+                    "stage": {
+                        "name": if goal { "F_SP104" } else { "F_SP103" },
+                        "room": 1,
+                        "point": if goal { 0 } else { 1 },
+                    },
+                    "player": {
+                        "present": true,
+                        "is_link": true,
+                        "procedure_id": if goal { 53 } else { 3 },
+                    },
+                    "boundary_fingerprint": fingerprint(digest),
+                }
+            })
+        };
+        let result = serde_json::json!({
+            "schema": {"name": "dusklight.automation.milestones", "version": 1},
+            "goal": "tunnel_crawl_start",
+            "goal_reached": true,
+            "program_digest": prepared.identity.milestone_program_sha256,
+            "milestones": [
+                authored("link_control", &prepared.source, 1, 1, 2, "a".repeat(32), false),
+                authored("tunnel_crawl_start", &prepared.goal, 2, 2, 3, "b".repeat(32), true),
+            ],
+        });
+        let result_path = root.join("result.json");
+        fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+        let score = parse_anchored_milestones(&result_path, &prepared).unwrap();
+        assert!(score.goal_reached);
+        assert_eq!(score.depth, 2);
+        assert_eq!(score.score_tick, Some(0));
+
+        let suffix_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape");
+        let suffix = InputTape::decode(&fs::read(suffix_path).unwrap())
+            .unwrap()
+            .tape;
+        let candidate = Candidate::from_absolute_tape(ANCHORED_PROFILE, &suffix).unwrap();
+        let population_root = root.join("population");
+        let manifest =
+            write_explicit_population(&population_root, ANCHORED_PROFILE, 0, vec![candidate])
+                .unwrap();
+        let trials = build_anchored_trials(
+            &manifest,
+            &fs::canonicalize(&population_root).unwrap(),
+            &root.join("attempts"),
+            1,
+            &prepared,
+        )
+        .unwrap();
+        let full = InputTape::decode(&fs::read(&trials[0].tape).unwrap())
+            .unwrap()
+            .tape;
+        assert_eq!(full.frames.len(), prefix.frames.len() + suffix.frames.len());
+        assert_eq!(
+            &full.frames[..prefix.frames.len()],
+            prefix.frames.as_slice()
+        );
+        assert_eq!(
+            &full.frames[prefix.frames.len()..],
+            suffix.frames.as_slice()
+        );
+        bind_population_objective(&population_root, &prepared.identity).unwrap();
+        bind_population_objective(&population_root, &prepared.identity).unwrap();
+        let mut different_objective = prepared.identity.clone();
+        different_objective.digest = "d".repeat(64);
+        assert!(bind_population_objective(&population_root, &different_objective).is_err());
+
+        let member_tape = population_root.join(&manifest.members[0].tape_file);
+        let mut tampered = suffix.clone();
+        tampered.frames[0].pads[0].buttons ^= 0x0100;
+        fs::write(&member_tape, tampered.encode().unwrap()).unwrap();
+        assert!(
+            build_anchored_trials(
+                &manifest,
+                &fs::canonicalize(&population_root).unwrap(),
+                &root.join("tampered-attempts"),
+                1,
+                &prepared,
+            )
+            .is_err()
+        );
+
+        let mut wrong = result;
+        wrong["milestones"][0]["evidence"]["boundary_fingerprint"]["digest"] =
+            serde_json::Value::String("c".repeat(32));
+        fs::write(&result_path, serde_json::to_vec_pretty(&wrong).unwrap()).unwrap();
+        assert!(parse_anchored_milestones(&result_path, &prepared).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

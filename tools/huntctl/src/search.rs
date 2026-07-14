@@ -24,6 +24,7 @@ const BUTTON_START: u16 = 0x1000;
 pub enum SegmentProfile {
     BootToFsp103,
     Fsp103ToFsp104,
+    LinkControlToTunnelCrawlStart,
 }
 
 impl SegmentProfile {
@@ -31,6 +32,7 @@ impl SegmentProfile {
         match self {
             Self::BootToFsp103 => "boot_to_fsp103",
             Self::Fsp103ToFsp104 => "fsp103_to_fsp104",
+            Self::LinkControlToTunnelCrawlStart => "link_control_to_tunnel_crawl_start",
         }
     }
 
@@ -38,6 +40,7 @@ impl SegmentProfile {
         match self {
             Self::BootToFsp103 => MilestoneId::Fsp103RouteControl,
             Self::Fsp103ToFsp104 => MilestoneId::Fsp104Loaded,
+            Self::LinkControlToTunnelCrawlStart => MilestoneId::TunnelCrawlStart,
         }
     }
 
@@ -53,6 +56,7 @@ impl std::str::FromStr for SegmentProfile {
         match value {
             "boot_to_fsp103" => Ok(Self::BootToFsp103),
             "fsp103_to_fsp104" => Ok(Self::Fsp103ToFsp104),
+            "link_control_to_tunnel_crawl_start" => Ok(Self::LinkControlToTunnelCrawlStart),
             _ => Err(SearchError::InvalidSegment(value.into())),
         }
     }
@@ -65,6 +69,7 @@ pub enum MilestoneId {
     Fsp103RouteControl,
     Fsp104LoadingTrigger,
     Fsp104Loaded,
+    TunnelCrawlStart,
 }
 
 impl MilestoneId {
@@ -74,6 +79,7 @@ impl MilestoneId {
             Self::Fsp103RouteControl => 2,
             Self::Fsp104LoadingTrigger => 3,
             Self::Fsp104Loaded => 4,
+            Self::TunnelCrawlStart => 5,
         }
     }
 }
@@ -120,6 +126,64 @@ pub enum MacroAction {
         hold_frames: u32,
         neutral_frames: u32,
     },
+    /// Lossless run-length encoded port-zero state used to import an observed
+    /// absolute movement tape without quantizing its analog samples.
+    PadRun {
+        pad: SearchPadState,
+        frames: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchPadState {
+    pub buttons: u16,
+    pub stick_x: i8,
+    pub stick_y: i8,
+    pub substick_x: i8,
+    pub substick_y: i8,
+    pub trigger_left: u8,
+    pub trigger_right: u8,
+    pub analog_a: u8,
+    pub analog_b: u8,
+    pub connected: bool,
+    pub error: i8,
+}
+
+impl From<RawPadState> for SearchPadState {
+    fn from(pad: RawPadState) -> Self {
+        Self {
+            buttons: pad.buttons,
+            stick_x: pad.stick_x,
+            stick_y: pad.stick_y,
+            substick_x: pad.substick_x,
+            substick_y: pad.substick_y,
+            trigger_left: pad.trigger_left,
+            trigger_right: pad.trigger_right,
+            analog_a: pad.analog_a,
+            analog_b: pad.analog_b,
+            connected: pad.connected,
+            error: pad.error,
+        }
+    }
+}
+
+impl From<SearchPadState> for RawPadState {
+    fn from(pad: SearchPadState) -> Self {
+        Self {
+            buttons: pad.buttons,
+            stick_x: pad.stick_x,
+            stick_y: pad.stick_y,
+            substick_x: pad.substick_x,
+            substick_y: pad.substick_y,
+            trigger_left: pad.trigger_left,
+            trigger_right: pad.trigger_right,
+            analog_a: pad.analog_a,
+            analog_b: pad.analog_b,
+            connected: pad.connected,
+            error: pad.error,
+        }
+    }
 }
 
 impl MacroAction {
@@ -134,6 +198,7 @@ impl MacroAction {
                 neutral_frames,
                 ..
             } => u64::from(*hold_frames) + u64::from(*neutral_frames),
+            Self::PadRun { frames, .. } => u64::from(*frames),
         }
     }
 }
@@ -162,6 +227,7 @@ impl Candidate {
         let actions = match segment {
             SegmentProfile::BootToFsp103 => boot_baseline(),
             SegmentProfile::Fsp103ToFsp104 => route_baseline(),
+            SegmentProfile::LinkControlToTunnelCrawlStart => tunnel_crawl_baseline(),
         };
         Self {
             schema: CANDIDATE_SCHEMA.into(),
@@ -210,6 +276,7 @@ impl Candidate {
                         return Err(SearchError::InvalidDuration(*neutral_frames));
                     }
                 }
+                MacroAction::PadRun { frames, .. } => validate_duration(*frames)?,
             }
             frames = frames
                 .checked_add(action.frame_count())
@@ -281,6 +348,9 @@ impl Candidate {
                         *neutral_frames,
                     );
                 }
+                MacroAction::PadRun { pad, frames: count } => {
+                    push_frames(&mut frames, imported_frame((*pad).into()), *count)
+                }
             }
         }
         Ok(InputTape {
@@ -306,6 +376,9 @@ impl Candidate {
         }
         if tape.frames.is_empty() {
             return Err(SearchError::NonCanonicalTape("tape is empty".into()));
+        }
+        if segment == SegmentProfile::LinkControlToTunnelCrawlStart {
+            return Self::from_movement_tape(tape);
         }
         #[derive(Clone, Copy, Eq, PartialEq)]
         enum State {
@@ -419,6 +492,55 @@ impl Candidate {
         if candidate.compile()? != *tape {
             return Err(SearchError::NonCanonicalTape(
                 "typed inference did not reproduce the source tape exactly".into(),
+            ));
+        }
+        Ok(candidate)
+    }
+
+    fn from_movement_tape(tape: &InputTape) -> Result<Self, SearchError> {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let mut runs: Vec<(SearchPadState, u32)> = Vec::new();
+        for frame in &tape.frames {
+            if frame.owned_ports != 0x01
+                || frame.wait_condition != crate::tape::WaitCondition::None
+                || frame.wait_timeout_ticks != 0
+                || frame.pads[1..] != [disconnected; 3]
+            {
+                return Err(SearchError::NonCanonicalTape(
+                    "anchored movement imports require absolute port-one ownership, no reactive waits, and canonical disconnected secondary ports"
+                        .into(),
+                ));
+            }
+            let pad = SearchPadState::from(frame.pads[0]);
+            if let Some((last, frames)) = runs.last_mut()
+                && *last == pad
+            {
+                *frames = frames.checked_add(1).ok_or(SearchError::TooManyFrames)?;
+            } else {
+                runs.push((pad, 1));
+            }
+        }
+        let candidate = Self {
+            schema: CANDIDATE_SCHEMA.into(),
+            segment: SegmentProfile::LinkControlToTunnelCrawlStart,
+            actions: runs
+                .into_iter()
+                .map(|(pad, frames)| MacroAction::PadRun { pad, frames })
+                .collect(),
+            ancestry: Ancestry {
+                generation: 0,
+                parent_id: None,
+                mutation: Some("lossless anchored movement-tape import".into()),
+            },
+        };
+        candidate.validate()?;
+        if candidate.compile()? != *tape {
+            return Err(SearchError::NonCanonicalTape(
+                "anchored movement import did not reproduce the source tape exactly".into(),
             ));
         }
         Ok(candidate)
@@ -825,8 +947,21 @@ fn mutate(
 ) -> Result<Candidate, SearchError> {
     let mut child = parent.clone();
     let parent_id = parent.id()?;
-    let route = child.segment == SegmentProfile::Fsp103ToFsp104;
-    let mutation_kind = if route { rng.usize(7) } else { rng.usize(3) };
+    let route = matches!(
+        child.segment,
+        SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+    );
+    let imported = child
+        .actions
+        .iter()
+        .any(|action| matches!(action, MacroAction::PadRun { .. }));
+    let mutation_kind = if imported {
+        [0, 4, 6, 7, 8][rng.usize(5)]
+    } else if route {
+        rng.usize(7)
+    } else {
+        rng.usize(3)
+    };
     let description;
     match mutation_kind {
         0 => {
@@ -969,6 +1104,50 @@ fn mutate(
             );
             description = format!("split_move[{index}]");
         }
+        7 if imported => {
+            let pads: Vec<_> = child
+                .actions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, action)| match action {
+                    MacroAction::PadRun { pad, .. } if pad.connected && pad.error == 0 => {
+                        Some(index)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let index = pads[rng.usize(pads.len())];
+            let mut delta_x = rng.signed(9);
+            let delta_y = rng.signed(9);
+            if delta_x == 0 && delta_y == 0 {
+                delta_x = 1;
+            }
+            let MacroAction::PadRun { pad, .. } = &mut child.actions[index] else {
+                unreachable!("pad-run index was selected above")
+            };
+            pad.stick_x = (i32::from(pad.stick_x) + delta_x).clamp(-127, 127) as i8;
+            pad.stick_y = (i32::from(pad.stick_y) + delta_y).clamp(-127, 127) as i8;
+            description = format!("pad_stick[{index}]({delta_x:+},{delta_y:+})");
+        }
+        8 if imported => {
+            let pads: Vec<_> = child
+                .actions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, action)| match action {
+                    MacroAction::PadRun { pad, .. } if pad.connected && pad.error == 0 => {
+                        Some(index)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let index = pads[rng.usize(pads.len())];
+            let MacroAction::PadRun { pad, .. } = &mut child.actions[index] else {
+                unreachable!("pad-run index was selected above")
+            };
+            pad.buttons ^= BUTTON_B;
+            description = format!("pad_toggle_b[{index}]");
+        }
         _ => {
             let neutral: Vec<_> = child
                 .actions
@@ -1001,9 +1180,9 @@ fn change_duration(action: &mut MacroAction, delta: i32) {
         (i64::from(value) + i64::from(delta)).clamp(i64::from(minimum), 10_000) as u32
     }
     match action {
-        MacroAction::Move { frames, .. } | MacroAction::Neutral { frames } => {
-            *frames = adjusted(*frames, delta, 1)
-        }
+        MacroAction::Move { frames, .. }
+        | MacroAction::Neutral { frames }
+        | MacroAction::PadRun { frames, .. } => *frames = adjusted(*frames, delta, 1),
         MacroAction::Roll {
             recovery_frames, ..
         } => *recovery_frames = adjusted(*recovery_frames, delta, 0).min(300),
@@ -1092,6 +1271,17 @@ fn route_baseline() -> Vec<MacroAction> {
     ]
 }
 
+/// Suffix-only seed for the authored link-control -> tunnel-crawl objective.
+/// Unlike the legacy direct-stage profile, construction time is supplied by
+/// the immutable clean-boot prefix and must not be hidden in the candidate.
+fn tunnel_crawl_baseline() -> Vec<MacroAction> {
+    // This profile is anchored to an observed suffix and intentionally has no
+    // synthetic baseline. Import the promoted absolute tape losslessly with
+    // Candidate::from_absolute_tape; validation rejects this empty placeholder
+    // if a generic caller attempts to seed without doing so.
+    Vec::new()
+}
+
 fn validate_magnitude(magnitude: u8) -> Result<(), SearchError> {
     if magnitude <= 127 {
         Ok(())
@@ -1111,6 +1301,21 @@ fn validate_duration(frames: u32) -> Result<(), SearchError> {
 fn owned_frame(pad: RawPadState) -> InputFrame {
     let mut frame = InputFrame {
         owned_ports: 0x0f,
+        ..InputFrame::default()
+    };
+    frame.pads[0] = pad;
+    frame
+}
+
+fn imported_frame(pad: RawPadState) -> InputFrame {
+    let disconnected = RawPadState {
+        connected: false,
+        error: -1,
+        ..RawPadState::default()
+    };
+    let mut frame = InputFrame {
+        owned_ports: 0x01,
+        pads: [disconnected; 4],
         ..InputFrame::default()
     };
     frame.pads[0] = pad;
@@ -1332,6 +1537,42 @@ mod tests {
                 .unwrap(),
             long_hold
         );
+    }
+
+    #[test]
+    fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape");
+        let tape = InputTape::decode(&fs::read(path).unwrap()).unwrap().tape;
+        assert_eq!(tape.frames.len(), 421);
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::LinkControlToTunnelCrawlStart, &tape)
+                .unwrap();
+        assert_eq!(candidate.compile().unwrap(), tape);
+        assert!(candidate.actions.len() < tape.frames.len());
+        assert!(
+            candidate
+                .actions
+                .iter()
+                .all(|action| matches!(action, MacroAction::PadRun { .. }))
+        );
+        assert!(
+            Candidate::baseline(SegmentProfile::LinkControlToTunnelCrawlStart)
+                .validate()
+                .is_err()
+        );
+
+        let mut rng = SplitMix64::new(0x7a5_2026);
+        let mut stick_mutations = 0;
+        let mut button_mutations = 0;
+        for _ in 0..256 {
+            let child = mutate(&candidate, 1, &mut rng).unwrap();
+            let mutation = child.ancestry.mutation.as_deref().unwrap();
+            stick_mutations += usize::from(mutation.starts_with("pad_stick["));
+            button_mutations += usize::from(mutation.starts_with("pad_toggle_b["));
+        }
+        assert!(stick_mutations > 20);
+        assert!(button_mutations > 20);
     }
 
     #[test]

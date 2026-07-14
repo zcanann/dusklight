@@ -35,15 +35,64 @@ An existing absolute boot tape can be imported without hand-authoring JSON:
 
     huntctl search import-tape --segment boot_to_fsp103 --tape build/boot.tape --output build/boot.candidate.json
 
-Import is lossless and deliberately narrow. It accepts neutral frames and
-zero-stick typed A/B/Start pulses. It rejects reactive waits, analog movement,
-secondary-port state, unusual pad state, and anything else whose intent would
-be ambiguous.
+Boot import is lossless and deliberately narrow. It accepts neutral frames and
+zero-stick typed A/B/Start pulses. The anchored tunnel profile also accepts an
+absolute port-one movement tape: it run-length encodes the complete raw pad
+state as `pad_run` actions, including analog samples and trigger values, and
+verifies that compilation reproduces every source byte. Reactive waits and
+noncanonical secondary-port state remain rejected.
 
 The segment profiles are:
 
 - boot_to_fsp103: process boot through restored control in F_SP103;
-- fsp103_to_fsp104: direct F_SP103 start through entry into F_SP104.
+- fsp103_to_fsp104: direct F_SP103 start through entry into F_SP104;
+- link_control_to_tunnel_crawl_start: an anchored suffix from the checked-in
+  Link-control boundary to `crawl_start` in F_SP104 room 1 spawn 0.
+
+## Anchored clean-boot suffix search
+
+The tunnel objective uses the anchored library evaluator rather than the
+legacy direct-stage evaluator. `AnchoredObjectiveConfig` supplies an immutable
+absolute prefix tape, compiled DMSP, source milestone and boundary fingerprint,
+and goal milestone. `AnchoredEvaluateConfig` and `AnchoredSearchRunConfig` are
+the public wiring surfaces for the CLI and route workbench.
+
+The promoted initial suffix is
+`routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape`. It is
+421 frames and imports losslessly; this profile has no synthetic baseline, so
+an anchored run fails configuration validation unless an observed suffix was
+explicitly imported as its seed.
+
+Every trial concatenates the same immutable prefix with one candidate suffix
+and boots that complete tape in a clean process. It does not pass `--stage`.
+The native run receives the compiled milestone program and exactly the source
+and goal milestones. A result is accepted only when all of the following match:
+
+- DMSP program and source/goal definition digests;
+- the source milestone's final prefix frame, boundary index, and pinned
+  boundary fingerprint;
+- the goal evidence's F_SP104 room 1 spawn 0, Link identity, and procedure 53
+  (`crawl_start`).
+
+The content-derived objective digest covers the prefix bytes, DMSP bytes,
+game executable and DVD SHA-256 identities, source proof, and goal. Anchored
+mode rejects extra game arguments entirely, so stage, timing, and CVar changes
+cannot escape that contract. The identity is stored beside the population and
+in anchored results, preventing results from being reused after proof or
+execution inputs change.
+Ranking records goal time relative to the source boundary. The winner emits
+both `champion.suffix.tape` for continuation work and a composed
+`champion.tape` for clean-boot visual playback.
+
+The route-aware command derives the prefix, source fingerprint, milestone
+program, and observed seed from the checked-in timeline and lineage:
+
+    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment link_control_to_tunnel_crawl_start --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/tunnel --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
+
+It refuses a timeline segment that is not immediately after the requested
+lineage prefix. The compiled DMSP and materialized prefix are retained in the
+sibling `build/search/tunnel.objective/` directory; attempt and champion
+artifacts remain below the requested output root.
 
 ## Native evaluation
 
@@ -140,6 +189,9 @@ Current mutations adjust macro duration, analog heading and magnitude, insert
 rolls, split/delete movement segments, and shrink explicit waits. Boot mutation
 directly shifts and shrinks the neutral gaps attached to menu button presses;
 it does not spend most samples perturbing only the initial boot wait. Candidate
-IDs hash segment plus input program, so identical tapes deduplicate even if
+Pad-run populations additionally perturb exact raw stick samples and toggle B
+on selected runs, so importing a human tape does not reduce mining to duration
+deletion alone. Candidate IDs hash segment plus input program, so identical
+tapes deduplicate even if
 separate search branches rediscover them; ancestry records the retained parent
 and mutation for every generation.

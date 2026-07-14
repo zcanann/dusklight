@@ -12,15 +12,18 @@ use huntctl::offline_rl::{
 };
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::route_store::{ObjectId, RouteStore};
-use huntctl::route_workbench::{WorkbenchConfig, serve as serve_route_workbench};
+use huntctl::route_workbench::{
+    MaterializeTarget, WorkbenchConfig, materialize_lineage, serve as serve_route_workbench,
+};
 use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
     rank_population, write_seed_population,
 };
 use huntctl::search_evaluator::{
-    BootGolfConfig, BootMinimizeConfig, EvaluateConfig, SearchRunConfig, evaluate_population,
-    golf_boot, minimize_boot, run_search,
+    AnchoredObjectiveConfig, AnchoredSearchRunConfig, BootGolfConfig, BootMinimizeConfig,
+    EvaluateConfig, SearchRunConfig, evaluate_population, golf_boot, minimize_boot,
+    run_anchored_search, run_search,
 };
 use huntctl::tape::InputTape;
 use huntctl::tape_chain::{ChainSegment, concatenate};
@@ -875,6 +878,157 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
+        Some("run-route") => {
+            let search_args = &args[1..];
+            let timeline_path = required_path(search_args, "--timeline")?;
+            let timeline = load_timeline(&timeline_path)?;
+            let artifact_root = timeline_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            timeline.validate_artifacts(Some(artifact_root))?;
+            let segment_name = option(search_args, "--segment")
+                .ok_or("missing required --segment TIMELINE_SEGMENT")?;
+            let segment = timeline
+                .segments
+                .get(&segment_name)
+                .ok_or_else(|| format!("unknown timeline segment {segment_name:?}"))?;
+            if segment.profile != SegmentProfile::LinkControlToTunnelCrawlStart {
+                return Err(format!(
+                    "route search currently requires profile {}, got {}",
+                    SegmentProfile::LinkControlToTunnelCrawlStart.as_str(),
+                    segment.profile.as_str()
+                )
+                .into());
+            }
+            let lineage = option(search_args, "--lineage").unwrap_or_else(|| "main".into());
+            let prefix = materialize_lineage(
+                &timeline,
+                artifact_root,
+                &lineage,
+                MaterializeTarget::ThroughMilestone(segment.from.clone()),
+            )?;
+            let through_goal = materialize_lineage(
+                &timeline,
+                artifact_root,
+                &lineage,
+                MaterializeTarget::ThroughMilestone(segment.to.clone()),
+            )?;
+            if through_goal.steps.len() != prefix.steps.len() + 1
+                || through_goal.steps.last().map(|step| step.segment.as_str())
+                    != Some(segment_name.as_str())
+                || through_goal.tape.frames.len() <= prefix.tape.frames.len()
+            {
+                return Err(format!(
+                    "lineage {lineage:?} does not contain {segment_name:?} immediately after milestone {:?}",
+                    segment.from
+                )
+                .into());
+            }
+            let source_variant_id = prefix
+                .steps
+                .last()
+                .map(|step| step.variant.as_str())
+                .ok_or("anchored route search requires a nonempty immutable prefix")?;
+            let source_fingerprint = timeline.variants[source_variant_id]
+                .boundary_fingerprint
+                .clone();
+            let suffix = InputTape {
+                tick_rate_numerator: through_goal.tape.tick_rate_numerator,
+                tick_rate_denominator: through_goal.tape.tick_rate_denominator,
+                frames: through_goal.tape.frames[prefix.tape.frames.len()..].to_vec(),
+            };
+            let seed_candidate = Candidate::from_absolute_tape(segment.profile, &suffix)?;
+
+            let output = required_path(search_args, "--output")?;
+            let game = required_path(search_args, "--game")?;
+            let dvd = required_path(search_args, "--dvd")?;
+            let working_directory = option(search_args, "--working-directory")
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?);
+            if !game.is_file() || !dvd.is_file() || !working_directory.is_dir() {
+                return Err(
+                    "route search requires existing game/DVD files and working directory".into(),
+                );
+            }
+            let size = usize_option(search_args, "--size", 16)?;
+            let generations = u32_option(search_args, "--generations", 2)?;
+            let elite_count = usize_option(search_args, "--elites", (size / 4).max(1))?;
+            let workers = usize_option(search_args, "--workers", 4)?;
+            let repetitions = u32_option(search_args, "--repetitions", 3)?;
+            let timeout = timeout_option(search_args)?;
+            let rng_seed = u64_option(search_args, "--rng-seed", 1)?;
+            if !repeated_option(search_args, "--game-arg").is_empty() {
+                return Err(
+                    "route search does not accept --game-arg; its execution contract is fixed"
+                        .into(),
+                );
+            }
+            if generations == 0
+                || size == 0
+                || elite_count == 0
+                || elite_count > size
+                || workers == 0
+                || repetitions == 0
+            {
+                return Err(
+                    "route search counts and elite bounds must be nonzero and valid".into(),
+                );
+            }
+            let output_name = output
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("route-search output requires a UTF-8 final path component")?;
+            let objective_root = output.with_file_name(format!("{output_name}.objective"));
+            if objective_root.exists() {
+                return Err(format!(
+                    "route-search objective directory already exists: {}",
+                    objective_root.display()
+                )
+                .into());
+            }
+            fs::create_dir_all(&objective_root)?;
+            let prefix_path = objective_root.join("prefix.tape");
+            fs::write(&prefix_path, prefix.tape.encode()?)?;
+            let source_path = artifact_root.join(
+                timeline
+                    .milestone_program
+                    .as_ref()
+                    .ok_or("route search requires milestone_program")?,
+            );
+            let compiled = milestone_dsl::compile_source(&fs::read_to_string(&source_path)?)?;
+            let program_path = objective_root.join("milestones.dmsp");
+            fs::write(&program_path, &compiled.bytes)?;
+
+            let summary = run_anchored_search(&AnchoredSearchRunConfig {
+                search: SearchRunConfig {
+                    segment: segment.profile,
+                    seed_candidate: Some(seed_candidate),
+                    game: game.clone(),
+                    dvd: dvd.clone(),
+                    output_root: output,
+                    working_directory,
+                    game_args_prefix: Vec::new(),
+                    generations,
+                    population_size: size,
+                    elite_count,
+                    workers,
+                    repetitions,
+                    timeout,
+                    rng_seed,
+                },
+                objective: AnchoredObjectiveConfig {
+                    prefix_tape: prefix_path,
+                    milestone_program: program_path,
+                    game,
+                    dvd,
+                    source_milestone: segment.from.clone(),
+                    source_boundary_fingerprint: source_fingerprint,
+                    goal_milestone: segment.to.clone(),
+                },
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
         Some("run") => {
             let search_args = &args[1..];
             let segment: SegmentProfile = option(search_args, "--segment")
@@ -1434,6 +1588,42 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("slice") if args.len() == 7 && args[3] == "--start" && args[5] == "--frames" => {
+            let input = PathBuf::from(&args[1]);
+            let output = PathBuf::from(&args[2]);
+            let start = args[4].parse::<usize>()?;
+            let frame_count = args[6].parse::<usize>()?;
+            if frame_count == 0 {
+                return Err("tape slice --frames must be greater than zero".into());
+            }
+            let mut tape = InputTape::decode(&fs::read(&input)?)?.tape;
+            let end = start
+                .checked_add(frame_count)
+                .ok_or("tape slice range overflows")?;
+            if end > tape.frames.len() {
+                return Err(format!(
+                    "tape slice range {start}..{end} exceeds {} frames",
+                    tape.frames.len()
+                )
+                .into());
+            }
+            tape.frames = tape.frames[start..end].to_vec();
+            let bytes = tape.encode()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "wrote frames {start}..{end} ({} frames, {} bytes) to {}",
+                tape.frames.len(),
+                bytes.len(),
+                output.display()
+            );
+            Ok(())
+        }
         _ => usage_error(),
     }
 }
@@ -1555,8 +1745,12 @@ fn print_usage() {
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
+    eprintln!("\nTape editing:\n  huntctl tape slice INPUT.tape OUTPUT.tape --start N --frames N");
     eprintln!(
         "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+    );
+    eprintln!(
+        "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
         "\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"

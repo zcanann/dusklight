@@ -140,9 +140,30 @@ milestones. It does not claim false single-tick determinism.
 
 This result closes the measured title-side scheduling leak, not every possible
 PC-port side channel. New asynchronous loaders must either be made part of the
-logical timing model or fail exact replay tests. Route frame golf should still
-use an explicit stage/save/checkpoint seed for throughput, then promote useful
-candidates to a cold process-boot lineage for end-to-end proof.
+logical timing model or fail exact replay tests. Route frame golf runs the
+immutable prefix unpaced for throughput, then repeats useful candidates from a
+cold process-boot lineage as the promotion gate.
+
+## Tunnel crawl frontier
+
+The first exact downstream golf target is authored as
+`tunnel_crawl_start`: post-simulation stage `F_SP104`, room 1, spawn 0, Link
+present, and procedure `PROC_CRAWL_START` (53). It is intentionally the first
+crawl-start frame rather than the later crawl-move state.
+
+Two independent human recordings both reach it at absolute tape frame 860,
+which is suffix-local frame 420 after the 440-frame `link_control` prefix. Each
+was reproduced 3/3 from a clean process and trimmed inclusively to a 421-frame
+segment. They remain sibling variants because their destination fingerprints
+differ (`0aee9b9dfc150ff0c0b44c36408922a3` versus
+`56b236160fbdff1ead7fed80441b7c99`); equal local time does not make their RNG
+and downstream state interchangeable.
+
+Mining this segment must prepend the immutable checked-in boot prefix and run
+the complete tape from a clean process. A direct `--stage` launch is not valid
+evidence for this objective. Candidate results are bound to the prefix tape,
+authored milestone program and definitions, source fingerprint, and exact
+source boundary before they can compete in the same population.
 
 ## Running and watching
 

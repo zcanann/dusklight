@@ -11,3 +11,10 @@ milestone link_control {
   phase post_sim
   when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 && player.exists && player.is_link && !event.running && event.id == -1
 }
+
+# Earliest exact entry into Link's tunnel-crawling state. This is the golf
+# endpoint; crawl_move is deliberately not used because it concedes later frames.
+milestone tunnel_crawl_start {
+  phase post_sim
+  when stage.name == "F_SP104" && stage.room == 1 && stage.spawn == 0 && player.exists && player.is_link && player.procedure == "crawl_start"
+}

@@ -94,6 +94,45 @@ frame neutral
     assert_eq!(chain.frames.len(), 8);
     assert_eq!(chain.frames[0], chain.frames[4]);
 
+    let slice_path = directory.join("nested").join("slice.tape");
+    let slice = Command::new(executable)
+        .args([
+            "tape",
+            "slice",
+            concatenated.to_str().unwrap(),
+            slice_path.to_str().unwrap(),
+            "--start",
+            "2",
+            "--frames",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        slice.status.success(),
+        "{}",
+        String::from_utf8_lossy(&slice.stderr)
+    );
+    let sliced = InputTape::decode(&fs::read(&slice_path).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(sliced.frames, chain.frames[2..5]);
+
+    let invalid_slice = Command::new(executable)
+        .args([
+            "tape",
+            "slice",
+            concatenated.to_str().unwrap(),
+            slice_path.to_str().unwrap(),
+            "--start",
+            "7",
+            "--frames",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid_slice.status.success());
+
     let missing_input = Command::new(executable)
         .args([
             "tape",

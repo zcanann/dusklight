@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 1);
+    assert_eq!(summary["segments"], 2);
 
     let status = run(&[
         "timeline",
@@ -48,6 +48,11 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
         "boot_to_link.golf439"
     );
     assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
+    assert_eq!(
+        status["workspace"]["steps"][1]["workspace_variant"],
+        "link_control_to_tunnel_crawl_start.human420"
+    );
+    assert_eq!(status["workspace"]["steps"][1]["state"], "unchanged");
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
