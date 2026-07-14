@@ -17,6 +17,7 @@
 #include "JSystem/JKernel/JKRSolidHeap.h"
 #include "JSystem/JUtility/JUTConsole.h"
 #include "JSystem/JUtility/JUTException.h"
+#include "JSystem/JUtility/JUTGamePad.h"
 #include "JSystem/JUtility/JUTProcBar.h"
 #include "JSystem/JUtility/JUTReport.h"
 #include "SSystem/SComponent/c_counter.h"
@@ -28,9 +29,11 @@
 #include "d/d_s_logo.h"
 #include "d/d_s_menu.h"
 #include "d/d_s_play.h"
+#include "d/actor/d_a_alink.h"
 #include "dusk/time.h"
 #include "f_ap/f_ap_game.h"
 #include "f_op/f_op_msg.h"
+#include "f_op/f_op_actor_iter.h"
 #include "m_Do/m_Do_MemCard.h"
 #include "m_Do/m_Do_Reset.h"
 #include "m_Do/m_Do_controller_pad.h"
@@ -45,11 +48,14 @@
 #include <sstream>
 
 #include <filesystem>
+#include <cmath>
+#include <limits>
 #include <system_error>
 #include <thread>
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
+#include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
@@ -226,6 +232,7 @@ static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
 static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
+static void write_gameplay_trace_on_exit();
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -426,6 +433,7 @@ void main01(void) {
     exit:;
     write_automation_oracle_result_on_exit();
     write_name_entry_trace_on_exit();
+    write_gameplay_trace_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -538,6 +546,8 @@ static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
+static std::filesystem::path gameplayTracePath;
+static bool gameplayTraceWriteFailed;
 static bool eyeShredderOracleEnabled;
 static bool automationOracleContinueOnPass;
 static dusk::automation::EyeShredderOracle eyeShredderOracle;
@@ -562,7 +572,99 @@ static void begin_automation_simulation_tick() {
                                                             automationTapeFrame);
 }
 
+static void record_gameplay_trace_tick() {
+    auto& recorder = dusk::automation::gameplay_trace_recorder();
+    if (!recorder.active()) {
+        return;
+    }
+
+    dusk::automation::GameplayTraceSample sample{
+        .simulationTick = automationSimulationTick,
+        .tapeFrame = automationTapeFrame,
+        .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
+        .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
+        .point = dComIfGp_getStartStagePoint(),
+    };
+    if (const char* stageName = dComIfGp_getStartStageName(); stageName != nullptr) {
+        std::strncpy(sample.stageName, stageName, sizeof(sample.stageName));
+    }
+
+    const auto& tapePlayer = dusk::automation::input_tape_player();
+    if (tapePlayer.isPlaying()) {
+        sample.flags |= dusk::automation::GameplayTraceTapePlaying;
+    }
+    const PADStatus& pad = JUTGamePad::mPadStatus[0];
+    sample.buttons = pad.button;
+    sample.stickX = pad.stickX;
+    sample.stickY = pad.stickY;
+    sample.padError = pad.err;
+    if (dComIfGp_event_runCheck() != 0) {
+        sample.flags |= dusk::automation::GameplayTraceEventRunning;
+    }
+    dEvt_control_c* event = dComIfGp_getEvent();
+    sample.eventId = event->mEventId;
+    sample.eventMode = event->getMode();
+    sample.eventStatus = event->mEventStatus;
+    sample.eventMapToolId = event->getMapToolId();
+    const char* eventName = dComIfGp_getEventManager().getRunEventName();
+    std::uint32_t eventNameHash = 2166136261u;
+    for (const unsigned char* cursor = reinterpret_cast<const unsigned char*>(eventName);
+         cursor != nullptr && *cursor != 0; ++cursor) {
+        eventNameHash = (eventNameHash ^ *cursor) * 16777619u;
+    }
+    sample.eventNameHash = eventNameHash;
+
+    if (fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
+        sample.flags |= dusk::automation::GameplayTracePlayerPresent;
+        sample.playerActorName = fopAcM_GetName(player);
+        if (sample.playerActorName == fpcNm_ALINK_e) {
+            sample.flags |= dusk::automation::GameplayTracePlayerIsLink;
+            sample.playerProcId = static_cast<daAlink_c*>(player)->mProcID;
+        }
+        sample.currentAngleY = player->current.angle.y;
+        sample.shapeAngleY = player->shape_angle.y;
+        sample.positionX = player->current.pos.x;
+        sample.positionY = player->current.pos.y;
+        sample.positionZ = player->current.pos.z;
+        sample.velocityX = player->speed.x;
+        sample.velocityY = player->speed.y;
+        sample.velocityZ = player->speed.z;
+        sample.forwardSpeed = player->speedF;
+
+        struct NearestSceneExit {
+            const cXyz* playerPosition;
+            fopAc_ac_c* actor;
+            float distanceSquared;
+        } nearest{&player->current.pos, nullptr, std::numeric_limits<float>::max()};
+        fopAcIt_Executor(
+            [](void* candidate, void* context) -> int {
+                auto* actor = static_cast<fopAc_ac_c*>(candidate);
+                auto* nearest = static_cast<NearestSceneExit*>(context);
+                const s16 actorName = fopAcM_GetName(actor);
+                if (actorName != fpcNm_SCENE_EXIT_e && actorName != fpcNm_SCENE_EXIT2_e) {
+                    return 1;
+                }
+                const float distance = actor->current.pos.abs2(*nearest->playerPosition);
+                if (distance < nearest->distanceSquared) {
+                    nearest->actor = actor;
+                    nearest->distanceSquared = distance;
+                }
+                return 1;
+            },
+            &nearest);
+        if (nearest.actor != nullptr) {
+            sample.nearestSceneExitActorName = fopAcM_GetName(nearest.actor);
+            sample.nearestSceneExitX = nearest.actor->current.pos.x;
+            sample.nearestSceneExitY = nearest.actor->current.pos.y;
+            sample.nearestSceneExitZ = nearest.actor->current.pos.z;
+            sample.nearestSceneExitDistance = std::sqrt(nearest.distanceSquared);
+        }
+    }
+    recorder.record(sample);
+}
+
 static bool finish_automation_oracle_tick() {
+    record_gameplay_trace_tick();
     if (!eyeShredderOracleEnabled) {
         ++automationSimulationTick;
         return false;
@@ -724,6 +826,25 @@ static void write_name_entry_trace_on_exit() {
                  artifact.droppedEventCount);
 }
 
+static void write_gameplay_trace_on_exit() {
+    if (gameplayTracePath.empty()) {
+        return;
+    }
+
+    auto& recorder = dusk::automation::gameplay_trace_recorder();
+    recorder.stop();
+    std::string error;
+    if (!dusk::automation::write_gameplay_trace(gameplayTracePath, recorder, error)) {
+        DuskLog.error("Failed to write gameplay trace '{}': {}",
+                      dusk::io::fs_path_to_string(gameplayTracePath), error);
+        gameplayTraceWriteFailed = true;
+        return;
+    }
+    DuskLog.info("Wrote gameplay trace '{}' ({} samples{})",
+                 dusk::io::fs_path_to_string(gameplayTracePath), recorder.samples().size(),
+                 recorder.capacityExhausted() ? ", capacity exhausted" : "");
+}
+
 static u8 selectedLanguage;
 
 u8 OSGetLanguage() {
@@ -802,6 +923,7 @@ int game_main(int argc, char* argv[]) {
             ("automation-data-root", "Isolate all writable Dusklight state for this tape run", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this tape run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
+            ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
             ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
@@ -922,6 +1044,19 @@ int game_main(int argc, char* argv[]) {
 
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
+
+    if (parsed_arg_options.count("gameplay-trace")) {
+        if (!hasInputTape) {
+            fprintf(stderr, "Gameplay Trace Error: --gameplay-trace requires --input-tape PATH\n");
+            return 1;
+        }
+        const std::string tracePath = parsed_arg_options["gameplay-trace"].as<std::string>();
+        if (tracePath.empty()) {
+            fprintf(stderr, "Gameplay Trace Error: --gameplay-trace PATH cannot be empty\n");
+            return 1;
+        }
+        gameplayTracePath = std::filesystem::u8path(tracePath);
+    }
 
     std::filesystem::path automationCardRoot;
     std::filesystem::path automationDataRoot;
@@ -1082,6 +1217,9 @@ int game_main(int argc, char* argv[]) {
         }
 
         inputTapeFrameCount = inputTape.frames.size();
+        if (!gameplayTracePath.empty()) {
+            dusk::automation::gameplay_trace_recorder().start(inputTapeFrameCount + 1);
+        }
         auto& inputTapePlayer = dusk::automation::input_tape_player();
         inputTapePlayer.install(std::move(inputTape));
         if (!inputTapePlayer.start(inputTapeEndBehavior)) {
@@ -1570,7 +1708,8 @@ int game_main(int argc, char* argv[]) {
         eyeShredderOracleEnabled &&
         eyeShredderOracle.result().status !=
             dusk::automation::EyeShredderOracleStatus::Passed;
-    return nameEntryTraceWriteFailed || eyeShredderOracleResultWriteFailed ||
+    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
+                   eyeShredderOracleResultWriteFailed ||
                    eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||
                    inputTapePlaybackFailed
                ? 1

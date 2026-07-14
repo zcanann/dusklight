@@ -1427,6 +1427,8 @@ set(DUSK_FILES
         src/dusk/automation/build_identity.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_tape.cpp
+        include/dusk/automation/gameplay_trace.hpp
+        src/dusk/automation/gameplay_trace.cpp
         include/dusk/automation/eye_shredder_oracle.hpp
         src/dusk/automation/eye_shredder_oracle.cpp
         include/dusk/automation/name_entry_observer.hpp

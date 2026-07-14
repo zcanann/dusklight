@@ -8,6 +8,7 @@ pub mod protocol;
 pub mod tape;
 pub mod tape_dsl;
 pub mod tape_program;
+pub mod trace;
 pub mod transport;
 
 pub use artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};
