@@ -27,6 +27,11 @@ roadmap documents describe the larger target.
 - Reactive observation is one-way: immutable player/camera/actor snapshots
   enter the pure evaluator. No gameplay state is written; inactive playback
   does not capture observations or claim the PAD.
+- `--actor-catalog PATH` emits a bounded read-only JSON snapshot at the
+  automation endpoint before headful handoff. `DUSKCTRL` 1.1 can seek the
+  nearest actor of a type, an exact session process ID, or a placed actor by
+  stage, type, home room, and map-authored set ID; exact selectors never fall
+  back to nearest.
 - `--unpaced` produces one logical 30 Hz tick per outer loop and removes VSync,
   interpolation timing, and the frame limiter.
 - Fixed-step modes also replace `OSGetTime`/`OSGetTick` with an atomic logical
@@ -163,6 +168,8 @@ and throughput remain unmeasured.
 - Actor observation is currently bounded to 256 snapshots, with deterministic
   retention and stable-ID tie-breaking. Controller programs have no internal
   state transitions yet, and actors are selected by numeric process name.
+- Actor catalogs embed build identity but not a game-data/scenario digest yet;
+  placed selectors must only be reused with independently validated game data.
 - Eye Shredder's original-layout corruption can be modeled safely, but the
   console-only rendering result is not emulated or claimed.
 - The Aurora automation change is committed inside the submodule on a local

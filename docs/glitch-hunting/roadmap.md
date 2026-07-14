@@ -94,6 +94,9 @@ oracle, not only a visual assertion.
   when a benchmark requires them. Keep all observation access read-only and
   promote discoveries through realized absolute tapes.
 - Add novelty signatures over events and quantized semantic state.
+- Add typed, compile-time-disabled intervention tapes for controlled causal
+  experiments. Keep them separate from input tapes and require an identical
+  no-intervention control plus explicit mutation provenance.
 - Retain structured enumeration and exact reduction as promotion tools. Use the
   native fitted-Q transition corpus and a return-and-explore archive to propose
   candidates only after trace-v2 state and episode-level validation exist.

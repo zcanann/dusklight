@@ -40,14 +40,36 @@ frames 120
 bezier replace from 0 for 120 p0 0 127 p1 0 127 p2 127 0 p3 127 0
 seek point add from 0 for 120 target 1 2 3 offset 0 0 0 magnitude 20 stop 5
 seek actor add from 10 for 40 actor 123 offset 1 0 2 magnitude 30 stop 10
+seek actor add from 50 for 20 actor 123 process 417 offset 0 0 0 magnitude 30 stop 10
+seek actor add from 70 for 20 actor 123 set 14 room 0 stage F_SP103 offset 0 0 0 magnitude 30 stop 10
 buttons from 5 for 1 B
 ```
 
-`seek point` moves camera-relative toward `target + offset`. `seek actor`
-selects the nearest matching actor, breaking equal-distance ties by stable ID,
-then moves toward its position plus the offset. A missing player, camera, or
-matching actor yields neutral output for that layer. The stop radius suppresses
-movement near the target.
+`seek point` moves camera-relative toward `target + offset`. Plain `seek actor`
+selects the nearest matching actor, breaking equal-distance ties by process ID.
+`process ID` follows exactly that runtime instance and never falls back.
+`set SETID room ROOM stage STAGE` selects the matching map-authored placement;
+duplicate matches deterministically choose the lowest process ID. A missing
+player, camera, or matching actor yields neutral output. The stop radius
+suppresses movement near the target.
+
+`DUSKCTRL` 1.1 writes these selectors while the decoder retains strict 1.0
+nearest-selector compatibility. Runtime process IDs are session-local. The
+placed selector is portable across sessions of the same validated build and
+game data because it combines stage, actor type, home room, and the
+stage-authored set ID. Actor catalogs embed the current build identity; a game-
+data digest and automatic selector/catalog compatibility check remain future
+guardrails.
+
+Add `--actor-catalog build/actors.json` to an automation launch to capture a
+read-only catalog at the automation endpoint, before any headful handoff. Each
+record contains symbolic/numeric type, enemy classification, process and parent
+IDs, set ID, parameters, home/current room and position, health, and status.
+This is intended for a one-off probe whose placed identity is copied into a
+later portable selector. A process ID may be used only in the same persistent
+engine session or after explicitly proving that a replay recreated that ID; the
+current process-per-run CLI cannot feed an exit catalog back into the run that
+produced it.
 
 Cubic Bezier layers use exact integer Bernstein evaluation with defined
 ties-away rounding, including the one-million-frame boundary. This makes the
@@ -89,9 +111,11 @@ treat a reactive run as an absolute tape.
 
 ## Current limits
 
-- Observation capture retains at most 256 actors deterministically.
-- Actor selection uses numeric process names; symbolic catalogs can be added
-  without changing the wire evaluator.
+- Observation and catalog capture retain the same 256 lowest process IDs and
+  report catalog truncation explicitly.
+- Actor selectors currently use the numeric actor name emitted by the catalog;
+  symbolic DSL names can be layered over that value without changing the wire
+  evaluator.
 - Programs are timed layers, not state machines yet. Conditions and transitions
   should be introduced only with explicit bounds and deterministic semantics.
 - Controller continuations and realized-tape output reject conditional prefixes.

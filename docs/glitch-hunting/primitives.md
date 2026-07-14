@@ -104,6 +104,30 @@ Stable actor handles combine a spawn/event identity and generation. Native
 pointers are diagnostic values only and never enter portable artifacts or
 hashes.
 
+Placed actors use a portable composite identity: stage, home room, actor type,
+and map-authored set ID. A runtime process ID is exact only for that actor's
+lifetime in one engine session. Actor catalogs may add parameters, parent ID,
+and home transform for diagnosis and disambiguation; they never use a pointer
+as identity.
+
+## InterventionTape
+
+An `InterventionTape` is a separately gated sequence of typed game-state writes
+used to test causal hypotheses, such as whether an enemy collision can push
+Link across a fence. It is never folded into an `InputTape` and never presented
+as an unmodified replay.
+
+Each intervention declares its exact simulation phase, stable actor selector,
+field-level operation, precondition, and bounded duration. Execution records
+selector resolution plus before/written/after values. Baseline and treatment
+runs retain identical scenarios and controller inputs so an oracle can attribute
+the changed outcome to the declared intervention.
+
+Intervention-built discoveries become normal glitch proofs only after the
+required setup is reproduced without mutation. Until then they are useful
+existence or mechanism evidence, not evidence that the setup is naturally
+reachable.
+
 ## Event
 
 Events make sparse behavior cheap to search and easy to inspect. Examples are:

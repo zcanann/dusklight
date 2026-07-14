@@ -51,6 +51,8 @@ state hashes, and the reason it was classified as interesting.
 - [Reactive input controllers](reactive-controllers.md) documents the bounded
   timeline DSL, native evaluator, read-only observation boundary, and realized
   tape promotion path.
+- [Experimental interventions](interventions.md) defines the separately gated
+  mutation-tape boundary for causal glitch-hunting experiments.
 - [Route timelines, variants, and Git](timelines.md) documents the visual route
   workbench, curated segment variants, exact boundary dependencies, and Git-owned
   lineages.
