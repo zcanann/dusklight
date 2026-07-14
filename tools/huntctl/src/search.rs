@@ -289,6 +289,133 @@ impl Candidate {
             frames,
         })
     }
+
+    /// Losslessly infers typed boot macros from an absolute raw tape. Only
+    /// neutral frames and zero-stick A/B/Start pulses are accepted; analog,
+    /// reactive, multi-port, or noncanonical pad state is rejected instead of
+    /// being guessed.
+    pub fn from_absolute_tape(
+        segment: SegmentProfile,
+        tape: &InputTape,
+    ) -> Result<Self, SearchError> {
+        tape.validate()?;
+        if tape.tick_rate_numerator != 30 || tape.tick_rate_denominator != 1 {
+            return Err(SearchError::NonCanonicalTape(
+                "typed candidates currently require a 30/1 tick rate".into(),
+            ));
+        }
+        if tape.frames.is_empty() {
+            return Err(SearchError::NonCanonicalTape("tape is empty".into()));
+        }
+        #[derive(Clone, Copy, Eq, PartialEq)]
+        enum State {
+            Neutral,
+            Press(u16),
+        }
+        let classify = |frame: &InputFrame| -> Result<State, SearchError> {
+            if frame.owned_ports != 0x0f
+                || frame.wait_condition != crate::tape::WaitCondition::None
+                || frame.wait_timeout_ticks != 0
+                || frame.pads[1..] != [RawPadState::default(); 3]
+            {
+                return Err(SearchError::NonCanonicalTape(
+                    "frame ownership, reactive waits, or secondary ports are not safely expressible"
+                        .into(),
+                ));
+            }
+            let pad = frame.pads[0];
+            let canonical = RawPadState {
+                buttons: pad.buttons,
+                ..RawPadState::default()
+            };
+            if pad != canonical {
+                return Err(SearchError::NonCanonicalTape(
+                    "analog, trigger, disconnected, or error pad state is ambiguous".into(),
+                ));
+            }
+            if pad.buttons & !(BUTTON_A | BUTTON_B | BUTTON_START) != 0 {
+                return Err(SearchError::NonCanonicalTape(format!(
+                    "button mask 0x{:04x} is not a typed A/B/Start pulse",
+                    pad.buttons
+                )));
+            }
+            Ok(if pad.buttons == 0 {
+                State::Neutral
+            } else {
+                State::Press(pad.buttons)
+            })
+        };
+        let mut runs: Vec<(State, u32)> = Vec::new();
+        for frame in &tape.frames {
+            let state = classify(frame)?;
+            if let Some((last, count)) = runs.last_mut()
+                && *last == state
+            {
+                *count = count.checked_add(1).ok_or(SearchError::TooManyFrames)?;
+            } else {
+                runs.push((state, 1));
+            }
+        }
+        let mut actions = Vec::new();
+        let mut index = 0;
+        while index < runs.len() {
+            match runs[index] {
+                (State::Neutral, frames) => {
+                    actions.push(MacroAction::Neutral { frames });
+                    index += 1;
+                }
+                (State::Press(mask), hold_frames) => {
+                    if hold_frames > 30 {
+                        return Err(SearchError::NonCanonicalTape(
+                            "button hold exceeds the typed press limit".into(),
+                        ));
+                    }
+                    let neutral_frames = runs
+                        .get(index + 1)
+                        .and_then(|(state, frames)| (*state == State::Neutral).then_some(*frames))
+                        .unwrap_or(0);
+                    if neutral_frames > 10_000 {
+                        return Err(SearchError::NonCanonicalTape(
+                            "post-press neutral run exceeds the typed press limit".into(),
+                        ));
+                    }
+                    let mut buttons = Vec::new();
+                    for (button, button_mask) in [
+                        (ControllerButton::A, BUTTON_A),
+                        (ControllerButton::B, BUTTON_B),
+                        (ControllerButton::Start, BUTTON_START),
+                    ] {
+                        if mask & button_mask != 0 {
+                            buttons.push(button);
+                        }
+                    }
+                    actions.push(MacroAction::Press {
+                        buttons,
+                        hold_frames,
+                        neutral_frames,
+                    });
+                    index += if neutral_frames == 0 { 1 } else { 2 };
+                }
+            }
+        }
+        let candidate = Self {
+            schema: CANDIDATE_SCHEMA.into(),
+            segment,
+            actions,
+            ancestry: Ancestry {
+                generation: 0,
+                parent_id: None,
+                mutation: Some("lossless absolute-tape import".into()),
+            },
+        };
+        candidate.validate()?;
+        if candidate.compile()? != *tape {
+            return Err(SearchError::NonCanonicalTape(
+                "typed inference did not reproduce the source tape exactly".into(),
+            ));
+        }
+        Ok(candidate)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -993,6 +1120,7 @@ pub enum SearchError {
     InvalidEvaluationSchema(u32),
     UnknownCandidate(String),
     NoEvaluatedCandidates,
+    NonCanonicalTape(String),
 }
 
 impl fmt::Display for SearchError {
@@ -1030,6 +1158,9 @@ impl fmt::Display for SearchError {
             }
             Self::NoEvaluatedCandidates => {
                 formatter.write_str("results contain no population candidates")
+            }
+            Self::NonCanonicalTape(message) => {
+                write!(formatter, "raw tape cannot be inferred safely: {message}")
             }
         }
     }
@@ -1091,6 +1222,30 @@ mod tests {
         assert_eq!(tape.frames[2].pads[0].stick_y, 100);
         assert_eq!(tape.frames[5].pads[0].buttons, BUTTON_START);
         assert_eq!(tape.frames[6].pads[0].buttons, 0);
+    }
+
+    #[test]
+    fn absolute_boot_tape_inference_is_lossless_and_rejects_analog() {
+        let source = Candidate::baseline(SegmentProfile::BootToFsp103)
+            .compile()
+            .unwrap();
+        let imported =
+            Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &source).unwrap();
+        assert_eq!(imported.compile().unwrap(), source);
+        assert!(
+            imported
+                .actions
+                .iter()
+                .any(|action| matches!(action, MacroAction::Press { .. }))
+        );
+
+        let analog = Candidate::baseline(SegmentProfile::Fsp103ToFsp104)
+            .compile()
+            .unwrap();
+        assert!(matches!(
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &analog),
+            Err(SearchError::NonCanonicalTape(_))
+        ));
     }
 
     #[test]

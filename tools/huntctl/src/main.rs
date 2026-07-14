@@ -7,6 +7,7 @@ use huntctl::search::{
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
     rank_population, write_seed_population,
 };
+use huntctl::search_evaluator::{EvaluateConfig, SearchRunConfig, evaluate_population, run_search};
 use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
@@ -20,6 +21,7 @@ use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn main() {
     if let Err(error) = run() {
@@ -44,6 +46,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "search" => command_search(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
+        "mock-search-worker" => mock_search_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
             Ok(())
@@ -271,6 +274,85 @@ fn timeline_selections(args: &[String]) -> Result<BTreeMap<String, String>, Box<
 
 fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("evaluate") => {
+            let search_args = &args[1..];
+            let population = required_path(search_args, "--population")?;
+            let game = required_path(search_args, "--game")?;
+            let dvd = required_path(search_args, "--dvd")?;
+            let output = required_path(search_args, "--output")?;
+            let results = option(search_args, "--results")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.join("results.json"));
+            let working_directory = option(search_args, "--working-directory")
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?);
+            let report = evaluate_population(&EvaluateConfig {
+                population_path: population,
+                game,
+                dvd,
+                output_root: output,
+                results_path: results,
+                working_directory,
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("run") => {
+            let search_args = &args[1..];
+            let segment: SegmentProfile = option(search_args, "--segment")
+                .ok_or("missing required --segment ID")?
+                .parse()?;
+            let output = required_path(search_args, "--output")?;
+            let size = usize_option(search_args, "--size", 16)?;
+            let summary = run_search(&SearchRunConfig {
+                segment,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: output,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                generations: u32_option(search_args, "--generations", 2)?,
+                population_size: size,
+                elite_count: usize_option(search_args, "--elites", (size / 4).max(1))?,
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+                rng_seed: u64_option(search_args, "--rng-seed", 1)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("import-tape") => {
+            let search_args = &args[1..];
+            let segment: SegmentProfile = option(search_args, "--segment")
+                .ok_or("missing required --segment ID")?
+                .parse()?;
+            let tape_path = required_path(search_args, "--tape")?;
+            let output = required_path(search_args, "--output")?;
+            let tape = InputTape::decode(&fs::read(&tape_path)?)?.tape;
+            let candidate = Candidate::from_absolute_tape(segment, &tape)?;
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, serde_json::to_vec_pretty(&candidate)?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "candidate_id": candidate.id()?,
+                    "candidate": output,
+                    "source_tape": tape_path,
+                    "frames": candidate.frame_count(),
+                    "lossless": candidate.compile()? == tape,
+                }))?
+            );
+            Ok(())
+        }
         Some("seed") => {
             let search_args = &args[1..];
             let segment: SegmentProfile = option(search_args, "--segment")
@@ -790,6 +872,25 @@ fn u64_option(args: &[String], name: &str, default: u64) -> Result<u64, Box<dyn 
         .unwrap_or(default))
 }
 
+fn u32_option(args: &[String], name: &str, default: u32) -> Result<u32, Box<dyn Error>> {
+    Ok(option(args, name)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(default))
+}
+
+fn timeout_option(args: &[String]) -> Result<Duration, Box<dyn Error>> {
+    if let Some(milliseconds) = option(args, "--timeout-ms") {
+        return Ok(Duration::from_millis(milliseconds.parse()?));
+    }
+    Ok(Duration::from_secs(
+        option(args, "--timeout-seconds")
+            .map(|value| value.parse())
+            .transpose()?
+            .unwrap_or(300),
+    ))
+}
+
 fn usage_error<T>() -> Result<T, Box<dyn Error>> {
     print_usage();
     Err("invalid command line".into())
@@ -798,6 +899,9 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 fn print_usage() {
     eprintln!(
         "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+    );
+    eprintln!(
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
 }
 
@@ -838,6 +942,71 @@ fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
         if command == "shutdown" {
             break;
         }
+    }
+    Ok(())
+}
+
+fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mode = option(args, "--mock-mode").unwrap_or_else(|| "hit".into());
+    if mode == "timeout" {
+        std::thread::sleep(Duration::from_secs(30));
+        return Ok(());
+    }
+    let result_path = required_path(args, "--milestone-result")?;
+    if mode == "malformed" {
+        fs::write(result_path, b"{}")?;
+        return Ok(());
+    }
+    let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
+    let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
+    let hit_goal = mode != "miss";
+    let milestones: Vec<Value> = requested
+        .split(',')
+        .map(|id| {
+            let hit = hit_goal
+                || (mode == "miss" && id == "gameplay-ready-f-sp103" && goal == "entered-f-sp104");
+            let tick = match id {
+                "gameplay-ready-f-sp103" => 77,
+                "exit-f-sp103-to-f-sp104" => 572,
+                "entered-f-sp104" => 603,
+                _ => 0,
+            };
+            let digest_character = match id {
+                "gameplay-ready-f-sp103" => "1",
+                "exit-f-sp103-to-f-sp104" => "2",
+                "entered-f-sp104" => "3",
+                _ => "0",
+            };
+            json!({
+                "id": id,
+                "hit": hit,
+                "sim_tick": hit.then_some(tick),
+                "tape_frame": hit.then_some(tick),
+                "evidence": hit.then(|| json!({
+                    "boundary_fingerprint": {
+                        "schema": "dusklight.milestone-boundary/v1",
+                        "algorithm": "xxh3-128",
+                        "canonical_encoding": "little-endian-fixed-v1",
+                        "digest": digest_character.repeat(32)
+                    }
+                }))
+            })
+        })
+        .collect();
+    fs::write(
+        result_path,
+        serde_json::to_vec_pretty(&json!({
+            "schema": {
+                "name": "dusklight.automation.milestones",
+                "version": 1
+            },
+            "goal": goal,
+            "goal_reached": hit_goal,
+            "milestones": milestones
+        }))?,
+    )?;
+    if mode == "miss" {
+        return Err("mock worker goal miss".into());
     }
     Ok(())
 }

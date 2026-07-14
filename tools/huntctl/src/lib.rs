@@ -7,6 +7,7 @@ pub mod pool;
 pub mod protocol;
 pub mod route_store;
 pub mod search;
+pub mod search_evaluator;
 pub mod tape;
 pub mod tape_chain;
 pub mod tape_dsl;
