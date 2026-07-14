@@ -2,6 +2,7 @@
 
 #include "JSystem/JUtility/JUTGamePad.h"
 #if TARGET_PC
+#include <aurora/aurora.h>
 #include "dusk/automation/input_tape.hpp"
 #endif
 #include <cmath>
@@ -102,7 +103,8 @@ u32 JUTGamePad::read() {
     }
 #endif
 #if TARGET_PC
-    dusk::updateActionBindings(!inputRecorder.isArmed());
+    dusk::updateActionBindings(
+        !inputRecorder.isArmed() && !aurora_get_automation_input_quarantine());
 #endif
 
     switch (sClampMode) {

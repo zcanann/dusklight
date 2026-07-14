@@ -62,7 +62,7 @@
     .badge.score { color: var(--amber); }
     .variant-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 7px; color: var(--muted); font-size: 11px; }
     .variant-meta code { color: #bdc8d8; }
-    .actions { display: flex; gap: 8px; align-items: center; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
     .play, .record { min-width: 112px; padding: 10px 13px; border-radius: 8px; font-weight: 750; cursor: pointer; }
     .play { border: 1px solid rgba(109, 225, 210, .55); background: rgba(109, 225, 210, .1); color: var(--cyan); }
     .record { border: 1px solid rgba(240, 195, 107, .55); background: rgba(240, 195, 107, .1); color: var(--amber); }
@@ -140,7 +140,7 @@
       return children.length?`<div class="draft-children">${children.map(draft=>draftCard(draft,next)).join('')}</div>`:'';
     }
     function draftCard(draft,seen=new Set()) {
-      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" data-play-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play</button><button class="record" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
+      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button><button class="play" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button><button class="record" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
     }
     function variantCard(variant) {
       const artifact=variant.artifact||{};
@@ -152,7 +152,7 @@
           <div class="variant-meta"><span>${escapeHtml(artifact.kind||'artifact')}: <code>${escapeHtml(artifact.value||'—')}</code></span><span title="${escapeHtml(variant.start_fingerprint)}">in <code>${escapeHtml(short(variant.start_fingerprint))}</code></span><span title="${escapeHtml(variant.boundary_fingerprint)}">out <code>${escapeHtml(short(variant.boundary_fingerprint))}</code></span></div>
           ${variant.error?`<div class="error-note">${escapeHtml(variant.error)}</div>`:''}
         </div>
-        <div class="actions"><button class="play" type="button" data-play-kind="variant" data-id="${escapeHtml(variant.id)}" ${disabled?'disabled':''}>${disabled?'Unavailable':'Play'}</button>${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}">Record · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
+        <div class="actions"><button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" ${disabled?'disabled':''}>${disabled?'Unavailable':'Play'}</button>${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}">Record · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
       </article>${draftChildren('variant',variant.id)}`;
     }
     function render() {
@@ -167,12 +167,12 @@
         });
       });
       $('tree').innerHTML=html||'<div class="empty">This timeline has no milestones.</div>';
-      $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button.dataset.playKind,button.dataset.id,button)));
+      $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button.dataset.playKind,button.dataset.id,button.dataset.playOrigin||'boot',button)));
       $('tree').querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       $('lineages').hidden=graph.lineages.length===0;
       $('lineageList').innerHTML=graph.lineages.map(lineage=>`<div class="lineage"><strong>${escapeHtml(lineage.name)}</strong> <span class="badge">${escapeHtml(lineage.kind||'lineage')}</span><br><code>${escapeHtml((lineage.steps||[]).map(step=>step.variant||step).join(' → '))}</code>${lineage.error?`<div class="reason">${escapeHtml(lineage.error)}</div>`:''}</div>`).join('');
     }
-    async function play(kind,id,button) {
+    async function play(kind,id,origin,button) {
       const variant=kind==='variant'&&graph.variants.find(item=>item.id===id);
       const draft=kind==='draft'&&graph.drafts.find(item=>item.id===id);
       const segment=variant&&graph.segments.find(item=>item.id===variant.segment);
@@ -180,17 +180,18 @@
       const name=variant?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=variant?{selection:{kind:'variant',id},stop:{kind:'milestone',milestone:segment.to},handoff:true}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true};
+      const payload=variant?{selection:{kind:'variant',id},stop:{kind:'milestone',milestone:segment.to},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent=`Running ${name}`; $('status').className='status ok';
-        toast(`Launched ${name}. Controller handoff is armed after ${body.frames||'the selected'} frames.`);
+        const detail=body.fast_forward_frames?` Fast-forwarding ${body.fast_forward_frames} parent frames.`:'';
+        toast(`Launched ${name} from ${body.origin||origin}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.`);
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(variant?.playable||draft?.playable); button.textContent='Play';
+        button.disabled=!(variant?.playable||draft?.playable); button.textContent=variant?'Play':origin==='parent'?'Play from parent':'Play from boot';
       }
     }
     async function record(button) {

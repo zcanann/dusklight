@@ -386,6 +386,29 @@ void testSuccessfulHoldTapeCanHandOffImmediately() {
     REQUIRE(gClearCalls[0] == 1);
 }
 
+void testCompletedFrameCountMarksExactFastForwardBoundary() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    InputTape tape;
+    tape.frames.resize(3);
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Release));
+
+    constexpr std::size_t revealAfter = 2;
+    REQUIRE(player.consumedFrameCount() == 0);
+    player.tick();
+    REQUIRE(player.consumedFrameCount() == revealAfter - 1);
+    REQUIRE(player.consumedFrameCount() != revealAfter);
+    player.tick();
+    REQUIRE(player.consumedFrameCount() == revealAfter);
+    REQUIRE(player.isPlaying());
+    player.tick();
+    REQUIRE(player.consumedFrameCount() == revealAfter + 1);
+    REQUIRE(!player.isPlaying());
+}
+
 void testMaximumExecutionTicksAccountsForConditionTimeouts() {
     using namespace dusk::automation;
 
@@ -880,6 +903,7 @@ int main() {
     testConditionedFrameRoundTrip();
     testPlayerOwnsAndReleasesPorts();
     testSuccessfulHoldTapeCanHandOffImmediately();
+    testCompletedFrameCountMarksExactFastForwardBoundary();
     testMaximumExecutionTicksAccountsForConditionTimeouts();
     testPlayerWaitsNeutrallyForCondition();
     testPlayerConditionTimeoutIsTerminal();

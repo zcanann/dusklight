@@ -83,6 +83,23 @@ boundary predicate/fingerprint. Zero-frame, capacity-exhausted, corrupt,
 detached, or failed recordings remain visible for diagnosis but cannot become
 parents.
 
+Ready draft cards expose two presentation origins. **Play from boot** displays
+the complete composed chain. **Play from parent** executes that same complete
+chain from a fresh process and isolated state root, but keeps the window hidden,
+host audio muted, and frame pacing disabled through the direct-parent prefix.
+After exactly that many tape frames, Dusklight reveals the window, restores
+30 Hz pacing and audio output, and displays the selected continuation before
+handing the controller back. The prefix is still simulated rather than skipped,
+so both modes have the same portable tape authority.
+
+Parent-origin playback is deliberately not described as loading a save state.
+Memory-card saves, direct stage starts, and the interactive State Share packet
+omit live actors, collision, loader queues, native heaps and pointers, and host
+renderer/audio state. A future checkpoint provider may replace the hidden cold
+replay only when it is tied to the exact build, game data, parent-chain digest,
+and boundary fingerprint and reproduces a validation replay. Until then, prefix
+replay is the only authoritative resume mechanism.
+
 The native result binds the launch with a random session token and authenticates
 the continuation by frame count, encoded length, and SHA-256. Parent-chain
 digests, exact lineage pins, path containment, and cycle checks prevent a draft

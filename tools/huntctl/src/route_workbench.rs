@@ -254,6 +254,16 @@ pub struct BrowserPlayRequest {
     pub stop: BrowserStop,
     #[serde(default = "default_takeover")]
     pub handoff: bool,
+    #[serde(default)]
+    pub origin: PlaybackOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackOrigin {
+    #[default]
+    Boot,
+    Parent,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -310,6 +320,9 @@ pub struct PlayResponse {
     pub session_id: String,
     pub frames: u64,
     pub input_tape_end: String,
+    pub origin: PlaybackOrigin,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_forward_frames: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -761,6 +774,16 @@ fn validate_draft_structure(
         {
             return Err(format!("draft {id:?} continuation tape was tampered"));
         }
+        let continuation = InputTape::decode(&tape_bytes)
+            .map_err(|_| format!("draft {id:?} continuation tape is invalid"))?
+            .tape;
+        if continuation.frames.is_empty()
+            || manifest.frames != Some(continuation.frames.len() as u64)
+        {
+            return Err(format!(
+                "draft {id:?} continuation frame metadata is inconsistent"
+            ));
+        }
         match &manifest.parent {
             DraftParent::Variant {
                 id: variant_id,
@@ -1118,13 +1141,21 @@ pub fn play(
     validate_play_request(request)?;
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_play_request(timeline, &artifact_root, request)?;
-    launch_materialized(config, materialized, request.takeover)
+    launch_materialized(
+        config,
+        materialized,
+        request.takeover,
+        PlaybackOrigin::Boot,
+        None,
+    )
 }
 
 fn launch_materialized(
     config: &WorkbenchConfig,
     materialized: MaterializedPlayback,
     takeover: bool,
+    origin: PlaybackOrigin,
+    fast_forward_frames: Option<u64>,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
@@ -1162,28 +1193,16 @@ fn launch_materialized(
     })?;
     let end = if takeover { "release" } else { "hold" };
     let mut command = Command::new(game);
-    command
-        .current_dir(&config.working_directory)
-        .arg("--dvd")
-        .arg(dvd)
-        .arg("--input-tape")
-        .arg(&tape_path)
-        .arg("--input-tape-end")
-        .arg(end)
-        .arg("--fixed-step")
-        .arg("--automation-data-root")
-        .arg(&state_root)
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false");
-    if let Some(stage) = materialized.seed_stage {
-        command.arg("--stage").arg(stage);
-    }
+    command.current_dir(&config.working_directory);
+    append_playback_args(
+        &mut command,
+        &dvd,
+        &tape_path,
+        end,
+        &state_root,
+        materialized.seed_stage,
+        fast_forward_frames,
+    );
     let child = command
         .spawn()
         .map_err(|error| WorkbenchError::new(format!("cannot launch Dusklight: {error}")))?;
@@ -1196,6 +1215,8 @@ fn launch_materialized(
         session_id,
         frames: materialized.tape.frames.len() as u64,
         input_tape_end: end.into(),
+        origin,
+        fast_forward_frames,
     };
     Ok((response, child))
 }
@@ -1204,10 +1225,164 @@ fn play_draft(
     timeline: &Timeline,
     config: &WorkbenchConfig,
     draft_id: &str,
+    origin: PlaybackOrigin,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_draft(timeline, &artifact_root, &config.state_root, draft_id)?;
-    launch_materialized(config, materialized, true)
+    let fast_forward_frames = match origin {
+        PlaybackOrigin::Boot => None,
+        PlaybackOrigin::Parent => Some(draft_parent_frame_count(
+            timeline,
+            &artifact_root,
+            &config.state_root,
+            draft_id,
+            materialized.tape.frames.len() as u64,
+        )?),
+    };
+    launch_materialized(config, materialized, true, origin, fast_forward_frames)
+}
+
+fn draft_parent_frame_count(
+    timeline: &Timeline,
+    repository_root: &Path,
+    state_root: &Path,
+    draft_id: &str,
+    full_frames: u64,
+) -> Result<u64, WorkbenchError> {
+    let manifests = scan_draft_manifests(state_root)?;
+    let manifest = manifests
+        .get(draft_id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown draft {draft_id:?}")))?;
+    if manifest.status != DraftStatus::Ready {
+        return Err(WorkbenchError::new(format!(
+            "draft {draft_id:?} is not ready"
+        )));
+    }
+    let draft_directory = drafts_root(state_root)?.join(draft_id);
+    let (_, continuation) = read_draft_tape(&draft_directory)?;
+    let continuation_frames = continuation.frames.len() as u64;
+    let parent = match &manifest.parent {
+        DraftParent::Variant {
+            id,
+            lineage,
+            step_index,
+            terminal_milestone,
+            ..
+        } => {
+            let materialized = materialize_lineage(
+                timeline,
+                repository_root,
+                lineage,
+                MaterializeTarget::ThroughMilestone(terminal_milestone.clone()),
+            )?;
+            if materialized.steps.len() != *step_index + 1
+                || materialized
+                    .steps
+                    .last()
+                    .is_none_or(|step| step.variant != *id)
+            {
+                return Err(WorkbenchError::new(
+                    "draft direct-parent lineage occurrence changed",
+                ));
+            }
+            materialized.tape
+        }
+        DraftParent::Draft { id, .. } => {
+            materialize_draft(timeline, repository_root, state_root, id)?.tape
+        }
+    };
+    let parent_frames = parent.frames.len() as u64;
+    if tape_digest(&parent)? != manifest.parent_tape_sha256 {
+        return Err(WorkbenchError::new(format!(
+            "draft {draft_id:?} direct-parent tape fingerprint changed"
+        )));
+    }
+    validate_parent_boundary_metadata(
+        parent_frames,
+        continuation_frames,
+        manifest.parent_frames,
+        manifest.frames,
+        full_frames,
+    )
+    .map_err(|_| {
+        WorkbenchError::new(format!(
+            "draft {draft_id:?} has invalid direct-parent playback boundary metadata"
+        ))
+    })?;
+    Ok(parent_frames)
+}
+
+fn validate_parent_boundary_metadata(
+    actual_parent_frames: u64,
+    actual_continuation_frames: u64,
+    declared_parent_frames: u64,
+    declared_continuation_frames: Option<u64>,
+    full_frames: u64,
+) -> Result<(), ()> {
+    if declared_parent_frames != actual_parent_frames
+        || declared_continuation_frames != Some(actual_continuation_frames)
+    {
+        return Err(());
+    }
+    validate_parent_boundary(
+        actual_parent_frames,
+        actual_continuation_frames,
+        full_frames,
+    )
+}
+
+fn validate_parent_boundary(
+    parent_frames: u64,
+    continuation_frames: u64,
+    full_frames: u64,
+) -> Result<(), ()> {
+    if parent_frames == 0
+        || parent_frames >= full_frames
+        || continuation_frames == 0
+        || parent_frames.checked_add(continuation_frames) != Some(full_frames)
+    {
+        Err(())
+    } else {
+        Ok(())
+    }
+}
+
+fn append_playback_args(
+    command: &mut Command,
+    dvd: &Path,
+    tape: &Path,
+    end: &str,
+    state_root: &Path,
+    seed_stage: Option<&str>,
+    fast_forward_frames: Option<u64>,
+) {
+    command
+        .arg("--dvd")
+        .arg(dvd)
+        .arg("--input-tape")
+        .arg(tape)
+        .arg("--input-tape-end")
+        .arg(end);
+    if let Some(frames) = fast_forward_frames {
+        command
+            .arg("--input-tape-fast-forward-frames")
+            .arg(frames.to_string());
+    }
+    command
+        .arg("--fixed-step")
+        .arg("--automation-data-root")
+        .arg(state_root)
+        .arg("--cvar")
+        .arg("game.instantSaves=true")
+        .arg("--cvar")
+        .arg("backend.cardFileType=1")
+        .arg("--cvar")
+        .arg("backend.wasPresetChosen=true")
+        .arg("--cvar")
+        .arg("game.enableMenuPointer=false");
+    if let Some(stage) = seed_stage {
+        command.arg("--stage").arg(stage);
+    }
 }
 
 fn record_continuation(
@@ -2157,6 +2332,7 @@ fn materialize_draft(
         let (encoded, continuation) = read_draft_tape(&root.join(&manifest.id))?;
         if continuation.frames.is_empty()
             || manifest.tape_bytes != Some(encoded.len() as u64)
+            || manifest.frames != Some(continuation.frames.len() as u64)
             || manifest.tape_sha256.as_deref()
                 != Some(format!("{:x}", Sha256::digest(&encoded)).as_str())
         {
@@ -2288,6 +2464,17 @@ fn adapt_browser_request(
     Ok(play)
 }
 
+fn validate_playback_origin(request: &BrowserPlayRequest) -> Result<(), WorkbenchError> {
+    if request.origin == PlaybackOrigin::Parent
+        && !matches!(request.selection, BrowserSelection::Draft { .. })
+    {
+        return Err(WorkbenchError::new(
+            "parent-origin playback requires a ready draft selection",
+        ));
+    }
+    Ok(())
+}
+
 struct HttpResponse {
     status: u16,
     reason: &'static str,
@@ -2322,10 +2509,11 @@ fn handle_http(
                             WorkbenchError::new(format!("invalid play request: {error}"))
                         })
                         .and_then(|browser_request| {
+                            validate_playback_origin(&browser_request)?;
                             let timeline = load_authoritative_timeline(&config.timeline_path)?;
                             let (response, _child) = match &browser_request.selection {
                                 BrowserSelection::Draft { id } => {
-                                    play_draft(&timeline, config, id)?
+                                    play_draft(&timeline, config, id, browser_request.origin)?
                                 }
                                 _ => {
                                     let play_request =
@@ -2687,11 +2875,22 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
             },
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
+            origin: PlaybackOrigin::Boot,
         };
         let adapted = adapt_browser_request(&timeline(), request).unwrap();
         assert_eq!(adapted.variant.as_deref(), Some("link_exit.one"));
         assert_eq!(adapted.frame, Some(1));
         assert!(adapted.takeover);
+
+        let parent_origin = BrowserPlayRequest {
+            selection: BrowserSelection::Variant {
+                id: "link_exit.one".into(),
+            },
+            stop: BrowserStop::Tick { tick: 1 },
+            handoff: true,
+            origin: PlaybackOrigin::Parent,
+        };
+        assert!(validate_playback_origin(&parent_origin).is_err());
     }
 
     #[test]
@@ -2860,6 +3059,130 @@ continue main with boot_link.tas after root@clean
         );
         let graph = graph_with_drafts(&timeline(), &root, &state).unwrap();
         assert!(graph.drafts[0].playable);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn direct_and_nested_draft_parent_origins_use_exact_cli_boundary() {
+        let root = temporary_root("draft-parent-origin");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let direct_id = "draft-parent-direct";
+        let mut direct_manifest = install_ready_draft(&root, &state, direct_id, &[8, 9]);
+        let direct = materialize_draft(&timeline(), &root, &state, direct_id).unwrap();
+        assert_eq!(direct.tape.frames.len(), 9);
+        assert_eq!(
+            draft_parent_frame_count(&timeline(), &root, &state, direct_id, 9).unwrap(),
+            7
+        );
+        assert!(validate_parent_boundary(0, 2, 2).is_err());
+        assert!(validate_parent_boundary(7, 0, 7).is_err());
+        assert!(validate_parent_boundary(7, 2, 7).is_err());
+        assert!(validate_parent_boundary(7, 1, 9).is_err());
+        assert!(
+            validate_parent_boundary_metadata(440, 106, 439, Some(107), 546).is_err(),
+            "compensating manifest corruption must not reveal one frame early"
+        );
+        assert!(validate_parent_boundary_metadata(440, 106, 440, Some(106), 546).is_ok());
+
+        let direct_directory = drafts_root(&state).unwrap().join(direct_id);
+        direct_manifest.parent_frames = 6;
+        direct_manifest.frames = Some(3);
+        fs::remove_file(direct_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&direct_directory, &direct_manifest, true).unwrap();
+        assert!(
+            draft_parent_frame_count(&timeline(), &root, &state, direct_id, 9).is_err(),
+            "compensating corruption in a real manifest must not move the decoded boundary"
+        );
+        assert!(materialize_draft(&timeline(), &root, &state, direct_id).is_err());
+        assert!(
+            !graph_with_drafts(&timeline(), &root, &state)
+                .unwrap()
+                .drafts
+                .into_iter()
+                .find(|draft| draft.id == direct_id)
+                .unwrap()
+                .playable,
+            "compensating frame corruption must make the draft structurally unplayable"
+        );
+        direct_manifest.parent_frames = 7;
+        direct_manifest.frames = Some(2);
+        fs::remove_file(direct_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&direct_directory, &direct_manifest, true).unwrap();
+
+        let nested_id = "draft-parent-nested";
+        let mut nested = install_ready_draft(&root, &state, nested_id, &[10, 11]);
+        let nested_directory = drafts_root(&state).unwrap().join(nested_id);
+        let (_, nested_continuation) = read_draft_tape(&nested_directory).unwrap();
+        let nested_result = concatenate(vec![
+            ChainSegment::all(direct.tape.clone()),
+            ChainSegment::all(nested_continuation),
+        ])
+        .unwrap()
+        .tape;
+        nested.parent = DraftParent::Draft {
+            id: direct_id.into(),
+            parent_tape_sha256: tape_digest(&direct.tape).unwrap(),
+        };
+        nested.parent_tape_sha256 = tape_digest(&direct.tape).unwrap();
+        nested.parent_frames = 9;
+        nested.expected_start_milestone = None;
+        nested.expected_start_fingerprint = None;
+        nested.start_boundary_verified = false;
+        nested.result_tape_sha256 = Some(tape_digest(&nested_result).unwrap());
+        fs::remove_file(nested_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&nested_directory, &nested, true).unwrap();
+
+        let nested_full = materialize_draft(&timeline(), &root, &state, nested_id).unwrap();
+        assert_eq!(nested_full.tape.frames.len(), 11);
+        assert_eq!(
+            draft_parent_frame_count(&timeline(), &root, &state, nested_id, 11).unwrap(),
+            9
+        );
+
+        let mut command = Command::new("game");
+        append_playback_args(
+            &mut command,
+            Path::new("disc.iso"),
+            Path::new("full-chain.tape"),
+            "release",
+            Path::new("state"),
+            None,
+            Some(9),
+        );
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let flag = arguments
+            .iter()
+            .position(|argument| argument == "--input-tape-fast-forward-frames")
+            .unwrap();
+        assert_eq!(arguments[flag + 1], "9");
+        assert_eq!(
+            arguments
+                .windows(2)
+                .find(|window| window[0] == "--input-tape")
+                .unwrap()[1],
+            "full-chain.tape"
+        );
+
+        let mut boot = Command::new("game");
+        append_playback_args(
+            &mut boot,
+            Path::new("disc.iso"),
+            Path::new("full-chain.tape"),
+            "release",
+            Path::new("state"),
+            None,
+            None,
+        );
+        assert!(
+            !boot
+                .get_args()
+                .any(|argument| argument == "--input-tape-fast-forward-frames")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

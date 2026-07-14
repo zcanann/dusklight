@@ -161,6 +161,32 @@ leaves no usable sidecar and exits nonzero. Other non-success states also exit
 nonzero. A normal window close is the intended way to finalize a headful
 recording; headless and exit-at-prefix modes are rejected.
 
+### Hidden prefix fast-forward
+
+For route-tree “play from parent,” a headful absolute tape can skip rendering
+its already-reviewed prefix to the desktop without skipping simulation:
+
+```powershell
+dusklight --dvd game.iso `
+  --input-tape build/selected-chain.tape `
+  --input-tape-fast-forward-frames 12345
+```
+
+The frame count is the exact composed length of the selected draft's direct
+parent and must satisfy `0 < N < tape frame count`. Dusklight starts a real
+presentation-capable backend hidden, mutes host audio, and runs full rendering
+and simulation in unpaced fixed-step mode. Once frame `N - 1` has completed its
+simulation tick, the completed-frame count is exactly `N`, but the window stays
+hidden until `aurora_end_frame` has submitted that parent-boundary image. Audio
+output is then restored and the same deterministic fixed-step clock continues
+with a paced 30 Hz outer loop; that limiter paces the just-completed parent
+frame. The first exposed buffer is therefore the parent boundary, and the next
+PAD read consumes child frame `N`. The tape is neither seeked nor truncated and
+no gameplay state is snapshotted or restored. Conditioned tapes,
+looping/holding end behavior, headless/unpaced launches, and exit-after-tape
+are rejected so the reveal boundary and eventual live handoff remain
+unambiguous.
+
 ## Current limits
 
 - Observation and catalog capture retain the same 256 lowest process IDs and

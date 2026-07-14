@@ -154,6 +154,10 @@ public:
     std::size_t failedFrameIndex() const { return mFailedFrame; }
     InputFrameCondition failedCondition() const { return mFailedCondition; }
     std::size_t nextFrameIndex() const { return mNextFrame; }
+    // tick() increments this when it installs a frame, before the caller runs
+    // that frame's simulation tick. At a post-simulation call site it is also
+    // the number of fully completed tape frames.
+    std::size_t consumedFrameCount() const { return mNextFrame; }
     std::size_t frameCount() const { return mTape.frames.size(); }
     const InputTape& tape() const { return mTape; }
 
