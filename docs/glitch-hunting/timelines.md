@@ -58,9 +58,37 @@ On Windows, the launcher prefers Brave when it is installed and otherwise uses
 the system default browser.
 
 The workbench renders milestones as a vertical tree and each checked-in segment
-variant as a card. Every playable card has its own **Play & Handoff** button,
-which runs the complete segment and releases controller ownership when its tape
-ends. Each launch gets a fresh isolated writable state directory.
+variant as a card. **Play** runs the selected chain and releases controller
+ownership when its tape ends. **Record** does the same deterministic replay,
+then records live port-0 input beginning with the first PAD read after handoff.
+Each launch gets a fresh isolated writable state directory.
+
+Record actions belong to concrete lineage occurrences, not just milestone or
+variant names. This matters when the same variant is reachable through multiple
+RNG/state prefixes. A checked-in endpoint is recordable only when its complete
+lineage is canonical and the native milestone fingerprint can be verified at
+the exact handoff frame.
+
+Closing Dusklight normally finalizes the recording. The workbench adds it as an
+ignored draft child under
+`build/automation-state/route-workbench/drafts/` and polls until its status is
+known. Restarting the workbench scans the same directory, so ready drafts remain
+visible. A draft stores only its continuation tape plus small parent, launch,
+and result manifests; playback reconstructs and verifies the selected chain.
+
+Draft endpoints begin as `manual_stop` / `unverified`. An optional human label
+describes intent but is not proof. Ready unverified drafts may be replayed and
+extended. Future promotion into the checked-in timeline must attach a native
+boundary predicate/fingerprint. Zero-frame, capacity-exhausted, corrupt,
+detached, or failed recordings remain visible for diagnosis but cannot become
+parents.
+
+The native result binds the launch with a random session token and authenticates
+the continuation by frame count, encoded length, and SHA-256. Parent-chain
+digests, exact lineage pins, path containment, and cycle checks prevent a draft
+from silently moving to another route state. Mouse, gyro, and Dusklight-specific
+action bindings are suppressed during recording because the current DUSKTAPE
+schema cannot replay those side channels.
 
 The same workbench is available directly:
 

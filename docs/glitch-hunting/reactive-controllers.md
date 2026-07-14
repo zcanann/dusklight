@@ -147,11 +147,18 @@ automation tape frame or recording never begins. They may be omitted only for
 an exploratory child of a manual draft; that ancestry remains unverified and
 cannot be promoted until a native boundary is established.
 
-Status schema `dusklight.input-recording/v1` reports `success`, `zero_frames`,
+Status schema `dusklight.input-recording/v2` reports `success`, `zero_frames`,
 `never_reached_handoff`, `start_boundary_mismatch`, `capacity_exhausted`, or
 `write_failure`, along with frame count/capacity, handoff and exhaustion flags,
-session token, start-boundary fields, and an optional error. Non-success states
-exit nonzero. A normal window close is the intended way to finalize a headful
+session token, start-boundary fields, an optional error, and the authoritative
+`process_success` boolean. That boolean is true only when every native failure
+term used for the final process exit is false, including the recording result.
+`status` remains recording-local: a successfully written recording may still
+report `process_success: false` when another requested artifact, milestone,
+oracle, or runtime check failed. Promotion requires recording status `success`,
+`process_success: true`, and a zero child-process exit. A status-write failure
+leaves no usable sidecar and exits nonzero. Other non-success states also exit
+nonzero. A normal window close is the intended way to finalize a headful
 recording; headless and exit-at-prefix modes are rejected.
 
 ## Current limits

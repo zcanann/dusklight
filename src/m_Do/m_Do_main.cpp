@@ -244,7 +244,7 @@ static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
 static void write_milestone_result_on_exit();
 static void write_realized_input_tape_on_exit();
-static void write_recorded_input_tape_on_exit();
+static void write_recorded_input_tape_on_exit(bool processFailedBeforeRecording);
 static void write_actor_catalog_on_exit();
 static void release_active_controller_on_exit();
 static bool auxiliary_live_input_enabled();
@@ -1273,10 +1273,12 @@ static bool write_atomic_file(const std::filesystem::path& path,
 static bool write_input_recording_status(const std::string_view status,
                                          const std::size_t frameCount,
                                          const bool capacityExhausted,
+                                         const bool processSuccess,
                                          const std::string& failure) {
     const nlohmann::ordered_json document{
-        {"schema", "dusklight.input-recording/v1"},
+        {"schema", "dusklight.input-recording/v2"},
         {"status", status},
+        {"process_success", processSuccess},
         {"tape", dusk::io::fs_path_to_string(recordInputTapePath)},
         {"frame_count", frameCount},
         {"frame_capacity", recordInputFrameCapacity},
@@ -1312,7 +1314,7 @@ static bool write_input_recording_status(const std::string_view status,
     return written;
 }
 
-static void write_recorded_input_tape_on_exit() {
+static void write_recorded_input_tape_on_exit(const bool processFailedBeforeRecording) {
     if (recordInputTapePath.empty()) {
         return;
     }
@@ -1332,7 +1334,7 @@ static void write_recorded_input_tape_on_exit() {
         fprintf(stderr,
                 "Input Recording Error: never reached verified live-input handoff; no tape was written\n");
         if (!write_input_recording_status(
-                status, frameCount, capacityExhausted, recordInputError)) {
+                status, frameCount, capacityExhausted, false, recordInputError)) {
             recordInputFailed = true;
         }
         return;
@@ -1377,7 +1379,9 @@ static void write_recorded_input_tape_on_exit() {
                 static_cast<int>(status.size()), status.data());
         fflush(stdout);
     }
-    if (!write_input_recording_status(status, frameCount, capacityExhausted, statusError)) {
+    const bool processSuccess = !processFailedBeforeRecording && !recordInputFailed;
+    if (!write_input_recording_status(
+            status, frameCount, capacityExhausted, processSuccess, statusError)) {
         recordInputFailed = true;
     }
 }
@@ -2658,11 +2662,6 @@ int game_main(int argc, char* argv[]) {
         deterministicTimeEnabled = false;
     }
 
-    // Recording status is deliberately the final artifact action. Consumers
-    // still wait for process exit before promoting a draft, but a completed
-    // sidecar can never race later game/runtime artifact writers.
-    write_recorded_input_tape_on_exit();
-
     const bool eyeShredderOracleFailed =
         eyeShredderOracleEnabled &&
         eyeShredderOracle.result().status !=
@@ -2670,15 +2669,20 @@ int game_main(int argc, char* argv[]) {
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
         milestoneTracker.goal().has_value() && !milestoneTracker.goalReached();
-    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
-                   realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
-                   milestoneResultWriteFailed ||
-                   milestoneGoalFailed ||
-                   eyeShredderOracleResultWriteFailed ||
-                   eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||
-                   inputTapePlaybackFailed || recordInputFailed
-               ? 1
-               : 0;
+    const bool processFailedBeforeRecording =
+        nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
+        realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
+        milestoneResultWriteFailed || milestoneGoalFailed ||
+        eyeShredderOracleResultWriteFailed || eyeShredderOracleFailed ||
+        deterministicTimeAdvanceFailed || inputTapePlaybackFailed;
+
+    // Recording status is deliberately the final artifact action. It records
+    // the complete process outcome known at the exact point used to choose the
+    // return code. A status-write failure leaves no usable authoritative
+    // sidecar and sets recordInputFailed before the return below.
+    write_recorded_input_tape_on_exit(processFailedBeforeRecording);
+
+    return processFailedBeforeRecording || recordInputFailed ? 1 : 0;
 }
 
 
