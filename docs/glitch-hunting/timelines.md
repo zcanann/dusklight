@@ -1,92 +1,124 @@
-# Route timelines and immutable lineage
+# Route timelines, variants, and Git
 
-The route layer separates human-authored intent from stored evidence.
-routes/intro.timeline is a readable view of milestone nodes, segment edges,
-competing variants, continuations, and branches. The content-addressed route
-store is the authority for imported programs, tapes, boundary states,
-evaluations, lineages, and named route or experiment heads.
+Git is the route database. Checked-in `.timeline` files, segment programs, and
+proof metadata are authoritative; normal Git commits provide history, copy,
+move, deletion, review, and recovery. The route layer adds game-specific graph
+semantics, not a second version-control system.
 
-## Immutable variant model
+`routes/intro.timeline` describes milestone nodes, segment edges, competing
+variants, and pinned lineages. A lineage contains references to segment
+variants. It does not copy their input, so even a large route tree remains a
+small collection of independent segment payloads and tiny manifests.
 
-A variant is one immutable attempt at one segment. It declares:
+## Curated variants versus mining output
 
-- a candidate or tape artifact;
+Search populations, failed attempts, traces, and transient champions remain in
+the ignored `build/` tree. A useful result is promoted by adding one immutable
+segment artifact under `routes/<route>/variants/<segment>/`, adding its proof
+metadata, and referencing it from the timeline. Everything else can be thrown
+away.
+
+This makes pruning ordinary branch hygiene:
+
+- delete variants or lineages that led nowhere;
+- keep unusual RNG frontiers even when they are locally slower;
+- commit only results worth sharing or preserving; and
+- use Git history to recover a discarded experiment when needed.
+
+Promotion is not “the fastest score wins.” Tick count is one property. Boundary
+fingerprints, RNG state, stability, and downstream usefulness determine whether
+two variants are substitutes or separate frontier points.
+
+## Immutable segment model
+
+A variant is one attempt at one segment. It declares:
+
+- a candidate, TAS source, or compact tape artifact;
 - its exact starting boundary fingerprint;
 - its produced boundary fingerprint; and
-- an optional first-hit tick.
+- optional score information such as the first-hit simulation tick.
 
-Boundary fingerprints represent the full state contract needed by the next
-segment, including RNG-sensitive state. A faster sibling does not stale an
-established continuation. It is only speed-comparable when both its starting
-and produced fingerprints equal the incumbent's. Otherwise it is a separate
-frontier point.
+The input artifact contains only that segment. Stage-launch setup, search
+harness frames, and other evaluation scaffolding are not valid continuation
+payloads. The workbench permits standalone preview of those artifacts but
+refuses to concatenate them until a canonical payload window and exact boundary
+proof exist.
 
-A continuation pins each segment variant to the exact preceding variant and
-checkpoint fingerprint. A branch inherits a named continuation through a named
-milestone and then supplies a different tail. Both remain valid when another
-variant becomes incumbent.
+A continuation pins every segment variant to the exact preceding variant and
+checkpoint fingerprint. A branch inherits a named prefix and supplies a
+different tail. Adding a sibling variant never rewrites an existing lineage.
 
-The stale label is restricted to an explicit workspace preview:
+## Route Workbench
 
-    huntctl timeline status --timeline routes/intro.timeline --continuation main --select boot_to_link.golf
+In VS Code, choose the single **Glitch Hunt: Route Workbench** entry under
+**Run and Debug**. The pre-launch task builds Dusklight and the Rust workbench,
+then opens a local browser view of the checked-in route graph.
 
-Selecting an upstream replacement marks the preview's descendants stale until
-an explicit repair. Compatible repair produces authored text for a new
-continuation and preserves the original:
+The graph can be panned, zoomed, and inspected by milestone, segment, variant,
+or lineage. Selecting a variant exposes a segment-local frame scrubber. **Play
+& Handoff** cold-replays the exact prefix through the chosen frame and then
+releases controller ownership so live input can continue. Each launch gets a
+fresh isolated writable state directory.
 
-    huntctl timeline rebase-compatible --timeline routes/intro.timeline --continuation main --select boot_to_link.golf --name main_golf
+The same workbench is available directly:
 
-No command silently prunes or rewrites a lineage.
+```powershell
+cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline workbench `
+  --timeline routes/intro.timeline `
+  --game build/windows-clang-debug/dusklight.exe `
+  --dvd orig/GZ2E01/GZ2E01.iso
+```
+
+`--dvd` may be omitted to use the image last selected in Dusklight's normal
+configuration. The VS Code launch uses this behavior, so it does not encode a
+machine-specific image path.
+
+The server binds only to loopback. It rereads the timeline on every request, so
+working-tree edits appear after refreshing the graph. Game, disc, and state
+paths are server-owned and cannot be supplied by the browser.
+
+Scrubbing is replay, not a save-state claim. The UI can inspect recorded frames
+instantly, but live playback to a tick starts from the segment's proven seed and
+executes its prefix. True constant-time “play from here” requires a restorable
+checkpoint format, which is not implemented yet.
 
 ## DSL
 
-The line-oriented format uses these declarations:
+The line-oriented format uses declarations such as:
 
-    timeline intro
-    milestone process_boot
-    milestone link_control
-    segment boot_to_link from process_boot to link_control profile boot_to_fsp103
-    variant boot_to_link.safe incumbent uses baseline boot_to_fsp103 starts process-v1 produces control-rng1
-    continuation main starts root@process-v1
-    continue main with boot_to_link.safe after root@process-v1
-    branch experiment from main at link_control
+```text
+timeline intro
+milestone process_boot
+milestone link_control
+segment boot_to_link from process_boot to link_control profile boot_to_fsp103
+variant boot_to_link.golf uses candidate intro/variants/boot_to_link/golf-661.candidate.json starts process-clean-v1 produces control-rng1 ticks 644
+continuation golf_boot starts root@process-clean-v1
+continue golf_boot with boot_to_link.golf after root@process-clean-v1
+branch experiment from golf_boot at link_control
+```
 
-Candidate and tape paths may be quoted. Comments start with a hash. The parser
-reports source line and column and rejects duplicate names, missing references,
-boundary mismatches, discontinuous continuations, and milestone or branch
-cycles.
+Artifact forms are `uses candidate`, `uses tas`, and `uses tape`. Baselines are
+generated profile seeds intended for evaluation and standalone preview. Paths
+are relative to the directory containing the timeline. Comments start with a
+hash. Validation rejects duplicate names, missing references, boundary
+mismatches, discontinuous continuations, and cycles.
 
-## Content-addressed route store
+Preview an upstream substitution without changing files:
 
-Initialize a store and atomically import a timeline snapshot:
+```powershell
+cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline status `
+  --timeline routes/intro.timeline `
+  --continuation main `
+  --select boot_to_link.golf
+```
 
-    huntctl timeline store init build/route-store
-    huntctl timeline store import --store build/route-store --timeline routes/intro.timeline --ref routes/intro
+`timeline rebase-compatible` can emit the text for a boundary-compatible
+lineage variant. It never mutates or prunes the original.
 
-Every object ID is the SHA-256 of its canonical typed object. Objects are
-immutable. Named refs are append-only head events, so promote cannot partially
-overwrite a prior head. An import writes all objects before its single snapshot
-ref event; an interrupted import leaves only unreachable objects.
+## Legacy route store
 
-Native evaluator output can be imported with its tape and observed boundary as
-one immutable evaluation object:
-
-    huntctl timeline store import-evaluation --store build/route-store --evaluation build/result.json --milestone f_sp104 --fingerprint fsp104-rng1 --ref evaluations/candidate
-
-Fork a lineage into an experiment head, then append or repair through authored
-timeline intent:
-
-    huntctl timeline store fork --store build/route-store --from routes/intro --lineage main --to experiments/golf
-    huntctl timeline store append --store build/route-store --ref experiments/golf --timeline routes/intro.timeline --continuation main
-    huntctl timeline store replay-repair --store build/route-store --from experiments/golf --to experiments/golf-repaired --timeline routes/intro.timeline --continuation main_golf
-
-verify rehashes typed objects and traverses all current refs, rejecting missing
-references, invalid schemas, and cycles. Garbage collection is conservative
-and dry-run by default:
-
-    huntctl timeline store verify --store build/route-store
-    huntctl timeline store gc --store build/route-store
-    huntctl timeline store gc --store build/route-store --apply
-
-Only objects unreachable from current named heads are eligible. Promotion and
-garbage collection are always explicit.
+The `timeline store` commands predate the Git-owned model. They remain readable
+for existing experiments, but their object refs, promotion history, and garbage
+collection are not route authority and should not be used for new work. Useful
+validation and content-hash ideas may later become an ignored generated index
+over the checked-in route tree.

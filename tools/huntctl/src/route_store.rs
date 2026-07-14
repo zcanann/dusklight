@@ -2,6 +2,7 @@
 
 use crate::search::Candidate;
 use crate::tape::InputTape;
+use crate::tape_dsl;
 use crate::timeline::{ArtifactSource, ResolvedLineage, Timeline, TimelineError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -443,6 +444,11 @@ impl RouteStore {
                     let candidate: Candidate = serde_json::from_str(&source)?;
                     (Some(source), candidate.compile()?.encode()?)
                 }
+                ArtifactSource::Tas(path) => {
+                    let source = fs::read_to_string(root.join(path))?;
+                    let compiled = tape_dsl::parse(&source)?.compile()?;
+                    (Some(source), compiled.tape.encode()?)
+                }
                 ArtifactSource::Tape(path) => {
                     let bytes = fs::read(root.join(path))?;
                     InputTape::decode(&bytes)?;
@@ -452,7 +458,11 @@ impl RouteStore {
             let program = program
                 .map(|source| {
                     self.put(RouteObject::Program {
-                        format: "dusklight-search-candidate/v1".into(),
+                        format: match &variant.artifact {
+                            ArtifactSource::Tas(_) => "dusktape-dsl/v1",
+                            _ => "dusklight-search-candidate/v1",
+                        }
+                        .into(),
                         source,
                     })
                 })
@@ -698,6 +708,8 @@ pub enum StoreError {
     Timeline(TimelineError),
     Search(crate::search::SearchError),
     Tape(crate::tape::TapeError),
+    TapeDsl(crate::tape_dsl::DslError),
+    TapeProgram(crate::tape_program::ProgramError),
     NotInitialized(PathBuf),
     InvalidSchema(String),
     InvalidObjectId(String),
@@ -719,6 +731,8 @@ impl fmt::Display for StoreError {
             Self::Timeline(error) => error.fmt(formatter),
             Self::Search(error) => error.fmt(formatter),
             Self::Tape(error) => error.fmt(formatter),
+            Self::TapeDsl(error) => error.fmt(formatter),
+            Self::TapeProgram(error) => error.fmt(formatter),
             Self::NotInitialized(path) => {
                 write!(
                     formatter,
@@ -776,6 +790,16 @@ impl From<crate::search::SearchError> for StoreError {
 impl From<crate::tape::TapeError> for StoreError {
     fn from(value: crate::tape::TapeError) -> Self {
         Self::Tape(value)
+    }
+}
+impl From<crate::tape_dsl::DslError> for StoreError {
+    fn from(value: crate::tape_dsl::DslError) -> Self {
+        Self::TapeDsl(value)
+    }
+}
+impl From<crate::tape_program::ProgramError> for StoreError {
+    fn from(value: crate::tape_program::ProgramError) -> Self {
+        Self::TapeProgram(value)
     }
 }
 

@@ -6,6 +6,7 @@ pub mod corpus;
 pub mod pool;
 pub mod protocol;
 pub mod route_store;
+pub mod route_workbench;
 pub mod search;
 pub mod search_evaluator;
 pub mod tape;

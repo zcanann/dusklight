@@ -2,29 +2,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Glitch Hunt: TAS Playback",
+            "name": "Glitch Hunt: Route Workbench",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+            "program": "${workspaceFolder}/tools/huntctl/target/debug/huntctl.exe",
             "args": [
-                "--configured-dvd",
-                "--input-tape", "${workspaceFolder}/build/${input:glitchHuntScenario}.tape",
-                "--input-tape-end", "release",
-                "--fixed-step",
-                "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
-                "--cursor-breakout-shadow",
-                "--name-entry-trace", "${workspaceFolder}/build/automation-state/vscode-debug/tas-playback.trace.json",
-                "--cvar", "game.instantSaves=true",
-                "--cvar", "backend.cardFileType=1",
-                "--cvar", "backend.wasPresetChosen=true",
-                "--cvar", "game.enableMenuPointer=false",
-                "--develop",
-                "--console"
+                "timeline", "workbench",
+                "--timeline", "${workspaceFolder}/routes/intro.timeline",
+                "--game", "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+                "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS",
-            "postDebugTask": "Glitch Hunt: Clean Visual TAS State"
+            "preLaunchTask": "Glitch Hunt: Prepare Route Workbench"
         },
         {
             "name": "(gdb) Launch Dusklight MSVC",
@@ -37,20 +27,6 @@
             "symbolSearchPath": "${command:cmake.launchTargetPath}",
             "console": "integratedTerminal",
             "cwd":"${workspaceRoot}"
-        }
-    ],
-    "inputs": [
-        {
-            "id": "glitchHuntScenario",
-            "type": "pickString",
-            "description": "TAS playback scenario",
-            "default": "eye-shredder",
-            "options": [
-                "eye-shredder",
-                "intro-first-exit",
-                "intro-cutscene",
-                "boot-start-smoke"
-            ]
         }
     ]
 }

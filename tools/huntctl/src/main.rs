@@ -2,6 +2,7 @@ use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerCli
 use huntctl::corpus::Corpus;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::route_store::{ObjectId, RouteStore};
+use huntctl::route_workbench::{WorkbenchConfig, serve as serve_route_workbench};
 use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
@@ -20,7 +21,9 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 fn main() {
@@ -118,9 +121,98 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("workbench") => command_timeline_workbench(&args[1..]),
         Some("store") => command_timeline_store(&args[1..]),
         _ => usage_error(),
     }
+}
+
+fn command_timeline_workbench(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let timeline_path = required_path(args, "--timeline")?;
+    let game = required_path(args, "--game")?;
+    let dvd = option(args, "--dvd")
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(configured_dvd_path)?;
+    let state_root = option(args, "--state-root")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("build/automation-state/route-workbench"));
+    let port = option(args, "--port")
+        .map(|value| value.parse::<u16>())
+        .transpose()?
+        .unwrap_or(0);
+    let working_directory = env::current_dir()?;
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let address = listener.local_addr()?;
+    let url = format!("http://{address}/");
+
+    println!("Route Workbench: {url}");
+    println!("Timeline: {}", timeline_path.display());
+    println!("Ctrl+C stops the workbench; launched playback sessions keep running.");
+    if !args.iter().any(|arg| arg == "--no-open") {
+        open_browser(&url)?;
+    }
+
+    serve_route_workbench(
+        listener,
+        WorkbenchConfig {
+            timeline_path,
+            repository_root: working_directory.clone(),
+            working_directory,
+            game,
+            dvd,
+            state_root,
+        },
+    )?;
+    Ok(())
+}
+
+fn open_browser(url: &str) -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command.spawn()?;
+    Ok(())
+}
+
+fn configured_dvd_path() -> Result<PathBuf, Box<dyn Error>> {
+    let app_data = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or("--dvd is required when APPDATA is unavailable")?;
+    let config_path = app_data.join("TwilitRealm/Dusklight/config.json");
+    let config: Value = serde_json::from_slice(&fs::read(&config_path).map_err(|error| {
+        format!(
+            "--dvd was omitted and the Dusklight config {} could not be read: {error}",
+            config_path.display()
+        )
+    })?)?;
+    config
+        .get("backend.isoPath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!(
+                "--dvd was omitted and {} has no backend.isoPath",
+                config_path.display()
+            )
+            .into()
+        })
 }
 
 fn command_timeline_store(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -899,6 +991,9 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 fn print_usage() {
     eprintln!(
         "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+    );
+    eprintln!(
+        "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
         "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"

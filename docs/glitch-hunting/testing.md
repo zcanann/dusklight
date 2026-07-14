@@ -40,7 +40,24 @@ The runner configures `windows-clang-debug` with code mods disabled. This keeps
 the automation tests usable from ordinary PowerShell rather than requiring a
 Visual Studio developer shell.
 
-## Visible TAS playback
+## Visual route playback
+
+For route work, choose the single **Glitch Hunt: Route Workbench** entry under
+**Run and Debug** and press F5. VS Code builds Dusklight and the Rust workbench,
+then opens a browser containing the checked-in milestone/variant graph. Select a
+variant or lineage, scrub to a segment-local frame, and choose **Play &
+Handoff**. Playback uses absolute input frames, owns all controller ports until
+the selected prefix ends, and then releases them to live input.
+
+The workbench replaces per-scenario launch configurations and generated-winner
+dropdown entries. Git-owned variants appear in the graph automatically; ignored
+search populations do not appear until a result is deliberately promoted into
+`routes/`.
+
+See [Route timelines, variants, and Git](timelines.md) for lineage and scrub
+semantics.
+
+## Legacy named playback
 
 For checked Eye Shredder playback, run **Tasks: Run Task**, choose **Glitch
 Hunt: Play Visual Scenario**, then select `eye-shredder`. It resolves the last
@@ -114,15 +131,10 @@ Dusklight releases automation ownership and hands control to the live controller
 until the window is closed. The Eye runner finalizes and validates its oracle
 and trace after process exit.
 
-To attach a debugger and use breakpoints, choose the single **Glitch Hunt: TAS
-Playback** entry under **Run and Debug**, press F5, and select a scenario from
-its dropdown. Scenario names map directly to standardized files under `build`
-(for example, `intro-cutscene` maps to `build/intro-cutscene.tape`). The common
-launch enables fixed-step playback and the bounded name-entry shadow required
-by Eye Shredder; semantic oracle validation remains in the test selector. The
-configuration copies only the last configured DVD path into a fresh debug data
-root before launch, then deletes the root after debugging. It requires VS
-Code's `cppvsdbg` debugger support.
+The named PowerShell dispatcher remains available for checked regression
+scenarios such as Eye Shredder. It is no longer exposed as a growing set of VS
+Code launch configurations; route exploration belongs in the workbench and
+semantic oracle validation belongs in the fixed test selector.
 
 The named dispatcher is also directly callable. Surrounding quotes pasted as
 part of the DVD path are accepted:

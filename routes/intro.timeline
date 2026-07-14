@@ -10,15 +10,19 @@ milestone f_sp104
 segment boot_to_link from process_boot to link_control profile boot_to_fsp103
 segment link_to_fsp104 from link_control to f_sp104 profile fsp103_to_fsp104
 
-variant boot_to_link.safe incumbent uses baseline boot_to_fsp103 starts process-clean-v1 produces fsp103-control-rng-unknown-v1
-variant boot_to_link.golf uses baseline boot_to_fsp103 starts process-clean-v1 produces fsp103-control-rng-unknown-v1
+variant boot_to_link.safe incumbent uses baseline boot_to_fsp103 starts process-clean-v1 produces cdb3715d71f27c06f3d9db7f7d8f7c6b
+variant boot_to_link.golf uses candidate intro/variants/boot_to_link/golf-661.candidate.json starts process-clean-v1 produces cdb3715d71f27c06f3d9db7f7d8f7c6b ticks 644
 
-variant link_to_fsp104.baseline incumbent uses baseline fsp103_to_fsp104 starts fsp103-control-rng-unknown-v1 produces fsp104-point0-rng-unknown-v1 ticks 603
-variant link_to_fsp104.rolls uses baseline fsp103_to_fsp104 starts fsp103-control-rng-unknown-v1 produces fsp104-point0-rng-unknown-v1
+variant link_to_fsp104.baseline incumbent uses baseline fsp103_to_fsp104 starts cdb3715d71f27c06f3d9db7f7d8f7c6b produces fsp104-point0-rng-unknown-v1 ticks 603
+variant link_to_fsp104.rolls uses baseline fsp103_to_fsp104 starts cdb3715d71f27c06f3d9db7f7d8f7c6b produces fsp104-point0-rng-unknown-v1
 
 continuation main starts root@process-clean-v1
 continue main with boot_to_link.safe after root@process-clean-v1
-continue main with link_to_fsp104.baseline after boot_to_link.safe@fsp103-control-rng-unknown-v1
+continue main with link_to_fsp104.baseline after boot_to_link.safe@cdb3715d71f27c06f3d9db7f7d8f7c6b
+
+continuation golf_boot starts root@process-clean-v1
+continue golf_boot with boot_to_link.golf after root@process-clean-v1
+continue golf_boot with link_to_fsp104.baseline after boot_to_link.golf@cdb3715d71f27c06f3d9db7f7d8f7c6b
 
 branch exit_roll_experiment from main at link_control
-continue exit_roll_experiment with link_to_fsp104.rolls after boot_to_link.safe@fsp103-control-rng-unknown-v1
+continue exit_roll_experiment with link_to_fsp104.rolls after boot_to_link.safe@cdb3715d71f27c06f3d9db7f7d8f7c6b

@@ -2,6 +2,7 @@
 
 use crate::search::{Candidate, SegmentProfile};
 use crate::tape::InputTape;
+use crate::tape_dsl;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
@@ -49,6 +50,7 @@ pub struct Variant {
 pub enum ArtifactSource {
     Baseline(SegmentProfile),
     Candidate(PathBuf),
+    Tas(PathBuf),
     Tape(PathBuf),
 }
 
@@ -258,6 +260,20 @@ impl Timeline {
                             format!("candidate {} has the wrong segment profile", path.display()),
                         ));
                     }
+                }
+                ArtifactSource::Tas(path) => {
+                    let path = root.join(path);
+                    let source = fs::read_to_string(&path).map_err(|error| {
+                        TimelineError::at(
+                            variant.line,
+                            1,
+                            format!("cannot read TAS program {}: {error}", path.display()),
+                        )
+                    })?;
+                    tape_dsl::parse(&source)
+                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?
+                        .compile()
+                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
                 }
                 ArtifactSource::Tape(path) => {
                     let path = root.join(path);
@@ -940,6 +956,7 @@ impl<'a> Parser<'a> {
                 |error: crate::search::SearchError| TimelineError::at(line, 1, error.to_string()),
             )?),
             "candidate" => ArtifactSource::Candidate(PathBuf::from(value)),
+            "tas" => ArtifactSource::Tas(PathBuf::from(value)),
             "tape" => ArtifactSource::Tape(PathBuf::from(value)),
             _ => {
                 return Err(TimelineError::at(
@@ -1383,5 +1400,32 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
         let error = Timeline::parse("timeline \"unterminated").unwrap_err();
         assert_eq!(error.line, Some(1));
         assert!(error.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn validates_git_tracked_tas_artifacts() {
+        let root =
+            std::env::temp_dir().join(format!("huntctl-timeline-tas-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("boot.tas"),
+            "dusktape 1\nrate 30/1\nports 0x0f\nstate neutral {}\nframe neutral\n",
+        )
+        .unwrap();
+        let timeline = Timeline::parse(
+            r#"
+timeline tas_route
+milestone boot
+milestone control
+segment boot_link from boot to control profile boot_to_fsp103
+variant boot_link.tas incumbent uses tas boot.tas starts clean produces control
+continuation main starts root@clean
+continue main with boot_link.tas after root@clean
+"#,
+        )
+        .unwrap();
+        timeline.validate_artifacts(Some(&root)).unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 }

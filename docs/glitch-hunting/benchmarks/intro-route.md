@@ -96,28 +96,25 @@ The trigger tick is a better golf objective than completion of the following
 load. Load completion contains host-I/O latency after the player has already
 completed the route.
 
-## Known timing side channel
+## Timing boundary
 
-Synchronous DVD and memory-card dispatch, fixed OS time, and absolute input do
-not yet make the whole PC port deterministic. In cold isolated runs, the title
-event has ended anywhere from tick 181 to beyond tick 400. Advancing the
-simulation while host work is outstanding changes which UI receives a fixed
-press. The checked normal boot puts its first context-sensitive A press at tick
-400, but a later cold run proved this is only a useful baseline, not a durable
-barrier. No larger guessed frame number can prove an unbounded host task is
-finished.
+The observed cold-boot title variance was traced to `JASDvd` completion work
+crossing from the host audio task thread into fixed-step simulation. Automation
+now dispatches those DVD-backed audio loads inline, as it already does for the
+other deterministic I/O paths. The checked boot then reproduced its exact
+strict trace 20/20 times in one batch and 45/45 independent cold runs. The tape
+still contains only absolute input; no reactive readiness check masks drift.
 
 Small physics populations also remain: identical input from identical reported
 control coordinates reaches the first exit within a four-tick band. The runner
 records min/median/max/spread and requires every run to reach the semantic
 milestones. It does not claim false single-tick determinism.
 
-The durable fix is an engine-level loading/readiness barrier that stalls logical
-time while deterministic automation work is outstanding. Until that exists,
-the console-boot scenarios are timing-leak probes rather than non-flaky CI
-tests. Route frame golf and roll-spacing exploration should begin from an
-explicit stage/save/checkpoint seed, then promote a candidate back to cold
-process-boot replay after the barrier exists.
+This result closes the measured title-side scheduling leak, not every possible
+PC-port side channel. New asynchronous loaders must either be made part of the
+logical timing model or fail exact replay tests. Route frame golf should still
+use an explicit stage/save/checkpoint seed for throughput, then promote useful
+candidates to a cold process-boot lineage for end-to-end proof.
 
 ## Running and watching
 
@@ -126,11 +123,11 @@ process-boot replay after the barrier exists.
 .\tools\glitch-hunting\run-intro-route.ps1 -Goal intro-cutscene -Runs 10
 ```
 
-In VS Code, run **Glitch Hunt: Play Visual Scenario** and select
-`intro-first-exit`, `intro-cutscene`, or `fsp103-next-map-seed`. The test
-selector exposes the same names for headless checked runs. The direct-stage
-choice is routed through the existing scenario selector; it does not add a
-launch configuration.
+In VS Code, run the single **Glitch Hunt: Route Workbench** launch. It displays
+checked-in segment variants and lineages, supports exact-prefix scrubbing, and
+hands live controller input back when playback ends. The fixed test selector
+still exposes `intro-first-exit`, `intro-cutscene`, and
+`fsp103-next-map-seed` for semantic regression runs.
 
 Each run writes its compact trace and JSON milestone summary beneath
 `build/test-results/<scenario>/<timestamp>`. The matrix also writes

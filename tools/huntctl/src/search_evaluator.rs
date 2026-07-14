@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v2";
-pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v1";
+pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v2";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 
 #[derive(Clone, Debug)]
@@ -88,7 +88,14 @@ pub struct AttemptEvidence {
     pub deepest_milestone: String,
     pub first_hit_tick: Option<u64>,
     pub goal_reached: bool,
+    pub milestone_observations: BTreeMap<String, MilestoneObservation>,
     pub boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MilestoneObservation {
+    pub sim_tick: u64,
+    pub tape_frame: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -398,6 +405,7 @@ fn run_trial(
         deepest_milestone: "none".into(),
         first_hit_tick: None,
         goal_reached: false,
+        milestone_observations: BTreeMap::new(),
         boundary_fingerprints: BTreeMap::new(),
     };
     let mut run = || -> Result<TrialScore, EvaluateError> {
@@ -480,6 +488,7 @@ fn run_trial(
             evidence.deepest_milestone = score.deepest;
             evidence.first_hit_tick = score.score_tick;
             evidence.goal_reached = score.goal_reached;
+            evidence.milestone_observations = score.milestone_observations;
             evidence.boundary_fingerprints = score.boundary_fingerprints;
         }
         Err(error) => evidence.infrastructure_error = Some(error.to_string()),
@@ -494,6 +503,7 @@ struct TrialScore {
     deepest: String,
     score_tick: Option<u64>,
     goal_reached: bool,
+    milestone_observations: BTreeMap<String, MilestoneObservation>,
     boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
 }
 
@@ -516,6 +526,7 @@ struct NativeMilestone {
     id: String,
     hit: bool,
     sim_tick: Option<u64>,
+    tape_frame: Option<u64>,
     evidence: Option<NativeEvidence>,
 }
 
@@ -575,13 +586,26 @@ fn parse_native_milestones(
         ));
     }
     let mut fingerprints = BTreeMap::new();
+    let mut observations = BTreeMap::new();
     for (id, milestone) in &milestones {
-        match (milestone.hit, milestone.sim_tick, &milestone.evidence) {
-            (true, Some(_), Some(evidence)) => {
+        match (
+            milestone.hit,
+            milestone.sim_tick,
+            milestone.tape_frame,
+            &milestone.evidence,
+        ) {
+            (true, Some(sim_tick), Some(tape_frame), Some(evidence)) => {
                 validate_fingerprint(&evidence.boundary_fingerprint)?;
+                observations.insert(
+                    id.clone(),
+                    MilestoneObservation {
+                        sim_tick,
+                        tape_frame,
+                    },
+                );
                 fingerprints.insert(id.clone(), evidence.boundary_fingerprint.clone());
             }
-            (false, None, None) => {}
+            (false, None, None, None) => {}
             _ => {
                 return Err(EvaluateError::NativeResult(format!(
                     "milestone {id} has inconsistent hit evidence"
@@ -632,6 +656,7 @@ fn parse_native_milestones(
         deepest: deepest.into(),
         score_tick,
         goal_reached: native.goal_reached,
+        milestone_observations: observations,
         boundary_fingerprints: fingerprints,
     })
 }
