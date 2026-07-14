@@ -1,4 +1,5 @@
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/input_recording.hpp"
 
 #include <bit>
 #include <array>
@@ -23,6 +24,24 @@ constexpr std::array<std::uint8_t, 252> IntroProgram{
 
 bool noSymbols(dusk::automation::MilestoneProgramSymbolKind, std::string_view, std::uint32_t&) {
     return false;
+}
+
+struct BootStartOrder {
+    std::vector<int> events;
+    bool recording = false;
+};
+
+bool beginBootRecorder(void* context) {
+    auto& order = *static_cast<BootStartOrder*>(context);
+    order.events.push_back(1);
+    order.recording = true;
+    return true;
+}
+
+void releaseBootInput(void* context) {
+    auto& order = *static_cast<BootStartOrder*>(context);
+    REQUIRE(order.recording);
+    order.events.push_back(2);
 }
 
 dusk::automation::MilestoneObservation f_sp103() {
@@ -280,6 +299,83 @@ void testMalformedAuthoredProgramIsRejected() {
     REQUIRE(program.empty());
 }
 
+void testBootRecordingGuardrailsAndBeginOrdering() {
+    using namespace dusk::automation;
+    BootRecordingCliRequest request{.enabled = true};
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::MissingOutputTape);
+    request.hasOutputTape = true;
+    request.hasAutomationInput = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::HasAutomationInput);
+    request.hasAutomationInput = false;
+    request.headless = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::Headless);
+    request.headless = false;
+    request.unpaced = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::Unpaced);
+    request.unpaced = false;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::MissingMilestoneProgram);
+    request.hasMilestoneProgram = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::MissingMilestoneSelection);
+    request.hasMilestoneSelection = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::MissingMilestoneResult);
+    request.hasMilestoneResult = true;
+    request.hasMilestoneGoal = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::HasMilestoneGoal);
+    request.hasMilestoneGoal = false;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::MissingStartMilestone);
+    request.hasStartMilestone = true;
+    REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::None);
+
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(validate_authored_boot_definition(program, "process_boot") ==
+            BootRecordingError::None);
+    REQUIRE(validate_authored_boot_definition(program, "link_control") ==
+            BootRecordingError::StartMilestoneNotPreInput);
+
+    MilestoneTracker tracker;
+    const std::vector<std::string> requested{"process_boot"};
+    std::string error;
+    REQUIRE(tracker.configureNames(requested, std::nullopt, program, error));
+    BootStartOrder order;
+    BootRecordingBinding binding;
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", "",
+                beginBootRecorder, releaseBootInput, &order, binding) ==
+            BootRecordingError::StartMilestoneNotHit);
+    REQUIRE(order.events.empty());
+
+    tracker.observeBoundary({}, MilestoneProgramPhase::PreInput,
+        MilestoneBoundaryKind::Boot, 0, 0, MilestoneNoTapeFrame);
+    const std::string fingerprint = tracker.authoredHits()[0].evidence.boundaryFingerprint;
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot",
+                "00000000000000000000000000000000", beginBootRecorder, releaseBootInput,
+                &order, binding) == BootRecordingError::FingerprintMismatch);
+    REQUIRE(order.events.empty());
+    auto& mutableHit = const_cast<AuthoredMilestoneHit&>(tracker.authoredHits()[0]);
+    mutableHit.boundaryIndex = 1;
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
+                beginBootRecorder, releaseBootInput, &order, binding) ==
+            BootRecordingError::InvalidBootBoundary);
+    mutableHit.boundaryIndex = 0;
+    mutableHit.programDigest[0] = mutableHit.programDigest[0] == '0' ? '1' : '0';
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
+                beginBootRecorder, releaseBootInput, &order, binding) ==
+            BootRecordingError::StaleProgram);
+    mutableHit.programDigest = std::string(program.digest());
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
+                beginBootRecorder, releaseBootInput, &order, binding) ==
+            BootRecordingError::None);
+    // The actual first PAD read happens after this gate returns.
+    REQUIRE(order.recording);
+    order.events.push_back(3);
+    REQUIRE(order.events == std::vector<int>({1, 2, 3}));
+    REQUIRE(binding.milestone == "process_boot");
+    REQUIRE(binding.boundaryIndex == 0);
+    REQUIRE(binding.boundaryFingerprint == fingerprint);
+    REQUIRE(binding.programDigest == program.digest());
+    REQUIRE(binding.definitionDigest == program.find("process_boot")->definitionDigest);
+}
+
 }  // namespace
 
 int main() {
@@ -291,6 +387,7 @@ int main() {
     testGoalMustBeRequested();
     testAuthoredBootStableAndExactFirstHit();
     testMalformedAuthoredProgramIsRejected();
+    testBootRecordingGuardrailsAndBeginOrdering();
     std::cout << "milestone tests passed\n";
     return 0;
 }

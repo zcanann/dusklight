@@ -1429,6 +1429,8 @@ set(DUSK_FILES
         src/dusk/automation/actor_catalog.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_tape.cpp
+        include/dusk/automation/input_recording.hpp
+        src/dusk/automation/input_recording.cpp
         src/dusk/automation/input_controller.cpp
         include/dusk/automation/gameplay_trace.hpp
         src/dusk/automation/gameplay_trace.cpp

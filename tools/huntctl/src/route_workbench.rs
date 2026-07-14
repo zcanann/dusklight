@@ -99,6 +99,13 @@ pub struct GraphDraft {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DraftParent {
+    Milestone {
+        id: String,
+        program_sha256: String,
+        definition_sha256: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        boundary_fingerprint: Option<String>,
+    },
     Variant {
         id: String,
         lineage: String,
@@ -142,6 +149,16 @@ struct NativeRecordStatus {
     session_token: Option<String>,
     start_milestone: Option<String>,
     start_fingerprint: Option<String>,
+    #[serde(default)]
+    expected_start_fingerprint: Option<String>,
+    #[serde(default)]
+    start_boundary_kind: Option<String>,
+    #[serde(default)]
+    start_boundary_index: Option<u64>,
+    #[serde(default)]
+    start_program_digest: Option<String>,
+    #[serde(default)]
+    start_definition_digest: Option<String>,
     start_tape_frame: Option<u64>,
 }
 
@@ -190,6 +207,7 @@ struct DraftLaunch {
 pub struct GraphMilestone {
     pub id: String,
     pub ordinal: usize,
+    pub recordable_from_boot: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -366,6 +384,9 @@ pub struct DraftDeleteResult {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserRecordParent {
+    Milestone {
+        id: String,
+    },
     Variant {
         id: String,
         lineage: String,
@@ -636,6 +657,47 @@ fn milestone_program_projection(
     }))
 }
 
+fn is_exact_boot_boundary_predicate(definition: &GraphMilestonePredicate) -> bool {
+    use milestone_dsl::{Comparison, EvaluationPhase, Expression, Field, Value};
+
+    fn collect<'a>(
+        expression: &'a Expression,
+        leaves: &mut Vec<(Field, Comparison, &'a Value)>,
+    ) -> bool {
+        match expression {
+            Expression::And(left, right) => collect(left, leaves) && collect(right, leaves),
+            Expression::Compare {
+                field,
+                operator,
+                value,
+            } => {
+                leaves.push((*field, *operator, value));
+                true
+            }
+            Expression::Not(_) | Expression::Or(_, _) => false,
+        }
+    }
+
+    if definition.phase != EvaluationPhase::PreInput || definition.stable_ticks != 1 {
+        return false;
+    }
+    let mut leaves = Vec::new();
+    if !collect(&definition.expression, &mut leaves) || leaves.len() != 2 {
+        return false;
+    }
+    let boot_kind = leaves.iter().any(|(field, operator, value)| {
+        *field == Field::BoundaryKind
+            && *operator == Comparison::Equal
+            && matches!(value, Value::Symbol(symbol) if symbol == "boot")
+    });
+    let boundary_zero = leaves.iter().any(|(field, operator, value)| {
+        *field == Field::BoundaryIndex
+            && *operator == Comparison::Equal
+            && matches!(value, Value::U64(0))
+    });
+    boot_kind && boundary_zero
+}
+
 #[derive(Debug)]
 enum MilestoneProgramUpdateError {
     Stale { expected: String, actual: String },
@@ -862,6 +924,15 @@ pub fn graph_from_timeline(
         .map(|(ordinal, id)| GraphMilestone {
             id: id.clone(),
             ordinal,
+            recordable_from_boot: milestone_program
+                .as_ref()
+                .and_then(|program| {
+                    program
+                        .definitions
+                        .iter()
+                        .find(|definition| definition.name == *id)
+                })
+                .is_some_and(is_exact_boot_boundary_predicate),
         })
         .collect();
     let segments = timeline
@@ -1552,6 +1623,33 @@ fn validate_draft_structure(
             ));
         }
         match &manifest.parent {
+            DraftParent::Milestone {
+                id,
+                program_sha256,
+                definition_sha256,
+                boundary_fingerprint,
+            } => {
+                let program = milestone_program_projection(timeline, repository_root)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "Boot parent has no authored milestone program".to_owned())?;
+                let definition = program
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.name == *id)
+                    .ok_or_else(|| "Boot parent milestone no longer exists".to_owned())?;
+                if program.program_sha256 != *program_sha256
+                    || definition.definition_sha256 != *definition_sha256
+                    || !is_exact_boot_boundary_predicate(definition)
+                    || !manifest.start_boundary_verified
+                    || !boundary_fingerprint
+                        .as_deref()
+                        .is_some_and(native_fingerprint)
+                    || manifest.parent_tape_sha256
+                        != tape_digest(&InputTape::default()).map_err(|error| error.to_string())?
+                {
+                    return Err("Boot milestone parent proof is missing or stale".into());
+                }
+            }
             DraftParent::Variant {
                 id: variant_id,
                 lineage,
@@ -2040,6 +2138,7 @@ fn draft_parent_frame_count(
     let (_, continuation) = read_draft_tape(&draft_directory)?;
     let continuation_frames = continuation.frames.len() as u64;
     let parent = match &manifest.parent {
+        DraftParent::Milestone { .. } => InputTape::default(),
         DraftParent::Variant {
             id,
             lineage,
@@ -2225,9 +2324,51 @@ fn record_continuation(
         }
         label.to_owned()
     };
-    let (materialized, parent, expected_start_milestone, expected_start_fingerprint) = match request
-        .parent
-    {
+    let (
+        materialized,
+        parent,
+        expected_start_milestone,
+        expected_start_fingerprint,
+        record_from_boot,
+    ) = match request.parent {
+        BrowserRecordParent::Milestone { id } => {
+            let graph = graph_from_timeline(timeline, &artifact_root)?;
+            let milestone = graph
+                .milestones
+                .iter()
+                .find(|milestone| milestone.id == id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown milestone {id:?}")))?;
+            if !milestone.recordable_from_boot {
+                return Err(WorkbenchError::new(format!(
+                    "milestone {id:?} is not the exact authored Boot boundary"
+                )));
+            }
+            let program = graph
+                .milestone_program
+                .ok_or_else(|| WorkbenchError::new("Boot recording requires milestone source"))?;
+            let definition = program
+                .definitions
+                .iter()
+                .find(|definition| definition.name == id)
+                .expect("graph milestone definition must exist");
+            (
+                MaterializedPlayback {
+                    lineage: None,
+                    variant: Some(format!("milestone:{id}")),
+                    tape: InputTape::default(),
+                    seed_stage: None,
+                },
+                DraftParent::Milestone {
+                    id: id.clone(),
+                    program_sha256: program.program_sha256,
+                    definition_sha256: definition.definition_sha256.clone(),
+                    boundary_fingerprint: None,
+                },
+                Some(id),
+                None,
+                true,
+            )
+        }
         BrowserRecordParent::Variant {
             id,
             lineage,
@@ -2296,6 +2437,7 @@ fn record_continuation(
                 parent,
                 Some(native_milestone.to_owned()),
                 Some(variant.boundary_fingerprint.clone()),
+                false,
             )
         }
         BrowserRecordParent::Draft { id } => {
@@ -2310,6 +2452,7 @@ fn record_continuation(
                 },
                 None,
                 None,
+                false,
             )
         }
     };
@@ -2371,11 +2514,17 @@ fn record_continuation(
     command
         .current_dir(&config.working_directory)
         .arg("--dvd")
-        .arg(dvd)
-        .arg("--input-tape")
-        .arg(&playback)
-        .arg("--input-tape-end")
-        .arg("release")
+        .arg(dvd);
+    if record_from_boot {
+        command.arg("--record-input-from-boot");
+    } else {
+        command
+            .arg("--input-tape")
+            .arg(&playback)
+            .arg("--input-tape-end")
+            .arg("release");
+    }
+    command
         .arg("--record-input-tape")
         .arg(&continuation)
         .arg("--record-input-capacity")
@@ -2393,7 +2542,13 @@ fn record_continuation(
         .arg("backend.wasPresetChosen=true")
         .arg("--cvar")
         .arg("game.enableMenuPointer=false");
-    if let (Some(milestone), Some(fingerprint)) =
+    if record_from_boot {
+        command.arg("--record-input-start-milestone").arg(
+            expected_start_milestone
+                .as_deref()
+                .expect("Boot recording has an authored start milestone"),
+        );
+    } else if let (Some(milestone), Some(fingerprint)) =
         (&expected_start_milestone, &expected_start_fingerprint)
     {
         command
@@ -2410,7 +2565,9 @@ fn record_continuation(
         &artifact_root,
         &state,
         &mut command,
-        expected_start_milestone.as_deref(),
+        (!record_from_boot)
+            .then_some(expected_start_milestone.as_deref())
+            .flatten(),
     )?;
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -2503,18 +2660,44 @@ fn finalize_recording(directory: &Path, manifest: &mut DraftManifest, exit_succe
         manifest.error = Some("native status and observed process exit disagree".into());
         return;
     }
+    let boot_parent = match &manifest.parent {
+        DraftParent::Milestone {
+            id,
+            program_sha256,
+            definition_sha256,
+            ..
+        } => Some((id, program_sha256, definition_sha256)),
+        DraftParent::Variant { .. } | DraftParent::Draft { .. } => None,
+    };
     let expected_boundary_matches = match (
+        boot_parent,
         &manifest.expected_start_milestone,
         &manifest.expected_start_fingerprint,
     ) {
-        (Some(milestone), Some(fingerprint)) => {
+        (Some((id, program, definition)), Some(milestone), None) => {
+            milestone == id
+                && native.start_milestone.as_deref() == Some(id)
+                && native
+                    .start_fingerprint
+                    .as_deref()
+                    .is_some_and(native_fingerprint)
+                && native.expected_start_fingerprint.is_none()
+                && native.start_boundary_kind.as_deref() == Some("boot")
+                && native.start_boundary_index == Some(0)
+                && native.start_program_digest.as_deref() == Some(program)
+                && native.start_definition_digest.as_deref() == Some(definition)
+                && native.start_tape_frame.is_none()
+        }
+        (None, Some(milestone), Some(fingerprint)) => {
             native.start_milestone.as_deref() == Some(milestone)
                 && native.start_fingerprint.as_deref() == Some(fingerprint)
+                && native.expected_start_fingerprint.as_deref() == Some(fingerprint)
                 && native.start_tape_frame == manifest.parent_frames.checked_sub(1)
         }
-        (None, None) => {
+        (None, None, None) => {
             native.start_milestone.is_none()
                 && native.start_fingerprint.is_none()
+                && native.expected_start_fingerprint.is_none()
                 && native.start_tape_frame.is_none()
         }
         _ => false,
@@ -2532,6 +2715,13 @@ fn finalize_recording(directory: &Path, manifest: &mut DraftManifest, exit_succe
             if capture_tape_metadata(directory, manifest, native.frame_count, false) {
                 manifest.start_boundary_verified =
                     manifest.expected_start_milestone.is_some() && expected_boundary_matches;
+                if let DraftParent::Milestone {
+                    boundary_fingerprint,
+                    ..
+                } = &mut manifest.parent
+                {
+                    *boundary_fingerprint = native.start_fingerprint.clone();
+                }
                 DraftStatus::Ready
             } else {
                 DraftStatus::ProcessFailure
@@ -3046,6 +3236,15 @@ fn materialize_draft(
     state_root: &Path,
     draft_id: &str,
 ) -> Result<MaterializedPlayback, WorkbenchError> {
+    enum DraftBase {
+        Boot,
+        Variant {
+            id: String,
+            lineage: String,
+            terminal_milestone: String,
+        },
+    }
+
     let manifests = scan_draft_manifests(state_root)?;
     let mut cursor = draft_id.to_owned();
     let mut seen = BTreeSet::new();
@@ -3065,6 +3264,32 @@ fn materialize_draft(
         }
         continuations.push(manifest.clone());
         match &manifest.parent {
+            DraftParent::Milestone {
+                id,
+                program_sha256,
+                definition_sha256,
+                boundary_fingerprint,
+            } => {
+                let program = milestone_program_projection(timeline, repository_root)?
+                    .ok_or_else(|| WorkbenchError::new("Boot parent has no milestone program"))?;
+                let definition = program
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.name == *id)
+                    .ok_or_else(|| WorkbenchError::new("Boot parent milestone is missing"))?;
+                if program.program_sha256 != *program_sha256
+                    || definition.definition_sha256 != *definition_sha256
+                    || !is_exact_boot_boundary_predicate(definition)
+                    || !manifest.start_boundary_verified
+                    || !boundary_fingerprint
+                        .as_deref()
+                        .is_some_and(native_fingerprint)
+                    || manifest.parent_tape_sha256 != tape_digest(&InputTape::default())?
+                {
+                    return Err(WorkbenchError::new("Boot parent proof is missing or stale"));
+                }
+                break DraftBase::Boot;
+            }
             DraftParent::Variant {
                 id,
                 lineage,
@@ -3095,45 +3320,57 @@ fn materialize_draft(
                 {
                     return Err(WorkbenchError::new("draft parent lineage anchor changed"));
                 }
-                break (id.clone(), lineage.clone(), terminal_milestone.clone());
+                break DraftBase::Variant {
+                    id: id.clone(),
+                    lineage: lineage.clone(),
+                    terminal_milestone: terminal_milestone.clone(),
+                };
             }
             DraftParent::Draft { id, .. } => cursor = id.clone(),
         }
     };
     continuations.reverse();
 
-    let (base_variant, base_lineage, terminal_milestone) = base_variant;
-    let base_lineage_tape = materialize_lineage(
-        timeline,
-        repository_root,
-        &base_lineage,
-        MaterializeTarget::ThroughMilestone(terminal_milestone),
-    )?;
-    let expected_step_index = continuations
-        .first()
-        .and_then(|manifest| match &manifest.parent {
-            DraftParent::Variant { step_index, .. } => Some(*step_index),
-            DraftParent::Draft { .. } => None,
-        })
-        .expect("first continuation has curated parent");
-    if base_lineage_tape.steps.len() != expected_step_index + 1
-        || base_lineage_tape
-            .steps
-            .last()
-            .map(|step| step.variant.as_str())
-            != Some(base_variant.as_str())
-    {
-        return Err(WorkbenchError::new(
-            "draft lineage anchor no longer resolves to its concrete occurrence",
-        ));
-    }
-    let seed_stage = base_lineage_tape.steps.first().and_then(|step| {
-        match timeline.segments[&step.segment].profile {
-            crate::search::SegmentProfile::BootToFsp103 => None,
-            crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+    let (mut tape, seed_stage, base_label) = match base_variant {
+        DraftBase::Boot => (InputTape::default(), None, "boot".to_owned()),
+        DraftBase::Variant {
+            id: base_variant,
+            lineage: base_lineage,
+            terminal_milestone,
+        } => {
+            let base_lineage_tape = materialize_lineage(
+                timeline,
+                repository_root,
+                &base_lineage,
+                MaterializeTarget::ThroughMilestone(terminal_milestone),
+            )?;
+            let expected_step_index = continuations
+                .first()
+                .and_then(|manifest| match &manifest.parent {
+                    DraftParent::Variant { step_index, .. } => Some(*step_index),
+                    DraftParent::Milestone { .. } | DraftParent::Draft { .. } => None,
+                })
+                .expect("first continuation has curated parent");
+            if base_lineage_tape.steps.len() != expected_step_index + 1
+                || base_lineage_tape
+                    .steps
+                    .last()
+                    .map(|step| step.variant.as_str())
+                    != Some(base_variant.as_str())
+            {
+                return Err(WorkbenchError::new(
+                    "draft lineage anchor no longer resolves to its concrete occurrence",
+                ));
+            }
+            let seed_stage = base_lineage_tape.steps.first().and_then(|step| {
+                match timeline.segments[&step.segment].profile {
+                    crate::search::SegmentProfile::BootToFsp103 => None,
+                    crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+                }
+            });
+            (base_lineage_tape.tape, seed_stage, base_variant)
         }
-    });
-    let mut tape = base_lineage_tape.tape;
+    };
     let root = drafts_root(state_root)?;
     for manifest in continuations {
         let digest = tape_digest(&tape)?;
@@ -3180,7 +3417,7 @@ fn materialize_draft(
     }
     Ok(MaterializedPlayback {
         lineage: None,
-        variant: Some(format!("{base_variant}:{draft_id}")),
+        variant: Some(format!("{base_label}:{draft_id}")),
         tape,
         seed_stage,
     })
@@ -4173,6 +4410,131 @@ continue main with boot_link.tas after root@clean
         assert!(variant.lineage_composable);
         assert_eq!(variant.predicate_proof, "verified");
         assert_eq!(variant.record_anchors.len(), 1);
+        let boot = graph
+            .milestones
+            .iter()
+            .find(|milestone| milestone.id == "process_boot")
+            .unwrap();
+        assert!(boot.recordable_from_boot);
+        assert!(
+            !graph
+                .milestones
+                .iter()
+                .find(|milestone| milestone.id == "link_control")
+                .unwrap()
+                .recordable_from_boot
+        );
+    }
+
+    #[test]
+    fn authored_boot_recording_status_becomes_a_proved_root_draft() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let timeline_path = repository.join("routes/intro.timeline");
+        let route = load_authoritative_timeline(&timeline_path).unwrap();
+        let artifact_root = timeline_path.parent().unwrap();
+        let program = milestone_program_projection(&route, artifact_root)
+            .unwrap()
+            .unwrap();
+        let definition = program
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "process_boot")
+            .unwrap();
+        assert!(is_exact_boot_boundary_predicate(definition));
+
+        let state = temporary_root("boot-root-draft");
+        let id = "draft-boot-root";
+        let directory = drafts_root(&state).unwrap().join(id);
+        fs::create_dir(&directory).unwrap();
+        let continuation = InputTape {
+            frames: vec![InputFrame {
+                owned_ports: 0x0f,
+                pads: [RawPadState::default(); 4],
+                ..InputFrame::default()
+            }],
+            ..InputTape::default()
+        };
+        fs::write(directory.join(DRAFT_TAPE), continuation.encode().unwrap()).unwrap();
+        let empty = InputTape::default();
+        fs::write(directory.join("playback.tape"), empty.encode().unwrap()).unwrap();
+        let mut manifest = DraftManifest {
+            schema: DRAFT_SCHEMA.into(),
+            id: id.into(),
+            label: "Boot root".into(),
+            parent: DraftParent::Milestone {
+                id: "process_boot".into(),
+                program_sha256: program.program_sha256.clone(),
+                definition_sha256: definition.definition_sha256.clone(),
+                boundary_fingerprint: None,
+            },
+            parent_tape_sha256: tape_digest(&empty).unwrap(),
+            created_unix_ms: 1,
+            session_token: "00112233445566778899aabbccddeeff".into(),
+            expected_start_milestone: Some("process_boot".into()),
+            expected_start_fingerprint: None,
+            tape: DRAFT_TAPE.into(),
+            status: DraftStatus::Recording,
+            endpoint_kind: "manual_stop".into(),
+            verification: "unverified".into(),
+            start_boundary_verified: false,
+            parent_frames: 0,
+            tape_sha256: None,
+            tape_bytes: None,
+            result_tape_sha256: None,
+            frames: None,
+            error: None,
+        };
+        let fingerprint = "0123456789abcdef0123456789abcdef";
+        let mut status = serde_json::json!({
+            "schema": "dusklight.input-recording/v2",
+            "status": "success",
+            "tape": fs::canonicalize(directory.join(DRAFT_TAPE)).unwrap(),
+            "frame_count": 1,
+            "frame_capacity": 1080000,
+            "handoff_reached": true,
+            "capacity_exhausted": false,
+            "error": null,
+            "process_success": true,
+            "session_token": manifest.session_token,
+            "start_milestone": "process_boot",
+            "start_fingerprint": fingerprint,
+            "expected_start_fingerprint": null,
+            "start_boundary_kind": "boot",
+            "start_boundary_index": 0,
+            "start_program_digest": program.program_sha256,
+            "start_definition_digest": definition.definition_sha256,
+            "start_tape_frame": null
+        });
+        let status_path = directory.join(format!("{DRAFT_TAPE}.status.json"));
+        status["start_boundary_index"] = serde_json::json!(1);
+        fs::write(&status_path, serde_json::to_vec(&status).unwrap()).unwrap();
+        let mut rejected = manifest.clone();
+        finalize_recording(&directory, &mut rejected, Some(true));
+        assert_eq!(rejected.status, DraftStatus::ProcessFailure);
+
+        status["start_boundary_index"] = serde_json::json!(0);
+        fs::write(&status_path, serde_json::to_vec(&status).unwrap()).unwrap();
+        finalize_recording(&directory, &mut manifest, Some(true));
+        assert_eq!(manifest.status, DraftStatus::Ready);
+        assert!(manifest.start_boundary_verified);
+        assert!(matches!(
+            &manifest.parent,
+            DraftParent::Milestone {
+                boundary_fingerprint: Some(actual),
+                ..
+            } if actual == fingerprint
+        ));
+        write_draft_manifest(&directory, &manifest, true).unwrap();
+        let materialized = materialize_draft(&route, artifact_root, &state, id).unwrap();
+        assert_eq!(materialized.tape.frames.len(), 1);
+        assert!(
+            draft_parent_frame_count(&route, artifact_root, &state, id, 1).is_err(),
+            "there is no meaningful parent-origin playback before Boot"
+        );
+        fs::remove_dir_all(state).unwrap();
     }
 
     fn install_ready_draft(
@@ -4266,6 +4628,11 @@ continue main with boot_link.tas after root@clean
             "session_token": manifest.session_token,
             "start_milestone": manifest.expected_start_milestone,
             "start_fingerprint": manifest.expected_start_fingerprint,
+            "expected_start_fingerprint": manifest.expected_start_fingerprint,
+            "start_boundary_kind": "tick",
+            "start_boundary_index": null,
+            "start_program_digest": null,
+            "start_definition_digest": null,
             "start_tape_frame": manifest.parent_frames - 1
         });
         fs::write(
@@ -4495,6 +4862,11 @@ continue main with boot_link.tas after root@clean
                 "session_token": token,
                 "start_milestone": "entered-f-sp104",
                 "start_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "expected_start_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "start_boundary_kind": "tick",
+                "start_boundary_index": null,
+                "start_program_digest": null,
+                "start_definition_digest": null,
                 "start_tape_frame": frame
             })
         };

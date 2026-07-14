@@ -172,7 +172,8 @@
       return children.length?`<div class="draft-children">${children.map(draft=>draftCard(draft,next)).join('')}</div>`:'';
     }
     function draftCard(draft,seen=new Set()) {
-      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button><button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
+      const parentPlayback=draft.parent?.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;
+      return `<div><article class="variant draft"><div><div class="variant-title"><strong>${escapeHtml(draft.label||draft.id)}</strong><span class="badge">draft</span><span class="badge score">${escapeHtml(label(draft.status))}</span></div><div class="variant-meta"><span>${escapeHtml(draft.frame_count??0)} frames</span><span>${escapeHtml(draft.endpoint_kind)}</span><span>${escapeHtml(draft.verification)}</span><code>${escapeHtml(short(draft.id))}</code></div>${draft.error?`<div class="error-note">${escapeHtml(draft.error)}</div>`:''}</div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></article>${draftChildren('draft',draft.id,seen)}</div>`;
     }
     function variantCard(variant) {
       const artifact=variant.artifact||{};
@@ -190,10 +191,12 @@
       </article>${draftChildren('variant',variant.id)}`;
     }
     function milestoneNode(id) {
+      const milestone=graph.milestones.find(item=>item.id===id);
       const predicate=graph.milestone_program?.definitions?.find(item=>item.name===id);
       const summary=predicate?`<span class="predicate-summary">${escapeHtml(label(predicate.phase))} · stable ${escapeHtml(predicate.stable_ticks)} · <code>${escapeHtml(short(predicate.definition_sha256))}</code></span>`:'';
       const edit=predicate?`<button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(id)}">Edit predicate…</button>`:'';
-      return `<section class="milestone"><div class="node-dot">◆</div><div class="node-copy"><strong>${escapeHtml(label(id))}</strong><span>${escapeHtml(id)}</span>${summary}</div>${edit}</section>`;
+      const record=milestone?.recordable_from_boot?`<button class="record" type="button" data-record-kind="milestone" data-id="${escapeHtml(id)}">Record from Boot</button>`:'';
+      return `<section class="milestone"><div class="node-dot">◆</div><div class="node-copy"><strong>${escapeHtml(label(id))}</strong><span>${escapeHtml(id)}</span>${summary}</div><div class="actions">${record}${edit}</div></section>`;
     }
     function renderMilestone(id,path,rendered) {
       if(path.has(id))return `<div class="milestone-ref">Cycle back to <code>${escapeHtml(id)}</code></div>`;
@@ -205,7 +208,7 @@
         const variants=graph.variants.filter(variant=>variant.segment===segment.id).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
         return `<div class="route-branch"><section class="segment"><div class="segment-head"><strong>${escapeHtml(label(segment.id))}</strong><span>${escapeHtml(id)} → ${escapeHtml(segment.to)}</span></div><div class="frontier-label">Variant frontier</div><div class="variants">${variants.length?variants.map(variantCard).join(''):'<div class="empty">No checked-in variants</div>'}</div></section><div class="route-destination">${renderMilestone(segment.to,nextPath,rendered)}</div></div>`;
       }).join('');
-      return `<div>${milestoneNode(id)}${branches}</div>`;
+      return `<div>${milestoneNode(id)}${draftChildren('milestone',id)}${branches}</div>`;
     }
     function render() {
       $('timelineName').textContent=`${graph.timeline} · Git timeline`;
@@ -304,7 +307,7 @@
         $('status').textContent='Recording live input'; $('status').className='status ok';
         toast(`Recording ${body.draft_id}. Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
-      finally { button.disabled=false; button.textContent=kind==='variant'?`Record - ${button.dataset.lineage}`:'Record child'; }
+      finally { button.disabled=false; button.textContent=kind==='variant'?`Record - ${button.dataset.lineage}`:kind==='milestone'?'Record from Boot':'Record child'; }
     }
     async function load() {
       $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>';

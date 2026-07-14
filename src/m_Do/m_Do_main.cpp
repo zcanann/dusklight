@@ -64,6 +64,7 @@
 #include "dusk/automation/actor_catalog.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/input_controller.hpp"
+#include "dusk/automation/input_recording.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/milestones.hpp"
@@ -241,6 +242,7 @@ static bool finish_simulation_tick();
 static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
 static bool record_milestone_pre_input_boundary();
+static bool prepare_automation_pre_input_boundary();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
@@ -358,7 +360,7 @@ void main01(void) {
 
                 for (int sim_tick = 0; sim_tick < pacing.sim_ticks_to_run; ++sim_tick) {
                     dusk::frame_interp::begin_sim_tick();
-                    if (record_milestone_pre_input_boundary()) {
+                    if (prepare_automation_pre_input_boundary()) {
                         dusk::IsRunning = false;
                         break;
                     }
@@ -396,7 +398,7 @@ void main01(void) {
             dusk::frame_interp::begin_frame(dusk::FrameInterpMode::Off, true, 0.0f);
             dusk::frame_interp::set_ui_tick_pending(true);
 
-            if (record_milestone_pre_input_boundary()) {
+            if (prepare_automation_pre_input_boundary()) {
                 dusk::IsRunning = false;
             } else {
                 // Game Inputs
@@ -607,9 +609,16 @@ static bool recordInputCapacityReported;
 static std::string recordInputError;
 static std::string recordInputSessionToken;
 static std::optional<dusk::automation::MilestoneId> recordInputStartMilestone;
+static std::string recordInputStartMilestoneName;
+static std::string recordInputExpectedStartFingerprint;
 static std::string recordInputStartFingerprint;
+static std::string recordInputStartProgramDigest;
+static std::string recordInputStartDefinitionDigest;
+static std::string recordInputStartBoundaryKind;
+static std::optional<std::uint64_t> recordInputStartBoundaryIndex;
 static std::optional<std::uint64_t> recordInputStartTapeFrame;
 static bool recordInputStartBoundaryMismatch;
+static bool recordInputFromBoot;
 static std::filesystem::path actorCatalogPath;
 static bool actorCatalogWriteFailed;
 static bool actorCatalogWritten;
@@ -783,7 +792,7 @@ static void handoff_automation_to_live_input() {
             const auto hit = std::ranges::find(
                 hits, *recordInputStartMilestone, &dusk::automation::MilestoneHit::id);
             if (hit == hits.end() || !hit->hit || hit->tapeFrame != automationTapeFrame ||
-                hit->evidence.boundaryFingerprint != recordInputStartFingerprint) {
+                hit->evidence.boundaryFingerprint != recordInputExpectedStartFingerprint) {
                 recordInputFailed = true;
                 recordInputStartBoundaryMismatch = true;
                 recordInputError = fmt::format(
@@ -795,6 +804,8 @@ static void handoff_automation_to_live_input() {
                 return;
             }
             recordInputStartTapeFrame = hit->tapeFrame;
+            recordInputStartFingerprint = hit->evidence.boundaryFingerprint;
+            recordInputStartBoundaryKind = "tick";
         }
         auto& recorder = dusk::automation::input_tape_recorder();
         if (!recorder.begin()) {
@@ -1006,6 +1017,48 @@ static bool record_milestone_pre_input_boundary() {
         automationSimulationTick == 0 ? dusk::automation::MilestoneBoundaryKind::Boot
                                       : dusk::automation::MilestoneBoundaryKind::Tick,
         automationSimulationTick, automationTapeFrame);
+}
+
+static bool begin_boot_recorder(void*) {
+    return dusk::automation::input_tape_recorder().begin();
+}
+
+static void release_boot_recording_input(void*) {
+    // The recorder is already live here. Clear any process-wide automation status before dropping
+    // quarantine so the immediately following PAD read sees only human input.
+    PADPrepareAutomationHandoff();
+    automationInputQuarantine = false;
+    aurora_set_automation_input_quarantine(false);
+    automationInputHandedOff = true;
+}
+
+static bool prepare_automation_pre_input_boundary() {
+    if (record_milestone_pre_input_boundary()) return true;
+    if (!recordInputFromBoot || recordInputHandoffReached) return false;
+
+    dusk::automation::BootRecordingBinding binding;
+    const auto error = dusk::automation::begin_authored_boot_recording(
+        dusk::automation::milestone_tracker(), dusk::automation::milestone_program(),
+        recordInputStartMilestoneName, recordInputExpectedStartFingerprint,
+        begin_boot_recorder, release_boot_recording_input, nullptr, binding);
+    if (error != dusk::automation::BootRecordingError::None) {
+        recordInputFailed = true;
+        recordInputStartBoundaryMismatch = true;
+        recordInputError = dusk::automation::boot_recording_error_message(error);
+        DuskLog.error("Input recording failed before first PAD read: {}", recordInputError);
+        return true;
+    }
+    recordInputHandoffReached = true;
+    recordInputStartMilestoneName = std::move(binding.milestone);
+    recordInputStartFingerprint = std::move(binding.boundaryFingerprint);
+    recordInputStartProgramDigest = std::move(binding.programDigest);
+    recordInputStartDefinitionDigest = std::move(binding.definitionDigest);
+    recordInputStartBoundaryKind = "boot";
+    recordInputStartBoundaryIndex = binding.boundaryIndex;
+    recordInputStartTapeFrame.reset();
+    DuskLog.info("Input recording started at authored Boot boundary zero (milestone={}, capacity={} frames)",
+        recordInputStartMilestoneName, recordInputFrameCapacity);
+    return false;
 }
 
 static bool record_milestone_tick() {
@@ -1380,13 +1433,28 @@ static bool write_input_recording_status(const std::string_view status,
         {"session_token", recordInputSessionToken.empty()
                               ? nlohmann::ordered_json(nullptr)
                               : nlohmann::ordered_json(recordInputSessionToken)},
-        {"start_milestone", recordInputStartMilestone.has_value()
-                                ? nlohmann::ordered_json(dusk::automation::milestone_name(
-                                      *recordInputStartMilestone))
-                                : nlohmann::ordered_json(nullptr)},
+        {"start_milestone", recordInputStartMilestoneName.empty()
+                                ? nlohmann::ordered_json(nullptr)
+                                : nlohmann::ordered_json(recordInputStartMilestoneName)},
         {"start_fingerprint", recordInputStartFingerprint.empty()
                                   ? nlohmann::ordered_json(nullptr)
                                   : nlohmann::ordered_json(recordInputStartFingerprint)},
+        {"expected_start_fingerprint", recordInputExpectedStartFingerprint.empty()
+                                           ? nlohmann::ordered_json(nullptr)
+                                           : nlohmann::ordered_json(
+                                                 recordInputExpectedStartFingerprint)},
+        {"start_boundary_kind", recordInputStartBoundaryKind.empty()
+                                    ? nlohmann::ordered_json(nullptr)
+                                    : nlohmann::ordered_json(recordInputStartBoundaryKind)},
+        {"start_boundary_index", recordInputStartBoundaryIndex.has_value()
+                                     ? nlohmann::ordered_json(*recordInputStartBoundaryIndex)
+                                     : nlohmann::ordered_json(nullptr)},
+        {"start_program_digest", recordInputStartProgramDigest.empty()
+                                     ? nlohmann::ordered_json(nullptr)
+                                     : nlohmann::ordered_json(recordInputStartProgramDigest)},
+        {"start_definition_digest", recordInputStartDefinitionDigest.empty()
+                                        ? nlohmann::ordered_json(nullptr)
+                                        : nlohmann::ordered_json(recordInputStartDefinitionDigest)},
         {"start_tape_frame", recordInputStartTapeFrame.has_value()
                                  ? nlohmann::ordered_json(*recordInputStartTapeFrame)
                                  : nlohmann::ordered_json(nullptr)},
@@ -1599,6 +1667,7 @@ int game_main(int argc, char* argv[]) {
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
+            ("record-input-from-boot", "Begin headful live recording at an authored pre-input Boot boundary", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("record-input-capacity", "Maximum live-input frames to retain (default 1080000 = 10 hours at 30 Hz)", cxxopts::value<std::size_t>()->default_value("1080000"))
             ("record-input-session", "Optional 128-bit lowercase-hex launch token echoed in recording status", cxxopts::value<std::string>())
             ("record-input-start-milestone", "Milestone ID required at the exact recording handoff frame", cxxopts::value<std::string>())
@@ -1755,6 +1824,7 @@ int game_main(int argc, char* argv[]) {
         parsed_arg_options.count("realized-input-tape") != 0;
     const bool hasRecordInputTape =
         parsed_arg_options.count("record-input-tape") != 0;
+    recordInputFromBoot = parsed_arg_options["record-input-from-boot"].as<bool>();
     const bool hasRecordInputSession =
         parsed_arg_options.count("record-input-session") != 0;
     const bool hasRecordStartMilestone =
@@ -1765,6 +1835,23 @@ int game_main(int argc, char* argv[]) {
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
     exitAfterInputController =
         parsed_arg_options["exit-after-controller"].as<bool>();
+    const auto bootRecordingCliError = dusk::automation::validate_boot_recording_cli({
+        .enabled = recordInputFromBoot,
+        .hasOutputTape = hasRecordInputTape,
+        .hasAutomationInput = hasAutomationInput,
+        .headless = headlessMainLoop,
+        .unpaced = explicitlyUnpaced,
+        .hasMilestoneProgram = parsed_arg_options.count("milestone-program") != 0,
+        .hasMilestoneSelection = parsed_arg_options.count("milestones") != 0,
+        .hasMilestoneResult = parsed_arg_options.count("milestone-result") != 0,
+        .hasMilestoneGoal = parsed_arg_options.count("milestone-goal") != 0,
+        .hasStartMilestone = hasRecordStartMilestone,
+    });
+    if (bootRecordingCliError != dusk::automation::BootRecordingError::None) {
+        fprintf(stderr, "Input Recording Error: %s\n",
+            dusk::automation::boot_recording_error_message(bootRecordingCliError));
+        return 1;
+    }
     if (hasInputTapeFastForward && !hasInputTape) {
         fprintf(stderr,
                 "Input Tape Error: --input-tape-fast-forward-frames requires --input-tape PATH\n");
@@ -1791,7 +1878,7 @@ int game_main(int argc, char* argv[]) {
         realizedInputTapePath = std::filesystem::u8path(outputPath);
     }
     if (hasRecordInputTape) {
-        if (!hasAutomationInput) {
+        if (!hasAutomationInput && !recordInputFromBoot) {
             fprintf(stderr,
                     "Input Recording Error: --record-input-tape requires --input-tape or --input-controller\n");
             return 1;
@@ -1815,7 +1902,7 @@ int game_main(int argc, char* argv[]) {
                     "Input Recording Error: --record-input-capacity must be greater than zero\n");
             return 1;
         }
-        if (hasRecordStartMilestone != hasRecordStartFingerprint) {
+        if (!recordInputFromBoot && hasRecordStartMilestone != hasRecordStartFingerprint) {
             fprintf(stderr,
                     "Input Recording Error: --record-input-start-milestone ID and --record-input-start-fingerprint DIGEST must be supplied together\n");
             return 1;
@@ -1831,17 +1918,22 @@ int game_main(int argc, char* argv[]) {
         if (hasRecordStartMilestone) {
             const std::string startMilestoneName =
                 parsed_arg_options["record-input-start-milestone"].as<std::string>();
-            const auto* startMilestone =
-                dusk::automation::find_milestone(startMilestoneName);
-            if (startMilestone == nullptr) {
-                fprintf(stderr, "Input Recording Error: unknown start milestone '%s'\n",
-                        startMilestoneName.c_str());
-                return 1;
+            recordInputStartMilestoneName = startMilestoneName;
+            if (!recordInputFromBoot) {
+                const auto* startMilestone =
+                    dusk::automation::find_milestone(startMilestoneName);
+                if (startMilestone == nullptr) {
+                    fprintf(stderr, "Input Recording Error: unknown start milestone '%s'\n",
+                            startMilestoneName.c_str());
+                    return 1;
+                }
+                recordInputStartMilestone = startMilestone->id;
             }
-            recordInputStartMilestone = startMilestone->id;
-            recordInputStartFingerprint =
+        }
+        if (hasRecordStartFingerprint) {
+            recordInputExpectedStartFingerprint =
                 parsed_arg_options["record-input-start-fingerprint"].as<std::string>();
-            if (!isLowerHex(recordInputStartFingerprint, 32)) {
+            if (!isLowerHex(recordInputExpectedStartFingerprint, 32)) {
                 fprintf(stderr,
                         "Input Recording Error: start fingerprint must be exactly 32 lowercase hex characters\n");
                 return 1;
@@ -1888,7 +1980,7 @@ int game_main(int argc, char* argv[]) {
                     "Input Recording Error: output tape or status already exists; recording never overwrites a draft\n");
             return 1;
         }
-    } else if (hasRecordInputSession || hasRecordStartMilestone ||
+    } else if (recordInputFromBoot || hasRecordInputSession || hasRecordStartMilestone ||
                hasRecordStartFingerprint) {
         fprintf(stderr,
                 "Input Recording Error: recording session and start-boundary options require --record-input-tape PATH\n");
@@ -1943,8 +2035,8 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     if (hasMilestones) {
-        if (!hasAutomationInput) {
-            fprintf(stderr, "Milestone Error: --milestones LIST requires automation input\n");
+        if (!hasAutomationInput && !recordInputFromBoot) {
+            fprintf(stderr, "Milestone Error: --milestones LIST requires automation input or --record-input-from-boot\n");
             return 1;
         }
 
@@ -2003,6 +2095,22 @@ int game_main(int argc, char* argv[]) {
             fprintf(stderr, "Milestone Error: %s\n", milestoneError.c_str());
             return 1;
         }
+        if (recordInputFromBoot) {
+            const auto setupError = dusk::automation::validate_authored_boot_definition(
+                program, recordInputStartMilestoneName);
+            if (setupError != dusk::automation::BootRecordingError::None) {
+                fprintf(stderr, "Input Recording Error: %s\n",
+                    dusk::automation::boot_recording_error_message(setupError));
+                return 1;
+            }
+            const auto& authored = dusk::automation::milestone_tracker().authoredHits();
+            if (std::ranges::find(authored, recordInputStartMilestoneName,
+                    &dusk::automation::AuthoredMilestoneHit::id) == authored.end()) {
+                fprintf(stderr, "Input Recording Error: Boot start milestone '%s' was not selected\n",
+                    recordInputStartMilestoneName.c_str());
+                return 1;
+            }
+        }
         milestoneResultPath = std::filesystem::u8path(resultPath);
     }
     if (hasRecordInputTape && recordInputStartMilestone.has_value()) {
@@ -2029,9 +2137,9 @@ int game_main(int argc, char* argv[]) {
     std::filesystem::path automationCardRoot;
     std::filesystem::path automationDataRoot;
     if (parsed_arg_options.count("automation-data-root")) {
-        if (!hasAutomationInput) {
+        if (!hasAutomationInput && !recordInputFromBoot) {
             fprintf(stderr,
-                    "Automation State Error: --automation-data-root requires automation input\n");
+                    "Automation State Error: --automation-data-root requires automation input or --record-input-from-boot\n");
             return 1;
         }
         automationDataRoot =
@@ -2051,9 +2159,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
     if (parsed_arg_options.count("automation-card-root")) {
-        if (!hasAutomationInput) {
+        if (!hasAutomationInput && !recordInputFromBoot) {
             fprintf(stderr,
-                    "Memory Card Error: --automation-card-root requires automation input\n");
+                    "Memory Card Error: --automation-card-root requires automation input or --record-input-from-boot\n");
             return 1;
         }
         automationCardRoot =
@@ -2339,7 +2447,8 @@ int game_main(int argc, char* argv[]) {
             inputTapeMaximumTicks + controllerFrames + 1);
     }
 
-    const bool deterministicAutomationIo = hasAutomationInput && fixedStepMainLoop;
+    const bool deterministicAutomationIo =
+        (hasAutomationInput || recordInputFromBoot) && fixedStepMainLoop;
     dusk::automation::set_synchronous_io_enabled(deterministicAutomationIo);
 
     if (parsed_arg_options.contains("load-save")){
@@ -2486,11 +2595,11 @@ int game_main(int argc, char* argv[]) {
         DuskLog.info("Automation I/O: DVD and memory-card commands complete on the simulation thread");
     }
 
-    automationInputQuarantine = hasAutomationInput;
+    automationInputQuarantine = hasAutomationInput || recordInputFromBoot;
     aurora_set_automation_input_quarantine(automationInputQuarantine);
     if (automationInputQuarantine) {
         DuskLog.info("Automation input quarantine enabled; host keyboard, mouse, touch, gamepad UI, "
-                     "mouse camera, and gyro input are suppressed until process exit");
+                     "mouse camera, and gyro input are suppressed until the verified input boundary");
     }
 
     if (headlessMainLoop) {
@@ -2642,7 +2751,8 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
-    if ((headlessMainLoop || useConfiguredDvd || hasAutomationInput) && !dvd_opened) {
+    if ((headlessMainLoop || useConfiguredDvd || hasAutomationInput || recordInputFromBoot) &&
+        !dvd_opened) {
         DuskLog.error("{} could not validate and open the requested DVD image: {}",
                       headlessMainLoop ? "Headless mode" : "Configured DVD boot", dvd_path);
         dusk::crash_reporting::shutdown();

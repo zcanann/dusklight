@@ -161,6 +161,39 @@ leaves no usable sidecar and exits nonzero. Other non-success states also exit
 nonzero. A normal window close is the intended way to finalize a headful
 recording; headless and exit-at-prefix modes are rejected.
 
+### Recording from authored Boot boundary zero
+
+An authored `pre_input`, `stable 1` milestone can start a new human recording
+without a dummy tape or controller frame:
+
+```powershell
+dusklight --dvd game.iso --fixed-step `
+  --record-input-from-boot `
+  --record-input-tape build/from-boot.tape `
+  --milestone-program build/automation-state/milestones/intro.dmsp `
+  --milestones process_boot `
+  --milestone-result build/from-boot.milestones.json `
+  --record-input-start-milestone process_boot
+```
+
+The game begins with host input quarantined and the recorder armed. Immediately
+before the first `mDoCPd_c::read`, native code evaluates and verifies the
+authored Boot hit at boundary index zero with no tape frame, begins recording,
+then releases quarantine. Consequently recorded frame zero is the first human
+PAD read. `--record-input-start-fingerprint` is optional in this mode; when
+supplied it remains an exact guardrail.
+
+Boot recording is headful and may use `--fixed-step`, but rejects `--headless`,
+`--unpaced`, `--input-tape`, `--input-controller`, and `--milestone-goal`.
+Reaching the Boot milestone is the start condition rather than a request to
+stop the process.
+
+The v2 status object additively reports `expected_start_fingerprint`,
+`start_boundary_kind`, `start_boundary_index`, `start_program_digest`, and
+`start_definition_digest`. A verified Boot recording reports kind `boot`, index
+`0`, a null `start_tape_frame`, and the actual predicate digests and boundary
+fingerprint used to authorize the first live read.
+
 ### Hidden prefix fast-forward
 
 For route-tree “play from parent,” a headful absolute tape can skip rendering

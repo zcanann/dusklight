@@ -111,6 +111,17 @@ a native replay establishes and checks in new proof hashes. The editor changes
 only predicate source; topology, curated variants, game memory, and native game
 state remain read-only.
 
+An exact authored Boot predicate (`phase pre_input`, `stable 1`,
+`boundary.kind == "boot" && boundary.index == 0`) also exposes **Record from
+Boot** on the milestone node itself. This is a real graph root, not an empty
+placeholder tape: native code proves that authored boundary, arms the recorder
+before the first PAD read, and stores the resulting draft directly beneath the
+Boot milestone. Its manifest pins the program hash, definition hash, boundary
+fingerprint, and canonical empty-parent digest. The workbench rejects stale or
+forged root proofs. A Boot-root draft offers **Play from boot** and **Record
+child**, but omits **Play from parent** because no simulation boundary exists
+before Boot.
+
 Ready draft cards expose two presentation origins. **Play from boot** displays
 the complete composed chain. **Play from parent** executes that same complete
 chain from a fresh process and isolated state root, but keeps the window hidden,
