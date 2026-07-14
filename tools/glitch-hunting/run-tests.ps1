@@ -4,6 +4,7 @@ param(
         "all",
         "native",
         "input-tape",
+        "input-controller",
         "game-clock",
         "name-entry",
         "name-entry-trace",
@@ -76,6 +77,7 @@ function Invoke-NativeExecutable {
 
 $nativeTests = [ordered]@{
     "input-tape"       = @("dusk_input_tape_test", "dusk_input_tape_test.exe")
+    "input-controller" = @("dusk_input_controller_test", "dusk_input_controller_test.exe")
     "game-clock"       = @("dusk_game_clock_test", "dusk_game_clock_test.exe")
     "name-entry"       = @("dusk_name_entry_observer_test", "dusk_name_entry_observer_test.exe")
     "name-entry-trace" = @("dusk_name_entry_trace_test", "dusk_name_entry_trace_test.exe")

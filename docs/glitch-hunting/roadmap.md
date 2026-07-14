@@ -89,6 +89,10 @@ oracle, not only a visual assertion.
   minimization.
 - Add parameterized stick arcs/splines, roll-spacing programs, and
   observation-feedback controllers.
+- Treat the first bounded reactive-controller implementation as a delivered
+  substrate, then add typed observations and explicit state transitions only
+  when a benchmark requires them. Keep all observation access read-only and
+  promote discoveries through realized absolute tapes.
 - Add novelty signatures over events and quantized semantic state.
 - Retain structured enumeration and exact reduction as promotion tools. Use the
   native fitted-Q transition corpus and a return-and-explore archive to propose

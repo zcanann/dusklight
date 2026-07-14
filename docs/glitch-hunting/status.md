@@ -15,6 +15,18 @@ roadmap documents describe the larger target.
   capacity and stops deterministically if it is exhausted.
 - Dusklight can load a tape with `--input-tape`, choose release/hold/loop end
   behavior, and exit after the last executed tape tick.
+- `huntctl controller compile` turns a bounded timeline DSL into canonical
+  `DUSKCTRL` bytes. The native evaluator supports cubic stick curves,
+  coordinate seeking, actor seeking, additive stick correction, and button
+  overlays without allocation in the per-tick path.
+- A controller can run alone or continue after a tape. Tape frames have exact
+  priority, the controller begins on the following tick, and a headful run
+  releases exclusive PAD ownership after completion.
+- `--realized-input-tape` records the raw pre-clamp controller output with its
+  prefix as an absolute `DUSKTAPE`, preserving the tape as replay authority.
+- Reactive observation is one-way: immutable player/camera/actor snapshots
+  enter the pure evaluator. No gameplay state is written; inactive playback
+  does not capture observations or claim the PAD.
 - `--unpaced` produces one logical 30 Hz tick per outer loop and removes VSync,
   interpolation timing, and the frame limiter.
 - Fixed-step modes also replace `OSGetTime`/`OSGetTick` with an atomic logical
@@ -62,6 +74,7 @@ cmake --build --preset windows-clang-debug --target dusklight
 
 # Native, game-data-free tests
 cmake --build --preset windows-clang-debug --target dusk_input_tape_test
+cmake --build --preset windows-clang-debug --target dusk_input_controller_test
 cmake --build --preset windows-clang-debug --target dusk_game_clock_test
 cmake --build --preset windows-clang-debug --target dusk_name_entry_observer_test
 cmake --build --preset windows-clang-debug --target dusk_name_entry_trace_test
@@ -70,6 +83,12 @@ cmake --build --preset windows-clang-debug --target dusk_rng_test
 # Rust tests and lint
 cargo test --manifest-path tools/huntctl/Cargo.toml
 cargo clippy --manifest-path tools/huntctl/Cargo.toml --all-targets -- -D warnings
+
+# Compile and inspect a reactive timeline
+cargo run --manifest-path tools/huntctl/Cargo.toml -- controller compile \
+  tests/fixtures/automation/intro_seek_forward.duskctl build/intro-seek-forward.dctl
+cargo run --manifest-path tools/huntctl/Cargo.toml -- controller inspect \
+  build/intro-seek-forward.dctl
 
 # Build and inspect the boot authoring smoke tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
@@ -96,6 +115,9 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- pool health \
 # Play a tape visibly or through the null renderer
 dusklight --dvd game.iso --input-tape run.tape --exit-after-tape
 dusklight --headless --dvd game.iso --input-tape run.tape --exit-after-tape
+dusklight --headless --dvd game.iso --input-tape prefix.tape \
+  --input-controller route.dctl --exit-after-controller \
+  --realized-input-tape build/route-realized.tape
 dusklight --headless --dvd game.iso --input-tape eye-shredder.tape \
   --exit-after-tape --deterministic-time-start 0 --cursor-breakout-shadow \
   --name-entry-trace eye-shredder.trace.json
@@ -104,8 +126,8 @@ dusklight --headless --dvd game.iso --input-tape eye-shredder.tape \
 ## Validated limits
 
 - The Windows Clang debug game target builds and links.
-- Native tape, fixed-step, name-entry observer/trace, and exact RNG sequence and
-  round-trip tests pass.
+- Native tape, reactive-controller, fixed-step, name-entry observer/trace, and
+  exact RNG sequence and round-trip tests pass.
 - Aurora's deterministic time tests pass for exact/rational stepping,
   concurrent reads, reset phase, overflow, and unchanged realtime defaults.
 - Rust formatting, all tests, and warning-clean Clippy pass.
@@ -117,9 +139,11 @@ dusklight --headless --dvd game.iso --input-tape eye-shredder.tape \
 - Null-backend initialization and deterministic failure for an invalid explicit
   DVD were exercised.
 
-No valid game image was available in the development workspace. Actual game
-ticks, headful/headless parity, replay determinism, and throughput are therefore
-not yet runtime-validated.
+A real `GZ2E01` run validated tape-to-controller handoff at route-control frame
+439. The 45-tick controller continued in `F_SP103`, produced a 485-frame
+realized tape, and a fresh absolute-tape replay reached identical final map,
+position, velocity, and applied input telemetry. Broader headful/headless parity
+and throughput remain unmeasured.
 
 ## Known gaps
 
@@ -136,6 +160,9 @@ not yet runtime-validated.
   requires a presentable surface to drain the existing GX traversal.
 - There are no canonical state hashes, scenario fixtures, reset/checkpoint
   acceleration, or gameplay oracle library yet.
+- Actor observation is currently bounded to 256 snapshots, with deterministic
+  retention and stable-ID tie-breaking. Controller programs have no internal
+  state transitions yet, and actors are selected by numeric process name.
 - Eye Shredder's original-layout corruption can be modeled safely, but the
   console-only rendering result is not emulated or claimed.
 - The Aurora automation change is committed inside the submodule on a local

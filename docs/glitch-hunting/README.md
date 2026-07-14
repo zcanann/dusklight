@@ -23,8 +23,12 @@ state hashes, and the reason it was classified as interesting.
 - Workers are long-lived native processes. We do not start a process or cross
   an FFI/IPC boundary for every frame.
 - Headless means presentation-free and unpaced, not a different update rate.
-- Raw input tapes are the replay authority. Splines, macros, search policies,
-  and learned policies compile down to tapes.
+- Raw input tapes are the replay authority. Static splines compile directly to
+  tapes; observation-feedback controllers run against read-only snapshots and
+  emit a realized tape for exact replay and promotion.
+- Automation may write the exclusive virtual PAD and automation-owned output
+  only. Gameplay observations are read-only, and an inactive controller takes
+  a cold path without scanning actors or touching PAD ownership.
 - Fidelity is explicit. Native safety fixes, original bugs, relative heap
   layout, absolute GameCube addresses, and console rendering are different
   capabilities and must not be conflated.
@@ -44,6 +48,9 @@ state hashes, and the reason it was classified as interesting.
 - [Native offline reinforcement learning](offline-rl.md) documents the compact
   transition corpus, tree-based fitted Q iteration, trace extraction, and its
   current non-authoritative boundary.
+- [Reactive input controllers](reactive-controllers.md) documents the bounded
+  timeline DSL, native evaluator, read-only observation boundary, and realized
+  tape promotion path.
 - [Route timelines, variants, and Git](timelines.md) documents the visual route
   workbench, curated segment variants, exact boundary dependencies, and Git-owned
   lineages.

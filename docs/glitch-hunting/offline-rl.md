@@ -71,6 +71,12 @@ terminal state, exhausted traces, and missing episode identity. Stick matching
 uses Aurora's exact integer `PADClamp` transform because the tape stores raw
 values while the trace observes post-clamp input.
 
+Reactive-controller trace records carry distinct provenance and are rejected
+by this bridge. First record the run with `--realized-input-tape`, replay that
+absolute tape, and extract transitions from the replay trace. This prevents an
+observation-feedback policy from being mistaken for a self-contained action
+sequence.
+
 The v1 movement action catalog is neutral plus 16 full-stick headings, with or
 without B held. B is an executable controller state, not a claim that Link
 actually began a roll. The 49-field observed-state vector includes stage,

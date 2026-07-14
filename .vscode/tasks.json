@@ -10,6 +10,7 @@
         "all",
         "native",
         "input-tape",
+        "input-controller",
         "game-clock",
         "name-entry",
         "name-entry-trace",
