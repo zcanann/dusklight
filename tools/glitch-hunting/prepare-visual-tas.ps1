@@ -5,9 +5,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$bootFixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.json"
+$bootFixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.tas"
 $bootOutput = Join-Path $repoRoot "build\boot_start_smoke.tape"
-$eyeShredderFixture = Join-Path $repoRoot "tests\fixtures\automation\eye_shredder.json"
+$eyeShredderFixture = Join-Path $repoRoot "tests\fixtures\automation\eye_shredder.tas"
 $eyeShredderOutput = Join-Path $repoRoot "build\eye_shredder.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
 $debugState = [System.IO.Path]::GetFullPath(

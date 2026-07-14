@@ -1,13 +1,16 @@
-#include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/file_select_observer.hpp"
+#include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
 
 #include <dolphin/pad.h>
+#include <zstd.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -32,6 +35,84 @@ void resetPadSpies() {
     gActive = {};
     gSetCalls = {};
     gClearCalls = {};
+}
+
+std::uint64_t readU64(const std::uint8_t* input) {
+    std::uint64_t value = 0;
+    for (unsigned byte = 0; byte < 8; ++byte) {
+        value |= static_cast<std::uint64_t>(input[byte]) << (byte * 8);
+    }
+    return value;
+}
+
+void writeU16(std::uint8_t* output, const std::uint16_t value) {
+    output[0] = static_cast<std::uint8_t>(value);
+    output[1] = static_cast<std::uint8_t>(value >> 8);
+}
+
+void writeU32(std::uint8_t* output, const std::uint32_t value) {
+    for (unsigned byte = 0; byte < 4; ++byte) {
+        output[byte] = static_cast<std::uint8_t>(value >> (byte * 8));
+    }
+}
+
+void writeU64(std::uint8_t* output, const std::uint64_t value) {
+    for (unsigned byte = 0; byte < 8; ++byte) {
+        output[byte] = static_cast<std::uint8_t>(value >> (byte * 8));
+    }
+}
+
+std::vector<std::uint8_t> expandV2(const std::vector<std::uint8_t>& bytes) {
+    using namespace dusk::automation;
+
+    REQUIRE(bytes.size() >= kInputTapeHeaderSize);
+    const std::size_t frameCount = static_cast<std::size_t>(readU64(bytes.data() + 24));
+    std::vector<std::uint8_t> expanded(frameCount * kInputFrameSize);
+    std::uint8_t empty = 0;
+    void* destination = expanded.empty() ? static_cast<void*>(&empty) : expanded.data();
+    const std::size_t result = ZSTD_decompress(destination, expanded.size(),
+        bytes.data() + kInputTapeHeaderSize, bytes.size() - kInputTapeHeaderSize);
+    REQUIRE(!ZSTD_isError(result));
+    REQUIRE(result == expanded.size());
+    return expanded;
+}
+
+std::vector<std::uint8_t> replaceV2Payload(
+    std::vector<std::uint8_t> bytes, const std::vector<std::uint8_t>& expanded) {
+    using namespace dusk::automation;
+
+    std::vector<std::uint8_t> compressed(ZSTD_compressBound(expanded.size()));
+    const std::uint8_t empty = 0;
+    const void* source = expanded.empty() ? static_cast<const void*>(&empty) : expanded.data();
+    const std::size_t result = ZSTD_compress(
+        compressed.data(), compressed.size(), source, expanded.size(), ZSTD_CLEVEL_DEFAULT);
+    REQUIRE(!ZSTD_isError(result));
+    compressed.resize(result);
+    bytes.resize(kInputTapeHeaderSize + compressed.size());
+    writeU64(bytes.data() + 32, compressed.size());
+    std::copy(compressed.begin(), compressed.end(), bytes.begin() + kInputTapeHeaderSize);
+    return bytes;
+}
+
+std::vector<std::uint8_t> makeLegacyV1(
+    const dusk::automation::InputTape& tape, const std::uint16_t minorVersion) {
+    using namespace dusk::automation;
+
+    std::vector<std::uint8_t> v2;
+    REQUIRE(encode_input_tape(tape, v2) == InputTapeError::None);
+    std::vector<std::uint8_t> frames = expandV2(v2);
+    constexpr std::size_t legacyHeaderSize = 32;
+    std::vector<std::uint8_t> legacy(legacyHeaderSize + frames.size(), 0);
+    std::copy(kInputTapeMagic.begin(), kInputTapeMagic.end(), legacy.begin());
+    writeU16(legacy.data() + 8, 1);
+    writeU16(legacy.data() + 10, minorVersion);
+    writeU16(legacy.data() + 12, legacyHeaderSize);
+    writeU16(legacy.data() + 14, kInputFrameSize);
+    writeU32(legacy.data() + 16, tape.tickRateNumerator);
+    writeU32(legacy.data() + 20, tape.tickRateDenominator);
+    writeU64(legacy.data() + 24, tape.frames.size());
+    std::copy(frames.begin(), frames.end(), legacy.begin() + legacyHeaderSize);
+    return legacy;
 }
 
 void testCanonicalRoundTrip() {
@@ -59,21 +140,23 @@ void testCanonicalRoundTrip() {
 
     std::vector<std::uint8_t> bytes;
     REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
-    REQUIRE(bytes.size() == kInputTapeHeaderSize + kInputFrameSize);
+    REQUIRE(bytes.size() > kInputTapeHeaderSize);
     REQUIRE(std::equal(kInputTapeMagic.begin(), kInputTapeMagic.end(), bytes.begin()));
-    REQUIRE(bytes[8] == 1 && bytes[9] == 0);
+    REQUIRE(bytes[8] == kInputTapeMajorVersion && bytes[9] == 0);
     REQUIRE(bytes[10] == kInputTapeMinorVersion && bytes[11] == 0);
     REQUIRE(bytes[12] == kInputTapeHeaderSize && bytes[13] == 0);
     REQUIRE(bytes[14] == kInputFrameSize && bytes[15] == 0);
     REQUIRE(bytes[16] == 60 && bytes[20] == 2);
     REQUIRE(bytes[24] == 1);
+    REQUIRE(readU64(bytes.data() + 32) == bytes.size() - kInputTapeHeaderSize);
 
-    const std::size_t pad0 = kInputTapeHeaderSize + 4;
-    REQUIRE(bytes[kInputTapeHeaderSize] == 0b0101);
-    REQUIRE(bytes[pad0] == 0x34 && bytes[pad0 + 1] == 0x12);
-    REQUIRE(bytes[pad0 + 2] == 0x81);
-    REQUIRE(bytes[pad0 + 10] == static_cast<std::uint8_t>(RawPadFlags::Connected));
-    REQUIRE(bytes[pad0 + 11] == 0);
+    const std::vector<std::uint8_t> expanded = expandV2(bytes);
+    const std::size_t pad0 = 4;
+    REQUIRE(expanded[0] == 0b0101);
+    REQUIRE(expanded[pad0] == 0x34 && expanded[pad0 + 1] == 0x12);
+    REQUIRE(expanded[pad0 + 2] == 0x81);
+    REQUIRE(expanded[pad0 + 10] == static_cast<std::uint8_t>(RawPadFlags::Connected));
+    REQUIRE(expanded[pad0 + 11] == 0);
 
     InputTape decoded;
     REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
@@ -94,7 +177,7 @@ void testMalformedTapesAreRejected() {
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::BadMagic);
 
     malformed = bytes;
-    malformed[8] = 2;
+    malformed[8] = 3;
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::UnsupportedVersion);
 
     malformed = bytes;
@@ -102,16 +185,49 @@ void testMalformedTapesAreRejected() {
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::TrailingData);
 
     malformed = bytes;
-    malformed[kInputTapeHeaderSize + 4 + 10] = 0x80;
+    malformed.pop_back();
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::Truncated);
+
+    malformed = bytes;
+    writeU64(malformed.data() + 32, readU64(malformed.data() + 32) - 1);
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::TrailingData);
+
+    malformed = bytes;
+    writeU64(malformed.data() + 32, readU64(malformed.data() + 32) + 1);
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::Truncated);
+
+    malformed = bytes;
+    malformed[kInputTapeHeaderSize] ^= 0xff;
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidCompressedPayload);
+
+    malformed = bytes;
+    writeU64(malformed.data() + 24, 2);
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidCompressedPayload);
+
+    malformed = bytes;
+    writeU64(malformed.data() + 24, std::numeric_limits<std::uint64_t>::max());
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::TooManyFrames);
+
+    malformed = bytes;
+    const std::vector<std::uint8_t> secondFrame(
+        malformed.begin() + kInputTapeHeaderSize, malformed.end());
+    malformed.insert(malformed.end(), secondFrame.begin(), secondFrame.end());
+    writeU64(malformed.data() + 32, malformed.size() - kInputTapeHeaderSize);
+    REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidCompressedPayload);
+
+    std::vector<std::uint8_t> expanded = expandV2(bytes);
+    expanded[4 + 10] = 0x80;
+    malformed = replaceV2Payload(bytes, expanded);
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidPadFlags);
 
-    malformed = bytes;
-    malformed[kInputTapeHeaderSize + 1] = 0xff;
+    expanded = expandV2(bytes);
+    expanded[1] = 0xff;
+    malformed = replaceV2Payload(bytes, expanded);
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidFrameCondition);
 
-    malformed = bytes;
-    malformed[kInputTapeHeaderSize + 1] =
-        static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive);
+    expanded = expandV2(bytes);
+    expanded[1] = static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive);
+    malformed = replaceV2Payload(bytes, expanded);
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::InvalidFrameCondition);
 
     tape.frames[0].ownedPorts = 0x80;
@@ -125,15 +241,60 @@ void testMinorZeroConnectionErrorsRemainCompatible() {
     tape.frames.resize(1);
     tape.frames[0].pads[0].flags = RawPadFlags::None;
     tape.frames[0].pads[0].error = PAD_ERR_NO_CONTROLLER;
-    std::vector<std::uint8_t> bytes;
-    REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
-
-    bytes[10] = 0; // Minor version 0.
-    bytes[11] = 0;
-    bytes[kInputTapeHeaderSize + 4 + 11] = 0; // This byte was reserved in v1.0.
+    std::vector<std::uint8_t> bytes = makeLegacyV1(tape, 0);
+    constexpr std::size_t legacyHeaderSize = 32;
+    bytes[legacyHeaderSize + 4 + 11] = 0;  // This byte was reserved in v1.0.
     InputTape decoded;
     REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
     REQUIRE(decoded.frames[0].pads[0].error == PAD_ERR_NO_CONTROLLER);
+}
+
+void testLegacyMinorOneAndTwoRemainCompatible() {
+    using namespace dusk::automation;
+
+    InputTape plain;
+    plain.frames.resize(1);
+    plain.frames[0].ownedPorts = 1;
+    plain.frames[0].pads[0].buttons = PAD_BUTTON_START;
+    plain.frames[0].pads[0].error = PAD_ERR_TRANSFER;
+    InputTape decoded;
+    REQUIRE(decode_input_tape(makeLegacyV1(plain, 1), decoded) == InputTapeError::None);
+    REQUIRE(decoded == plain);
+
+    InputTape conditioned = plain;
+    conditioned.frames[0].condition = InputFrameCondition::NameEntryActive;
+    conditioned.frames[0].timeoutTicks = 9;
+    REQUIRE(decode_input_tape(makeLegacyV1(conditioned, 2), decoded) == InputTapeError::None);
+    REQUIRE(decoded == conditioned);
+}
+
+void testEmptyTapeRoundTrip() {
+    using namespace dusk::automation;
+
+    const InputTape tape;
+    std::vector<std::uint8_t> bytes;
+    REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
+    REQUIRE(bytes.size() > kInputTapeHeaderSize);
+    REQUIRE(readU64(bytes.data() + 24) == 0);
+    InputTape decoded;
+    REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
+    REQUIRE(decoded == tape);
+}
+
+void testRepeatedTapeIsCompact() {
+    using namespace dusk::automation;
+
+    InputTape tape;
+    tape.frames.resize(1024);
+    for (InputFrame& frame : tape.frames) {
+        frame.ownedPorts = 0x0f;
+    }
+    std::vector<std::uint8_t> bytes;
+    REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
+    REQUIRE(bytes.size() < kInputTapeHeaderSize + tape.frames.size() * kInputFrameSize);
+    InputTape decoded;
+    REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
+    REQUIRE(decoded == tape);
 }
 
 void testConditionedFrameRoundTrip() {
@@ -147,11 +308,11 @@ void testConditionedFrameRoundTrip() {
 
     std::vector<std::uint8_t> bytes;
     REQUIRE(encode_input_tape(tape, bytes) == InputTapeError::None);
-    REQUIRE(bytes[kInputTapeHeaderSize] == 0x0f);
-    REQUIRE(bytes[kInputTapeHeaderSize + 1] ==
-            static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive));
-    REQUIRE(bytes[kInputTapeHeaderSize + 2] == 0xd2);
-    REQUIRE(bytes[kInputTapeHeaderSize + 3] == 0x04);
+    const std::vector<std::uint8_t> expanded = expandV2(bytes);
+    REQUIRE(expanded[0] == 0x0f);
+    REQUIRE(expanded[1] == static_cast<std::uint8_t>(InputFrameCondition::NameEntryActive));
+    REQUIRE(expanded[2] == 0xd2);
+    REQUIRE(expanded[3] == 0x04);
 
     InputTape decoded;
     REQUIRE(decode_input_tape(bytes, decoded) == InputTapeError::None);
@@ -588,6 +749,9 @@ int main() {
     testCanonicalRoundTrip();
     testMalformedTapesAreRejected();
     testMinorZeroConnectionErrorsRemainCompatible();
+    testLegacyMinorOneAndTwoRemainCompatible();
+    testEmptyTapeRoundTrip();
+    testRepeatedTapeIsCompact();
     testConditionedFrameRoundTrip();
     testPlayerOwnsAndReleasesPorts();
     testSuccessfulHoldTapeCanHandOffImmediately();

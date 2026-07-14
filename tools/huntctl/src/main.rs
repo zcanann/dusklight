@@ -2,6 +2,7 @@ use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerCli
 use huntctl::corpus::Corpus;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::tape::InputTape;
+use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::transport::ProcessTransport;
 use huntctl::{BuildIdentity, Digest};
@@ -231,7 +232,12 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("compile") if args.len() == 3 => {
             let source = fs::read_to_string(&args[1])?;
-            let compiled = TapeProgram::from_json(&source)?.compile()?;
+            let program = if source.trim_start().starts_with('{') {
+                TapeProgram::from_json(&source)?
+            } else {
+                tape_dsl::parse(&source)?
+            };
+            let compiled = program.compile()?;
             let bytes = compiled.tape.encode()?;
             fs::write(&args[2], &bytes)?;
             let marker_path = format!("{}.markers.json", args[2]);
@@ -335,7 +341,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.json OUTPUT.tape\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nTape program schema: {PROGRAM_SCHEMA}"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
 }
 

@@ -13,9 +13,11 @@ namespace dusk::automation {
 inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
     'D', 'U', 'S', 'K', 'T', 'A', 'P', 'E',
 };
-inline constexpr std::uint16_t kInputTapeMajorVersion = 1;
-inline constexpr std::uint16_t kInputTapeMinorVersion = 2;
-inline constexpr std::size_t kInputTapeHeaderSize = 32;
+// DUSKTAPE v2 stores the canonical 52-byte v1.2 frame stream in one zstd
+// frame. The decoder continues to accept uncompressed v1.0-v1.2 tapes.
+inline constexpr std::uint16_t kInputTapeMajorVersion = 2;
+inline constexpr std::uint16_t kInputTapeMinorVersion = 0;
+inline constexpr std::size_t kInputTapeHeaderSize = 40;
 inline constexpr std::size_t kRawPadStateSize = 12;
 inline constexpr std::size_t kInputFrameSize = 52;
 inline constexpr std::size_t kInputPortCount = 4;
@@ -101,6 +103,7 @@ enum class InputTapeError {
     InvalidOwnedPorts,
     InvalidFrameCondition,
     InvalidPadFlags,
+    InvalidCompressedPayload,
     TrailingData,
     TooManyFrames,
 };

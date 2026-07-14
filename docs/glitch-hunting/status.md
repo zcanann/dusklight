@@ -8,8 +8,9 @@ roadmap documents describe the larger target.
 - `orig/` is ignored as local extracted-game data.
 - Aurora exposes an exclusive automation pad source. Owned ports replace
   keyboard, physical, touch, and ordinary virtual input for that tick.
-- DUSKTAPE v1.1 has a canonical little-endian C++ and Rust codec. It stores four
-  exact controller ports without serializing native `PADStatus` memory.
+- DUSKTAPE v2 has matching C++ and Rust codecs. It zstd-compresses the canonical
+  52-byte controller frame stream, stores four exact ports without serializing
+  native `PADStatus` memory, and still decodes v1.0-v1.2 tapes.
 - C++ playback performs no per-tick allocation. Recording reserves a declared
   capacity and stops deterministically if it is exhausted.
 - Dusklight can load a tape with `--input-tape`, choose release/hold/loop end
@@ -33,9 +34,10 @@ roadmap documents describe the larger target.
 - `huntctl` can keep an N-worker pool alive, enforce identical-build or explicit
   mixed-build policy, schedule parallel coarse health jobs, retain healthy
   workers after partial startup failures, and shut every accepted worker down.
-- `huntctl tape compile` converts a strict JSON program into canonical tape
-  bytes; `huntctl tape inspect` decodes tapes. Markers live in a sidecar so the
-  replay format stays exact.
+- `huntctl tape compile` compiles the concise `.tas` state DSL into canonical
+  compressed tape bytes; `huntctl tape inspect` decodes tapes. Markers live in
+  a sidecar so replay bytes stay exact. Legacy JSON input remains readable but
+  is not used by checked tapes.
 - `huntctl corpus` stores immutable tapes and run metadata under real SHA-256
   names, uses atomic replacement for manifests, and verifies blobs against
   corruption or tampering.
@@ -67,7 +69,7 @@ cargo clippy --manifest-path tools/huntctl/Cargo.toml --all-targets -- -D warnin
 
 # Build and inspect the boot authoring smoke tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
-  tests/fixtures/automation/boot_start_smoke.json build/boot_start_smoke.tape
+  tests/fixtures/automation/boot_start_smoke.tas build/boot_start_smoke.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape inspect \
   build/boot_start_smoke.tape
 

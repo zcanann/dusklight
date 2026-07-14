@@ -464,6 +464,7 @@ target_include_directories(dusk_input_tape_test PRIVATE
     ${CMAKE_SOURCE_DIR}/extern/aurora/include
 )
 target_compile_definitions(dusk_input_tape_test PRIVATE TARGET_PC=1 AURORA=1)
+target_link_libraries(dusk_input_tape_test PRIVATE zstd::libzstd)
 set_target_properties(dusk_input_tape_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)

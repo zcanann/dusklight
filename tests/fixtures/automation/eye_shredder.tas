@@ -1,0 +1,68 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+# Reusable controller states. Playback is an absolute, branch-free timeline.
+state neutral {}
+state start { p0 buttons START }
+state accept { p0 buttons A }
+state right { p0 buttons RIGHT }
+state b_left { p0 buttons B stick -127 0 }
+state left { p0 stick -127 0 }
+state eye_write { p0 buttons A START }
+
+marker process-start
+repeat 115 neutral
+
+marker start-pulse-1
+frame start
+repeat 31 neutral
+
+marker start-pulse-2
+frame start
+repeat 79 neutral
+
+marker continue-without-saving
+frame accept
+repeat 7 neutral
+
+marker move-to-final-name-slot
+cycle 3 { frame right; frame neutral }
+
+marker fill-final-name-slot
+frame accept
+frame neutral
+
+marker cursor-breakout-right-106
+cycle 106 { frame right; frame neutral }
+
+marker cursor-114-backspace-to-113
+frame b_left
+frame neutral
+
+marker select-uppercase-m
+cycle 5 { frame left; frame neutral }
+
+marker eye-shredder-write-113
+frame eye_write
+frame neutral
+
+marker confirm-corrupted-file
+frame start
+repeat 30 neutral
+
+marker select-default-epona-menu
+frame start
+frame neutral
+
+marker accept-default-epona
+frame start
+repeat 64 neutral
+
+marker skip-opening-event-arm
+frame start
+frame neutral
+
+marker skip-opening-event-confirm
+frame start
+repeat 72 neutral

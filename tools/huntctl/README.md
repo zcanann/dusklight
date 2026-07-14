@@ -85,50 +85,55 @@ added after profiling without changing the coarse scheduling interface.
 
 ## DUSKTAPE authoring
 
-The tape codec is byte-compatible with native DUSKTAPE v1.1 and decodes legacy
-v1.0 tapes, including v1.0's derived controller error values. Inspect a tape or
-expand its exact frames as JSON with:
+The tape codec emits compact DUSKTAPE v2 files and decodes legacy v1.0-v1.2
+tapes. V2 wraps the canonical 52-byte frame stream in one zstd frame, preserving
+exact controller semantics while avoiding flat per-tick storage. Inspect a tape
+or expand its exact frames as JSON with:
 
 ```console
 huntctl tape inspect run.tape
 huntctl tape inspect run.tape --frames
 ```
 
-Compile a strict `dusktape-program/v1` JSON program with:
+Compile the TAS state DSL with:
 
 ```console
-huntctl tape compile boot.json boot.tape
+huntctl tape compile boot.tas boot.tape
 ```
 
 Example:
 
-```json
-{
-  "schema": "dusktape-program/v1",
-  "tick_rate": { "numerator": 30, "denominator": 1 },
-  "default_owned_ports": 1,
-  "steps": [
-    { "op": "marker", "name": "boot" },
-    { "op": "repeat", "count": 60, "frame": {} },
-    { "op": "frame", "frame": { "pads": { "0": { "buttons": ["START"] } } } },
-    { "op": "hold", "count": 1 },
-    { "op": "repeat", "count": 30, "frame": {} }
-  ]
-}
+```text
+dusktape 1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+state start { p0 buttons START }
+state left_a { p0 buttons A stick -127 0 }
+
+marker boot
+repeat 60 neutral
+frame start
+cycle 3 { frame left_a; frame neutral }
+repeat 30 neutral
 ```
 
-`frame` emits one exact frame. `repeat` emits `count` copies of its exact frame.
-`hold` emits `count` additional copies of the last emitted frame. Missing pad
-fields are neutral; missing pads are neutral and connected. `owned_ports` is a
-four-bit mask and may be overridden per frame. Buttons accept either a raw
-`u16` mask or names: `LEFT`, `RIGHT`, `DOWN`, `UP`, `Z`, `R`, `L`, `A`, `B`,
-`X`, `Y`, and `START`/`MENU`.
+Named `state`s make controller configurations reusable. `frame` emits one
+state, `repeat` emits a state N times, `cycle` repeats an exact state sequence,
+and `hold` repeats the last emitted frame. `wait` and `pulse` preserve the
+legacy conditioned-input features for experiments, although checked TAS tapes
+reject them. Missing pads are neutral and connected. Frame bodies support
+buttons, main/sub sticks, analog triggers, connection state, error values, and
+an `owned` port-mask override. `#` starts a comment. Parser errors include the
+source line and column.
 
 The binary tape has no marker channel. Compilation therefore always writes an
 external `OUTPUT.tape.markers.json` sidecar, keeping the replay bytes canonical
-while preserving source markers at exact tick offsets. Unknown JSON fields,
-invalid ports, zero counts, duplicate/empty markers, and expansions beyond ten
-million frames are rejected.
+while preserving source markers at exact tick offsets. Unknown commands or
+states, invalid ports, zero counts, duplicate/empty markers, and expansions
+beyond ten million frames are rejected. Leading-`{` legacy JSON programs remain
+accepted for migration only.
 
 ## Content-addressed corpus
 

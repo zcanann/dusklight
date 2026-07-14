@@ -1,0 +1,31 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+state start { p0 buttons START }
+state accept { p0 buttons A }
+state back { p0 buttons B }
+
+marker process-start
+repeat 180 neutral
+
+marker start-pulse-1
+repeat 2 start
+repeat 118 neutral
+
+marker start-pulse-2
+repeat 2 start
+repeat 118 neutral
+
+marker start-pulse-3
+repeat 2 start
+repeat 178 neutral
+
+marker select-first-save
+repeat 2 accept
+repeat 30 neutral
+
+marker remove-carried-name-character
+repeat 2 back
+repeat 148 neutral

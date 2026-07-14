@@ -6,6 +6,7 @@ pub mod corpus;
 pub mod pool;
 pub mod protocol;
 pub mod tape;
+pub mod tape_dsl;
 pub mod tape_program;
 pub mod transport;
 

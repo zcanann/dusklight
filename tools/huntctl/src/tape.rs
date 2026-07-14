@@ -3,12 +3,15 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 8] = *b"DUSKTAPE";
-pub const MAJOR_VERSION: u16 = 1;
-pub const MINOR_VERSION: u16 = 2;
-pub const HEADER_SIZE: usize = 32;
+pub const MAJOR_VERSION: u16 = 2;
+pub const MINOR_VERSION: u16 = 0;
+pub const HEADER_SIZE: usize = 40;
 pub const PAD_SIZE: usize = 12;
 pub const FRAME_SIZE: usize = 52;
 pub const PORT_COUNT: usize = 4;
+const LEGACY_MAJOR_VERSION: u16 = 1;
+const LEGACY_MAX_MINOR_VERSION: u16 = 2;
+const LEGACY_HEADER_SIZE: usize = 32;
 const ALL_PORTS: u8 = (1 << PORT_COUNT) - 1;
 const CONNECTED_FLAG: u8 = 1;
 
@@ -146,6 +149,7 @@ pub enum TapeError {
     InvalidPadFlags,
     InvalidWaitCondition,
     InvalidWaitTimeout,
+    InvalidCompressedPayload,
     TrailingData,
     TooManyFrames,
 }
@@ -163,6 +167,7 @@ impl fmt::Display for TapeError {
             Self::InvalidPadFlags => "input tape contains unknown controller flags",
             Self::InvalidWaitCondition => "input tape contains an unknown wait condition",
             Self::InvalidWaitTimeout => "input tape wait timeout is invalid",
+            Self::InvalidCompressedPayload => "input tape contains an invalid compressed payload",
             Self::TrailingData => "input tape contains trailing data",
             Self::TooManyFrames => "input tape frame count is too large",
         })
@@ -189,7 +194,8 @@ impl InputTape {
         Ok(())
     }
 
-    /// Encodes canonical DUSKTAPE v1.2 bytes.
+    /// Encodes canonical DUSKTAPE v2 bytes. The canonical v1.2 frame stream is
+    /// compressed as one zstd frame; frame semantics are unchanged.
     pub fn encode(&self) -> Result<Vec<u8>, TapeError> {
         self.validate()?;
         let payload_size = self
@@ -197,8 +203,12 @@ impl InputTape {
             .len()
             .checked_mul(FRAME_SIZE)
             .ok_or(TapeError::TooManyFrames)?;
+        let mut expanded = vec![0_u8; payload_size];
+        encode_frame_stream(&self.frames, &mut expanded);
+        let compressed =
+            zstd::bulk::compress(&expanded, 0).map_err(|_| TapeError::InvalidCompressedPayload)?;
         let total_size = HEADER_SIZE
-            .checked_add(payload_size)
+            .checked_add(compressed.len())
             .ok_or(TapeError::TooManyFrames)?;
         let mut output = vec![0_u8; total_size];
         output[..8].copy_from_slice(&MAGIC);
@@ -209,25 +219,13 @@ impl InputTape {
         put_u32(&mut output[16..20], self.tick_rate_numerator);
         put_u32(&mut output[20..24], self.tick_rate_denominator);
         put_u64(&mut output[24..32], self.frames.len() as u64);
-
-        for (frame_index, frame) in self.frames.iter().enumerate() {
-            let frame_start = HEADER_SIZE + frame_index * FRAME_SIZE;
-            output[frame_start] = frame.owned_ports;
-            output[frame_start + 1] = frame.wait_condition.encode();
-            put_u16(
-                &mut output[frame_start + 2..frame_start + 4],
-                frame.wait_timeout_ticks,
-            );
-            for (port, pad) in frame.pads.iter().enumerate() {
-                let start = frame_start + 4 + port * PAD_SIZE;
-                encode_pad(pad, &mut output[start..start + PAD_SIZE]);
-            }
-        }
+        put_u64(&mut output[32..40], compressed.len() as u64);
+        output[HEADER_SIZE..].copy_from_slice(&compressed);
         Ok(output)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<DecodedInputTape, TapeError> {
-        if bytes.len() < HEADER_SIZE {
+        if bytes.len() < LEGACY_HEADER_SIZE {
             return Err(TapeError::Truncated);
         }
         if bytes[..8] != MAGIC {
@@ -237,10 +235,21 @@ impl InputTape {
             major: get_u16(&bytes[8..10]),
             minor: get_u16(&bytes[10..12]),
         };
-        if version.major != MAJOR_VERSION || version.minor > MINOR_VERSION {
+        let legacy =
+            version.major == LEGACY_MAJOR_VERSION && version.minor <= LEGACY_MAX_MINOR_VERSION;
+        let compressed = version.major == MAJOR_VERSION && version.minor == MINOR_VERSION;
+        if !legacy && !compressed {
             return Err(TapeError::UnsupportedVersion);
         }
-        if get_u16(&bytes[12..14]) as usize != HEADER_SIZE {
+        let header_size = if legacy {
+            LEGACY_HEADER_SIZE
+        } else {
+            HEADER_SIZE
+        };
+        if bytes.len() < header_size {
+            return Err(TapeError::Truncated);
+        }
+        if get_u16(&bytes[12..14]) as usize != header_size {
             return Err(TapeError::InvalidHeaderSize);
         }
         if get_u16(&bytes[14..16]) as usize != FRAME_SIZE {
@@ -252,55 +261,46 @@ impl InputTape {
             return Err(TapeError::InvalidTickRate);
         }
         let frame_count_u64 = get_u64(&bytes[24..32]);
-        let available = (bytes.len() - HEADER_SIZE) / FRAME_SIZE;
-        if frame_count_u64 > available as u64 || frame_count_u64 > usize::MAX as u64 {
+        if frame_count_u64 > (usize::MAX / FRAME_SIZE) as u64 {
             return Err(TapeError::TooManyFrames);
         }
         let frame_count = frame_count_u64 as usize;
-        let expected = HEADER_SIZE
-            .checked_add(
-                frame_count
-                    .checked_mul(FRAME_SIZE)
-                    .ok_or(TapeError::TooManyFrames)?,
-            )
+        let expanded_size = frame_count
+            .checked_mul(FRAME_SIZE)
             .ok_or(TapeError::TooManyFrames)?;
-        if bytes.len() < expected {
-            return Err(TapeError::Truncated);
-        }
-        if bytes.len() != expected {
-            return Err(TapeError::TrailingData);
-        }
-
-        let mut frames = Vec::with_capacity(frame_count);
-        for frame_index in 0..frame_count {
-            let start = HEADER_SIZE + frame_index * FRAME_SIZE;
-            let source = &bytes[start..start + FRAME_SIZE];
-            if source[0] & !ALL_PORTS != 0 {
-                return Err(TapeError::InvalidOwnedPorts);
+        let (frame_bytes, frame_minor_version) = if legacy {
+            let expected = LEGACY_HEADER_SIZE
+                .checked_add(expanded_size)
+                .ok_or(TapeError::TooManyFrames)?;
+            if bytes.len() < expected {
+                return Err(TapeError::Truncated);
             }
-            if version.minor < 2 && source[1..4] != [0, 0, 0] {
-                return Err(TapeError::InvalidFrameSize);
+            if bytes.len() != expected {
+                return Err(TapeError::TrailingData);
             }
-            let wait_condition = WaitCondition::decode(source[1])?;
-            let wait_timeout_ticks = get_u16(&source[2..4]);
-            match (wait_condition, wait_timeout_ticks) {
-                (WaitCondition::None, 0) => {}
-                (WaitCondition::None, _) | (_, 0) => return Err(TapeError::InvalidWaitTimeout),
-                _ => {}
+            (bytes[LEGACY_HEADER_SIZE..].to_vec(), version.minor)
+        } else {
+            let payload_size_u64 = get_u64(&bytes[32..40]);
+            if payload_size_u64 > usize::MAX as u64 {
+                return Err(TapeError::TooManyFrames);
             }
-            let mut frame = InputFrame {
-                owned_ports: source[0],
-                wait_condition,
-                wait_timeout_ticks,
-                ..InputFrame::default()
-            };
-            for port in 0..PORT_COUNT {
-                let pad_start = 4 + port * PAD_SIZE;
-                frame.pads[port] =
-                    decode_pad(&source[pad_start..pad_start + PAD_SIZE], version.minor)?;
+            let payload_size = payload_size_u64 as usize;
+            let available = bytes.len() - HEADER_SIZE;
+            if payload_size > available {
+                return Err(TapeError::Truncated);
             }
-            frames.push(frame);
-        }
+            if payload_size < available {
+                return Err(TapeError::TrailingData);
+            }
+            let payload = &bytes[HEADER_SIZE..];
+            let expanded = zstd::bulk::decompress(payload, expanded_size)
+                .map_err(|_| TapeError::InvalidCompressedPayload)?;
+            if expanded.len() != expanded_size {
+                return Err(TapeError::InvalidCompressedPayload);
+            }
+            (expanded, LEGACY_MAX_MINOR_VERSION)
+        };
+        let frames = decode_frame_stream(&frame_bytes, frame_count, frame_minor_version)?;
         Ok(DecodedInputTape {
             source_version: version,
             tape: InputTape {
@@ -310,6 +310,60 @@ impl InputTape {
             },
         })
     }
+}
+
+fn encode_frame_stream(frames: &[InputFrame], output: &mut [u8]) {
+    for (frame_index, frame) in frames.iter().enumerate() {
+        let frame_start = frame_index * FRAME_SIZE;
+        output[frame_start] = frame.owned_ports;
+        output[frame_start + 1] = frame.wait_condition.encode();
+        put_u16(
+            &mut output[frame_start + 2..frame_start + 4],
+            frame.wait_timeout_ticks,
+        );
+        for (port, pad) in frame.pads.iter().enumerate() {
+            let start = frame_start + 4 + port * PAD_SIZE;
+            encode_pad(pad, &mut output[start..start + PAD_SIZE]);
+        }
+    }
+}
+
+fn decode_frame_stream(
+    bytes: &[u8],
+    frame_count: usize,
+    minor_version: u16,
+) -> Result<Vec<InputFrame>, TapeError> {
+    let mut frames = Vec::with_capacity(frame_count);
+    for source in bytes.chunks_exact(FRAME_SIZE) {
+        if source[0] & !ALL_PORTS != 0 {
+            return Err(TapeError::InvalidOwnedPorts);
+        }
+        if minor_version < 2 && source[1..4] != [0, 0, 0] {
+            return Err(TapeError::InvalidFrameSize);
+        }
+        let wait_condition = WaitCondition::decode(source[1])?;
+        let wait_timeout_ticks = get_u16(&source[2..4]);
+        match (wait_condition, wait_timeout_ticks) {
+            (WaitCondition::None, 0) => {}
+            (WaitCondition::None, _) | (_, 0) => return Err(TapeError::InvalidWaitTimeout),
+            _ => {}
+        }
+        let mut frame = InputFrame {
+            owned_ports: source[0],
+            wait_condition,
+            wait_timeout_ticks,
+            ..InputFrame::default()
+        };
+        for port in 0..PORT_COUNT {
+            let start = 4 + port * PAD_SIZE;
+            frame.pads[port] = decode_pad(&source[start..start + PAD_SIZE], minor_version)?;
+        }
+        frames.push(frame);
+    }
+    if frames.len() != frame_count {
+        return Err(TapeError::InvalidCompressedPayload);
+    }
+    Ok(frames)
 }
 
 fn encode_pad(pad: &RawPadState, output: &mut [u8]) {
@@ -373,8 +427,40 @@ fn put_u64(bytes: &mut [u8], value: u64) {
 mod tests {
     use super::*;
 
+    fn legacy_bytes(tape: &InputTape, minor: u16) -> Vec<u8> {
+        let mut frames = vec![0; tape.frames.len() * FRAME_SIZE];
+        encode_frame_stream(&tape.frames, &mut frames);
+        if minor < 2 {
+            for frame in frames.chunks_exact_mut(FRAME_SIZE) {
+                frame[1..4].fill(0);
+            }
+        }
+        let mut bytes = vec![0; LEGACY_HEADER_SIZE + frames.len()];
+        bytes[..8].copy_from_slice(&MAGIC);
+        put_u16(&mut bytes[8..10], 1);
+        put_u16(&mut bytes[10..12], minor);
+        put_u16(&mut bytes[12..14], LEGACY_HEADER_SIZE as u16);
+        put_u16(&mut bytes[14..16], FRAME_SIZE as u16);
+        put_u32(&mut bytes[16..20], tape.tick_rate_numerator);
+        put_u32(&mut bytes[20..24], tape.tick_rate_denominator);
+        put_u64(&mut bytes[24..32], tape.frames.len() as u64);
+        bytes[LEGACY_HEADER_SIZE..].copy_from_slice(&frames);
+        bytes
+    }
+
+    fn mutate_v2_frame(mut bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        let expanded_size = get_u64(&bytes[24..32]) as usize * FRAME_SIZE;
+        let mut frames = zstd::bulk::decompress(&bytes[HEADER_SIZE..], expanded_size).unwrap();
+        mutate(&mut frames);
+        let compressed = zstd::bulk::compress(&frames, 0).unwrap();
+        bytes.truncate(HEADER_SIZE);
+        put_u64(&mut bytes[32..40], compressed.len() as u64);
+        bytes.extend_from_slice(&compressed);
+        bytes
+    }
+
     #[test]
-    fn v1_2_golden_bytes() {
+    fn v2_round_trip_is_compact() {
         let mut frame = InputFrame {
             owned_ports: 1,
             ..InputFrame::default()
@@ -399,30 +485,22 @@ mod tests {
         }
         .encode()
         .unwrap();
-        let mut expected = vec![
-            0x44, 0x55, 0x53, 0x4b, 0x54, 0x41, 0x50, 0x45, 0x01, 0x00, 0x02, 0x00, 0x20, 0x00,
-            0x34, 0x00, 0x30, 0x75, 0x00, 0x00, 0xe9, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x11, 0x80, 0x7f, 0xfe, 0x03,
-            0x04, 0x05, 0x06, 0x07, 0x01, 0xfd,
-        ];
-        expected.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0].repeat(3));
-        assert_eq!(bytes, expected);
-        assert_eq!(
-            InputTape::decode(&bytes).unwrap().tape.frames[0].pads[0].error,
-            -3
-        );
+        assert_eq!(&bytes[..8], &MAGIC);
+        assert_eq!(get_u16(&bytes[8..10]), 2);
+        assert_eq!(get_u16(&bytes[12..14]) as usize, HEADER_SIZE);
+        assert!(bytes.len() < LEGACY_HEADER_SIZE + FRAME_SIZE);
+        let decoded = InputTape::decode(&bytes).unwrap();
+        assert_eq!(decoded.source_version, TapeVersion { major: 2, minor: 0 });
+        assert_eq!(decoded.tape.frames[0].pads[0].error, -3);
     }
 
     #[test]
     fn legacy_v1_0_derives_error_from_connected_flag() {
-        let mut bytes = InputTape {
+        let tape = InputTape {
             frames: vec![InputFrame::default()],
             ..InputTape::default()
-        }
-        .encode()
-        .unwrap();
-        bytes[10] = 0;
-        bytes[11] = 0;
+        };
+        let mut bytes = legacy_bytes(&tape, 0);
         bytes[32 + 4 + 11] = 99;
         bytes[32 + 4 + 12 + 10] = 0;
         bytes[32 + 4 + 12 + 11] = 99;
@@ -446,7 +524,6 @@ mod tests {
         }
         .encode()
         .unwrap();
-        assert_eq!(&bytes[32..36], &[0x0f, 1, 0x84, 0x03]);
         assert_eq!(InputTape::decode(&bytes).unwrap().tape.frames[0], frame);
     }
 
@@ -458,13 +535,19 @@ mod tests {
         }
         .encode()
         .unwrap();
-        bytes[33] = 1;
+        bytes = mutate_v2_frame(bytes, |frames| frames[1] = 1);
         assert_eq!(
             InputTape::decode(&bytes).unwrap_err(),
             TapeError::InvalidWaitTimeout
         );
 
-        bytes[33] = 7;
+        bytes = InputTape {
+            frames: vec![InputFrame::default()],
+            ..InputTape::default()
+        }
+        .encode()
+        .unwrap();
+        bytes = mutate_v2_frame(bytes, |frames| frames[1] = 7);
         assert_eq!(
             InputTape::decode(&bytes).unwrap_err(),
             TapeError::InvalidWaitCondition
@@ -482,13 +565,11 @@ mod tests {
 
     #[test]
     fn legacy_versions_require_zero_reserved_frame_bytes() {
-        let mut bytes = InputTape {
+        let tape = InputTape {
             frames: vec![InputFrame::default()],
             ..InputTape::default()
-        }
-        .encode()
-        .unwrap();
-        bytes[10] = 1;
+        };
+        let mut bytes = legacy_bytes(&tape, 1);
         bytes[33] = 1;
         bytes[34] = 1;
         assert_eq!(
@@ -499,13 +580,11 @@ mod tests {
 
     #[test]
     fn legacy_v1_1_tape_decodes() {
-        let mut bytes = InputTape {
+        let tape = InputTape {
             frames: vec![InputFrame::default()],
             ..InputTape::default()
-        }
-        .encode()
-        .unwrap();
-        bytes[10] = 1;
+        };
+        let bytes = legacy_bytes(&tape, 1);
         let decoded = InputTape::decode(&bytes).unwrap();
         assert_eq!(decoded.source_version.minor, 1);
         assert_eq!(decoded.tape.frames[0].wait_condition, WaitCondition::None);
@@ -533,7 +612,7 @@ mod tests {
         };
         assert_eq!(tape.validate(), Ok(()));
 
-        let mut bytes = InputTape {
+        let bytes = InputTape {
             frames: vec![InputFrame {
                 wait_condition: WaitCondition::NameEntryActive,
                 wait_timeout_ticks: 1,
@@ -543,7 +622,7 @@ mod tests {
         }
         .encode()
         .unwrap();
-        bytes[36] = 1;
+        let bytes = mutate_v2_frame(bytes, |frames| frames[4] = 1);
         let decoded = InputTape::decode(&bytes).unwrap();
         assert_eq!(decoded.tape.frames[0].pads[0].buttons, 1);
     }

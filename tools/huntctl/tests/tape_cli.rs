@@ -12,19 +12,18 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
         .as_nanos();
     let directory = std::env::temp_dir().join(format!("huntctl-tape-{unique}"));
     fs::create_dir_all(&directory).unwrap();
-    let source = directory.join("boot.json");
+    let source = directory.join("boot.tas");
     let tape = directory.join("boot.tape");
     fs::write(
         &source,
-        r#"{
-      "schema":"dusktape-program/v1",
-      "steps":[
-        {"op":"marker","name":"start"},
-        {"op":"repeat","count":2,"frame":{"pads":{"0":{"buttons":["START"]}}}},
-        {"op":"wait_until","condition":"name_entry_active","timeout_ticks":900},
-        {"op":"frame","frame":{}}
-      ]
-    }"#,
+        r#"dusktape 1
+state neutral {}
+state start { p0 buttons START }
+marker start
+repeat 2 start
+wait name_entry_active 900
+frame neutral
+"#,
     )
     .unwrap();
 
@@ -58,7 +57,8 @@ fn compiles_and_inspects_program_with_marker_sidecar() {
         .unwrap();
     assert!(inspect.status.success());
     let summary: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
-    assert_eq!(summary["source_version"]["minor"], 2);
+    assert_eq!(summary["source_version"]["major"], 2);
+    assert_eq!(summary["source_version"]["minor"], 0);
     assert_eq!(summary["nominal_frame_count"], 4);
     assert_eq!(summary["wait_frame_count"], 1);
     assert_eq!(summary["minimum_tick_count"], 3);
