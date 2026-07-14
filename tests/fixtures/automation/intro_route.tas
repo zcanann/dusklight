@@ -37,7 +37,7 @@ repeat 30 neutral
 
 marker accept-default-epona
 frame accept
-repeat 68 neutral
+repeat 66 neutral
 
 marker skip-opening-event
 frame start
@@ -45,7 +45,7 @@ frame neutral
 
 marker skip-opening-cutscene
 frame start
-repeat 100 neutral
+repeat 102 neutral
 
 marker route-to-first-exit
 repeat 45 move_forward

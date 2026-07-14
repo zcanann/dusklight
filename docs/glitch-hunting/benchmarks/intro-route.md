@@ -90,6 +90,13 @@ same proof in 20/20 independent cold boots. Generated populations and evidence
 remain ignored under `build/`; the compact TAS source is checked in at
 `routes/intro/variants/boot_to_link/golf-439.tas`.
 
+An exhaustive timing pass then evaluated every legal earlier timestamp for
+each surviving pulse. The locally minimal timestamp vector is
+`115, 147, 227, 235, 237, 268, 335, 337`; all 332 coordinate candidates used
+three exact repetitions, and the final artifact passed a separate 20/20 cold
+proof. It remains a one-coordinate minimum for this button-order family, not a
+global optimality claim over different input structures.
+
 The fixed `intro-first-exit` selector now uses this same prefix. A three-run
 end-to-end regression reached control at tick 439, the first exit trigger at
 827, and the `F_SP104` load at 858 on every run. That validates composition
