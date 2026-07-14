@@ -22,6 +22,7 @@ static OutputSubframe OutBuffer;
 static std::array<f32, DSP_SUBFRAME_SIZE * OutputSubframe::NUM_CHANNELS> OutInterleaveBuffer;
 
 static SDL_AudioStream* PlaybackStream;
+static bool OutputMuted;
 
 /**
  * SDL audiostream callback to trigger rendering of new audio data.
@@ -61,6 +62,7 @@ static void InitSDL3Output() {
 
 void dusk::audio::Initialize() {
     InitSDL3Output();
+    SDL_SetAudioStreamGain(PlaybackStream, OutputMuted ? 0.0f : 1.0f);
     DspInit();
 
     JASDsp::initBuffer();
@@ -75,6 +77,13 @@ void dusk::audio::SetMasterVolume(const f32 value) {
     JASCriticalSection section;
 
     MasterVolume = value;
+}
+
+void dusk::audio::SetOutputMuted(const bool muted) {
+    OutputMuted = muted;
+    if (PlaybackStream != nullptr) {
+        SDL_SetAudioStreamGain(PlaybackStream, muted ? 0.0f : 1.0f);
+    }
 }
 
 void dusk::audio::SetPaused(const bool paused) {

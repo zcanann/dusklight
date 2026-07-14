@@ -23,6 +23,11 @@ namespace dusk::audio {
 
     void SetMasterVolume(f32 value);
 
+    /**
+     * Silence or restore host audio output without stopping audio emulation.
+     */
+    void SetOutputMuted(bool muted);
+
     void SetPaused(bool paused);
 
     u32 GetResetCount(int channelIdx);
