@@ -86,11 +86,13 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 905, 705);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
     REQUIRE(oracle.result().gameplayMatched);
+    oracle.observeTapeCompletion(906, 705);
+    REQUIRE(oracle.result().tapeCompleted);
     REQUIRE(oracle.result().simTick == 905);
     REQUIRE(oracle.result().tapeFrame == 705);
 
     const auto json = nlohmann::json::parse(serialize_eye_shredder_oracle_result(oracle.result()));
-    REQUIRE(json["schema"]["version"] == 3);
+    REQUIRE(json["schema"]["version"] == 4);
     REQUIRE(json["status"] == "pass");
     REQUIRE(json["memory_model"] == "bounded_retail_dname_shadow");
     REQUIRE(json["retail_profile"] == "fresh_gcn_ntsc_u");
@@ -121,6 +123,9 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["stage_name"] == "F_SP103");
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["player_is_link"] == true);
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["event_running"] == false);
+    REQUIRE(json["stages"]["tape"]["completed"] == true);
+    REQUIRE(json["stages"]["tape"]["sim_tick"] == 906);
+    REQUIRE(json["stages"]["tape"]["tape_frame"] == 705);
 }
 
 void testWrongSignatureFails() {

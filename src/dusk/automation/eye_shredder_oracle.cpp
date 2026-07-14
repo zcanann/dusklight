@@ -228,6 +228,13 @@ void EyeShredderOracle::observeGameplayTelemetry(const EyeShredderGameplayTeleme
     mResult.reason = "matched Eye Shredder and reached controllable new gameplay";
 }
 
+void EyeShredderOracle::observeTapeCompletion(
+    const std::uint64_t simTick, const std::uint64_t tapeFrame) {
+    mResult.tapeCompleted = true;
+    mResult.tapeCompletionSimTick = simTick;
+    mResult.tapeCompletionFrame = tapeFrame;
+}
+
 void EyeShredderOracle::finish(const std::uint64_t simTick, const std::uint64_t tapeFrame) {
     if (mResult.status != EyeShredderOracleStatus::Running) {
         return;
@@ -327,7 +334,11 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
                     {{"matched", result.gameplayMatched},
                         {"sim_tick", result.gameplayMatchSimTick},
                         {"tape_frame", result.gameplayMatchTapeFrame},
-                        {"telemetry", std::move(gameplayTelemetry)}}}}},
+                        {"telemetry", std::move(gameplayTelemetry)}}},
+                {"tape",
+                    {{"completed", result.tapeCompleted},
+                        {"sim_tick", result.tapeCompletionSimTick},
+                        {"tape_frame", result.tapeCompletionFrame}}}}},
         {"actual", std::move(actual)},
     };
     return root.dump(2) + '\n';

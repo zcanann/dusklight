@@ -645,6 +645,10 @@ static bool finish_input_tape_tick() {
         return true;
     }
 
+    if (eyeShredderOracleEnabled) {
+        eyeShredderOracle.observeTapeCompletion(automationSimulationTick, automationTapeFrame);
+    }
+
     if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
         eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
         dusk::IsRunning = false;

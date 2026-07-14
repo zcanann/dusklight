@@ -9,7 +9,7 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 3;
+inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 4;
 
 struct EyeShredderExpectedWrite {
     static constexpr std::uint8_t CharacterIndex = 113;
@@ -77,6 +77,9 @@ struct EyeShredderOracleResult {
     EyeShredderGameplayTelemetry gameplayTelemetry{};
     std::uint64_t gameplayMatchSimTick = NameEntryNoTick;
     std::uint64_t gameplayMatchTapeFrame = NameEntryNoTick;
+    bool tapeCompleted = false;
+    std::uint64_t tapeCompletionSimTick = NameEntryNoTick;
+    std::uint64_t tapeCompletionFrame = NameEntryNoTick;
     std::uint64_t simTick = NameEntryNoTick;
     std::uint64_t tapeFrame = NameEntryNoTick;
 };
@@ -90,6 +93,7 @@ public:
         std::uint64_t simTick, std::uint64_t tapeFrame);
     void observeGameplayTelemetry(const EyeShredderGameplayTelemetry& telemetry,
         std::uint64_t simTick, std::uint64_t tapeFrame);
+    void observeTapeCompletion(std::uint64_t simTick, std::uint64_t tapeFrame);
     void finish(std::uint64_t simTick, std::uint64_t tapeFrame);
     void reject(std::string reason);
 

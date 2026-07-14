@@ -134,6 +134,7 @@ for ($run = 1; $run -le $Runs; $run++) {
         "--cursor-breakout-shadow",
         "--name-entry-trace", $tracePath,
         "--automation-oracle", "eye-shredder",
+        "--automation-oracle-continue-on-pass",
         "--automation-oracle-result", $resultPath,
         "--cvar", "game.instantSaves=true",
         "--cvar", "backend.cardFileType=1",
@@ -142,7 +143,7 @@ for ($run = 1; $run -le $Runs; $run++) {
         "--console"
     )
     if ($Visual) {
-        $arguments += @("--fixed-step", "--automation-oracle-continue-on-pass")
+        $arguments += "--fixed-step"
     } else {
         $arguments += @("--headless", "--exit-after-tape")
     }
@@ -176,6 +177,9 @@ for ($run = 1; $run -le $Runs; $run++) {
             [uint64]$result.stages.renderer.tape_frame -eq 693 -and
             $gameplayTick -ge 867 -and $gameplayTick -le 868 -and
             $gameplayFrame -eq $gameplayTick -and
+            [bool]$result.stages.tape.completed -and
+            [uint64]$result.stages.tape.sim_tick -eq 869 -and
+            [uint64]$result.stages.tape.tape_frame -eq 868 -and
             [string]$result.stages.gameplay.telemetry.stage_name -eq "F_SP103" -and
             [int]$result.stages.gameplay.telemetry.room -eq 1 -and
             [int]$result.stages.gameplay.telemetry.point -eq 1 -and
@@ -226,6 +230,9 @@ for ($run = 1; $run -le $Runs; $run++) {
             gameplay_player_actor_present = $result.stages.gameplay.telemetry.player_actor_present
             gameplay_player_is_link = $result.stages.gameplay.telemetry.player_is_link
             gameplay_event_running = $result.stages.gameplay.telemetry.event_running
+            tape_completed = $result.stages.tape.completed
+            tape_completion_sim_tick = $result.stages.tape.sim_tick
+            tape_completion_frame = $result.stages.tape.tape_frame
             trace_sha256 = $traceSha256
         } | ConvertTo-Json -Compress
         $signatures += $signature
