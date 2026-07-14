@@ -40,9 +40,11 @@ A variant is one attempt at one segment. It declares:
 
 The input artifact contains only that segment. Stage-launch setup, search
 harness frames, and other evaluation scaffolding are not valid continuation
-payloads. The workbench permits standalone preview of those artifacts but
-refuses to concatenate them until a canonical payload window and exact boundary
-proof exist.
+payloads. The workbench never treats a segment artifact as a console-boot tape.
+It exposes Play only when it can resolve a concrete lineage boundary whose
+milestone and fingerprint exactly match the segment input, then concatenates
+that prefix before launch. Explicit evaluation tooling can still inspect a
+standalone artifact.
 
 A continuation pins every segment variant to the exact preceding variant and
 checkpoint fingerprint. A branch inherits a named prefix and supplies a
@@ -59,9 +61,12 @@ the system default browser.
 
 The workbench follows the route topology from root milestones through outgoing
 segments, variant frontiers, shared destinations, and recursive draft children;
-the declaration order is not treated as route structure. **Play** runs the
-selected chain and releases controller
-ownership when its tape ends. **Record** does the same deterministic replay,
+the declaration order is not treated as route structure. A variant can expose
+one **Play · lineage** action for each compatible prefix occurrence; siblings
+need not already be pinned into that lineage. The request carries the exact
+lineage, prefix-step count, and source milestone, and the server revalidates all
+three against the boundary fingerprint before composing the selected chain.
+Playback releases controller ownership when its tape ends. **Record** does the same deterministic replay,
 then records live port-0 input beginning with the first PAD read after handoff.
 Each launch gets a fresh isolated writable state directory.
 
@@ -114,9 +119,9 @@ editor receives a conflict instead of overwriting a newer filesystem edit.
 
 Variants pin both the compiled program identity and the destination milestone's
 compiled definition identity. Editing a predicate intentionally makes those
-proof pins stale. Such variants remain available for visual playback, but the
-workbench labels the proof stale and withholds record/continuation anchors until
-a native replay establishes and checks in new proof hashes. The editor changes
+proof pins stale. Such variants remain visible, but the workbench labels the
+proof stale and withholds play/record/continuation anchors until a native replay
+establishes and checks in new proof hashes. The editor changes
 only predicate source; topology, curated variants, game memory, and native game
 state remain read-only.
 

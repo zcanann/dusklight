@@ -24,7 +24,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v2";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v3";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v1";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -245,9 +245,17 @@ pub struct GraphVariant {
     pub playable: bool,
     pub lineage_composable: bool,
     pub recordable: bool,
+    pub play_anchors: Vec<GraphPlayAnchor>,
     pub record_anchors: Vec<GraphRecordAnchor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GraphPlayAnchor {
+    pub lineage: String,
+    pub prefix_steps: usize,
+    pub source_milestone: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -327,10 +335,21 @@ pub enum PlaybackOrigin {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserSelection {
-    Variant { id: String },
-    Draft { id: String },
-    Segment { id: String },
-    Milestone { id: String },
+    Variant {
+        id: String,
+        lineage: String,
+        prefix_steps: usize,
+        source_milestone: String,
+    },
+    Draft {
+        id: String,
+    },
+    Segment {
+        id: String,
+    },
+    Milestone {
+        id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -461,6 +480,7 @@ pub enum MaterializeTarget {
     FullLineage,
     ThroughMilestone(String),
     ThroughSegmentFrame { segment: String, frame: u64 },
+    ThroughStepCount(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -1016,6 +1036,26 @@ pub fn graph_from_timeline(
             if !predicate_verified {
                 record_anchors.clear();
             }
+            let play_anchors = if loaded.is_ok()
+                && artifact_is_canonical_payload(&variant.artifact)
+                && fingerprints_are_exact(variant)
+                && predicate_verified
+            {
+                play_anchors_for_variant(timeline, &inspection.lineages, &variant.id)
+                    .into_iter()
+                    .filter(|anchor| {
+                        materialize_lineage(
+                            timeline,
+                            repository_root,
+                            &anchor.lineage,
+                            MaterializeTarget::ThroughStepCount(anchor.prefix_steps),
+                        )
+                        .is_ok_and(|prefix| prefix.steps.len() == anchor.prefix_steps)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             GraphVariant {
                 id: variant.id.clone(),
                 segment: variant.segment.clone(),
@@ -1035,11 +1075,12 @@ pub fn graph_from_timeline(
                     .ok()
                     .and_then(|tape| (tape.frames.len() as u64).checked_sub(1)),
                 ticks: variant.first_hit_tick,
-                playable: loaded.is_ok(),
+                playable: !play_anchors.is_empty(),
                 lineage_composable: artifact_is_canonical_payload(&variant.artifact)
                     && fingerprints_are_exact(variant)
                     && predicate_verified,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
+                play_anchors,
                 record_anchors,
                 error: loaded.err().map(|error| error.to_string()),
             }
@@ -1061,6 +1102,57 @@ pub fn graph_from_timeline(
         draft_graph_revision: None,
         milestone_program,
     })
+}
+
+fn play_anchors_for_variant(
+    timeline: &Timeline,
+    lineages: &[ResolvedLineage],
+    variant_id: &str,
+) -> Vec<GraphPlayAnchor> {
+    let variant = &timeline.variants[variant_id];
+    let source_milestone = &timeline.segments[&variant.segment].from;
+    let mut candidates = Vec::new();
+    for lineage in lineages {
+        let root_milestone = lineage.steps.first().map(|step| {
+            let root_variant = &timeline.variants[&step.variant];
+            &timeline.segments[&root_variant.segment].from
+        });
+        if timeline.segments[&variant.segment].profile
+            == crate::search::SegmentProfile::BootToFsp103
+            && root_milestone == Some(source_milestone)
+            && lineage.root_fingerprint == variant.start_fingerprint
+            && ensure_canonical_prefix(timeline, lineage, 0).is_ok()
+        {
+            candidates.push(GraphPlayAnchor {
+                lineage: lineage.name.clone(),
+                prefix_steps: 0,
+                source_milestone: source_milestone.clone(),
+            });
+        }
+        for (index, step) in lineage.steps.iter().enumerate() {
+            let parent = &timeline.variants[&step.variant];
+            let boundary_milestone = &timeline.segments[&parent.segment].to;
+            if boundary_milestone == source_milestone
+                && parent.boundary_fingerprint == variant.start_fingerprint
+                && ensure_canonical_prefix(timeline, lineage, index + 1).is_ok()
+            {
+                candidates.push(GraphPlayAnchor {
+                    lineage: lineage.name.clone(),
+                    prefix_steps: index + 1,
+                    source_milestone: source_milestone.clone(),
+                });
+            }
+        }
+    }
+    candidates.sort_by_key(|anchor| {
+        (
+            anchor.lineage != "main",
+            anchor.lineage.clone(),
+            anchor.prefix_steps,
+        )
+    });
+    candidates.dedup();
+    candidates
 }
 
 fn record_anchors_for_variant(
@@ -3244,6 +3336,17 @@ fn selected_step_count(
                     lineage.name
                 ))
             }),
+        MaterializeTarget::ThroughStepCount(count) => {
+            if *count <= lineage.steps.len() {
+                Ok(*count)
+            } else {
+                Err(WorkbenchError::new(format!(
+                    "step count {count} is outside lineage {:?} ({} steps)",
+                    lineage.name,
+                    lineage.steps.len()
+                )))
+            }
+        }
     }
 }
 
@@ -3258,6 +3361,14 @@ fn ensure_composable_lineage(
     if selected <= 1 {
         return Ok(());
     }
+    ensure_canonical_prefix(timeline, lineage, selected)
+}
+
+fn ensure_canonical_prefix(
+    timeline: &Timeline,
+    lineage: &ResolvedLineage,
+    selected: usize,
+) -> Result<(), WorkbenchError> {
     for step in lineage.steps.iter().take(selected) {
         let variant = &timeline.variants[&step.variant];
         if !artifact_is_canonical_payload(&variant.artifact) {
@@ -3521,6 +3632,134 @@ fn materialize_play_request(
     })
 }
 
+fn materialize_anchored_variant(
+    timeline: &Timeline,
+    repository_root: &Path,
+    variant_id: &str,
+    lineage_name: &str,
+    prefix_steps: usize,
+    source_milestone: &str,
+    stop: &BrowserStop,
+) -> Result<MaterializedPlayback, WorkbenchError> {
+    let variant = timeline
+        .variants
+        .get(variant_id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown variant {variant_id:?}")))?;
+    let requested_anchor = GraphPlayAnchor {
+        lineage: lineage_name.into(),
+        prefix_steps,
+        source_milestone: source_milestone.into(),
+    };
+    let graph = graph_from_timeline(timeline, repository_root)?;
+    if !graph
+        .variants
+        .iter()
+        .find(|candidate| candidate.id == variant_id)
+        .is_some_and(|candidate| candidate.play_anchors.contains(&requested_anchor))
+    {
+        return Err(WorkbenchError::new(format!(
+            "variant {variant_id:?} is not composable from lineage {lineage_name:?} at {source_milestone:?} after {prefix_steps} steps"
+        )));
+    }
+
+    let mut continuation = load_variant_tape(timeline, variant, repository_root)?;
+    let last = logical_last_frame(variant, &continuation)?;
+    match stop {
+        BrowserStop::Tick { tick } => {
+            if *tick > last {
+                return Err(WorkbenchError::new(format!(
+                    "frame {tick} is outside variant {variant_id:?} (last logical frame is {last})"
+                )));
+            }
+            continuation.frames.truncate(*tick as usize + 1);
+        }
+        BrowserStop::Milestone { milestone } => {
+            let destination = &timeline.segments[&variant.segment].to;
+            if destination != milestone {
+                return Err(WorkbenchError::new(format!(
+                    "variant {variant_id:?} ends at {destination:?}, not {milestone:?}"
+                )));
+            }
+        }
+    }
+
+    let prefix = materialize_lineage(
+        timeline,
+        repository_root,
+        lineage_name,
+        MaterializeTarget::ThroughStepCount(prefix_steps),
+    )?;
+    if prefix.steps.len() != prefix_steps {
+        return Err(WorkbenchError::new(format!(
+            "lineage {lineage_name:?} no longer reaches {source_milestone:?} after {prefix_steps} steps"
+        )));
+    }
+    let tape = if prefix.tape.frames.is_empty() {
+        continuation
+    } else {
+        concatenate(vec![
+            ChainSegment::all(prefix.tape),
+            ChainSegment::all(continuation),
+        ])
+        .map_err(|error| WorkbenchError::new(error.to_string()))?
+        .tape
+    };
+    let seed_profile = prefix
+        .steps
+        .first()
+        .map(|step| timeline.segments[&step.segment].profile)
+        .unwrap_or(timeline.segments[&variant.segment].profile);
+    let seed_stage = match seed_profile {
+        crate::search::SegmentProfile::BootToFsp103 => None,
+        crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
+        crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
+    };
+    Ok(MaterializedPlayback {
+        lineage: Some(lineage_name.into()),
+        variant: Some(variant_id.into()),
+        tape,
+        seed_stage,
+    })
+}
+
+fn play_anchored_variant(
+    timeline: &Timeline,
+    config: &WorkbenchConfig,
+    selection: &BrowserSelection,
+    stop: &BrowserStop,
+    handoff: bool,
+) -> Result<(PlayResponse, Child), WorkbenchError> {
+    let BrowserSelection::Variant {
+        id: variant_id,
+        lineage,
+        prefix_steps,
+        source_milestone,
+    } = selection
+    else {
+        return Err(WorkbenchError::new(
+            "anchored playback requires a variant selection",
+        ));
+    };
+    let artifact_root = configured_artifact_root(config)?;
+    let materialized = materialize_anchored_variant(
+        timeline,
+        &artifact_root,
+        variant_id,
+        lineage,
+        *prefix_steps,
+        source_milestone,
+        stop,
+    )?;
+    launch_materialized(
+        timeline,
+        config,
+        materialized,
+        handoff,
+        PlaybackOrigin::Boot,
+        None,
+    )
+}
+
 fn materialize_draft(
     timeline: &Timeline,
     repository_root: &Path,
@@ -3744,11 +3983,10 @@ fn adapt_browser_request(
         takeover: request.handoff,
     };
     match request.selection {
-        BrowserSelection::Variant { id } => {
-            if !timeline.variants.contains_key(&id) {
-                return Err(WorkbenchError::new(format!("unknown variant {id:?}")));
-            }
-            play.variant = Some(id);
+        BrowserSelection::Variant { .. } => {
+            return Err(WorkbenchError::new(
+                "anchored variant selections use lineage composition",
+            ));
         }
         BrowserSelection::Draft { .. } => {
             return Err(WorkbenchError::new(
@@ -3759,14 +3997,9 @@ fn adapt_browser_request(
             if !timeline.segments.contains_key(&id) {
                 return Err(WorkbenchError::new(format!("unknown segment {id:?}")));
             }
-            let incumbent = timeline
-                .variants
-                .values()
-                .find(|variant| variant.segment == id && variant.incumbent)
-                .ok_or_else(|| {
-                    WorkbenchError::new(format!("segment {id:?} has no incumbent variant"))
-                })?;
-            play.variant = Some(incumbent.id.clone());
+            return Err(WorkbenchError::new(
+                "segment selections require a concrete variant lineage anchor",
+            ));
         }
         BrowserSelection::Milestone { id } => {
             if !timeline.milestones.contains(&id) {
@@ -3868,6 +4101,13 @@ fn handle_http(
                                 BrowserSelection::Draft { id } => {
                                     play_draft(&timeline, config, id, browser_request.origin)?
                                 }
+                                BrowserSelection::Variant { .. } => play_anchored_variant(
+                                    &timeline,
+                                    config,
+                                    &browser_request.selection,
+                                    &browser_request.stop,
+                                    browser_request.handoff,
+                                )?,
                                 _ => {
                                     let play_request =
                                         adapt_browser_request(&timeline, browser_request)?;
@@ -4341,7 +4581,7 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
         write_tape(&root, "second.tape", &[5, 6, 7]);
         let graph = graph_from_timeline(&timeline(), &root).unwrap();
-        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v2");
+        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v3");
         assert_eq!(graph.milestones.len(), 3);
         assert_eq!(graph.segments.len(), 2);
         assert!(graph.variants.iter().all(|variant| variant.playable));
@@ -4384,7 +4624,7 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         let changed = MILESTONE_SOURCE.replace("F_SP104", "F_SP105");
         fs::write(root.join("route.milestones"), changed).unwrap();
         let stale = graph_from_timeline(&route, &root).unwrap();
-        assert!(stale.variants.iter().all(|variant| variant.playable));
+        assert!(stale.variants.iter().all(|variant| !variant.playable));
         assert!(
             stale
                 .variants
@@ -4396,7 +4636,100 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
             stale
                 .variants
                 .iter()
+                .all(|variant| variant.play_anchors.is_empty())
+        );
+        assert!(
+            stale
+                .variants
+                .iter()
                 .all(|variant| variant.record_anchors.is_empty())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn play_anchors_require_canonical_loadable_prefixes_and_real_boot_roots() {
+        let root = temporary_root("strict-play-anchors");
+        write_tape(&root, "child.tape", &[5, 6, 7]);
+        let seeded_prefix = Timeline::parse(
+            r#"
+timeline seeded
+milestone boot
+milestone control
+milestone exit
+segment boot_link from boot to control profile boot_to_fsp103
+segment link_exit from control to exit profile fsp103_to_fsp104
+variant boot_link.seed incumbent uses baseline boot_to_fsp103 starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+variant link_exit.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+continuation main starts root@clean
+continue main with boot_link.seed after root@clean
+continue main with link_exit.child after boot_link.seed@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"#,
+        )
+        .unwrap();
+        let graph = graph_from_timeline(&seeded_prefix, &root).unwrap();
+        let child = graph
+            .variants
+            .iter()
+            .find(|variant| variant.id == "link_exit.child")
+            .unwrap();
+        assert!(!child.playable);
+        assert!(child.play_anchors.is_empty());
+
+        let missing_prefix = Timeline::parse(
+            r#"
+timeline missing
+milestone boot
+milestone control
+milestone exit
+segment boot_link from boot to control profile boot_to_fsp103
+segment link_exit from control to exit profile fsp103_to_fsp104
+variant boot_link.missing incumbent uses tape missing.tape starts cccccccccccccccccccccccccccccccc produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+variant link_exit.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+continuation main starts root@cccccccccccccccccccccccccccccccc
+continue main with boot_link.missing after root@cccccccccccccccccccccccccccccccc
+continue main with link_exit.child after boot_link.missing@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"#,
+        )
+        .unwrap();
+        let graph = graph_from_timeline(&missing_prefix, &root).unwrap();
+        let child = graph
+            .variants
+            .iter()
+            .find(|variant| variant.id == "link_exit.child")
+            .unwrap();
+        assert!(!child.playable);
+        assert!(child.play_anchors.is_empty());
+
+        let non_boot_root = Timeline::parse(
+            r#"
+timeline non_boot
+milestone control
+milestone crawl
+segment tunnel from control to crawl profile link_control_to_tunnel_crawl_start
+variant tunnel.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+continuation main starts root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"#,
+        )
+        .unwrap();
+        let graph = graph_from_timeline(&non_boot_root, &root).unwrap();
+        let child = &graph.variants[0];
+        assert!(!child.playable);
+        assert!(child.play_anchors.is_empty());
+        assert!(
+            materialize_anchored_variant(
+                &non_boot_root,
+                &root,
+                "tunnel.child",
+                "main",
+                0,
+                "control",
+                &BrowserStop::Milestone {
+                    milestone: "crawl".into(),
+                },
+            )
+            .is_err()
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -4653,7 +4986,7 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
-    fn browser_segment_selects_incumbent_and_uses_local_tape_frame() {
+    fn browser_rejects_unanchored_segment_and_parent_variant_origins() {
         let request = BrowserPlayRequest {
             selection: BrowserSelection::Segment {
                 id: "link_exit".into(),
@@ -4662,14 +4995,19 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
             handoff: true,
             origin: PlaybackOrigin::Boot,
         };
-        let adapted = adapt_browser_request(&timeline(), request).unwrap();
-        assert_eq!(adapted.variant.as_deref(), Some("link_exit.one"));
-        assert_eq!(adapted.frame, Some(1));
-        assert!(adapted.takeover);
+        assert!(
+            adapt_browser_request(&timeline(), request)
+                .unwrap_err()
+                .to_string()
+                .contains("concrete variant lineage anchor")
+        );
 
         let parent_origin = BrowserPlayRequest {
             selection: BrowserSelection::Variant {
                 id: "link_exit.one".into(),
+                lineage: "main".into(),
+                prefix_steps: 1,
+                source_milestone: "exit".into(),
             },
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
@@ -4736,6 +5074,118 @@ continue main with boot_link.tas after root@clean
                 .unwrap()
                 .recordable_from_boot
         );
+    }
+
+    #[test]
+    fn checked_in_intro_variant_cards_compose_the_exact_boot_prefix() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let timeline_path = repository.join("routes/intro.timeline");
+        let route = load_authoritative_timeline(&timeline_path).unwrap();
+        let artifact_root = timeline_path.parent().unwrap();
+        let graph = graph_from_timeline(&route, artifact_root).unwrap();
+        let prefix = materialize_lineage(
+            &route,
+            artifact_root,
+            "main",
+            MaterializeTarget::ThroughMilestone("link_control".into()),
+        )
+        .unwrap();
+        assert_eq!(prefix.tape.frames.len(), 440);
+
+        for (variant_id, expected_output) in [
+            (
+                "link_control_to_tunnel_crawl_start.human420",
+                "0aee9b9dfc150ff0c0b44c36408922a3",
+            ),
+            (
+                "link_control_to_tunnel_crawl_start.human_alt420",
+                "56b236160fbdff1ead7fed80441b7c99",
+            ),
+        ] {
+            let variant = &route.variants[variant_id];
+            assert_eq!(variant.boundary_fingerprint, expected_output);
+            let card = graph
+                .variants
+                .iter()
+                .find(|candidate| candidate.id == variant_id)
+                .unwrap();
+            assert_eq!(
+                card.play_anchors,
+                vec![GraphPlayAnchor {
+                    lineage: "main".into(),
+                    prefix_steps: 1,
+                    source_milestone: "link_control".into(),
+                }]
+            );
+            let continuation = load_variant_tape(&route, variant, artifact_root).unwrap();
+            assert_eq!(continuation.frames.len(), 421);
+            let playback = materialize_anchored_variant(
+                &route,
+                artifact_root,
+                variant_id,
+                "main",
+                1,
+                "link_control",
+                &BrowserStop::Milestone {
+                    milestone: "tunnel_crawl_start".into(),
+                },
+            )
+            .unwrap();
+            assert_eq!(playback.tape.frames.len(), 861);
+            assert_eq!(playback.lineage.as_deref(), Some("main"));
+            assert_eq!(playback.variant.as_deref(), Some(variant_id));
+            assert_eq!(
+                &playback.tape.frames[..prefix.tape.frames.len()],
+                prefix.tape.frames.as_slice()
+            );
+            assert_eq!(
+                &playback.tape.frames[prefix.tape.frames.len()..],
+                continuation.frames.as_slice()
+            );
+            let first_local_frame = materialize_anchored_variant(
+                &route,
+                artifact_root,
+                variant_id,
+                "main",
+                1,
+                "link_control",
+                &BrowserStop::Tick { tick: 0 },
+            )
+            .unwrap();
+            assert_eq!(first_local_frame.tape.frames.len(), 441);
+            assert_eq!(
+                first_local_frame.tape.frames.last(),
+                continuation.frames.first()
+            );
+        }
+
+        assert!(
+            materialize_anchored_variant(
+                &route,
+                artifact_root,
+                "link_control_to_tunnel_crawl_start.human420",
+                "main",
+                0,
+                "link_control",
+                &BrowserStop::Milestone {
+                    milestone: "tunnel_crawl_start".into(),
+                },
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not composable")
+        );
+
+        let suffix_only = r#"{
+            "selection":{"kind":"variant","id":"link_control_to_tunnel_crawl_start.human420"},
+            "stop":{"kind":"milestone","milestone":"tunnel_crawl_start"},
+            "handoff":true,
+            "origin":"boot"
+        }"#;
+        assert!(serde_json::from_str::<BrowserPlayRequest>(suffix_only).is_err());
     }
 
     #[test]

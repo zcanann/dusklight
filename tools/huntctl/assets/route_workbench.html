@@ -180,16 +180,16 @@
     function variantCard(variant) {
       const artifact=variant.artifact||{};
       const score=variant.first_hit_tick ?? variant.ticks;
-      const disabled=!variant.playable;
       const proof=variant.predicate_proof||'not_required';
       const proofBadge=proof==='not_required'?'':`<span class="badge proof-${escapeHtml(proof)}">predicate proof ${escapeHtml(proof)}</span>`;
+      const playButtons=(variant.play_anchors||[]).map(anchor=>{const repeated=(variant.play_anchors||[]).filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-source-milestone="${escapeHtml(anchor.source_milestone)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
       return `<article class="variant${variant.incumbent?' incumbent':''}">
         <div>
           <div class="variant-title"><strong>${escapeHtml(variant.name||variant.id)}</strong>${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${proofBadge}</div>
           <div class="variant-meta"><span>${escapeHtml(artifact.kind||'artifact')}: <code>${escapeHtml(artifact.value||'—')}</code></span><span title="${escapeHtml(variant.start_fingerprint)}">in <code>${escapeHtml(short(variant.start_fingerprint))}</code></span><span title="${escapeHtml(variant.boundary_fingerprint)}">out <code>${escapeHtml(short(variant.boundary_fingerprint))}</code></span></div>
           ${variant.error?`<div class="error-note">${escapeHtml(variant.error)}</div>`:''}
         </div>
-        <div class="actions"><button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" ${disabled?'disabled':''}>${disabled?'Unavailable':'Play'}</button>${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}" title="Replay the lineage hidden, muted, and unpaced, then reveal at the exact recording boundary">Record fast · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
+        <div class="actions">${playButtons||'<button class="play" type="button" disabled>Unavailable</button>'}${(variant.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}" title="Replay the lineage hidden, muted, and unpaced, then reveal at the exact recording boundary">Record fast · ${escapeHtml(anchor.lineage)}</button>`).join('')}</div>
       </article>${draftChildren('variant',variant.id)}`;
     }
     function milestoneNode(id) {
@@ -220,7 +220,7 @@
       let html=(roots.length?roots:[...graph.milestones.map(item=>item.id)].sort().slice(0,1)).map(id=>renderMilestone(id,new Set(),rendered)).join('');
       graph.milestones.map(item=>item.id).sort().filter(id=>!rendered.has(id)).forEach(id=>html+=renderMilestone(id,new Set(),rendered));
       $('tree').innerHTML=html||'<div class="empty">This timeline has no milestones.</div>';
-      $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button.dataset.playKind,button.dataset.id,button.dataset.playOrigin||'boot',button)));
+      $('tree').querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       $('tree').querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       $('tree').querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
       $('tree').querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
@@ -256,7 +256,9 @@
         button.disabled=false; button.textContent='Validate & save';
       }
     }
-    async function play(kind,id,origin,button) {
+    async function play(button) {
+      const {playKind:kind,id}=button.dataset;
+      const origin=button.dataset.playOrigin||'boot';
       const variant=kind==='variant'&&graph.variants.find(item=>item.id===id);
       const draft=kind==='draft'&&graph.drafts.find(item=>item.id===id);
       const segment=variant&&graph.segments.find(item=>item.id===variant.segment);
@@ -264,7 +266,7 @@
       const name=variant?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=variant?{selection:{kind:'variant',id},stop:{kind:'milestone',milestone:segment.to},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
+      const payload=variant?{selection:{kind:'variant',id,lineage:button.dataset.lineage,prefix_steps:Number(button.dataset.prefixSteps),source_milestone:button.dataset.sourceMilestone},stop:{kind:'milestone',milestone:segment.to},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
@@ -275,7 +277,7 @@
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(variant?.playable||draft?.playable); button.textContent=variant?'Play':origin==='parent'?'Play from parent':'Play from boot';
+        button.disabled=!(variant?.playable||draft?.playable); button.textContent=variant?`Play · ${button.dataset.playLabel||button.dataset.lineage}`:origin==='parent'?'Play from parent':'Play from boot';
       }
     }
     async function deleteDraft(id,button) {
