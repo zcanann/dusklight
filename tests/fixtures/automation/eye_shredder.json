@@ -182,11 +182,114 @@
     },
     {
       "op": "marker",
-      "name": "observe-eye-shredder"
+      "name": "confirm-corrupted-file-menu"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "confirm-corrupted-file"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
     },
     {
       "op": "repeat",
-      "count": 180,
+      "count": 30,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "select-default-epona-menu"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "frame",
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "accept-default-epona"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 64,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "skip-opening-event-arm"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 1,
+      "frame": {}
+    },
+    {
+      "op": "marker",
+      "name": "skip-opening-event-confirm"
+    },
+    {
+      "op": "frame",
+      "frame": {
+        "pads": {
+          "0": {
+            "buttons": ["START"]
+          }
+        }
+      }
+    },
+    {
+      "op": "repeat",
+      "count": 72,
       "frame": {}
     }
   ]

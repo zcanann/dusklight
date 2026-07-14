@@ -107,6 +107,9 @@ $tapeSummary = ($inspectOutput -join [Environment]::NewLine) | ConvertFrom-Json
 if ([int]$tapeSummary.wait_frame_count -ne 0) {
     throw "Eye Shredder is not a TAS: its compiled tape contains $($tapeSummary.wait_frame_count) reactive condition frame(s)."
 }
+if ([int]$tapeSummary.nominal_frame_count -ne 869) {
+    throw "Eye Shredder tape length drifted: expected 869 absolute frames, got $($tapeSummary.nominal_frame_count)."
+}
 
 $stateBase = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot "build\automation-state\eye-shredder"))
@@ -161,17 +164,39 @@ for ($run = 1; $run -le $Runs; $run++) {
 
         $trace = Get-Content -Raw -LiteralPath $tracePath | ConvertFrom-Json
         $sessionStart = @($trace.event_stream.events | Where-Object { $_.kind -eq "session_started" })[0]
+        $sessionEnd = @($trace.event_stream.events | Where-Object { $_.kind -eq "session_ended" })[0]
+        $gameplayTick = [uint64]$result.stages.gameplay.sim_tick
+        $gameplayFrame = [uint64]$result.stages.gameplay.tape_frame
         $timingMatches =
+            [uint64]$result.sim_tick -eq $gameplayTick -and
+            [uint64]$result.tape_frame -eq $gameplayFrame -and
             [uint64]$result.stages.memory.sim_tick -eq 692 -and
             [uint64]$result.stages.memory.tape_frame -eq 692 -and
             [uint64]$result.stages.renderer.sim_tick -eq 694 -and
             [uint64]$result.stages.renderer.tape_frame -eq 693 -and
+            $gameplayTick -ge 867 -and $gameplayTick -le 868 -and
+            $gameplayFrame -eq $gameplayTick -and
+            [string]$result.stages.gameplay.telemetry.stage_name -eq "F_SP103" -and
+            [int]$result.stages.gameplay.telemetry.room -eq 1 -and
+            [int]$result.stages.gameplay.telemetry.point -eq 1 -and
+            [int]$result.stages.gameplay.telemetry.layer -eq -1 -and
+            [int]$result.stages.gameplay.telemetry.player_actor_name -eq 253 -and
+            [bool]$result.stages.gameplay.telemetry.player_actor_present -and
+            [bool]$result.stages.gameplay.telemetry.player_is_link -and
+            -not [bool]$result.stages.gameplay.telemetry.event_running -and
             [uint64]$sessionStart.sim_tick -eq 334 -and
+            [uint64]$sessionEnd.sim_tick -eq 758 -and
+            [uint64]$sessionEnd.tape_frame -eq 758 -and
             [int]$result.actual.attempt -eq 2 -and
-            [int]$trace.event_stream.drained_count -eq 112 -and
+            [int]$trace.event_stream.drained_count -eq 113 -and
             [int]$trace.event_stream.dropped_count -eq 0 -and
-            [int]$trace.snapshot.logical_cursor -eq 114 -and
-            [int]$trace.snapshot.name_length -eq 4 -and
+            -not [bool]$trace.snapshot.active -and
+            [uint64]$trace.snapshot.sim_tick -eq 727 -and
+            [uint64]$trace.snapshot.tape_frame -eq 727 -and
+            [int]$trace.snapshot.logical_cursor -eq 5 -and
+            [int]$trace.snapshot.last_logical_cursor -eq 114 -and
+            [int]$trace.snapshot.name_length -eq 5 -and
+            [int]$trace.snapshot.selection_procedure -eq 8 -and
             [int]$trace.snapshot.character_column -eq 12
         if (-not $timingMatches) {
             throw "Eye Shredder reached the corruption through a different timeline; refusing to mask TAS drift."
@@ -181,8 +206,6 @@ for ($run = 1; $run -le $Runs; $run++) {
 
         $signature = [ordered]@{
             status = $result.status
-            oracle_sim_tick = $result.sim_tick
-            tape_frame = $result.tape_frame
             memory_sim_tick = $result.stages.memory.sim_tick
             memory_tape_frame = $result.stages.memory.tape_frame
             renderer_sim_tick = $result.stages.renderer.sim_tick
@@ -195,11 +218,19 @@ for ($run = 1; $run -le $Runs; $run++) {
             renderer_xf_num_chans_raw = $result.stages.renderer.telemetry.xf_num_chans_raw
             renderer_bp_num_chans_raw = $result.stages.renderer.telemetry.bp_num_chans_raw
             renderer_mismatch_draw_count = $result.stages.renderer.telemetry.mismatch_draw_count
+            gameplay_stage_name = $result.stages.gameplay.telemetry.stage_name
+            gameplay_room = $result.stages.gameplay.telemetry.room
+            gameplay_point = $result.stages.gameplay.telemetry.point
+            gameplay_layer = $result.stages.gameplay.telemetry.layer
+            gameplay_player_actor_name = $result.stages.gameplay.telemetry.player_actor_name
+            gameplay_player_actor_present = $result.stages.gameplay.telemetry.player_actor_present
+            gameplay_player_is_link = $result.stages.gameplay.telemetry.player_is_link
+            gameplay_event_running = $result.stages.gameplay.telemetry.event_running
             trace_sha256 = $traceSha256
         } | ConvertTo-Json -Compress
         $signatures += $signature
         $gcAddress = "0x{0:X8}" -f [uint32]$result.actual.fresh_usa_gc_cached_address
-        Write-Host "  PASS sim=$($result.stages.memory.sim_tick) frame=$($result.stages.memory.tape_frame) attempt=$($result.actual.attempt) GC=$gcAddress bytes=$(@($result.actual.bytes) -join ' ') renderer=XF$($result.stages.renderer.telemetry.xf_num_chans_raw)/BP$($result.stages.renderer.telemetry.bp_num_chans_raw)" -ForegroundColor Green
+        Write-Host "  PASS memory=$($result.stages.memory.sim_tick)/$($result.stages.memory.tape_frame) renderer=$($result.stages.renderer.sim_tick)/$($result.stages.renderer.tape_frame) gameplay=$gameplayTick/$gameplayFrame stage=$($result.stages.gameplay.telemetry.stage_name) attempt=$($result.actual.attempt) GC=$gcAddress bytes=$(@($result.actual.bytes) -join ' ') XF$($result.stages.renderer.telemetry.xf_num_chans_raw)/BP$($result.stages.renderer.telemetry.bp_num_chans_raw)" -ForegroundColor Green
     } finally {
         Remove-ContainedDirectory -Path $state -Base $stateBase
     }
