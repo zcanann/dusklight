@@ -33,10 +33,12 @@ For the named Eye Shredder benchmark, run **Tasks: Run Task → Glitch Hunt: Eye
 Shredder Visual**. It resolves the last manually selected image, builds the
 fixture, runs the same two-stage memory/renderer oracle, and preserves the
 result/trace under `build/test-results/eye-shredder`. Playback owns all four
-controller ports, waits on observed file-select/name-entry readiness instead of
-wall-clock sleeps, and lingers on Aurora's latched XF=12/BP=4 shredded
-diagnostic before consuming the final Start inputs. The diagnostic is synthetic;
-pixel-perfect console raster corruption is not claimed.
+controller ports and consumes only absolute frames. DVD and memory-card work is
+dispatched synchronously for fixed-step tape runs; any deviation from the
+checked simulation ticks or complete trace hash fails instead of delaying or
+retrying input. The visual run lingers on Aurora's latched XF=12/BP=4 shredded
+diagnostic. The diagnostic is synthetic; pixel-perfect console raster
+corruption is not claimed.
 
 1. Put a supported Twilight Princess disc image somewhere on your machine.
    `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by

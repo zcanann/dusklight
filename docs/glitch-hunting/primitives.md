@@ -28,9 +28,10 @@ A `Scenario` describes repeatable initial conditions, not just a map:
 - optional actor or memory fixtures; and
 - required capabilities and fidelity profile.
 
-Scenario loading ends at a declared ready condition and emits an initial state
-hash. Tests should not rely on a fixed number of loading frames when a semantic
-condition can be observed instead.
+Scenario setup may observe a declared ready condition before the replay clock
+starts, then emits an initial state hash. Once tape playback starts, readiness
+observations are assertions only: they may fail a run but must never delay,
+skip, repeat, or choose input.
 
 ## SimTick
 
@@ -58,12 +59,14 @@ details. Use a canonical packed schema.
 An `InputTape` contains build-independent metadata, a scenario reference,
 run-length encoded frames, named markers, and optional expected hash/event
 checkpoints. It supports lossless splice, trim, and neutral-frame insertion.
-The tape is the final proof produced by any higher-level controller.
+The tape is the final proof produced by any higher-level controller. Its input
+at tick N is fixed before replay begins; it contains no observation-dependent
+waits or branches.
 
 ## ControllerProgram
 
-A `ControllerProgram` compactly generates candidate tapes. Initial operations
-should include:
+A `ControllerProgram` drives search and compactly generates candidate tapes.
+It is not itself a TAS proof. Initial operations may include:
 
 - hold/release buttons for a tick range;
 - set exact stick or trigger bytes;
@@ -73,9 +76,10 @@ should include:
 - invoke a parameterized motion segment.
 
 Motion segments may later include stick-space splines, angle/speed targets, roll
-spacing, and state-feedback controllers. Their execution must still emit the
-raw `InputFrame` sequence used in the run. A spline is a search convenience,
-not a replay format.
+spacing, and state-feedback controllers. A successful run must materialize the
+exact raw `InputFrame` sequence it actually used. Verification replays that
+flattened sequence with all program waits and branches removed. A spline is a
+search convenience, not a replay format.
 
 Programs must be bounded: every wait, loop, and branch has a maximum tick count
 and deterministic timeout result.

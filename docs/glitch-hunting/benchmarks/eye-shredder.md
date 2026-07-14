@@ -89,11 +89,17 @@ magenta/cyan shredded diagnostic with the live XF/BP values. That overlay is an
 explicit diagnostic visualization, not a claim of pixel-perfect Flipper
 rasterization.
 
-The tape also contains state-gated frames. It waits neutrally while retaining
-ownership of all controller ports until file select or name entry reports an
-input-ready handler. A bounded timeout fails the process and oracle. This keeps
-async resource speed from turning a guessed sleep into misplaced input while
-fixed-step simulation runs faster than realtime.
+The checked tape contains only absolute input frames. It never waits, branches,
+retries, or changes input from an observation. Automation-only DVD and memory
+card dispatch is synchronous, so host thread scheduling cannot change the game
+tick on which a resource becomes visible. Observers assert the resulting
+timeline without influencing it.
+
+The full boot and exploit trajectory is fixed: name entry is constructed at
+tick 334, the no-save confirmation is pressed at tick 450, the first name input
+is consumed at tick 458, and the position-113 write occurs at tick 692. The
+renderer proof follows at simulation tick 694. The complete name-entry event
+trace is byte-identical across repeat runs.
 
 The current native implementation under audit is
 [`src/d/d_name.cpp`](../../../src/d/d_name.cpp), with its associated layout in
@@ -104,9 +110,11 @@ The current native implementation under audit is
 ### Stage 0: deterministic boot
 
 - Boot from a declared clean save fixture and settings profile.
-- Reach the expected file/name UI semantic state.
+- Make automation I/O completion deterministic at explicit simulation
+  boundaries.
 - Replay at least 100 times with identical state hashes and event sequence.
-- Do not use screenshots or fixed loading delays as the ready condition.
+- Treat any change in a fixed UI transition tick as a test failure; do not wait
+  for it during playback.
 
 ### Stage 1: exact menu tape
 
@@ -161,16 +169,18 @@ Run the checked integration test with:
 ```
 
 It performs three isolated headless runs by default and requires identical
-memory and renderer signatures. Use `-Runs 100` for the full determinism gate
-or `-Visual` for paced headful playback. Visual mode continues after the oracle
-passes, holds the diagnostic for six seconds, then consumes the final Start
-inputs. Every run writes a versioned oracle result and a tick-stamped
+simulation timing, complete name-entry trace hashes, memory signatures, and
+renderer signatures. It rejects compiled tapes containing reactive condition
+frames. Use `-Runs 100` for the full determinism gate or `-Visual` for paced
+headful playback. Visual mode continues after the oracle passes and holds the
+diagnostic for six seconds. Every run writes a versioned oracle result and a tick-stamped
 name-entry trace under `build/test-results/eye-shredder`, while its temporary
 config/card/cache state is deleted.
 
-The test passes only when every requested run reports the same tape frame,
-cursor position, original offset, fresh-USA cached address, eight-byte write,
-and exact XF/BP mismatch draw. Pixel-accurate reproduction of the console's
+The test passes only when every requested run reports the fixed tick/frame
+timeline, canonical two-write event history, cursor position, original offset,
+fresh-USA cached address, eight-byte write, and exact XF/BP mismatch draw.
+Pixel-accurate reproduction of the console's
 triangular/rainbow artifact remains a later renderer-fidelity milestone.
 
 Do not treat Aurora's separately allocated MEM1 buffer, or a GC-looking low
