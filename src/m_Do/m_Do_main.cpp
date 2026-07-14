@@ -1533,11 +1533,11 @@ int game_main(int argc, char* argv[]) {
             aurora_shutdown();
             return 1;
         }
-        // Aurora's null backend still needs a presentable SDL window to drain
-        // the GX render traversal. Opacity suppresses that window without
-        // setting SDL_WINDOW_HIDDEN, which would pause Aurora's frame sink.
-        if (!SDL_SetWindowOpacity(auroraInfo.window, 0.0f)) {
-            DuskLog.error("Failed to suppress the headless SDL window: {}", SDL_GetError());
+        // Aurora retains a hidden SDL window as an internal size/event anchor,
+        // but simulation-only mode must never expose it on the desktop or taskbar.
+        // disablePresentation bypasses Aurora's visibility/focus pause checks.
+        if ((SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u) {
+            DuskLog.error("Headless Aurora window unexpectedly became visible");
             dusk::crash_reporting::shutdown();
             dusk::ShutdownFileLogging();
             dusk::config::shutdown();
