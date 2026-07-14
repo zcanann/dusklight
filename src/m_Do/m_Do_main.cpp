@@ -58,6 +58,7 @@
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
+#include "dusk/automation/actor_catalog.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/input_controller.hpp"
 #include "dusk/automation/input_tape.hpp"
@@ -241,6 +242,7 @@ static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
 static void write_milestone_result_on_exit();
 static void write_realized_input_tape_on_exit();
+static void write_actor_catalog_on_exit();
 static void release_active_controller_on_exit();
 
 void main01(void) {
@@ -446,6 +448,7 @@ void main01(void) {
     write_gameplay_trace_on_exit();
     write_milestone_result_on_exit();
     write_realized_input_tape_on_exit();
+    write_actor_catalog_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -572,6 +575,9 @@ static bool gameplayTraceWriteFailed;
 static std::filesystem::path realizedInputTapePath;
 static dusk::automation::InputTape realizedInputTape;
 static bool realizedInputTapeWriteFailed;
+static std::filesystem::path actorCatalogPath;
+static bool actorCatalogWriteFailed;
+static bool actorCatalogWritten;
 static std::filesystem::path milestoneResultPath;
 static bool milestoneResultWriteFailed;
 static bool eyeShredderOracleEnabled;
@@ -601,6 +607,8 @@ int capture_controller_actor(void* candidate, void* context) {
     const dusk::automation::ControllerActor snapshot{
         .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
         .stableId = stableId,
+        .setId = actor->setID,
+        .homeRoom = actor->home.roomNo,
         .x = actor->current.pos.x,
         .y = actor->current.pos.y,
         .z = actor->current.pos.z,
@@ -625,6 +633,11 @@ int capture_controller_actor(void* candidate, void* context) {
 dusk::automation::ControllerObservation capture_controller_observation(
     ControllerActorCapture& capture) {
     dusk::automation::ControllerObservation observation;
+    if (const char* stageName = dComIfGp_getStartStageName(); stageName != nullptr) {
+        const std::size_t length = std::min(
+            std::strlen(stageName), observation.stageName.size());
+        std::copy_n(stageName, length, observation.stageName.begin());
+    }
     if (fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
         observation.playerPresent = true;
         observation.playerX = player->current.pos.x;
@@ -999,6 +1012,7 @@ static bool finish_input_tape_tick() {
         release_controller_input();
         inputControllerCompleted = true;
         dusk::automation::gameplay_trace_recorder().stop();
+        write_actor_catalog_on_exit();
         DuskLog.info("Input controller complete after {} frames (combined frame {})",
                      inputControllerNextFrame,
                      inputControllerPrefixFrames + inputControllerNextFrame - 1);
@@ -1025,6 +1039,7 @@ static bool finish_input_tape_tick() {
     // completion check. Do not let later headful input exhaust or contaminate
     // the automation trace after PAD ownership is handed back.
     dusk::automation::gameplay_trace_recorder().stop();
+    write_actor_catalog_on_exit();
 
     if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
         eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
@@ -1152,6 +1167,26 @@ static void write_realized_input_tape_on_exit() {
                  realizedInputTape.frames.size());
 }
 
+static void write_actor_catalog_on_exit() {
+    if (actorCatalogPath.empty() || actorCatalogWritten) {
+        return;
+    }
+
+    std::string error;
+    const std::uint64_t completedTick =
+        automationSimulationTick == 0 ? 0 : automationSimulationTick - 1;
+    if (!dusk::automation::write_actor_catalog(
+            actorCatalogPath, completedTick, error)) {
+        DuskLog.error("Failed to write actor catalog '{}': {}",
+                      dusk::io::fs_path_to_string(actorCatalogPath), error);
+        actorCatalogWriteFailed = true;
+        return;
+    }
+    actorCatalogWritten = true;
+    DuskLog.info("Wrote read-only actor catalog '{}'",
+                 dusk::io::fs_path_to_string(actorCatalogPath));
+}
+
 static void write_milestone_result_on_exit() {
     if (milestoneResultPath.empty()) {
         return;
@@ -1250,6 +1285,7 @@ int game_main(int argc, char* argv[]) {
             ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
+            ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
@@ -1380,6 +1416,7 @@ int game_main(int argc, char* argv[]) {
     const bool hasAutomationInput = hasInputTape || hasInputController;
     const bool hasRealizedInputTape =
         parsed_arg_options.count("realized-input-tape") != 0;
+    const bool hasActorCatalog = parsed_arg_options.count("actor-catalog") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
     exitAfterInputController =
         parsed_arg_options["exit-after-controller"].as<bool>();
@@ -1397,6 +1434,18 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         realizedInputTapePath = std::filesystem::u8path(outputPath);
+    }
+    if (hasActorCatalog) {
+        if (!hasAutomationInput) {
+            fprintf(stderr, "Actor Catalog Error: --actor-catalog requires automation input\n");
+            return 1;
+        }
+        const std::string outputPath = parsed_arg_options["actor-catalog"].as<std::string>();
+        if (outputPath.empty()) {
+            fprintf(stderr, "Actor Catalog Error: --actor-catalog PATH cannot be empty\n");
+            return 1;
+        }
+        actorCatalogPath = std::filesystem::u8path(outputPath);
     }
 
     if (parsed_arg_options.count("gameplay-trace")) {
@@ -2228,7 +2277,8 @@ int game_main(int argc, char* argv[]) {
     const bool milestoneGoalFailed =
         milestoneTracker.goal().has_value() && !milestoneTracker.goalReached();
     return nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
-                   realizedInputTapeWriteFailed || milestoneResultWriteFailed ||
+                   realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
+                   milestoneResultWriteFailed ||
                    milestoneGoalFailed ||
                    eyeShredderOracleResultWriteFailed ||
                    eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||

@@ -36,6 +36,24 @@ bool finite(const float value) {
     return std::isfinite(value);
 }
 
+bool canonical_nonempty_fixed_string(const std::uint8_t* begin, const std::size_t size) {
+    if (size == 0 || begin[0] == 0) {
+        return false;
+    }
+    bool sawZero = false;
+    for (std::size_t index = 0; index < size; ++index) {
+        if (begin[index] > 0x7f) {
+            return false;
+        }
+        if (begin[index] == 0) {
+            sawZero = true;
+        } else if (sawZero) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool valid_seek(const InputControllerLayer& layer) {
     return finite(layer.offsetX) && finite(layer.offsetY) && finite(layer.offsetZ) &&
            finite(layer.stopRadius) && layer.stopRadius >= 0.0F && layer.magnitude >= 1 &&
@@ -216,6 +234,24 @@ StickValue evaluate_stick_layer(const InputControllerLayer& layer, const std::ui
             if (actor.actorName != layer.actorName || !finite(actor.x) || !finite(actor.z)) {
                 continue;
             }
+
+            if (layer.actorSelector == InputControllerActorSelector::Process) {
+                if (actor.stableId == layer.processId) {
+                    selected = &actor;
+                    break;
+                }
+                continue;
+            }
+            if (layer.actorSelector == InputControllerActorSelector::Placed) {
+                if (observation.stageName == layer.placedStageName && actor.setId == layer.setId &&
+                    actor.homeRoom == layer.homeRoom &&
+                    (selected == nullptr || actor.stableId < selected->stableId))
+                {
+                    selected = &actor;
+                }
+                continue;
+            }
+
             const double deltaX = static_cast<double>(actor.x) - observation.playerX;
             const double deltaZ = static_cast<double>(actor.z) - observation.playerZ;
             const double distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
@@ -252,8 +288,9 @@ InputControllerError decode_input_controller(
     if (!std::equal(kInputControllerMagic.begin(), kInputControllerMagic.end(), bytes.begin())) {
         return InputControllerError::BadMagic;
     }
+    const std::uint16_t minorVersion = read_u16(bytes.data() + 10);
     if (read_u16(bytes.data() + 8) != kInputControllerMajorVersion ||
-        read_u16(bytes.data() + 10) != kInputControllerMinorVersion)
+        minorVersion > kInputControllerMinorVersion)
     {
         return InputControllerError::UnsupportedVersion;
     }
@@ -375,8 +412,14 @@ InputControllerError decode_input_controller(
         }
 
         layer.actorName = read_i16(record + 12);
-        if (read_u16(record + 14) != 0) {
+        if (minorVersion == 0 && (record[14] != 0 || record[15] != 0)) {
             return InputControllerError::InvalidReservedData;
+        }
+        if (minorVersion >= 1) {
+            if (record[14] > static_cast<std::uint8_t>(InputControllerActorSelector::Placed)) {
+                return InputControllerError::InvalidActorSelector;
+            }
+            layer.actorSelector = static_cast<InputControllerActorSelector>(record[14]);
         }
         layer.offsetX = read_f32(record + 16);
         layer.offsetY = read_f32(record + 20);
@@ -390,7 +433,39 @@ InputControllerError decode_input_controller(
                    layer.stopRadius < 0.0F ? InputControllerError::InvalidStopRadius :
                                              InputControllerError::InvalidMagnitude;
         }
-        if (!all_zero(record + 33, record + kInputControllerRecordSize)) {
+        if (minorVersion == 0 || layer.actorSelector == InputControllerActorSelector::Nearest) {
+            if (record[15] != 0 || !all_zero(record + 33, record + 39)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+        } else if (layer.actorSelector == InputControllerActorSelector::Process) {
+            if (record[15] != 0 || !all_zero(record + 37, record + 39)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            layer.processId = read_u32(record + 33);
+            if (layer.processId == 0 ||
+                layer.processId == std::numeric_limits<std::uint32_t>::max())
+            {
+                return InputControllerError::InvalidProcessId;
+            }
+        } else {
+            if (!all_zero(record + 33, record + 37)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            layer.homeRoom = std::bit_cast<std::int8_t>(record[15]);
+            layer.setId = read_u16(record + 37);
+            if (layer.setId == std::numeric_limits<std::uint16_t>::max()) {
+                return InputControllerError::InvalidSetId;
+            }
+            if (!canonical_nonempty_fixed_string(record + 39, layer.placedStageName.size())) {
+                return InputControllerError::InvalidStageName;
+            }
+            std::copy_n(record + 39, layer.placedStageName.size(), layer.placedStageName.begin());
+        }
+        if (layer.actorSelector == InputControllerActorSelector::Placed && minorVersion >= 1) {
+            if (!all_zero(record + 47, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+        } else if (!all_zero(record + 39, record + kInputControllerRecordSize)) {
             return InputControllerError::InvalidUnusedData;
         }
     }
@@ -488,6 +563,14 @@ const char* input_controller_error_message(const InputControllerError error) {
         return "controller seek magnitude is invalid";
     case InputControllerError::InvalidButtonMask:
         return "controller button mask is empty";
+    case InputControllerError::InvalidActorSelector:
+        return "controller actor selector is invalid";
+    case InputControllerError::InvalidProcessId:
+        return "controller actor process ID is invalid";
+    case InputControllerError::InvalidSetId:
+        return "controller actor set ID is invalid";
+    case InputControllerError::InvalidStageName:
+        return "controller placed-actor stage name is invalid";
     case InputControllerError::InvalidUnusedData:
         return "controller layer unused data is nonzero";
     case InputControllerError::OverlappingReplaceLayers:

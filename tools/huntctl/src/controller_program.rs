@@ -11,7 +11,8 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 8] = b"DUSKCTRL";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 0;
+pub const VERSION_MINOR: u16 = 1;
+const MIN_SUPPORTED_MINOR: u16 = 0;
 pub const HEADER_SIZE: usize = 32;
 pub const RECORD_SIZE: usize = 64;
 pub const MAX_DURATION_FRAMES: u32 = 1_000_000;
@@ -56,12 +57,27 @@ pub enum Operation {
     SeekActor {
         blend: StickBlend,
         actor_name: i16,
+        selector: ActorSelector,
         offset: [f32; 3],
         stop_radius: f32,
         magnitude: u8,
     },
     Buttons {
         mask: u16,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ActorSelector {
+    Nearest,
+    Process {
+        process_id: u32,
+    },
+    Placed {
+        set_id: u16,
+        room: i8,
+        stage_name: String,
     },
 }
 
@@ -153,6 +169,7 @@ impl ControllerProgram {
                     validate_magnitude(index, *magnitude)?;
                 }
                 Operation::SeekActor {
+                    selector,
                     offset,
                     stop_radius,
                     magnitude,
@@ -160,6 +177,27 @@ impl ControllerProgram {
                 } => {
                     validate_floats(index, &[], offset, *stop_radius)?;
                     validate_magnitude(index, *magnitude)?;
+                    match selector {
+                        ActorSelector::Nearest => {}
+                        ActorSelector::Process { process_id }
+                            if *process_id != 0 && *process_id != u32::MAX => {}
+                        ActorSelector::Process { .. } => {
+                            return Err(ControllerError::new(format!(
+                                "layer {index} process ID must not be 0 or 4294967295"
+                            )));
+                        }
+                        ActorSelector::Placed {
+                            set_id, stage_name, ..
+                        } if *set_id != u16::MAX
+                            && !stage_name.is_empty()
+                            && stage_name.len() <= 8
+                            && stage_name.is_ascii() => {}
+                        ActorSelector::Placed { .. } => {
+                            return Err(ControllerError::new(format!(
+                                "layer {index} placed selector requires set ID below 65535 and a nonempty ASCII stage name of at most 8 bytes"
+                            )));
+                        }
+                    }
                 }
                 Operation::Buttons { mask } => {
                     if *mask == 0 {
@@ -190,23 +228,7 @@ impl ControllerProgram {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ControllerError> {
-        self.validate()?;
-        let payload_len = self.layers.len() * RECORD_SIZE;
-        let mut output = vec![0_u8; HEADER_SIZE + payload_len];
-        output[..8].copy_from_slice(MAGIC);
-        put_u16(&mut output, 8, VERSION_MAJOR);
-        put_u16(&mut output, 10, VERSION_MINOR);
-        put_u16(&mut output, 12, HEADER_SIZE as u16);
-        put_u16(&mut output, 14, RECORD_SIZE as u16);
-        put_u32(&mut output, 16, self.duration_frames);
-        put_u16(&mut output, 20, self.layers.len() as u16);
-        put_u32(&mut output, 24, payload_len as u32);
-
-        for (index, layer) in self.layers.iter().enumerate() {
-            let start = HEADER_SIZE + index * RECORD_SIZE;
-            encode_layer(layer, &mut output[start..start + RECORD_SIZE]);
-        }
-        Ok(output)
+        self.encode_for_version(VERSION_MINOR)
     }
 
     pub fn decode(input: &[u8]) -> Result<Self, ControllerError> {
@@ -220,7 +242,7 @@ impl ControllerProgram {
         }
         let major = get_u16(input, 8);
         let minor = get_u16(input, 10);
-        if major != VERSION_MAJOR || minor != VERSION_MINOR {
+        if major != VERSION_MAJOR || !(MIN_SUPPORTED_MINOR..=VERSION_MINOR).contains(&minor) {
             return Err(ControllerError::new(format!(
                 "unsupported controller version {major}.{minor}"
             )));
@@ -258,7 +280,11 @@ impl ControllerProgram {
         let mut layers = Vec::with_capacity(layer_count);
         for index in 0..layer_count {
             let start = HEADER_SIZE + index * RECORD_SIZE;
-            layers.push(decode_layer(index, &input[start..start + RECORD_SIZE])?);
+            layers.push(decode_layer(
+                index,
+                &input[start..start + RECORD_SIZE],
+                minor,
+            )?);
         }
         let program = Self {
             duration_frames,
@@ -267,10 +293,49 @@ impl ControllerProgram {
         program.validate()?;
         // This guards every canonical requirement in one place, including
         // zero-filled payload bytes and the fixed enum encodings.
-        if program.encode()?.as_slice() != input {
+        if program.encode_for_version(minor)?.as_slice() != input {
             return Err(ControllerError::new("noncanonical controller encoding"));
         }
         Ok(program)
+    }
+
+    fn encode_for_version(&self, minor: u16) -> Result<Vec<u8>, ControllerError> {
+        self.validate()?;
+        if !(MIN_SUPPORTED_MINOR..=VERSION_MINOR).contains(&minor) {
+            return Err(ControllerError::new(format!(
+                "unsupported controller version {VERSION_MAJOR}.{minor}"
+            )));
+        }
+        if minor == 0
+            && self.layers.iter().any(|layer| {
+                matches!(
+                    layer.operation,
+                    Operation::SeekActor {
+                        selector: ActorSelector::Process { .. } | ActorSelector::Placed { .. },
+                        ..
+                    }
+                )
+            })
+        {
+            return Err(ControllerError::new(
+                "exact actor selectors require controller version 1.1",
+            ));
+        }
+        let payload_len = self.layers.len() * RECORD_SIZE;
+        let mut output = vec![0_u8; HEADER_SIZE + payload_len];
+        output[..8].copy_from_slice(MAGIC);
+        put_u16(&mut output, 8, VERSION_MAJOR);
+        put_u16(&mut output, 10, minor);
+        put_u16(&mut output, 12, HEADER_SIZE as u16);
+        put_u16(&mut output, 14, RECORD_SIZE as u16);
+        put_u32(&mut output, 16, self.duration_frames);
+        put_u16(&mut output, 20, self.layers.len() as u16);
+        put_u32(&mut output, 24, payload_len as u32);
+        for (index, layer) in self.layers.iter().enumerate() {
+            let start = HEADER_SIZE + index * RECORD_SIZE;
+            encode_layer(layer, &mut output[start..start + RECORD_SIZE], minor)?;
+        }
+        Ok(output)
     }
 }
 
@@ -539,6 +604,10 @@ fn parse_seek_actor(tokens: &[&str], line: usize) -> Result<Layer, ControllerErr
     let (start_frame, duration_frames, mut cursor) = parse_seek_prefix(tokens, line)?;
     let blend = parse_blend(tokens[2], line)?;
     let mut actor_name = None;
+    let mut process_id = None;
+    let mut set_id = None;
+    let mut room = None;
+    let mut stage_name = None;
     let mut offset = None;
     let mut magnitude = None;
     let mut stop_radius = None;
@@ -551,6 +620,69 @@ fn parse_seek_actor(tokens: &[&str], line: usize) -> Result<Layer, ControllerErr
                     line,
                     "actor name",
                 )?);
+                cursor += 2;
+            }
+            "process" => {
+                reject_duplicate(process_id.is_some(), line, "process")?;
+                if set_id.is_some() || room.is_some() {
+                    return Err(ControllerError::at(
+                        line,
+                        "process and placed actor selectors are mutually exclusive",
+                    ));
+                }
+                process_id = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "process ID")?,
+                    line,
+                    "process ID",
+                )?);
+                cursor += 2;
+            }
+            "set" => {
+                reject_duplicate(set_id.is_some(), line, "set")?;
+                if process_id.is_some() {
+                    return Err(ControllerError::at(
+                        line,
+                        "process and placed actor selectors are mutually exclusive",
+                    ));
+                }
+                set_id = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "set ID")?,
+                    line,
+                    "set ID",
+                )?);
+                cursor += 2;
+            }
+            "room" => {
+                reject_duplicate(room.is_some(), line, "room")?;
+                if process_id.is_some() {
+                    return Err(ControllerError::at(
+                        line,
+                        "process and placed actor selectors are mutually exclusive",
+                    ));
+                }
+                room = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "room")?,
+                    line,
+                    "room",
+                )?);
+                cursor += 2;
+            }
+            "stage" => {
+                reject_duplicate(stage_name.is_some(), line, "stage")?;
+                if process_id.is_some() {
+                    return Err(ControllerError::at(
+                        line,
+                        "process and placed actor selectors are mutually exclusive",
+                    ));
+                }
+                let value = required_token(tokens, cursor + 1, line, "stage name")?;
+                if value.is_empty() || value.len() > 8 || !value.is_ascii() {
+                    return Err(ControllerError::at(
+                        line,
+                        "stage name must be nonempty ASCII of at most 8 bytes",
+                    ));
+                }
+                stage_name = Some(value.to_owned());
                 cursor += 2;
             }
             "offset" => {
@@ -584,12 +716,52 @@ fn parse_seek_actor(tokens: &[&str], line: usize) -> Result<Layer, ControllerErr
             }
         }
     }
+    let selector = match (process_id, set_id, room, stage_name) {
+        (None, None, None, None) => ActorSelector::Nearest,
+        (Some(process_id), None, None, None) => ActorSelector::Process { process_id },
+        (None, Some(set_id), Some(room), Some(stage_name)) => ActorSelector::Placed {
+            set_id,
+            room,
+            stage_name,
+        },
+        (None, Some(_), None, _) => {
+            return Err(ControllerError::at(
+                line,
+                "placed actor selector requires a room field",
+            ));
+        }
+        (None, None, Some(_), _) => {
+            return Err(ControllerError::at(
+                line,
+                "placed actor selector requires a set field",
+            ));
+        }
+        (None, Some(_), Some(_), None) => {
+            return Err(ControllerError::at(
+                line,
+                "placed actor selector requires a stage field",
+            ));
+        }
+        (None, None, None, Some(_)) => {
+            return Err(ControllerError::at(
+                line,
+                "stage field requires a placed actor selector",
+            ));
+        }
+        _ => {
+            return Err(ControllerError::at(
+                line,
+                "process and placed actor selectors are mutually exclusive",
+            ));
+        }
+    };
     Ok(Layer {
         start_frame,
         duration_frames,
         operation: Operation::SeekActor {
             blend,
             actor_name: required_field(actor_name, line, "actor")?,
+            selector,
             offset: required_field(offset, line, "offset")?,
             magnitude: required_field(magnitude, line, "magnitude")?,
             stop_radius: required_field(stop_radius, line, "stop")?,
@@ -725,7 +897,7 @@ fn button_mask(value: &str) -> Option<u16> {
     })
 }
 
-fn encode_layer(layer: &Layer, output: &mut [u8]) {
+fn encode_layer(layer: &Layer, output: &mut [u8], minor: u16) -> Result<(), ControllerError> {
     put_u32(output, 4, layer.start_frame);
     put_u32(output, 8, layer.duration_frames);
     match &layer.operation {
@@ -754,6 +926,7 @@ fn encode_layer(layer: &Layer, output: &mut [u8]) {
         Operation::SeekActor {
             blend,
             actor_name,
+            selector,
             offset,
             stop_radius,
             magnitude,
@@ -761,6 +934,28 @@ fn encode_layer(layer: &Layer, output: &mut [u8]) {
             output[0] = KIND_SEEK_ACTOR;
             output[1] = encode_blend(*blend);
             put_i16(output, 12, *actor_name);
+            match selector {
+                ActorSelector::Nearest => {}
+                ActorSelector::Process { process_id } if minor >= 1 => {
+                    output[14] = 1;
+                    put_u32(output, 33, *process_id);
+                }
+                ActorSelector::Placed {
+                    set_id,
+                    room,
+                    stage_name,
+                } if minor >= 1 => {
+                    output[14] = 2;
+                    output[15] = *room as u8;
+                    put_u16(output, 37, *set_id);
+                    output[39..39 + stage_name.len()].copy_from_slice(stage_name.as_bytes());
+                }
+                _ => {
+                    return Err(ControllerError::new(
+                        "exact actor selectors require controller version 1.1",
+                    ));
+                }
+            }
             for (index, value) in offset.iter().enumerate() {
                 put_f32(output, 16 + index * 4, *value);
             }
@@ -773,9 +968,10 @@ fn encode_layer(layer: &Layer, output: &mut [u8]) {
             put_u16(output, 12, *mask);
         }
     }
+    Ok(())
 }
 
-fn decode_layer(index: usize, input: &[u8]) -> Result<Layer, ControllerError> {
+fn decode_layer(index: usize, input: &[u8], minor: u16) -> Result<Layer, ControllerError> {
     if input[2] != 0 {
         return Err(ControllerError::new(format!(
             "layer {index} uses unsupported controller port {}",
@@ -813,15 +1009,71 @@ fn decode_layer(index: usize, input: &[u8]) -> Result<Layer, ControllerError> {
             }
         }
         KIND_SEEK_ACTOR => {
-            if input[14] != 0 || input[15] != 0 {
+            if minor == 0 && (input[14] != 0 || input[15] != 0) {
                 return Err(ControllerError::new(format!(
                     "layer {index} has nonzero seek-actor reserved bytes"
                 )));
             }
-            require_zero(index, input, 33)?;
+            let selector = match input[14] {
+                0 => {
+                    if input[15] != 0 {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} nearest actor selector has nonzero room"
+                        )));
+                    }
+                    require_zero(index, input, 33)?;
+                    ActorSelector::Nearest
+                }
+                1 if minor >= 1 => {
+                    if input[15] != 0 || input[37..].iter().any(|byte| *byte != 0) {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} has noncanonical process actor selector"
+                        )));
+                    }
+                    ActorSelector::Process {
+                        process_id: get_u32(input, 33),
+                    }
+                }
+                2 if minor >= 1 => {
+                    if input[33..37].iter().any(|byte| *byte != 0)
+                        || input[47..].iter().any(|byte| *byte != 0)
+                    {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} has noncanonical placed actor selector"
+                        )));
+                    }
+                    let stage_bytes = &input[39..47];
+                    let stage_length = stage_bytes
+                        .iter()
+                        .position(|byte| *byte == 0)
+                        .unwrap_or(stage_bytes.len());
+                    if stage_length == 0
+                        || stage_bytes[stage_length..].iter().any(|byte| *byte != 0)
+                        || !stage_bytes[..stage_length].is_ascii()
+                    {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} has invalid placed actor stage name"
+                        )));
+                    }
+                    let stage_name = std::str::from_utf8(&stage_bytes[..stage_length])
+                        .expect("ASCII stage name")
+                        .to_owned();
+                    ActorSelector::Placed {
+                        set_id: get_u16(input, 37),
+                        room: input[15] as i8,
+                        stage_name,
+                    }
+                }
+                mode => {
+                    return Err(ControllerError::new(format!(
+                        "layer {index} has invalid actor selector mode {mode} for version 1.{minor}"
+                    )));
+                }
+            };
             Operation::SeekActor {
                 blend: decode_stick_blend(index, input[1])?,
                 actor_name: get_i16(input, 12),
+                selector,
                 offset: [get_f32(input, 16), get_f32(input, 20), get_f32(input, 24)],
                 stop_radius: get_f32(input, 28),
                 magnitude: input[32],
@@ -933,6 +1185,7 @@ mod tests {
         assert_eq!(bytes.len(), HEADER_SIZE + 4 * RECORD_SIZE);
         assert_eq!(&bytes[..8], MAGIC);
         assert_eq!(get_u16(&bytes, 8), 1);
+        assert_eq!(get_u16(&bytes, 10), 1);
         assert_eq!(get_u16(&bytes, 12), 32);
         assert_eq!(get_u16(&bytes, 14), 64);
         assert_eq!(get_u32(&bytes, 16), 120);
@@ -945,6 +1198,147 @@ mod tests {
         assert_eq!(bytes[HEADER_SIZE + 3 * RECORD_SIZE + 1], BLEND_OR);
         assert_eq!(get_u16(&bytes, HEADER_SIZE + 3 * RECORD_SIZE + 12), 0x1200);
         assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+    }
+
+    #[test]
+    fn exact_actor_selectors_round_trip_in_version_1_1() {
+        let source = r#"duskcontrol 1
+frames 8
+seek actor replace from 0 for 4 actor 123 process 42 offset 0 0 0 magnitude 127 stop 0
+seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 2 3 magnitude 80 stop 5
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(
+            program.layers[0].operation,
+            Operation::SeekActor {
+                blend: StickBlend::Replace,
+                actor_name: 123,
+                selector: ActorSelector::Process { process_id: 42 },
+                offset: [0.0, 0.0, 0.0],
+                stop_radius: 0.0,
+                magnitude: 127,
+            }
+        );
+        assert_eq!(
+            program.layers[1].operation,
+            Operation::SeekActor {
+                blend: StickBlend::Replace,
+                actor_name: -77,
+                selector: ActorSelector::Placed {
+                    set_id: 14,
+                    room: -3,
+                    stage_name: "F_SP103".to_owned(),
+                },
+                offset: [1.0, 2.0, 3.0],
+                stop_radius: 5.0,
+                magnitude: 80,
+            }
+        );
+
+        let bytes = program.encode().unwrap();
+        let first = HEADER_SIZE;
+        let second = HEADER_SIZE + RECORD_SIZE;
+        assert_eq!(bytes[first + 14], 1);
+        assert_eq!(get_u32(&bytes, first + 33), 42);
+        assert_eq!(bytes[second + 14], 2);
+        assert_eq!(bytes[second + 15] as i8, -3);
+        assert_eq!(get_u16(&bytes, second + 37), 14);
+        assert_eq!(&bytes[second + 39..second + 46], b"F_SP103");
+        assert_eq!(bytes[second + 46], 0);
+        assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+    }
+
+    #[test]
+    fn version_1_0_nearest_actor_programs_remain_decodable_and_strict() {
+        let program = parse(SOURCE).unwrap();
+        let legacy = program.encode_for_version(0).unwrap();
+        assert_eq!(get_u16(&legacy, 10), 0);
+        assert_eq!(ControllerProgram::decode(&legacy).unwrap(), program);
+
+        let actor = HEADER_SIZE + 2 * RECORD_SIZE;
+        let mut selector_in_legacy = legacy.clone();
+        selector_in_legacy[actor + 14] = 1;
+        assert!(
+            ControllerProgram::decode(&selector_in_legacy)
+                .unwrap_err()
+                .to_string()
+                .contains("reserved")
+        );
+
+        let exact = parse("duskcontrol 1\nframes 1\nseek actor add from 0 for 1 actor 1 process 2 offset 0 0 0 magnitude 1 stop 0\n").unwrap();
+        assert!(
+            exact
+                .encode_for_version(0)
+                .unwrap_err()
+                .to_string()
+                .contains("version 1.1")
+        );
+    }
+
+    #[test]
+    fn actor_selector_syntax_and_values_are_strict() {
+        let prefix = "duskcontrol 1\nframes 1\nseek actor add from 0 for 1 actor 1 ";
+        let suffix = " offset 0 0 0 magnitude 1 stop 0\n";
+        for (selector, expected) in [
+            ("process 0", "process ID"),
+            ("process 4294967295", "process ID"),
+            ("set 65535 room 0 stage F_SP103", "set ID"),
+            ("set 1", "room field"),
+            ("room 1", "set field"),
+            ("set 1 room 0", "stage field"),
+            ("stage F_SP103", "requires a placed"),
+            ("set 1 room 128 stage F_SP103", "invalid room"),
+            ("set 1 room -129 stage F_SP103", "invalid room"),
+            ("set 1 room 0 stage TOO_LONG9", "at most 8"),
+            ("set 1 room 0 stage F_SP10é", "ASCII"),
+            ("process 5 set 1 room 0", "mutually exclusive"),
+            ("process 5 stage F_SP103", "mutually exclusive"),
+            ("process 5 process 6", "duplicate process"),
+            ("set 1 room 0 stage F_SP103 room 1", "duplicate room"),
+            ("set 1 room 0 stage F_SP103 stage D_MN01", "duplicate stage"),
+        ] {
+            let source = format!("{prefix}{selector}{suffix}");
+            assert!(
+                parse(&source).unwrap_err().to_string().contains(expected),
+                "selector {selector:?} did not report {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn actor_selector_binary_reservations_are_canonical() {
+        let process = parse("duskcontrol 1\nframes 1\nseek actor add from 0 for 1 actor 1 process 2 offset 0 0 0 magnitude 1 stop 0\n").unwrap();
+        let mut process_room = process.encode().unwrap();
+        process_room[HEADER_SIZE + 15] = 1;
+        assert!(ControllerProgram::decode(&process_room).is_err());
+        let mut process_set = process.encode().unwrap();
+        process_set[HEADER_SIZE + 37] = 1;
+        assert!(ControllerProgram::decode(&process_set).is_err());
+
+        let placed = parse("duskcontrol 1\nframes 1\nseek actor add from 0 for 1 actor 1 set 2 room 0 stage F_SP103 offset 0 0 0 magnitude 1 stop 0\n").unwrap();
+        let mut placed_process = placed.encode().unwrap();
+        placed_process[HEADER_SIZE + 33] = 1;
+        assert!(ControllerProgram::decode(&placed_process).is_err());
+        let mut placed_tail = placed.encode().unwrap();
+        placed_tail[HEADER_SIZE + 47] = 1;
+        assert!(ControllerProgram::decode(&placed_tail).is_err());
+        let mut placed_gap = placed.encode().unwrap();
+        placed_gap[HEADER_SIZE + 42] = 0;
+        assert!(ControllerProgram::decode(&placed_gap).is_err());
+        let mut placed_empty = placed.encode().unwrap();
+        placed_empty[HEADER_SIZE + 39..HEADER_SIZE + 47].fill(0);
+        assert!(ControllerProgram::decode(&placed_empty).is_err());
+        let mut placed_non_ascii = placed.encode().unwrap();
+        placed_non_ascii[HEADER_SIZE + 39] = 0x80;
+        assert!(ControllerProgram::decode(&placed_non_ascii).is_err());
+        let mut unknown_mode = placed.encode().unwrap();
+        unknown_mode[HEADER_SIZE + 14] = 3;
+        assert!(
+            ControllerProgram::decode(&unknown_mode)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid actor selector mode")
+        );
     }
 
     #[test]

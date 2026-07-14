@@ -20,7 +20,7 @@ inline constexpr std::array<std::uint8_t, 8> kInputControllerMagic{
     'L',
 };
 inline constexpr std::uint16_t kInputControllerMajorVersion = 1;
-inline constexpr std::uint16_t kInputControllerMinorVersion = 0;
+inline constexpr std::uint16_t kInputControllerMinorVersion = 1;
 inline constexpr std::size_t kInputControllerHeaderSize = 32;
 inline constexpr std::size_t kInputControllerRecordSize = 64;
 inline constexpr std::uint32_t kInputControllerMaximumDuration = 1'000'000;
@@ -47,6 +47,10 @@ enum class InputControllerError {
     InvalidStopRadius,
     InvalidMagnitude,
     InvalidButtonMask,
+    InvalidActorSelector,
+    InvalidProcessId,
+    InvalidSetId,
+    InvalidStageName,
     InvalidUnusedData,
     OverlappingReplaceLayers,
 };
@@ -64,11 +68,19 @@ enum class InputControllerBlend : std::uint8_t {
     Or = 2,
 };
 
+enum class InputControllerActorSelector : std::uint8_t {
+    Nearest = 0,
+    Process = 1,
+    Placed = 2,
+};
+
 struct ControllerActor {
     std::int16_t actorName = 0;
     // Stable IDs must be unique within an observation. Pointer values are not
     // suitable IDs because they change between processes and restored states.
     std::uint64_t stableId = 0;
+    std::uint16_t setId = 0;
+    std::int8_t homeRoom = 0;
     float x = 0.0F;
     float y = 0.0F;
     float z = 0.0F;
@@ -81,6 +93,9 @@ struct ControllerObservation {
     float playerZ = 0.0F;
     bool cameraPresent = false;
     float cameraYawRadians = 0.0F;
+    // Exact placed-actor selectors compare all eight canonical fixed-string
+    // bytes. Short names are zero-padded; pointer identity is never involved.
+    std::array<char, 8> stageName{};
     // Evaluation inspects at most kInputControllerMaximumActors entries.
     std::span<const ControllerActor> actors{};
 };
@@ -94,8 +109,13 @@ struct InputControllerLayer {
     // Bezier uses all eight values as four (x, y) control points.
     std::array<std::int16_t, 8> bezier{};
 
-    // SeekPoint stores its target here. SeekActor stores only actorName.
+    // SeekPoint stores its target here. SeekActor uses the selector fields.
     std::int16_t actorName = 0;
+    InputControllerActorSelector actorSelector = InputControllerActorSelector::Nearest;
+    std::uint32_t processId = 0;
+    std::uint16_t setId = 0;
+    std::int8_t homeRoom = 0;
+    std::array<char, 8> placedStageName{};
     float targetX = 0.0F;
     float targetY = 0.0F;
     float targetZ = 0.0F;

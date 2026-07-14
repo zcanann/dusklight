@@ -102,11 +102,13 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("inspect") if args.len() == 2 => {
             let bytes = fs::read(&args[1])?;
             let program = ControllerProgram::decode(&bytes)?;
+            let version_major = u16::from_le_bytes(bytes[8..10].try_into()?);
+            let version_minor = u16::from_le_bytes(bytes[10..12].try_into()?);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "format": "DUSKCTRL",
-                    "version": { "major": 1, "minor": 0 },
+                    "version": { "major": version_major, "minor": version_minor },
                     "duration_frames": program.duration_frames,
                     "layer_count": program.layers.len(),
                     "layers": program.layers,

@@ -19,7 +19,7 @@ fn compiles_and_inspects_reactive_controller() {
         r#"duskcontrol 1
 frames 60
 bezier replace from 0 for 60 p0 0 127 p1 0 127 p2 127 0 p3 127 0
-seek actor add from 0 for 60 actor 123 offset 1 0 2 magnitude 30 stop 10
+seek actor add from 0 for 60 actor 123 set 17 room -2 stage F_SP103 offset 1 0 2 magnitude 30 stop 10
 buttons from 5 for 1 B
 "#,
     )
@@ -57,10 +57,15 @@ buttons from 5 for 1 B
     let summary: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
     assert_eq!(summary["format"], "DUSKCTRL");
     assert_eq!(summary["version"]["major"], 1);
+    assert_eq!(summary["version"]["minor"], 1);
     assert_eq!(summary["duration_frames"], 60);
     assert_eq!(summary["layer_count"], 3);
     assert_eq!(summary["layers"][0]["kind"], "cubic_bezier");
     assert_eq!(summary["layers"][1]["kind"], "seek_actor");
+    assert_eq!(summary["layers"][1]["selector"]["mode"], "placed");
+    assert_eq!(summary["layers"][1]["selector"]["set_id"], 17);
+    assert_eq!(summary["layers"][1]["selector"]["room"], -2);
+    assert_eq!(summary["layers"][1]["selector"]["stage_name"], "F_SP103");
     assert_eq!(summary["layers"][2]["mask"], 0x0200);
     fs::remove_dir_all(directory).unwrap();
 }

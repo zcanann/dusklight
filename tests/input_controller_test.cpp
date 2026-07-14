@@ -41,13 +41,22 @@ void writeF32(std::uint8_t* output, const float value) {
     writeU32(output, std::bit_cast<std::uint32_t>(value));
 }
 
-std::vector<std::uint8_t> makeProgram(const std::uint32_t duration, const std::uint16_t layers) {
+template <std::size_t Size>
+std::array<char, 8> stageName(const char (&value)[Size]) {
+    static_assert(Size >= 2 && Size <= 9);
+    std::array<char, 8> result{};
+    std::copy_n(value, Size - 1, result.begin());
+    return result;
+}
+
+std::vector<std::uint8_t> makeProgram(const std::uint32_t duration, const std::uint16_t layers,
+    const std::uint16_t minorVersion = dusk::automation::kInputControllerMinorVersion) {
     using namespace dusk::automation;
     std::vector<std::uint8_t> bytes(
         kInputControllerHeaderSize + layers * kInputControllerRecordSize);
     std::copy(kInputControllerMagic.begin(), kInputControllerMagic.end(), bytes.begin());
     writeU16(bytes.data() + 8, kInputControllerMajorVersion);
-    writeU16(bytes.data() + 10, kInputControllerMinorVersion);
+    writeU16(bytes.data() + 10, minorVersion);
     writeU16(bytes.data() + 12, kInputControllerHeaderSize);
     writeU16(bytes.data() + 14, kInputControllerRecordSize);
     writeU32(bytes.data() + 16, duration);
@@ -94,15 +103,22 @@ void setPoint(std::uint8_t* record, const std::uint8_t blend, const std::uint32_
 
 void setActor(std::uint8_t* record, const std::uint8_t blend, const std::uint32_t start,
     const std::uint32_t duration, const std::int16_t actorName, const float offsetX,
-    const float offsetY, const float offsetZ, const float stopRadius,
-    const std::uint8_t magnitude) {
+    const float offsetY, const float offsetZ, const float stopRadius, const std::uint8_t magnitude,
+    const std::uint8_t selector = 0, const std::int8_t homeRoom = 0,
+    const std::uint32_t processId = 0, const std::uint16_t setId = 0,
+    const std::array<char, 8>& placedStageName = {}) {
     setCommon(record, 3, blend, start, duration);
     writeI16(record + 12, actorName);
+    record[14] = selector;
+    record[15] = std::bit_cast<std::uint8_t>(homeRoom);
     writeF32(record + 16, offsetX);
     writeF32(record + 20, offsetY);
     writeF32(record + 24, offsetZ);
     writeF32(record + 28, stopRadius);
     record[32] = magnitude;
+    writeU32(record + 33, processId);
+    writeU16(record + 37, setId);
+    std::copy(placedStageName.begin(), placedStageName.end(), record + 39);
 }
 
 void setButtons(std::uint8_t* record, const std::uint32_t start, const std::uint32_t duration,
@@ -198,6 +214,96 @@ void testActorSelectionIsStableAndPure() {
     REQUIRE(program.evaluate(0, observation) == first);
 }
 
+void testVersion10ActorCompatibility() {
+    using namespace dusk::automation;
+    auto bytes = makeProgram(2, 1, 0);
+    setActor(layer(bytes, 0), 0, 0, 2, 42, 0.0F, 0.0F, 0.0F, 0.0F, 100);
+    const InputControllerProgram program = decode(bytes);
+    REQUIRE(program.layers()[0].actorSelector == InputControllerActorSelector::Nearest);
+
+    const std::array<ControllerActor, 2> actors{{
+        {.actorName = 42, .stableId = 9, .x = 10.0F},
+        {.actorName = 42, .stableId = 3, .x = -2.0F},
+    }};
+    const ControllerObservation observation{
+        .playerPresent = true,
+        .cameraPresent = true,
+        .actors = actors,
+    };
+    REQUIRE(program.evaluate(0, observation).stickX == -100);
+}
+
+void testExactProcessActorSelectionNeverFallsBack() {
+    using namespace dusk::automation;
+    auto bytes = makeProgram(2, 1);
+    setActor(layer(bytes, 0), 0, 0, 2, 42, 0.0F, 0.0F, 0.0F, 0.0F, 100,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Process), 0, 9);
+    const InputControllerProgram program = decode(bytes);
+    REQUIRE(program.layers()[0].processId == 9);
+
+    std::array<ControllerActor, 2> actors{{
+        {.actorName = 42, .stableId = 3, .x = -2.0F},
+        {.actorName = 42, .stableId = 9, .x = 10.0F},
+    }};
+    const ControllerObservation observation{
+        .playerPresent = true,
+        .cameraPresent = true,
+        .actors = actors,
+    };
+    REQUIRE(program.evaluate(0, observation).stickX == 100);
+
+    // The exact ID still requires the declared actor type and cannot fall back
+    // to the nearer actor when that guard fails.
+    actors[1].actorName = 7;
+    REQUIRE(program.evaluate(0, observation).stickX == 0);
+    REQUIRE(program.evaluate(0, observation).stickY == 0);
+}
+
+void testPlacedActorSelectionRequiresExactStageAndPlacement() {
+    using namespace dusk::automation;
+    auto bytes = makeProgram(2, 1);
+    setActor(layer(bytes, 0), 0, 0, 2, 42, 0.0F, 0.0F, 0.0F, 0.0F, 100,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -3, 0, 7,
+        stageName("F_SP103"));
+    const InputControllerProgram program = decode(bytes);
+    REQUIRE(program.layers()[0].setId == 7);
+    REQUIRE(program.layers()[0].homeRoom == -3);
+    REQUIRE(program.layers()[0].placedStageName == stageName("F_SP103"));
+
+    std::array<ControllerActor, 4> actors{{
+        {.actorName = 42, .stableId = 9, .setId = 7, .homeRoom = -3, .x = 10.0F},
+        {.actorName = 42, .stableId = 3, .setId = 7, .homeRoom = -3, .x = -10.0F},
+        {.actorName = 42, .stableId = 1, .setId = 8, .homeRoom = -3, .x = 1.0F},
+        {.actorName = 7, .stableId = 2, .setId = 7, .homeRoom = -3, .z = 1.0F},
+    }};
+    ControllerObservation observation{
+        .playerPresent = true,
+        .cameraPresent = true,
+        .stageName = stageName("F_SP103"),
+        .actors = actors,
+    };
+    REQUIRE(program.evaluate(0, observation).stickX == -100);
+
+    // A placed selector is the full stage/type/set/room tuple. It never
+    // falls back to a nearby actor when any part of that tuple differs.
+    observation.stageName = stageName("F_SP104");
+    REQUIRE(program.evaluate(0, observation) == RawPadState{});
+    observation.stageName = stageName("F_SP103");
+    actors[0].setId = 8;
+    actors[1].setId = 8;
+    REQUIRE(program.evaluate(0, observation) == RawPadState{});
+    actors[0].setId = 7;
+    actors[1].setId = 7;
+    actors[0].homeRoom = -2;
+    actors[1].homeRoom = -2;
+    REQUIRE(program.evaluate(0, observation) == RawPadState{});
+    actors[0].homeRoom = -3;
+    actors[1].homeRoom = -3;
+    actors[0].actorName = 7;
+    actors[1].actorName = 7;
+    REQUIRE(program.evaluate(0, observation) == RawPadState{});
+}
+
 void testStrictCanonicalValidation() {
     using namespace dusk::automation;
     InputControllerProgram output;
@@ -230,6 +336,63 @@ void testStrictCanonicalValidation() {
     setBezier(layer(bad, 0), 0, 0, 6, {});
     setPoint(layer(bad, 1), 0, 5, 5, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1);
     REQUIRE(decode_input_controller(bad, output) == InputControllerError::OverlappingReplaceLayers);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1, 3);
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidActorSelector);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Process));
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidProcessId);
+    writeU32(layer(bad, 0) + 33, std::numeric_limits<std::uint32_t>::max());
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidProcessId);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -1, 0,
+        std::numeric_limits<std::uint16_t>::max());
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidSetId);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -1, 0, 7);
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidStageName);
+    const auto validStageName = stageName("F_SP103");
+    std::copy(validStageName.begin(), validStageName.end(), layer(bad, 0) + 39);
+    layer(bad, 0)[41] = 0;
+    layer(bad, 0)[42] = 'X';
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidStageName);
+    std::copy(validStageName.begin(), validStageName.end(), layer(bad, 0) + 39);
+    layer(bad, 0)[39] = 0x80;
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidStageName);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -1, 0, 7,
+        stageName("F_SP103"));
+    layer(bad, 0)[47] = 1;
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidUnusedData);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1);
+    layer(bad, 0)[39] = 'X';
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidUnusedData);
+
+    bad = makeProgram(10, 1);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Process), 0, 9);
+    layer(bad, 0)[39] = 'X';
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidUnusedData);
+
+    bad = makeProgram(10, 1, 0);
+    setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
+        static_cast<std::uint8_t>(InputControllerActorSelector::Process), 0, 1);
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidReservedData);
+
+    bad = makeProgram(10, 0);
+    writeU16(bad.data() + 10, kInputControllerMinorVersion + 1);
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::UnsupportedVersion);
 }
 
 void testMaximumDurationAndEmptyLayerSet() {
@@ -260,6 +423,9 @@ int main() {
     testBezierLayeringAndButtons();
     testPointSeekAndStopRadius();
     testActorSelectionIsStableAndPure();
+    testVersion10ActorCompatibility();
+    testExactProcessActorSelectionNeverFallsBack();
+    testPlacedActorSelectionRequiresExactStageAndPlacement();
     testStrictCanonicalValidation();
     testMaximumDurationAndEmptyLayerSet();
     return 0;
