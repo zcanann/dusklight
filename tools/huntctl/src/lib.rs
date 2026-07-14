@@ -7,6 +7,7 @@ pub mod pool;
 pub mod protocol;
 pub mod search;
 pub mod tape;
+pub mod tape_chain;
 pub mod tape_dsl;
 pub mod tape_program;
 pub mod trace;
