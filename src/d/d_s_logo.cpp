@@ -806,6 +806,7 @@ void dScnLogo_c::nextSceneChange() {
                 // If we aren't loading a save, initialize a blank save file and request the correct scene to load
                 if (dusk::SaveRequested == 0) {
                     dComIfGs_init();
+                    dComIfGs_gameStart();
 
                     fopScnM_ChangeReq(this, fpcNm_PLAY_SCENE_e, 0, 30);
                     dusk::SaveRequested = 0xff; //Skip requesting the scene from above
