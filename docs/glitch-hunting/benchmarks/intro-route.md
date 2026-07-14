@@ -32,8 +32,9 @@ proof, but it retains its route-local score and ancestry.
 The checked route-local scenario is `fsp103-next-map-seed`. Its 180-frame
 neutral prefix covers direct stage creation and the short automatic event;
 candidate movement begins at its `candidate-start` marker. On the current
-baseline, the exit activates at tape tick 572 and the `F_SP104` point-0
-transition begins at tick 603. It is a functional seed, not a speed claim.
+baseline, one native milestone run observed exit activation at tape tick 571
+and fully entered `F_SP104` room 1 point 0 at tick 640. It is a functional
+seed, not a speed claim.
 
 Evaluate any compiled candidate with:
 
@@ -44,10 +45,13 @@ Evaluate any compiled candidate with:
 ```
 
 The stable result document contains `candidate_id`, tape path/hash, the exact
-source and destination goal, `success`, source-exit `first_hit_tick`, transition
-tick, deepest milestone, process status, and trace/result paths. The deepest
-milestone values are `none`, `fsp103_route_control`,
-`fsp103_exit_activated`, and `fsp104_point0`. This is suitable as the leaf
+source and destination goal, `success`, native source-exit `first_hit_tick`,
+entered-map goal tick, deepest milestone, process status, and trace/result
+paths. Success requires the native `entered-f-sp104` goal, while ranking uses
+the earlier native `exit-f-sp103-to-f-sp104` hit so uncontrollable loading time
+does not masquerade as movement quality. The deepest milestone values are
+`none`, `gameplay-ready-f-sp103`, `exit-f-sp103-to-f-sp104`, and
+`entered-f-sp104`. This is suitable as the leaf
 evaluation record for a Rust search round or candidate ancestry DAG.
 
 ## Current route and oracle

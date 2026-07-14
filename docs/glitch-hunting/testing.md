@@ -183,11 +183,13 @@ changing a checked scenario:
   -CandidateTape build\experiment-42.tape
 ```
 
-The evaluator always launches an isolated writable profile, records a compact
-gameplay trace, and writes `evaluation.json` plus `trace.summary.json` under
+The evaluator always launches an isolated writable profile, evaluates native
+memory-backed milestones, records a compact diagnostic gameplay trace, and
+writes `evaluation.json`, `milestones.json`, and `trace.summary.json` under
 `build/test-results/route-search`. A movement sequence that misses the goal is
-a successful evaluation with `success: false`; setup, launch, or trace failures
-use `evaluation_status: worker_error`. This distinction lets an optimizer treat
+a successful evaluation with `success: false`; setup, launch, or native-result
+failures use `evaluation_status: worker_error`. Trace decoding is diagnostic
+and cannot change success or score. This distinction lets an optimizer treat
 bad candidates as samples without hiding broken workers.
 
 The checked seed tape starts with 180 neutral frames for direct-stage loading

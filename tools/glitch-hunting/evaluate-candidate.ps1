@@ -89,6 +89,7 @@ New-Item -ItemType Directory -Force $resolvedArtifactRoot | Out-Null
 $state = Join-Path $resolvedArtifactRoot "worker-state"
 $tracePath = Join-Path $resolvedArtifactRoot "gameplay.trace"
 $traceSummaryPath = Join-Path $resolvedArtifactRoot "trace.summary.json"
+$milestonePath = Join-Path $resolvedArtifactRoot "milestones.json"
 $resultPath = Join-Path $resolvedArtifactRoot "evaluation.json"
 New-Item -ItemType Directory -Force $state | Out-Null
 
@@ -99,6 +100,9 @@ $arguments = @(
     "--input-tape-end", "hold",
     "--automation-data-root", $state,
     "--gameplay-trace", $tracePath,
+    "--milestones", "gameplay-ready-f-sp103,exit-f-sp103-to-f-sp104,entered-f-sp104",
+    "--milestone-goal", "entered-f-sp104",
+    "--milestone-result", $milestonePath,
     "--cvar", "game.instantSaves=true",
     "--cvar", "backend.cardFileType=1",
     "--cvar", "backend.wasPresetChosen=true",
@@ -121,15 +125,31 @@ if ($DryRun) {
 }
 
 $processExitCode = $null
-$launchError = $null
+$workerError = $null
+$diagnosticError = $null
 $summary = $null
+$milestoneResult = $null
 try {
     $argumentLine = ($arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
     $process = Start-Process -FilePath $game -ArgumentList $argumentLine `
         -WorkingDirectory $repoRoot -Wait -PassThru
     $processExitCode = $process.ExitCode
 } catch {
-    $launchError = $_.Exception.Message
+    $workerError = $_.Exception.Message
+}
+
+if (Test-Path -LiteralPath $milestonePath -PathType Leaf) {
+    try {
+        $milestoneResult = Get-Content -Raw -LiteralPath $milestonePath | ConvertFrom-Json
+        if ($milestoneResult.schema.name -ne "dusklight.automation.milestones" -or
+            [int]$milestoneResult.schema.version -ne 1) {
+            throw "Unsupported native milestone result schema."
+        }
+    } catch {
+        if ($null -eq $workerError) { $workerError = $_.Exception.Message }
+    }
+} elseif ($null -eq $workerError) {
+    $workerError = "Game process produced no native milestone result."
 }
 
 if (Test-Path -LiteralPath $tracePath -PathType Leaf) {
@@ -139,42 +159,65 @@ if (Test-Path -LiteralPath $tracePath -PathType Leaf) {
         [System.IO.File]::WriteAllText(
             $traceSummaryPath, $summaryText, [System.Text.UTF8Encoding]::new($false))
         $summary = $summaryText | ConvertFrom-Json
-    } elseif ($null -eq $launchError) {
-        $launchError = "Could not inspect gameplay trace."
+    } else {
+        $diagnosticError = "Could not inspect gameplay trace."
     }
-} elseif ($null -eq $launchError) {
-    $launchError = "Game process produced no gameplay trace."
+} else {
+    $diagnosticError = "Game process produced no gameplay trace."
 }
 
 $deepestMilestone = "none"
+$milestoneDepth = 0
+$deepestTick = $null
 $firstHitTick = $null
 $firstHitTapeFrame = $null
+$exitActivationTick = $null
 $transitionTick = $null
+$goalHitTick = $null
 $success = $false
-if ($null -ne $summary) {
-    if ($null -ne $summary.route_control -and
-        $summary.route_control.location.stage_name -eq "F_SP103" -and
-        [int]$summary.route_control.location.room -eq 1 -and
-        [int]$summary.route_control.location.point -eq 1) {
-        $deepestMilestone = "fsp103_route_control"
+if ($null -ne $milestoneResult) {
+    $hits = @{}
+    foreach ($hit in $milestoneResult.milestones) { $hits[[string]$hit.id] = $hit }
+    $ready = $hits["gameplay-ready-f-sp103"]
+    $exit = $hits["exit-f-sp103-to-f-sp104"]
+    $entered = $hits["entered-f-sp104"]
+    if ($null -ne $ready -and $ready.hit) {
+        $deepestMilestone = "gameplay-ready-f-sp103"
+        $milestoneDepth = 2
+        $deepestTick = [uint64]$ready.sim_tick
     }
-    if ($null -ne $summary.first_loading_trigger) {
-        $deepestMilestone = "fsp103_exit_activated"
+    if ($null -ne $exit -and $exit.hit) {
+        $deepestMilestone = "exit-f-sp103-to-f-sp104"
+        $milestoneDepth = 3
+        $deepestTick = [uint64]$exit.sim_tick
+        $exitActivationTick = [uint64]$exit.sim_tick
     }
-    if ($null -ne $summary.first_loading_trigger -and
-        $null -ne $summary.first_loading_transition -and
-        $summary.first_loading_transition.location.stage_name -eq "F_SP104" -and
-        [int]$summary.first_loading_transition.location.point -eq 0) {
-        $deepestMilestone = "fsp104_point0"
+    if ($null -ne $entered -and $entered.hit) {
+        $deepestMilestone = "entered-f-sp104"
+        $milestoneDepth = 4
+        $deepestTick = [uint64]$entered.sim_tick
+        $transitionTick = [uint64]$entered.sim_tick
+    }
+    if ($milestoneResult.goal -eq "entered-f-sp104" -and
+        $milestoneResult.goal_reached -and $null -ne $entered -and $entered.hit) {
         $success = $true
-        $firstHitTick = [uint64]$summary.first_loading_trigger.simulation_tick
-        $firstHitTapeFrame = [uint64]$summary.first_loading_trigger.tape_frame
-        $transitionTick = [uint64]$summary.first_loading_transition.simulation_tick
+        # Loading duration is host work after movement has finished. Require the
+        # entered-map goal for validity, but rank successful routes by the native
+        # source-exit hit which the candidate can actually improve.
+        $firstHitTick = [uint64]$exit.sim_tick
+        $firstHitTapeFrame = [uint64]$exit.tape_frame
+        $goalHitTick = [uint64]$entered.sim_tick
     }
 }
 
+$searchFirstHitTicks = [System.Collections.Generic.List[uint64]]::new()
+if ($milestoneDepth -gt 0) {
+    $searchTick = if ($success) { $firstHitTick } else { $deepestTick }
+    $searchFirstHitTicks.Add([uint64]$searchTick)
+}
+
 $preservedState = $null
-if ($KeepState -or $null -ne $launchError -or ($null -ne $processExitCode -and $processExitCode -ne 0)) {
+if ($KeepState -or $null -ne $workerError) {
     $preservedState = $state
 } elseif (Test-Path -LiteralPath $state) {
     Remove-Item -LiteralPath $state -Recurse -Force
@@ -189,18 +232,31 @@ $result = [ordered]@{
         kind = "scene_transition"
         source = [ordered]@{ stage = "F_SP103"; room = 1; point = 1 }
         destination = [ordered]@{ stage = "F_SP104"; point = 0 }
-        score_tick = "source_exit_activation"
+        native_milestone = "entered-f-sp104"
+        score_tick = "verified_source_exit_first_hit"
     }
-    evaluation_status = if ($null -eq $launchError -and $processExitCode -eq 0) { "completed" } else { "worker_error" }
+    # A valid native result with an unmet goal is an ordinary search sample;
+    # the engine intentionally uses a nonzero exit code for that case.
+    evaluation_status = if ($null -eq $workerError) { "completed" } else { "worker_error" }
     success = $success
     first_hit_tick = $firstHitTick
     first_hit_tape_frame = $firstHitTapeFrame
+    exit_activation_tick = $exitActivationTick
     transition_tick = $transitionTick
+    goal_hit_tick = $goalHitTick
     deepest_milestone = $deepestMilestone
+    search_result = [ordered]@{
+        milestone_depth = $milestoneDepth
+        attempts = 1
+        successes = if ($milestoneDepth -gt 0) { 1 } else { 0 }
+        first_hit_ticks = $searchFirstHitTicks
+    }
     process_exit_code = $processExitCode
-    error = $launchError
+    error = $workerError
+    diagnostic_error = $diagnosticError
     artifacts = [ordered]@{
         root = $resolvedArtifactRoot
+        native_milestones = if (Test-Path -LiteralPath $milestonePath) { $milestonePath } else { $null }
         trace = if (Test-Path -LiteralPath $tracePath) { $tracePath } else { $null }
         trace_summary = if (Test-Path -LiteralPath $traceSummaryPath) { $traceSummaryPath } else { $null }
         evaluation = $resultPath
