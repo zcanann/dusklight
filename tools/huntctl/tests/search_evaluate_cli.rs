@@ -1,4 +1,7 @@
-use huntctl::search::{Candidate, SearchResults};
+use huntctl::search::{
+    Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, SearchResults,
+    SegmentProfile,
+};
 use huntctl::tape::InputTape;
 use std::fs;
 use std::path::Path;
@@ -341,5 +344,80 @@ fn search_run_owns_the_complete_generation_loop() {
     );
     assert!(output_root.join("g000/results.json").is_file());
     assert!(output_root.join("g001/results.json").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn boot_minimizer_ddmins_a_dense_contiguous_mash_and_proves_trim() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-boot-minimize-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let dense = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        actions: (0..120)
+            .map(|index| MacroAction::Press {
+                buttons: vec![if index % 2 == 0 {
+                    ControllerButton::A
+                } else {
+                    ControllerButton::Start
+                }],
+                hold_frames: 1,
+                neutral_frames: 0,
+            })
+            .collect(),
+        ancestry: Ancestry::default(),
+    };
+    let candidate_path = root.join("dense.candidate.json");
+    fs::write(&candidate_path, serde_json::to_vec_pretty(&dense).unwrap()).unwrap();
+    let output_root = root.join("minimized");
+    let output = run(&[
+        "search",
+        "minimize-boot",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--game-arg",
+        "mock-search-worker",
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        output_root.to_str().unwrap(),
+        "--workers",
+        "2",
+        "--repetitions",
+        "2",
+        "--timeout-ms",
+        "2000",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-boot-minimization/v1");
+    assert_eq!(summary["source_pulse_frames"], 120);
+    assert_eq!(summary["minimized_pulse_frames"], 0);
+    assert_eq!(summary["goal_tape_frame"], 77);
+    assert_eq!(summary["minimized_frames"], 78);
+    assert!(output_root.join("minimized.candidate.json").is_file());
+    assert!(output_root.join("minimized.tape").is_file());
+    assert!(output_root.join("proof.json").is_file());
+    assert!(output_root.join("minimize.summary.json").is_file());
+    let minimized: Candidate =
+        serde_json::from_slice(&fs::read(output_root.join("minimized.candidate.json")).unwrap())
+            .unwrap();
+    let tape = InputTape::decode(&fs::read(output_root.join("minimized.tape")).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(minimized.compile().unwrap(), tape);
+    assert_eq!(tape.frames.len(), 78);
     fs::remove_dir_all(root).unwrap();
 }

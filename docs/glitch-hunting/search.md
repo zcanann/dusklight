@@ -77,6 +77,26 @@ To continue mining from an existing candidate instead of restarting from the
 built-in baseline, pass `--candidate FILE` to `search run`. The candidate is
 validated and must match `--segment`.
 
+For a successful boot tape, use the native reducer before spending samples on
+more evolution:
+
+    huntctl search minimize-boot --candidate build/dense.candidate.json --game build/windows-clang-debug/dusklight.exe --dvd orig/GZ2E01/GZ2E01.iso --output build/search/boot-minimized --workers 16 --repetitions 3
+
+The reducer first proves the source against the corrected route-control oracle.
+It neutralizes chunks of active button frames without shifting the timestamps
+of surviving input, then removes individual pulse frames. A deletion is kept
+only when every repetition produces identical milestone depth, goal outcome,
+ticks, tape frames, and boundary fingerprints and still reaches the exact goal.
+The source proof's goal simulation tick, tape frame, and boundary fingerprint
+become an immutable reduction target; a deletion that succeeds later or reaches
+a different boundary is rejected. Among exact-target equivalents, candidates
+with fewer pulse frames win.
+
+Finally, it truncates the tape to `goal tape_frame + 1` and proves that exact
+artifact again. The output contains `minimized.candidate.json`,
+`minimized.tape`, `proof.json`, and `minimize.summary.json`; intermediate ddmin
+rounds remain under the output root for audit.
+
 Individual primitives remain available:
 
     huntctl search seed --segment fsp103_to_fsp104 --output build/search/g0 --size 16 --rng-seed 1

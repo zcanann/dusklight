@@ -146,6 +146,7 @@ pub struct BootMinimizeSummary {
     pub minimized_pulse_frames: usize,
     pub goal_sim_tick: u64,
     pub goal_tape_frame: u64,
+    pub goal_boundary_fingerprint: String,
     pub candidate: PathBuf,
     pub tape: PathBuf,
     pub proof: PathBuf,
@@ -365,6 +366,367 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
     };
     write_json(&config.output_root.join("run.summary.json"), &summary)?;
     Ok(summary)
+}
+
+#[derive(Clone)]
+struct ProvenBootCandidate {
+    candidate: Candidate,
+    tape: InputTape,
+    sim_tick: u64,
+    tape_frame: u64,
+    boundary_fingerprint: BoundaryFingerprint,
+}
+
+#[derive(Clone)]
+struct BootReductionTarget {
+    sim_tick: u64,
+    tape_frame: u64,
+    boundary_fingerprint: BoundaryFingerprint,
+}
+
+impl BootReductionTarget {
+    fn accepts(&self, candidate: &ProvenBootCandidate) -> bool {
+        candidate.sim_tick == self.sim_tick
+            && candidate.tape_frame == self.tape_frame
+            && candidate.boundary_fingerprint == self.boundary_fingerprint
+    }
+}
+
+pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary, EvaluateError> {
+    if config.candidate.segment != SegmentProfile::BootToFsp103 {
+        return Err(EvaluateError::InvalidConfig(
+            "boot minimization requires a boot_to_fsp103 candidate".into(),
+        ));
+    }
+    config.candidate.validate()?;
+    if !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || config.workers == 0
+        || config.repetitions == 0
+        || config.timeout.is_zero()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "game, DVD, working directory, positive execution limits, and a new/empty output root are required"
+                .into(),
+        ));
+    }
+    fs::create_dir_all(&config.output_root)?;
+    let source_id = config.candidate.id()?;
+    let source_tape = config.candidate.compile()?;
+    let source_frames = config.candidate.frame_count();
+    let source_pulses = pulse_frame_count(&source_tape);
+    let mut round = 0_u32;
+    let initial = evaluate_boot_batch(
+        config,
+        vec![config.candidate.clone()],
+        &config
+            .output_root
+            .join("rounds")
+            .join(format!("{round:04}")),
+        round,
+    )?
+    .into_iter()
+    .next()
+    .ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the starting candidate did not reach gameplay-ready-f-sp103".into(),
+        )
+    })?;
+    let mut current = initial;
+    let target = BootReductionTarget {
+        sim_tick: current.sim_tick,
+        tape_frame: current.tape_frame,
+        boundary_fingerprint: current.boundary_fingerprint.clone(),
+    };
+    round += 1;
+
+    // First partition the ordered active frames into contiguous chunks. This
+    // splits even one dense 800-frame A/Start mash into removable regions. The
+    // frames become neutral rather than disappearing, so surviving pulses keep
+    // their exact absolute timestamps throughout ddmin.
+    let mut granularity = 2_usize;
+    loop {
+        let pulse_frames: Vec<_> = current
+            .tape
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| (frame.pads[0].buttons != 0).then_some(index))
+            .collect();
+        if pulse_frames.is_empty() {
+            break;
+        }
+        let partitions = granularity.min(pulse_frames.len());
+        let mut candidates = Vec::with_capacity(partitions);
+        for partition in 0..partitions {
+            let start = pulse_frames.len() * partition / partitions;
+            let end = pulse_frames.len() * (partition + 1) / partitions;
+            let ranges = coalesce_pulse_frames(&pulse_frames[start..end]);
+            candidates.push(candidate_with_neutralized_ranges(
+                &current,
+                &ranges,
+                round,
+                "ddmin pulse chunk",
+            )?);
+        }
+        let mut proven = evaluate_boot_batch(
+            config,
+            candidates,
+            &config
+                .output_root
+                .join("rounds")
+                .join(format!("{round:04}")),
+            round,
+        )?;
+        proven.retain(|candidate| target.accepts(candidate));
+        round += 1;
+        if let Some(best) = best_boot_candidate(proven) {
+            current = best;
+            granularity = 2;
+        } else if partitions == pulse_frames.len() {
+            break;
+        } else {
+            granularity = (partitions * 2).min(pulse_frames.len());
+        }
+    }
+
+    // A run can contain several held or mashed button frames. Finish at frame
+    // granularity, repeatedly taking the deletion with the fewest remaining
+    // pulse frames and then the earliest exact goal tick.
+    loop {
+        let pulse_frames: Vec<_> = current
+            .tape
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| (frame.pads[0].buttons != 0).then_some(index))
+            .collect();
+        if pulse_frames.is_empty() {
+            break;
+        }
+        let candidates = pulse_frames
+            .iter()
+            .map(|index| {
+                candidate_with_neutralized_ranges(
+                    &current,
+                    &[(*index, *index + 1)],
+                    round,
+                    "minimize individual pulse",
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut proven = evaluate_boot_batch(
+            config,
+            candidates,
+            &config
+                .output_root
+                .join("rounds")
+                .join(format!("{round:04}")),
+            round,
+        )?;
+        proven.retain(|candidate| target.accepts(candidate));
+        round += 1;
+        if let Some(best) = best_boot_candidate(proven) {
+            current = best;
+        } else {
+            break;
+        }
+    }
+
+    let required_frames = usize::try_from(current.tape_frame)
+        .map_err(|_| EvaluateError::InvalidResult("goal tape frame is too large".into()))?
+        .checked_add(1)
+        .ok_or_else(|| EvaluateError::InvalidResult("goal tape frame overflowed".into()))?;
+    if required_frames > current.tape.frames.len() {
+        return Err(EvaluateError::InvalidResult(
+            "goal tape frame lies outside the candidate tape".into(),
+        ));
+    }
+    let mut trimmed_tape = current.tape.clone();
+    trimmed_tape.frames.truncate(required_frames);
+    let mut trimmed = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &trimmed_tape)?;
+    trimmed.ancestry = crate::search::Ancestry {
+        generation: round,
+        parent_id: Some(current.candidate.id()?),
+        mutation: Some("trim after exact goal tape frame".into()),
+    };
+    let proof_root = config.output_root.join("proof");
+    let (mut proof_candidates, proof_report) =
+        evaluate_boot_batch_with_report(config, vec![trimmed], &proof_root, round)?;
+    proof_candidates.retain(|candidate| target.accepts(candidate));
+    let minimized = proof_candidates.into_iter().next().ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the tape trimmed to goal tape_frame + 1 did not reproduce the exact goal".into(),
+        )
+    })?;
+
+    let candidate_path = config.output_root.join("minimized.candidate.json");
+    let tape_path = config.output_root.join("minimized.tape");
+    let proof_path = config.output_root.join("proof.json");
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&minimized.candidate)?,
+    )?;
+    fs::write(&tape_path, minimized.tape.encode()?)?;
+    write_json(&proof_path, &proof_report)?;
+    let summary = BootMinimizeSummary {
+        schema: "dusklight-boot-minimization/v1",
+        source_candidate_id: source_id,
+        minimized_candidate_id: minimized.candidate.id()?,
+        source_frames,
+        minimized_frames: minimized.candidate.frame_count(),
+        source_pulse_frames: source_pulses,
+        minimized_pulse_frames: pulse_frame_count(&minimized.tape),
+        goal_sim_tick: minimized.sim_tick,
+        goal_tape_frame: minimized.tape_frame,
+        goal_boundary_fingerprint: minimized.boundary_fingerprint.digest.clone(),
+        candidate: candidate_path,
+        tape: tape_path,
+        proof: proof_path,
+        output_root: config.output_root.clone(),
+    };
+    write_json(&config.output_root.join("minimize.summary.json"), &summary)?;
+    Ok(summary)
+}
+
+fn pulse_frame_count(tape: &InputTape) -> usize {
+    tape.frames
+        .iter()
+        .filter(|frame| frame.pads[0].buttons != 0)
+        .count()
+}
+
+fn coalesce_pulse_frames(frames: &[usize]) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    for &frame in frames {
+        if let Some((_, end)) = runs.last_mut()
+            && *end == frame
+        {
+            *end += 1;
+        } else {
+            runs.push((frame, frame + 1));
+        }
+    }
+    runs
+}
+
+fn candidate_with_neutralized_ranges(
+    parent: &ProvenBootCandidate,
+    ranges: &[(usize, usize)],
+    generation: u32,
+    mutation: &str,
+) -> Result<Candidate, EvaluateError> {
+    let mut tape = parent.tape.clone();
+    for &(start, end) in ranges {
+        for frame in &mut tape.frames[start..end] {
+            frame.pads[0] = RawPadState::default();
+        }
+    }
+    let mut candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape)?;
+    candidate.ancestry = crate::search::Ancestry {
+        generation,
+        parent_id: Some(parent.candidate.id()?),
+        mutation: Some(mutation.into()),
+    };
+    Ok(candidate)
+}
+
+fn best_boot_candidate(candidates: Vec<ProvenBootCandidate>) -> Option<ProvenBootCandidate> {
+    candidates.into_iter().min_by(|left, right| {
+        left.sim_tick
+            .cmp(&right.sim_tick)
+            .then(left.tape_frame.cmp(&right.tape_frame))
+            .then(pulse_frame_count(&left.tape).cmp(&pulse_frame_count(&right.tape)))
+            .then_with(|| {
+                left.candidate
+                    .id()
+                    .unwrap()
+                    .cmp(&right.candidate.id().unwrap())
+            })
+    })
+}
+
+fn evaluate_boot_batch(
+    config: &BootMinimizeConfig,
+    candidates: Vec<Candidate>,
+    root: &Path,
+    generation: u32,
+) -> Result<Vec<ProvenBootCandidate>, EvaluateError> {
+    Ok(evaluate_boot_batch_with_report(config, candidates, root, generation)?.0)
+}
+
+fn evaluate_boot_batch_with_report(
+    config: &BootMinimizeConfig,
+    candidates: Vec<Candidate>,
+    root: &Path,
+    generation: u32,
+) -> Result<(Vec<ProvenBootCandidate>, EvaluationReport), EvaluateError> {
+    let population_root = root.join("population");
+    let manifest = write_explicit_population(
+        &population_root,
+        SegmentProfile::BootToFsp103,
+        generation,
+        candidates.clone(),
+    )?;
+    let report = evaluate_population(&EvaluateConfig {
+        population_path: population_root.join("manifest.json"),
+        game: config.game.clone(),
+        dvd: config.dvd.clone(),
+        output_root: root.join("evidence"),
+        results_path: root.join("results.json"),
+        working_directory: config.working_directory.clone(),
+        game_args_prefix: config.game_args_prefix.clone(),
+        workers: config.workers,
+        repetitions: config.repetitions,
+        timeout: config.timeout,
+    })?;
+    let mut proven = Vec::new();
+    for candidate in candidates {
+        let id = candidate.id()?;
+        let attempts: Vec<_> = report
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.candidate_id == id)
+            .collect();
+        if attempts.len() != config.repetitions as usize
+            || !attempts.iter().all(|attempt| attempt.goal_reached)
+        {
+            continue;
+        }
+        let observation = attempts[0]
+            .milestone_observations
+            .get("gameplay-ready-f-sp103")
+            .ok_or_else(|| {
+                EvaluateError::InvalidResult(format!(
+                    "successful boot candidate {id} has no goal observation"
+                ))
+            })?;
+        let boundary_fingerprint = attempts[0]
+            .boundary_fingerprints
+            .get("gameplay-ready-f-sp103")
+            .ok_or_else(|| {
+                EvaluateError::InvalidResult(format!(
+                    "successful boot candidate {id} has no goal boundary fingerprint"
+                ))
+            })?
+            .clone();
+        proven.push(ProvenBootCandidate {
+            tape: candidate.compile()?,
+            candidate,
+            sim_tick: observation.sim_tick,
+            tape_frame: observation.tape_frame,
+            boundary_fingerprint,
+        });
+    }
+    // Keep manifest live in this scope as a sanity assertion that every exact
+    // caller-supplied candidate was represented once.
+    debug_assert_eq!(
+        manifest.members.len(),
+        report.planned_attempts / config.repetitions as usize
+    );
+    Ok((proven, report))
 }
 
 #[derive(Clone, Debug)]
@@ -976,5 +1338,40 @@ impl From<crate::search::SearchError> for EvaluateError {
 impl From<crate::tape::TapeError> for EvaluateError {
     fn from(value: crate::tape::TapeError) -> Self {
         Self::Tape(value)
+    }
+}
+
+#[cfg(test)]
+mod minimize_tests {
+    use super::*;
+
+    fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
+        let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
+        ProvenBootCandidate {
+            tape: candidate.compile().unwrap(),
+            candidate,
+            sim_tick,
+            tape_frame,
+            boundary_fingerprint: BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v1".into(),
+                digest: digest.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn boot_reduction_target_rejects_later_or_different_proof() {
+        let source = proven(439, 439, &"a".repeat(32));
+        let target = BootReductionTarget {
+            sim_tick: source.sim_tick,
+            tape_frame: source.tape_frame,
+            boundary_fingerprint: source.boundary_fingerprint.clone(),
+        };
+        assert!(target.accepts(&source));
+        assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
+        assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
+        assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
     }
 }

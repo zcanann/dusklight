@@ -365,11 +365,6 @@ impl Candidate {
                     index += 1;
                 }
                 (State::Press(mask), hold_frames) => {
-                    if hold_frames > 30 {
-                        return Err(SearchError::NonCanonicalTape(
-                            "button hold exceeds the typed press limit".into(),
-                        ));
-                    }
                     let neutral_frames = runs
                         .get(index + 1)
                         .and_then(|(state, frames)| (*state == State::Neutral).then_some(*frames))
@@ -389,9 +384,21 @@ impl Candidate {
                             buttons.push(button);
                         }
                     }
+                    // Preserve long raw holds losslessly by splitting them into
+                    // adjacent typed actions. This also lets the reducer
+                    // canonicalize a mash after deleting intervening frames.
+                    let mut remaining = hold_frames;
+                    while remaining > 30 {
+                        actions.push(MacroAction::Press {
+                            buttons: buttons.clone(),
+                            hold_frames: 30,
+                            neutral_frames: 0,
+                        });
+                        remaining -= 30;
+                    }
                     actions.push(MacroAction::Press {
                         buttons,
-                        hold_frames,
+                        hold_frames: remaining,
                         neutral_frames,
                     });
                     index += if neutral_frames == 0 { 1 } else { 2 };
@@ -1298,6 +1305,33 @@ mod tests {
             Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &analog),
             Err(SearchError::NonCanonicalTape(_))
         ));
+
+        let long_hold = Candidate {
+            schema: CANDIDATE_SCHEMA.into(),
+            segment: SegmentProfile::BootToFsp103,
+            actions: vec![
+                MacroAction::Press {
+                    buttons: vec![ControllerButton::A],
+                    hold_frames: 30,
+                    neutral_frames: 0,
+                },
+                MacroAction::Press {
+                    buttons: vec![ControllerButton::A],
+                    hold_frames: 30,
+                    neutral_frames: 1,
+                },
+            ],
+            ancestry: Ancestry::default(),
+        }
+        .compile()
+        .unwrap();
+        assert_eq!(
+            Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &long_hold)
+                .unwrap()
+                .compile()
+                .unwrap(),
+            long_hold
+        );
     }
 
     #[test]

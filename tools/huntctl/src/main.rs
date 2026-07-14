@@ -8,7 +8,10 @@ use huntctl::search::{
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
     rank_population, write_seed_population,
 };
-use huntctl::search_evaluator::{EvaluateConfig, SearchRunConfig, evaluate_population, run_search};
+use huntctl::search_evaluator::{
+    BootMinimizeConfig, EvaluateConfig, SearchRunConfig, evaluate_population, minimize_boot,
+    run_search,
+};
 use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
@@ -439,6 +442,27 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
                 timeout: timeout_option(search_args)?,
                 rng_seed: u64_option(search_args, "--rng-seed", 1)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("minimize-boot") => {
+            let search_args = &args[1..];
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            candidate.validate()?;
+            let summary = minimize_boot(&BootMinimizeConfig {
+                candidate,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -1019,7 +1043,7 @@ fn print_usage() {
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
-        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
 }
 
