@@ -46,6 +46,8 @@ state hashes, and the reason it was classified as interesting.
   nondeterminism that need to be controlled.
 - [Eye Shredder benchmark](benchmarks/eye-shredder.md) defines the first
   boot-tape and fidelity probe.
+- [Intro route benchmarks](benchmarks/intro-route.md) define the first-exit
+  frame golf, the path to `demo01_04`, trace scoring, and route-search tools.
 - [Roadmap](roadmap.md) breaks implementation into independently verifiable
   milestones.
 

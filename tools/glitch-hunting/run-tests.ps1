@@ -10,6 +10,8 @@ param(
         "rng",
         "eye-shredder-oracle",
         "eye-shredder",
+        "intro-first-exit",
+        "intro-cutscene",
         "aurora-card",
         "aurora-time",
         "rust",
@@ -151,6 +153,12 @@ try {
         }
         "eye-shredder" {
             & (Join-Path $repoRoot "tools\glitch-hunting\run-eye-shredder.ps1") -Preset $Preset
+        }
+        "intro-first-exit" {
+            & (Join-Path $repoRoot "tools\glitch-hunting\run-intro-route.ps1") -Preset $Preset -Goal first-exit
+        }
+        "intro-cutscene" {
+            & (Join-Path $repoRoot "tools\glitch-hunting\run-intro-route.ps1") -Preset $Preset -Goal intro-cutscene
         }
         default {
             Invoke-NativeTests @($Test)

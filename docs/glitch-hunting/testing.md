@@ -12,6 +12,9 @@ Run **Tasks: Run Test Task** from the command palette and choose
   `eye-shredder-oracle`, `aurora-card`, or `aurora-time`: one native suite;
 - `eye-shredder`: build and run the real isolated Eye Shredder tape three times
   silently and headlessly against the last configured GCN USA image;
+- `intro-first-exit`: run the normal-file first-loading-trigger golf three
+  times with semantic gameplay traces;
+- `intro-cutscene`: continue the route through the fence into `demo01_04`;
 - `rust` or `rust-lint`: the control-plane tests or formatting/Clippy; and
 - `worker-smoke` or `pool-smoke`: real native process protocol tests.
 
@@ -45,11 +48,12 @@ pixel-perfect console raster corruption is not claimed.
    repository-local image such as `orig/GZ2E01/GZ2E01.iso` remains ignored by
    Git.
 2. Run **Tasks: Run Task** and choose **Glitch Hunt: Play Visual Scenario**.
-3. Choose `eye-shredder` from the fixed dropdown. It is the default;
-   `boot-start-smoke` is only a short boot/menu diagnostic. Leaving the DVD
+3. Choose `eye-shredder`, `intro-first-exit`, or `intro-cutscene` from the fixed
+   dropdown. Eye Shredder is the default; `boot-start-smoke` is only a short
+   boot/menu diagnostic. Leaving the DVD
    prompt blank uses the last image selected through Dusklight's Browse screen.
 
-The pre-launch task builds Dusklight and compiles both checked TAS fixtures.
+The pre-launch task builds Dusklight and compiles all checked TAS fixtures.
 The selector dispatches named scenarios rather than treating every tape as
 interchangeable. Eye Shredder uses the checked Eye runner, fixed-step timing,
 the bounded Cursor Breakout model, semantic oracle, trace, isolated state, and

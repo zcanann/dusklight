@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("eye-shredder", "boot-start-smoke")]
+    [ValidateSet("eye-shredder", "intro-first-exit", "intro-cutscene", "boot-start-smoke")]
     [string]$Scenario = "eye-shredder",
 
     [string]$DvdPath,
@@ -28,6 +28,14 @@ switch ($Scenario) {
     "boot-start-smoke" {
         $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
         $runnerParameters.TapePath = Join-Path $repoRoot "build\boot_start_smoke.tape"
+    }
+    "intro-first-exit" {
+        $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro_first_exit.tape"
+    }
+    "intro-cutscene" {
+        $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro_route.tape"
     }
 }
 

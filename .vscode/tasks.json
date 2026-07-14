@@ -18,6 +18,8 @@
         "rng",
         "eye-shredder-oracle",
         "eye-shredder",
+        "intro-first-exit",
+        "intro-cutscene",
         "aurora-card",
         "aurora-time",
         "rust",
@@ -39,6 +41,8 @@
       "default": "eye-shredder",
       "options": [
         "eye-shredder",
+        "intro-first-exit",
+        "intro-cutscene",
         "boot-start-smoke"
       ]
     },

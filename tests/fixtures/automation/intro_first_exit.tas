@@ -1,0 +1,64 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+# First-exit golf benchmark. This is deliberately a pure absolute input tape:
+# no observed game state can delay, advance, or branch playback.
+state neutral {}
+state start { p0 buttons START }
+state accept { p0 buttons A }
+state move_forward { p0 stick 0 127 }
+state move_right { p0 stick 127 0 }
+
+marker process-start
+repeat 115 neutral
+
+marker start-pulse-1
+frame start
+repeat 31 neutral
+
+marker start-pulse-2
+frame start
+repeat 252 neutral
+
+marker continue-without-saving
+frame accept
+repeat 7 neutral
+
+marker accept-default-link
+frame start
+repeat 29 neutral
+
+marker select-default-epona-menu
+frame start
+frame neutral
+
+marker accept-default-epona
+frame start
+repeat 67 neutral
+
+marker skip-opening-event-arm
+frame start
+frame neutral
+
+marker skip-opening-event-confirm
+frame start
+repeat 65 neutral
+
+marker skip-opening-cutscene-arm
+frame start
+frame neutral
+
+marker skip-opening-cutscene-confirm
+frame start
+repeat 115 neutral
+
+marker route-to-first-exit
+repeat 45 move_forward
+repeat 14 move_right
+repeat 20 move_forward
+repeat 10 move_right
+repeat 316 move_forward
+
+marker observe-first-exit
+repeat 80 neutral

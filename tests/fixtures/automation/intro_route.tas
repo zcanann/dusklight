@@ -1,0 +1,79 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+# Deterministic normal-file boot prefix for the intro route benchmark. This is
+# deliberately branch-free; timings are minimized only after cold-run proof.
+state neutral {}
+state start { p0 buttons START }
+state accept { p0 buttons A }
+state move_forward { p0 stick 0 127 }
+state move_right { p0 stick 127 0 }
+state move_left { p0 stick -127 0 }
+state move_forward_left { p0 stick -90 90 }
+
+marker process-start
+repeat 115 neutral
+
+marker start-pulse-1
+frame start
+repeat 31 neutral
+
+marker start-pulse-2
+frame start
+# Cold title-scene streaming has completed as late as tick 318. Keep the
+# first context-sensitive A press beyond that boundary; golf this only against
+# a cold-run distribution, never a warm run.
+repeat 252 neutral
+
+marker continue-without-saving
+frame accept
+repeat 7 neutral
+
+marker accept-default-link
+frame start
+repeat 29 neutral
+
+marker select-default-epona-menu
+frame start
+frame neutral
+
+marker accept-default-epona
+frame start
+repeat 67 neutral
+
+marker skip-opening-event-arm
+frame start
+frame neutral
+
+marker skip-opening-event-confirm
+frame start
+repeat 65 neutral
+
+marker skip-opening-cutscene-arm
+frame start
+frame neutral
+
+marker skip-opening-cutscene-confirm
+frame start
+repeat 115 neutral
+
+marker route-to-first-exit
+repeat 45 move_forward
+repeat 14 move_right
+repeat 20 move_forward
+repeat 10 move_right
+repeat 316 move_forward
+repeat 200 neutral
+
+marker route-after-first-load
+repeat 8 move_right
+repeat 220 move_forward
+repeat 8 move_left
+repeat 75 move_forward
+repeat 8 move_left
+repeat 120 move_forward
+
+marker route-fence-to-intro
+repeat 100 move_forward_left
+repeat 200 neutral

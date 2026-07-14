@@ -9,6 +9,10 @@ $bootFixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.t
 $bootOutput = Join-Path $repoRoot "build\boot_start_smoke.tape"
 $eyeShredderFixture = Join-Path $repoRoot "tests\fixtures\automation\eye_shredder.tas"
 $eyeShredderOutput = Join-Path $repoRoot "build\eye_shredder.tape"
+$introRouteFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_route.tas"
+$introRouteOutput = Join-Path $repoRoot "build\intro_route.tape"
+$introFirstExitFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_first_exit.tas"
+$introFirstExitOutput = Join-Path $repoRoot "build\intro_first_exit.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
 $debugState = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot "build\automation-state\vscode-debug"))
@@ -43,6 +47,14 @@ try {
     )
     Invoke-Checked "cargo" @(
         "run", "--quiet", "--manifest-path", $manifest, "--",
+        "tape", "compile", $introRouteFixture, $introRouteOutput
+    )
+    Invoke-Checked "cargo" @(
+        "run", "--quiet", "--manifest-path", $manifest, "--",
+        "tape", "compile", $introFirstExitFixture, $introFirstExitOutput
+    )
+    Invoke-Checked "cargo" @(
+        "run", "--quiet", "--manifest-path", $manifest, "--",
         "tape", "compile", $eyeShredderFixture, $eyeShredderOutput
     )
 
@@ -72,6 +84,8 @@ try {
 
     Write-Host "`nVisual TAS tapes ready:" -ForegroundColor Green
     Write-Host "  $eyeShredderOutput" -ForegroundColor Green
+    Write-Host "  $introFirstExitOutput" -ForegroundColor Green
+    Write-Host "  $introRouteOutput" -ForegroundColor Green
     Write-Host "  $bootOutput" -ForegroundColor DarkGray
 } finally {
     Pop-Location
