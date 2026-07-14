@@ -59,6 +59,19 @@ json renderer_telemetry_json(const EyeShredderRendererTelemetry& telemetry) {
     };
 }
 
+json gameplay_telemetry_json(const EyeShredderGameplayTelemetry& telemetry) {
+    return {
+        {"stage_name", telemetry.stageName},
+        {"room", telemetry.room},
+        {"point", telemetry.point},
+        {"layer", telemetry.layer},
+        {"player_actor_name", telemetry.playerActorName},
+        {"player_actor_present", telemetry.playerActorPresent},
+        {"player_is_link", telemetry.playerIsLink},
+        {"event_running", telemetry.eventRunning},
+    };
+}
+
 }  // namespace
 
 void EyeShredderOracle::start() {
@@ -68,6 +81,7 @@ void EyeShredderOracle::start() {
     mLastWriteAttempt = 0;
     mRendererMismatchDrawCountAtMemoryMatch = 0;
     mSawNameEntry = false;
+    mNameEntryEnded = false;
 }
 
 void EyeShredderOracle::evaluate(const NameEntryObservation& observation,
@@ -78,15 +92,18 @@ void EyeShredderOracle::evaluate(const NameEntryObservation& observation,
 
     mResult.simTick = simTick;
     mResult.tapeFrame = tapeFrame;
-    if (mResult.memoryMatched) {
-        return;
-    }
-
     if (observation.active != 0) {
         mSawNameEntry = true;
     } else if (mSawNameEntry) {
-        fail("name-entry session ended before the expected Eye Shredder write", nullptr, simTick,
-            tapeFrame);
+        if (!mResult.memoryMatched) {
+            fail("name-entry session ended before the expected Eye Shredder write", nullptr,
+                simTick, tapeFrame);
+            return;
+        }
+        mNameEntryEnded = true;
+    }
+
+    if (mResult.memoryMatched) {
         return;
     }
 
@@ -168,9 +185,35 @@ void EyeShredderOracle::observeRendererTelemetry(
     mResult.rendererMatched = true;
     mResult.rendererMatchSimTick = simTick;
     mResult.rendererMatchTapeFrame = tapeFrame;
-    mResult.status = EyeShredderOracleStatus::Passed;
     mResult.reason =
-        "matched Eye Shredder memory write and exact XF=12 / BP=4 renderer draw";
+        "matched Eye Shredder memory write and exact XF=12 / BP=4 renderer draw; waiting for "
+        "controllable new-gameplay state";
+}
+
+void EyeShredderOracle::observeGameplayTelemetry(const EyeShredderGameplayTelemetry& telemetry,
+    const std::uint64_t simTick, const std::uint64_t tapeFrame) {
+    if (mResult.status != EyeShredderOracleStatus::Running) {
+        return;
+    }
+
+    mResult.hasGameplayTelemetry = true;
+    mResult.gameplayTelemetry = telemetry;
+    mResult.simTick = simTick;
+    mResult.tapeFrame = tapeFrame;
+
+    const bool isControllableNewGame = mResult.rendererMatched && mNameEntryEnded &&
+        telemetry.stageName == "F_SP108" && telemetry.room == 1 && telemetry.point == 21 &&
+        telemetry.layer == 13 && telemetry.playerActorPresent && telemetry.playerIsLink &&
+        !telemetry.eventRunning;
+    if (!isControllableNewGame) {
+        return;
+    }
+
+    mResult.gameplayMatched = true;
+    mResult.gameplayMatchSimTick = simTick;
+    mResult.gameplayMatchTapeFrame = tapeFrame;
+    mResult.status = EyeShredderOracleStatus::Passed;
+    mResult.reason = "matched Eye Shredder and reached controllable new gameplay";
 }
 
 void EyeShredderOracle::finish(const std::uint64_t simTick, const std::uint64_t tapeFrame) {
@@ -178,7 +221,10 @@ void EyeShredderOracle::finish(const std::uint64_t simTick, const std::uint64_t 
         return;
     }
     mResult.status = EyeShredderOracleStatus::Incomplete;
-    if (mResult.memoryMatched) {
+    if (mResult.rendererMatched) {
+        mResult.reason =
+            "matched Eye Shredder renderer draw but input ended before controllable new gameplay";
+    } else if (mResult.memoryMatched) {
         mResult.reason =
             "matched Eye Shredder memory write but input ended before a subsequent exact "
             "XF=12 / BP=4 renderer draw";
@@ -226,6 +272,10 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
     if (result.hasRendererTelemetry) {
         rendererTelemetry = renderer_telemetry_json(result.rendererTelemetry);
     }
+    json gameplayTelemetry = nullptr;
+    if (result.hasGameplayTelemetry) {
+        gameplayTelemetry = gameplay_telemetry_json(result.gameplayTelemetry);
+    }
 
     const json root = {
         {"schema", {{"name", "dusklight.eye_shredder_oracle"},
@@ -240,6 +290,7 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
         {"j2d_leak", false},
         {"renderer_effect",
             result.rendererMatched ? "exact_xf_bp_draw_observed" : "not_observed"},
+        {"gameplay_effect", result.gameplayMatched ? "control_reached" : "not_reached"},
         {"emulator_diagnostic", "Mismatched configuration between XF and BP stages"},
         {"expected",
             {{"character_index", EyeShredderExpectedWrite::CharacterIndex},
@@ -259,7 +310,12 @@ std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& 
                     {{"matched", result.rendererMatched},
                         {"sim_tick", result.rendererMatchSimTick},
                         {"tape_frame", result.rendererMatchTapeFrame},
-                        {"telemetry", std::move(rendererTelemetry)}}}}},
+                        {"telemetry", std::move(rendererTelemetry)}}},
+                {"gameplay",
+                    {{"matched", result.gameplayMatched},
+                        {"sim_tick", result.gameplayMatchSimTick},
+                        {"tape_frame", result.gameplayMatchTapeFrame},
+                        {"telemetry", std::move(gameplayTelemetry)}}}}},
         {"actual", std::move(actual)},
     };
     return root.dump(2) + '\n';

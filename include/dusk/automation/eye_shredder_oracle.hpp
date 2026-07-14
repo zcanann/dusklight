@@ -9,7 +9,7 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 2;
+inline constexpr std::uint32_t EyeShredderOracleSchemaVersion = 3;
 
 struct EyeShredderExpectedWrite {
     static constexpr std::uint8_t CharacterIndex = 113;
@@ -48,6 +48,17 @@ struct EyeShredderRendererTelemetry {
     std::uint64_t mismatchDrawCount = 0;
 };
 
+struct EyeShredderGameplayTelemetry {
+    std::string stageName;
+    std::int16_t room = -1;
+    std::int16_t point = -1;
+    std::int16_t layer = -1;
+    std::int32_t playerActorName = -1;
+    bool playerActorPresent = false;
+    bool playerIsLink = false;
+    bool eventRunning = false;
+};
+
 struct EyeShredderOracleResult {
     EyeShredderOracleStatus status = EyeShredderOracleStatus::Idle;
     std::string reason;
@@ -61,6 +72,11 @@ struct EyeShredderOracleResult {
     EyeShredderRendererTelemetry rendererTelemetry{};
     std::uint64_t rendererMatchSimTick = NameEntryNoTick;
     std::uint64_t rendererMatchTapeFrame = NameEntryNoTick;
+    bool gameplayMatched = false;
+    bool hasGameplayTelemetry = false;
+    EyeShredderGameplayTelemetry gameplayTelemetry{};
+    std::uint64_t gameplayMatchSimTick = NameEntryNoTick;
+    std::uint64_t gameplayMatchTapeFrame = NameEntryNoTick;
     std::uint64_t simTick = NameEntryNoTick;
     std::uint64_t tapeFrame = NameEntryNoTick;
 };
@@ -71,6 +87,8 @@ public:
     void evaluate(
         const NameEntryObservation& observation, std::uint64_t simTick, std::uint64_t tapeFrame);
     void observeRendererTelemetry(const EyeShredderRendererTelemetry& telemetry,
+        std::uint64_t simTick, std::uint64_t tapeFrame);
+    void observeGameplayTelemetry(const EyeShredderGameplayTelemetry& telemetry,
         std::uint64_t simTick, std::uint64_t tapeFrame);
     void finish(std::uint64_t simTick, std::uint64_t tapeFrame);
     void reject(std::string reason);
@@ -86,6 +104,7 @@ private:
     std::uint64_t mLastWriteAttempt = 0;
     std::uint64_t mRendererMismatchDrawCountAtMemoryMatch = 0;
     bool mSawNameEntry = false;
+    bool mNameEntryEnded = false;
 };
 
 std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& result);

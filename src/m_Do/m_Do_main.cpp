@@ -570,6 +570,19 @@ static bool finish_automation_oracle_tick() {
 
     eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
                                automationSimulationTick, automationTapeFrame);
+    fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    eyeShredderOracle.observeGameplayTelemetry(
+        {
+            .stageName = dComIfGp_getStartStageName(),
+            .room = dComIfGp_getStartStageRoomNo(),
+            .point = dComIfGp_getStartStagePoint(),
+            .layer = dComIfGp_getStartStageLayer(),
+            .playerActorName = player == nullptr ? -1 : fopAcM_GetName(player),
+            .playerActorPresent = player != nullptr,
+            .playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e,
+            .eventRunning = dComIfGp_event_runCheck() != 0,
+        },
+        automationSimulationTick, automationTapeFrame);
     ++automationSimulationTick;
     if (!eyeShredderOracle.isTerminal()) {
         return false;
