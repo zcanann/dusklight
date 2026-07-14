@@ -51,6 +51,16 @@
       ]
     },
     {
+      "id": "glitchHuntSearchSegment",
+      "type": "pickString",
+      "description": "Milestone-backed search objective",
+      "default": "fsp103_to_fsp104",
+      "options": [
+        "fsp103_to_fsp104",
+        "boot_to_fsp103"
+      ]
+    },
+    {
         "id": "gameVersion",
         "type": "pickString",
         "options": [
@@ -88,6 +98,28 @@
       ],
       "problemMatcher": "$msCompile",
       "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Glitch Hunt: Run Search",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\glitch-hunting\\run-search.ps1",
+        "-Segment",
+        "${input:glitchHuntSearchSegment}",
+        "-DvdPath",
+        "${input:glitchHuntDvd}"
+      ],
+      "problemMatcher": "$msCompile",
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",

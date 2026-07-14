@@ -37,6 +37,30 @@ The segment profiles are:
 
 ## File-oriented generation loop
 
+For a complete local round, use the VS Code task `Glitch Hunt: Run Search` and
+pick either objective. The task builds the native client, runs two generations
+of eight candidates with two trials each on four concurrent clients, writes the
+leaderboards under `build/search`, and promotes the final winner for visual
+playback. The equivalent command is:
+
+    .\tools\glitch-hunting\run-search.ps1 -Segment fsp103_to_fsp104
+
+Population size, generations, elites, repetitions, workers, seed, and output
+root are command-line parameters. A native timeout, crash, or malformed result
+fails the round; it is never silently counted as a poor candidate. A legitimate
+goal miss remains a scored partial sample.
+
+After the round, run `Glitch Hunt: TAS Playback` and select
+`route-search-champion` or `boot-search-champion`. The former recreates the
+direct `F_SP103,1,1,3` search start; the latter replays from a cold process boot.
+
+The initial route acceptance hunt (seed 424242, four generations, twelve
+candidates) reduced the verified exit-commit score from tick 571 to tick 493.
+The promoted 581-frame champion repeated tick 493 in 3/3 isolated trials and
+loaded `F_SP104` each time. The cold-boot baseline reached controllable
+`F_SP103` at tick 649; boot timing golf now uses that memory-backed result as
+its incumbent.
+
 Generate a reproducible initial population:
 
     cargo run --release --manifest-path tools/huntctl/Cargo.toml -- search seed --segment fsp103_to_fsp104 --output build/search/g0 --size 16 --rng-seed 1
