@@ -59,6 +59,7 @@
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/rng.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
 #include "dusk/automation/worker.hpp"
@@ -675,6 +676,18 @@ static bool record_milestone_tick() {
     }
 
     fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
+    const auto* link = playerIsLink ? static_cast<daAlink_c*>(player) : nullptr;
+    dEvt_control_c* event = dComIfGp_getEvent();
+    const char* eventName = dComIfGp_getEventManager().getRunEventName();
+    std::uint32_t eventNameHash = 0;
+    if (eventName != nullptr) {
+        eventNameHash = 2166136261u;
+        for (const unsigned char* cursor = reinterpret_cast<const unsigned char*>(eventName);
+             *cursor != 0; ++cursor) {
+            eventNameHash = (eventNameHash ^ *cursor) * 16777619u;
+        }
+    }
     const bool goalReachedBefore = tracker.goalReached();
     tracker.observe(
         {
@@ -683,13 +696,43 @@ static bool record_milestone_tick() {
             .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
             .point = dComIfGp_getStartStagePoint(),
             .playerPresent = player != nullptr,
-            .playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e,
+            .playerIsLink = playerIsLink,
+            .playerProcessId = player == nullptr ? fpcM_ERROR_PROCESS_ID_e : fopAcM_GetID(player),
+            .playerActorName = static_cast<std::int16_t>(
+                player == nullptr ? -1 : fopAcM_GetName(player)),
+            .playerProcId =
+                static_cast<std::uint16_t>(link == nullptr ? 0xffff : link->mProcID),
+            .playerPositionX = player == nullptr ? 0.0f : player->current.pos.x,
+            .playerPositionY = player == nullptr ? 0.0f : player->current.pos.y,
+            .playerPositionZ = player == nullptr ? 0.0f : player->current.pos.z,
+            .playerVelocityX = player == nullptr ? 0.0f : player->speed.x,
+            .playerVelocityY = player == nullptr ? 0.0f : player->speed.y,
+            .playerVelocityZ = player == nullptr ? 0.0f : player->speed.z,
+            .playerForwardSpeed = player == nullptr ? 0.0f : player->speedF,
+            .playerCurrentAngleX =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.x),
+            .playerCurrentAngleY =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.y),
+            .playerCurrentAngleZ =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.z),
+            .playerShapeAngleX =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.x),
+            .playerShapeAngleY =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.y),
+            .playerShapeAngleZ =
+                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.z),
             .eventRunning = dComIfGp_event_runCheck() != 0,
+            .eventId = event->mEventId,
+            .eventMode = event->getMode(),
+            .eventStatus = event->mEventStatus,
+            .eventMapToolId = event->getMapToolId(),
+            .eventNameHash = eventNameHash,
             .nextStageEnabled = dComIfGp_isEnableNextStage() != 0,
             .nextStageName = dComIfGp_getNextStageName(),
             .nextRoom = static_cast<std::int8_t>(dComIfGp_getNextStageRoomNo()),
             .nextLayer = static_cast<std::int8_t>(dComIfGp_getNextStageLayer()),
             .nextPoint = dComIfGp_getNextStagePoint(),
+            .rng = dusk::automation::capture_game_rng_snapshot(),
         },
         automationSimulationTick, automationTapeFrame);
     if (!goalReachedBefore && tracker.goalReached()) {

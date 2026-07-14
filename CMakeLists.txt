@@ -501,7 +501,7 @@ add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
     src/dusk/automation/milestones.cpp
 )
 target_include_directories(dusk_milestones_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json xxHash::xxhash)
 set_target_properties(dusk_milestones_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_rng_test EXCLUDE_FROM_ALL
