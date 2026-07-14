@@ -64,5 +64,45 @@ frame neutral
     assert_eq!(summary["minimum_tick_count"], 3);
     assert_eq!(summary["minimum_duration_seconds"], 0.1);
     assert_eq!(summary["wait_conditions"]["name_entry_active"], 1);
+
+    let absolute_path = directory.join("absolute.tape");
+    let mut absolute = decoded.tape.clone();
+    for frame in &mut absolute.frames {
+        frame.wait_condition = Default::default();
+        frame.wait_timeout_ticks = 0;
+    }
+    fs::write(&absolute_path, absolute.encode().unwrap()).unwrap();
+    let concatenated = directory.join("nested").join("chain.tape");
+    let concat = Command::new(executable)
+        .args([
+            "tape",
+            "concat",
+            concatenated.to_str().unwrap(),
+            absolute_path.to_str().unwrap(),
+            absolute_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        concat.status.success(),
+        "{}",
+        String::from_utf8_lossy(&concat.stderr)
+    );
+    let chain = InputTape::decode(&fs::read(&concatenated).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(chain.frames.len(), 8);
+    assert_eq!(chain.frames[0], chain.frames[4]);
+
+    let missing_input = Command::new(executable)
+        .args([
+            "tape",
+            "concat",
+            concatenated.to_str().unwrap(),
+            absolute_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing_input.status.success());
     fs::remove_dir_all(directory).unwrap();
 }

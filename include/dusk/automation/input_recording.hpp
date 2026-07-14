@@ -31,6 +31,13 @@ enum class BootRecordingError {
     RecorderBeginFailed,
 };
 
+enum class FastForwardBoundaryError {
+    None,
+    PastTapeEnd,
+    TapeEndRequiresRecording,
+    TapeEndRequiresRelease,
+};
+
 struct BootRecordingCliRequest {
     bool enabled = false;
     bool hasOutputTape = false;
@@ -52,6 +59,11 @@ struct BootRecordingBinding {
     std::uint64_t boundaryIndex = 0;
 };
 
+struct ParentRecordingBoundary {
+    std::uint64_t boundaryIndex = 0;
+    std::uint64_t tapeFrame = 0;
+};
+
 using BootRecordingBegin = bool (*)(void* context);
 using BootRecordingReleaseInput = void (*)(void* context);
 
@@ -70,5 +82,21 @@ BootRecordingError begin_authored_boot_recording(const MilestoneTracker& tracker
     BootRecordingReleaseInput releaseInput, void* context, BootRecordingBinding& binding);
 
 const char* boot_recording_error_message(BootRecordingError error);
+
+/**
+ * Ordinary playback must retain at least one visible tape frame. An exact tape-end reveal is only
+ * meaningful for recording handoff, where the next PAD read is the first live child frame.
+ */
+FastForwardBoundaryError validate_fast_forward_boundary(std::uint64_t requestedFrames,
+    std::uint64_t tapeFrames, bool recording, bool tapeEndReleasesInput);
+
+/** Guard used immediately before revealing an exact tape-end recording handoff. */
+bool accelerated_recording_reveal_ready(
+    bool exactTapeEndHandoff, bool handoffReached, bool recorderIsRecording);
+
+/** Maps an exact N-frame absolute prefix to its post-simulation handoff boundary. */
+ParentRecordingBoundary exact_parent_recording_boundary(std::uint64_t completedFrames);
+
+const char* fast_forward_boundary_error_message(FastForwardBoundaryError error);
 
 }  // namespace dusk::automation

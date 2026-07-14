@@ -23,6 +23,7 @@ use huntctl::search_evaluator::{
     golf_boot, minimize_boot, run_search,
 };
 use huntctl::tape::InputTape;
+use huntctl::tape_chain::{ChainSegment, concatenate};
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::timeline::Timeline;
@@ -1408,6 +1409,31 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("concat") if args.len() >= 4 => {
+            let output = PathBuf::from(&args[1]);
+            let mut segments = Vec::with_capacity(args.len() - 2);
+            for input in &args[2..] {
+                let tape = InputTape::decode(&fs::read(input)?)?.tape;
+                segments.push(ChainSegment::all(tape));
+            }
+            let chained = concatenate(segments)?;
+            let bytes = chained.tape.encode()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "concatenated {} tapes into {} frames ({} bytes) at {}",
+                args.len() - 2,
+                chained.tape.frames.len(),
+                bytes.len(),
+                output.display()
+            );
+            Ok(())
+        }
         _ => usage_error(),
     }
 }
@@ -1524,7 +1550,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"

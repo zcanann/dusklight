@@ -4,6 +4,7 @@
 #include "dusk/automation/milestones.hpp"
 
 #include <algorithm>
+#include <cassert>
 
 namespace dusk::automation {
 
@@ -126,6 +127,42 @@ const char* boot_recording_error_message(const BootRecordingError error) {
         return "armed Boot input recorder failed to begin";
     }
     return "unknown Boot recording error";
+}
+
+FastForwardBoundaryError validate_fast_forward_boundary(const std::uint64_t requestedFrames,
+    const std::uint64_t tapeFrames, const bool recording,
+    const bool tapeEndReleasesInput) {
+    if (requestedFrames > tapeFrames) return FastForwardBoundaryError::PastTapeEnd;
+    if (requestedFrames < tapeFrames) return FastForwardBoundaryError::None;
+    if (!recording) return FastForwardBoundaryError::TapeEndRequiresRecording;
+    if (!tapeEndReleasesInput) return FastForwardBoundaryError::TapeEndRequiresRelease;
+    return FastForwardBoundaryError::None;
+}
+
+bool accelerated_recording_reveal_ready(const bool exactTapeEndHandoff,
+    const bool handoffReached, const bool recorderIsRecording) {
+    return !exactTapeEndHandoff || (handoffReached && recorderIsRecording);
+}
+
+ParentRecordingBoundary exact_parent_recording_boundary(const std::uint64_t completedFrames) {
+    assert(completedFrames > 0);
+    return {
+        .boundaryIndex = completedFrames,
+        .tapeFrame = completedFrames - 1,
+    };
+}
+
+const char* fast_forward_boundary_error_message(const FastForwardBoundaryError error) {
+    switch (error) {
+    case FastForwardBoundaryError::None: return "no error";
+    case FastForwardBoundaryError::PastTapeEnd:
+        return "fast-forward frame count exceeds tape frame count";
+    case FastForwardBoundaryError::TapeEndRequiresRecording:
+        return "fast-forward to tape end requires --record-input-tape PATH with no controller continuation";
+    case FastForwardBoundaryError::TapeEndRequiresRelease:
+        return "fast-forward to recording handoff requires --input-tape-end release";
+    }
+    return "unknown fast-forward boundary error";
 }
 
 }  // namespace dusk::automation

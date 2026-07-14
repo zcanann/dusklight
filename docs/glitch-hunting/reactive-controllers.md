@@ -220,6 +220,32 @@ looping/holding end behavior, headless/unpaced launches, and exit-after-tape
 are rejected so the reveal boundary and eventual live handoff remain
 unambiguous.
 
+For authoritative **Record child from parent**, `N` is instead exactly the
+absolute prefix tape length. This equality is accepted only for a direct
+recording handoff with release end behavior and no controller continuation:
+
+```powershell
+dusklight --dvd game.iso --fixed-step `
+  --input-tape build/exact-parent-chain.tape `
+  --input-tape-end release `
+  --input-tape-fast-forward-frames 12345 `
+  --record-input-tape build/child-continuation.tape
+```
+
+On the final prefix tick, native code arms reveal but keeps the submitted
+parent-boundary frame hidden. The normal verified handoff begins the already
+armed recorder and releases input quarantine. Only after both conditions are
+true does Dusklight reveal the parent boundary, restore audio and pacing, and
+enter the next outer loop. That loop's PAD read is therefore simultaneously
+the first live child input, recorded frame zero, and the first input consumed
+while the window is visible. A missing or failed recorder handoff aborts while
+the window remains hidden. Without `--record-input-tape`, equality remains an
+error so ordinary Play from parent always retains a visible tape continuation.
+The recording status binds this unnamed handoff with `start_boundary_kind` set
+to `"tick"`, `start_boundary_index` set to `N`, and `start_tape_frame` set to
+`N - 1`; milestone and fingerprint remain null when the parent draft did not
+require them.
+
 ## Current limits
 
 - Observation and catalog capture retain the same 256 lowest process IDs and

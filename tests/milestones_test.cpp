@@ -376,6 +376,40 @@ void testBootRecordingGuardrailsAndBeginOrdering() {
     REQUIRE(binding.definitionDigest == program.find("process_boot")->definitionDigest);
 }
 
+void testAcceleratedParentRecordingBoundaryAndRevealOrdering() {
+    using namespace dusk::automation;
+    REQUIRE(validate_fast_forward_boundary(9, 10, false, true) ==
+            FastForwardBoundaryError::None);
+    REQUIRE(validate_fast_forward_boundary(10, 10, false, true) ==
+            FastForwardBoundaryError::TapeEndRequiresRecording);
+    REQUIRE(validate_fast_forward_boundary(10, 10, true, false) ==
+            FastForwardBoundaryError::TapeEndRequiresRelease);
+    REQUIRE(validate_fast_forward_boundary(11, 10, true, true) ==
+            FastForwardBoundaryError::PastTapeEnd);
+    REQUIRE(validate_fast_forward_boundary(10, 10, true, true) ==
+            FastForwardBoundaryError::None);
+    const ParentRecordingBoundary boundary = exact_parent_recording_boundary(10);
+    REQUIRE(boundary.boundaryIndex == 10);
+    REQUIRE(boundary.tapeFrame == 9);
+
+    // Exact tape-end reveal is forbidden until the normal handoff has both marked the boundary
+    // reached and begun the armed recorder. The first live PAD read follows reveal.
+    std::vector<int> order;
+    bool handoffReached = false;
+    bool recorderRecording = false;
+    REQUIRE(!accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
+    recorderRecording = true;
+    order.push_back(1);  // recorder.begin()
+    REQUIRE(!accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
+    handoffReached = true;
+    order.push_back(2);  // live-input handoff/quarantine release
+    REQUIRE(accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
+    order.push_back(3);  // window reveal after hidden parent frame submission
+    order.push_back(4);  // first visible live PAD read
+    REQUIRE(order == std::vector<int>({1, 2, 3, 4}));
+    REQUIRE(accelerated_recording_reveal_ready(false, false, false));
+}
+
 }  // namespace
 
 int main() {
@@ -388,6 +422,7 @@ int main() {
     testAuthoredBootStableAndExactFirstHit();
     testMalformedAuthoredProgramIsRejected();
     testBootRecordingGuardrailsAndBeginOrdering();
+    testAcceleratedParentRecordingBoundaryAndRevealOrdering();
     std::cout << "milestone tests passed\n";
     return 0;
 }

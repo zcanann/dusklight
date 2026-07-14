@@ -581,6 +581,7 @@ static bool inputTapePlaybackFailed;
 static std::size_t inputTapeFastForwardFrames;
 static bool inputTapeFastForwardActive;
 static bool inputTapeFastForwardRevealPending;
+static bool inputTapeFastForwardAtRecordingHandoff;
 static bool exitAfterInputController;
 static bool inputControllerConfigured;
 static bool inputControllerStarted;
@@ -816,6 +817,13 @@ static void handoff_automation_to_live_input() {
             return;
         }
         recordInputHandoffReached = true;
+        if (inputTapeFastForwardAtRecordingHandoff) {
+            const auto boundary = dusk::automation::exact_parent_recording_boundary(
+                dusk::automation::input_tape_player().consumedFrameCount());
+            recordInputStartBoundaryKind = "tick";
+            recordInputStartBoundaryIndex = boundary.boundaryIndex;
+            recordInputStartTapeFrame = boundary.tapeFrame;
+        }
         DuskLog.info("Input recording started at live-input handoff (capacity={} frames)",
                      recordInputFrameCapacity);
     }
@@ -1261,6 +1269,21 @@ static bool finalize_input_tape_fast_forward_reveal() {
         return false;
     }
     inputTapeFastForwardRevealPending = false;
+
+    auto& recorder = dusk::automation::input_tape_recorder();
+    if (!dusk::automation::accelerated_recording_reveal_ready(
+            inputTapeFastForwardAtRecordingHandoff, recordInputHandoffReached,
+            recorder.isRecording())) {
+        DuskLog.error("Exact tape-end reveal reached before the recording handoff was live; refusing to expose an invalid child boundary");
+        inputTapePlaybackFailed = true;
+        recordInputFailed = true;
+        recordInputStartBoundaryMismatch = true;
+        if (recordInputError.empty()) {
+            recordInputError = "accelerated parent replay reached reveal before recorder begin";
+        }
+        dusk::IsRunning = false;
+        return true;
+    }
 
     // The parent-boundary image has now been submitted and renderer telemetry
     // finalized for this outer tick. Revealing here cannot expose the prior
@@ -2336,13 +2359,20 @@ int game_main(int argc, char* argv[]) {
                     "Input Tape Error: fast-forward requires an absolute tape with one completed frame per simulation tick\n");
             return 1;
         }
+        const auto fastForwardBoundaryError = dusk::automation::validate_fast_forward_boundary(
+            inputTapeFastForwardFrames, inputTapeFrameCount,
+            hasRecordInputTape && !hasInputController,
+            inputTapeEndBehavior == dusk::automation::TapeEndBehavior::Release);
         if (hasInputTapeFastForward &&
-            inputTapeFastForwardFrames >= inputTapeFrameCount) {
-            fprintf(stderr,
-                    "Input Tape Error: fast-forward frame count %zu must be less than tape frame count %zu\n",
+            fastForwardBoundaryError != dusk::automation::FastForwardBoundaryError::None) {
+            fprintf(stderr, "Input Tape Error: %s (requested %zu, tape %zu)\n",
+                    dusk::automation::fast_forward_boundary_error_message(
+                        fastForwardBoundaryError),
                     inputTapeFastForwardFrames, inputTapeFrameCount);
             return 1;
         }
+        inputTapeFastForwardAtRecordingHandoff = hasInputTapeFastForward &&
+            inputTapeFastForwardFrames == inputTapeFrameCount;
         if (!dusk::automation::input_tape_maximum_execution_ticks(
                 inputTape, inputTapeMaximumTicks)) {
             fprintf(stderr, "Input Tape Error: maximum execution tick count overflows\n");

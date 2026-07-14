@@ -92,6 +92,15 @@ recordings and path escapes, and atomically moves each affected directory into
 `build/automation-state/route-workbench/trash/drafts/`. This is recoverable
 workspace cleanup, not deletion or mutation of checked-in timeline objects.
 
+**Rename** changes only an ignored draft's human-facing label. The immutable
+draft ID, directory, parent references, tapes, hashes, and verification state do
+not move or change. The browser submits the draft-graph revision captured when
+the rename prompt opened; the server refuses stale edits and active recordings,
+revalidates the contained manifest path, then installs the label-only manifest
+replacement through an adjacent synced temporary file and rollback backup.
+Labels are trimmed, nonempty, at most 160 UTF-8 bytes, and contain no control
+characters. Checked-in route objects remain read-only.
+
 When a timeline declares `milestone_program`, each milestone node also exposes
 **Edit predicate**. The editor works on the complete DSL source because the
 program is compiled and identified as one unit. The browser never supplies or
@@ -119,7 +128,7 @@ before the first PAD read, and stores the resulting draft directly beneath the
 Boot milestone. Its manifest pins the program hash, definition hash, boundary
 fingerprint, and canonical empty-parent digest. The workbench rejects stale or
 forged root proofs. A Boot-root draft offers **Play from boot** and **Record
-child**, but omits **Play from parent** because no simulation boundary exists
+child (fast)**, but omits **Play from parent** because no simulation boundary exists
 before Boot.
 
 Ready draft cards expose two presentation origins. **Play from boot** displays
@@ -138,6 +147,16 @@ renderer/audio state. A future checkpoint provider may replace the hidden cold
 replay only when it is tied to the exact build, game data, parent-chain digest,
 and boundary fingerprint and reproduces a validation replay. Until then, prefix
 replay is the only authoritative resume mechanism.
+
+Recording from a checked-in variant or ready draft uses the same authoritative
+resume mechanism. **Record fast** / **Record child (fast)** replays the entire
+parent prefix in a hidden, muted, unpaced fixed-step process. The final parent
+frame is submitted while the window is still hidden; native code then proves
+the exact tape-end boundary, starts the recorder, releases physical-controller
+quarantine, restores audio and 30 Hz pacing, and reveals the window. The first
+visible PAD read is therefore child frame zero. An unnamed draft parent still
+records the exact tick boundary index and final parent tape frame in its native
+status instead of treating tape exhaustion as an implicit or approximate handoff.
 
 The native result binds the launch with a random session token and authenticates
 the continuation by frame count, encoded length, and SHA-256. Parent-chain

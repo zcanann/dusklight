@@ -33,6 +33,7 @@ const DRAFT_TAPE: &str = "continuation.tape";
 const DRAFT_TRASH_DIRECTORY: &str = "trash";
 const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-preview.v1";
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
+const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
@@ -57,6 +58,8 @@ pub struct WorkbenchGraph {
     pub variants: Vec<GraphVariant>,
     pub lineages: Vec<GraphLineage>,
     pub drafts: Vec<GraphDraft>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft_graph_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub milestone_program: Option<GraphMilestoneProgram>,
 }
@@ -181,6 +184,8 @@ struct DraftManifest {
     endpoint_kind: String,
     verification: String,
     start_boundary_verified: bool,
+    #[serde(default)]
+    accelerated_parent_replay: bool,
     parent_frames: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     tape_sha256: Option<String>,
@@ -351,6 +356,14 @@ pub struct BrowserDraftDeleteApplyRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct BrowserDraftRenameRequest {
+    pub id: String,
+    pub label: String,
+    pub expected_graph_revision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserMilestoneProgramUpdateRequest {
     pub expected_revision_sha256: String,
     pub source: String,
@@ -379,6 +392,14 @@ pub struct DraftDeleteResult {
     pub graph_revision: String,
     pub drafts: Vec<String>,
     pub trash_transaction: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DraftRenameResult {
+    pub schema: String,
+    pub id: String,
+    pub label: String,
+    pub graph_revision: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1037,6 +1058,7 @@ pub fn graph_from_timeline(
         variants,
         lineages,
         drafts: Vec::new(),
+        draft_graph_revision: None,
         milestone_program,
     })
 }
@@ -1089,7 +1111,9 @@ fn graph_with_drafts(
     state_root: &Path,
 ) -> Result<WorkbenchGraph, WorkbenchError> {
     let mut graph = graph_from_timeline(timeline, repository_root)?;
-    graph.drafts = scan_drafts(timeline, repository_root, state_root)?;
+    let manifests = scan_draft_manifests(state_root)?;
+    graph.draft_graph_revision = Some(draft_graph_revision(&manifests)?);
+    graph.drafts = graph_drafts_from_manifests(timeline, repository_root, state_root, manifests)?;
     Ok(graph)
 }
 
@@ -1157,6 +1181,16 @@ fn validated_drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
 fn scan_draft_manifests(
     state_root: &Path,
 ) -> Result<BTreeMap<String, DraftManifest>, WorkbenchError> {
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    scan_draft_manifests_with_active(state_root, &active)
+}
+
+fn scan_draft_manifests_with_active(
+    state_root: &Path,
+    active: &BTreeSet<String>,
+) -> Result<BTreeMap<String, DraftManifest>, WorkbenchError> {
     let root = validated_drafts_root(state_root)?;
     let mut manifests = BTreeMap::new();
     let mut entries = fs::read_dir(&root)
@@ -1220,11 +1254,7 @@ fn scan_draft_manifests(
             manifest.status,
             DraftStatus::Preparing | DraftStatus::Recording
         ) {
-            if active_recordings()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(&id)
-            {
+            if active.contains(&id) {
                 manifest.status = DraftStatus::Recording;
                 manifests.insert(id, manifest);
                 continue;
@@ -1364,10 +1394,10 @@ fn preview_draft_deletion(
     state_root: &Path,
     id: &str,
 ) -> Result<DraftDeletePreview, WorkbenchError> {
-    let manifests = scan_draft_manifests(state_root)?;
     let active = active_recordings()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
     draft_delete_preview_locked(state_root, id, &manifests, &active)
 }
 
@@ -1391,6 +1421,231 @@ fn validated_draft_directory(root: &Path, id: &str) -> Result<PathBuf, Workbench
         )));
     }
     Ok(resolved)
+}
+
+#[derive(Debug)]
+enum DraftRenameError {
+    Conflict(String),
+    Invalid(WorkbenchError),
+}
+
+impl fmt::Display for DraftRenameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflict(message) => formatter.write_str(message),
+            Self::Invalid(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<WorkbenchError> for DraftRenameError {
+    fn from(error: WorkbenchError) -> Self {
+        Self::Invalid(error)
+    }
+}
+
+fn validated_draft_manifest_path(directory: &Path) -> Result<PathBuf, WorkbenchError> {
+    let final_path = directory.join(DRAFT_FINAL_MANIFEST);
+    let path = match fs::symlink_metadata(&final_path) {
+        Ok(_) => final_path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            directory.join(DRAFT_MANIFEST)
+        }
+        Err(error) => {
+            return Err(WorkbenchError::new(format!(
+                "cannot inspect draft manifest {}: {error}",
+                final_path.display()
+            )));
+        }
+    };
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot inspect draft manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WorkbenchError::new(format!(
+            "draft manifest {} is not a contained regular file",
+            path.display()
+        )));
+    }
+    let resolved = fs::canonicalize(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve draft manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    if resolved != path || resolved.parent() != Some(directory) {
+        return Err(WorkbenchError::new(format!(
+            "draft manifest {} escapes its draft directory",
+            path.display()
+        )));
+    }
+    Ok(resolved)
+}
+
+fn rollback_draft_manifest(backup: &Path, target: &Path) -> Result<(), WorkbenchError> {
+    if fs::symlink_metadata(target).is_ok() {
+        return Err(WorkbenchError::new(format!(
+            "cannot restore draft manifest backup {} because {} now exists",
+            backup.display(),
+            target.display()
+        )));
+    }
+    fs::rename(backup, target).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot restore draft manifest backup {} to {}: {error}",
+            backup.display(),
+            target.display()
+        ))
+    })
+}
+
+fn replace_draft_manifest(
+    path: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+) -> Result<(), WorkbenchError> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("draft manifest has no parent directory"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| WorkbenchError::new("draft manifest filename is not UTF-8"))?;
+    let nonce = random_session_token()?;
+    let temporary = directory.join(format!(".{name}.{nonce}.tmp"));
+    let backup = directory.join(format!(".{name}.{nonce}.rollback"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create adjacent draft manifest temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    let mut cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    file.write_all(replacement)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot flush draft manifest temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    drop(file);
+
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot revalidate draft manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WorkbenchError::new(
+            "draft manifest changed to a non-regular file during rename",
+        ));
+    }
+    if fs::canonicalize(path).ok().as_deref() != Some(path)
+        || !fs::read(path).is_ok_and(|bytes| bytes == expected)
+    {
+        return Err(WorkbenchError::new(
+            "draft manifest changed while preparing rename; reload the graph",
+        ));
+    }
+
+    fs::rename(path, &backup).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot stage draft manifest rollback backup {}: {error}",
+            backup.display()
+        ))
+    })?;
+    let moved_matches = fs::symlink_metadata(&backup)
+        .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        && fs::read(&backup).is_ok_and(|bytes| bytes == expected);
+    if !moved_matches {
+        rollback_draft_manifest(&backup, path)?;
+        return Err(WorkbenchError::new(
+            "draft manifest changed while staging its rollback backup",
+        ));
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        rollback_draft_manifest(&backup, path)?;
+        return Err(WorkbenchError::new(format!(
+            "cannot replace draft manifest {}: {error}",
+            path.display()
+        )));
+    }
+    cleanup.0 = None;
+    let _ = fs::remove_file(backup);
+    Ok(())
+}
+
+fn rename_draft_label(
+    state_root: &Path,
+    request: &BrowserDraftRenameRequest,
+) -> Result<DraftRenameResult, DraftRenameError> {
+    let label = validate_draft_label(&request.label)?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let revision = draft_graph_revision(&manifests)?;
+    if revision != request.expected_graph_revision {
+        return Err(DraftRenameError::Conflict(
+            "draft graph changed; reload before renaming".into(),
+        ));
+    }
+    let manifest = manifests
+        .get(&request.id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown draft {:?}", request.id)))?;
+    let root = validated_drafts_root(state_root)?;
+    let directory = validated_draft_directory(&root, &request.id)?;
+    if draft_is_active(&directory, manifest, &active) {
+        return Err(DraftRenameError::Conflict(format!(
+            "cannot rename draft {:?} while its recording is active",
+            request.id
+        )));
+    }
+    let path = validated_draft_manifest_path(&directory)?;
+    let original = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read draft manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mut disk_manifest: DraftManifest = serde_json::from_slice(&original).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot decode draft manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    if disk_manifest.schema != DRAFT_SCHEMA || disk_manifest.id != request.id {
+        return Err(
+            WorkbenchError::new("draft manifest identity changed while preparing rename").into(),
+        );
+    }
+    disk_manifest.label = label.clone();
+    let replacement = serde_json::to_vec(&disk_manifest)
+        .map_err(|error| WorkbenchError::new(format!("cannot encode draft manifest: {error}")))?;
+
+    let latest = scan_draft_manifests_with_active(state_root, &active)?;
+    if draft_graph_revision(&latest)? != request.expected_graph_revision {
+        return Err(DraftRenameError::Conflict(
+            "draft graph changed while preparing rename; reload the graph".into(),
+        ));
+    }
+    replace_draft_manifest(&path, &original, &replacement)?;
+    let updated = scan_draft_manifests_with_active(state_root, &active)?;
+    Ok(DraftRenameResult {
+        schema: DRAFT_RENAME_RESULT_SCHEMA.into(),
+        id: request.id.clone(),
+        label,
+        graph_revision: draft_graph_revision(&updated)?,
+    })
 }
 
 fn draft_trash_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
@@ -1429,10 +1684,10 @@ fn apply_draft_deletion(
     state_root: &Path,
     request: &BrowserDraftDeleteApplyRequest,
 ) -> Result<DraftDeleteResult, WorkbenchError> {
-    let manifests = scan_draft_manifests(state_root)?;
     let active = active_recordings()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
     let preview = draft_delete_preview_locked(state_root, &request.id, &manifests, &active)?;
     if request.confirmation_token != preview.confirmation_token {
         return Err(WorkbenchError::new(
@@ -1514,12 +1769,12 @@ fn read_draft_launch(directory: &Path, manifest: &DraftManifest) -> Option<Draft
         .then_some(launch)
 }
 
-fn scan_drafts(
+fn graph_drafts_from_manifests(
     timeline: &Timeline,
     repository_root: &Path,
     state_root: &Path,
+    manifests: BTreeMap<String, DraftManifest>,
 ) -> Result<Vec<GraphDraft>, WorkbenchError> {
-    let manifests = scan_draft_manifests(state_root)?;
     let root = drafts_root(state_root)?;
     let mut memo = BTreeMap::new();
     let mut anchor_digests = BTreeMap::new();
@@ -2303,6 +2558,30 @@ fn append_playback_args(
     }
 }
 
+fn validate_draft_label(label: &str) -> Result<String, WorkbenchError> {
+    let label = label.trim();
+    if label.is_empty() || label.len() > 160 || label.chars().any(char::is_control) {
+        return Err(WorkbenchError::new(
+            "draft label must be 1 to 160 UTF-8 bytes without controls",
+        ));
+    }
+    Ok(label.to_owned())
+}
+
+fn append_accelerated_recording_prefix(
+    command: &mut Command,
+    playback: &Path,
+    parent_frames: usize,
+) {
+    command
+        .arg("--input-tape")
+        .arg(playback)
+        .arg("--input-tape-end")
+        .arg("release")
+        .arg("--input-tape-fast-forward-frames")
+        .arg(parent_frames.to_string());
+}
+
 fn record_continuation(
     timeline: &Timeline,
     config: &WorkbenchConfig,
@@ -2316,13 +2595,7 @@ fn record_continuation(
     let label = if request.label.trim().is_empty() {
         format!("Manual branch {generated_number}")
     } else {
-        let label = request.label.trim();
-        if label.len() > 160 || label.chars().any(char::is_control) {
-            return Err(WorkbenchError::new(
-                "draft label must be at most 160 characters without controls",
-            ));
-        }
-        label.to_owned()
+        validate_draft_label(&request.label)?
     };
     let (
         materialized,
@@ -2502,6 +2775,7 @@ fn record_continuation(
         endpoint_kind: "manual_stop".into(),
         verification: "unverified".into(),
         start_boundary_verified: false,
+        accelerated_parent_replay: !record_from_boot,
         parent_frames: materialized.tape.frames.len() as u64,
         tape_sha256: None,
         tape_bytes: None,
@@ -2518,11 +2792,11 @@ fn record_continuation(
     if record_from_boot {
         command.arg("--record-input-from-boot");
     } else {
-        command
-            .arg("--input-tape")
-            .arg(&playback)
-            .arg("--input-tape-end")
-            .arg("release");
+        append_accelerated_recording_prefix(
+            &mut command,
+            &playback,
+            materialized.tape.frames.len(),
+        );
     }
     command
         .arg("--record-input-tape")
@@ -2692,6 +2966,17 @@ fn finalize_recording(directory: &Path, manifest: &mut DraftManifest, exit_succe
             native.start_milestone.as_deref() == Some(milestone)
                 && native.start_fingerprint.as_deref() == Some(fingerprint)
                 && native.expected_start_fingerprint.as_deref() == Some(fingerprint)
+                && (!manifest.accelerated_parent_replay
+                    || (native.start_boundary_kind.as_deref() == Some("tick")
+                        && native.start_boundary_index == Some(manifest.parent_frames)))
+                && native.start_tape_frame == manifest.parent_frames.checked_sub(1)
+        }
+        (None, None, None) if manifest.accelerated_parent_replay => {
+            native.start_milestone.is_none()
+                && native.start_fingerprint.is_none()
+                && native.expected_start_fingerprint.is_none()
+                && native.start_boundary_kind.as_deref() == Some("tick")
+                && native.start_boundary_index == Some(manifest.parent_frames)
                 && native.start_tape_frame == manifest.parent_frames.checked_sub(1)
         }
         (None, None, None) => {
@@ -3643,6 +3928,26 @@ fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/drafts/rename") => {
+                    let result = serde_json::from_slice::<BrowserDraftRenameRequest>(&request.body)
+                        .map_err(|error| {
+                            DraftRenameError::Invalid(WorkbenchError::new(format!(
+                                "invalid draft rename request: {error}"
+                            )))
+                        })
+                        .and_then(|rename_request| {
+                            rename_draft_label(&config.state_root, &rename_request)
+                        });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error @ DraftRenameError::Conflict(_)) => {
+                            json_error(409, "Conflict", &error.to_string())
+                        }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/milestone-program") => {
                     let result = serde_json::from_slice::<BrowserMilestoneProgramUpdateRequest>(
                         &request.body,
@@ -4480,6 +4785,7 @@ continue main with boot_link.tas after root@clean
             endpoint_kind: "manual_stop".into(),
             verification: "unverified".into(),
             start_boundary_verified: false,
+            accelerated_parent_replay: false,
             parent_frames: 0,
             tape_sha256: None,
             tape_bytes: None,
@@ -4603,6 +4909,7 @@ continue main with boot_link.tas after root@clean
             endpoint_kind: "manual_stop".into(),
             verification: "unverified".into(),
             start_boundary_verified: true,
+            accelerated_parent_replay: false,
             parent_frames: parent.frames.len() as u64,
             tape_sha256: Some(format!("{:x}", Sha256::digest(&continuation_bytes))),
             tape_bytes: Some(continuation_bytes.len() as u64),
@@ -4785,6 +5092,66 @@ continue main with boot_link.tas after root@clean
             !boot
                 .get_args()
                 .any(|argument| argument == "--input-tape-fast-forward-frames")
+        );
+
+        let mut recording = Command::new("game");
+        append_accelerated_recording_prefix(
+            &mut recording,
+            Path::new("playback.tape"),
+            nested.parent_frames as usize,
+        );
+        let recording_arguments = recording
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            recording_arguments,
+            [
+                "--input-tape",
+                "playback.tape",
+                "--input-tape-end",
+                "release",
+                "--input-tape-fast-forward-frames",
+                "9"
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accelerated_unnamed_parent_requires_exact_native_tape_end_boundary() {
+        let root = temporary_root("draft-accelerated-boundary");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let id = "draft-accelerated";
+        let mut manifest = install_ready_draft(&root, &state, id, &[8, 9]);
+        let directory = drafts_root(&state).unwrap().join(id);
+        manifest.status = DraftStatus::Recording;
+        manifest.expected_start_milestone = None;
+        manifest.expected_start_fingerprint = None;
+        manifest.start_boundary_verified = false;
+        manifest.accelerated_parent_replay = true;
+        write_success_status(&directory, &manifest, 2);
+        let status_path = directory.join(format!("{DRAFT_TAPE}.status.json"));
+        let mut status: serde_json::Value =
+            serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+        status["start_boundary_index"] = manifest.parent_frames.into();
+        fs::write(&status_path, serde_json::to_vec(&status).unwrap()).unwrap();
+
+        let mut exact = manifest.clone();
+        finalize_recording(&directory, &mut exact, Some(true));
+        assert_eq!(exact.status, DraftStatus::Ready);
+        assert!(!exact.start_boundary_verified);
+
+        status["start_boundary_index"] = (manifest.parent_frames - 1).into();
+        fs::write(&status_path, serde_json::to_vec(&status).unwrap()).unwrap();
+        let mut early = manifest;
+        finalize_recording(&directory, &mut early, Some(true));
+        assert_eq!(early.status, DraftStatus::ProcessFailure);
+        assert_eq!(
+            early.error.as_deref(),
+            Some("native recording status contradicts process result")
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -5118,6 +5485,223 @@ continue main with boot_link.tas after root@clean
     }
 
     #[test]
+    fn draft_rename_changes_only_final_manifest_label() {
+        let root = temporary_root("draft-rename");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let parent = install_ready_draft(&root, &state, "draft-rename-parent", &[8]);
+        let mut child = install_ready_draft(&root, &state, "draft-rename-child", &[9]);
+        child.parent = DraftParent::Draft {
+            id: parent.id.clone(),
+            parent_tape_sha256: parent.result_tape_sha256.clone().unwrap(),
+        };
+        child.parent_tape_sha256 = parent.result_tape_sha256.clone().unwrap();
+        let child_directory = drafts_root(&state).unwrap().join(&child.id);
+        fs::remove_file(child_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&child_directory, &child, true).unwrap();
+
+        let draft_root = drafts_root(&state).unwrap();
+        let directory = draft_root.join(&parent.id);
+        let manifest_path = directory.join(DRAFT_FINAL_MANIFEST);
+        let tape_before = fs::read(directory.join(DRAFT_TAPE)).unwrap();
+        let manifest_before: DraftManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let manifests = scan_draft_manifests(&state).unwrap();
+        let revision = draft_graph_revision(&manifests).unwrap();
+        let graph = graph_with_drafts(&timeline(), &root, &state).unwrap();
+        assert_eq!(
+            graph.draft_graph_revision.as_deref(),
+            Some(revision.as_str())
+        );
+        let result = rename_draft_label(
+            &state,
+            &BrowserDraftRenameRequest {
+                id: parent.id.clone(),
+                label: "  Useful route  ".into(),
+                expected_graph_revision: revision.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.label, "Useful route");
+        assert_ne!(result.graph_revision, revision);
+        assert!(directory.is_dir());
+        assert_eq!(fs::read(directory.join(DRAFT_TAPE)).unwrap(), tape_before);
+        let manifest_after: DraftManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let mut expected = manifest_before;
+        expected.label = "Useful route".into();
+        assert_eq!(
+            serde_json::to_value(manifest_after).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        let rescanned = scan_draft_manifests(&state).unwrap();
+        let DraftParent::Draft { id, .. } = &rescanned[&child.id].parent else {
+            panic!("child lost its draft parent");
+        };
+        assert_eq!(id, &parent.id);
+        assert!(fs::read_dir(&directory).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            !name.ends_with(".tmp") && !name.ends_with(".rollback")
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_rename_rejects_active_stale_and_invalid_requests_without_writing() {
+        let root = temporary_root("draft-rename-conflict");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let target = install_ready_draft(&root, &state, "draft-rename-target", &[8]);
+        let mut sibling = install_ready_draft(&root, &state, "draft-rename-sibling", &[9]);
+        let directory = drafts_root(&state).unwrap().join(&target.id);
+        let manifest_path = directory.join(DRAFT_FINAL_MANIFEST);
+        let original = fs::read(&manifest_path).unwrap();
+        let revision = draft_graph_revision(&scan_draft_manifests(&state).unwrap()).unwrap();
+
+        active_recordings()
+            .lock()
+            .unwrap()
+            .insert(target.id.clone());
+        let active = rename_draft_label(
+            &state,
+            &BrowserDraftRenameRequest {
+                id: target.id.clone(),
+                label: "blocked".into(),
+                expected_graph_revision: revision.clone(),
+            },
+        );
+        active_recordings().lock().unwrap().remove(&target.id);
+        assert!(matches!(active, Err(DraftRenameError::Conflict(_))));
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+
+        sibling.label = "concurrent sibling edit".into();
+        let sibling_directory = drafts_root(&state).unwrap().join(&sibling.id);
+        fs::remove_file(sibling_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&sibling_directory, &sibling, true).unwrap();
+        let stale = rename_draft_label(
+            &state,
+            &BrowserDraftRenameRequest {
+                id: target.id.clone(),
+                label: "stale".into(),
+                expected_graph_revision: revision,
+            },
+        );
+        assert!(matches!(stale, Err(DraftRenameError::Conflict(_))));
+        assert_eq!(fs::read(&manifest_path).unwrap(), original);
+
+        let current = draft_graph_revision(&scan_draft_manifests(&state).unwrap()).unwrap();
+        for label in [
+            String::new(),
+            "   ".into(),
+            "bad\nlabel".into(),
+            "x".repeat(161),
+        ] {
+            let invalid = rename_draft_label(
+                &state,
+                &BrowserDraftRenameRequest {
+                    id: target.id.clone(),
+                    label,
+                    expected_graph_revision: current.clone(),
+                },
+            );
+            assert!(matches!(invalid, Err(DraftRenameError::Invalid(_))));
+            assert_eq!(fs::read(&manifest_path).unwrap(), original);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_rename_http_api_rejects_paths_and_returns_stale_conflict() {
+        let root = temporary_root("draft-rename-http");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let draft = install_ready_draft(&root, &state, "draft-rename-http", &[8]);
+        let revision = draft_graph_revision(&scan_draft_manifests(&state).unwrap()).unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: root.join("unused.timeline"),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: root.join("unused-game"),
+            dvd: root.join("unused-dvd"),
+            state_root: state.clone(),
+        };
+        let smuggled = serde_json::json!({
+            "id": draft.id.clone(),
+            "label": "renamed",
+            "expected_graph_revision": revision.clone(),
+            "path": "../outside",
+            "new_id": "replacement-id"
+        });
+        let rejected = call_http(
+            &config,
+            "POST",
+            "/api/drafts/rename",
+            &serde_json::to_vec(&smuggled).unwrap(),
+        );
+        assert_eq!(rejected.status, 400);
+
+        let request = BrowserDraftRenameRequest {
+            id: draft.id.clone(),
+            label: "renamed through HTTP".into(),
+            expected_graph_revision: revision,
+        };
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/drafts/rename",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(response.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["id"], draft.id);
+        assert_eq!(body["label"], "renamed through HTTP");
+        assert!(body.get("path").is_none());
+        let stale = call_http(
+            &config,
+            "POST",
+            "/api/drafts/rename",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(stale.status, 409);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn draft_rename_rejects_manifest_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root("draft-rename-symlink");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let draft = install_ready_draft(&root, &state, "draft-rename-symlink", &[8]);
+        let revision = draft_graph_revision(&scan_draft_manifests(&state).unwrap()).unwrap();
+        let directory = drafts_root(&state).unwrap().join(&draft.id);
+        let final_path = directory.join(DRAFT_FINAL_MANIFEST);
+        let outside = root.join("outside.json");
+        fs::write(&outside, fs::read(&final_path).unwrap()).unwrap();
+        fs::remove_file(&final_path).unwrap();
+        symlink(&outside, &final_path).unwrap();
+        let result = rename_draft_label(
+            &state,
+            &BrowserDraftRenameRequest {
+                id: draft.id,
+                label: "escaped".into(),
+                expected_graph_revision: revision,
+            },
+        );
+        assert!(result.is_err());
+        let outside_manifest: DraftManifest =
+            serde_json::from_slice(&fs::read(&outside).unwrap()).unwrap();
+        assert_eq!(outside_manifest.label, "Test branch");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn draft_delete_moves_only_selected_subtree_to_recoverable_trash() {
         let root = temporary_root("draft-delete-subtree");
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
@@ -5205,6 +5789,43 @@ continue main with boot_link.tas after root@clean
                 .contains("changed after preview")
         );
         assert!(directory.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn draft_delete_rejects_descendant_added_after_preview() {
+        let root = temporary_root("draft-delete-new-descendant");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let parent = install_ready_draft(&root, &state, "draft-delete-parent", &[8]);
+        let preview = preview_draft_deletion(&state, &parent.id).unwrap();
+        let mut child = install_ready_draft(&root, &state, "draft-delete-late-child", &[9]);
+        child.parent = DraftParent::Draft {
+            id: parent.id.clone(),
+            parent_tape_sha256: parent.result_tape_sha256.clone().unwrap(),
+        };
+        child.parent_tape_sha256 = parent.result_tape_sha256.clone().unwrap();
+        let child_directory = drafts_root(&state).unwrap().join(&child.id);
+        fs::remove_file(child_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&child_directory, &child, true).unwrap();
+
+        let result = apply_draft_deletion(
+            &state,
+            &BrowserDraftDeleteApplyRequest {
+                id: parent.id.clone(),
+                confirmation_token: preview.confirmation_token,
+            },
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("changed after preview")
+        );
+        let draft_root = drafts_root(&state).unwrap();
+        assert!(draft_root.join(parent.id).is_dir());
+        assert!(draft_root.join(child.id).is_dir());
         fs::remove_dir_all(root).unwrap();
     }
 
