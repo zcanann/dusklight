@@ -533,6 +533,7 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool inputTapePlaybackFailed;
+static bool automationInputHandedOff;
 static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
@@ -636,12 +637,19 @@ static bool finish_input_tape_tick() {
         dusk::IsRunning = false;
         return true;
     }
-    if (!exitAfterInputTape) {
-        return false;
+    if (exitAfterInputTape) {
+        dusk::IsRunning = false;
+        return true;
     }
-
-    dusk::IsRunning = false;
-    return true;
+    if (!headlessMainLoop && !automationInputHandedOff) {
+        player.handoffToLiveInput();
+        PADPrepareAutomationHandoff();
+        automationInputQuarantine = false;
+        aurora_set_automation_input_quarantine(false);
+        automationInputHandedOff = true;
+        DuskLog.info("Input tape complete; live controller input resumed");
+    }
+    return false;
 }
 
 static void write_automation_oracle_result_on_exit() {

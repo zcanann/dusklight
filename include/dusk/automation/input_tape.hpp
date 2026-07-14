@@ -133,6 +133,7 @@ public:
 
     bool start(TapeEndBehavior endBehavior = TapeEndBehavior::Release);
     void stop();
+    void handoffToLiveInput();
     void tick();
 
     bool isPlaying() const { return mPlaying; }

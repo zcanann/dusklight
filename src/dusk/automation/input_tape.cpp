@@ -351,6 +351,11 @@ void InputTapePlayer::stop() {
     mFailedCondition = InputFrameCondition::None;
 }
 
+void InputTapePlayer::handoffToLiveInput() {
+    releaseOwnedPorts();
+    mReleasePending = false;
+}
+
 void InputTapePlayer::tick() {
     if (mReleasePending) {
         releaseOwnedPorts();

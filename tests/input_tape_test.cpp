@@ -198,6 +198,33 @@ void testPlayerOwnsAndReleasesPorts() {
     REQUIRE(gClearCalls[1] == 1);
 }
 
+void testSuccessfulHoldTapeCanHandOffImmediately() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    InputTape tape;
+    tape.frames.resize(1);
+    tape.frames[0].ownedPorts = 1 << 0;
+    tape.frames[0].pads[0].buttons = PAD_BUTTON_START;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    REQUIRE(!player.isPlaying());
+    REQUIRE(!player.hasFailed());
+    REQUIRE(player.nextFrameIndex() == 1);
+    REQUIRE(gActive[0]);
+
+    player.handoffToLiveInput();
+    REQUIRE(!gActive[0]);
+    REQUIRE(gClearCalls[0] == 1);
+    REQUIRE(player.nextFrameIndex() == 1);
+
+    player.handoffToLiveInput();
+    REQUIRE(gClearCalls[0] == 1);
+}
+
 void testPlayerWaitsNeutrallyForCondition() {
     using namespace dusk::automation;
 
@@ -563,6 +590,7 @@ int main() {
     testMinorZeroConnectionErrorsRemainCompatible();
     testConditionedFrameRoundTrip();
     testPlayerOwnsAndReleasesPorts();
+    testSuccessfulHoldTapeCanHandOffImmediately();
     testPlayerWaitsNeutrallyForCondition();
     testPlayerConditionTimeoutIsTerminal();
     testPlayerPulsesConditionedInputUntilSatisfied();

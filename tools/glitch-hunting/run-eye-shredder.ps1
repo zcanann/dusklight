@@ -126,8 +126,7 @@ for ($run = 1; $run -le $Runs; $run++) {
     $arguments = @(
         "--dvd", $resolvedDvd,
         "--input-tape", $tape,
-        "--input-tape-end", "hold",
-        "--exit-after-tape",
+        "--input-tape-end", $(if ($Visual) { "release" } else { "hold" }),
         "--automation-data-root", $state,
         "--cursor-breakout-shadow",
         "--name-entry-trace", $tracePath,
@@ -142,7 +141,7 @@ for ($run = 1; $run -le $Runs; $run++) {
     if ($Visual) {
         $arguments += @("--fixed-step", "--automation-oracle-continue-on-pass")
     } else {
-        $arguments += "--headless"
+        $arguments += @("--headless", "--exit-after-tape")
     }
 
     $mode = if ($Visual) { "visual" } else { "headless" }
