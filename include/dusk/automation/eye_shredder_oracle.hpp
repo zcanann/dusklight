@@ -105,6 +105,7 @@ private:
     std::uint64_t mRendererMismatchDrawCountAtMemoryMatch = 0;
     bool mSawNameEntry = false;
     bool mNameEntryEnded = false;
+    bool mSawNewGameplayEvent = false;
 };
 
 std::string serialize_eye_shredder_oracle_result(const EyeShredderOracleResult& result);

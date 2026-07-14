@@ -79,11 +79,12 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     REQUIRE(oracle.result().actualWrite.bytes == EyeShredderExpectedWrite::Bytes);
     NameEntryObservation ended;
     oracle.evaluate(ended, 902, 702);
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 903, 703);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(false), 903, 703);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 904, 704);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
     REQUIRE(oracle.result().gameplayMatched);
-    REQUIRE(oracle.result().simTick == 903);
-    REQUIRE(oracle.result().tapeFrame == 703);
+    REQUIRE(oracle.result().simTick == 904);
+    REQUIRE(oracle.result().tapeFrame == 704);
 
     const auto json = nlohmann::json::parse(serialize_eye_shredder_oracle_result(oracle.result()));
     REQUIRE(json["schema"]["version"] == 3);
@@ -112,8 +113,8 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
             true);
     REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_draw_count"] == 1);
     REQUIRE(json["stages"]["gameplay"]["matched"] == true);
-    REQUIRE(json["stages"]["gameplay"]["sim_tick"] == 903);
-    REQUIRE(json["stages"]["gameplay"]["tape_frame"] == 703);
+    REQUIRE(json["stages"]["gameplay"]["sim_tick"] == 904);
+    REQUIRE(json["stages"]["gameplay"]["tape_frame"] == 704);
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["stage_name"] == "F_SP108");
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["player_is_link"] == true);
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["event_running"] == false);
@@ -167,15 +168,18 @@ void testGameplayRequiresNameExitLinkAndNoEvent() {
 
     NameEntryObservation ended;
     oracle.evaluate(ended, 903, 703);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 904, 704);
+    REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
+
     auto gameplay = make_gameplay_telemetry();
     gameplay.playerIsLink = false;
-    oracle.observeGameplayTelemetry(gameplay, 904, 704);
+    oracle.observeGameplayTelemetry(gameplay, 905, 705);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
 
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(false), 905, 705);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(false), 906, 706);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
 
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 906, 706);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 907, 707);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
 }
 

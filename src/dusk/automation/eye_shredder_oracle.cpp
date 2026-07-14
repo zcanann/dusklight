@@ -82,6 +82,7 @@ void EyeShredderOracle::start() {
     mRendererMismatchDrawCountAtMemoryMatch = 0;
     mSawNameEntry = false;
     mNameEntryEnded = false;
+    mSawNewGameplayEvent = false;
 }
 
 void EyeShredderOracle::evaluate(const NameEntryObservation& observation,
@@ -201,9 +202,14 @@ void EyeShredderOracle::observeGameplayTelemetry(const EyeShredderGameplayTeleme
     mResult.simTick = simTick;
     mResult.tapeFrame = tapeFrame;
 
-    const bool isControllableNewGame = mResult.rendererMatched && mNameEntryEnded &&
-        telemetry.stageName == "F_SP108" && telemetry.room == 1 && telemetry.point == 21 &&
-        telemetry.layer == 13 && telemetry.playerActorPresent && telemetry.playerIsLink &&
+    const bool isNewGameStage = mNameEntryEnded && telemetry.stageName == "F_SP108" &&
+        telemetry.room == 1 && telemetry.point == 21 && telemetry.layer == 13;
+    if (isNewGameStage && telemetry.eventRunning) {
+        mSawNewGameplayEvent = true;
+    }
+
+    const bool isControllableNewGame = mResult.rendererMatched && isNewGameStage &&
+        mSawNewGameplayEvent && telemetry.playerActorPresent && telemetry.playerIsLink &&
         !telemetry.eventRunning;
     if (!isControllableNewGame) {
         return;
