@@ -184,6 +184,10 @@ void encode_frame_stream(const InputTape& tape, const std::span<std::uint8_t> ou
 
 } // namespace
 
+PADStatus raw_pad_state_to_pad_status(const RawPadState& input) {
+    return to_pad_status(input);
+}
+
 const char* input_tape_error_message(const InputTapeError error) {
     switch (error) {
     case InputTapeError::None:
@@ -255,6 +259,26 @@ InputTapeError validate_input_tape(const InputTape& tape) {
         }
     }
     return InputTapeError::None;
+}
+
+bool input_tape_maximum_execution_ticks(const InputTape& tape, std::size_t& output) {
+    std::size_t total = 0;
+    for (const InputFrame& frame : tape.frames) {
+        const std::size_t ticks = frame.condition == InputFrameCondition::None ?
+                                      1 : static_cast<std::size_t>(frame.timeoutTicks);
+        if (ticks > std::numeric_limits<std::size_t>::max() - total) {
+            return false;
+        }
+        total += ticks;
+    }
+    output = total;
+    return true;
+}
+
+bool input_tape_is_absolute(const InputTape& tape) {
+    return std::all_of(tape.frames.begin(), tape.frames.end(), [](const InputFrame& frame) {
+        return frame.condition == InputFrameCondition::None;
+    });
 }
 
 InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, InputTape& output) {

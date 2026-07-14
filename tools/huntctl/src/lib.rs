@@ -2,6 +2,7 @@
 
 pub mod artifact;
 pub mod client;
+pub mod controller_program;
 pub mod corpus;
 pub mod fqi;
 pub mod offline_rl;

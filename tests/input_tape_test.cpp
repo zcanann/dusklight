@@ -386,6 +386,23 @@ void testSuccessfulHoldTapeCanHandOffImmediately() {
     REQUIRE(gClearCalls[0] == 1);
 }
 
+void testMaximumExecutionTicksAccountsForConditionTimeouts() {
+    using namespace dusk::automation;
+
+    InputTape tape;
+    tape.frames.resize(3);
+    REQUIRE(input_tape_is_absolute(tape));
+    tape.frames[1].condition = InputFrameCondition::NameEntryActive;
+    tape.frames[1].timeoutTicks = 9;
+    tape.frames[2].condition = InputFrameCondition::FileSelectAcceptReady;
+    tape.frames[2].timeoutTicks = 17;
+    REQUIRE(!input_tape_is_absolute(tape));
+
+    std::size_t ticks = 0;
+    REQUIRE(input_tape_maximum_execution_ticks(tape, ticks));
+    REQUIRE(ticks == 27);
+}
+
 void testPlayerWaitsNeutrallyForCondition() {
     using namespace dusk::automation;
 
@@ -755,6 +772,7 @@ int main() {
     testConditionedFrameRoundTrip();
     testPlayerOwnsAndReleasesPorts();
     testSuccessfulHoldTapeCanHandOffImmediately();
+    testMaximumExecutionTicksAccountsForConditionTimeouts();
     testPlayerWaitsNeutrallyForCondition();
     testPlayerConditionTimeoutIsTerminal();
     testPlayerPulsesConditionedInputUntilSatisfied();

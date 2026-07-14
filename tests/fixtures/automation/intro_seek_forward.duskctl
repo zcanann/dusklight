@@ -1,0 +1,8 @@
+duskcontrol 1
+frames 45
+
+# Start at the proven F_SP103 route-control boundary. The replacement layer
+# recomputes camera-relative input toward the end of the opening straight on
+# every tick; the zero correction exercises deterministic additive layering.
+seek point replace from 0 for 45 target 666.0405 800 -1412 offset 0 0 0 magnitude 127 stop 0
+bezier add from 0 for 45 p0 0 0 p1 0 0 p2 0 0 p3 0 0

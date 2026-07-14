@@ -66,7 +66,10 @@ void mDoCPd_c::read() {
     ZoneScoped;
 #if TARGET_PC
     dusk::ui::sync_virtual_input();
-    dusk::automation::input_tape_player().tick();
+    auto& inputTapePlayer = dusk::automation::input_tape_player();
+    const bool tapeWasPlaying = inputTapePlayer.isPlaying();
+    inputTapePlayer.tick();
+    mDoAutomationInputTick(tapeWasPlaying);
 #endif
     JUTGamePad::read();
 #if TARGET_PC

@@ -467,6 +467,13 @@ target_compile_definitions(dusk_input_tape_test PRIVATE TARGET_PC=1 AURORA=1)
 target_link_libraries(dusk_input_tape_test PRIVATE zstd::libzstd)
 set_target_properties(dusk_input_tape_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_input_controller_test EXCLUDE_FROM_ALL
+    tests/input_controller_test.cpp
+    src/dusk/automation/input_controller.cpp
+)
+target_include_directories(dusk_input_controller_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(dusk_input_controller_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
 target_include_directories(dusk_game_clock_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(dusk_game_clock_test PROPERTIES FOLDER "Tests")

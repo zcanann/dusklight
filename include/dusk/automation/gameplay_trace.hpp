@@ -17,6 +17,7 @@ enum GameplayTraceFlags : std::uint32_t {
     GameplayTracePlayerIsLink = 1u << 1,
     GameplayTraceEventRunning = 1u << 2,
     GameplayTraceTapePlaying = 1u << 3,
+    GameplayTraceControllerPlaying = 1u << 4,
 };
 
 struct GameplayTraceSample {

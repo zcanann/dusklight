@@ -11,6 +11,13 @@ extern OSThread mainThread;
 void version_check();
 s32 LOAD_COPYDATE(void*);
 
+#if TARGET_PC
+// Called immediately before JUTGamePad::read(). tapeWasPlaying describes the
+// state at the beginning of this input tick, so a reactive controller can
+// never replace the tape's final frame.
+void mDoAutomationInputTick(bool tapeWasPlaying);
+#endif
+
 extern OSThread mainThread;
 const int HeapCheckTableNum = 8;
 

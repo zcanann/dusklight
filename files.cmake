@@ -1427,6 +1427,7 @@ set(DUSK_FILES
         src/dusk/automation/build_identity.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_tape.cpp
+        src/dusk/automation/input_controller.cpp
         include/dusk/automation/gameplay_trace.hpp
         src/dusk/automation/gameplay_trace.cpp
         include/dusk/automation/milestones.hpp

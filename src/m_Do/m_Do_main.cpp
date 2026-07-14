@@ -34,6 +34,7 @@
 #include "f_ap/f_ap_game.h"
 #include "f_op/f_op_msg.h"
 #include "f_op/f_op_actor_iter.h"
+#include "f_op/f_op_camera_mng.h"
 #include "m_Do/m_Do_MemCard.h"
 #include "m_Do/m_Do_Reset.h"
 #include "m_Do/m_Do_controller_pad.h"
@@ -48,6 +49,8 @@
 #include <sstream>
 
 #include <filesystem>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <system_error>
@@ -56,6 +59,7 @@
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
+#include "dusk/automation/input_controller.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/milestones.hpp"
@@ -236,6 +240,8 @@ static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
 static void write_milestone_result_on_exit();
+static void write_realized_input_tape_on_exit();
+static void release_active_controller_on_exit();
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -434,10 +440,12 @@ void main01(void) {
     } while (dusk::IsRunning);
 
     exit:;
+    release_active_controller_on_exit();
     write_automation_oracle_result_on_exit();
     write_name_entry_trace_on_exit();
     write_gameplay_trace_on_exit();
     write_milestone_result_on_exit();
+    write_realized_input_tape_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -545,6 +553,15 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool inputTapePlaybackFailed;
+static bool exitAfterInputController;
+static bool inputControllerConfigured;
+static bool inputControllerStarted;
+static bool inputControllerCompleted;
+static bool inputControllerFrameApplied;
+static bool inputTapeFrameApplied;
+static std::uint32_t inputControllerNextFrame;
+static std::size_t inputControllerPrefixFrames;
+static dusk::automation::InputControllerProgram inputControllerProgram;
 static bool automationInputHandedOff;
 static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
@@ -552,6 +569,9 @@ static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
 static bool gameplayTraceWriteFailed;
+static std::filesystem::path realizedInputTapePath;
+static dusk::automation::InputTape realizedInputTape;
+static bool realizedInputTapeWriteFailed;
 static std::filesystem::path milestoneResultPath;
 static bool milestoneResultWriteFailed;
 static bool eyeShredderOracleEnabled;
@@ -561,6 +581,137 @@ static std::filesystem::path eyeShredderOracleResultPath;
 static bool eyeShredderOracleResultWriteFailed;
 static std::uint64_t automationSimulationTick;
 static std::uint64_t automationTapeFrame = dusk::automation::NameEntryNoTick;
+static std::uint64_t automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
+
+namespace {
+
+constexpr std::size_t kControllerActorCapacity = 256;
+
+struct ControllerActorCapture {
+    std::array<dusk::automation::ControllerActor, kControllerActorCapacity> actors{};
+    std::size_t count = 0;
+};
+
+int capture_controller_actor(void* candidate, void* context) {
+    // fopAcIt's legacy callback ABI is mutable, but this observer only copies
+    // identity and transform fields from the completed prior game tick.
+    auto* actor = static_cast<fopAc_ac_c*>(candidate);
+    auto* capture = static_cast<ControllerActorCapture*>(context);
+    const std::uint64_t stableId = static_cast<std::uint32_t>(fopAcM_GetID(actor));
+    const dusk::automation::ControllerActor snapshot{
+        .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
+        .stableId = stableId,
+        .x = actor->current.pos.x,
+        .y = actor->current.pos.y,
+        .z = actor->current.pos.z,
+    };
+
+    if (capture->count < capture->actors.size()) {
+        capture->actors[capture->count++] = snapshot;
+        return 1;
+    }
+
+    // Bound work and storage without making the retained set depend on actor
+    // iteration order: keep the 256 smallest stable process IDs.
+    auto largest = std::max_element(
+        capture->actors.begin(), capture->actors.end(),
+        [](const auto& lhs, const auto& rhs) { return lhs.stableId < rhs.stableId; });
+    if (stableId < largest->stableId) {
+        *largest = snapshot;
+    }
+    return 1;
+}
+
+dusk::automation::ControllerObservation capture_controller_observation(
+    ControllerActorCapture& capture) {
+    dusk::automation::ControllerObservation observation;
+    if (fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
+        observation.playerPresent = true;
+        observation.playerX = player->current.pos.x;
+        observation.playerY = player->current.pos.y;
+        observation.playerZ = player->current.pos.z;
+    }
+    if (camera_process_class* camera = dComIfGp_getCamera(0); camera != nullptr) {
+        observation.cameraPresent = true;
+        constexpr float kAngleToRadians = 3.14159265358979323846F / 32768.0F;
+        observation.cameraYawRadians =
+            static_cast<float>(static_cast<std::int16_t>(camera->mCamera.U2())) *
+            kAngleToRadians;
+    }
+
+    fopAcIt_Executor(capture_controller_actor, &capture);
+    std::sort(capture.actors.begin(), capture.actors.begin() + capture.count,
+              [](const auto& lhs, const auto& rhs) { return lhs.stableId < rhs.stableId; });
+    observation.actors = std::span<const dusk::automation::ControllerActor>(
+        capture.actors.data(), capture.count);
+    return observation;
+}
+
+void release_controller_input() {
+    PADClearAutomationStatus(0);
+}
+
+} // namespace
+
+static void release_active_controller_on_exit() {
+    if (inputControllerStarted && !inputControllerCompleted) {
+        release_controller_input();
+    }
+}
+
+void mDoAutomationInputTick(const bool tapeWasPlaying) {
+    auto& tapePlayer = dusk::automation::input_tape_player();
+    if (tapeWasPlaying) {
+        inputControllerFrameApplied = false;
+        inputTapeFrameApplied = true;
+        const std::size_t nextFrame = tapePlayer.nextFrameIndex();
+        automationPreparedInputFrame =
+            nextFrame == 0 ? dusk::automation::NameEntryNoTick
+                           : static_cast<std::uint64_t>(nextFrame - 1);
+        return;
+    }
+    // Ordinary input takes a cold branch: no actor walk, observation capture,
+    // or PAD automation write occurs without an installed controller.
+    if (!inputControllerConfigured) {
+        if (tapePlayer.frameCount() != 0) {
+            inputTapeFrameApplied = false;
+            automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
+        }
+        return;
+    }
+
+    inputControllerFrameApplied = false;
+    inputTapeFrameApplied = false;
+    automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
+    if (inputControllerProgram.finished(inputControllerNextFrame)) {
+        return;
+    }
+
+    if (!inputControllerStarted) {
+        // Clears a held tape prefix only on the tick after its final frame.
+        tapePlayer.handoffToLiveInput();
+        inputControllerStarted = true;
+    }
+
+    ControllerActorCapture capture;
+    const auto observation = capture_controller_observation(capture);
+    const dusk::automation::RawPadState raw =
+        inputControllerProgram.evaluate(inputControllerNextFrame, observation);
+    if (!realizedInputTapePath.empty()) {
+        dusk::automation::InputFrame realizedFrame;
+        realizedFrame.ownedPorts = 1;
+        realizedFrame.pads[0] = raw;
+        // Capacity is reserved before entering the game loop.
+        realizedInputTape.frames.push_back(realizedFrame);
+    }
+    const PADStatus status = dusk::automation::raw_pad_state_to_pad_status(raw);
+    PADSetAutomationStatus(0, &status);
+
+    automationPreparedInputFrame =
+        static_cast<std::uint64_t>(inputControllerPrefixFrames) + inputControllerNextFrame;
+    inputControllerFrameApplied = true;
+    ++inputControllerNextFrame;
+}
 
 static bool automation_oracle_rejected_before_loop() {
     return eyeShredderOracleEnabled && eyeShredderOracle.isTerminal() &&
@@ -570,10 +721,7 @@ static bool automation_oracle_rejected_before_loop() {
 }
 
 static void begin_automation_simulation_tick() {
-    const std::size_t nextFrame = dusk::automation::input_tape_player().nextFrameIndex();
-    automationTapeFrame = nextFrame == 0
-                              ? dusk::automation::NameEntryNoTick
-                              : static_cast<std::uint64_t>(nextFrame - 1);
+    automationTapeFrame = automationPreparedInputFrame;
     dusk::automation::name_entry_observer().setTickContext(automationSimulationTick,
                                                             automationTapeFrame);
 }
@@ -595,9 +743,11 @@ static void record_gameplay_trace_tick() {
         std::strncpy(sample.stageName, stageName, sizeof(sample.stageName));
     }
 
-    const auto& tapePlayer = dusk::automation::input_tape_player();
-    if (tapePlayer.isPlaying()) {
+    if (inputTapeFrameApplied) {
         sample.flags |= dusk::automation::GameplayTraceTapePlaying;
+    }
+    if (inputControllerFrameApplied) {
+        sample.flags |= dusk::automation::GameplayTraceControllerPlaying;
     }
     const PADStatus& pad = JUTGamePad::mPadStatus[0];
     sample.buttons = pad.button;
@@ -836,9 +986,45 @@ static bool finish_input_tape_tick() {
         return true;
     }
 
+    if (inputControllerConfigured) {
+        if (!inputControllerProgram.finished(inputControllerNextFrame)) {
+            return false;
+        }
+        if (inputControllerCompleted) {
+            return false;
+        }
+
+        // The final status remained installed through this completed game
+        // tick. Release ownership only now, never during its PAD read.
+        release_controller_input();
+        inputControllerCompleted = true;
+        dusk::automation::gameplay_trace_recorder().stop();
+        DuskLog.info("Input controller complete after {} frames (combined frame {})",
+                     inputControllerNextFrame,
+                     inputControllerPrefixFrames + inputControllerNextFrame - 1);
+
+        if (exitAfterInputController || headlessMainLoop) {
+            dusk::IsRunning = false;
+            return true;
+        }
+        if (!automationInputHandedOff) {
+            PADPrepareAutomationHandoff();
+            automationInputQuarantine = false;
+            aurora_set_automation_input_quarantine(false);
+            automationInputHandedOff = true;
+            DuskLog.info("Input controller complete; live controller input resumed");
+        }
+        return false;
+    }
+
     if (eyeShredderOracleEnabled) {
         eyeShredderOracle.observeTapeCompletion(automationSimulationTick, automationTapeFrame);
     }
+
+    // The current tick's post-simulation sample was recorded before this
+    // completion check. Do not let later headful input exhaust or contaminate
+    // the automation trace after PAD ownership is handed back.
+    dusk::automation::gameplay_trace_recorder().stop();
 
     if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
         eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
@@ -934,6 +1120,38 @@ static void write_gameplay_trace_on_exit() {
                  recorder.capacityExhausted() ? ", capacity exhausted" : "");
 }
 
+static void write_realized_input_tape_on_exit() {
+    if (realizedInputTapePath.empty()) {
+        return;
+    }
+
+    std::vector<std::uint8_t> encoded;
+    const auto encodeError =
+        dusk::automation::encode_input_tape(realizedInputTape, encoded);
+    if (encodeError != dusk::automation::InputTapeError::None) {
+        DuskLog.error("Failed to encode realized input tape '{}': {}",
+                      dusk::io::fs_path_to_string(realizedInputTapePath),
+                      dusk::automation::input_tape_error_message(encodeError));
+        realizedInputTapeWriteFailed = true;
+        return;
+    }
+
+    try {
+        auto output = dusk::io::FileStream::Create(realizedInputTapePath);
+        output.Write(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+        output.Flush();
+    } catch (const std::exception& e) {
+        DuskLog.error("Failed to write realized input tape '{}': {}",
+                      dusk::io::fs_path_to_string(realizedInputTapePath), e.what());
+        realizedInputTapeWriteFailed = true;
+        return;
+    }
+
+    DuskLog.info("Wrote realized input tape '{}' ({} frames)",
+                 dusk::io::fs_path_to_string(realizedInputTapePath),
+                 realizedInputTape.frames.size());
+}
+
 static void write_milestone_result_on_exit() {
     if (milestoneResultPath.empty()) {
         return;
@@ -1000,7 +1218,10 @@ int game_main(int argc, char* argv[]) {
 
     cxxopts::ParseResult parsed_arg_options;
     std::string inputTapePath;
+    std::string inputControllerPath;
     std::size_t inputTapeFrameCount = 0;
+    std::size_t inputTapeMaximumTicks = 0;
+    bool inputTapeHasConditions = false;
     dusk::automation::TapeEndBehavior inputTapeEndBehavior =
         dusk::automation::TapeEndBehavior::Release;
 
@@ -1026,8 +1247,11 @@ int game_main(int argc, char* argv[]) {
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-            ("automation-data-root", "Isolate all writable Dusklight state for this tape run", cxxopts::value<std::string>())
-            ("automation-card-root", "Use an explicit memory-card root for this tape run", cxxopts::value<std::string>())
+            ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
+            ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
+            ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
+            ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
             ("milestones", "Evaluate comma-separated memory-backed milestone IDs", cxxopts::value<std::string>())
@@ -1152,11 +1376,32 @@ int game_main(int argc, char* argv[]) {
             : dusk::automation::NameEntryFidelityProfile::ObserveOnly);
 
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
+    const bool hasInputController = parsed_arg_options.count("input-controller") != 0;
+    const bool hasAutomationInput = hasInputTape || hasInputController;
+    const bool hasRealizedInputTape =
+        parsed_arg_options.count("realized-input-tape") != 0;
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
+    exitAfterInputController =
+        parsed_arg_options["exit-after-controller"].as<bool>();
+    if (hasRealizedInputTape) {
+        if (!hasAutomationInput) {
+            fprintf(stderr,
+                    "Realized Input Error: --realized-input-tape requires automation input\n");
+            return 1;
+        }
+        const std::string outputPath =
+            parsed_arg_options["realized-input-tape"].as<std::string>();
+        if (outputPath.empty()) {
+            fprintf(stderr,
+                    "Realized Input Error: --realized-input-tape PATH cannot be empty\n");
+            return 1;
+        }
+        realizedInputTapePath = std::filesystem::u8path(outputPath);
+    }
 
     if (parsed_arg_options.count("gameplay-trace")) {
-        if (!hasInputTape) {
-            fprintf(stderr, "Gameplay Trace Error: --gameplay-trace requires --input-tape PATH\n");
+        if (!hasAutomationInput) {
+            fprintf(stderr, "Gameplay Trace Error: --gameplay-trace requires --input-tape or --input-controller\n");
             return 1;
         }
         const std::string tracePath = parsed_arg_options["gameplay-trace"].as<std::string>();
@@ -1180,8 +1425,8 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     if (hasMilestones) {
-        if (!hasInputTape) {
-            fprintf(stderr, "Milestone Error: --milestones LIST requires --input-tape PATH\n");
+        if (!hasAutomationInput) {
+            fprintf(stderr, "Milestone Error: --milestones LIST requires automation input\n");
             return 1;
         }
 
@@ -1223,9 +1468,9 @@ int game_main(int argc, char* argv[]) {
     std::filesystem::path automationCardRoot;
     std::filesystem::path automationDataRoot;
     if (parsed_arg_options.count("automation-data-root")) {
-        if (!hasInputTape) {
+        if (!hasAutomationInput) {
             fprintf(stderr,
-                    "Automation State Error: --automation-data-root requires --input-tape PATH\n");
+                    "Automation State Error: --automation-data-root requires automation input\n");
             return 1;
         }
         automationDataRoot =
@@ -1245,9 +1490,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
     if (parsed_arg_options.count("automation-card-root")) {
-        if (!hasInputTape) {
+        if (!hasAutomationInput) {
             fprintf(stderr,
-                    "Memory Card Error: --automation-card-root requires --input-tape PATH\n");
+                    "Memory Card Error: --automation-card-root requires automation input\n");
             return 1;
         }
         automationCardRoot =
@@ -1294,6 +1539,22 @@ int game_main(int argc, char* argv[]) {
         fprintf(stderr, "Input Tape Error: --exit-after-tape cannot be combined with --input-tape-end loop\n");
         return 1;
     }
+    if (!hasInputController && exitAfterInputController) {
+        fprintf(stderr,
+                "Input Controller Error: --exit-after-controller requires --input-controller PATH\n");
+        return 1;
+    }
+    if (hasInputTape && hasInputController && inputTapeEndBehavior !=
+            dusk::automation::TapeEndBehavior::Release) {
+        fprintf(stderr,
+                "Input Controller Error: a tape prefix requires --input-tape-end release\n");
+        return 1;
+    }
+    if (hasInputController && exitAfterInputTape) {
+        fprintf(stderr,
+                "Input Controller Error: --exit-after-tape cannot be used with a controller continuation\n");
+        return 1;
+    }
 
     const bool hasAutomationOracle = parsed_arg_options.count("automation-oracle") != 0;
     const bool hasAutomationOracleResult =
@@ -1322,6 +1583,11 @@ int game_main(int argc, char* argv[]) {
         if (!hasInputTape) {
             fprintf(stderr,
                     "Automation Oracle Error: eye-shredder requires --input-tape PATH\n");
+            return 1;
+        }
+        if (hasInputController) {
+            fprintf(stderr,
+                    "Automation Oracle Error: eye-shredder does not accept a reactive controller continuation\n");
             return 1;
         }
         if (!cursorBreakoutShadow) {
@@ -1379,8 +1645,26 @@ int game_main(int argc, char* argv[]) {
         }
 
         inputTapeFrameCount = inputTape.frames.size();
-        if (!gameplayTracePath.empty()) {
-            dusk::automation::gameplay_trace_recorder().start(inputTapeFrameCount + 1);
+        inputTapeHasConditions = !dusk::automation::input_tape_is_absolute(inputTape);
+        if (!dusk::automation::input_tape_maximum_execution_ticks(
+                inputTape, inputTapeMaximumTicks)) {
+            fprintf(stderr, "Input Tape Error: maximum execution tick count overflows\n");
+            return 1;
+        }
+        if (hasInputController && inputTapeHasConditions) {
+            fprintf(stderr,
+                    "Input Controller Error: controller prefixes must be absolute tapes; "
+                    "conditioned frames are not supported\n");
+            return 1;
+        }
+        if (hasRealizedInputTape && inputTapeHasConditions) {
+            fprintf(stderr,
+                    "Realized Input Error: conditioned tapes are not absolute; replay the "
+                    "conditioned run as an explicit tape first\n");
+            return 1;
+        }
+        if (hasRealizedInputTape) {
+            realizedInputTape = inputTape;
         }
         auto& inputTapePlayer = dusk::automation::input_tape_player();
         inputTapePlayer.install(std::move(inputTape));
@@ -1390,7 +1674,67 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
-    const bool deterministicAutomationIo = hasInputTape && fixedStepMainLoop;
+    if (hasInputController) {
+        inputControllerPath = parsed_arg_options["input-controller"].as<std::string>();
+        if (inputControllerPath.empty()) {
+            fprintf(stderr, "Input Controller Error: --input-controller PATH cannot be empty\n");
+            return 1;
+        }
+
+        std::vector<u8> inputControllerBytes;
+        try {
+            inputControllerBytes =
+                dusk::io::FileStream::ReadAllBytes(inputControllerPath.c_str());
+        } catch (const std::exception& e) {
+            fprintf(stderr, "Input Controller Error: cannot read '%s': %s\n",
+                    inputControllerPath.c_str(), e.what());
+            return 1;
+        }
+
+        const dusk::automation::InputControllerError controllerError =
+            dusk::automation::decode_input_controller(inputControllerBytes, inputControllerProgram);
+        if (controllerError != dusk::automation::InputControllerError::None) {
+            fprintf(stderr, "Input Controller Error: cannot load '%s': %s\n",
+                    inputControllerPath.c_str(),
+                    dusk::automation::input_controller_error_message(controllerError));
+            return 1;
+        }
+        inputControllerConfigured = true;
+        inputControllerPrefixFrames = inputTapeFrameCount;
+        inputControllerNextFrame = 0;
+        inputControllerStarted = false;
+        inputControllerCompleted = false;
+    }
+
+    if (hasRealizedInputTape) {
+        if (!hasInputTape) {
+            realizedInputTape.tickRateNumerator = 30;
+            realizedInputTape.tickRateDenominator = 1;
+        }
+        const std::size_t controllerFrames =
+            hasInputController ? inputControllerProgram.duration() : 0;
+        if (inputTapeMaximumTicks > std::numeric_limits<std::size_t>::max() -
+                                         controllerFrames) {
+            fprintf(stderr, "Realized Input Error: automation frame count overflows capacity\n");
+            return 1;
+        }
+        realizedInputTape.frames.reserve(inputTapeMaximumTicks + controllerFrames);
+    }
+
+    if (!gameplayTracePath.empty()) {
+        const std::size_t controllerFrames =
+            hasInputController ? inputControllerProgram.duration() : 0;
+        if (controllerFrames == std::numeric_limits<std::size_t>::max() ||
+            inputTapeMaximumTicks > std::numeric_limits<std::size_t>::max() -
+                                        controllerFrames - 1) {
+            fprintf(stderr, "Gameplay Trace Error: automation frame count overflows capacity\n");
+            return 1;
+        }
+        dusk::automation::gameplay_trace_recorder().start(
+            inputTapeMaximumTicks + controllerFrames + 1);
+    }
+
+    const bool deterministicAutomationIo = hasAutomationInput && fixedStepMainLoop;
     dusk::automation::set_synchronous_io_enabled(deterministicAutomationIo);
 
     if (parsed_arg_options.contains("load-save")){
@@ -1444,6 +1788,16 @@ int game_main(int argc, char* argv[]) {
     if (hasInputTape) {
         DuskLog.info("Input tape: {} ({} frames, end={}, exit={})", inputTapePath,
                      inputTapeFrameCount, inputTapeEnd, exitAfterInputTape);
+    }
+    if (hasInputController) {
+        DuskLog.info("Input controller: {} ({} frames, {} layers, prefix={}, exit={})",
+                     inputControllerPath, inputControllerProgram.duration(),
+                     inputControllerProgram.layerCount(), inputControllerPrefixFrames,
+                     exitAfterInputController);
+    }
+    if (hasRealizedInputTape) {
+        DuskLog.info("Realized input tape: {} (raw pre-clamp controller output)",
+                     dusk::io::fs_path_to_string(realizedInputTapePath));
     }
 
     dusk::config::load_from_user_preferences();
@@ -1516,7 +1870,7 @@ int game_main(int argc, char* argv[]) {
         DuskLog.info("Automation I/O: DVD and memory-card commands complete on the simulation thread");
     }
 
-    automationInputQuarantine = hasInputTape;
+    automationInputQuarantine = hasAutomationInput;
     aurora_set_automation_input_quarantine(automationInputQuarantine);
     if (automationInputQuarantine) {
         DuskLog.info("Automation input quarantine enabled; host keyboard, mouse, touch, gamepad UI, "
@@ -1655,7 +2009,7 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
-    if ((headlessMainLoop || useConfiguredDvd || hasInputTape) && !dvd_opened) {
+    if ((headlessMainLoop || useConfiguredDvd || hasAutomationInput) && !dvd_opened) {
         DuskLog.error("{} could not validate and open the requested DVD image: {}",
                       headlessMainLoop ? "Headless mode" : "Configured DVD boot", dvd_path);
         dusk::crash_reporting::shutdown();
@@ -1873,7 +2227,8 @@ int game_main(int argc, char* argv[]) {
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
         milestoneTracker.goal().has_value() && !milestoneTracker.goalReached();
-    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed || milestoneResultWriteFailed ||
+    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
+                   realizedInputTapeWriteFailed || milestoneResultWriteFailed ||
                    milestoneGoalFailed ||
                    eyeShredderOracleResultWriteFailed ||
                    eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||

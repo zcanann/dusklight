@@ -71,6 +71,11 @@ struct RawPadState {
     bool operator==(const RawPadState&) const = default;
 };
 
+// Converts the stable automation representation to Aurora's host pad ABI.
+// Keeping this conversion shared prevents reactive controllers and tapes from
+// drifting on error/analog field semantics.
+PADStatus raw_pad_state_to_pad_status(const RawPadState& input);
+
 struct InputFrame {
     // Bit N means automation owns controller port N for this tick.
     std::uint8_t ownedPorts = 0;
@@ -110,6 +115,10 @@ enum class InputTapeError {
 
 const char* input_tape_error_message(InputTapeError error);
 InputTapeError validate_input_tape(const InputTape& tape);
+bool input_tape_is_absolute(const InputTape& tape);
+// Returns the maximum simulation ticks the tape can consume. Conditioned
+// frames contribute their timeout; absolute frames contribute one tick.
+bool input_tape_maximum_execution_ticks(const InputTape& tape, std::size_t& output);
 InputTapeError decode_input_tape(std::span<const std::uint8_t> bytes, InputTape& output);
 InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t>& output);
 
