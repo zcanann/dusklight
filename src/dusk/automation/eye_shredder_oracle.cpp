@@ -173,6 +173,10 @@ void EyeShredderOracle::observeRendererTelemetry(
     mResult.simTick = simTick;
     mResult.tapeFrame = tapeFrame;
 
+    if (mResult.rendererMatched) {
+        return;
+    }
+
     const bool observedNewMismatchDraw =
         telemetry.mismatchDrawCount > mRendererMismatchDrawCountAtMemoryMatch;
     if (!mResult.memoryMatched || !observedNewMismatchDraw) {
@@ -208,9 +212,11 @@ void EyeShredderOracle::observeGameplayTelemetry(const EyeShredderGameplayTeleme
         mSawNewGameplayEvent = true;
     }
 
-    const bool isControllableNewGame = mResult.rendererMatched && isNewGameStage &&
-        mSawNewGameplayEvent && telemetry.playerActorPresent && telemetry.playerIsLink &&
-        !telemetry.eventRunning;
+    const bool isPostOpeningGameplay = telemetry.stageName == "F_SP103" &&
+        telemetry.room == 1 && telemetry.point == 1 && telemetry.layer == -1;
+    const bool isControllableNewGame = mResult.rendererMatched && mNameEntryEnded &&
+        mSawNewGameplayEvent && isPostOpeningGameplay && telemetry.playerActorPresent &&
+        telemetry.playerIsLink && !telemetry.eventRunning;
     if (!isControllableNewGame) {
         return;
     }

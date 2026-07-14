@@ -40,16 +40,16 @@ dusk::automation::NameEntryObservation make_write(const std::uint8_t index,
 }
 
 [[nodiscard]] dusk::automation::EyeShredderGameplayTelemetry make_gameplay_telemetry(
-    const bool controllable = true) {
+    const bool eventRunning = false, const bool postOpening = true) {
     return {
-        .stageName = "F_SP108",
+        .stageName = postOpening ? "F_SP103" : "F_SP108",
         .room = 1,
-        .point = 21,
-        .layer = 13,
+        .point = static_cast<std::int16_t>(postOpening ? 1 : 21),
+        .layer = static_cast<std::int16_t>(postOpening ? -1 : 13),
         .playerActorName = 0x00FD,
         .playerActorPresent = true,
         .playerIsLink = true,
-        .eventRunning = !controllable,
+        .eventRunning = eventRunning,
     };
 }
 
@@ -77,14 +77,17 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     REQUIRE(oracle.result().actualWrite.characterIndex == 113);
     REQUIRE(oracle.result().actualWrite.originalOffset == 0x654);
     REQUIRE(oracle.result().actualWrite.bytes == EyeShredderExpectedWrite::Bytes);
+    oracle.observeRendererTelemetry(make_renderer_telemetry(2), 902, 702);
+    REQUIRE(oracle.result().rendererMatchSimTick == 901);
+    REQUIRE(oracle.result().rendererMatchTapeFrame == 701);
     NameEntryObservation ended;
-    oracle.evaluate(ended, 902, 702);
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(false), 903, 703);
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 904, 704);
+    oracle.evaluate(ended, 903, 703);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(true, false), 904, 704);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 905, 705);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Passed);
     REQUIRE(oracle.result().gameplayMatched);
-    REQUIRE(oracle.result().simTick == 904);
-    REQUIRE(oracle.result().tapeFrame == 704);
+    REQUIRE(oracle.result().simTick == 905);
+    REQUIRE(oracle.result().tapeFrame == 705);
 
     const auto json = nlohmann::json::parse(serialize_eye_shredder_oracle_result(oracle.result()));
     REQUIRE(json["schema"]["version"] == 3);
@@ -111,11 +114,11 @@ void testExactRetailShadowWriteArmsUntilRendererDraw() {
     REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_latched"] == true);
     REQUIRE(json["stages"]["renderer"]["telemetry"]["eye_shredder_mismatch_latched"] ==
             true);
-    REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_draw_count"] == 1);
+    REQUIRE(json["stages"]["renderer"]["telemetry"]["mismatch_draw_count"] == 2);
     REQUIRE(json["stages"]["gameplay"]["matched"] == true);
-    REQUIRE(json["stages"]["gameplay"]["sim_tick"] == 904);
-    REQUIRE(json["stages"]["gameplay"]["tape_frame"] == 704);
-    REQUIRE(json["stages"]["gameplay"]["telemetry"]["stage_name"] == "F_SP108");
+    REQUIRE(json["stages"]["gameplay"]["sim_tick"] == 905);
+    REQUIRE(json["stages"]["gameplay"]["tape_frame"] == 705);
+    REQUIRE(json["stages"]["gameplay"]["telemetry"]["stage_name"] == "F_SP103");
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["player_is_link"] == true);
     REQUIRE(json["stages"]["gameplay"]["telemetry"]["event_running"] == false);
 }
@@ -176,7 +179,7 @@ void testGameplayRequiresNameExitLinkAndNoEvent() {
     oracle.observeGameplayTelemetry(gameplay, 905, 705);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
 
-    oracle.observeGameplayTelemetry(make_gameplay_telemetry(false), 906, 706);
+    oracle.observeGameplayTelemetry(make_gameplay_telemetry(true, false), 906, 706);
     REQUIRE(oracle.result().status == EyeShredderOracleStatus::Running);
 
     oracle.observeGameplayTelemetry(make_gameplay_telemetry(), 907, 707);
