@@ -223,6 +223,7 @@ static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
+static bool fixedStepMainLoop;
 static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 
@@ -398,11 +399,18 @@ void main01(void) {
         static double last_fps_setting = 0.0;
         static Limiter::duration_t target_ns = 0;
 
-        if (!unpacedMainLoop &&
-            dusk::getSettings().game.enableFrameInterpolation.getValue() == dusk::FrameInterpMode::Capped &&
-            !dusk::getTransientSettings().skipFrameRateLimit) {
+        double current_fps = 0.0;
+        if (fixedStepMainLoop && !unpacedMainLoop) {
+            current_fps = 30.0;
+        } else if (!unpacedMainLoop &&
+                   dusk::getSettings().game.enableFrameInterpolation.getValue() ==
+                       dusk::FrameInterpMode::Capped &&
+                   !dusk::getTransientSettings().skipFrameRateLimit) {
+            current_fps = dusk::getSettings().video.maxFrameRate.getValue();
+        }
+
+        if (current_fps > 0.0) {
             ZoneScopedN("Frame limiter");
-            double current_fps = dusk::getSettings().video.maxFrameRate.getValue();
             if (current_fps != last_fps_setting) {
                 last_fps_setting = current_fps;
                 target_ns = static_cast<Limiter::duration_t>(1'000'000'000.0 / current_fps);
@@ -759,9 +767,10 @@ int game_main(int argc, char* argv[]) {
             ("develop", "Enable the game's developer mode and OSReport for debugging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
+            ("fixed-step", "Run exactly one deterministic 30 Hz logical tick per presented frame", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("headless", "Use the null render backend with an invisible window; implies --unpaced and requires --dvd", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-            ("deterministic-time-start", "Initial signed OS timer tick for --unpaced/--headless (default 0)", cxxopts::value<std::int64_t>())
+            ("deterministic-time-start", "Initial signed OS timer tick for fixed-step modes (default 0)", cxxopts::value<std::int64_t>())
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -826,15 +835,16 @@ int game_main(int argc, char* argv[]) {
 
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
     unpacedMainLoop = headlessMainLoop || parsed_arg_options["unpaced"].as<bool>();
+    fixedStepMainLoop = unpacedMainLoop || parsed_arg_options["fixed-step"].as<bool>();
     const bool useConfiguredDvd = parsed_arg_options["configured-dvd"].as<bool>();
     if (useConfiguredDvd && parsed_arg_options.count("dvd")) {
         fprintf(stderr, "DVD Error: --configured-dvd cannot be combined with --dvd PATH\n");
         return 1;
     }
     const bool hasDeterministicTimeStart = parsed_arg_options.count("deterministic-time-start") != 0;
-    if (hasDeterministicTimeStart && !unpacedMainLoop) {
+    if (hasDeterministicTimeStart && !fixedStepMainLoop) {
         fprintf(stderr,
-                "Time Error: --deterministic-time-start requires --unpaced or --headless\n");
+                "Time Error: --deterministic-time-start requires --fixed-step, --unpaced, or --headless\n");
         return 1;
     }
     if (headlessMainLoop && !parsed_arg_options.count("dvd")) {
@@ -849,7 +859,7 @@ int game_main(int argc, char* argv[]) {
     const OSTime deterministicInitialTicks = hasDeterministicTimeStart
                                                  ? parsed_arg_options["deterministic-time-start"].as<std::int64_t>()
                                                  : 0;
-    if (unpacedMainLoop) {
+    if (fixedStepMainLoop) {
         if (!AuroraEnableDeterministicTime(deterministicInitialTicks, 30, 1)) {
             fprintf(stderr,
                     "Time Error: failed to enable deterministic OS time at tick %lld (30/1 Hz)\n",
@@ -859,8 +869,8 @@ int game_main(int argc, char* argv[]) {
         deterministicTimeEnabled = true;
     }
     dusk::game_clock::set_main_loop_mode(
-        unpacedMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
-                         : dusk::game_clock::MainLoopMode::Realtime);
+        fixedStepMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
+                          : dusk::game_clock::MainLoopMode::Realtime);
 
     const bool cursorBreakoutShadow = parsed_arg_options["cursor-breakout-shadow"].as<bool>();
     const bool hasNameEntryTrace = parsed_arg_options.count("name-entry-trace") != 0;
@@ -1055,7 +1065,7 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
-    const bool deterministicAutomationIo = hasInputTape && unpacedMainLoop;
+    const bool deterministicAutomationIo = hasInputTape && fixedStepMainLoop;
     dusk::automation::set_synchronous_io_enabled(deterministicAutomationIo);
 
     if (parsed_arg_options.contains("load-save")){
@@ -1087,9 +1097,9 @@ int game_main(int argc, char* argv[]) {
     }
 
     log_build_info();
-    if (unpacedMainLoop) {
-        DuskLog.info("Automation timing: fixed 30 Hz step (headless={}, initial_os_tick={})",
-                     headlessMainLoop, deterministicInitialTicks);
+    if (fixedStepMainLoop) {
+        DuskLog.info("Automation timing: fixed 30 Hz step (headless={}, unpaced={}, initial_os_tick={})",
+                     headlessMainLoop, unpacedMainLoop, deterministicInitialTicks);
         DuskLog.warn("Deterministic OS time does not dispatch OSAlarm callbacks; pre-loop time "
                      "remains fixed at the declared initial tick until the first completed simulation tick");
     }
@@ -1144,7 +1154,7 @@ int game_main(int argc, char* argv[]) {
 #ifdef DUSK_ASSET_DIR
         config.resourcesPath = DUSK_ASSET_DIR;
 #endif
-        config.vsync = unpacedMainLoop ? false : dusk::getSettings().video.enableVsync;
+        config.vsync = fixedStepMainLoop ? false : dusk::getSettings().video.enableVsync;
         config.startFullscreen = headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
         config.windowPosX = -1;
         config.windowPosY = -1;

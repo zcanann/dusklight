@@ -140,7 +140,7 @@ for ($run = 1; $run -le $Runs; $run++) {
         "--console"
     )
     if ($Visual) {
-        $arguments += "--automation-oracle-continue-on-pass"
+        $arguments += @("--fixed-step", "--automation-oracle-continue-on-pass")
     } else {
         $arguments += "--headless"
     }
