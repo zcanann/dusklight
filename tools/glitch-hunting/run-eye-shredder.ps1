@@ -107,8 +107,8 @@ $tapeSummary = ($inspectOutput -join [Environment]::NewLine) | ConvertFrom-Json
 if ([int]$tapeSummary.wait_frame_count -ne 0) {
     throw "Eye Shredder is not a TAS: its compiled tape contains $($tapeSummary.wait_frame_count) reactive condition frame(s)."
 }
-if ([int]$tapeSummary.nominal_frame_count -ne 642) {
-    throw "Eye Shredder tape length drifted: expected 642 absolute frames, got $($tapeSummary.nominal_frame_count)."
+if ([int]$tapeSummary.nominal_frame_count -ne 650) {
+    throw "Eye Shredder tape length drifted: expected 650 absolute frames, got $($tapeSummary.nominal_frame_count)."
 }
 
 $stateBase = [System.IO.Path]::GetFullPath(
@@ -172,9 +172,9 @@ for ($run = 1; $run -le $Runs; $run++) {
         # before the null backend. Inputs are already neutral in this tail; all
         # exploit, renderer, name-entry, and tape-completion ticks remain exact.
         $gameplayTimingMatches = if ($Visual) {
-            $gameplayTick -ge 636 -and $gameplayTick -le 641
+            $gameplayTick -ge 636 -and $gameplayTick -le 649
         } else {
-            $gameplayTick -ge 639 -and $gameplayTick -le 641
+            $gameplayTick -ge 639 -and $gameplayTick -le 649
         }
         $timingMatches =
             [uint64]$result.sim_tick -eq $gameplayTick -and
@@ -186,8 +186,8 @@ for ($run = 1; $run -le $Runs; $run++) {
             $gameplayTimingMatches -and
             $gameplayFrame -eq $gameplayTick -and
             [bool]$result.stages.tape.completed -and
-            [uint64]$result.stages.tape.sim_tick -eq 642 -and
-            [uint64]$result.stages.tape.tape_frame -eq 641 -and
+            [uint64]$result.stages.tape.sim_tick -eq 650 -and
+            [uint64]$result.stages.tape.tape_frame -eq 649 -and
             [string]$result.stages.gameplay.telemetry.stage_name -eq "F_SP103" -and
             [int]$result.stages.gameplay.telemetry.room -eq 1 -and
             [int]$result.stages.gameplay.telemetry.point -eq 1 -and

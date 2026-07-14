@@ -39,7 +39,7 @@ and preserves the result/trace under `build/test-results/eye-shredder`.
 Playback owns all four controller ports and consumes only absolute frames. DVD
 and memory-card work is dispatched synchronously for fixed-step tape runs; any
 deviation from the checked simulation ticks or complete trace hash fails
-instead of delaying or retrying input. After the 642-frame tape reaches normal
+instead of delaying or retrying input. After the 650-frame tape reaches normal
 `F_SP103` gameplay, automation releases the ports and live controller input is
 restored. Aurora's XF=12/BP=4 shredded diagnostic remains synthetic;
 pixel-perfect console raster corruption is not claimed.

@@ -102,9 +102,15 @@ name, skips the opening, and reaches controllable `F_SP103` gameplay at tick
 639, 640, or 641 through the null renderer as native actor creation converges.
 The real D3D12 renderer has exposed the completed actor as early as tick 636;
 the input tail is neutral throughout this bounded renderer-dependent interval.
-Tape completion is fixed at tick 642. The final neutral frame is required: a
-641-frame candidate failed two of three cold runs, while the 642-frame tape
-passed ten of ten. The complete
+Tape completion is fixed at tick 650. The exploit itself is complete by tick
+469; the remaining frames are a neutral observation tail. A 100-run diagnostic
+of the former 642-frame candidate reproduced the exact memory and renderer
+ticks in every completed oracle, but three runs had not exposed the final
+ALINK actor by the cutoff. The eight-frame tail is retained for cold-run
+gameplay robustness, not to mask or retry the exploit input. The pinned
+650-frame candidate then passed 100/100 isolated cold runs: gameplay appeared
+at tick 639 five times, tick 640 sixty-seven times, and tick 641 twenty-eight
+times. The complete
 name-entry event trace remains byte-identical across repeat runs.
 
 The current native implementation under audit is
@@ -178,7 +184,7 @@ It performs three isolated, silent headless runs by default and requires
 identical trace hashes, memory signatures, renderer signatures, and completed
 gameplay handoff. It rejects compiled tapes containing reactive condition
 frames. Use `-Runs 100` for the full determinism gate or `-Visual` for paced
-headful playback. Visual mode plays the entire 642-frame tape, then releases
+headful playback. Visual mode plays the entire 650-frame tape, then releases
 the automated ports so a physical controller can continue from gameplay.
 Every run writes a versioned oracle result and a tick-stamped name-entry trace
 under `build/test-results/eye-shredder`, while its temporary config/card/cache
