@@ -1,6 +1,11 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::corpus::Corpus;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
+use huntctl::search::{
+    Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
+    RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
+    rank_population, write_seed_population,
+};
 use huntctl::tape::InputTape;
 use huntctl::tape_dsl;
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
@@ -33,10 +38,139 @@ fn run() -> Result<(), Box<dyn Error>> {
         "corpus" => command_corpus(&args[1..]),
         "tape" => command_tape(&args[1..]),
         "trace" => command_trace(&args[1..]),
+        "search" => command_search(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("seed") => {
+            let search_args = &args[1..];
+            let segment: SegmentProfile = option(search_args, "--segment")
+                .ok_or("missing required --segment ID")?
+                .parse()?;
+            let output = required_path(search_args, "--output")?;
+            let size = usize_option(search_args, "--size", 16)?;
+            let rng_seed = u64_option(search_args, "--rng-seed", 1)?;
+            let candidate = if let Some(path) = option(search_args, "--candidate") {
+                let candidate: Candidate = serde_json::from_slice(&fs::read(path)?)?;
+                if candidate.segment != segment {
+                    return Err("candidate segment does not match --segment".into());
+                }
+                candidate
+            } else {
+                Candidate::baseline(segment)
+            };
+            let manifest = write_seed_population(&output, candidate, size, rng_seed)?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+            Ok(())
+        }
+        Some("evolve") => {
+            let search_args = &args[1..];
+            let population = required_path(search_args, "--population")?;
+            let results: SearchResults =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--results")?)?)?;
+            let output = required_path(search_args, "--output")?;
+            let size = usize_option(search_args, "--size", 16)?;
+            let elites = usize_option(search_args, "--elites", (size / 4).max(1))?;
+            let rng_seed = u64_option(search_args, "--rng-seed", 1)?;
+            let manifest = evolve_population(
+                &population,
+                &results,
+                &output,
+                EvolutionConfig {
+                    population_size: size,
+                    elite_count: elites,
+                    rng_seed,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+            Ok(())
+        }
+        Some("rank") => {
+            let search_args = &args[1..];
+            let manifest: PopulationManifest =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--population")?)?)?;
+            let results: SearchResults =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--results")?)?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&rank_population(&manifest, &results)?)?
+            );
+            Ok(())
+        }
+        Some("collect") => {
+            let search_args = &args[1..];
+            let manifest: PopulationManifest =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--population")?)?)?;
+            let inputs = repeated_option(search_args, "--input");
+            if inputs.is_empty() {
+                return Err("search collect requires at least one --input FILE".into());
+            }
+            let artifacts = inputs
+                .iter()
+                .map(|path| serde_json::from_slice(&fs::read(path)?).map_err(Into::into))
+                .collect::<Result<Vec<EvaluationArtifact>, Box<dyn Error>>>()?;
+            let results = collect_results(&manifest, artifacts)?;
+            let output = required_path(search_args, "--output")?;
+            fs::write(&output, serde_json::to_vec_pretty(&results)?)?;
+            println!("{}", serde_json::to_string_pretty(&results)?);
+            Ok(())
+        }
+        Some("inspect") if args.len() == 2 => {
+            let candidate: Candidate = serde_json::from_slice(&fs::read(&args[1])?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "candidate_id": candidate.id()?,
+                    "segment": candidate.segment,
+                    "target": candidate.segment.target(),
+                    "target_depth": candidate.segment.target_depth(),
+                    "action_count": candidate.actions.len(),
+                    "frame_count": candidate.frame_count(),
+                    "ancestry": candidate.ancestry,
+                }))?
+            );
+            Ok(())
+        }
+        Some("mock-evaluate") => {
+            let search_args = &args[1..];
+            let population_path = required_path(search_args, "--population")?;
+            let output = required_path(search_args, "--output")?;
+            let attempts = u32::try_from(usize_option(search_args, "--attempts", 3)?)?;
+            if attempts == 0 {
+                return Err("--attempts must be greater than zero".into());
+            }
+            let manifest: PopulationManifest = serde_json::from_slice(&fs::read(population_path)?)?;
+            let candidates = manifest
+                .members
+                .iter()
+                .map(|member| {
+                    (
+                        member.candidate_id.clone(),
+                        CandidateResult {
+                            milestone_depth: manifest.segment.target_depth(),
+                            attempts,
+                            successes: attempts,
+                            first_hit_ticks: vec![member.frame_count; attempts as usize],
+                        },
+                    )
+                })
+                .collect();
+            let results = SearchResults {
+                schema: RESULTS_SCHEMA.into(),
+                segment: manifest.segment,
+                candidates,
+            };
+            fs::write(&output, serde_json::to_vec_pretty(&results)?)?;
+            println!("{}", serde_json::to_string_pretty(&results)?);
             Ok(())
         }
         _ => usage_error(),
@@ -422,6 +556,20 @@ fn required_path(args: &[String], name: &str) -> Result<PathBuf, Box<dyn Error>>
         .ok_or_else(|| format!("missing required {name} <path>").into())
 }
 
+fn usize_option(args: &[String], name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
+    Ok(option(args, name)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(default))
+}
+
+fn u64_option(args: &[String], name: &str, default: u64) -> Result<u64, Box<dyn Error>> {
+    Ok(option(args, name)
+        .map(|value| value.parse())
+        .transpose()?
+        .unwrap_or(default))
+}
+
 fn usage_error<T>() -> Result<T, Box<dyn Error>> {
     print_usage();
     Err("invalid command line".into())
@@ -429,7 +577,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
 }
 

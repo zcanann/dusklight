@@ -39,6 +39,8 @@ state hashes, and the reason it was classified as interesting.
   command-line runner, and visible replay workflow.
 - [Architecture](architecture.md) describes the Rust/C++ boundary, worker
   model, headless execution, and headful promotion.
+- [Milestone-backed route search](search.md) documents typed controller
+  candidates, population evaluation, lexicographic scoring, and evolution.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
   programs, observations, events, oracles, checkpoints, and run artifacts.
 - [Determinism and memory fidelity](determinism-and-memory.md) records what
