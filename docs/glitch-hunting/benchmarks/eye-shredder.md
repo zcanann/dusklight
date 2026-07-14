@@ -95,11 +95,14 @@ card dispatch is synchronous, so host thread scheduling cannot change the game
 tick on which a resource becomes visible. Observers assert the resulting
 timeline without influencing it.
 
-The full boot and exploit trajectory is fixed: name entry is constructed at
-tick 334, the no-save confirmation is pressed at tick 450, the first name input
-is consumed at tick 458, and the position-113 write occurs at tick 692. The
-renderer proof follows at simulation tick 694. The complete name-entry event
-trace is byte-identical across repeat runs.
+The minimized boot and exploit trajectory starts name entry at simulation tick
+182, performs the position-113 write at tick 467, proves the renderer mismatch
+at tick 469, and ends name entry at tick 531. It then accepts the default Epona
+name, skips the opening, and reaches controllable `F_SP103` gameplay at tick
+639, 640, or 641 as native actor creation converges. Tape completion is fixed
+at tick 642. The final neutral frame is required: a 641-frame candidate failed
+two of three cold runs, while the 642-frame tape passed ten of ten. The complete
+name-entry event trace remains byte-identical across repeat runs.
 
 The current native implementation under audit is
 [`src/d/d_name.cpp`](../../../src/d/d_name.cpp), with its associated layout in
@@ -168,14 +171,15 @@ Run the checked integration test with:
 .\tools\glitch-hunting\run-eye-shredder.ps1
 ```
 
-It performs three isolated headless runs by default and requires identical
-simulation timing, complete name-entry trace hashes, memory signatures, and
-renderer signatures. It rejects compiled tapes containing reactive condition
+It performs three isolated, silent headless runs by default and requires
+identical trace hashes, memory signatures, renderer signatures, and completed
+gameplay handoff. It rejects compiled tapes containing reactive condition
 frames. Use `-Runs 100` for the full determinism gate or `-Visual` for paced
-headful playback. Visual mode continues after the oracle passes and holds the
-diagnostic for six seconds. Every run writes a versioned oracle result and a tick-stamped
-name-entry trace under `build/test-results/eye-shredder`, while its temporary
-config/card/cache state is deleted.
+headful playback. Visual mode plays the entire 642-frame tape, then releases
+the automated ports so a physical controller can continue from gameplay.
+Every run writes a versioned oracle result and a tick-stamped name-entry trace
+under `build/test-results/eye-shredder`, while its temporary config/card/cache
+state is deleted.
 
 The test passes only when every requested run reports the fixed tick/frame
 timeline, canonical two-write event history, cursor position, original offset,

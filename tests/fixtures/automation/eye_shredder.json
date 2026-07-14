@@ -12,7 +12,7 @@
     },
     {
       "op": "repeat",
-      "count": 180,
+      "count": 115,
       "frame": {}
     },
     {
@@ -31,7 +31,7 @@
     },
     {
       "op": "repeat",
-      "count": 118,
+      "count": 31,
       "frame": {}
     },
     {
@@ -50,7 +50,7 @@
     },
     {
       "op": "repeat",
-      "count": 150,
+      "count": 79,
       "frame": {}
     },
     {
@@ -135,7 +135,8 @@
       "frame": {
         "pads": {
           "0": {
-            "buttons": ["B"]
+            "buttons": ["B"],
+            "stick_x": -127
           }
         }
       }
@@ -150,7 +151,7 @@
     },
     {
       "op": "cycle",
-      "count": 6,
+      "count": 5,
       "frames": [
         {
           "pads": {
@@ -171,25 +172,7 @@
       "frame": {
         "pads": {
           "0": {
-            "buttons": ["A"]
-          }
-        }
-      }
-    },
-    {
-      "op": "frame",
-      "frame": {}
-    },
-    {
-      "op": "marker",
-      "name": "confirm-corrupted-file-menu"
-    },
-    {
-      "op": "frame",
-      "frame": {
-        "pads": {
-          "0": {
-            "buttons": ["START"]
+            "buttons": ["A", "START"]
           }
         }
       }

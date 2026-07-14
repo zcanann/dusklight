@@ -11,7 +11,7 @@ Run **Tasks: Run Test Task** from the command palette and choose
 - `input-tape`, `game-clock`, `name-entry`, `name-entry-trace`, `rng`,
   `eye-shredder-oracle`, `aurora-card`, or `aurora-time`: one native suite;
 - `eye-shredder`: build and run the real isolated Eye Shredder tape three times
-  headlessly against the last configured GCN USA image;
+  silently and headlessly against the last configured GCN USA image;
 - `rust` or `rust-lint`: the control-plane tests or formatting/Clippy; and
 - `worker-smoke` or `pool-smoke`: real native process protocol tests.
 
@@ -31,14 +31,15 @@ Visual Studio developer shell.
 
 For the named Eye Shredder benchmark, run **Tasks: Run Task → Glitch Hunt: Eye
 Shredder Visual**. It resolves the last manually selected image, builds the
-fixture, runs the same two-stage memory/renderer oracle, and preserves the
-result/trace under `build/test-results/eye-shredder`. Playback owns all four
-controller ports and consumes only absolute frames. DVD and memory-card work is
-dispatched synchronously for fixed-step tape runs; any deviation from the
-checked simulation ticks or complete trace hash fails instead of delaying or
-retrying input. The visual run lingers on Aurora's latched XF=12/BP=4 shredded
-diagnostic. The diagnostic is synthetic; pixel-perfect console raster
-corruption is not claimed.
+fixture, runs the memory, renderer, opening-event, and playable-gameplay oracle,
+and preserves the result/trace under `build/test-results/eye-shredder`.
+Playback owns all four controller ports and consumes only absolute frames. DVD
+and memory-card work is dispatched synchronously for fixed-step tape runs; any
+deviation from the checked simulation ticks or complete trace hash fails
+instead of delaying or retrying input. After the 642-frame tape reaches normal
+`F_SP103` gameplay, automation releases the ports and live controller input is
+restored. Aurora's XF=12/BP=4 shredded diagnostic remains synthetic;
+pixel-perfect console raster corruption is not claimed.
 
 1. Put a supported Twilight Princess disc image somewhere on your machine.
    `orig/GZ2E01/GZ2E01.iso` is the default prompt value and remains ignored by

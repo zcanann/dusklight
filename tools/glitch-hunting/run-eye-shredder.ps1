@@ -107,8 +107,8 @@ $tapeSummary = ($inspectOutput -join [Environment]::NewLine) | ConvertFrom-Json
 if ([int]$tapeSummary.wait_frame_count -ne 0) {
     throw "Eye Shredder is not a TAS: its compiled tape contains $($tapeSummary.wait_frame_count) reactive condition frame(s)."
 }
-if ([int]$tapeSummary.nominal_frame_count -ne 869) {
-    throw "Eye Shredder tape length drifted: expected 869 absolute frames, got $($tapeSummary.nominal_frame_count)."
+if ([int]$tapeSummary.nominal_frame_count -ne 642) {
+    throw "Eye Shredder tape length drifted: expected 642 absolute frames, got $($tapeSummary.nominal_frame_count)."
 }
 
 $stateBase = [System.IO.Path]::GetFullPath(
@@ -171,15 +171,15 @@ for ($run = 1; $run -le $Runs; $run++) {
         $timingMatches =
             [uint64]$result.sim_tick -eq $gameplayTick -and
             [uint64]$result.tape_frame -eq $gameplayFrame -and
-            [uint64]$result.stages.memory.sim_tick -eq 692 -and
-            [uint64]$result.stages.memory.tape_frame -eq 692 -and
-            [uint64]$result.stages.renderer.sim_tick -eq 694 -and
-            [uint64]$result.stages.renderer.tape_frame -eq 693 -and
-            $gameplayTick -ge 867 -and $gameplayTick -le 868 -and
+            [uint64]$result.stages.memory.sim_tick -eq 467 -and
+            [uint64]$result.stages.memory.tape_frame -eq 467 -and
+            [uint64]$result.stages.renderer.sim_tick -eq 469 -and
+            [uint64]$result.stages.renderer.tape_frame -eq 468 -and
+            $gameplayTick -ge 639 -and $gameplayTick -le 641 -and
             $gameplayFrame -eq $gameplayTick -and
             [bool]$result.stages.tape.completed -and
-            [uint64]$result.stages.tape.sim_tick -eq 869 -and
-            [uint64]$result.stages.tape.tape_frame -eq 868 -and
+            [uint64]$result.stages.tape.sim_tick -eq 642 -and
+            [uint64]$result.stages.tape.tape_frame -eq 641 -and
             [string]$result.stages.gameplay.telemetry.stage_name -eq "F_SP103" -and
             [int]$result.stages.gameplay.telemetry.room -eq 1 -and
             [int]$result.stages.gameplay.telemetry.point -eq 1 -and
@@ -188,15 +188,15 @@ for ($run = 1; $run -le $Runs; $run++) {
             [bool]$result.stages.gameplay.telemetry.player_actor_present -and
             [bool]$result.stages.gameplay.telemetry.player_is_link -and
             -not [bool]$result.stages.gameplay.telemetry.event_running -and
-            [uint64]$sessionStart.sim_tick -eq 334 -and
-            [uint64]$sessionEnd.sim_tick -eq 758 -and
-            [uint64]$sessionEnd.tape_frame -eq 758 -and
+            [uint64]$sessionStart.sim_tick -eq 182 -and
+            [uint64]$sessionEnd.sim_tick -eq 531 -and
+            [uint64]$sessionEnd.tape_frame -eq 531 -and
             [int]$result.actual.attempt -eq 2 -and
             [int]$trace.event_stream.drained_count -eq 113 -and
             [int]$trace.event_stream.dropped_count -eq 0 -and
             -not [bool]$trace.snapshot.active -and
-            [uint64]$trace.snapshot.sim_tick -eq 727 -and
-            [uint64]$trace.snapshot.tape_frame -eq 727 -and
+            [uint64]$trace.snapshot.sim_tick -eq 500 -and
+            [uint64]$trace.snapshot.tape_frame -eq 500 -and
             [int]$trace.snapshot.logical_cursor -eq 5 -and
             [int]$trace.snapshot.last_logical_cursor -eq 114 -and
             [int]$trace.snapshot.name_length -eq 5 -and
