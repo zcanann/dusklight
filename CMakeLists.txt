@@ -496,6 +496,14 @@ target_include_directories(dusk_eye_shredder_oracle_test PRIVATE ${CMAKE_SOURCE_
 target_link_libraries(dusk_eye_shredder_oracle_test PRIVATE nlohmann_json::nlohmann_json)
 set_target_properties(dusk_eye_shredder_oracle_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
+    tests/milestones_test.cpp
+    src/dusk/automation/milestones.cpp
+)
+target_include_directories(dusk_milestones_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(dusk_milestones_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_rng_test EXCLUDE_FROM_ALL
     tests/rng_test.cpp
     src/SSystem/SComponent/c_math_rng.cpp

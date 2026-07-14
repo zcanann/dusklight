@@ -58,6 +58,7 @@
 #include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
+#include "dusk/automation/milestones.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
 #include "dusk/automation/worker.hpp"
@@ -233,6 +234,7 @@ static bool fixedStepMainLoop;
 static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
+static void write_milestone_result_on_exit();
 
 void main01(void) {
     OS_REPORT("\x1b[m");
@@ -434,6 +436,7 @@ void main01(void) {
     write_automation_oracle_result_on_exit();
     write_name_entry_trace_on_exit();
     write_gameplay_trace_on_exit();
+    write_milestone_result_on_exit();
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -548,6 +551,8 @@ static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
 static bool gameplayTraceWriteFailed;
+static std::filesystem::path milestoneResultPath;
+static bool milestoneResultWriteFailed;
 static bool eyeShredderOracleEnabled;
 static bool automationOracleContinueOnPass;
 static dusk::automation::EyeShredderOracle eyeShredderOracle;
@@ -663,11 +668,48 @@ static void record_gameplay_trace_tick() {
     recorder.record(sample);
 }
 
+static bool record_milestone_tick() {
+    auto& tracker = dusk::automation::milestone_tracker();
+    if (!tracker.active()) {
+        return false;
+    }
+
+    fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    const bool goalReachedBefore = tracker.goalReached();
+    tracker.observe(
+        {
+            .stageName = dComIfGp_getStartStageName(),
+            .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
+            .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
+            .point = dComIfGp_getStartStagePoint(),
+            .playerPresent = player != nullptr,
+            .playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e,
+            .eventRunning = dComIfGp_event_runCheck() != 0,
+            .nextStageEnabled = dComIfGp_isEnableNextStage() != 0,
+            .nextStageName = dComIfGp_getNextStageName(),
+            .nextRoom = static_cast<std::int8_t>(dComIfGp_getNextStageRoomNo()),
+            .nextLayer = static_cast<std::int8_t>(dComIfGp_getNextStageLayer()),
+            .nextPoint = dComIfGp_getNextStagePoint(),
+        },
+        automationSimulationTick, automationTapeFrame);
+    if (!goalReachedBefore && tracker.goalReached()) {
+        DuskLog.info("Automation milestone goal '{}' reached at simulation tick {}, tape frame {}",
+                     dusk::automation::milestone_name(*tracker.goal()),
+                     automationSimulationTick, automationTapeFrame);
+        return true;
+    }
+    return false;
+}
+
 static bool finish_automation_oracle_tick() {
     record_gameplay_trace_tick();
+    const bool milestoneGoalReached = record_milestone_tick();
     if (!eyeShredderOracleEnabled) {
         ++automationSimulationTick;
-        return false;
+        if (milestoneGoalReached) {
+            dusk::IsRunning = false;
+        }
+        return milestoneGoalReached;
     }
 
     eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
@@ -686,6 +728,10 @@ static bool finish_automation_oracle_tick() {
         },
         automationSimulationTick, automationTapeFrame);
     ++automationSimulationTick;
+    if (milestoneGoalReached) {
+        dusk::IsRunning = false;
+        return true;
+    }
     if (!eyeShredderOracle.isTerminal()) {
         return false;
     }
@@ -845,6 +891,23 @@ static void write_gameplay_trace_on_exit() {
                  recorder.capacityExhausted() ? ", capacity exhausted" : "");
 }
 
+static void write_milestone_result_on_exit() {
+    if (milestoneResultPath.empty()) {
+        return;
+    }
+
+    auto& tracker = dusk::automation::milestone_tracker();
+    std::string error;
+    if (!dusk::automation::write_milestone_result(milestoneResultPath, tracker, error)) {
+        DuskLog.error("Failed to write milestone result '{}': {}",
+                      dusk::io::fs_path_to_string(milestoneResultPath), error);
+        milestoneResultWriteFailed = true;
+        return;
+    }
+    DuskLog.info("Wrote milestone result '{}' (goal reached: {})",
+                 dusk::io::fs_path_to_string(milestoneResultPath), tracker.goalReached());
+}
+
 static u8 selectedLanguage;
 
 u8 OSGetLanguage() {
@@ -924,6 +987,9 @@ int game_main(int argc, char* argv[]) {
             ("automation-card-root", "Use an explicit memory-card root for this tape run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
+            ("milestones", "Evaluate comma-separated memory-backed milestone IDs", cxxopts::value<std::string>())
+            ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
+            ("milestone-result", "Write versioned memory-backed milestone results as JSON", cxxopts::value<std::string>())
             ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
             ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
@@ -1056,6 +1122,59 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         gameplayTracePath = std::filesystem::u8path(tracePath);
+    }
+
+    const bool hasMilestones = parsed_arg_options.count("milestones") != 0;
+    const bool hasMilestoneResult = parsed_arg_options.count("milestone-result") != 0;
+    const bool hasMilestoneGoal = parsed_arg_options.count("milestone-goal") != 0;
+    if (hasMilestones != hasMilestoneResult) {
+        fprintf(stderr,
+                "Milestone Error: --milestones LIST and --milestone-result PATH must be used together\n");
+        return 1;
+    }
+    if (hasMilestoneGoal && !hasMilestones) {
+        fprintf(stderr, "Milestone Error: --milestone-goal ID requires --milestones LIST\n");
+        return 1;
+    }
+    if (hasMilestones) {
+        if (!hasInputTape) {
+            fprintf(stderr, "Milestone Error: --milestones LIST requires --input-tape PATH\n");
+            return 1;
+        }
+
+        std::vector<dusk::automation::MilestoneId> requestedMilestones;
+        std::string milestoneError;
+        if (!dusk::automation::parse_milestone_list(
+                parsed_arg_options["milestones"].as<std::string>(), requestedMilestones,
+                milestoneError)) {
+            fprintf(stderr, "Milestone Error: %s\n", milestoneError.c_str());
+            return 1;
+        }
+
+        std::optional<dusk::automation::MilestoneId> milestoneGoal;
+        if (hasMilestoneGoal) {
+            const std::string goalName =
+                parsed_arg_options["milestone-goal"].as<std::string>();
+            const auto* definition = dusk::automation::find_milestone(goalName);
+            if (definition == nullptr) {
+                fprintf(stderr, "Milestone Error: unknown goal '%s'\n", goalName.c_str());
+                return 1;
+            }
+            milestoneGoal = definition->id;
+        }
+
+        const std::string resultPath =
+            parsed_arg_options["milestone-result"].as<std::string>();
+        if (resultPath.empty()) {
+            fprintf(stderr, "Milestone Error: --milestone-result PATH cannot be empty\n");
+            return 1;
+        }
+        if (!dusk::automation::milestone_tracker().configure(
+                requestedMilestones, milestoneGoal, milestoneError)) {
+            fprintf(stderr, "Milestone Error: %s\n", milestoneError.c_str());
+            return 1;
+        }
+        milestoneResultPath = std::filesystem::u8path(resultPath);
     }
 
     std::filesystem::path automationCardRoot;
@@ -1708,7 +1827,11 @@ int game_main(int argc, char* argv[]) {
         eyeShredderOracleEnabled &&
         eyeShredderOracle.result().status !=
             dusk::automation::EyeShredderOracleStatus::Passed;
-    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
+    const auto& milestoneTracker = dusk::automation::milestone_tracker();
+    const bool milestoneGoalFailed =
+        milestoneTracker.goal().has_value() && !milestoneTracker.goalReached();
+    return nameEntryTraceWriteFailed || gameplayTraceWriteFailed || milestoneResultWriteFailed ||
+                   milestoneGoalFailed ||
                    eyeShredderOracleResultWriteFailed ||
                    eyeShredderOracleFailed || deterministicTimeAdvanceFailed ||
                    inputTapePlaybackFailed
