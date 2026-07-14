@@ -91,25 +91,6 @@
       }
     },
     {
-      "label": "Glitch Hunt: Eye Shredder Visual",
-      "type": "process",
-      "command": "powershell.exe",
-      "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}\\tools\\glitch-hunting\\run-eye-shredder.ps1",
-        "-Visual"
-      ],
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      }
-    },
-    {
       "label": "Glitch Hunt: Prepare Visual TAS",
       "type": "process",
       "command": "powershell.exe",

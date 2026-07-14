@@ -6,13 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $bootFixture = Join-Path $repoRoot "tests\fixtures\automation\boot_start_smoke.tas"
-$bootOutput = Join-Path $repoRoot "build\boot_start_smoke.tape"
+$bootOutput = Join-Path $repoRoot "build\boot-start-smoke.tape"
 $eyeShredderFixture = Join-Path $repoRoot "tests\fixtures\automation\eye_shredder.tas"
-$eyeShredderOutput = Join-Path $repoRoot "build\eye_shredder.tape"
+$eyeShredderOutput = Join-Path $repoRoot "build\eye-shredder.tape"
 $introRouteFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_route.tas"
-$introRouteOutput = Join-Path $repoRoot "build\intro_route.tape"
+$introRouteOutput = Join-Path $repoRoot "build\intro-cutscene.tape"
 $introFirstExitFixture = Join-Path $repoRoot "tests\fixtures\automation\intro_first_exit.tas"
-$introFirstExitOutput = Join-Path $repoRoot "build\intro_first_exit.tape"
+$introFirstExitOutput = Join-Path $repoRoot "build\intro-first-exit.tape"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"
 $debugState = [System.IO.Path]::GetFullPath(
     (Join-Path $repoRoot "build\automation-state\vscode-debug"))

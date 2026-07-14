@@ -27,15 +27,15 @@ switch ($Scenario) {
     }
     "boot-start-smoke" {
         $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
-        $runnerParameters.TapePath = Join-Path $repoRoot "build\boot_start_smoke.tape"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\boot-start-smoke.tape"
     }
     "intro-first-exit" {
         $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
-        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro_first_exit.tape"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro-first-exit.tape"
     }
     "intro-cutscene" {
         $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
-        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro_route.tape"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\intro-cutscene.tape"
     }
 }
 

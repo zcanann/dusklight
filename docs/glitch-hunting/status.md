@@ -69,14 +69,14 @@ cargo clippy --manifest-path tools/huntctl/Cargo.toml --all-targets -- -D warnin
 
 # Build and inspect the boot authoring smoke tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
-  tests/fixtures/automation/boot_start_smoke.tas build/boot_start_smoke.tape
+  tests/fixtures/automation/boot_start_smoke.tas build/boot-start-smoke.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape inspect \
-  build/boot_start_smoke.tape
+  build/boot-start-smoke.tape
 
 # Initialize, ingest into, and verify a content-addressed corpus
 cargo run --manifest-path tools/huntctl/Cargo.toml -- corpus init build/corpus
 cargo run --manifest-path tools/huntctl/Cargo.toml -- corpus ingest \
-  build/corpus build/boot_start_smoke.tape
+  build/corpus build/boot-start-smoke.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- corpus verify build/corpus
 
 # Probe the real persistent native worker

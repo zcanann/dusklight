@@ -90,7 +90,7 @@ if ($null -eq $resolvedDvd -or -not (Test-Path -LiteralPath $resolvedDvd -PathTy
 }
 
 $game = Join-Path $repoRoot "build\$Preset\dusklight.exe"
-$tape = Join-Path $repoRoot "build\eye_shredder.tape"
+$tape = Join-Path $repoRoot "build\eye-shredder.tape"
 if (-not (Test-Path -LiteralPath $game -PathType Leaf)) {
     throw "Dusklight executable does not exist: $game"
 }

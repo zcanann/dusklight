@@ -2,44 +2,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Glitch Hunt: Eye Shredder Visual Debug",
+            "name": "Glitch Hunt: TAS Playback",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
             "args": [
                 "--configured-dvd",
-                "--input-tape", "${workspaceFolder}/build/eye_shredder.tape",
+                "--input-tape", "${workspaceFolder}/build/${input:glitchHuntScenario}.tape",
                 "--input-tape-end", "release",
                 "--fixed-step",
                 "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
                 "--cursor-breakout-shadow",
-                "--name-entry-trace", "${workspaceFolder}/build/automation-state/vscode-debug/eye-shredder.trace.json",
-                "--automation-oracle", "eye-shredder",
-                "--automation-oracle-result", "${workspaceFolder}/build/automation-state/vscode-debug/eye-shredder.oracle.json",
-                "--automation-oracle-continue-on-pass",
-                "--cvar", "game.instantSaves=true",
-                "--cvar", "backend.cardFileType=1",
-                "--cvar", "backend.wasPresetChosen=true",
-                "--cvar", "game.enableMenuPointer=false",
-                "--develop",
-                "--console"
-            ],
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "preLaunchTask": "Glitch Hunt: Prepare Visual TAS",
-            "postDebugTask": "Glitch Hunt: Clean Visual TAS State"
-        },
-        {
-            "name": "Glitch Hunt: Boot Start Smoke Visual Debug",
-            "type": "cppvsdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
-            "args": [
-                "--configured-dvd",
-                "--input-tape", "${workspaceFolder}/build/boot_start_smoke.tape",
-                "--input-tape-end", "release",
-                "--fixed-step",
-                "--automation-data-root", "${workspaceFolder}/build/automation-state/vscode-debug",
+                "--name-entry-trace", "${workspaceFolder}/build/automation-state/vscode-debug/tas-playback.trace.json",
                 "--cvar", "game.instantSaves=true",
                 "--cvar", "backend.cardFileType=1",
                 "--cvar", "backend.wasPresetChosen=true",
@@ -63,6 +37,20 @@
             "symbolSearchPath": "${command:cmake.launchTargetPath}",
             "console": "integratedTerminal",
             "cwd":"${workspaceRoot}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "glitchHuntScenario",
+            "type": "pickString",
+            "description": "TAS playback scenario",
+            "default": "eye-shredder",
+            "options": [
+                "eye-shredder",
+                "intro-first-exit",
+                "intro-cutscene",
+                "boot-start-smoke"
+            ]
         }
     ]
 }

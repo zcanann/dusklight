@@ -46,7 +46,7 @@ if ($null -eq $resolvedDvd -or -not (Test-Path -LiteralPath $resolvedDvd -PathTy
 }
 
 $game = Join-Path $repoRoot "build\$Preset\dusklight.exe"
-$tapeName = if ($Goal -eq "first-exit") { "intro_first_exit.tape" } else { "intro_route.tape" }
+$tapeName = if ($Goal -eq "first-exit") { "intro-first-exit.tape" } else { "intro-cutscene.tape" }
 $scenarioName = if ($Goal -eq "first-exit") { "intro-first-exit" } else { "intro-cutscene" }
 $tape = Join-Path $repoRoot "build\$tapeName"
 $manifest = Join-Path $repoRoot "tools\huntctl\Cargo.toml"

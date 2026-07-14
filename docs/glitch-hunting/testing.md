@@ -39,10 +39,11 @@ Visual Studio developer shell.
 
 ## Visible TAS playback
 
-For the named Eye Shredder benchmark, run **Tasks: Run Task → Glitch Hunt: Eye
-Shredder Visual**. It resolves the last manually selected image, builds the
-fixture, runs the memory, renderer, opening-event, and playable-gameplay oracle,
-and preserves the result/trace under `build/test-results/eye-shredder`.
+For checked Eye Shredder playback, run **Tasks: Run Task**, choose **Glitch
+Hunt: Play Visual Scenario**, then select `eye-shredder`. It resolves the last
+manually selected image, builds the fixture, runs the memory, renderer,
+opening-event, and playable-gameplay oracle, and preserves the result/trace
+under `build/test-results/eye-shredder`.
 Playback owns all four controller ports and consumes only absolute frames. DVD
 and memory-card work is dispatched synchronously for fixed-step tape runs; any
 deviation from the checked simulation ticks or complete trace hash fails
@@ -91,7 +92,7 @@ with `-StatePath`; that directory is writable and survives process exit:
 
 ```powershell
 .\tools\glitch-hunting\play-visual-tas.ps1 `
-  -TapePath 'build\boot_start_smoke.tape' `
+  -TapePath 'build\boot-start-smoke.tape' `
   -StatePath 'build\automation-state\saved-runs\my-run'
 ```
 
@@ -101,13 +102,15 @@ Dusklight releases automation ownership and hands control to the live controller
 until the window is closed. The Eye runner finalizes and validates its oracle
 and trace after process exit.
 
-To attach a debugger and use breakpoints, choose **Glitch Hunt: Eye Shredder
-Visual Debug** or **Glitch Hunt: Boot Start Smoke Visual Debug** under **Run and
-Debug**, then press F5. They are separate because Eye Shredder requires its
-fixed-step shadow-memory and oracle flags; silently launching it as a generic
-tape does not reproduce the exploit. Each configuration copies only the last
-configured DVD path into a fresh debug data root before launch, then deletes the
-root after debugging. They require VS Code's `cppvsdbg` debugger support.
+To attach a debugger and use breakpoints, choose the single **Glitch Hunt: TAS
+Playback** entry under **Run and Debug**, press F5, and select a scenario from
+its dropdown. Scenario names map directly to standardized files under `build`
+(for example, `intro-cutscene` maps to `build/intro-cutscene.tape`). The common
+launch enables fixed-step playback and the bounded name-entry shadow required
+by Eye Shredder; semantic oracle validation remains in the test selector. The
+configuration copies only the last configured DVD path into a fresh debug data
+root before launch, then deletes the root after debugging. It requires VS
+Code's `cppvsdbg` debugger support.
 
 The named dispatcher is also directly callable. Surrounding quotes pasted as
 part of the DVD path are accepted:
@@ -123,7 +126,7 @@ The generic launcher remains available for custom and smoke tapes:
 ```powershell
 .\tools\glitch-hunting\play-visual-tas.ps1 `
   -DvdPath 'C:\path with spaces\game.iso' `
-  -TapePath 'build\boot_start_smoke.tape'
+  -TapePath 'build\boot-start-smoke.tape'
 ```
 
 Use `-DryRun` with either visual script to inspect routing or engine arguments
