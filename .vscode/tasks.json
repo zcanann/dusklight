@@ -45,6 +45,8 @@
         "intro-first-exit",
         "intro-cutscene",
         "fsp103-next-map-seed",
+        "boot-search-champion",
+        "route-search-champion",
         "boot-start-smoke"
       ]
     },

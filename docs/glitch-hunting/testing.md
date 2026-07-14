@@ -66,6 +66,13 @@ pixel-perfect console raster corruption is not claimed.
    boot/menu diagnostic. Leaving the DVD
    prompt blank uses the last image selected through Dusklight's Browse screen.
 
+Search winners have two fixed playback handoff names in the same dropdown:
+`boot-search-champion` plays `build/boot-search-champion.tape` from a cold boot;
+`route-search-champion` plays `build/route-search-champion.tape` from
+`F_SP103,1,1,3`. Search promotion writes those generated files under the
+already-ignored `build/` tree. Selecting one before its tape exists reports
+that the corresponding search must be run first.
+
 The pre-launch task builds Dusklight and compiles all checked TAS fixtures.
 The selector dispatches named scenarios rather than treating every tape as
 interchangeable. Eye Shredder uses the checked Eye runner, fixed-step timing,

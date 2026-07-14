@@ -1,6 +1,14 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("eye-shredder", "intro-first-exit", "intro-cutscene", "fsp103-next-map-seed", "boot-start-smoke")]
+    [ValidateSet(
+        "eye-shredder",
+        "intro-first-exit",
+        "intro-cutscene",
+        "fsp103-next-map-seed",
+        "boot-search-champion",
+        "route-search-champion",
+        "boot-start-smoke"
+    )]
     [string]$Scenario = "eye-shredder",
 
     [string]$DvdPath,
@@ -16,6 +24,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
 $runner = $null
+$generatedChampion = $false
 $runnerParameters = @{
     Preset = $Preset
 }
@@ -42,6 +51,17 @@ switch ($Scenario) {
         $runnerParameters.TapePath = Join-Path $repoRoot "build\fsp103-next-map-seed.tape"
         $runnerParameters.Stage = "F_SP103,1,1,3"
     }
+    "boot-search-champion" {
+        $generatedChampion = $true
+        $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\boot-search-champion.tape"
+    }
+    "route-search-champion" {
+        $generatedChampion = $true
+        $runner = Join-Path $PSScriptRoot "play-visual-tas.ps1"
+        $runnerParameters.TapePath = Join-Path $repoRoot "build\route-search-champion.tape"
+        $runnerParameters.Stage = "F_SP103,1,1,3"
+    }
 }
 
 if (-not [string]::IsNullOrWhiteSpace($DvdPath)) {
@@ -55,6 +75,11 @@ if ($DryRun) {
         parameters = $runnerParameters
     } | ConvertTo-Json -Depth 3
     return
+}
+
+if ($generatedChampion -and
+    -not (Test-Path -LiteralPath $runnerParameters.TapePath -PathType Leaf)) {
+    throw "Missing generated champion tape '$($runnerParameters.TapePath)'. Run the corresponding search first, then promote its winner to this fixed output path."
 }
 
 if (-not $SkipBuild) {
