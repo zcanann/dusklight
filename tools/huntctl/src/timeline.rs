@@ -1,4 +1,4 @@
-//! Authored route timelines and immutable variant lineages.
+//! Authored route timelines and immutable segment lineages.
 
 use crate::milestone_dsl::{self, CompiledMilestones};
 use crate::search::{Candidate, SegmentProfile};
@@ -20,7 +20,6 @@ pub struct Timeline {
     pub origin: Option<Origin>,
     pub segments: BTreeMap<String, Segment>,
     pub goals: BTreeMap<String, Goal>,
-    pub variants: BTreeMap<String, Variant>,
     pub proofs: Vec<GoalProof>,
     pub continuations: BTreeMap<String, Continuation>,
     pub branches: BTreeMap<String, Branch>,
@@ -36,10 +35,13 @@ pub struct Origin {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Segment {
-    pub name: String,
+    pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub profile: SegmentProfile,
+    pub artifact: ArtifactSource,
+    pub start_fingerprint: String,
+    pub end_fingerprint: String,
     #[serde(skip)]
     line: usize,
 }
@@ -54,21 +56,8 @@ pub struct Goal {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Variant {
-    pub id: String,
-    pub segment: String,
-    pub name: String,
-    pub incumbent: bool,
-    pub artifact: ArtifactSource,
-    pub start_fingerprint: String,
-    pub boundary_fingerprint: String,
-    #[serde(skip)]
-    line: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
 pub struct GoalProof {
-    pub variant: String,
+    pub segment: String,
     pub goal: String,
     pub predicate_program_sha256: String,
     pub predicate_definition_sha256: String,
@@ -89,13 +78,13 @@ pub enum ArtifactSource {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DependencyPin {
-    pub parent_variant: String,
+    pub parent_segment: String,
     pub checkpoint_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ContinuationStep {
-    pub variant: String,
+    pub segment: String,
     pub after: DependencyPin,
     #[serde(skip)]
     line: usize,
@@ -114,7 +103,7 @@ pub struct Continuation {
 pub struct Branch {
     pub name: String,
     pub from_lineage: String,
-    pub after_variant: String,
+    pub after_segment: String,
     pub steps: Vec<ContinuationStep>,
     #[serde(skip)]
     line: usize,
@@ -123,9 +112,8 @@ pub struct Branch {
 #[derive(Clone, Debug, Serialize)]
 pub struct TimelineInspection {
     pub timeline: Timeline,
-    pub incumbents: BTreeMap<String, String>,
     pub lineages: Vec<ResolvedLineage>,
-    pub frontiers: Vec<VariantFrontier>,
+    pub frontiers: Vec<GoalFrontier>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -144,20 +132,17 @@ pub enum LineageKind {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct VariantFrontier {
-    pub segment: String,
+pub struct GoalFrontier {
+    pub reference_segment: String,
     pub goal: String,
-    pub start_fingerprint: String,
-    pub boundary_fingerprint: String,
-    pub variants: Vec<FrontierMember>,
+    pub segments: Vec<FrontierMember>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct FrontierMember {
-    pub variant: String,
-    pub incumbent: bool,
+    pub segment: String,
     pub first_hit_tick: Option<u64>,
-    pub relation_to_incumbent: DominanceRelation,
+    pub relation_to_reference: DominanceRelation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -173,7 +158,6 @@ pub enum DominanceRelation {
 #[derive(Clone, Debug, Serialize)]
 pub struct TimelineStatus {
     pub timeline: String,
-    pub incumbents: BTreeMap<String, String>,
     pub immutable_lineages: Vec<LineageStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<WorkspaceStatus>,
@@ -197,8 +181,8 @@ pub struct WorkspaceStatus {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceStep {
-    pub original_variant: String,
-    pub workspace_variant: String,
+    pub original_segment: String,
+    pub workspace_segment: String,
     pub state: WorkspaceStepState,
     pub rebase_compatible: bool,
     pub expected_start_fingerprint: String,
@@ -232,7 +216,6 @@ impl Timeline {
 
     pub fn inspect(&self) -> Result<TimelineInspection, TimelineError> {
         self.validate_artifacts(None)?;
-        let incumbents = self.incumbents();
         let mut lineages = Vec::new();
         for name in self.continuations.keys() {
             lineages.push(self.resolve_lineage(name)?);
@@ -242,7 +225,6 @@ impl Timeline {
         }
         Ok(TimelineInspection {
             timeline: self.clone(),
-            incumbents,
             lineages,
             frontiers: self.frontiers(),
         })
@@ -351,8 +333,8 @@ impl Timeline {
                         proof.line,
                         1,
                         format!(
-                            "proof for variant {} and goal {} pins stale predicate program {}; current program is {}",
-                            proof.variant,
+                            "proof for segment {} and goal {} pins stale predicate program {}; current program is {}",
+                            proof.segment,
                             proof.goal,
                             proof.predicate_program_sha256,
                             program_sha256
@@ -364,8 +346,8 @@ impl Timeline {
                         proof.line,
                         1,
                         format!(
-                            "proof for variant {} and goal {} pins stale predicate {}; current predicate is {}",
-                            proof.variant, proof.goal, proof.predicate_definition_sha256, actual
+                            "proof for segment {} and goal {} pins stale predicate {}; current predicate is {}",
+                            proof.segment, proof.goal, proof.predicate_definition_sha256, actual
                         ),
                     ));
                 }
@@ -375,22 +357,22 @@ impl Timeline {
                 proof.line,
                 1,
                 format!(
-                    "proof for variant {} and goal {} has no predicate_program declaration",
-                    proof.variant, proof.goal
+                    "proof for segment {} and goal {} has no predicate_program declaration",
+                    proof.segment, proof.goal
                 ),
             ));
         }
-        for variant in self.variants.values() {
-            let profile = self.segments[&variant.segment].profile;
-            match &variant.artifact {
+        for segment in self.segments.values() {
+            let profile = segment.profile;
+            match &segment.artifact {
                 ArtifactSource::Baseline(candidate_profile) => {
                     if *candidate_profile != profile {
                         return Err(TimelineError::at(
-                            variant.line,
+                            segment.line,
                             1,
                             format!(
-                                "variant {} baseline profile {} does not match segment profile {}",
-                                variant.id,
+                                "segment {} baseline profile {} does not match its declared profile {}",
+                                segment.id,
                                 candidate_profile.as_str(),
                                 profile.as_str()
                             ),
@@ -398,25 +380,25 @@ impl Timeline {
                     }
                     Candidate::baseline(*candidate_profile)
                         .validate()
-                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
+                        .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?;
                 }
                 ArtifactSource::Candidate(path) => {
                     let path = root.join(path);
                     let candidate: Candidate =
                         serde_json::from_slice(&fs::read(&path).map_err(|error| {
                             TimelineError::at(
-                                variant.line,
+                                segment.line,
                                 1,
                                 format!("cannot read candidate {}: {error}", path.display()),
                             )
                         })?)
-                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
+                        .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?;
                     candidate
                         .validate()
-                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
+                        .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?;
                     if candidate.segment != profile {
                         return Err(TimelineError::at(
-                            variant.line,
+                            segment.line,
                             1,
                             format!("candidate {} has the wrong segment profile", path.display()),
                         ));
@@ -426,26 +408,26 @@ impl Timeline {
                     let path = root.join(path);
                     let source = fs::read_to_string(&path).map_err(|error| {
                         TimelineError::at(
-                            variant.line,
+                            segment.line,
                             1,
                             format!("cannot read TAS program {}: {error}", path.display()),
                         )
                     })?;
                     tape_dsl::parse(&source)
-                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?
+                        .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?
                         .compile()
-                        .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
+                        .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?;
                 }
                 ArtifactSource::Tape(path) => {
                     let path = root.join(path);
                     InputTape::decode(&fs::read(&path).map_err(|error| {
                         TimelineError::at(
-                            variant.line,
+                            segment.line,
                             1,
                             format!("cannot read tape {}: {error}", path.display()),
                         )
                     })?)
-                    .map_err(|error| TimelineError::at(variant.line, 1, error.to_string()))?;
+                    .map_err(|error| TimelineError::at(segment.line, 1, error.to_string()))?;
                 }
             }
         }
@@ -468,7 +450,7 @@ impl Timeline {
                 steps: resolved
                     .steps
                     .into_iter()
-                    .map(|step| step.variant)
+                    .map(|step| step.segment)
                     .collect(),
             });
         }
@@ -483,7 +465,6 @@ impl Timeline {
         };
         Ok(TimelineStatus {
             timeline: self.name.clone(),
-            incumbents: self.incumbents(),
             immutable_lineages,
             workspace,
         })
@@ -508,34 +489,36 @@ impl Timeline {
         let mut steps = Vec::with_capacity(resolved.steps.len());
         let mut compatible_descendants = Vec::new();
         let mut stale_descendants = Vec::new();
-        let mut previous_variant: Option<String> = None;
+        let mut previous_segment: Option<String> = None;
         let mut previous_fingerprint = resolved.root_fingerprint.clone();
         let mut chain_compatible = true;
         for (index, workspace_step) in workspace.steps.iter().enumerate() {
-            let variant_id = &workspace_step.workspace_variant;
-            let variant = &self.variants[variant_id];
-            let compatible = chain_compatible && variant.start_fingerprint == previous_fingerprint;
+            let segment_id = &workspace_step.workspace_segment;
+            let segment = &self.segments[segment_id];
+            let compatible = chain_compatible
+                && segment.parent == previous_segment
+                && segment.start_fingerprint == previous_fingerprint;
             if index > 0 && workspace_step.state == WorkspaceStepState::Stale {
                 if compatible {
-                    compatible_descendants.push(variant_id.clone());
+                    compatible_descendants.push(segment_id.clone());
                 } else {
-                    stale_descendants.push(variant_id.clone());
+                    stale_descendants.push(segment_id.clone());
                 }
             }
             if !compatible {
                 chain_compatible = false;
             }
-            let parent_variant = previous_variant.clone().unwrap_or_else(|| "root".into());
+            let parent_segment = previous_segment.clone().unwrap_or_else(|| "root".into());
             steps.push(ContinuationStep {
-                variant: variant_id.clone(),
+                segment: segment_id.clone(),
                 after: DependencyPin {
-                    parent_variant,
+                    parent_segment,
                     checkpoint_fingerprint: previous_fingerprint.clone(),
                 },
                 line: 0,
             });
-            previous_variant = Some(variant_id.clone());
-            previous_fingerprint = variant.boundary_fingerprint.clone();
+            previous_segment = Some(segment_id.clone());
+            previous_fingerprint = segment.end_fingerprint.clone();
         }
         let fully_compatible = chain_compatible;
         let authored_dsl = if fully_compatible {
@@ -555,72 +538,38 @@ impl Timeline {
         })
     }
 
-    fn incumbents(&self) -> BTreeMap<String, String> {
-        self.variants
-            .values()
-            .filter(|variant| variant.incumbent)
-            .map(|variant| (variant.segment.clone(), variant.id.clone()))
-            .collect()
-    }
-
-    fn frontiers(&self) -> Vec<VariantFrontier> {
+    fn frontiers(&self) -> Vec<GoalFrontier> {
         let proof_ticks = self
             .proofs
             .iter()
             .map(|proof| {
                 (
-                    (proof.variant.as_str(), proof.goal.as_str()),
+                    (proof.segment.as_str(), proof.goal.as_str()),
                     proof.first_hit_tick,
                 )
             })
             .collect::<HashMap<_, _>>();
         let mut output = Vec::new();
         for goal in self.goals.values() {
-            let mut grouped: BTreeMap<(String, String), Vec<&Variant>> = BTreeMap::new();
-            for variant in self
-                .variants
-                .values()
-                .filter(|variant| variant.segment == goal.segment)
-            {
-                grouped
-                    .entry((
-                        variant.start_fingerprint.clone(),
-                        variant.boundary_fingerprint.clone(),
-                    ))
-                    .or_default()
-                    .push(variant);
-            }
-            for ((start_fingerprint, boundary_fingerprint), variants) in grouped {
-                let incumbent = variants.iter().find(|variant| variant.incumbent).copied();
-                let incumbent_tick = incumbent.and_then(|variant| {
-                    proof_ticks
-                        .get(&(variant.id.as_str(), goal.id.as_str()))
-                        .copied()
-                        .flatten()
-                });
-                let members = variants
-                    .into_iter()
-                    .map(|variant| {
-                        let first_hit_tick = proof_ticks
-                            .get(&(variant.id.as_str(), goal.id.as_str()))
-                            .copied()
-                            .flatten();
-                        FrontierMember {
-                            variant: variant.id.clone(),
-                            incumbent: variant.incumbent,
-                            first_hit_tick,
-                            relation_to_incumbent: dominance(first_hit_tick, incumbent_tick),
-                        }
-                    })
-                    .collect();
-                output.push(VariantFrontier {
-                    segment: goal.segment.clone(),
-                    goal: goal.id.clone(),
-                    start_fingerprint,
-                    boundary_fingerprint,
-                    variants: members,
-                });
-            }
+            let reference_tick = proof_ticks
+                .get(&(goal.segment.as_str(), goal.id.as_str()))
+                .copied()
+                .flatten();
+            let segments = self
+                .proofs
+                .iter()
+                .filter(|proof| proof.goal == goal.id)
+                .map(|proof| FrontierMember {
+                    segment: proof.segment.clone(),
+                    first_hit_tick: proof.first_hit_tick,
+                    relation_to_reference: dominance(proof.first_hit_tick, reference_tick),
+                })
+                .collect();
+            output.push(GoalFrontier {
+                reference_segment: goal.segment.clone(),
+                goal: goal.id.clone(),
+                segments,
+            });
         }
         output
     }
@@ -631,42 +580,42 @@ impl Timeline {
         selections: &BTreeMap<String, String>,
     ) -> Result<WorkspaceStatus, TimelineError> {
         let resolved = self.resolve_lineage(lineage)?;
-        let lineage_segments: HashSet<_> = resolved
+        let lineage_segments = resolved
             .steps
             .iter()
-            .map(|step| self.variants[&step.variant].segment.as_str())
-            .collect();
-        for (segment, variant_id) in selections {
-            if !lineage_segments.contains(segment.as_str()) {
+            .map(|step| step.segment.as_str())
+            .collect::<HashSet<_>>();
+        for (original_id, replacement_id) in selections {
+            if !lineage_segments.contains(original_id.as_str()) {
                 return Err(TimelineError::new(format!(
-                    "selection segment {segment:?} is not in lineage {lineage:?}"
+                    "selection segment {original_id:?} is not in lineage {lineage:?}"
                 )));
             }
-            let variant = self.variants.get(variant_id).ok_or_else(|| {
+            let original = &self.segments[original_id];
+            let replacement = self.segments.get(replacement_id).ok_or_else(|| {
                 TimelineError::new(format!(
-                    "selection references unknown variant {variant_id:?}"
+                    "selection references unknown segment {replacement_id:?}"
                 ))
             })?;
-            if variant.segment != *segment {
+            if replacement.profile != original.profile {
                 return Err(TimelineError::new(format!(
-                    "variant {variant_id} belongs to segment {}, not {segment}",
-                    variant.segment
+                    "replacement segment {replacement_id} does not have the same profile as {original_id}"
                 )));
             }
         }
         let mut changed_upstream = false;
         let mut chain_compatible = true;
         let mut expected_start = resolved.root_fingerprint.clone();
+        let mut expected_parent: Option<String> = None;
         let mut steps = Vec::new();
         let mut stale_descendants = Vec::new();
         for original in &resolved.steps {
-            let original_variant = &self.variants[&original.variant];
             let selected = selections
-                .get(&original_variant.segment)
+                .get(&original.segment)
                 .cloned()
-                .unwrap_or_else(|| original.variant.clone());
-            let workspace_variant = &self.variants[&selected];
-            let selected_changed = selected != original.variant;
+                .unwrap_or_else(|| original.segment.clone());
+            let workspace_segment = &self.segments[&selected];
+            let selected_changed = selected != original.segment;
             let state = if selected_changed {
                 changed_upstream = true;
                 WorkspaceStepState::Selected
@@ -676,20 +625,22 @@ impl Timeline {
             } else {
                 WorkspaceStepState::Unchanged
             };
-            let compatible =
-                chain_compatible && workspace_variant.start_fingerprint == expected_start;
+            let compatible = chain_compatible
+                && workspace_segment.parent == expected_parent
+                && workspace_segment.start_fingerprint == expected_start;
             if !compatible {
                 chain_compatible = false;
             }
             steps.push(WorkspaceStep {
-                original_variant: original.variant.clone(),
-                workspace_variant: selected,
+                original_segment: original.segment.clone(),
+                workspace_segment: selected,
                 state,
                 rebase_compatible: compatible,
                 expected_start_fingerprint: expected_start.clone(),
-                actual_start_fingerprint: workspace_variant.start_fingerprint.clone(),
+                actual_start_fingerprint: workspace_segment.start_fingerprint.clone(),
             });
-            expected_start = workspace_variant.boundary_fingerprint.clone();
+            expected_start = workspace_segment.end_fingerprint.clone();
+            expected_parent = Some(workspace_segment.id.clone());
         }
         Ok(WorkspaceStatus {
             base_lineage: lineage.into(),
@@ -715,7 +666,7 @@ impl Timeline {
         let mut prefix = Vec::new();
         let mut reached = false;
         for step in base.steps {
-            reached = step.variant == branch.after_variant;
+            reached = step.segment == branch.after_segment;
             prefix.push(step);
             if reached {
                 break;
@@ -726,8 +677,8 @@ impl Timeline {
                 branch.line,
                 1,
                 format!(
-                    "branch {} fork variant {} is not reached by {}",
-                    branch.name, branch.after_variant, branch.from_lineage
+                    "branch {} fork segment {} is not reached by {}",
+                    branch.name, branch.after_segment, branch.from_lineage
                 ),
             ));
         }
@@ -741,13 +692,13 @@ impl Timeline {
     }
 }
 
-fn dominance(first_hit_tick: Option<u64>, incumbent_tick: Option<u64>) -> DominanceRelation {
-    let Some(incumbent_tick) = incumbent_tick else {
+fn dominance(first_hit_tick: Option<u64>, reference_tick: Option<u64>) -> DominanceRelation {
+    let Some(reference_tick) = reference_tick else {
         return DominanceRelation::Incomparable;
     };
     match first_hit_tick {
-        Some(left) if left < incumbent_tick => DominanceRelation::Faster,
-        Some(left) if left > incumbent_tick => DominanceRelation::Slower,
+        Some(left) if left < reference_tick => DominanceRelation::Faster,
+        Some(left) if left > reference_tick => DominanceRelation::Slower,
         Some(_) => DominanceRelation::Tied,
         None => DominanceRelation::Unscored,
     }
@@ -758,7 +709,7 @@ fn render_continuation(name: &str, root_fingerprint: &str, steps: &[Continuation
     for step in steps {
         output.push_str(&format!(
             "continue {name} with {} after {}@{}\n",
-            step.variant, step.after.parent_variant, step.after.checkpoint_fingerprint
+            step.segment, step.after.parent_segment, step.after.checkpoint_fingerprint
         ));
     }
     output
@@ -775,11 +726,11 @@ impl Timeline {
             ));
         }
         for segment in self.segments.values() {
-            if segment.parent.as_deref() == Some(segment.name.as_str()) {
+            if segment.parent.as_deref() == Some(segment.id.as_str()) {
                 return Err(TimelineError::at(
                     segment.line,
                     1,
-                    format!("segment {} cannot be its own parent", segment.name),
+                    format!("segment {} cannot be its own parent", segment.id),
                 ));
             }
             if let Some(parent) = &segment.parent
@@ -788,14 +739,29 @@ impl Timeline {
                 return Err(TimelineError::at(
                     segment.line,
                     1,
-                    format!(
-                        "segment {} references unknown parent {parent}",
-                        segment.name
-                    ),
+                    format!("segment {} references unknown parent {parent}", segment.id),
                 ));
             }
         }
         self.validate_segment_forest()?;
+        for segment in self.segments.values() {
+            if let Some(parent_id) = &segment.parent {
+                let parent = &self.segments[parent_id];
+                if segment.start_fingerprint != parent.end_fingerprint {
+                    return Err(TimelineError::at(
+                        segment.line,
+                        1,
+                        format!(
+                            "segment {} starts at {}, but its parent {} ends at {}",
+                            segment.id,
+                            segment.start_fingerprint,
+                            parent.id,
+                            parent.end_fingerprint
+                        ),
+                    ));
+                }
+            }
+        }
 
         for goal in self.goals.values() {
             if !self.segments.contains_key(&goal.segment) {
@@ -810,36 +776,22 @@ impl Timeline {
             }
         }
 
-        let mut incumbent_counts: HashMap<&str, usize> = HashMap::new();
-        for variant in self.variants.values() {
-            if !self.segments.contains_key(&variant.segment) {
+        for segment in self.segments.values() {
+            if segment.start_fingerprint.is_empty() || segment.end_fingerprint.is_empty() {
                 return Err(TimelineError::at(
-                    variant.line,
+                    segment.line,
                     1,
-                    format!(
-                        "variant {} references unknown segment {}",
-                        variant.id, variant.segment
-                    ),
+                    format!("segment {} has an empty boundary fingerprint", segment.id),
                 ));
-            }
-            if variant.start_fingerprint.is_empty() || variant.boundary_fingerprint.is_empty() {
-                return Err(TimelineError::at(
-                    variant.line,
-                    1,
-                    format!("variant {} has an empty boundary fingerprint", variant.id),
-                ));
-            }
-            if variant.incumbent {
-                *incumbent_counts.entry(&variant.segment).or_default() += 1;
             }
         }
         let mut proof_pairs = HashSet::new();
         for proof in &self.proofs {
-            let variant = self.variants.get(&proof.variant).ok_or_else(|| {
+            let proving_segment = self.segments.get(&proof.segment).ok_or_else(|| {
                 TimelineError::at(
                     proof.line,
                     1,
-                    format!("proof references unknown variant {}", proof.variant),
+                    format!("proof references unknown segment {}", proof.segment),
                 )
             })?;
             let goal = self.goals.get(&proof.goal).ok_or_else(|| {
@@ -849,36 +801,30 @@ impl Timeline {
                     format!("proof references unknown goal {}", proof.goal),
                 )
             })?;
-            if goal.segment != variant.segment {
+            let reference_segment = &self.segments[&goal.segment];
+            if proving_segment.id != reference_segment.id
+                && proving_segment.parent != reference_segment.parent
+            {
                 return Err(TimelineError::at(
                     proof.line,
                     1,
                     format!(
-                        "proof goal {} belongs to segment {}, but variant {} belongs to {}",
-                        goal.id, goal.segment, variant.id, variant.segment
+                        "segment {} cannot satisfy goal {} on unrelated segment {}; proofs require the reference segment or one of its siblings",
+                        proving_segment.id, goal.id, reference_segment.id
                     ),
                 ));
             }
-            if !proof_pairs.insert((proof.variant.as_str(), proof.goal.as_str())) {
+            if !proof_pairs.insert((proof.segment.as_str(), proof.goal.as_str())) {
                 return Err(TimelineError::at(
                     proof.line,
                     1,
                     format!(
-                        "duplicate proof for variant {} and goal {}",
-                        proof.variant, proof.goal
+                        "duplicate proof for segment {} and goal {}",
+                        proof.segment, proof.goal
                     ),
                 ));
             }
         }
-        for segment in self.segments.keys() {
-            let count = incumbent_counts.get(segment.as_str()).copied().unwrap_or(0);
-            if count != 1 {
-                return Err(TimelineError::new(format!(
-                    "segment {segment} must have exactly one incumbent variant; found {count}"
-                )));
-            }
-        }
-
         for continuation in self.continuations.values() {
             if continuation.steps.is_empty() {
                 return Err(TimelineError::at(
@@ -894,13 +840,13 @@ impl Timeline {
             )?;
         }
         for branch in self.branches.values() {
-            if !self.variants.contains_key(&branch.after_variant) {
+            if !self.segments.contains_key(&branch.after_segment) {
                 return Err(TimelineError::at(
                     branch.line,
                     1,
                     format!(
-                        "branch {} references unknown fork variant {}",
-                        branch.name, branch.after_variant
+                        "branch {} references unknown fork segment {}",
+                        branch.name, branch.after_segment
                     ),
                 ));
             }
@@ -931,63 +877,62 @@ impl Timeline {
         root_fingerprint: &str,
         steps: &[ContinuationStep],
     ) -> Result<(), TimelineError> {
-        let mut prior_variant: Option<&Variant> = None;
+        let mut prior_segment: Option<&Segment> = None;
         let mut expected_fingerprint = root_fingerprint;
         for step in steps {
-            let variant = self.variants.get(&step.variant).ok_or_else(|| {
+            let segment = self.segments.get(&step.segment).ok_or_else(|| {
                 TimelineError::at(
                     step.line,
                     1,
-                    format!("{name} references unknown variant {}", step.variant),
+                    format!("{name} references unknown segment {}", step.segment),
                 )
             })?;
-            let expected_parent = prior_variant.map_or("root", |prior| prior.id.as_str());
-            if step.after.parent_variant != expected_parent {
+            let expected_parent = prior_segment.map_or("root", |prior| prior.id.as_str());
+            if step.after.parent_segment != expected_parent {
                 return Err(TimelineError::at(
                     step.line,
                     1,
                     format!(
                         "{name} step {} pins parent {}, expected exact parent {}",
-                        variant.id, step.after.parent_variant, expected_parent
+                        segment.id, step.after.parent_segment, expected_parent
                     ),
                 ));
             }
             if step.after.checkpoint_fingerprint != expected_fingerprint
-                || variant.start_fingerprint != expected_fingerprint
+                || segment.start_fingerprint != expected_fingerprint
             {
                 return Err(TimelineError::at(
                     step.line,
                     1,
                     format!(
-                        "{name} step {} boundary mismatch: pin={}, variant starts={}, expected={}",
-                        variant.id,
+                        "{name} step {} boundary mismatch: pin={}, segment starts={}, expected={}",
+                        segment.id,
                         step.after.checkpoint_fingerprint,
-                        variant.start_fingerprint,
+                        segment.start_fingerprint,
                         expected_fingerprint
                     ),
                 ));
             }
-            if let Some(prior) = prior_variant {
-                let segment = &self.segments[&variant.segment];
-                if segment.parent.as_deref() != Some(prior.segment.as_str()) {
+            if let Some(prior) = prior_segment {
+                if segment.parent.as_deref() != Some(prior.id.as_str()) {
                     return Err(TimelineError::at(
                         step.line,
                         1,
                         format!(
                             "{name} is discontinuous: segment {} is not a child of {}",
-                            segment.name, prior.segment
+                            segment.id, prior.id
                         ),
                     ));
                 }
-            } else if self.segments[&variant.segment].parent.is_some() {
+            } else if segment.parent.is_some() {
                 return Err(TimelineError::at(
                     step.line,
                     1,
-                    format!("{name} starts with non-root segment {}", variant.segment),
+                    format!("{name} starts with non-root segment {}", segment.id),
                 ));
             }
-            expected_fingerprint = &variant.boundary_fingerprint;
-            prior_variant = Some(variant);
+            expected_fingerprint = &segment.end_fingerprint;
+            prior_segment = Some(segment);
         }
         Ok(())
     }
@@ -995,7 +940,7 @@ impl Timeline {
     fn validate_segment_forest(&self) -> Result<(), TimelineError> {
         for segment in self.segments.values() {
             let mut seen = HashSet::new();
-            let mut current = Some(segment.name.as_str());
+            let mut current = Some(segment.id.as_str());
             while let Some(name) = current {
                 if !seen.insert(name) {
                     return Err(TimelineError::at(
@@ -1036,7 +981,6 @@ struct Parser<'a> {
     origin: Option<Origin>,
     segments: BTreeMap<String, Segment>,
     goals: BTreeMap<String, Goal>,
-    variants: BTreeMap<String, Variant>,
     proofs: Vec<GoalProof>,
     continuations: BTreeMap<String, Continuation>,
     branches: BTreeMap<String, Branch>,
@@ -1051,7 +995,6 @@ impl<'a> Parser<'a> {
             origin: None,
             segments: BTreeMap::new(),
             goals: BTreeMap::new(),
-            variants: BTreeMap::new(),
             proofs: Vec::new(),
             continuations: BTreeMap::new(),
             branches: BTreeMap::new(),
@@ -1071,7 +1014,6 @@ impl<'a> Parser<'a> {
                 "origin" => self.parse_origin(&tokens, line_number)?,
                 "segment" => self.parse_segment(&tokens, line_number)?,
                 "goal" => self.parse_goal(&tokens, line_number)?,
-                "variant" => self.parse_variant(&tokens, line_number)?,
                 "proof" => self.parse_proof(&tokens, line_number)?,
                 "continuation" => self.parse_continuation(&tokens, line_number)?,
                 "branch" => self.parse_branch(&tokens, line_number)?,
@@ -1093,7 +1035,6 @@ impl<'a> Parser<'a> {
             origin: self.origin,
             segments: self.segments,
             goals: self.goals,
-            variants: self.variants,
             proofs: self.proofs,
             continuations: self.continuations,
             branches: self.branches,
@@ -1161,43 +1102,62 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_segment(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        let (parent, profile_index) = match tokens.get(2).map(String::as_str) {
-            Some("root") => {
-                exact_len(tokens, 5, line, "segment NAME root profile PROFILE")?;
-                (None, 4)
-            }
-            Some("after") => {
-                exact_len(
-                    tokens,
-                    6,
-                    line,
-                    "segment NAME after PARENT_SEGMENT profile PROFILE",
-                )?;
-                (Some(tokens[3].clone()), 5)
-            }
+        let (parent, cursor) = match tokens.get(2).map(String::as_str) {
+            Some("root") => (None, 3),
+            Some("after") => (Some(required_token(tokens, 3, line, "parent segment")?), 4),
             _ => {
                 return Err(TimelineError::at(
                     line,
                     1,
-                    "expected segment NAME root profile PROFILE or segment NAME after PARENT_SEGMENT profile PROFILE",
+                    "expected segment ID root profile PROFILE uses KIND VALUE starts FINGERPRINT produces FINGERPRINT or segment ID after PARENT_SEGMENT profile PROFILE uses KIND VALUE starts FINGERPRINT produces FINGERPRINT",
                 ));
             }
         };
-        expect(tokens, profile_index - 1, "profile", line)?;
-        let name = tokens[1].clone();
-        let segment = Segment {
-            name: name.clone(),
-            parent,
-            profile: tokens[profile_index].parse().map_err(
+        exact_len(
+            tokens,
+            cursor + 9,
+            line,
+            "segment ID (root | after PARENT_SEGMENT) profile PROFILE uses KIND VALUE starts FINGERPRINT produces FINGERPRINT",
+        )?;
+        expect(tokens, cursor, "profile", line)?;
+        expect(tokens, cursor + 2, "uses", line)?;
+        expect(tokens, cursor + 5, "starts", line)?;
+        expect(tokens, cursor + 7, "produces", line)?;
+        let id = tokens[1].clone();
+        let profile = tokens[cursor + 1]
+            .parse()
+            .map_err(|error: crate::search::SearchError| {
+                TimelineError::at(line, 1, error.to_string())
+            })?;
+        let artifact = match tokens[cursor + 3].as_str() {
+            "baseline" => ArtifactSource::Baseline(tokens[cursor + 4].parse().map_err(
                 |error: crate::search::SearchError| TimelineError::at(line, 1, error.to_string()),
-            )?,
+            )?),
+            "candidate" => ArtifactSource::Candidate(PathBuf::from(&tokens[cursor + 4])),
+            "tas" => ArtifactSource::Tas(PathBuf::from(&tokens[cursor + 4])),
+            "tape" => ArtifactSource::Tape(PathBuf::from(&tokens[cursor + 4])),
+            kind => {
+                return Err(TimelineError::at(
+                    line,
+                    1,
+                    format!("unknown segment artifact kind {kind:?}"),
+                ));
+            }
+        };
+        let segment = Segment {
+            id: id.clone(),
+            parent,
+            profile,
+            artifact,
+            start_fingerprint: tokens[cursor + 6].clone(),
+            end_fingerprint: tokens[cursor + 8].clone(),
             line,
         };
-        if self.segments.insert(name.clone(), segment).is_some() {
+        if self.segments.insert(id.clone(), segment).is_some() {
             return Err(TimelineError::at(
                 line,
                 1,
-                format!("duplicate segment {name}"),
+                format!("duplicate segment {id}"),
             ));
         }
         Ok(())
@@ -1225,84 +1185,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_variant(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        if tokens.len() < 9 {
-            return Err(TimelineError::at(
-                line,
-                1,
-                "expected variant SEGMENT.NAME [incumbent] uses KIND VALUE starts FINGERPRINT produces FINGERPRINT",
-            ));
-        }
-        let id = tokens[1].clone();
-        let (segment, name) = split_variant_id(&id, line)?;
-        let mut cursor = 2;
-        let incumbent = tokens.get(cursor).is_some_and(|token| token == "incumbent");
-        if incumbent {
-            cursor += 1;
-        }
-        expect(tokens, cursor, "uses", line)?;
-        let kind = tokens
-            .get(cursor + 1)
-            .ok_or_else(|| TimelineError::at(line, 1, "missing artifact kind"))?;
-        let value = tokens
-            .get(cursor + 2)
-            .ok_or_else(|| TimelineError::at(line, 1, "missing artifact value"))?;
-        let artifact = match kind.as_str() {
-            "baseline" => ArtifactSource::Baseline(value.parse().map_err(
-                |error: crate::search::SearchError| TimelineError::at(line, 1, error.to_string()),
-            )?),
-            "candidate" => ArtifactSource::Candidate(PathBuf::from(value)),
-            "tas" => ArtifactSource::Tas(PathBuf::from(value)),
-            "tape" => ArtifactSource::Tape(PathBuf::from(value)),
-            _ => {
-                return Err(TimelineError::at(
-                    line,
-                    1,
-                    format!("unknown variant artifact kind {kind:?}"),
-                ));
-            }
-        };
-        cursor += 3;
-        expect(tokens, cursor, "starts", line)?;
-        let start_fingerprint = required_token(tokens, cursor + 1, line, "start fingerprint")?;
-        cursor += 2;
-        expect(tokens, cursor, "produces", line)?;
-        let boundary_fingerprint =
-            required_token(tokens, cursor + 1, line, "boundary fingerprint")?;
-        cursor += 2;
-        if cursor != tokens.len() {
-            return Err(TimelineError::at(
-                line,
-                1,
-                format!("unexpected variant token {:?}", tokens[cursor]),
-            ));
-        }
-        let variant = Variant {
-            id: id.clone(),
-            segment,
-            name,
-            incumbent,
-            artifact,
-            start_fingerprint,
-            boundary_fingerprint,
-            line,
-        };
-        if self.variants.insert(id.clone(), variant).is_some() {
-            return Err(TimelineError::at(
-                line,
-                1,
-                format!("duplicate variant {id}"),
-            ));
-        }
-        Ok(())
-    }
-
     fn parse_proof(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
         if tokens.len() != 8 && tokens.len() != 10 {
             return Err(TimelineError::at(
                 line,
                 1,
-                "expected proof VARIANT satisfies GOAL program SHA256 predicate SHA256 [ticks N]",
+                "expected proof SEGMENT satisfies GOAL program SHA256 predicate SHA256 [ticks N]",
             ));
         }
         expect(tokens, 2, "satisfies", line)?;
@@ -1319,7 +1207,7 @@ impl<'a> Parser<'a> {
             None
         };
         self.proofs.push(GoalProof {
-            variant: tokens[1].clone(),
+            segment: tokens[1].clone(),
             goal: tokens[3].clone(),
             predicate_program_sha256: tokens[5].clone(),
             predicate_definition_sha256: tokens[7].clone(),
@@ -1333,7 +1221,7 @@ impl<'a> Parser<'a> {
         exact_len(tokens, 4, line, "continuation NAME starts root@FINGERPRINT")?;
         expect(tokens, 2, "starts", line)?;
         let pin = parse_pin(&tokens[3], line)?;
-        if pin.parent_variant != "root" {
+        if pin.parent_segment != "root" {
             return Err(TimelineError::at(
                 line,
                 1,
@@ -1363,14 +1251,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_branch(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        exact_len(tokens, 6, line, "branch NAME from LINEAGE after VARIANT_ID")?;
+        exact_len(tokens, 6, line, "branch NAME from LINEAGE after SEGMENT_ID")?;
         expect(tokens, 2, "from", line)?;
         expect(tokens, 4, "after", line)?;
         let name = tokens[1].clone();
         let branch = Branch {
             name: name.clone(),
             from_lineage: tokens[3].clone(),
-            after_variant: tokens[5].clone(),
+            after_segment: tokens[5].clone(),
             steps: Vec::new(),
             line,
         };
@@ -1391,13 +1279,13 @@ impl<'a> Parser<'a> {
             tokens,
             6,
             line,
-            "continue LINEAGE with SEGMENT.VARIANT after PARENT@FINGERPRINT",
+            "continue LINEAGE with SEGMENT after PARENT@FINGERPRINT",
         )?;
         expect(tokens, 2, "with", line)?;
         expect(tokens, 4, "after", line)?;
         let lineage = &tokens[1];
         let step = ContinuationStep {
-            variant: tokens[3].clone(),
+            segment: tokens[3].clone(),
             after: parse_pin(&tokens[5], line)?,
             line,
         };
@@ -1416,29 +1304,15 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn split_variant_id(id: &str, line: usize) -> Result<(String, String), TimelineError> {
-    let (segment, name) = id.rsplit_once('.').ok_or_else(|| {
-        TimelineError::at(line, 1, format!("variant ID {id:?} must be SEGMENT.NAME"))
-    })?;
-    if segment.is_empty() || name.is_empty() {
-        return Err(TimelineError::at(
-            line,
-            1,
-            format!("invalid variant ID {id:?}"),
-        ));
-    }
-    Ok((segment.into(), name.into()))
-}
-
 fn parse_pin(token: &str, line: usize) -> Result<DependencyPin, TimelineError> {
-    let (parent_variant, checkpoint_fingerprint) = token.rsplit_once('@').ok_or_else(|| {
+    let (parent_segment, checkpoint_fingerprint) = token.rsplit_once('@').ok_or_else(|| {
         TimelineError::at(
             line,
             1,
             format!("dependency pin {token:?} must be PARENT@FINGERPRINT"),
         )
     })?;
-    if parent_variant.is_empty() || checkpoint_fingerprint.is_empty() {
+    if parent_segment.is_empty() || checkpoint_fingerprint.is_empty() {
         return Err(TimelineError::at(
             line,
             1,
@@ -1446,7 +1320,7 @@ fn parse_pin(token: &str, line: usize) -> Result<DependencyPin, TimelineError> {
         ));
     }
     Ok(DependencyPin {
-        parent_variant: parent_variant.into(),
+        parent_segment: parent_segment.into(),
         checkpoint_fingerprint: checkpoint_fingerprint.into(),
     })
 }
@@ -1612,70 +1486,68 @@ mod tests {
 timeline intro
 predicate_program route.milestones
 origin boot predicate process_boot
-segment boot_link root profile boot_to_fsp103
-segment exit after boot_link profile fsp103_to_fsp104
-goal link_control on boot_link predicate link_control
-goal next_map on exit predicate next_map
-variant boot_link.safe incumbent uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
-variant boot_link.fast uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
-variant boot_link.other_rng uses baseline boot_to_fsp103 starts clean-rng2 produces control-rng2
-variant exit.safe incumbent uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
-variant exit.rolls uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
-proof boot_link.safe satisfies link_control program 2222222222222222222222222222222222222222222222222222222222222222 predicate 1111111111111111111111111111111111111111111111111111111111111111 ticks 700
-proof boot_link.fast satisfies link_control program 2222222222222222222222222222222222222222222222222222222222222222 predicate 1111111111111111111111111111111111111111111111111111111111111111 ticks 650
+segment boot_safe root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
+segment boot_fast root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
+segment boot_other_rng root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng2 produces control-rng2
+segment exit_safe after boot_safe profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
+segment exit_rolls after boot_safe profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
+segment exit_repaired after boot_fast profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
+goal link_control on boot_safe predicate link_control
+goal next_map on exit_safe predicate next_map
+proof boot_safe satisfies link_control program 2222222222222222222222222222222222222222222222222222222222222222 predicate 1111111111111111111111111111111111111111111111111111111111111111 ticks 700
+proof boot_fast satisfies link_control program 2222222222222222222222222222222222222222222222222222222222222222 predicate 1111111111111111111111111111111111111111111111111111111111111111 ticks 650
 continuation main starts root@clean-rng1
-continue main with boot_link.safe after root@clean-rng1
-continue main with exit.safe after boot_link.safe@control-rng1
-branch rolls from main after boot_link.safe
-continue rolls with exit.rolls after boot_link.safe@control-rng1
+continue main with boot_safe after root@clean-rng1
+continue main with exit_safe after boot_safe@control-rng1
+branch rolls from main after boot_safe
+continue rolls with exit_rolls after boot_safe@control-rng1
 "#;
 
     #[test]
-    fn parses_variants_continuations_branches_and_frontiers() {
+    fn parses_segment_tree_continuations_branches_and_goal_frontiers() {
         let timeline = Timeline::parse(ROUTE).unwrap();
         let inspection = timeline.inspect().unwrap();
         assert_eq!(inspection.timeline.name, "intro");
         assert_eq!(inspection.lineages.len(), 2);
-        assert_eq!(inspection.incumbents["boot_link"], "boot_link.safe");
+        assert_eq!(timeline.segments["boot_fast"].parent, None);
+        assert_eq!(
+            timeline.segments["exit_safe"].parent.as_deref(),
+            Some("boot_safe")
+        );
         let rolls = inspection
             .lineages
             .iter()
             .find(|lineage| lineage.name == "rolls")
             .unwrap();
-        assert_eq!(rolls.steps[0].variant, "boot_link.safe");
-        assert_eq!(rolls.steps[1].variant, "exit.rolls");
+        assert_eq!(rolls.steps[0].segment, "boot_safe");
+        assert_eq!(rolls.steps[1].segment, "exit_rolls");
         let frontier = inspection
             .frontiers
             .iter()
             .find(|frontier| {
-                frontier.segment == "boot_link"
+                frontier.reference_segment == "boot_safe"
                     && frontier.goal == "link_control"
-                    && frontier.variants.len() == 2
+                    && frontier.segments.len() == 2
             })
             .unwrap();
         assert_eq!(
             frontier
-                .variants
+                .segments
                 .iter()
-                .find(|member| member.variant == "boot_link.fast")
+                .find(|member| member.segment == "boot_fast")
                 .unwrap()
-                .relation_to_incumbent,
+                .relation_to_reference,
             DominanceRelation::Faster
         );
-        assert!(inspection.frontiers.iter().any(|frontier| {
-            frontier.segment == "boot_link"
-                && frontier.start_fingerprint == "clean-rng2"
-                && frontier.variants[0].relation_to_incumbent == DominanceRelation::Incomparable
-        }));
     }
 
     #[test]
-    fn goal_proof_is_separate_from_variant_and_scoped_to_its_segment() {
+    fn goal_proof_is_segment_metadata_and_may_be_satisfied_by_a_sibling() {
         let program_digest = "2".repeat(64);
         let digest = "1".repeat(64);
         let timeline = Timeline::parse(ROUTE).unwrap();
         let proof = &timeline.proofs[0];
-        assert_eq!(proof.variant, "boot_link.safe");
+        assert_eq!(proof.segment, "boot_safe");
         assert_eq!(proof.goal, "link_control");
         assert_eq!(proof.predicate_program_sha256, program_digest);
         assert_eq!(proof.predicate_definition_sha256, digest);
@@ -1692,16 +1564,14 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
                 .contains("64 lowercase hexadecimal")
         );
 
-        let wrong_segment = ROUTE.replace("satisfies link_control", "satisfies next_map");
-        assert!(
-            Timeline::parse(&wrong_segment)
-                .unwrap_err()
-                .to_string()
-                .contains("belongs to segment exit")
-        );
+        assert!(timeline.proofs.iter().any(|proof| {
+            proof.segment == "boot_fast"
+                && proof.goal == "link_control"
+                && timeline.segments["boot_fast"].parent == timeline.segments["boot_safe"].parent
+        }));
 
         let duplicate = format!(
-            "{ROUTE}\nproof boot_link.safe satisfies link_control program {} predicate {}",
+            "{ROUTE}\nproof boot_safe satisfies link_control program {} predicate {}",
             "2".repeat(64),
             "1".repeat(64)
         );
@@ -1714,9 +1584,45 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
     }
 
     #[test]
-    fn incumbent_change_does_not_stale_immutable_lineage() {
-        let mut source = ROUTE.replace("boot_link.safe incumbent", "boot_link.safe");
-        source = source.replace("boot_link.fast uses", "boot_link.fast incumbent uses");
+    fn rejects_goal_proof_from_an_unrelated_segment() {
+        let unrelated = ROUTE.replace(
+            "proof boot_fast satisfies link_control",
+            "proof exit_safe satisfies link_control",
+        );
+        let error = Timeline::parse(&unrelated).unwrap_err();
+        assert!(error.to_string().contains("unrelated segment boot_safe"));
+        assert!(
+            error
+                .to_string()
+                .contains("reference segment or one of its siblings")
+        );
+    }
+
+    #[test]
+    fn rejects_unpinned_parent_boundary_mismatch() {
+        let mismatch = ROUTE.replace(
+            "segment exit_repaired after boot_fast profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-rng1",
+            "segment exit_repaired after boot_fast profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts wrong-parent-state",
+        );
+        let error = Timeline::parse(&mismatch).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("segment exit_repaired starts at wrong-parent-state")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("parent boot_fast ends at control-rng1")
+        );
+    }
+
+    #[test]
+    fn adding_a_sibling_does_not_change_a_pinned_lineage() {
+        let source = ROUTE.replace(
+            "segment boot_other_rng root",
+            "segment another_boot root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng1 produces other\nsegment boot_other_rng root",
+        );
         let timeline = Timeline::parse(&source).unwrap();
         let status = timeline.status(None, &BTreeMap::new()).unwrap();
         assert!(
@@ -1725,37 +1631,46 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
                 .iter()
                 .all(|lineage| !lineage.stale)
         );
-        assert_eq!(status.immutable_lineages[0].steps[0], "boot_link.safe");
+        assert_eq!(status.immutable_lineages[0].steps[0], "boot_safe");
     }
 
     #[test]
     fn workspace_marks_descendants_stale_and_rebase_creates_new_lineage() {
         let timeline = Timeline::parse(ROUTE).unwrap();
-        let selections = BTreeMap::from([("boot_link".into(), "boot_link.fast".into())]);
+        let selections = BTreeMap::from([("boot_safe".into(), "boot_fast".into())]);
         let status = timeline.status(Some("main"), &selections).unwrap();
         let workspace = status.workspace.unwrap();
         assert_eq!(workspace.steps[0].state, WorkspaceStepState::Selected);
         assert_eq!(workspace.steps[1].state, WorkspaceStepState::Stale);
-        assert!(workspace.steps[1].rebase_compatible);
+        assert!(!workspace.steps[1].rebase_compatible);
 
-        let repair = timeline
+        let poisoned = timeline
             .rebase_compatible("main", &selections, "main_fast")
             .unwrap();
-        assert!(repair.old_lineage_preserved);
+        assert!(poisoned.old_lineage_preserved);
+        assert!(!poisoned.fully_compatible);
+        assert_eq!(poisoned.stale_descendants, vec!["exit_safe"]);
+
+        let repaired_selections = BTreeMap::from([
+            ("boot_safe".into(), "boot_fast".into()),
+            ("exit_safe".into(), "exit_repaired".into()),
+        ]);
+        let repair = timeline
+            .rebase_compatible("main", &repaired_selections, "main_repaired")
+            .unwrap();
         assert!(repair.fully_compatible);
-        assert_eq!(repair.compatible_descendants, vec!["exit.safe"]);
         assert!(
             repair
                 .authored_dsl
-                .contains("continue main_fast with exit.safe after boot_link.fast@control-rng1")
+                .contains("continue main_repaired with exit_repaired after boot_fast@control-rng1")
         );
     }
 
     #[test]
     fn rejects_cycles_bad_references_and_boundary_mismatches_with_lines() {
         let cycle = ROUTE.replace(
-            "segment boot_link root profile boot_to_fsp103",
-            "segment boot_link after exit profile boot_to_fsp103",
+            "segment boot_safe root profile",
+            "segment boot_safe after exit_safe profile",
         );
         assert!(
             Timeline::parse(&cycle)
@@ -1764,15 +1679,12 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
                 .contains("cycle")
         );
 
-        let unknown = ROUTE.replace("with exit.safe", "with exit.missing");
+        let unknown = ROUTE.replace("with exit_safe", "with exit_missing");
         let error = Timeline::parse(&unknown).unwrap_err();
-        assert!(error.to_string().contains("unknown variant"));
+        assert!(error.to_string().contains("unknown segment"));
         assert!(error.line.is_some());
 
-        let mismatch = ROUTE.replace(
-            "after boot_link.safe@control-rng1",
-            "after boot_link.safe@wrong",
-        );
+        let mismatch = ROUTE.replace("after boot_safe@control-rng1", "after boot_safe@wrong");
         assert!(
             Timeline::parse(&mismatch)
                 .unwrap_err()
@@ -1781,8 +1693,8 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
         );
 
         let off_lineage = ROUTE.replace(
-            "branch rolls from main after boot_link.safe",
-            "branch rolls from main after boot_link.other_rng",
+            "branch rolls from main after boot_safe",
+            "branch rolls from main after boot_other_rng",
         );
         assert!(
             Timeline::parse(&off_lineage)
@@ -1797,6 +1709,19 @@ continue rolls with exit.rolls after boot_link.safe@control-rng1
         let error = Timeline::parse("timeline \"unterminated").unwrap_err();
         assert_eq!(error.line, Some(1));
         assert!(error.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn rejects_the_removed_variant_entity() {
+        let error = Timeline::parse(
+            "timeline old\nvariant boot.safe uses baseline boot_to_fsp103 starts clean produces control",
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unknown timeline statement \"variant\"")
+        );
     }
 
     #[test]
@@ -1851,11 +1776,10 @@ milestone unused_probe {
             r#"timeline route
 predicate_program route.milestones
 origin boot predicate process_boot
-segment boot root profile boot_to_fsp103
+segment boot root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces control
 goal control on boot predicate link_control
-variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control
 continuation main starts root@clean
-continue main with boot.test after root@clean
+continue main with boot after root@clean
 "#,
         )
         .unwrap();
@@ -1881,12 +1805,11 @@ continue main with boot.test after root@clean
             r#"timeline route
 predicate_program route.milestones
 origin boot predicate process_boot
-segment boot root profile boot_to_fsp103
+segment boot root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces control
 goal control on boot predicate link_control
-variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control
-proof boot.test satisfies control program {program_digest} predicate {predicate_digest}
+proof boot satisfies control program {program_digest} predicate {predicate_digest}
 continuation main starts root@clean
-continue main with boot.test after root@clean
+continue main with boot after root@clean
 "#
         ))
         .unwrap();
@@ -1910,11 +1833,10 @@ continue main with boot.test after root@clean
         let missing = Timeline::parse(
             r#"timeline route
 predicate_program route.milestones
-segment boot root profile boot_to_fsp103
+segment boot root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces control
 goal control on boot predicate not_defined
-variant boot.test incumbent uses baseline boot_to_fsp103 starts clean produces control
 continuation main starts root@clean
-continue main with boot.test after root@clean
+continue main with boot after root@clean
 "#,
         )
         .unwrap();
@@ -1942,10 +1864,9 @@ continue main with boot.test after root@clean
         let timeline = Timeline::parse(
             r#"
 timeline tas_route
-segment boot_link root profile boot_to_fsp103
-variant boot_link.tas incumbent uses tas boot.tas starts clean produces control
+segment boot_link root profile boot_to_fsp103 uses tas boot.tas starts clean produces control
 continuation main starts root@clean
-continue main with boot_link.tas after root@clean
+continue main with boot_link after root@clean
 "#,
         )
         .unwrap();

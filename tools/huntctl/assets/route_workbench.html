@@ -29,11 +29,6 @@
     .disclosure { width:18px; height:22px; padding:0; border:0; background:transparent; color:#738096; cursor:pointer; line-height:1; }
     .disclosure.open { transform:rotate(90deg); }
     .disclosure.empty { visibility:hidden; }
-    .tree-icon { width:16px; color:var(--muted); text-align:center; font-size:10px; }
-    .tree-icon.origin { color:var(--cyan); }
-    .tree-icon.segment { color:var(--blue); }
-    .tree-icon.variant { color:var(--amber); }
-    .tree-icon.draft { color:#bd8cf1; }
     .tree-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .tree-tail { margin-left:auto; display:flex; gap:5px; align-items:center; color:var(--muted); font-size:9px; }
     .dot { width:6px; height:6px; border-radius:50%; background:#5e6a7c; }
@@ -47,7 +42,7 @@
     .detail-subtitle { color:var(--muted); font-size:12px; line-height:1.5; }
     .badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
     .badge { padding:3px 7px; border-radius:999px; background:#222c3a; color:var(--muted); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
-    .badge.incumbent,.badge.blue { color:var(--blue); }
+    .badge.blue { color:var(--blue); }
     .badge.score { color:var(--amber); }
     .badge.ok,.badge.proof-verified { color:var(--cyan); }
     .badge.bad,.badge.proof-missing,.badge.proof-stale { color:var(--red); }
@@ -134,18 +129,16 @@
     function normalize(raw) {
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
-      const variants=Array.isArray(raw.variants)?raw.variants:Object.entries(raw.variants||{}).map(([id,item])=>({...item,id:item.id||id}));
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,variants,lineages:raw.lineages||[],drafts:raw.drafts||[]};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[]};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = id => graph.predicate_program?.definitions?.find(item=>item.name===id);
     const goalsFor = segment => graph.goals.filter(goal=>goal.segment===segment);
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort((a,b)=>a.created_unix_ms-b.created_unix_ms);
-    const draftsUnderVariant = (id,chain) => draftsUnder('variant',id).filter(draft=>{const lineage=graph.lineages.find(item=>item.name===draft.parent.lineage);const pinned=(lineage?.steps||[]).slice(0,draft.parent.step_index+1).map(step=>step.variant);return draft.parent.step_index===chain.length-1&&pinned.length===chain.length&&pinned.every((variant,index)=>variant===chain[index]);});
-    const variantsFor = (segment,parentFingerprint=null) => graph.variants.filter(variant=>variant.segment===segment.id&&(parentFingerprint===null||variant.start_fingerprint===parentFingerprint)).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
-    function treeRow(kind,id,occurrence,name,icon,expandKey,hasChildren,tail='') {
+    const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
+    function treeRow(kind,id,occurrence,name,expandKey,hasChildren,tail='') {
       const open=expanded.has(expandKey);
-      return `<div class="tree-row${selected(occurrence)?' selected':''}" role="treeitem" tabindex="0" data-select-kind="${escapeHtml(kind)}" data-select-id="${escapeHtml(id)}" data-select-occurrence="${escapeHtml(occurrence)}"><button class="disclosure${hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(expandKey)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="tree-icon ${escapeHtml(kind)}">${icon}</span><span class="tree-name">${escapeHtml(name)}</span>${tail?`<span class="tree-tail">${tail}</span>`:''}</div>`;
+      return `<div class="tree-row${selected(occurrence)?' selected':''}" role="treeitem" tabindex="0" data-select-kind="${escapeHtml(kind)}" data-select-id="${escapeHtml(id)}" data-select-occurrence="${escapeHtml(occurrence)}"><button class="disclosure${hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(expandKey)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="tree-name">${escapeHtml(name)}</span>${tail?`<span class="tree-tail">${tail}</span>`:''}</div>`;
     }
     function renderDraftNode(draft,path=new Set(),chain=[]) {
       if(path.has(draft.id))return '';
@@ -156,118 +149,67 @@
       occurrenceIndex.set(key,{kind:'draft',id:draft.id,chain:nextChain});
       const tail=`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${draft.playable?'ok':draft.error?'bad':'warn'}"></span>`;
       const rendered=expanded.has(key)?children.map(child=>renderDraftNode(child,next,nextChain)).join(''):'';
-      return `<div>${treeRow('draft',draft.id,key,draft.label||draft.id,'◇',key,children.length>0,tail)}${rendered?`<div class="tree-children">${rendered}</div>`:''}</div>`;
+      return `<div>${treeRow('draft',draft.id,key,draft.label||draft.id,key,children.length>0,tail)}${rendered?`<div class="tree-children">${rendered}</div>`:''}</div>`;
     }
-    function renderVariantNode(variant,path=new Set(),chain=[]) {
-      if(path.has(variant.id)) {
-        const reference=`reference:${[...chain,variant.id].join('>')}`;
-        occurrenceIndex.set(reference,{kind:'reference',id:variant.id,chain:[...chain,variant.id]});
-        return treeRow('reference',variant.id,reference,`continues to ${variant.name||variant.id}`,'↩',reference,false);
+    function renderPlayableSegmentNode(segment,path=new Set(),chain=[]) {
+      if(path.has(segment.id)) {
+        return '';
       }
-      const next=new Set(path);next.add(variant.id);
-      const nextChain=[...chain,variant.id];
-      const occurrence=`variant:${nextChain.join('>')}`;
-      occurrenceIndex.set(occurrence,{kind:'variant',id:variant.id,chain:nextChain});
-      const segment=graph.segments.find(item=>item.id===variant.segment);
-      const drafts=draftsUnderVariant(variant.id,nextChain);
-      const outgoing=graph.segments.filter(item=>item.parent===segment?.id&&variantsFor(item,variant.boundary_fingerprint).length>0).sort((a,b)=>a.id.localeCompare(b.id));
+      const next=new Set(path);next.add(segment.id);
+      const nextChain=[...chain,segment.id];
+      const occurrence=`segment:${nextChain.join('>')}`;
+      occurrenceIndex.set(occurrence,{kind:'segment',id:segment.id,chain:nextChain});
+      const drafts=draftsUnder('segment',segment.id);
+      const outgoing=childSegments(segment.id);
       const key=occurrence;
-      const score=variant.first_hit_tick??variant.ticks;
-      const state=variant.error?'bad':variant.playable?'ok':'warn';
-      const tail=`${variant.incumbent?'<span>★</span>':''}${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
+      const score=segment.first_hit_tick??segment.ticks;
+      const state=segment.error?'bad':segment.playable?'ok':'warn';
+      const tail=`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
       const hasChildren=drafts.length>0||outgoing.length>0;
-      const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderSegmentNode(child,variant.boundary_fingerprint,next,nextChain))].join(''):'';
-      return `<div>${treeRow('variant',variant.id,occurrence,variant.name||variant.id,'●',key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
-    }
-    function renderSegmentNode(segment,parentFingerprint=null,path=new Set(),chain=[],explicitVariants=null) {
-      const variants=explicitVariants||variantsFor(segment,parentFingerprint);
-      const key=`segment:${chain.join('>')}:${segment.id}`;
-      occurrenceIndex.set(key,{kind:'segment',id:segment.id,chain:[...chain]});
-      const children=expanded.has(key)?variants.map(variant=>renderVariantNode(variant,path,chain)).join(''):'';
-      return `<div>${treeRow('segment',segment.id,key,label(segment.id),'─',key,variants.length>0,`<span>${variants.length}</span>`)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
+      const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain))].join(''):'';
+      return `<div>${treeRow('segment',segment.id,occurrence,segment.name||label(segment.id),key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
     }
     function initializeExpansion() {
       if(expansionInitialized)return;
       expansionInitialized=true;
       expanded.add('origin:boot');
-      const main=graph.lineages.find(lineage=>lineage.name==='main')||graph.lineages[0];
-      const chain=[];
-      (main?.steps||[]).forEach(step=>{expanded.add(`segment:${chain.join('>')}:${step.segment}`);chain.push(step.variant);expanded.add(`variant:${chain.join('>')}`);});
-    }
-    function collectCompatibleDescendants(variant,output=new Set()) {
-      if(output.has(variant.id))return output;
-      output.add(variant.id);
-      const segment=graph.segments.find(item=>item.id===variant.segment);
-      graph.segments.filter(item=>item.parent===segment?.id).forEach(next=>variantsFor(next,variant.boundary_fingerprint).forEach(child=>collectCompatibleDescendants(child,output)));
-      return output;
-    }
-    function bootLineages() { return graph.lineages.filter(lineage=>{const first=lineage.steps?.[0];const variant=first&&graph.variants.find(item=>item.id===first.variant);return (variant?.play_anchors||[]).some(anchor=>anchor.lineage===lineage.name&&anchor.prefix_steps===0);}); }
-    function unattachedRootVariants(unreachable,preferred=[]) {
-      const remaining=new Set(unreachable.map(variant=>variant.id));const roots=[];
-      preferred.forEach(root=>{if(!roots.some(item=>item.id===root.id))roots.push(root);});
-      roots.forEach(root=>collectCompatibleDescendants(root).forEach(id=>remaining.delete(id)));
-      while(remaining.size) {
-        const candidates=graph.variants.filter(variant=>remaining.has(variant.id)&&!graph.variants.some(parent=>remaining.has(parent.id)&&graph.segments.find(item=>item.id===variant.segment)?.parent===parent.segment&&parent.boundary_fingerprint===variant.start_fingerprint));
-        const chosen=candidates.length?candidates:[graph.variants.filter(variant=>remaining.has(variant.id)).sort((a,b)=>a.id.localeCompare(b.id))[0]];
-        chosen.forEach(root=>{if(!remaining.has(root.id))return;roots.push(root);collectCompatibleDescendants(root).forEach(id=>remaining.delete(id));});
-      }
-      return roots;
-    }
-    function renderRootGroups(variants) {
-      const bySegment=new Map();variants.forEach(variant=>{const list=bySegment.get(variant.segment)||[];list.push(variant);bySegment.set(variant.segment,list);});
-      return [...bySegment.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([segmentId,members])=>renderSegmentNode(graph.segments.find(item=>item.id===segmentId),null,new Set(),[],members.sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id)))).join('');
     }
     function renderTree() {
       initializeExpansion();
       occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:[]});
-      const bootVariants=graph.variants.filter(variant=>graph.segments.find(segment=>segment.id===variant.segment)?.parent==null&&(variant.play_anchors||[]).some(anchor=>anchor.prefix_steps===0));
-      const reachable=new Set();bootVariants.forEach(variant=>collectCompatibleDescendants(variant,reachable));
-      const unattached=graph.variants.filter(variant=>!reachable.has(variant.id));
-      const bootPinned=bootLineages();const bootPinnedNames=new Set(bootPinned.map(lineage=>lineage.name));
-      const nonBootLineageRoots=graph.lineages.filter(lineage=>!bootPinnedNames.has(lineage.name)).map(lineage=>graph.variants.find(variant=>variant.id===lineage.steps?.[0]?.variant)).filter(Boolean);
+      const roots=graph.segments.filter(segment=>segment.parent==null).sort((a,b)=>a.id.localeCompare(b.id));
       const bootDrafts=graph.drafts.filter(draft=>['origin','milestone'].includes(draft.parent?.kind)&&graph.origin?.id===draft.parent.id&&graph.origin.recordable_from_boot);
-      const hasBootChildren=bootDrafts.length>0||bootVariants.length>0;
-      const children=expanded.has('origin:boot')?[...bootDrafts.map(draft=>renderDraftNode(draft)),renderRootGroups(bootVariants)].join(''):'';
-      let html=`${treeRow('origin','boot','origin:boot','Boot','◆','origin:boot',hasBootChildren,`<span>${bootPinned.length} pinned</span>`)}${children?`<div class="tree-children">${children}</div>`:''}`;
-      const otherRoots=unattachedRootVariants(unattached,nonBootLineageRoots);
-      if(otherRoots.length){const key='origin:unattached';occurrenceIndex.set(key,{kind:'origin',id:'unattached',chain:[]});const other=expanded.has(key)?renderRootGroups(otherRoots):'';html+=`${treeRow('origin','unattached',key,'Other roots','◇',key,true,`<span>${otherRoots.length} roots</span>`)}${other?`<div class="tree-children">${other}</div>`:''}`;}
-      $('tree').innerHTML=html||'<div class="empty">No route variants.</div>';
+      const hasBootChildren=bootDrafts.length>0||roots.length>0;
+      const children=expanded.has('origin:boot')?[...bootDrafts.map(draft=>renderDraftNode(draft)),...roots.map(segment=>renderPlayableSegmentNode(segment))].join(''):'';
+      const html=`${treeRow('origin','boot','origin:boot','Boot','origin:boot',hasBootChildren)}${children?`<div class="tree-children">${children}</div>`:''}`;
+      $('tree').innerHTML=html||'<div class="empty">No route segments.</div>';
       $('tree').querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
       $('tree').querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;expanded.has(key)?expanded.delete(key):expanded.add(key);renderTree();}));
     }
     function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
     function goalDetail(segmentId,proofs=[]) {
-      const goals=goalsFor(segmentId);
-      if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">No parity goal is attached to this segment.</div></div>`;
-      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
+      const goals=[...goalsFor(segmentId)];
+      proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
+      if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">This segment has no parity metadata.</div></div>`;
+      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',label(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
-    function anchorPrefix(anchor,includeSelected=false) { const lineage=graph.lineages.find(item=>item.name===anchor.lineage);const count=includeSelected?anchor.step_index+1:anchor.prefix_steps;return (lineage?.steps||[]).slice(0,count).map(step=>step.variant); }
-    function sameChain(left,right) { return left.length===right.length&&left.every((value,index)=>value===right[index]); }
-    function variantActions(variant,chain) {
-      const scopedPlays=(variant.play_anchors||[]).filter(anchor=>sameChain([...anchorPrefix(anchor),variant.id],chain));
-      const scopedRecords=(variant.record_anchors||[]).filter(anchor=>sameChain(anchorPrefix(anchor,true),chain));
-      const plays=scopedPlays.map(anchor=>{const repeated=scopedPlays.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-parent-segment="${escapeHtml(anchor.parent_segment||'')}" data-start-fingerprint="${escapeHtml(anchor.start_fingerprint)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
-      const records=scopedRecords.map(anchor=>{const repeated=scopedRecords.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const recordLabel=repeated?`${anchor.lineage} @ step ${anchor.step_index}`:anchor.lineage;return `<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-goal="${escapeHtml(anchor.goal)}">Record child · ${escapeHtml(recordLabel)} → ${escapeHtml(label(anchor.goal))}</button>`;}).join('');
+    function segmentActions(segment) {
+      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
+      const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
       return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}</div>`;
     }
     function renderDetail() {
-      let html='';const context=occurrenceIndex.get(selection.occurrence)||selection;
+      let html='';
       if(selection.kind==='origin'&&selection.id==='boot') {
-        const boot=graph.origin?.recordable_from_boot?graph.origin:null;const pinned=bootLineages();
-        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input. Root segments continue from here.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
-      } else if(selection.kind==='origin') {
-        const bootNames=new Set(bootLineages().map(lineage=>lineage.name));const pinned=graph.lineages.filter(lineage=>!bootNames.has(lineage.name));
-        html=`<div class="detail-kicker">Unattached origins</div><div class="detail-title">Other roots</div><div class="detail-subtitle">Seeded, disconnected, or cyclic route components without a verified console-Boot ancestry. They are kept visible but are never mislabeled as Boot-playable.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>`;
+        const boot=graph.origin?.recordable_from_boot?graph.origin:null;
+        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment)html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(label(segment.id))}</div><div class="detail-subtitle">A structural continuation beneath ${escapeHtml(segment.parent?label(segment.parent):'Boot')}. Goals are optional parity metadata.</div><div class="detail-section"><h3>Route</h3><div class="fields">${field('Parent segment',segment.parent||'Boot')}${field('Profile',segment.profile)}${field('Checked variants',graph.variants.filter(item=>item.segment===segment.id).length)}</div></div>${goalDetail(segment.id)}`;
-      } else if(selection.kind==='variant') {
-        const variant=graph.variants.find(item=>item.id===selection.id);const segment=variant&&graph.segments.find(item=>item.id===variant.segment);const artifact=variant?.artifact||{};const score=variant&&(variant.first_hit_tick??variant.ticks);
-        if(variant&&segment)html=`<div class="detail-kicker">Segment variant</div><div class="detail-title">${escapeHtml(variant.name||variant.id)}</div><div class="detail-subtitle">${escapeHtml(label(segment.id))}</div><div class="badges">${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(variant.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${variantActions(variant,context.chain)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',variant.start_fingerprint,true)}${field('Output',variant.boundary_fingerprint,true)}${field('Frames',variant.frame_count)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,variant.goal_proofs||[])}${variant.error?`<div class="detail-section error-note">${escapeHtml(variant.error)}</div>`:''}`;
+        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segment.name||label(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?label(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
         if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}`;}
-      } else if(selection.kind==='reference') { const variant=graph.variants.find(item=>item.id===selection.id);html=`<div class="detail-kicker">Continuation reference</div><div class="detail-title">${escapeHtml(variant?.name||selection.id)}</div><div class="detail-subtitle">This path returns to a variant already shown above. Expansion stops here to keep cyclic routes finite.</div>`; }
+      }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
     }
@@ -299,7 +241,7 @@
         graph.predicate_program=body;
         predicateEditRevision=null;
         $('predicateEditor').close();
-        toast('Goal predicates compiled and saved. Variant proof badges now reflect the new definition identities.');
+        toast('Goal predicates compiled and saved. Segment proof badges now reflect the new definition identities.');
         await load();
       } catch(error) {
         $('predicateError').textContent=error.message;
@@ -310,14 +252,13 @@
     async function play(button) {
       const {playKind:kind,id}=button.dataset;
       const origin=button.dataset.playOrigin||'boot';
-      const variant=kind==='variant'&&graph.variants.find(item=>item.id===id);
+      const segment=kind==='segment'&&graph.segments.find(item=>item.id===id);
       const draft=kind==='draft'&&graph.drafts.find(item=>item.id===id);
-      const segment=variant&&graph.segments.find(item=>item.id===variant.segment);
-      if(!variant&&!draft)return;
-      const name=variant?.name||draft?.label||id;
+      if(!segment&&!draft)return;
+      const name=segment?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=variant?{selection:{kind:'variant',id,lineage:button.dataset.lineage,prefix_steps:Number(button.dataset.prefixSteps),parent_segment:button.dataset.parentSegment||null,start_fingerprint:button.dataset.startFingerprint},stop:{kind:'segment',segment:segment.id},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
+      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
@@ -328,7 +269,7 @@
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(variant?.playable||draft?.playable); button.textContent=variant?`Play · ${button.dataset.playLabel||button.dataset.lineage}`:origin==='parent'?'Play from parent':'Play from boot';
+        button.disabled=!(segment?.playable||draft?.playable); button.textContent=segment?'Play':origin==='parent'?'Play from parent':'Play from boot';
       }
     }
     async function deleteDraft(id,button) {
@@ -339,7 +280,7 @@
         if(!previewResponse.ok)throw new Error(preview.error||`HTTP ${previewResponse.status}`);
         const impacts=(preview.drafts||[]).map(item=>`• ${item.label||item.id} (${item.id})`).join('\n');
         const count=(preview.drafts||[]).length;
-        if(!window.confirm(`Move ${count} draft${count===1?'':'s'} to recoverable trash?\n\n${impacts}\n\nChecked-in variants and timeline files are not affected.`))return;
+        if(!window.confirm(`Move ${count} draft${count===1?'':'s'} to recoverable trash?\n\n${impacts}\n\nChecked-in segments and timeline files are not affected.`))return;
         button.textContent='Moving…';
         const applyResponse=await fetch('/api/drafts/delete/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,confirmation_token:preview.confirmation_token})});
         const result=await applyResponse.json().catch(()=>({}));
@@ -373,7 +314,7 @@
     async function record(button) {
       const kind=button.dataset.recordKind, id=button.dataset.id;
       const entered=window.prompt('Optional draft label',''); if(entered===null)return;
-      const parent=kind==='variant'?{kind,id,lineage:button.dataset.lineage,step_index:Number(button.dataset.stepIndex),terminal_goal:button.dataset.terminalGoal}:{kind,id};
+      const parent=kind==='segment'?{kind,id,terminal_goal:button.dataset.terminalGoal||null}:{kind,id};
       button.disabled=true; button.textContent='Launching...';
       try {
         const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered})});
@@ -382,7 +323,7 @@
         const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames hidden, muted, and unpaced first.`:'';
         toast(`Recording ${body.draft_id}.${prefix} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
-      finally { button.disabled=false; button.textContent=kind==='variant'?`Record child · ${button.dataset.lineage}`:kind==='origin'?'Record from Boot':'Record child'; }
+      finally { button.disabled=false; button.textContent=kind==='origin'?'Record from Boot':'Record child'; }
     }
     async function load() {
       $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';

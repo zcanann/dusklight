@@ -88,7 +88,7 @@ alternating A/Start baseline while holding that tick and fingerprint immutable.
 The resulting absolute tape has eight non-neutral frames and reproduced the
 same proof in 20/20 independent cold boots. Generated populations and evidence
 remain ignored under `build/`; the compact TAS source is checked in at
-`routes/intro/variants/boot_to_link/golf-439.tas`.
+`routes/intro/segments/golf439.tas`.
 
 An exhaustive timing pass then evaluated every legal earlier timestamp for
 each surviving pulse. The locally minimal timestamp vector is
@@ -154,7 +154,7 @@ crawl-start frame rather than the later crawl-move state.
 Two independent human recordings both reach it at absolute tape frame 860,
 which is suffix-local frame 420 after the 440-frame `link_control` prefix. Each
 was reproduced 3/3 from a clean process and trimmed inclusively to a 421-frame
-segment. They remain sibling variants because their destination fingerprints
+segment. They remain sibling segments because their destination fingerprints
 differ (`0aee9b9dfc150ff0c0b44c36408922a3` versus
 `56b236160fbdff1ead7fed80441b7c99`); equal local time does not make their RNG
 and downstream state interchangeable.
@@ -173,8 +173,8 @@ source boundary before they can compete in the same population.
 ```
 
 In VS Code, run the single **Glitch Hunt: Route Workbench** launch. It displays
-checked-in segment variants and lineages, plays a complete segment from its
-card, and hands live controller input back when playback ends. The fixed test
+checked-in segments and pinned paths, plays a complete segment from its tree
+entry, and hands live controller input back when playback ends. The fixed test
 selector still exposes `intro-first-exit`, `intro-cutscene`, and
 `fsp103-next-map-seed` for semantic regression runs.
 

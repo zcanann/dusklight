@@ -1,201 +1,147 @@
-# Route timelines, variants, and Git
+# Route segment trees and Git
 
-Git is the route database. Checked-in `.timeline` files, segment programs, and
-proof metadata are authoritative; normal Git commits provide history, copy,
-move, deletion, review, and recovery. The route layer adds game-specific graph
-semantics, not a second version-control system.
+Git is the route database. Checked-in `.timeline` files, segment artifacts, and
+proof metadata are authoritative; commits provide history, copy, move,
+deletion, review, and recovery. The route layer adds game-specific tree and
+playback semantics, not another version-control system.
 
-`routes/intro.timeline` describes a hierarchy of segments, competing variants,
-optional goals attached to those segments, and pinned lineages. A lineage
-contains references to segment variants. It does not copy their input, so even
-a large route tree remains a small collection of independent segment payloads
-and tiny manifests.
+## One structural object: the segment
 
-## Curated variants versus mining output
+Every playable input artifact is a segment. A segment owns:
+
+- one candidate, TAS source, or compact tape;
+- either the Boot origin or exactly one parent segment;
+- its exact input and output boundary fingerprints; and
+- the execution profile needed to interpret the artifact.
+
+Alternative attempts are ordinary sibling segments with the same parent:
+
+```text
+Boot
+└─ golf439
+   ├─ human420
+   └─ human_alt420
+```
+
+This makes ancestry structural and mechanically enforceable. Adding a faster,
+slower, or RNG-different attempt means adding another sibling. It does not
+rewrite the existing path or imply that local speed determines which branch is
+globally useful.
 
 Search populations, failed attempts, traces, and transient champions remain in
-the ignored `build/` tree. A useful result is promoted by adding one immutable
-segment artifact under `routes/<route>/variants/<segment>/`, adding its proof
-metadata, and referencing it from the timeline. Everything else can be thrown
-away.
+the ignored `build/` tree. Promotion copies only a useful immutable artifact to
+`routes/<route>/segments/`, declares its segment in the timeline, and adds any
+evidence worth retaining. Pruning is ordinary Git branch hygiene.
 
-This makes pruning ordinary branch hygiene:
+## Goals and proofs are metadata
 
-- delete variants or lineages that led nowhere;
-- keep unusual RNG frontiers even when they are locally slower;
-- commit only results worth sharing or preserving; and
-- use Git history to recover a discarded experiment when needed.
+A goal is declared *on* an existing segment after topology exists. It names a
+read-only predicate that defines one parity axis. It never owns segments or
+creates an edge.
 
-Promotion is not “the fastest score wins.” Tick count is one property. Boundary
-fingerprints, RNG state, stability, and downstream usefulness determine whether
-two variants are substitutes or separate frontier points.
+A proof says that a segment satisfied a goal. The proving segment may be the
+goal's reference segment or one of its siblings. This supports questions such
+as “does this alternative reach the same crawl state?” without inventing a
+second structural type. Missing or stale proof blocks only the parity claim,
+score, or predicate-backed handoff; it does not make an exact segment chain
+unplayable.
 
-## Immutable segment model
+The current goal engine proves Boolean predicates. Dynamic projections such as
+“same RNG value as this reference segment” still need an explicit value-parity
+form; they must not be approximated by topology or hard-coded folklore.
 
-A segment is the structural unit. It is either rooted at Boot or names its
-parent segment directly. Goals do not connect segments. A variant is one
-attempt at one segment and declares:
+## Pinned paths
 
-- a candidate, TAS source, or compact tape artifact;
-- its exact starting boundary fingerprint;
-- its produced boundary fingerprint.
+A continuation pins a root-to-leaf segment path and the fingerprint at every
+edge. A branch inherits a named prefix and adds a different child path. These
+pins make replay composition explicit and prevent a segment from silently
+moving beneath a different RNG or loader state.
 
-The route tree consists only of segments, their variants, and continuations to
-child segments. A goal is declared separately *on* a segment after the segment
-exists. It names a predicate used to compare attempts along a chosen parity
-condition. A segment may have no goals or several goals. Goal proof and score
-records are separate from the variant, so changing one goal invalidates only
-the evidence for that goal. It cannot change ancestry, invalidate an exact tape
-chain, or turn a segment into a child of a predicate. `milestone` remains only a
-native evaluator term for boolean predicate hits.
-
-The current goal engine proves Boolean predicates. A future value-projection
-form is still needed for dynamic parity such as “same RNG value as this
-reference variant” without hard-coding that value into a predicate.
-
-The input artifact contains only that segment. Stage-launch setup, search
-harness frames, and other evaluation scaffolding are not valid continuation
-payloads. The workbench never treats a segment artifact as a console-boot tape.
-It exposes Play only when it can resolve a concrete lineage occurrence whose
-parent segment and fingerprint exactly match the segment input, then
-concatenates that prefix before launch. Explicit evaluation tooling can still
-inspect a standalone artifact.
-
-A continuation pins every segment variant to the exact preceding variant and
-checkpoint fingerprint. A branch inherits a named prefix and supplies a
-different tail. Adding a sibling variant never rewrites an existing lineage.
+Because every segment has one structural parent, the tree itself remains easy
+to inspect. Pinned paths answer a separate question: which sibling was selected
+for a named route such as `main`?
 
 ## Route Workbench
 
-In VS Code, choose the single **Glitch Hunt: Route Workbench** entry under
-**Run and Debug**. The pre-launch task builds Dusklight and the Rust workbench,
-then opens a local browser view of the checked-in route graph.
+Choose **Glitch Hunt: Route Workbench** under VS Code's Run and Debug panel.
+The pre-launch task builds Dusklight and the Rust server, then opens the local
+view in Brave when available.
 
-On Windows, the launcher prefers Brave when it is installed and otherwise uses
-the system default browser.
+The left pane is a literal tree: Boot followed by nested segments. Alternative
+attempts appear as siblings. Goals, proofs, fingerprints, scores, and artifact
+information appear only in the selected segment's details. There are no
+decorative type icons beside expanders because every checked-in entry has the
+same structural meaning.
 
-The left pane is a compact continuation tree: Boot, segment families, concrete
-variants, compatible next segments, and recursive draft children. Goal
-predicates are shown only as metadata for the selected segment or variant in the
-details pane; they are not navigation nodes. Declaration order is not treated as
-route structure. A variant can expose one **Play · lineage** action for each
-compatible prefix occurrence; siblings need not already be pinned into that
-lineage. The request carries the exact lineage and prefix-step count, and the
-server revalidates the parent segment, parent variant, and boundary fingerprint
-before composing the selected chain. Goal identity is never a playback key.
+**Play** follows the selected segment's unique parent chain to Boot, composes
+those exact artifacts, launches a fresh isolated process, and releases
+controller ownership when the selected tape ends. Named continuations are
+bookmarks and preferred paths, not playback authorization; an unpinned sibling
+remains playable when its structural chain and fingerprints are valid.
 
-Only variants with a verified zero-prefix playback anchor appear beneath Boot.
-Seeded, disconnected, and cyclic components remain visible beneath **Other
-roots** rather than being mislabeled as console-boot routes. Tree selection keeps
-the complete occurrence chain, so Play, Record, and recorded draft children are
-scoped to the exact branch that was clicked even when a variant ID occurs in
-more than one lineage.
-Playback releases controller ownership when its tape ends. **Record** does the same deterministic replay,
-then records live port-0 input beginning with the first PAD read after handoff.
-Each launch gets a fresh isolated writable state directory.
+**Record child** performs the same deterministic prefix replay, then begins
+recording live port-0 input on the first PAD read after handoff. The prefix can
+run hidden, muted, and unpaced, but it is still simulated rather than replaced
+with a partial save. The window becomes visible and normal pacing returns at
+handoff.
 
-Record actions belong to concrete lineage occurrences, not just goal or variant
-names. This matters when the same variant is reachable through multiple
-RNG/state prefixes. A checked-in endpoint is recordable only when its complete
-lineage is canonical. A goal-backed handoff additionally requires a current
-native proof for that selected goal at the exact handoff frame.
+Closing Dusklight finalizes the recording beneath the ignored
+`build/automation-state/route-workbench/drafts/` tree. Drafts are temporary
+child segments: they carry one parent, continuation input, fingerprints, and
+verification state. Promotion creates a normal checked-in segment. Restarting
+the workbench rediscovers ready drafts from disk.
 
-Closing Dusklight normally finalizes the recording. The workbench adds it as an
-ignored draft child under
-`build/automation-state/route-workbench/drafts/` and polls until its status is
-known. Restarting the workbench scans the same directory, so ready drafts remain
-visible. A draft stores only its continuation tape plus small parent, launch,
-and result manifests; playback reconstructs and verifies the selected chain.
+Draft **Rename** changes only its human label. **Delete** previews and moves the
+selected draft subtree to recoverable trash; it never edits checked-in route
+objects. Active, corrupt, detached, or path-escaping drafts are rejected.
 
-Draft endpoints begin as `manual_stop` / `unverified`. An optional human label
-describes intent but is not proof. Ready unverified drafts may be replayed and
-extended. Future promotion into the checked-in timeline must attach a native
-boundary predicate/fingerprint. Zero-frame, capacity-exhausted, corrupt,
-detached, or failed recordings remain visible for diagnosis but cannot become
-parents.
+Predicate editing is likewise separate from topology. The server exposes only
+the timeline-configured predicate program, validates optimistic revision
+hashes, recompiles the complete source, and requires all referenced predicates
+to remain defined. Editing a predicate makes matching proof hashes stale but
+does not change the segment tree or input artifacts.
 
-**Delete** is available only on ignored drafts. It first previews the selected
-draft and every recursive draft descendant, then asks for confirmation of that
-exact impact set. Apply rechecks the full draft-graph revision, refuses active
-recordings and path escapes, and atomically moves each affected directory into
-`build/automation-state/route-workbench/trash/drafts/`. This is recoverable
-workspace cleanup, not deletion or mutation of checked-in timeline objects.
+Boot itself is an authored origin predicate at pre-input boundary zero. A Boot
+recording starts before the first emulated controller read and creates a root
+draft. It is not represented by a placeholder tape or hidden segment.
 
-**Rename** changes only an ignored draft's human-facing label. The immutable
-draft ID, directory, parent references, tapes, hashes, and verification state do
-not move or change. The browser submits the draft-graph revision captured when
-the rename prompt opened; the server refuses stale edits and active recordings,
-revalidates the contained manifest path, then installs the label-only manifest
-replacement through an adjacent synced temporary file and rollback backup.
-Labels are trimmed, nonempty, at most 160 UTF-8 bytes, and contain no control
-characters. Checked-in route objects remain read-only.
+The server binds only to loopback and owns all game, disc, repository, and
+state paths. The browser cannot provide filesystem paths. Timeline edits are
+reloaded from disk, while native gameplay observations remain read-only.
 
-When a timeline declares `predicate_program`, each attached goal exposes **Edit
-predicate** in its segment details. The editor works on the complete DSL source because the
-program is compiled and identified as one unit. The browser never supplies or
-sees a filesystem path: the server resolves only the path configured in the
-timeline, rejects symbolic-link and repository-root escapes, and returns the
-source with its SHA-256 revision and parsed phase/stability/expression summary.
-Save requires that exact source revision, parses and compiles the replacement,
-and requires every referenced origin or goal predicate to remain defined. It
-then uses an adjacent flushed temporary file and rollback backup. A stale
-editor receives a conflict instead of overwriting a newer filesystem edit.
+## DSL
 
-Goal-proof records pin both the compiled program identity and the selected
-predicate definition identity. Editing a predicate intentionally makes only
-those proof records stale. Such variants remain structurally playable when
-their exact lineage and fingerprints are valid, but they cannot claim parity,
-score against that goal, or use that predicate for a recording handoff until a
-native replay establishes new proof hashes. The editor changes only predicate
-source; topology, curated variants, game memory, and native game state remain
-read-only.
+The line-oriented format describes the same model directly:
 
-An exact authored Boot predicate (`phase pre_input`, `stable 1`,
-`boundary.kind == "boot" && boundary.index == 0`) can be bound to the authored
-Boot origin and exposes **Record from Boot**. This is a real graph root, not an empty
-placeholder tape: native code proves that authored boundary, arms the recorder
-before the first PAD read, and stores the resulting draft directly beneath the
-Boot origin. Its manifest pins the program hash, definition hash, boundary
-fingerprint, and canonical empty-parent digest. The workbench rejects stale or
-forged root proofs. A Boot-root draft offers **Play from boot** and **Record
-child (fast)**, but omits **Play from parent** because no simulation boundary exists
-before Boot.
+```text
+timeline intro
+predicate_program intro/milestones.milestones
+origin boot predicate process_boot
 
-Ready draft cards expose two presentation origins. **Play from boot** displays
-the complete composed chain. **Play from parent** executes that same complete
-chain from a fresh process and isolated state root, but keeps the window hidden,
-host audio muted, and frame pacing disabled through the direct-parent prefix.
-After exactly that many tape frames, Dusklight reveals the window, restores
-30 Hz pacing and audio output, and displays the selected continuation before
-handing the controller back. The prefix is still simulated rather than skipped,
-so both modes have the same portable tape authority.
+segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces LINK_STATE
+segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human420.tape starts LINK_STATE produces CRAWL_STATE_A
+segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
 
-Parent-origin playback is deliberately not described as loading a save state.
-Memory-card saves, direct stage starts, and the interactive State Share packet
-omit live actors, collision, loader queues, native heaps and pointers, and host
-renderer/audio state. A future checkpoint provider may replace the hidden cold
-replay only when it is tied to the exact build, game data, parent-chain digest,
-and boundary fingerprint and reproduces a validation replay. Until then, prefix
-replay is the only authoritative resume mechanism.
+goal link_control on golf439 predicate link_control
+goal tunnel_crawl_start on human420 predicate tunnel_crawl_start
 
-Recording from a checked-in variant or ready draft uses the same authoritative
-resume mechanism. **Record fast** / **Record child (fast)** replays the entire
-parent prefix in a hidden, muted, unpaced fixed-step process. The final parent
-frame is submitted while the window is still hidden; native code then proves
-the exact tape-end boundary, starts the recorder, releases physical-controller
-quarantine, restores audio and 30 Hz pacing, and reveals the window. The first
-visible PAD read is therefore child frame zero. An unnamed draft parent still
-records the exact tick boundary index and final parent tape frame in its native
-status instead of treating tape exhaustion as an implicit or approximate handoff.
+proof golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
+proof human420 satisfies tunnel_crawl_start program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 420
+proof human_alt420 satisfies tunnel_crawl_start program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 420
 
-The native result binds the launch with a random session token and authenticates
-the continuation by frame count, encoded length, and SHA-256. Parent-chain
-digests, exact lineage pins, path containment, and cycle checks prevent a draft
-from silently moving to another route state. Mouse, gyro, and Dusklight-specific
-action bindings are suppressed during recording because the current DUSKTAPE
-schema cannot replay those side channels.
+continuation main starts root@process-clean-v1
+continue main with golf439 after root@process-clean-v1
+continue main with human420 after golf439@LINK_STATE
+branch experiment from main after golf439
+continue experiment with human_alt420 after golf439@LINK_STATE
+```
 
-The same workbench is available directly:
+Artifact forms are `uses candidate`, `uses tas`, `uses tape`, and generated
+profile baselines where supported. Paths are relative to the timeline file.
+Validation rejects duplicate IDs, missing parents, parent cycles, discontinuous
+fingerprints, invalid artifacts, unknown goals, and stale proof identities.
+
+Run the workbench directly with:
 
 ```powershell
 cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline workbench `
@@ -204,59 +150,13 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline workbench `
   --dvd orig/GZ2E01/GZ2E01.iso
 ```
 
-`--dvd` may be omitted to use the image last selected in Dusklight's normal
-configuration. The VS Code launch uses this behavior, so it does not encode a
-machine-specific image path.
+`--dvd` may be omitted to use Dusklight's configured image. Portable random
+access remains deferred until a full checkpoint can reproduce live actors,
+collision, loaders, heaps, and host-side state; until then exact prefix replay
+is authoritative.
 
-The server binds only to loopback. It rereads the timeline on every request, so
-working-tree edits appear after refreshing the graph. Game, disc, and state
-paths are server-owned and cannot be supplied by the browser.
+## Route store
 
-Random-access playback can be added after a restorable checkpoint format exists.
-The initial UI deliberately exposes only complete-segment playback.
-
-## DSL
-
-The line-oriented format uses declarations such as:
-
-```text
-timeline intro
-predicate_program intro/milestones.milestones
-origin boot predicate process_boot
-segment boot_to_link root profile boot_to_fsp103
-segment to_tunnel after boot_to_link profile link_control_to_tunnel_crawl_start
-goal link_control on boot_to_link predicate link_control
-goal tunnel_crawl_start on to_tunnel predicate tunnel_crawl_start
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85
-proof boot_to_link.golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
-continuation main starts root@process-clean-v1
-continue main with boot_to_link.golf439 after root@process-clean-v1
-branch experiment from main after boot_to_link.golf439
-```
-
-Artifact forms are `uses candidate`, `uses tas`, and `uses tape`. Baselines are
-generated profile seeds intended for evaluation and standalone preview. Paths
-are relative to the directory containing the timeline. Comments start with a
-hash. Validation rejects duplicate names, missing references, parent-segment
-cycles, goal proofs attached to the wrong segment, boundary mismatches, and
-discontinuous continuations.
-
-Preview an upstream substitution without changing files:
-
-```powershell
-cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline status `
-  --timeline routes/intro.timeline `
-  --continuation main `
-  --select boot_to_link.golf439
-```
-
-`timeline rebase-compatible` can emit the text for a boundary-compatible
-lineage variant. It never mutates or prunes the original.
-
-## Legacy route store
-
-The `timeline store` commands predate the Git-owned model. They remain readable
-for existing experiments, but their object refs, promotion history, and garbage
-collection are not route authority and should not be used for new work. Useful
-validation and content-hash ideas may later become an ignored generated index
-over the checked-in route tree.
+The content-addressed route store is an optional derived index, not route
+authority. Its objects mirror segment, goal, proof, and pinned-path identities.
+Git-owned timeline files and artifacts remain the source of truth.

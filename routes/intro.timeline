@@ -1,25 +1,21 @@
-# Curated route frontier. The earlier boot and movement entries used a
-# pre-cutscene control predicate and are retained in Git history, not as active
-# lineage. New downstream work must begin at the proven boundary below.
+# Curated segment tree. Every playable artifact is a segment; alternatives are
+# sibling segments with the same parent. Goals and proofs are metadata only.
 timeline intro
 predicate_program intro/milestones.milestones
 
 origin boot predicate process_boot
 
-segment boot_to_link root profile boot_to_fsp103
-segment link_control_to_tunnel_crawl_start after boot_to_link profile link_control_to_tunnel_crawl_start
+segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85
+segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human420.tape starts 5f3f489f2cf561844564368fbc427d85 produces 0aee9b9dfc150ff0c0b44c36408922a3
+segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts 5f3f489f2cf561844564368fbc427d85 produces 56b236160fbdff1ead7fed80441b7c99
 
-goal link_control on boot_to_link predicate link_control
-goal tunnel_crawl_start on link_control_to_tunnel_crawl_start predicate tunnel_crawl_start
+goal link_control on golf439 predicate link_control
+goal tunnel_crawl_start on human420 predicate tunnel_crawl_start
 
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85
-proof boot_to_link.golf439 satisfies link_control program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
-
-variant link_control_to_tunnel_crawl_start.human420 incumbent uses tape intro/variants/link_control_to_tunnel_crawl_start/human-420.tape starts 5f3f489f2cf561844564368fbc427d85 produces 0aee9b9dfc150ff0c0b44c36408922a3
-proof link_control_to_tunnel_crawl_start.human420 satisfies tunnel_crawl_start program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 056e9fd86fb187337bd6ebd75edb2c677ea6bd9d4842f377aa9c98c305660651 ticks 420
-variant link_control_to_tunnel_crawl_start.human_alt420 uses tape intro/variants/link_control_to_tunnel_crawl_start/human-alt-420.tape starts 5f3f489f2cf561844564368fbc427d85 produces 56b236160fbdff1ead7fed80441b7c99
-proof link_control_to_tunnel_crawl_start.human_alt420 satisfies tunnel_crawl_start program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 056e9fd86fb187337bd6ebd75edb2c677ea6bd9d4842f377aa9c98c305660651 ticks 420
+proof golf439 satisfies link_control program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
+proof human420 satisfies tunnel_crawl_start program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 056e9fd86fb187337bd6ebd75edb2c677ea6bd9d4842f377aa9c98c305660651 ticks 420
+proof human_alt420 satisfies tunnel_crawl_start program 94720e9c7dc6c53f246f70312212b256a81f251993b7dc1c74bc1a9617ae9540 predicate 056e9fd86fb187337bd6ebd75edb2c677ea6bd9d4842f377aa9c98c305660651 ticks 420
 
 continuation main starts root@process-clean-v1
-continue main with boot_to_link.golf439 after root@process-clean-v1
-continue main with link_control_to_tunnel_crawl_start.human420 after boot_to_link.golf439@5f3f489f2cf561844564368fbc427d85
+continue main with golf439 after root@process-clean-v1
+continue main with human420 after golf439@5f3f489f2cf561844564368fbc427d85

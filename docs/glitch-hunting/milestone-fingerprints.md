@@ -23,7 +23,7 @@ an opaque hash difference:
   states, and call count.
 
 The RNG values come from the backing state used by `cM_rnd`/`cM_rnd2` and their `F`/`FX`
-variants (`g_primary` and `g_secondary` in `c_math_rng.cpp`) through
+helpers (`g_primary` and `g_secondary` in `c_math_rng.cpp`) through
 `capture_game_rng_snapshot()`. No host timestamp or replacement pseudo-random source is involved.
 Capturing them does not advance either stream.
 

@@ -163,16 +163,16 @@ to a segment; predicate definitions do not form route topology:
 timeline intro
 predicate_program intro/milestones.milestones
 origin boot predicate process_boot
-segment boot_to_link root profile boot_to_fsp103
-goal link_control on boot_to_link predicate link_control
+segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces STATE_FINGERPRINT
+goal link_control on golf439 predicate link_control
 ```
 
-Evidence is a separate goal-scoped declaration. A variant may have no proof,
-or independent proofs for several goals attached to its segment:
+Evidence is a separate goal-scoped declaration. A segment may have no proof,
+or independent proofs for several goals. A sibling segment may satisfy a goal
+defined on the reference sibling without becoming its child:
 
 ```text
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces STATE_FINGERPRINT
-proof boot_to_link.golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
+proof golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 ```
 
 The hashes printed by `milestone compile` describe the program to run; copying
@@ -181,7 +181,7 @@ accepted only after a native replay emits the same
 program and definition hashes with its first-hit boundary evidence. `timeline
 inspect` and the workbench report missing or stale proof per goal. This does not
 invalidate the segment hierarchy, exact fingerprint chain, or ordinary
-playback; it prevents the variant from claiming parity, scoring against that
+playback; it prevents the segment from claiming parity, scoring against that
 goal, or using that goal for a predicate-backed recording handoff.
 
 Program and predicate pins are a pair. Supplying only one, supplying them

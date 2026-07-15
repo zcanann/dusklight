@@ -1,14 +1,14 @@
 //! Local, Git-backed route workbench primitives.
 //!
 //! Authored `.timeline` files and the artifacts they name are authoritative.
-//! This module never mutates timeline topology or curated variants. It projects
-//! them as graph JSON, materializes exact pinned lineages, and offers one
+//! This module never mutates timeline topology or curated segments. It projects
+//! them as graph JSON, materializes exact parent chains and named continuations, and offers one
 //! revision-checked source edit for the timeline-configured milestone program.
 
 use crate::search::Candidate;
 use crate::tape::InputTape;
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
-use crate::timeline::{ArtifactSource, LineageKind, ResolvedLineage, Timeline, Variant};
+use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline};
 use crate::{milestone_dsl, milestone_dsl::MilestoneProgram};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -24,8 +24,8 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v4";
-const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v1";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v5";
+const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
 const DRAFT_LAUNCH: &str = "launch.json";
@@ -57,8 +57,6 @@ pub struct WorkbenchGraph {
     pub origin: Option<GraphOrigin>,
     pub segments: Vec<GraphSegment>,
     pub goals: Vec<GraphGoal>,
-    pub variants: Vec<GraphVariant>,
-    pub lineages: Vec<GraphLineage>,
     pub drafts: Vec<GraphDraft>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_graph_revision: Option<String>,
@@ -111,10 +109,8 @@ pub enum DraftParent {
         #[serde(skip_serializing_if = "Option::is_none")]
         boundary_fingerprint: Option<String>,
     },
-    Variant {
+    Segment {
         id: String,
-        lineage: String,
-        step_index: usize,
         terminal_milestone: String,
         boundary_fingerprint: String,
     },
@@ -223,21 +219,6 @@ pub struct GraphSegment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub profile: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct GraphGoal {
-    pub id: String,
-    pub segment: String,
-    pub predicate: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct GraphVariant {
-    pub id: String,
-    pub segment: String,
-    pub name: String,
-    pub incumbent: bool,
     pub artifact: GraphArtifact,
     pub start_fingerprint: String,
     pub boundary_fingerprint: String,
@@ -249,12 +230,17 @@ pub struct GraphVariant {
     pub end_tick: Option<u64>,
     pub ticks: Option<u64>,
     pub playable: bool,
-    pub lineage_composable: bool,
     pub recordable: bool,
-    pub play_anchors: Vec<GraphPlayAnchor>,
     pub record_anchors: Vec<GraphRecordAnchor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphGoal {
+    pub id: String,
+    pub segment: String,
+    pub predicate: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -267,20 +253,8 @@ pub struct GraphGoalProof {
     pub first_hit_tick: Option<u64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct GraphPlayAnchor {
-    pub lineage: String,
-    pub prefix_steps: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_segment: Option<String>,
-    pub start_fingerprint: String,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct GraphRecordAnchor {
-    pub lineage: String,
-    pub step_index: usize,
-    pub segment: String,
     pub goal: String,
     pub predicate: String,
 }
@@ -291,37 +265,13 @@ pub struct GraphArtifact {
     pub value: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct GraphLineage {
-    pub name: String,
-    pub kind: String,
-    pub root_fingerprint: String,
-    pub steps: Vec<GraphLineageStep>,
-    pub frame_count: Option<u64>,
-    pub playable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct GraphLineageStep {
-    pub variant: String,
-    pub segment: String,
-    pub parent_segment: Option<String>,
-    pub parent_variant: String,
-    pub checkpoint_fingerprint: String,
-    pub source_frames: Option<u64>,
-    pub chain_start_frame: Option<u64>,
-    pub chain_end_frame: Option<u64>,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayRequest {
     #[serde(default)]
     pub lineage: Option<String>,
     #[serde(default)]
-    pub variant: Option<String>,
+    pub standalone_segment: Option<String>,
     #[serde(default)]
     pub through_segment: Option<String>,
     #[serde(default)]
@@ -354,19 +304,8 @@ pub enum PlaybackOrigin {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserSelection {
-    Variant {
-        id: String,
-        lineage: String,
-        prefix_steps: usize,
-        parent_segment: Option<String>,
-        start_fingerprint: String,
-    },
-    Draft {
-        id: String,
-    },
-    Segment {
-        id: String,
-    },
+    Draft { id: String },
+    Segment { id: String },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -441,18 +380,9 @@ pub struct DraftRenameResult {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserRecordParent {
-    Origin {
-        id: String,
-    },
-    Variant {
-        id: String,
-        lineage: String,
-        step_index: usize,
-        terminal_goal: String,
-    },
-    Draft {
-        id: String,
-    },
+    Origin { id: String },
+    Segment { id: String, terminal_goal: String },
+    Draft { id: String },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -472,7 +402,7 @@ pub struct PlayResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lineage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
+    pub segment: Option<String>,
     pub tape: PathBuf,
     pub session_state_root: PathBuf,
     pub session_id: String,
@@ -510,14 +440,13 @@ pub struct MaterializedLineage {
 #[derive(Clone, Debug)]
 struct MaterializedPlayback {
     lineage: Option<String>,
-    variant: Option<String>,
+    segment: Option<String>,
     tape: InputTape,
     seed_stage: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MaterializedStep {
-    pub variant: String,
     pub segment: String,
     pub source_start_frame: u64,
     pub source_end_frame: u64,
@@ -959,7 +888,7 @@ pub fn graph_from_timeline(
     timeline: &Timeline,
     repository_root: &Path,
 ) -> Result<WorkbenchGraph, WorkbenchError> {
-    let inspection = timeline
+    timeline
         .inspect()
         .map_err(|error| WorkbenchError::new(error.to_string()))?;
     let predicate_program = milestone_program_projection(timeline, repository_root)?;
@@ -991,15 +920,6 @@ pub fn graph_from_timeline(
             })
             .is_some_and(is_exact_boot_boundary_predicate),
     });
-    let segments = timeline
-        .segments
-        .values()
-        .map(|segment| GraphSegment {
-            id: segment.name.clone(),
-            parent: segment.parent.clone(),
-            profile: segment.profile.as_str().into(),
-        })
-        .collect();
     let goals = timeline
         .goals
         .values()
@@ -1010,23 +930,29 @@ pub fn graph_from_timeline(
         })
         .collect();
 
-    let variants = timeline
-        .variants
+    let segments = timeline
+        .segments
         .values()
-        .map(|variant| {
-            let loaded = load_variant_tape(timeline, variant, repository_root);
-            let attached_goals = timeline
+        .map(|segment| {
+            let loaded = load_segment_tape(segment, repository_root);
+            let relevant_goals = timeline
                 .goals
                 .values()
-                .filter(|goal| goal.segment == variant.segment)
+                .filter(|goal| {
+                    goal.segment == segment.id
+                        || timeline
+                            .proofs
+                            .iter()
+                            .any(|proof| proof.segment == segment.id && proof.goal == goal.id)
+                })
                 .collect::<Vec<_>>();
-            let goal_proofs = attached_goals
+            let goal_proofs = relevant_goals
                 .iter()
                 .map(|goal| {
                     let proof = timeline
                         .proofs
                         .iter()
-                        .find(|proof| proof.variant == variant.id && proof.goal == goal.id);
+                        .find(|proof| proof.segment == segment.id && proof.goal == goal.id);
                     let status = match (predicate_program.as_ref(), proof) {
                         (None, _) => "not_required",
                         (Some(_), None) => "missing",
@@ -1068,58 +994,25 @@ pub fn graph_from_timeline(
                 .filter(|proof| proof.status == "verified")
                 .filter_map(|proof| proof.first_hit_tick)
                 .min();
-            let mut record_anchors =
-                record_anchors_for_variant(timeline, &inspection.lineages, &variant.id);
-            record_anchors.retain(|anchor| {
-                goal_proofs
-                    .iter()
-                    .any(|proof| proof.goal == anchor.goal && proof.status == "verified")
-            });
-            record_anchors = record_anchors
-                .into_iter()
-                .filter(|anchor| {
-                    materialize_lineage(
-                        timeline,
-                        repository_root,
-                        &anchor.lineage,
-                        MaterializeTarget::ThroughStepCount(anchor.step_index + 1),
-                    )
-                    .is_ok_and(|materialized| {
-                        materialized.steps.len() == anchor.step_index + 1
-                            && materialized
-                                .steps
-                                .last()
-                                .is_some_and(|step| step.variant == variant.id)
-                    })
+            let record_anchors = goal_proofs
+                .iter()
+                .filter(|proof| proof.status == "verified")
+                .map(|proof| GraphRecordAnchor {
+                    goal: proof.goal.clone(),
+                    predicate: proof.predicate.clone(),
                 })
                 .collect::<Vec<_>>();
-            let play_anchors = if loaded.is_ok()
-                && artifact_is_canonical_payload(&variant.artifact)
-                && fingerprints_are_exact(variant)
-            {
-                play_anchors_for_variant(timeline, &inspection.lineages, &variant.id)
-                    .into_iter()
-                    .filter(|anchor| {
-                        materialize_lineage(
-                            timeline,
-                            repository_root,
-                            &anchor.lineage,
-                            MaterializeTarget::ThroughStepCount(anchor.prefix_steps),
-                        )
-                        .is_ok_and(|prefix| prefix.steps.len() == anchor.prefix_steps)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            GraphVariant {
-                id: variant.id.clone(),
-                segment: variant.segment.clone(),
-                name: variant.name.clone(),
-                incumbent: variant.incumbent,
-                artifact: graph_artifact(&variant.artifact),
-                start_fingerprint: variant.start_fingerprint.clone(),
-                boundary_fingerprint: variant.boundary_fingerprint.clone(),
+            let playable = loaded.is_ok()
+                && artifact_is_canonical_payload(&segment.artifact)
+                && fingerprints_are_exact(segment)
+                && materialize_segment_chain(timeline, repository_root, &segment.id).is_ok();
+            GraphSegment {
+                id: segment.id.clone(),
+                parent: segment.parent.clone(),
+                profile: segment.profile.as_str().into(),
+                artifact: graph_artifact(&segment.artifact),
+                start_fingerprint: segment.start_fingerprint.clone(),
+                boundary_fingerprint: segment.end_fingerprint.clone(),
                 goal_proofs,
                 predicate_proof: predicate_proof.into(),
                 first_hit_tick,
@@ -1130,20 +1023,12 @@ pub fn graph_from_timeline(
                     .ok()
                     .and_then(|tape| (tape.frames.len() as u64).checked_sub(1)),
                 ticks: first_hit_tick,
-                playable: !play_anchors.is_empty(),
-                lineage_composable: artifact_is_canonical_payload(&variant.artifact)
-                    && fingerprints_are_exact(variant),
+                playable,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
-                play_anchors,
                 record_anchors,
                 error: loaded.err().map(|error| error.to_string()),
             }
         })
-        .collect();
-    let lineages = inspection
-        .lineages
-        .iter()
-        .map(|lineage| graph_lineage(timeline, lineage, repository_root))
         .collect();
     Ok(WorkbenchGraph {
         schema: GRAPH_SCHEMA.into(),
@@ -1151,128 +1036,10 @@ pub fn graph_from_timeline(
         origin,
         segments,
         goals,
-        variants,
-        lineages,
         drafts: Vec::new(),
         draft_graph_revision: None,
         predicate_program,
     })
-}
-
-fn play_anchors_for_variant(
-    timeline: &Timeline,
-    lineages: &[ResolvedLineage],
-    variant_id: &str,
-) -> Vec<GraphPlayAnchor> {
-    let variant = &timeline.variants[variant_id];
-    let parent_segment = timeline.segments[&variant.segment].parent.as_deref();
-    let mut candidates = Vec::new();
-    for lineage in lineages {
-        if parent_segment.is_none()
-            && lineage.root_fingerprint == variant.start_fingerprint
-            && ensure_canonical_prefix(timeline, lineage, 0).is_ok()
-        {
-            candidates.push(GraphPlayAnchor {
-                lineage: lineage.name.clone(),
-                prefix_steps: 0,
-                parent_segment: None,
-                start_fingerprint: variant.start_fingerprint.clone(),
-            });
-        }
-        for (index, step) in lineage.steps.iter().enumerate() {
-            let parent = &timeline.variants[&step.variant];
-            if Some(parent.segment.as_str()) == parent_segment
-                && parent.boundary_fingerprint == variant.start_fingerprint
-                && ensure_canonical_prefix(timeline, lineage, index + 1).is_ok()
-            {
-                candidates.push(GraphPlayAnchor {
-                    lineage: lineage.name.clone(),
-                    prefix_steps: index + 1,
-                    parent_segment: Some(parent.segment.clone()),
-                    start_fingerprint: variant.start_fingerprint.clone(),
-                });
-            }
-        }
-    }
-    candidates.sort_by_key(|anchor| {
-        (
-            anchor.lineage != "main",
-            anchor.lineage.clone(),
-            anchor.prefix_steps,
-        )
-    });
-    candidates.dedup();
-    candidates
-}
-
-fn record_anchors_for_variant(
-    timeline: &Timeline,
-    lineages: &[ResolvedLineage],
-    variant_id: &str,
-) -> Vec<GraphRecordAnchor> {
-    let variant = &timeline.variants[variant_id];
-    let verified_goals = timeline
-        .goals
-        .values()
-        .filter(|goal| goal.segment == variant.segment)
-        .filter(|goal| {
-            timeline
-                .proofs
-                .iter()
-                .any(|proof| proof.variant == variant_id && proof.goal == goal.id)
-        })
-        .collect::<Vec<_>>();
-    let mut candidates = Vec::new();
-    for lineage in lineages {
-        for (step, item) in lineage.steps.iter().enumerate() {
-            if item.variant != variant_id
-                || ensure_composable_lineage(timeline, lineage, step + 1).is_err()
-                || !native_fingerprint(&variant.boundary_fingerprint)
-            {
-                continue;
-            }
-            for goal in &verified_goals {
-                candidates.push(GraphRecordAnchor {
-                    lineage: lineage.name.clone(),
-                    step_index: step,
-                    segment: variant.segment.clone(),
-                    goal: goal.id.clone(),
-                    predicate: goal.predicate.clone(),
-                });
-            }
-        }
-    }
-    candidates.sort_by_key(|anchor| {
-        (
-            anchor.lineage != "main",
-            anchor.lineage.clone(),
-            anchor.step_index,
-        )
-    });
-    candidates
-}
-
-fn exact_variant_occurrence(
-    timeline: &Timeline,
-    variant_id: &str,
-    lineage_name: &str,
-    step_index: usize,
-) -> Result<bool, WorkbenchError> {
-    let inspection = timeline
-        .inspect()
-        .map_err(|error| WorkbenchError::new(error.to_string()))?;
-    let Some(lineage) = inspection
-        .lineages
-        .iter()
-        .find(|lineage| lineage.name == lineage_name)
-    else {
-        return Ok(false);
-    };
-    Ok(lineage
-        .steps
-        .get(step_index)
-        .is_some_and(|step| step.variant == variant_id)
-        && ensure_composable_lineage(timeline, lineage, step_index + 1).is_ok())
 }
 
 fn native_fingerprint(value: &str) -> bool {
@@ -1496,7 +1263,7 @@ fn draft_graph_revision(
     manifests: &BTreeMap<String, DraftManifest>,
 ) -> Result<String, WorkbenchError> {
     let mut digest = Sha256::new();
-    digest.update(b"dusklight.route-workbench.draft-graph.v1\0");
+    digest.update(b"dusklight.route-workbench.draft-graph.v2\0");
     for (id, manifest) in manifests {
         let encoded = serde_json::to_vec(manifest).map_err(|error| {
             WorkbenchError::new(format!("cannot encode draft graph revision: {error}"))
@@ -1940,7 +1707,7 @@ fn apply_draft_deletion(
 fn read_draft_launch(directory: &Path, manifest: &DraftManifest) -> Option<DraftLaunch> {
     let bytes = fs::read(directory.join(DRAFT_LAUNCH)).ok()?;
     let launch: DraftLaunch = serde_json::from_slice(&bytes).ok()?;
-    (launch.schema == "dusklight.route-workbench.launch.v1"
+    (launch.schema == "dusklight.route-workbench.launch.v2"
         && launch.id == manifest.id
         && launch.session_token == manifest.session_token)
         .then_some(launch)
@@ -2082,47 +1849,29 @@ fn validate_draft_structure(
                     return Err("Boot milestone parent proof is missing or stale".into());
                 }
             }
-            DraftParent::Variant {
-                id: variant_id,
-                lineage,
-                step_index,
+            DraftParent::Segment {
+                id: segment_id,
                 terminal_milestone: _,
                 boundary_fingerprint,
             } => {
-                let variant = timeline
-                    .variants
-                    .get(variant_id)
-                    .ok_or_else(|| "parent variant no longer exists".to_owned())?;
-                if variant.boundary_fingerprint != *boundary_fingerprint
+                let segment = timeline
+                    .segments
+                    .get(segment_id)
+                    .ok_or_else(|| "parent segment no longer exists".to_owned())?;
+                if segment.end_fingerprint != *boundary_fingerprint
                     || !manifest.start_boundary_verified
-                    || !exact_variant_occurrence(timeline, variant_id, lineage, *step_index)
-                        .map_err(|error| error.to_string())?
                 {
-                    return Err("curated lineage anchor is no longer exact".into());
+                    return Err("curated segment anchor is no longer exact".into());
                 }
-                let key = (lineage.clone(), *step_index);
+                let key = (segment_id.clone(), 0);
                 let parent_digest = if let Some(result) = anchor_digests.get(&key) {
                     result.clone()?
                 } else {
-                    let result = materialize_lineage(
-                        timeline,
-                        repository_root,
-                        lineage,
-                        MaterializeTarget::ThroughStepCount(*step_index + 1),
-                    )
-                    .map_err(|error| error.to_string())
-                    .and_then(|materialized| {
-                        if materialized.steps.len() != *step_index + 1
-                            || materialized
-                                .steps
-                                .last()
-                                .is_none_or(|step| step.variant != *variant_id)
-                        {
-                            Err("curated lineage occurrence changed".into())
-                        } else {
+                    let result = materialize_segment_chain(timeline, repository_root, segment_id)
+                        .map_err(|error| error.to_string())
+                        .and_then(|materialized| {
                             tape_digest(&materialized.tape).map_err(|error| error.to_string())
-                        }
-                    });
+                        });
                     anchor_digests.insert(key, result.clone());
                     result?
                 };
@@ -2337,7 +2086,7 @@ fn read_draft_tape(directory: &Path) -> Result<(Vec<u8>, InputTape), WorkbenchEr
     Ok((bytes, decoded.tape))
 }
 
-/// Resolve a pinned lineage and concatenate its immutable artifacts. A frame
+/// Resolve a pinned continuation and concatenate its immutable segment artifacts. A frame
 /// selector is inclusive: frame N's input is present in the output tape.
 pub fn materialize_lineage(
     timeline: &Timeline,
@@ -2365,12 +2114,12 @@ pub fn materialize_lineage(
 
     let mut chain = Vec::with_capacity(selected);
     for (index, step) in lineage.steps.iter().take(selected).enumerate() {
-        let variant = &timeline.variants[&step.variant];
-        let tape = load_variant_tape(timeline, variant, repository_root)?;
-        let logical_last = logical_last_frame(variant, &tape)?;
+        let segment = &timeline.segments[&step.segment];
+        let tape = load_segment_tape(segment, repository_root)?;
+        let logical_last = logical_last_frame(segment, &tape)?;
         let frame_window = match &target {
             MaterializeTarget::ThroughSegmentFrame { segment, frame }
-                if index + 1 == selected && variant.segment == *segment =>
+                if index + 1 == selected && step.segment == *segment =>
             {
                 if *frame > logical_last {
                     return Err(WorkbenchError::new(format!(
@@ -2384,7 +2133,7 @@ pub fn materialize_lineage(
             },
         };
         chain.push(ChainSegment {
-            name: Some(variant.id.clone()),
+            name: Some(segment.id.clone()),
             tape,
             markers: Vec::new(),
             frames: frame_window,
@@ -2395,13 +2144,12 @@ pub fn materialize_lineage(
         .segments
         .iter()
         .map(|boundary| {
-            let variant_id = boundary
+            let segment_id = boundary
                 .segment_name
                 .as_ref()
                 .expect("workbench always names chain segments");
             MaterializedStep {
-                variant: variant_id.clone(),
-                segment: timeline.variants[variant_id].segment.clone(),
+                segment: segment_id.clone(),
                 source_start_frame: boundary.source_start_tick,
                 source_end_frame: boundary.source_end_tick,
                 chain_start_frame: boundary.chain_start_tick,
@@ -2411,6 +2159,94 @@ pub fn materialize_lineage(
         .collect();
     Ok(MaterializedLineage {
         lineage: lineage_name.into(),
+        tape: chained.tape,
+        steps,
+    })
+}
+
+/// Materialize the unique Boot-rooted ancestry of a segment. Named
+/// continuations are bookmarks, not playback authorization: the parent links
+/// and their exact fingerprints are the structural authority.
+fn materialize_segment_chain(
+    timeline: &Timeline,
+    repository_root: &Path,
+    segment_id: &str,
+) -> Result<MaterializedLineage, WorkbenchError> {
+    let mut reversed = Vec::new();
+    let mut cursor = segment_id;
+    let mut seen = BTreeSet::new();
+    loop {
+        if !seen.insert(cursor.to_owned()) {
+            return Err(WorkbenchError::new(format!(
+                "segment ancestry contains a cycle at {cursor:?}"
+            )));
+        }
+        let segment = timeline
+            .segments
+            .get(cursor)
+            .ok_or_else(|| WorkbenchError::new(format!("unknown segment {cursor:?}")))?;
+        reversed.push(segment);
+        let Some(parent_id) = segment.parent.as_deref() else {
+            break;
+        };
+        let parent = timeline.segments.get(parent_id).ok_or_else(|| {
+            WorkbenchError::new(format!(
+                "segment {:?} references missing parent {parent_id:?}",
+                segment.id
+            ))
+        })?;
+        if parent.end_fingerprint != segment.start_fingerprint {
+            return Err(WorkbenchError::new(format!(
+                "segment {:?} starts at {}, but parent {parent_id:?} ends at {}",
+                segment.id, segment.start_fingerprint, parent.end_fingerprint
+            )));
+        }
+        cursor = parent_id;
+    }
+    reversed.reverse();
+
+    let mut chain = Vec::with_capacity(reversed.len());
+    for segment in reversed {
+        if !artifact_is_canonical_payload(&segment.artifact) {
+            return Err(WorkbenchError::new(format!(
+                "segment {} is a stage-seeded baseline/candidate, not a canonical continuation tape",
+                segment.id
+            )));
+        }
+        if !fingerprints_are_exact(segment) {
+            return Err(WorkbenchError::new(format!(
+                "segment {} uses placeholder fingerprints",
+                segment.id
+            )));
+        }
+        let tape = load_segment_tape(segment, repository_root)?;
+        let logical_last = logical_last_frame(segment, &tape)?;
+        chain.push(ChainSegment {
+            name: Some(segment.id.clone()),
+            tape,
+            markers: Vec::new(),
+            frames: SegmentFrames::ThroughMilestone {
+                tape_frame: logical_last,
+            },
+        });
+    }
+    let chained = concatenate(chain).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let steps = chained
+        .segments
+        .iter()
+        .map(|boundary| MaterializedStep {
+            segment: boundary
+                .segment_name
+                .clone()
+                .expect("workbench always names chain segments"),
+            source_start_frame: boundary.source_start_tick,
+            source_end_frame: boundary.source_end_tick,
+            chain_start_frame: boundary.chain_start_tick,
+            chain_end_frame: boundary.chain_end_tick,
+        })
+        .collect();
+    Ok(MaterializedLineage {
+        lineage: segment_id.to_owned(),
         tape: chained.tape,
         steps,
     })
@@ -2498,7 +2334,7 @@ fn launch_materialized(
     let response = PlayResponse {
         pid: child.id(),
         lineage: materialized.lineage,
-        variant: materialized.variant,
+        segment: materialized.segment,
         tape: tape_path,
         session_state_root: state_root,
         session_id,
@@ -2559,29 +2395,8 @@ fn draft_parent_frame_count(
     let continuation_frames = continuation.frames.len() as u64;
     let parent = match &manifest.parent {
         DraftParent::Milestone { .. } => InputTape::default(),
-        DraftParent::Variant {
-            id,
-            lineage,
-            step_index,
-            ..
-        } => {
-            let materialized = materialize_lineage(
-                timeline,
-                repository_root,
-                lineage,
-                MaterializeTarget::ThroughStepCount(*step_index + 1),
-            )?;
-            if materialized.steps.len() != *step_index + 1
-                || materialized
-                    .steps
-                    .last()
-                    .is_none_or(|step| step.variant != *id)
-            {
-                return Err(WorkbenchError::new(
-                    "draft direct-parent lineage occurrence changed",
-                ));
-            }
-            materialized.tape
+        DraftParent::Segment { id, .. } => {
+            materialize_segment_chain(timeline, repository_root, id)?.tape
         }
         DraftParent::Draft { id, .. } => {
             materialize_draft(timeline, repository_root, state_root, id)?.tape
@@ -2800,7 +2615,7 @@ fn record_continuation(
             (
                 MaterializedPlayback {
                     lineage: None,
-                    variant: Some(format!("origin:{id}")),
+                    segment: Some(format!("origin:{id}")),
                     tape: InputTape::default(),
                     seed_stage: None,
                 },
@@ -2815,71 +2630,47 @@ fn record_continuation(
                 true,
             )
         }
-        BrowserRecordParent::Variant {
-            id,
-            lineage,
-            step_index,
-            terminal_goal,
-        } => {
-            let variant = timeline
-                .variants
+        BrowserRecordParent::Segment { id, terminal_goal } => {
+            let segment = timeline
+                .segments
                 .get(&id)
-                .ok_or_else(|| WorkbenchError::new(format!("unknown variant {id:?}")))?;
+                .ok_or_else(|| WorkbenchError::new(format!("unknown segment {id:?}")))?;
             let anchors = graph_from_timeline(timeline, &artifact_root)?
-                .variants
+                .segments
                 .into_iter()
                 .find(|candidate| candidate.id == id)
-                .expect("timeline variant must appear in its graph")
+                .expect("timeline segment must appear in its graph")
                 .record_anchors;
-            let anchor = anchors.iter().find(|anchor| {
-                anchor.lineage == lineage
-                    && anchor.step_index == step_index
-                    && anchor.goal == terminal_goal
-            });
-            if anchor.is_none() || !native_fingerprint(&variant.boundary_fingerprint) {
+            let anchor = anchors.iter().find(|anchor| anchor.goal == terminal_goal);
+            if anchor.is_none() || !native_fingerprint(&segment.end_fingerprint) {
                 return Err(WorkbenchError::new(
-                    "recording requires the concrete composable lineage anchor advertised by the graph",
+                    "recording requires a verified goal attached to the selected segment",
                 ));
             }
-            let lineage_tape = materialize_lineage(
-                timeline,
-                &artifact_root,
-                &lineage,
-                MaterializeTarget::ThroughStepCount(step_index + 1),
-            )?;
-            if lineage_tape.steps.len() != step_index + 1
-                || lineage_tape.steps.last().map(|step| step.variant.as_str()) != Some(id.as_str())
-            {
-                return Err(WorkbenchError::new(
-                    "lineage anchor does not resolve to the requested concrete occurrence",
-                ));
-            }
-            let first_segment = lineage_tape.steps.first().map(|step| step.segment.clone());
-            let seed_stage = first_segment.as_deref().and_then(|segment| {
-                match timeline.segments[segment].profile {
+            let segment_chain = materialize_segment_chain(timeline, &artifact_root, &id)?;
+            let seed_stage = segment_chain.steps.first().and_then(|step| {
+                match timeline.segments[&step.segment].profile {
                     crate::search::SegmentProfile::BootToFsp103 => None,
                     crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
                     crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
                 }
             });
             let materialized = MaterializedPlayback {
-                lineage: Some(lineage.clone()),
-                variant: Some(id.clone()),
-                tape: lineage_tape.tape,
+                lineage: None,
+                segment: Some(id.clone()),
+                tape: segment_chain.tape,
                 seed_stage,
             };
-            let parent = DraftParent::Variant {
-                id,
-                lineage,
-                step_index,
+            let parent = DraftParent::Segment {
+                id: id.clone(),
                 terminal_milestone: anchor.expect("checked anchor").predicate.clone(),
-                boundary_fingerprint: variant.boundary_fingerprint.clone(),
+                boundary_fingerprint: segment.end_fingerprint.clone(),
             };
             (
                 materialized,
                 parent,
                 Some(anchor.expect("checked anchor").predicate.clone()),
-                Some(variant.boundary_fingerprint.clone()),
+                Some(segment.end_fingerprint.clone()),
                 false,
             )
         }
@@ -3027,7 +2818,7 @@ fn record_continuation(
     };
     let pid = child.id();
     let launch = DraftLaunch {
-        schema: "dusklight.route-workbench.launch.v1".into(),
+        schema: "dusklight.route-workbench.launch.v2".into(),
         id: draft_id.clone(),
         pid,
         session_token,
@@ -3111,7 +2902,7 @@ fn finalize_recording(directory: &Path, manifest: &mut DraftManifest, exit_succe
             definition_sha256,
             ..
         } => Some((id, program_sha256, definition_sha256)),
-        DraftParent::Variant { .. } | DraftParent::Draft { .. } => None,
+        DraftParent::Segment { .. } | DraftParent::Draft { .. } => None,
     };
     let expected_boundary_matches = match (
         boot_parent,
@@ -3292,53 +3083,6 @@ pub fn serve(listener: TcpListener, config: WorkbenchConfig) -> Result<(), Workb
     Ok(())
 }
 
-fn graph_lineage(
-    timeline: &Timeline,
-    lineage: &ResolvedLineage,
-    repository_root: &Path,
-) -> GraphLineage {
-    let mut cursor = Some(0_u64);
-    let mut steps = Vec::new();
-    for step in &lineage.steps {
-        let variant = &timeline.variants[&step.variant];
-        let source_frames = load_variant_tape(timeline, variant, repository_root)
-            .and_then(|tape| logical_frame_count(variant, &tape))
-            .ok();
-        let start = cursor;
-        let end = match (cursor, source_frames) {
-            (Some(value), Some(count)) => value.checked_add(count),
-            _ => None,
-        };
-        steps.push(GraphLineageStep {
-            variant: variant.id.clone(),
-            segment: variant.segment.clone(),
-            parent_segment: timeline.segments[&variant.segment].parent.clone(),
-            parent_variant: step.after.parent_variant.clone(),
-            checkpoint_fingerprint: step.after.checkpoint_fingerprint.clone(),
-            source_frames,
-            chain_start_frame: start,
-            chain_end_frame: end,
-        });
-        cursor = end;
-    }
-    let composition_error = ensure_composable_lineage(timeline, lineage, lineage.steps.len())
-        .err()
-        .map(|error| error.to_string());
-    GraphLineage {
-        name: lineage.name.clone(),
-        kind: match lineage.kind {
-            LineageKind::Continuation => "continuation",
-            LineageKind::Branch => "branch",
-        }
-        .into(),
-        root_fingerprint: lineage.root_fingerprint.clone(),
-        steps,
-        frame_count: cursor,
-        playable: cursor.is_some() && composition_error.is_none(),
-        error: composition_error,
-    }
-}
-
 fn graph_artifact(source: &ArtifactSource) -> GraphArtifact {
     match source {
         ArtifactSource::Baseline(profile) => GraphArtifact {
@@ -3393,7 +3137,7 @@ fn selected_step_count(
 }
 
 fn unique_segment_step(
-    timeline: &Timeline,
+    _timeline: &Timeline,
     lineage: &ResolvedLineage,
     segment: &str,
 ) -> Result<usize, WorkbenchError> {
@@ -3401,7 +3145,7 @@ fn unique_segment_step(
         .steps
         .iter()
         .enumerate()
-        .filter(|(_, step)| timeline.variants[&step.variant].segment == segment)
+        .filter(|(_, step)| step.segment == segment)
         .map(|(index, _)| index + 1)
         .collect::<Vec<_>>();
     match matches.as_slice() {
@@ -3422,7 +3166,7 @@ fn ensure_composable_lineage(
     lineage: &ResolvedLineage,
     selected: usize,
 ) -> Result<(), WorkbenchError> {
-    // A single variant can always be played under its profile seed. Crossing a
+    // A single segment can always be played under its profile seed. Crossing a
     // boundary is stricter: generated baselines/candidates may contain their
     // evaluation seed harness and therefore are not continuation payloads.
     if selected <= 1 {
@@ -3437,19 +3181,19 @@ fn ensure_canonical_prefix(
     selected: usize,
 ) -> Result<(), WorkbenchError> {
     for step in lineage.steps.iter().take(selected) {
-        let variant = &timeline.variants[&step.variant];
-        if !artifact_is_canonical_payload(&variant.artifact) {
+        let segment = &timeline.segments[&step.segment];
+        if !artifact_is_canonical_payload(&segment.artifact) {
             return Err(WorkbenchError::new(format!(
-                "lineage {:?} cannot cross segment {}: variant {} is a stage-seeded baseline/candidate, not a canonical continuation tape",
-                lineage.name, variant.segment, variant.id
+                "continuation {:?} cannot cross segment {}: it is a stage-seeded baseline/candidate, not a canonical continuation tape",
+                lineage.name, segment.id
             )));
         }
-        if !fingerprints_are_exact(variant)
+        if !fingerprints_are_exact(segment)
             || contains_placeholder(&step.after.checkpoint_fingerprint)
         {
             return Err(WorkbenchError::new(format!(
-                "lineage {:?} cannot cross segment {}: variant {} uses placeholder fingerprints",
-                lineage.name, variant.segment, variant.id
+                "continuation {:?} cannot cross segment {} because it uses placeholder fingerprints",
+                lineage.name, segment.id
             )));
         }
     }
@@ -3462,27 +3206,20 @@ fn artifact_is_canonical_payload(source: &ArtifactSource) -> bool {
     matches!(source, ArtifactSource::Tas(_) | ArtifactSource::Tape(_))
 }
 
-fn fingerprints_are_exact(variant: &Variant) -> bool {
-    !contains_placeholder(&variant.start_fingerprint)
-        && !contains_placeholder(&variant.boundary_fingerprint)
+fn fingerprints_are_exact(segment: &Segment) -> bool {
+    !contains_placeholder(&segment.start_fingerprint)
+        && !contains_placeholder(&segment.end_fingerprint)
 }
 
 fn contains_placeholder(value: &str) -> bool {
     value.trim().is_empty() || value.to_ascii_lowercase().contains("unknown")
 }
 
-fn logical_frame_count(variant: &Variant, tape: &InputTape) -> Result<u64, WorkbenchError> {
-    logical_last_frame(variant, tape).and_then(|last| {
-        last.checked_add(1)
-            .ok_or_else(|| WorkbenchError::new("frame count overflow"))
-    })
-}
-
-fn logical_last_frame(variant: &Variant, tape: &InputTape) -> Result<u64, WorkbenchError> {
+fn logical_last_frame(segment: &Segment, tape: &InputTape) -> Result<u64, WorkbenchError> {
     if tape.frames.is_empty() {
         return Err(WorkbenchError::new(format!(
-            "variant {} has an empty tape",
-            variant.id
+            "segment {} has an empty tape",
+            segment.id
         )));
     }
     // first_hit_tick is a simulation score, not an artifact-local frame
@@ -3491,22 +3228,17 @@ fn logical_last_frame(variant: &Variant, tape: &InputTape) -> Result<u64, Workbe
     Ok(tape.frames.len() as u64 - 1)
 }
 
-fn load_variant_tape(
-    timeline: &Timeline,
-    variant: &Variant,
+fn load_segment_tape(
+    segment: &Segment,
     repository_root: &Path,
 ) -> Result<InputTape, WorkbenchError> {
-    let profile = timeline
-        .segments
-        .get(&variant.segment)
-        .ok_or_else(|| WorkbenchError::new(format!("unknown segment {:?}", variant.segment)))?
-        .profile;
-    match &variant.artifact {
+    let profile = segment.profile;
+    match &segment.artifact {
         ArtifactSource::Baseline(candidate_profile) => {
             if *candidate_profile != profile {
                 return Err(WorkbenchError::new(format!(
-                    "variant {} baseline profile does not match its segment",
-                    variant.id
+                    "segment {} baseline profile does not match its profile",
+                    segment.id
                 )));
             }
             Candidate::baseline(*candidate_profile)
@@ -3615,17 +3347,25 @@ fn canonical_file(path: &Path, label: &str) -> Result<PathBuf, WorkbenchError> {
 }
 
 fn validate_play_request(request: &PlayRequest) -> Result<(), WorkbenchError> {
-    match (&request.lineage, &request.variant) {
+    match (&request.lineage, &request.standalone_segment) {
         (Some(lineage), None) if !lineage.trim().is_empty() => {}
-        (None, Some(variant)) if !variant.trim().is_empty() => {}
+        (None, Some(segment)) if !segment.trim().is_empty() => {}
         (Some(_), Some(_)) => {
             return Err(WorkbenchError::new(
-                "lineage and variant are mutually exclusive",
+                "lineage and standalone_segment are mutually exclusive",
             ));
         }
-        _ => return Err(WorkbenchError::new("lineage or variant is required")),
+        _ => {
+            return Err(WorkbenchError::new(
+                "lineage or standalone_segment is required",
+            ));
+        }
     }
-    match (&request.segment, request.frame, request.variant.is_some()) {
+    match (
+        &request.segment,
+        request.frame,
+        request.standalone_segment.is_some(),
+    ) {
         (Some(_), Some(_), false) | (None, None, _) | (None, Some(_), true) => {}
         _ => {
             return Err(WorkbenchError::new(
@@ -3638,10 +3378,11 @@ fn validate_play_request(request: &PlayRequest) -> Result<(), WorkbenchError> {
             "through_segment and segment/frame are mutually exclusive",
         ));
     }
-    if request.variant.is_some() && (request.through_segment.is_some() || request.segment.is_some())
+    if request.standalone_segment.is_some()
+        && (request.through_segment.is_some() || request.segment.is_some())
     {
         return Err(WorkbenchError::new(
-            "standalone variant playback accepts frame only, not lineage segment selectors",
+            "standalone segment playback accepts frame only, not lineage segment selectors",
         ));
     }
     Ok(())
@@ -3653,32 +3394,8 @@ fn materialize_play_request(
     request: &PlayRequest,
 ) -> Result<MaterializedPlayback, WorkbenchError> {
     validate_play_request(request)?;
-    if let Some(variant_id) = &request.variant {
-        let variant = timeline
-            .variants
-            .get(variant_id)
-            .ok_or_else(|| WorkbenchError::new(format!("unknown variant {variant_id:?}")))?;
-        let mut tape = load_variant_tape(timeline, variant, repository_root)?;
-        let last = logical_last_frame(variant, &tape)?;
-        let selected = request.frame.unwrap_or(last);
-        if selected > last {
-            return Err(WorkbenchError::new(format!(
-                "frame {selected} is outside variant {variant_id:?} (last logical frame is {last})"
-            )));
-        }
-        tape.frames.truncate(selected as usize + 1);
-        let profile = timeline.segments[&variant.segment].profile;
-        let seed_stage = match profile {
-            crate::search::SegmentProfile::BootToFsp103 => None,
-            crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
-            crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
-        };
-        return Ok(MaterializedPlayback {
-            lineage: None,
-            variant: Some(variant_id.clone()),
-            tape,
-            seed_stage,
-        });
+    if let Some(segment_id) = &request.standalone_segment {
+        return materialize_segment_playback(timeline, repository_root, segment_id, request.frame);
     }
     let lineage = request.lineage.as_deref().expect("validated lineage");
     let materialized =
@@ -3692,130 +3409,75 @@ fn materialize_play_request(
     });
     Ok(MaterializedPlayback {
         lineage: Some(lineage.into()),
-        variant: None,
+        segment: None,
         tape: materialized.tape,
         seed_stage,
     })
 }
 
-fn materialize_anchored_variant(
+fn materialize_segment_playback(
     timeline: &Timeline,
     repository_root: &Path,
-    variant_id: &str,
-    requested_anchor: &GraphPlayAnchor,
-    stop: &BrowserStop,
+    segment_id: &str,
+    local_frame: Option<u64>,
 ) -> Result<MaterializedPlayback, WorkbenchError> {
-    let variant = timeline
-        .variants
-        .get(variant_id)
-        .ok_or_else(|| WorkbenchError::new(format!("unknown variant {variant_id:?}")))?;
-    let graph = graph_from_timeline(timeline, repository_root)?;
-    if !graph
-        .variants
-        .iter()
-        .find(|candidate| candidate.id == variant_id)
-        .is_some_and(|candidate| candidate.play_anchors.contains(requested_anchor))
-    {
-        return Err(WorkbenchError::new(format!(
-            "variant {variant_id:?} is not composable from lineage {:?} after {} steps",
-            requested_anchor.lineage, requested_anchor.prefix_steps
-        )));
-    }
-
-    let mut continuation = load_variant_tape(timeline, variant, repository_root)?;
-    let last = logical_last_frame(variant, &continuation)?;
-    match stop {
-        BrowserStop::Tick { tick } => {
-            if *tick > last {
-                return Err(WorkbenchError::new(format!(
-                    "frame {tick} is outside variant {variant_id:?} (last logical frame is {last})"
-                )));
-            }
-            continuation.frames.truncate(*tick as usize + 1);
+    let segment = timeline
+        .segments
+        .get(segment_id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown segment {segment_id:?}")))?;
+    let mut chain = materialize_segment_chain(timeline, repository_root, segment_id)?;
+    if let Some(frame) = local_frame {
+        let local_last =
+            logical_last_frame(segment, &load_segment_tape(segment, repository_root)?)?;
+        if frame > local_last {
+            return Err(WorkbenchError::new(format!(
+                "frame {frame} is outside segment {segment_id:?} (last logical frame is {local_last})"
+            )));
         }
-        BrowserStop::Segment { segment } => {
-            if variant.segment != *segment {
-                return Err(WorkbenchError::new(format!(
-                    "variant {variant_id:?} belongs to {:?}, not {segment:?}",
-                    variant.segment
-                )));
-            }
-        }
+        let selected = chain.steps.last().expect("segment chain is non-empty");
+        let chain_last = selected
+            .chain_start_frame
+            .checked_add(frame)
+            .ok_or_else(|| WorkbenchError::new("frame selection overflow"))?;
+        chain.tape.frames.truncate(chain_last as usize + 1);
     }
-
-    let prefix = materialize_lineage(
-        timeline,
-        repository_root,
-        &requested_anchor.lineage,
-        MaterializeTarget::ThroughStepCount(requested_anchor.prefix_steps),
-    )?;
-    if prefix.steps.len() != requested_anchor.prefix_steps {
-        return Err(WorkbenchError::new(format!(
-            "lineage {:?} no longer reaches the selected segment after {} steps",
-            requested_anchor.lineage, requested_anchor.prefix_steps
-        )));
-    }
-    let tape = if prefix.tape.frames.is_empty() {
-        continuation
-    } else {
-        concatenate(vec![
-            ChainSegment::all(prefix.tape),
-            ChainSegment::all(continuation),
-        ])
-        .map_err(|error| WorkbenchError::new(error.to_string()))?
-        .tape
-    };
-    let seed_profile = prefix
+    let seed_profile = chain
         .steps
         .first()
         .map(|step| timeline.segments[&step.segment].profile)
-        .unwrap_or(timeline.segments[&variant.segment].profile);
+        .unwrap_or(segment.profile);
     let seed_stage = match seed_profile {
         crate::search::SegmentProfile::BootToFsp103 => None,
         crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
         crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
     };
     Ok(MaterializedPlayback {
-        lineage: Some(requested_anchor.lineage.clone()),
-        variant: Some(variant_id.into()),
-        tape,
+        lineage: None,
+        segment: Some(segment_id.into()),
+        tape: chain.tape,
         seed_stage,
     })
 }
 
-fn play_anchored_variant(
+fn play_segment(
     timeline: &Timeline,
     config: &WorkbenchConfig,
-    selection: &BrowserSelection,
+    segment_id: &str,
     stop: &BrowserStop,
     handoff: bool,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
-    let BrowserSelection::Variant {
-        id: variant_id,
-        lineage,
-        prefix_steps,
-        parent_segment,
-        start_fingerprint,
-    } = selection
-    else {
-        return Err(WorkbenchError::new(
-            "anchored playback requires a variant selection",
-        ));
+    let local_frame = match stop {
+        BrowserStop::Segment { segment } if segment == segment_id => None,
+        BrowserStop::Segment { segment } => {
+            return Err(WorkbenchError::new(format!(
+                "selected segment {segment_id:?} cannot stop at {segment:?}"
+            )));
+        }
+        BrowserStop::Tick { tick } => Some(*tick),
     };
     let artifact_root = configured_artifact_root(config)?;
-    let requested_anchor = GraphPlayAnchor {
-        lineage: lineage.clone(),
-        prefix_steps: *prefix_steps,
-        parent_segment: parent_segment.clone(),
-        start_fingerprint: start_fingerprint.clone(),
-    };
-    let materialized = materialize_anchored_variant(
-        timeline,
-        &artifact_root,
-        variant_id,
-        &requested_anchor,
-        stop,
-    )?;
+    let materialized =
+        materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
     launch_materialized(
         timeline,
         config,
@@ -3834,18 +3496,14 @@ fn materialize_draft(
 ) -> Result<MaterializedPlayback, WorkbenchError> {
     enum DraftBase {
         Boot,
-        Variant {
-            id: String,
-            lineage: String,
-            step_index: usize,
-        },
+        Segment { id: String },
     }
 
     let manifests = scan_draft_manifests(state_root)?;
     let mut cursor = draft_id.to_owned();
     let mut seen = BTreeSet::new();
     let mut continuations = Vec::new();
-    let base_variant = loop {
+    let base_segment = loop {
         if !seen.insert(cursor.clone()) {
             return Err(WorkbenchError::new("draft parent graph contains a cycle"));
         }
@@ -3886,72 +3544,37 @@ fn materialize_draft(
                 }
                 break DraftBase::Boot;
             }
-            DraftParent::Variant {
+            DraftParent::Segment {
                 id,
-                lineage,
-                step_index,
                 terminal_milestone: _,
                 boundary_fingerprint,
             } => {
-                let variant = timeline
-                    .variants
+                let segment = timeline
+                    .segments
                     .get(id)
-                    .ok_or_else(|| WorkbenchError::new("draft parent variant is missing"))?;
-                if variant.boundary_fingerprint != *boundary_fingerprint
-                    || !exact_variant_occurrence(timeline, id, lineage, *step_index)?
-                {
-                    return Err(WorkbenchError::new("draft parent lineage anchor changed"));
+                    .ok_or_else(|| WorkbenchError::new("draft parent segment is missing"))?;
+                if segment.end_fingerprint != *boundary_fingerprint {
+                    return Err(WorkbenchError::new("draft parent segment boundary changed"));
                 }
-                break DraftBase::Variant {
-                    id: id.clone(),
-                    lineage: lineage.clone(),
-                    step_index: *step_index,
-                };
+                break DraftBase::Segment { id: id.clone() };
             }
             DraftParent::Draft { id, .. } => cursor = id.clone(),
         }
     };
     continuations.reverse();
 
-    let (mut tape, seed_stage, base_label) = match base_variant {
+    let (mut tape, seed_stage, base_label) = match base_segment {
         DraftBase::Boot => (InputTape::default(), None, "boot".to_owned()),
-        DraftBase::Variant {
-            id: base_variant,
-            lineage: base_lineage,
-            step_index,
-        } => {
-            let base_lineage_tape = materialize_lineage(
-                timeline,
-                repository_root,
-                &base_lineage,
-                MaterializeTarget::ThroughStepCount(step_index + 1),
-            )?;
-            let expected_step_index = continuations
-                .first()
-                .and_then(|manifest| match &manifest.parent {
-                    DraftParent::Variant { step_index, .. } => Some(*step_index),
-                    DraftParent::Milestone { .. } | DraftParent::Draft { .. } => None,
-                })
-                .expect("first continuation has curated parent");
-            if base_lineage_tape.steps.len() != expected_step_index + 1
-                || base_lineage_tape
-                    .steps
-                    .last()
-                    .map(|step| step.variant.as_str())
-                    != Some(base_variant.as_str())
-            {
-                return Err(WorkbenchError::new(
-                    "draft lineage anchor no longer resolves to its concrete occurrence",
-                ));
-            }
-            let seed_stage = base_lineage_tape.steps.first().and_then(|step| {
+        DraftBase::Segment { id: base_segment } => {
+            let base_tape = materialize_segment_chain(timeline, repository_root, &base_segment)?;
+            let seed_stage = base_tape.steps.first().and_then(|step| {
                 match timeline.segments[&step.segment].profile {
                     crate::search::SegmentProfile::BootToFsp103 => None,
                     crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
                     crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
                 }
             });
-            (base_lineage_tape.tape, seed_stage, base_variant)
+            (base_tape.tape, seed_stage, base_segment)
         }
     };
     let root = drafts_root(state_root)?;
@@ -4000,7 +3623,7 @@ fn materialize_draft(
     }
     Ok(MaterializedPlayback {
         lineage: None,
-        variant: Some(format!("{base_label}:{draft_id}")),
+        segment: Some(format!("{base_label}:{draft_id}")),
         tape,
         seed_stage,
     })
@@ -4019,28 +3642,6 @@ fn play_target(request: &PlayRequest) -> Result<MaterializeTarget, WorkbenchErro
         _ => Err(WorkbenchError::new(
             "segment and frame must be supplied together",
         )),
-    }
-}
-
-fn adapt_browser_request(
-    timeline: &Timeline,
-    request: BrowserPlayRequest,
-) -> Result<PlayRequest, WorkbenchError> {
-    match request.selection {
-        BrowserSelection::Variant { .. } => Err(WorkbenchError::new(
-            "anchored variant selections use lineage composition",
-        )),
-        BrowserSelection::Draft { .. } => Err(WorkbenchError::new(
-            "draft selections use persistent draft playback",
-        )),
-        BrowserSelection::Segment { id } => {
-            if !timeline.segments.contains_key(&id) {
-                return Err(WorkbenchError::new(format!("unknown segment {id:?}")));
-            }
-            Err(WorkbenchError::new(
-                "segment selections require a concrete variant lineage anchor",
-            ))
-        }
     }
 }
 
@@ -4095,18 +3696,13 @@ fn handle_http(
                                 BrowserSelection::Draft { id } => {
                                     play_draft(&timeline, config, id, browser_request.origin)?
                                 }
-                                BrowserSelection::Variant { .. } => play_anchored_variant(
+                                BrowserSelection::Segment { id } => play_segment(
                                     &timeline,
                                     config,
-                                    &browser_request.selection,
+                                    id,
                                     &browser_request.stop,
                                     browser_request.handoff,
                                 )?,
-                                _ => {
-                                    let play_request =
-                                        adapt_browser_request(&timeline, browser_request)?;
-                                    play(&timeline, config, &play_request)?
-                                }
                             };
                             Ok(response)
                         });
@@ -4436,10 +4032,8 @@ mod tests {
         Timeline::parse(
             r#"
 timeline test
-segment boot_link root profile boot_to_fsp103
-segment link_exit after boot_link profile fsp103_to_fsp104
-variant boot_link.one incumbent uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-variant link_exit.one incumbent uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment boot_link.one root profile boot_to_fsp103 uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment link_exit.one after boot_link.one profile fsp103_to_fsp104 uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 continuation main starts root@clean
 continue main with boot_link.one after root@clean
 continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -4495,12 +4089,10 @@ milestone exit {
 timeline test
 predicate_program route.milestones
 origin boot predicate boot
-segment boot_link root profile boot_to_fsp103
-segment link_exit after boot_link profile fsp103_to_fsp104
-goal control on boot_link predicate control
-goal exit on link_exit predicate exit
-variant boot_link.one incumbent uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-variant link_exit.one incumbent uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment boot_link.one root profile boot_to_fsp103 uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment link_exit.one after boot_link.one profile fsp103_to_fsp104 uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+goal control on boot_link.one predicate control
+goal exit on link_exit.one predicate exit
 proof boot_link.one satisfies control program {program} predicate {control} ticks 2
 proof link_exit.one satisfies exit program {program} predicate {exit} ticks 1
 continuation main starts root@clean
@@ -4574,13 +4166,16 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
         write_tape(&root, "second.tape", &[5, 6, 7]);
         let graph = graph_from_timeline(&timeline(), &root).unwrap();
-        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v4");
+        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v5");
         assert!(graph.origin.is_none());
         assert_eq!(graph.segments.len(), 2);
-        assert!(graph.variants.iter().all(|variant| variant.playable));
-        assert!(graph.variants.iter().all(|variant| !variant.recordable));
-        assert_eq!(graph.lineages[0].frame_count, Some(7));
-        assert_eq!(graph.lineages[0].steps[1].chain_start_frame, Some(4));
+        assert!(graph.segments.iter().all(|segment| segment.playable));
+        assert!(graph.segments.iter().all(|segment| !segment.recordable));
+        assert_eq!(graph.segments[0].parent, None);
+        assert_eq!(graph.segments[1].parent.as_deref(), Some("boot_link.one"));
+        let playback = materialize_segment_chain(&timeline(), &root, "link_exit.one").unwrap();
+        assert_eq!(playback.tape.frames.len(), 7);
+        assert_eq!(playback.steps[1].chain_start_frame, 4);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4605,52 +4200,44 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
                 .unwrap()
                 .is_object()
         );
-        assert!(graph.variants.iter().all(|variant| variant.playable));
+        assert!(graph.segments.iter().all(|segment| segment.playable));
         assert!(
             graph
-                .variants
+                .segments
                 .iter()
-                .all(|variant| variant.predicate_proof == "verified")
+                .all(|segment| segment.predicate_proof == "verified")
         );
-        assert!(graph.variants.iter().all(|variant| variant.recordable));
+        assert!(graph.segments.iter().all(|segment| segment.recordable));
 
         let changed = MILESTONE_SOURCE.replace("F_SP104", "F_SP105");
         fs::write(root.join("route.milestones"), changed).unwrap();
         let stale = graph_from_timeline(&route, &root).unwrap();
-        assert!(stale.variants.iter().all(|variant| variant.playable));
+        assert!(stale.segments.iter().all(|segment| segment.playable));
         assert!(
             stale
-                .variants
+                .segments
                 .iter()
-                .all(|variant| variant.predicate_proof == "stale")
+                .all(|segment| segment.predicate_proof == "stale")
         );
-        assert!(stale.variants.iter().all(|variant| !variant.recordable));
+        assert!(stale.segments.iter().all(|segment| !segment.recordable));
         assert!(
             stale
-                .variants
+                .segments
                 .iter()
-                .all(|variant| !variant.play_anchors.is_empty())
-        );
-        assert!(
-            stale
-                .variants
-                .iter()
-                .all(|variant| variant.record_anchors.is_empty())
+                .all(|segment| segment.record_anchors.is_empty())
         );
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn play_anchors_require_canonical_loadable_prefixes_and_real_boot_roots() {
-        let root = temporary_root("strict-play-anchors");
+    fn segment_playback_requires_a_canonical_loadable_parent_chain() {
+        let root = temporary_root("strict-segment-chain");
         write_tape(&root, "child.tape", &[5, 6, 7]);
         let seeded_prefix = Timeline::parse(
             r#"
 timeline seeded
-segment boot_link root profile boot_to_fsp103
-segment link_exit after boot_link profile fsp103_to_fsp104
-variant boot_link.seed incumbent uses baseline boot_to_fsp103 starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-variant link_exit.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment boot_link.seed root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment link_exit.child after boot_link.seed profile fsp103_to_fsp104 uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 continuation main starts root@clean
 continue main with boot_link.seed after root@clean
 continue main with link_exit.child after boot_link.seed@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -4659,20 +4246,17 @@ continue main with link_exit.child after boot_link.seed@aaaaaaaaaaaaaaaaaaaaaaaa
         .unwrap();
         let graph = graph_from_timeline(&seeded_prefix, &root).unwrap();
         let child = graph
-            .variants
+            .segments
             .iter()
-            .find(|variant| variant.id == "link_exit.child")
+            .find(|segment| segment.id == "link_exit.child")
             .unwrap();
         assert!(!child.playable);
-        assert!(child.play_anchors.is_empty());
 
         let missing_prefix = Timeline::parse(
             r#"
 timeline missing
-segment boot_link root profile boot_to_fsp103
-segment link_exit after boot_link profile fsp103_to_fsp104
-variant boot_link.missing incumbent uses tape missing.tape starts cccccccccccccccccccccccccccccccc produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-variant link_exit.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment boot_link.missing root profile boot_to_fsp103 uses tape missing.tape starts cccccccccccccccccccccccccccccccc produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment link_exit.child after boot_link.missing profile fsp103_to_fsp104 uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 continuation main starts root@cccccccccccccccccccccccccccccccc
 continue main with boot_link.missing after root@cccccccccccccccccccccccccccccccc
 continue main with link_exit.child after boot_link.missing@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -4681,43 +4265,26 @@ continue main with link_exit.child after boot_link.missing@aaaaaaaaaaaaaaaaaaaaa
         .unwrap();
         let graph = graph_from_timeline(&missing_prefix, &root).unwrap();
         let child = graph
-            .variants
+            .segments
             .iter()
-            .find(|variant| variant.id == "link_exit.child")
+            .find(|segment| segment.id == "link_exit.child")
             .unwrap();
         assert!(!child.playable);
-        assert!(child.play_anchors.is_empty());
 
-        let non_boot_root = Timeline::parse(
+        let independent_root = Timeline::parse(
             r#"
-timeline non_boot
-segment tunnel root profile link_control_to_tunnel_crawl_start
-variant tunnel.child incumbent uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+timeline independent
+segment tunnel.child root profile link_control_to_tunnel_crawl_start uses tape child.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 continuation main starts root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 "#,
         )
         .unwrap();
-        let graph = graph_from_timeline(&non_boot_root, &root).unwrap();
-        let child = &graph.variants[0];
+        let graph = graph_from_timeline(&independent_root, &root).unwrap();
+        let child = &graph.segments[0];
         assert!(child.playable);
-        assert_eq!(child.play_anchors.len(), 1);
         assert!(
-            materialize_anchored_variant(
-                &non_boot_root,
-                &root,
-                "tunnel.child",
-                &GraphPlayAnchor {
-                    lineage: "main".into(),
-                    prefix_steps: 0,
-                    parent_segment: None,
-                    start_fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-                },
-                &BrowserStop::Segment {
-                    segment: "tunnel".into(),
-                },
-            )
-            .is_ok()
+            materialize_segment_playback(&independent_root, &root, "tunnel.child", None).is_ok()
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -4748,17 +4315,15 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             &route,
             &config,
             BrowserRecordRequest {
-                parent: BrowserRecordParent::Variant {
+                parent: BrowserRecordParent::Segment {
                     id: "boot_link.one".into(),
-                    lineage: "main".into(),
-                    step_index: 0,
                     terminal_goal: "control".into(),
                 },
                 label: String::new(),
             },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("advertised by the graph"));
+        assert!(error.to_string().contains("verified goal"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -4914,7 +4479,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             &route,
             &root,
             "main",
-            MaterializeTarget::ThroughSegment("boot_link".into()),
+            MaterializeTarget::ThroughSegment("boot_link.one".into()),
         )
         .unwrap();
         assert_eq!(segment.tape.frames.len(), 4);
@@ -4923,7 +4488,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             &root,
             "main",
             MaterializeTarget::ThroughSegmentFrame {
-                segment: "link_exit".into(),
+                segment: "link_exit.one".into(),
                 frame: 0,
             },
         )
@@ -4955,7 +4520,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     fn play_request_requires_unambiguous_scrub_target() {
         let request = PlayRequest {
             lineage: Some("main".into()),
-            variant: None,
+            standalone_segment: None,
             through_segment: Some("boot_link".into()),
             segment: Some("boot_link".into()),
             frame: Some(1),
@@ -4974,39 +4539,25 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
-    fn browser_ui_is_a_compact_continuation_tree_with_selection_details() {
+    fn browser_ui_is_a_compact_segment_tree_with_selection_details() {
         let html = include_str!("../assets/route_workbench.html");
         for required in [
             "aria-label=\"Route tree\"",
             "id=\"tree\"",
             "id=\"detail\"",
             "data-select-kind",
-            "data-select-occurrence",
-            "Segment variant",
-            "Predicate structure",
-            "Other roots",
-            "draftsUnderVariant",
-            "anchor.prefix_steps===0",
-            "const children=expanded.has(key)?",
-            "unattachedRootVariants(unreachable,preferred=[])",
-            "if(!roots.some(item=>item.id===root.id))roots.push(root)",
-            "bootLineages()",
-            "item.parent===segment?.id",
-            "graph.segments.find(segment=>segment.id===variant.segment)?.parent==null",
+            "renderPlayableSegmentNode",
+            "childSegments",
+            "segment.parent==null",
+            "segmentActions",
+            "selection:{kind:'segment',id}",
+            "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
-            "variant.goal_proofs",
-            "chain:[...(context?.chain||[])]",
-            "const context=occurrenceIndex.get(selection.occurrence)||selection",
+            "segment.goal_proofs",
         ] {
             assert!(html.contains(required), "missing UI contract {required:?}");
         }
-        for removed_dump in [
-            "Variant frontier",
-            "Saved lineages",
-            "milestoneNode(",
-            "item.from===segment?.to",
-            "goalDetail(segment.to)",
-        ] {
+        for removed_dump in ["tree-icon", "Other roots"] {
             assert!(
                 !html.contains(removed_dump),
                 "legacy info-dump UI remains: {removed_dump:?}"
@@ -5015,29 +4566,20 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
-    fn browser_rejects_unanchored_segment_and_parent_variant_origins() {
-        let request = BrowserPlayRequest {
+    fn browser_accepts_segments_from_boot_and_rejects_parent_origin() {
+        let boot = BrowserPlayRequest {
             selection: BrowserSelection::Segment {
-                id: "link_exit".into(),
+                id: "link_exit.one".into(),
             },
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
             origin: PlaybackOrigin::Boot,
         };
-        assert!(
-            adapt_browser_request(&timeline(), request)
-                .unwrap_err()
-                .to_string()
-                .contains("concrete variant lineage anchor")
-        );
+        assert!(validate_playback_origin(&boot).is_ok());
 
         let parent_origin = BrowserPlayRequest {
-            selection: BrowserSelection::Variant {
+            selection: BrowserSelection::Segment {
                 id: "link_exit.one".into(),
-                lineage: "main".into(),
-                prefix_steps: 1,
-                parent_segment: Some("boot_link".into()),
-                start_fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             },
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
@@ -5057,14 +4599,13 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         let route = Timeline::parse(
             r#"
 timeline tas
-segment boot_link root profile boot_to_fsp103
-variant boot_link.tas incumbent uses tas boot.tas starts clean produces control
+segment boot_link.tas root profile boot_to_fsp103 uses tas boot.tas starts clean produces control
 continuation main starts root@clean
 continue main with boot_link.tas after root@clean
 "#,
         )
         .unwrap();
-        let tape = load_variant_tape(&route, &route.variants["boot_link.tas"], &root).unwrap();
+        let tape = load_segment_tape(&route.segments["boot_link.tas"], &root).unwrap();
         assert_eq!(tape.frames.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
@@ -5082,34 +4623,45 @@ continue main with boot_link.tas after root@clean
             graph
                 .segments
                 .iter()
-                .find(|segment| segment.id == "link_control_to_tunnel_crawl_start")
+                .find(|segment| segment.id == "human420")
                 .and_then(|segment| segment.parent.as_deref()),
-            Some("boot_to_link")
+            Some("golf439")
         );
         assert!(graph.goals.iter().any(|goal| {
             goal.id == "link_control"
-                && goal.segment == "boot_to_link"
+                && goal.segment == "golf439"
                 && goal.predicate == "link_control"
         }));
-        let variant = graph
-            .variants
+        let segment = graph
+            .segments
             .iter()
-            .find(|variant| variant.id == "boot_to_link.golf439")
+            .find(|segment| segment.id == "golf439")
             .unwrap();
-        assert!(variant.playable);
-        assert!(variant.recordable);
-        assert!(variant.lineage_composable);
-        assert_eq!(variant.predicate_proof, "verified");
-        assert_eq!(variant.goal_proofs.len(), 1);
-        assert_eq!(variant.goal_proofs[0].goal, "link_control");
-        assert_eq!(variant.record_anchors.len(), 1);
+        assert!(segment.playable);
+        assert!(segment.recordable);
+        assert_eq!(segment.predicate_proof, "verified");
+        assert_eq!(segment.goal_proofs.len(), 1);
+        assert_eq!(segment.goal_proofs[0].goal, "link_control");
+        assert_eq!(segment.record_anchors.len(), 1);
+        let sibling = graph
+            .segments
+            .iter()
+            .find(|segment| segment.id == "human_alt420")
+            .unwrap();
+        assert!(sibling.playable);
+        assert!(sibling.recordable);
+        assert_eq!(sibling.predicate_proof, "verified");
+        assert_eq!(sibling.first_hit_tick, Some(420));
+        assert_eq!(sibling.goal_proofs.len(), 1);
+        assert_eq!(sibling.goal_proofs[0].goal, "tunnel_crawl_start");
+        assert_eq!(sibling.record_anchors.len(), 1);
         let boot = graph.origin.as_ref().unwrap();
         assert!(boot.recordable_from_boot);
         assert_eq!(boot.id, "boot");
     }
 
     #[test]
-    fn checked_in_intro_variant_cards_compose_the_exact_boot_prefix() {
+    fn checked_in_intro_siblings_compose_their_exact_boot_prefix() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
@@ -5122,57 +4674,31 @@ continue main with boot_link.tas after root@clean
             &route,
             artifact_root,
             "main",
-            MaterializeTarget::ThroughSegment("boot_to_link".into()),
+            MaterializeTarget::ThroughSegment("golf439".into()),
         )
         .unwrap();
         assert_eq!(prefix.tape.frames.len(), 440);
 
-        for (variant_id, expected_output) in [
-            (
-                "link_control_to_tunnel_crawl_start.human420",
-                "0aee9b9dfc150ff0c0b44c36408922a3",
-            ),
-            (
-                "link_control_to_tunnel_crawl_start.human_alt420",
-                "56b236160fbdff1ead7fed80441b7c99",
-            ),
+        for (segment_id, expected_output) in [
+            ("human420", "0aee9b9dfc150ff0c0b44c36408922a3"),
+            ("human_alt420", "56b236160fbdff1ead7fed80441b7c99"),
         ] {
-            let variant = &route.variants[variant_id];
-            assert_eq!(variant.boundary_fingerprint, expected_output);
+            let segment = &route.segments[segment_id];
+            assert_eq!(segment.end_fingerprint, expected_output);
             let card = graph
-                .variants
+                .segments
                 .iter()
-                .find(|candidate| candidate.id == variant_id)
+                .find(|candidate| candidate.id == segment_id)
                 .unwrap();
-            assert_eq!(
-                card.play_anchors,
-                vec![GraphPlayAnchor {
-                    lineage: "main".into(),
-                    prefix_steps: 1,
-                    parent_segment: Some("boot_to_link".into()),
-                    start_fingerprint: variant.start_fingerprint.clone(),
-                }]
-            );
-            let continuation = load_variant_tape(&route, variant, artifact_root).unwrap();
+            assert!(card.playable);
+            assert_eq!(card.parent.as_deref(), Some("golf439"));
+            let continuation = load_segment_tape(segment, artifact_root).unwrap();
             assert_eq!(continuation.frames.len(), 421);
-            let playback = materialize_anchored_variant(
-                &route,
-                artifact_root,
-                variant_id,
-                &GraphPlayAnchor {
-                    lineage: "main".into(),
-                    prefix_steps: 1,
-                    parent_segment: Some("boot_to_link".into()),
-                    start_fingerprint: variant.start_fingerprint.clone(),
-                },
-                &BrowserStop::Segment {
-                    segment: "link_control_to_tunnel_crawl_start".into(),
-                },
-            )
-            .unwrap();
+            let playback =
+                materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
             assert_eq!(playback.tape.frames.len(), 861);
-            assert_eq!(playback.lineage.as_deref(), Some("main"));
-            assert_eq!(playback.variant.as_deref(), Some(variant_id));
+            assert_eq!(playback.lineage, None);
+            assert_eq!(playback.segment.as_deref(), Some(segment_id));
             assert_eq!(
                 &playback.tape.frames[..prefix.tape.frames.len()],
                 prefix.tape.frames.as_slice()
@@ -5181,19 +4707,8 @@ continue main with boot_link.tas after root@clean
                 &playback.tape.frames[prefix.tape.frames.len()..],
                 continuation.frames.as_slice()
             );
-            let first_local_frame = materialize_anchored_variant(
-                &route,
-                artifact_root,
-                variant_id,
-                &GraphPlayAnchor {
-                    lineage: "main".into(),
-                    prefix_steps: 1,
-                    parent_segment: Some("boot_to_link".into()),
-                    start_fingerprint: variant.start_fingerprint.clone(),
-                },
-                &BrowserStop::Tick { tick: 0 },
-            )
-            .unwrap();
+            let first_local_frame =
+                materialize_segment_playback(&route, artifact_root, segment_id, Some(0)).unwrap();
             assert_eq!(first_local_frame.tape.frames.len(), 441);
             assert_eq!(
                 first_local_frame.tape.frames.last(),
@@ -5201,33 +4716,13 @@ continue main with boot_link.tas after root@clean
             );
         }
 
-        assert!(
-            materialize_anchored_variant(
-                &route,
-                artifact_root,
-                "link_control_to_tunnel_crawl_start.human420",
-                &GraphPlayAnchor {
-                    lineage: "main".into(),
-                    prefix_steps: 0,
-                    parent_segment: Some("boot_to_link".into()),
-                    start_fingerprint: "5f3f489f2cf561844564368fbc427d85".into(),
-                },
-                &BrowserStop::Segment {
-                    segment: "link_control_to_tunnel_crawl_start".into(),
-                },
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("not composable")
-        );
-
-        let suffix_only = r#"{
-            "selection":{"kind":"variant","id":"link_control_to_tunnel_crawl_start.human420"},
-            "stop":{"kind":"segment","segment":"link_control_to_tunnel_crawl_start"},
+        let sibling_request = r#"{
+            "selection":{"kind":"segment","id":"human_alt420"},
+            "stop":{"kind":"segment","segment":"human_alt420"},
             "handoff":true,
             "origin":"boot"
         }"#;
-        assert!(serde_json::from_str::<BrowserPlayRequest>(suffix_only).is_err());
+        assert!(serde_json::from_str::<BrowserPlayRequest>(sibling_request).is_ok());
     }
 
     #[test]
@@ -5353,7 +4848,7 @@ continue main with boot_link.tas after root@clean
             &route,
             repository_root,
             "main",
-            MaterializeTarget::ThroughSegment("link_exit".into()),
+            MaterializeTarget::ThroughSegment("link_exit.one".into()),
         )
         .unwrap()
         .tape;
@@ -5391,10 +4886,8 @@ continue main with boot_link.tas after root@clean
             schema: DRAFT_SCHEMA.into(),
             id: id.into(),
             label: "Test branch".into(),
-            parent: DraftParent::Variant {
+            parent: DraftParent::Segment {
                 id: "link_exit.one".into(),
-                lineage: "main".into(),
-                step_index: 1,
                 terminal_milestone: "exit".into(),
                 boundary_fingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
             },
@@ -5947,7 +5440,7 @@ continue main with boot_link.tas after root@clean
         write_draft_launch(
             &directory,
             &DraftLaunch {
-                schema: "dusklight.route-workbench.launch.v1".into(),
+                schema: "dusklight.route-workbench.launch.v2".into(),
                 id: id.into(),
                 pid: std::process::id(),
                 session_token: manifest.session_token.clone(),
@@ -5965,7 +5458,7 @@ continue main with boot_link.tas after root@clean
         write_draft_launch(
             &directory,
             &DraftLaunch {
-                schema: "dusklight.route-workbench.launch.v1".into(),
+                schema: "dusklight.route-workbench.launch.v2".into(),
                 id: id.into(),
                 pid: u32::MAX,
                 session_token: manifest.session_token.clone(),

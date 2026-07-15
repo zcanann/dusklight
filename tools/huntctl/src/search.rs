@@ -1541,8 +1541,8 @@ mod tests {
 
     #[test]
     fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../routes/intro/segments/human420.tape");
         let tape = InputTape::decode(&fs::read(path).unwrap()).unwrap().tape;
         assert_eq!(tape.frames.len(), 421);
         let candidate =

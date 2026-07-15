@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 2);
+    assert_eq!(summary["segments"], 3);
 
     let status = run(&[
         "timeline",
@@ -44,15 +44,45 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["immutable_lineages"][0]["stale"], false);
     assert_eq!(
-        status["workspace"]["steps"][0]["workspace_variant"],
-        "boot_to_link.golf439"
+        status["workspace"]["steps"][0]["workspace_segment"],
+        "golf439"
     );
     assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
     assert_eq!(
-        status["workspace"]["steps"][1]["workspace_variant"],
-        "link_control_to_tunnel_crawl_start.human420"
+        status["workspace"]["steps"][1]["workspace_segment"],
+        "human420"
     );
     assert_eq!(status["workspace"]["steps"][1]["state"], "unchanged");
+
+    let alternative = run(&[
+        "timeline",
+        "status",
+        "--timeline",
+        route.to_str().unwrap(),
+        "--continuation",
+        "main",
+        "--select",
+        "human420=human_alt420",
+    ]);
+    assert!(
+        alternative.status.success(),
+        "{}",
+        String::from_utf8_lossy(&alternative.stderr)
+    );
+    let alternative: serde_json::Value = serde_json::from_slice(&alternative.stdout).unwrap();
+    assert_eq!(
+        alternative["workspace"]["steps"][1]["original_segment"],
+        "human420"
+    );
+    assert_eq!(
+        alternative["workspace"]["steps"][1]["workspace_segment"],
+        "human_alt420"
+    );
+    assert_eq!(alternative["workspace"]["steps"][1]["state"], "selected");
+    assert_eq!(
+        alternative["workspace"]["steps"][1]["rebase_compatible"],
+        true
+    );
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -80,6 +110,14 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
         "{}",
         String::from_utf8_lossy(&imported.stderr)
     );
+    let imported: serde_json::Value = serde_json::from_slice(&imported.stdout).unwrap();
+    assert_eq!(imported["segments"]["human_alt420"]["parent"], "golf439");
+    assert_eq!(
+        imported["segments"]["human_alt420"]["goals"],
+        serde_json::json!({})
+    );
+    assert!(imported["segments"]["human_alt420"]["goal_proofs"]["tunnel_crawl_start"].is_string());
+    assert!(imported["segments"]["human_alt420"]["tape"].is_string());
     assert!(
         run(&[
             "timeline",

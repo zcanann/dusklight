@@ -61,7 +61,7 @@ and goal predicate. `AnchoredEvaluateConfig` and `AnchoredSearchRunConfig` are
 the public wiring surfaces for the CLI and route workbench.
 
 The promoted initial suffix is
-`routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape`. It is
+`routes/intro/segments/human420.tape`. It is
 421 frames and imports losslessly; this profile has no synthetic baseline, so
 an anchored run fails configuration validation unless an observed suffix was
 explicitly imported as its seed.
@@ -92,7 +92,7 @@ target goal, program, and observed seed from the checked-in timeline and
 lineage. When either segment has several attached goals, pass `--source-goal`
 or `--goal` explicitly:
 
-    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment link_control_to_tunnel_crawl_start --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/tunnel --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
+    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment human420 --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/tunnel --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
 It refuses a timeline segment that is not immediately after the requested
 lineage prefix. The compiled DMSP and materialized prefix are retained in the

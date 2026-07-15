@@ -13,7 +13,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const ROUTE_OBJECT_SCHEMA: &str = "dusklight-route-object/v2";
+pub const ROUTE_OBJECT_SCHEMA: &str = "dusklight-route-object/v3";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredObject {
@@ -43,7 +43,7 @@ pub enum RouteObject {
         predicate: String,
     },
     GoalProof {
-        variant: String,
+        segment: String,
         goal: ObjectId,
         boundary: ObjectId,
         predicate_program_sha256: String,
@@ -51,7 +51,7 @@ pub enum RouteObject {
         first_hit_tick: Option<u64>,
     },
     Evaluation {
-        variant: String,
+        segment: String,
         artifact: ObjectId,
         boundary: ObjectId,
         success: bool,
@@ -89,13 +89,17 @@ pub struct SegmentBoundaryContext {
 pub struct StoredSegment {
     pub parent: Option<String>,
     pub profile: crate::search::SegmentProfile,
+    pub program: Option<ObjectId>,
+    pub tape: ObjectId,
+    pub start_boundary: ObjectId,
+    pub end_boundary: ObjectId,
     pub goals: BTreeMap<String, ObjectId>,
+    pub goal_proofs: BTreeMap<String, ObjectId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredLineageStep {
     pub segment: String,
-    pub variant: String,
     pub program: Option<ObjectId>,
     pub tape: ObjectId,
     pub start_boundary: ObjectId,
@@ -288,7 +292,7 @@ impl RouteStore {
     ) -> Result<ImportResult, StoreError> {
         timeline.validate_artifacts(Some(source_root))?;
         let inspection = timeline.inspect()?;
-        let artifacts = self.import_variant_artifacts(timeline, source_root)?;
+        let artifacts = self.import_segment_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
         let goals = self.import_goals(timeline)?;
         let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
@@ -299,15 +303,34 @@ impl RouteStore {
                 let segment_goals = timeline
                     .goals
                     .values()
-                    .filter(|goal| goal.segment == segment.name)
+                    .filter(|goal| goal.segment == segment.id)
                     .map(|goal| (goal.id.clone(), goals[&goal.id].clone()))
                     .collect();
                 (
-                    segment.name.clone(),
+                    segment.id.clone(),
                     StoredSegment {
                         parent: segment.parent.clone(),
                         profile: segment.profile,
+                        program: artifacts[&segment.id].0.clone(),
+                        tape: artifacts[&segment.id].1.clone(),
+                        start_boundary: boundaries[&(
+                            segment.id.clone(),
+                            BoundarySide::Start,
+                            segment.start_fingerprint.clone(),
+                        )]
+                            .clone(),
+                        end_boundary: boundaries[&(
+                            segment.id.clone(),
+                            BoundarySide::End,
+                            segment.end_fingerprint.clone(),
+                        )]
+                            .clone(),
                         goals: segment_goals,
+                        goal_proofs: proofs
+                            .iter()
+                            .filter(|((proof_segment, _), _)| proof_segment == &segment.id)
+                            .map(|((_, goal), proof)| (goal.clone(), proof.clone()))
+                            .collect(),
                     },
                 )
             })
@@ -345,9 +368,6 @@ impl RouteStore {
                 "unsupported evaluation schema".into(),
             ));
         }
-        let variant = raw["candidate_id"]
-            .as_str()
-            .ok_or_else(|| StoreError::InvalidObject("evaluation has no candidate_id".into()))?;
         let tape_path = raw["tape"]
             .as_str()
             .ok_or_else(|| StoreError::InvalidObject("evaluation has no tape path".into()))?;
@@ -372,7 +392,7 @@ impl RouteStore {
             fingerprint: fingerprint.into(),
         })?;
         let id = self.put(RouteObject::Evaluation {
-            variant: variant.into(),
+            segment: segment.into(),
             artifact,
             boundary,
             success: raw["success"].as_bool().unwrap_or(false),
@@ -403,7 +423,7 @@ impl RouteStore {
             .iter()
             .find(|lineage| lineage.name == lineage_name)
             .ok_or_else(|| StoreError::UnknownLineage(lineage_name.into()))?;
-        let artifacts = self.import_variant_artifacts(timeline, source_root)?;
+        let artifacts = self.import_segment_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
         let goals = self.import_goals(timeline)?;
         let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
@@ -438,7 +458,7 @@ impl RouteStore {
             .iter()
             .find(|lineage| lineage.name == lineage_name)
             .ok_or_else(|| StoreError::UnknownLineage(lineage_name.into()))?;
-        let artifacts = self.import_variant_artifacts(timeline, source_root)?;
+        let artifacts = self.import_segment_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
         let goals = self.import_goals(timeline)?;
         let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
@@ -510,14 +530,14 @@ impl RouteStore {
         Ok(count)
     }
 
-    fn import_variant_artifacts(
+    fn import_segment_artifacts(
         &self,
         timeline: &Timeline,
         root: &Path,
     ) -> Result<BTreeMap<String, (Option<ObjectId>, ObjectId)>, StoreError> {
         let mut output = BTreeMap::new();
-        for variant in timeline.variants.values() {
-            let (program, tape_bytes) = match &variant.artifact {
+        for segment in timeline.segments.values() {
+            let (program, tape_bytes) = match &segment.artifact {
                 ArtifactSource::Baseline(profile) => {
                     let candidate = Candidate::baseline(*profile);
                     (
@@ -544,7 +564,7 @@ impl RouteStore {
             let program = program
                 .map(|source| {
                     self.put(RouteObject::Program {
-                        format: match &variant.artifact {
+                        format: match &segment.artifact {
                             ArtifactSource::Tas(_) => "dusktape-dsl/v1",
                             _ => "dusklight-search-candidate/v1",
                         }
@@ -556,7 +576,7 @@ impl RouteStore {
             let tape = self.put(RouteObject::Tape {
                 bytes_hex: encode_hex(&tape_bytes),
             })?;
-            output.insert(variant.id.clone(), (program, tape));
+            output.insert(segment.id.clone(), (program, tape));
         }
         Ok(output)
     }
@@ -566,16 +586,16 @@ impl RouteStore {
         timeline: &Timeline,
     ) -> Result<BTreeMap<(String, BoundarySide, String), ObjectId>, StoreError> {
         let mut output = BTreeMap::new();
-        for variant in timeline.variants.values() {
+        for segment in timeline.segments.values() {
             for (side, fingerprint) in [
-                (BoundarySide::Start, &variant.start_fingerprint),
-                (BoundarySide::End, &variant.boundary_fingerprint),
+                (BoundarySide::Start, &segment.start_fingerprint),
+                (BoundarySide::End, &segment.end_fingerprint),
             ] {
-                let key = (variant.segment.clone(), side, fingerprint.clone());
+                let key = (segment.id.clone(), side, fingerprint.clone());
                 if let std::collections::btree_map::Entry::Vacant(entry) = output.entry(key) {
                     let id = self.put(RouteObject::Boundary {
                         context: SegmentBoundaryContext {
-                            segment: variant.segment.clone(),
+                            segment: segment.id.clone(),
                             side,
                         },
                         fingerprint: fingerprint.clone(),
@@ -613,7 +633,7 @@ impl RouteStore {
             .proofs
             .iter()
             .map(|proof| {
-                let variant = &timeline.variants[&proof.variant];
+                let segment = &timeline.segments[&proof.segment];
                 let goal = goals.get(&proof.goal).ok_or_else(|| {
                     StoreError::InvalidObject(format!(
                         "proof references unknown goal {:?}",
@@ -622,25 +642,25 @@ impl RouteStore {
                 })?;
                 let boundary = boundaries
                     .get(&(
-                        variant.segment.clone(),
+                        segment.id.clone(),
                         BoundarySide::End,
-                        variant.boundary_fingerprint.clone(),
+                        segment.end_fingerprint.clone(),
                     ))
                     .ok_or_else(|| {
                         StoreError::InvalidObject(format!(
-                            "proof for variant {:?} has no segment end boundary",
-                            proof.variant
+                            "proof for segment {:?} has no end boundary",
+                            proof.segment
                         ))
                     })?;
                 self.put(RouteObject::GoalProof {
-                    variant: proof.variant.clone(),
+                    segment: proof.segment.clone(),
                     goal: goal.clone(),
                     boundary: boundary.clone(),
                     predicate_program_sha256: proof.predicate_program_sha256.clone(),
                     predicate_definition_sha256: proof.predicate_definition_sha256.clone(),
                     first_hit_tick: proof.first_hit_tick,
                 })
-                .map(|id| ((proof.variant.clone(), proof.goal.clone()), id))
+                .map(|id| ((proof.segment.clone(), proof.goal.clone()), id))
             })
             .collect()
     }
@@ -656,29 +676,27 @@ impl RouteStore {
     ) -> Result<ObjectId, StoreError> {
         let mut steps = Vec::new();
         for step in &lineage.steps {
-            let variant = &timeline.variants[&step.variant];
-            let segment = &timeline.segments[&variant.segment];
-            let (program, tape) = &artifacts[&variant.id];
+            let segment = &timeline.segments[&step.segment];
+            let (program, tape) = &artifacts[&segment.id];
             steps.push(StoredLineageStep {
-                segment: segment.name.clone(),
-                variant: variant.id.clone(),
+                segment: segment.id.clone(),
                 program: program.clone(),
                 tape: tape.clone(),
                 start_boundary: boundaries[&(
-                    segment.name.clone(),
+                    segment.id.clone(),
                     BoundarySide::Start,
-                    variant.start_fingerprint.clone(),
+                    segment.start_fingerprint.clone(),
                 )]
                     .clone(),
                 end_boundary: boundaries[&(
-                    segment.name.clone(),
+                    segment.id.clone(),
                     BoundarySide::End,
-                    variant.boundary_fingerprint.clone(),
+                    segment.end_fingerprint.clone(),
                 )]
                     .clone(),
                 goal_proofs: proofs
                     .iter()
-                    .filter(|((proof_variant, _), _)| proof_variant == &variant.id)
+                    .filter(|((proof_segment, _), _)| proof_segment == &segment.id)
                     .map(|((_, goal), proof)| (goal.clone(), proof.clone()))
                     .collect(),
             });
@@ -769,15 +787,18 @@ impl StoredObject {
                 Err(StoreError::InvalidObject("empty goal field".into()))
             }
             RouteObject::GoalProof {
-                variant,
+                segment,
                 predicate_program_sha256,
                 predicate_definition_sha256,
                 ..
-            } if variant.is_empty()
+            } if segment.is_empty()
                 || predicate_program_sha256.len() != 64
                 || predicate_definition_sha256.len() != 64 =>
             {
                 Err(StoreError::InvalidObject("invalid goal proof field".into()))
+            }
+            RouteObject::Evaluation { segment, .. } if segment.is_empty() => {
+                Err(StoreError::InvalidObject("empty evaluation segment".into()))
             }
             RouteObject::Lineage { steps, .. } if steps.is_empty() => {
                 Err(StoreError::InvalidObject("empty lineage".into()))
@@ -822,7 +843,19 @@ impl StoredObject {
                 segments, lineages, ..
             } => segments
                 .values()
-                .flat_map(|segment| segment.goals.values().cloned())
+                .flat_map(|segment| {
+                    segment
+                        .program
+                        .iter()
+                        .cloned()
+                        .chain([
+                            segment.tape.clone(),
+                            segment.start_boundary.clone(),
+                            segment.end_boundary.clone(),
+                        ])
+                        .chain(segment.goals.values().cloned())
+                        .chain(segment.goal_proofs.values().cloned())
+                })
                 .chain(lineages.values().cloned())
                 .collect(),
             _ => Vec::new(),
@@ -1044,19 +1077,20 @@ milestone map {
 timeline test
 predicate_program predicates.milestones
 origin boot predicate control
-segment boot_link root profile boot_to_fsp103
-segment exit after boot_link profile fsp103_to_fsp104
+segment boot_link root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces control-v1
+segment exit after boot_link profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-v1 produces map-v1
+segment exit_fast after boot_link profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-v1 produces map-v2
 goal control on boot_link predicate control
 goal map on exit predicate map
-variant boot_link.safe incumbent uses baseline boot_to_fsp103 starts clean produces control-v1
-variant exit.safe incumbent uses baseline fsp103_to_fsp104 starts control-v1 produces map-v1
-proof boot_link.safe satisfies control program {program_sha256} predicate {} ticks 439
-proof exit.safe satisfies map program {program_sha256} predicate {} ticks 603
+proof boot_link satisfies control program {program_sha256} predicate {} ticks 439
+proof exit satisfies map program {program_sha256} predicate {} ticks 603
+proof exit_fast satisfies map program {program_sha256} predicate {} ticks 599
 continuation main starts root@clean
-continue main with boot_link.safe after root@clean
-continue main with exit.safe after boot_link.safe@control-v1
+continue main with boot_link after root@clean
+continue main with exit after boot_link@control-v1
 "#,
             definition("control"),
+            definition("map"),
             definition("map")
         )
     }
@@ -1082,6 +1116,22 @@ continue main with exit.safe after boot_link.safe@control-v1
             panic!("import did not create a snapshot");
         };
         assert_eq!(segments["boot_link"].parent, None);
+        assert_eq!(segments["exit_fast"].parent.as_deref(), Some("boot_link"));
+        assert!(segments["exit"].goals.contains_key("map"));
+        assert!(segments["exit_fast"].goals.is_empty());
+        assert!(segments["exit_fast"].goal_proofs.contains_key("map"));
+        assert!(store.read(&segments["exit_fast"].tape).is_ok());
+        let fast_map_proof = store
+            .read(&segments["exit_fast"].goal_proofs["map"])
+            .unwrap();
+        assert!(matches!(
+            fast_map_proof.value,
+            RouteObject::GoalProof {
+                segment,
+                first_hit_tick: Some(599),
+                ..
+            } if segment == "exit_fast"
+        ));
         let main = store
             .fork_lineage("routes/main", "main", "experiments/main")
             .unwrap();
@@ -1107,10 +1157,10 @@ continue main with exit.safe after boot_link.safe@control-v1
         assert!(matches!(
             map_proof.value,
             RouteObject::GoalProof {
-                variant,
+                segment,
                 first_hit_tick: Some(603),
                 ..
-            } if variant == "exit.safe"
+            } if segment == "exit"
         ));
 
         let appended = store

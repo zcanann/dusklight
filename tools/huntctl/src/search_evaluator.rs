@@ -2077,9 +2077,7 @@ fn parse_anchored_milestones(
             &milestone.evidence,
         ) {
             (true, Some(boundary_index), Some(sim_tick), Some(tape_frame), Some(evidence)) => {
-                if boundary_index != tape_frame.saturating_add(1)
-                    || sim_tick != tape_frame
-                {
+                if boundary_index != tape_frame.saturating_add(1) || sim_tick != tape_frame {
                     return Err(EvaluateError::NativeResult(format!(
                         "milestone {id} tick, tape frame, and boundary index are not one absolute fixed-step boundary"
                     )));
@@ -2722,8 +2720,8 @@ milestone tunnel_crawl_start {
         assert_eq!(score.depth, 2);
         assert_eq!(score.score_tick, Some(0));
 
-        let suffix_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../routes/intro/variants/link_control_to_tunnel_crawl_start/human-420.tape");
+        let suffix_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../routes/intro/segments/human420.tape");
         let suffix = InputTape::decode(&fs::read(suffix_path).unwrap())
             .unwrap()
             .tape;

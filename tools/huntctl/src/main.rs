@@ -541,7 +541,6 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "goals": timeline.goals.len(),
                     "proofs": timeline.proofs.len(),
                     "segments": timeline.segments.len(),
-                    "variants": timeline.variants.len(),
                     "continuations": timeline.continuations.len(),
                     "branches": timeline.branches.len(),
                 }))?
@@ -583,7 +582,9 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("missing required --name NEW_CONTINUATION")?;
             let selections = timeline_selections(timeline_args)?;
             if selections.is_empty() {
-                return Err("rebase-compatible requires at least one --select VARIANT".into());
+                return Err(
+                    "rebase-compatible requires at least one --select ORIGINAL=REPLACEMENT".into(),
+                );
             }
             println!(
                 "{}",
@@ -739,13 +740,13 @@ fn command_timeline_store(args: &[String]) -> Result<(), Box<dyn Error>> {
             let store_args = &args[1..];
             let store = RouteStore::open(required_path(store_args, "--store")?)?;
             let path = required_path(store_args, "--evaluation")?;
-            let milestone =
-                option(store_args, "--milestone").ok_or("missing required --milestone NAME")?;
+            let segment =
+                option(store_args, "--segment").ok_or("missing required --segment NAME")?;
             let fingerprint = option(store_args, "--fingerprint")
                 .ok_or("missing required --fingerprint VALUE")?;
             let reference = option(store_args, "--ref");
             let id =
-                store.import_evaluation(&path, &milestone, &fingerprint, reference.as_deref())?;
+                store.import_evaluation(&path, &segment, &fingerprint, reference.as_deref())?;
             println!("{id}");
             Ok(())
         }
@@ -838,13 +839,18 @@ fn load_timeline(path: impl AsRef<std::path::Path>) -> Result<Timeline, Box<dyn 
 
 fn timeline_selections(args: &[String]) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
     let mut output = BTreeMap::new();
-    for variant in repeated_option(args, "--select") {
-        let (segment, _) = variant
-            .rsplit_once('.')
-            .ok_or("--select must be a qualified SEGMENT.VARIANT")?;
-        let segment = segment.to_string();
-        if output.insert(segment.clone(), variant).is_some() {
-            return Err(format!("duplicate selection for segment {segment}").into());
+    for selection in repeated_option(args, "--select") {
+        let (original, replacement) = selection
+            .split_once('=')
+            .ok_or("--select must be ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT")?;
+        if original.is_empty() || replacement.is_empty() {
+            return Err("--select segment IDs must be nonempty".into());
+        }
+        if output
+            .insert(original.to_owned(), replacement.to_owned())
+            .is_some()
+        {
+            return Err(format!("duplicate selection for segment {original}").into());
         }
     }
     Ok(output)
@@ -916,7 +922,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &timeline,
                 artifact_root,
                 &lineage,
-                MaterializeTarget::ThroughSegment(segment.name.clone()),
+                MaterializeTarget::ThroughSegment(segment.id.clone()),
             )?;
             if through_goal.steps.len() != prefix.steps.len() + 1
                 || through_goal.steps.last().map(|step| step.segment.as_str())
@@ -928,14 +934,12 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 )
                 .into());
             }
-            let source_variant_id = prefix
+            let source_segment_id = prefix
                 .steps
                 .last()
-                .map(|step| step.variant.as_str())
+                .map(|step| step.segment.as_str())
                 .ok_or("anchored route search requires a nonempty immutable prefix")?;
-            let source_fingerprint = timeline.variants[source_variant_id]
-                .boundary_fingerprint
-                .clone();
+            let source_fingerprint = timeline.segments[source_segment_id].end_fingerprint.clone();
             let suffix = InputTape {
                 tick_rate_numerator: through_goal.tape.tick_rate_numerator,
                 tick_rate_denominator: through_goal.tape.tick_rate_denominator,
@@ -1007,33 +1011,38 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                                requested: Option<String>,
                                option_name: &str|
              -> Result<&huntctl::timeline::Goal, Box<dyn Error>> {
-                let attached = timeline
+                let available = timeline
                     .goals
                     .values()
-                    .filter(|goal| goal.segment == segment_id)
+                    .filter(|goal| {
+                        goal.segment == segment_id
+                            || timeline
+                                .proofs
+                                .iter()
+                                .any(|proof| proof.segment == segment_id && proof.goal == goal.id)
+                    })
                     .collect::<Vec<_>>();
                 if let Some(id) = requested {
                     let goal = timeline
                         .goals
                         .get(&id)
                         .ok_or_else(|| format!("unknown route goal {id:?}"))?;
-                    if goal.segment != segment_id {
+                    if !available.iter().any(|candidate| candidate.id == goal.id) {
                         return Err(format!(
-                            "goal {id:?} is attached to segment {:?}, not {segment_id:?}",
-                            goal.segment
+                            "segment {segment_id:?} neither defines nor proves goal {id:?}"
                         )
                         .into());
                     }
                     return Ok(goal);
                 }
-                if attached.len() != 1 {
+                if available.len() != 1 {
                     return Err(format!(
-                        "segment {segment_id:?} has {} goals; select one with {option_name}",
-                        attached.len()
+                        "segment {segment_id:?} defines or proves {} goals; select one with {option_name}",
+                        available.len()
                     )
                     .into());
                 }
-                Ok(attached[0])
+                Ok(available[0])
             };
             let source_goal = select_goal(
                 parent_segment,
@@ -1784,7 +1793,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select SEGMENT.VARIANT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select SEGMENT.VARIANT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --milestone NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"

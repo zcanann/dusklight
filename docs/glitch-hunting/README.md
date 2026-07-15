@@ -71,9 +71,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   exact tick-boundary semantics, stability, and proof identities.
 - [Experimental interventions](interventions.md) defines the separately gated
   mutation-tape boundary for causal glitch-hunting experiments.
-- [Route timelines, variants, and Git](timelines.md) documents the visual route
-  workbench, curated segment variants, exact boundary dependencies, and Git-owned
-  lineages.
+- [Route segment trees and Git](timelines.md) documents the visual route
+  workbench, immutable segment ancestry, exact boundary dependencies, and
+  Git-owned lineages.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
   programs, observations, events, oracles, checkpoints, and run artifacts.
 - [Determinism and memory fidelity](determinism-and-memory.md) records what
