@@ -42,12 +42,16 @@ attempt at one segment and declares:
 
 The route tree consists only of segments, their variants, and continuations to
 child segments. A goal is declared separately *on* a segment after the segment
-exists. It names a predicate or parity projection used to compare attempts at
-that segment. A segment may have no goals or several goals. Goal proof and score
+exists. It names a predicate used to compare attempts along a chosen parity
+condition. A segment may have no goals or several goals. Goal proof and score
 records are separate from the variant, so changing one goal invalidates only
 the evidence for that goal. It cannot change ancestry, invalidate an exact tape
 chain, or turn a segment into a child of a predicate. `milestone` remains only a
 native evaluator term for boolean predicate hits.
+
+The current goal engine proves Boolean predicates. A future value-projection
+form is still needed for dynamic parity such as “same RNG value as this
+reference variant” without hard-coding that value into a predicate.
 
 The input artifact contains only that segment. Stage-launch setup, search
 harness frames, and other evaluation scaffolding are not valid continuation
