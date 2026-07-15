@@ -1098,7 +1098,7 @@ public:
     bool isModeOK() { return mStyleSettle.mFinished; }
     bool push_any_key() { return mCameraInputActive; }
 
-    bool chkFlag(u32 i_flag) { return (mEventFlags & i_flag) != 0; }
+    bool chkFlag(u32 i_flag) const { return (mEventFlags & i_flag) != 0; }
     u32 setFlag(u32 i_flag) { return mEventFlags |= i_flag; }
     u32 clrFlag(u32 i_flag) { return mEventFlags &= ~i_flag; }
 
@@ -1144,7 +1144,7 @@ public:
     s16 iV() { return mViewCache.mDirection.V(); }
     f32 iR() { return mViewCache.mDirection.R(); }
 
-    s16 U2() {
+    s16 U2() const {
         if (chkFlag(0x10)) {
             return mViewCache.mDirection.U();
         } else {

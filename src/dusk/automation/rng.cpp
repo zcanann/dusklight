@@ -31,31 +31,4 @@ GameRngSnapshot capture_game_rng_snapshot() {
     return snapshot;
 }
 
-GameRngRestoreError restore_game_rng_snapshot(const GameRngSnapshot& snapshot) {
-    if (snapshot.version != kGameRngSnapshotVersion) {
-        return GameRngRestoreError::UnsupportedSnapshotVersion;
-    }
-    if (snapshot.streamCount != kGameRngStreamCount) {
-        return GameRngRestoreError::InvalidStreamCount;
-    }
-    for (std::size_t i = 0; i < snapshot.streams.size(); ++i) {
-        if (snapshot.streams[i].id != static_cast<GameRngStreamId>(i)) {
-            return GameRngRestoreError::InvalidStreamId;
-        }
-        if (snapshot.streams[i].algorithmVersion != kGameRngAlgorithmVersion) {
-            return GameRngRestoreError::UnsupportedAlgorithmVersion;
-        }
-    }
-
-    for (const GameRngStreamSnapshot& stream : snapshot.streams) {
-        cM_RndState state;
-        state.state0 = stream.state0;
-        state.state1 = stream.state1;
-        state.state2 = stream.state2;
-        state.callCount = stream.callCount;
-        cM_setRndState(native_id(stream.id), state);
-    }
-    return GameRngRestoreError::None;
-}
-
 } // namespace dusk::automation

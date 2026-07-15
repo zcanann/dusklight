@@ -45,7 +45,7 @@ struct ActorCatalogCapture {
 };
 
 int capture_actor(void* candidate, void* context) {
-    auto* actor = static_cast<fopAc_ac_c*>(candidate);
+    const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto* capture = static_cast<ActorCatalogCapture*>(context);
     ++capture->observed;
 

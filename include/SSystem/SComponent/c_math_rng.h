@@ -30,6 +30,5 @@ float cM_rndF2(float);
 float cM_rndFX2(float);
 
 bool cM_getRndState(cM_RndStream stream, cM_RndState& output);
-bool cM_setRndState(cM_RndStream stream, const cM_RndState& state);
 
 #endif /* C_MATH_RNG_H */

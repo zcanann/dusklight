@@ -35,15 +35,6 @@ struct GameRngSnapshot {
     bool operator==(const GameRngSnapshot&) const = default;
 };
 
-enum class GameRngRestoreError {
-    None,
-    UnsupportedSnapshotVersion,
-    InvalidStreamCount,
-    InvalidStreamId,
-    UnsupportedAlgorithmVersion,
-};
-
 GameRngSnapshot capture_game_rng_snapshot();
-GameRngRestoreError restore_game_rng_snapshot(const GameRngSnapshot& snapshot);
 
 } // namespace dusk::automation

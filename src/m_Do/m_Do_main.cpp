@@ -646,7 +646,7 @@ struct ControllerActorCapture {
 int capture_controller_actor(void* candidate, void* context) {
     // fopAcIt's legacy callback ABI is mutable, but this observer only copies
     // identity and transform fields from the completed prior game tick.
-    auto* actor = static_cast<fopAc_ac_c*>(candidate);
+    const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto* capture = static_cast<ControllerActorCapture*>(context);
     const std::uint64_t stableId = static_cast<std::uint32_t>(fopAcM_GetID(actor));
     const dusk::automation::ControllerActor snapshot{
@@ -683,13 +683,13 @@ dusk::automation::ControllerObservation capture_controller_observation(
             std::strlen(stageName), observation.stageName.size());
         std::copy_n(stageName, length, observation.stageName.begin());
     }
-    if (fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
+    if (const fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
         observation.playerPresent = true;
         observation.playerX = player->current.pos.x;
         observation.playerY = player->current.pos.y;
         observation.playerZ = player->current.pos.z;
     }
-    if (camera_process_class* camera = dComIfGp_getCamera(0); camera != nullptr) {
+    if (const camera_process_class* camera = dComIfGp_getCamera(0); camera != nullptr) {
         observation.cameraPresent = true;
         constexpr float kAngleToRadians = 3.14159265358979323846F / 32768.0F;
         observation.cameraYawRadians =
@@ -876,7 +876,7 @@ static void record_gameplay_trace_tick() {
     if (dComIfGp_event_runCheck() != 0) {
         sample.flags |= dusk::automation::GameplayTraceEventRunning;
     }
-    dEvt_control_c* event = dComIfGp_getEvent();
+    const dEvt_control_c* event = dComIfGp_getEvent();
     sample.eventId = event->mEventId;
     sample.eventMode = event->getMode();
     sample.eventStatus = event->mEventStatus;
@@ -889,12 +889,12 @@ static void record_gameplay_trace_tick() {
     }
     sample.eventNameHash = eventNameHash;
 
-    if (fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
+    if (const fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
         sample.flags |= dusk::automation::GameplayTracePlayerPresent;
         sample.playerActorName = fopAcM_GetName(player);
         if (sample.playerActorName == fpcNm_ALINK_e) {
             sample.flags |= dusk::automation::GameplayTracePlayerIsLink;
-            sample.playerProcId = static_cast<daAlink_c*>(player)->mProcID;
+            sample.playerProcId = static_cast<const daAlink_c*>(player)->mProcID;
         }
         sample.currentAngleY = player->current.angle.y;
         sample.shapeAngleY = player->shape_angle.y;
@@ -908,12 +908,12 @@ static void record_gameplay_trace_tick() {
 
         struct NearestSceneExit {
             const cXyz* playerPosition;
-            fopAc_ac_c* actor;
+            const fopAc_ac_c* actor;
             float distanceSquared;
         } nearest{&player->current.pos, nullptr, std::numeric_limits<float>::max()};
         fopAcIt_Executor(
             [](void* candidate, void* context) -> int {
-                auto* actor = static_cast<fopAc_ac_c*>(candidate);
+                const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
                 auto* nearest = static_cast<NearestSceneExit*>(context);
                 const s16 actorName = fopAcM_GetName(actor);
                 if (actorName != fpcNm_SCENE_EXIT_e && actorName != fpcNm_SCENE_EXIT2_e) {
@@ -939,10 +939,10 @@ static void record_gameplay_trace_tick() {
 }
 
 static dusk::automation::MilestoneObservation capture_milestone_observation() {
-    fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
-    const auto* link = playerIsLink ? static_cast<daAlink_c*>(player) : nullptr;
-    dEvt_control_c* event = dComIfGp_getEvent();
+    const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
+    const dEvt_control_c* event = dComIfGp_getEvent();
     const char* eventName = dComIfGp_getEventManager().getRunEventName();
     std::uint32_t eventNameHash = 0;
     if (eventName != nullptr) {
@@ -1088,7 +1088,7 @@ static bool finish_automation_oracle_tick() {
 
     eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
                                automationSimulationTick, automationTapeFrame);
-    fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
     eyeShredderOracle.observeGameplayTelemetry(
         {
             .stageName = dComIfGp_getStartStageName(),

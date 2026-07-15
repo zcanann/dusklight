@@ -90,7 +90,7 @@ void testInitializationAndHelperCallCounts() {
     REQUIRE(state.callCount == 0);
 }
 
-void testSnapshotRoundTripRestoresBothStreams() {
+void testSnapshotCaptureDoesNotAdvanceEitherStream() {
     using namespace dusk::automation;
 
     cM_initRnd(100, 100, 100);
@@ -98,33 +98,27 @@ void testSnapshotRoundTripRestoresBothStreams() {
     cM_rnd();
     cM_rnd2();
     cM_rnd2();
-    const GameRngSnapshot checkpoint = capture_game_rng_snapshot();
+    cM_RndState primaryBefore;
+    cM_RndState secondaryBefore;
+    REQUIRE(cM_getRndState(cM_RndStream::Primary, primaryBefore));
+    REQUIRE(cM_getRndState(cM_RndStream::Secondary, secondaryBefore));
 
-    std::array<std::uint32_t, 3> primaryOutputs{};
-    std::array<std::uint32_t, 3> secondaryOutputs{};
-    for (std::size_t i = 0; i < primaryOutputs.size(); ++i) {
-        primaryOutputs[i] = std::bit_cast<std::uint32_t>(cM_rnd());
-        secondaryOutputs[i] = std::bit_cast<std::uint32_t>(cM_rnd2());
-    }
+    const GameRngSnapshot snapshot = capture_game_rng_snapshot();
 
-    REQUIRE(restore_game_rng_snapshot(checkpoint) == GameRngRestoreError::None);
-    REQUIRE(capture_game_rng_snapshot() == checkpoint);
-    for (std::size_t i = 0; i < primaryOutputs.size(); ++i) {
-        REQUIRE(std::bit_cast<std::uint32_t>(cM_rnd()) == primaryOutputs[i]);
-        REQUIRE(std::bit_cast<std::uint32_t>(cM_rnd2()) == secondaryOutputs[i]);
-    }
-}
-
-void testInvalidSnapshotIsTransactional() {
-    using namespace dusk::automation;
-
-    cM_initRnd(1, 2, 3);
-    cM_initRnd2(4, 5, 6);
-    const GameRngSnapshot before = capture_game_rng_snapshot();
-    GameRngSnapshot invalid = before;
-    invalid.streams[1].algorithmVersion++;
-    REQUIRE(restore_game_rng_snapshot(invalid) == GameRngRestoreError::UnsupportedAlgorithmVersion);
-    REQUIRE(capture_game_rng_snapshot() == before);
+    cM_RndState primaryAfter;
+    cM_RndState secondaryAfter;
+    REQUIRE(cM_getRndState(cM_RndStream::Primary, primaryAfter));
+    REQUIRE(cM_getRndState(cM_RndStream::Secondary, secondaryAfter));
+    REQUIRE(primaryAfter == primaryBefore);
+    REQUIRE(secondaryAfter == secondaryBefore);
+    REQUIRE(snapshot.streams[0].state0 == primaryBefore.state0);
+    REQUIRE(snapshot.streams[0].state1 == primaryBefore.state1);
+    REQUIRE(snapshot.streams[0].state2 == primaryBefore.state2);
+    REQUIRE(snapshot.streams[0].callCount == primaryBefore.callCount);
+    REQUIRE(snapshot.streams[1].state0 == secondaryBefore.state0);
+    REQUIRE(snapshot.streams[1].state1 == secondaryBefore.state1);
+    REQUIRE(snapshot.streams[1].state2 == secondaryBefore.state2);
+    REQUIRE(snapshot.streams[1].callCount == secondaryBefore.callCount);
 }
 
 } // namespace
@@ -133,8 +127,7 @@ int main() {
     testKnownPrimarySequence();
     testKnownSecondarySequenceAndIndependence();
     testInitializationAndHelperCallCounts();
-    testSnapshotRoundTripRestoresBothStreams();
-    testInvalidSnapshotIsTransactional();
+    testSnapshotCaptureDoesNotAdvanceEitherStream();
     std::cout << "RNG tests passed\n";
     return 0;
 }

@@ -35,6 +35,22 @@ state hashes, and the reason it was classified as interesting.
 - Python may be useful for offline notebooks, plots, and one-off corpus
   analysis, but it is not part of the execution hot path.
 
+## Read-only gameplay boundary
+
+Normal playback, recording, milestones, oracles, reactive controllers, and
+catalog capture must never write gameplay state. Game objects enter automation
+observers through `const` pointers, and snapshot APIs expose capture only; in
+particular, the normal build has no RNG restore/setter API. Tests verify that
+capturing RNG state does not advance or alter either game RNG stream.
+
+The permitted runtime effects are deliberately narrow: exclusive virtual PAD
+input, automation-owned files and lifecycle state, and host/substrate controls
+such as pacing, presentation, and deterministic I/O scheduling. A substrate
+timing fix needs its own determinism evidence and must not conceal a gameplay
+mutation. Experimental gameplay interventions, if implemented, remain a
+separate compile-time-disabled capability with explicit runtime opt-in and an
+unavoidable mutation audit; they never count as TAS playback or proof.
+
 ## Documents
 
 - [Implementation status](status.md) records working commands, tests, and

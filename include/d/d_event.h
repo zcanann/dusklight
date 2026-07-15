@@ -143,7 +143,7 @@ public:
 #endif
     }
     void setDebugStb(u8 stb) { mDebugStb = stb; }
-    u8 getMapToolId() { return mMapToolId; }
+    u8 getMapToolId() const { return mMapToolId; }
     BOOL chkTalkXY() {
 #if PLATFORM_WII || PLATFORM_SHIELD
         return mTalkXyType == 1 || mTalkXyType == 2 || mTalkXyType == 3 || mTalkXyType == 4;

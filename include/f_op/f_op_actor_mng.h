@@ -141,7 +141,7 @@ inline fpc_ProcID fopAcM_GetID(const void* i_actor) {
     return fpcM_GetID(i_actor);
 }
 
-inline s16 fopAcM_GetName(void* i_actor) {
+inline s16 fopAcM_GetName(const void* i_actor) {
     return fpcM_GetName(i_actor);
 }
 
