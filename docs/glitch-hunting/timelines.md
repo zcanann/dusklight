@@ -5,10 +5,11 @@ proof metadata are authoritative; normal Git commits provide history, copy,
 move, deletion, review, and recovery. The route layer adds game-specific graph
 semantics, not a second version-control system.
 
-`routes/intro.timeline` describes milestone nodes, segment edges, competing
-variants, and pinned lineages. A lineage contains references to segment
-variants. It does not copy their input, so even a large route tree remains a
-small collection of independent segment payloads and tiny manifests.
+`routes/intro.timeline` describes a hierarchy of segments, competing variants,
+optional goals attached to those segments, and pinned lineages. A lineage
+contains references to segment variants. It does not copy their input, so even
+a large route tree remains a small collection of independent segment payloads
+and tiny manifests.
 
 ## Curated variants versus mining output
 
@@ -31,26 +32,30 @@ two variants are substitutes or separate frontier points.
 
 ## Immutable segment model
 
-A variant is one attempt at one segment. It declares:
+A segment is the structural unit. It is either rooted at Boot or names its
+parent segment directly. Goals do not connect segments. A variant is one
+attempt at one segment and declares:
 
 - a candidate, TAS source, or compact tape artifact;
 - its exact starting boundary fingerprint;
-- its produced boundary fingerprint; and
-- optional score information such as the first-hit simulation tick.
+- its produced boundary fingerprint.
 
-The route tree consists of segment variants and their continuations. A named
-goal condition is metadata on a segment: it defines what counts as completing
-that segment and supplies the objective function used by search and proof. It is
-not an additional node between two segments. `milestone` remains the current
-storage/runtime term for these compiled goal predicates.
+The route tree consists only of segments, their variants, and continuations to
+child segments. A goal is declared separately *on* a segment after the segment
+exists. It names a predicate or parity projection used to compare attempts at
+that segment. A segment may have no goals or several goals. Goal proof and score
+records are separate from the variant, so changing one goal invalidates only
+the evidence for that goal. It cannot change ancestry, invalidate an exact tape
+chain, or turn a segment into a child of a predicate. `milestone` remains only a
+native evaluator term for boolean predicate hits.
 
 The input artifact contains only that segment. Stage-launch setup, search
 harness frames, and other evaluation scaffolding are not valid continuation
 payloads. The workbench never treats a segment artifact as a console-boot tape.
-It exposes Play only when it can resolve a concrete lineage boundary whose goal
-and fingerprint exactly match the segment input, then concatenates
-that prefix before launch. Explicit evaluation tooling can still inspect a
-standalone artifact.
+It exposes Play only when it can resolve a concrete lineage occurrence whose
+parent segment and fingerprint exactly match the segment input, then
+concatenates that prefix before launch. Explicit evaluation tooling can still
+inspect a standalone artifact.
 
 A continuation pins every segment variant to the exact preceding variant and
 checkpoint fingerprint. A branch inherits a named prefix and supplies a
@@ -71,9 +76,9 @@ predicates are shown only as metadata for the selected segment or variant in the
 details pane; they are not navigation nodes. Declaration order is not treated as
 route structure. A variant can expose one **Play · lineage** action for each
 compatible prefix occurrence; siblings need not already be pinned into that
-lineage. The request carries the exact lineage, prefix-step count, and source
-goal, and the server revalidates all three against the boundary fingerprint
-before composing the selected chain.
+lineage. The request carries the exact lineage and prefix-step count, and the
+server revalidates the parent segment, parent variant, and boundary fingerprint
+before composing the selected chain. Goal identity is never a playback key.
 
 Only variants with a verified zero-prefix playback anchor appear beneath Boot.
 Seeded, disconnected, and cyclic components remain visible beneath **Other
@@ -88,8 +93,8 @@ Each launch gets a fresh isolated writable state directory.
 Record actions belong to concrete lineage occurrences, not just goal or variant
 names. This matters when the same variant is reachable through multiple
 RNG/state prefixes. A checked-in endpoint is recordable only when its complete
-lineage is canonical and the native goal fingerprint can be verified at
-the exact handoff frame.
+lineage is canonical. A goal-backed handoff additionally requires a current
+native proof for that selected goal at the exact handoff frame.
 
 Closing Dusklight normally finalizes the recording. The workbench adds it as an
 ignored draft child under
@@ -121,31 +126,32 @@ replacement through an adjacent synced temporary file and rollback backup.
 Labels are trimmed, nonempty, at most 160 UTF-8 bytes, and contain no control
 characters. Checked-in route objects remain read-only.
 
-When a timeline declares `milestone_program`, each milestone node also exposes
-**Edit predicate**. The editor works on the complete DSL source because the
+When a timeline declares `predicate_program`, each attached goal exposes **Edit
+predicate** in its segment details. The editor works on the complete DSL source because the
 program is compiled and identified as one unit. The browser never supplies or
 sees a filesystem path: the server resolves only the path configured in the
 timeline, rejects symbolic-link and repository-root escapes, and returns the
 source with its SHA-256 revision and parsed phase/stability/expression summary.
 Save requires that exact source revision, parses and compiles the replacement,
-and requires definition names and order to remain identical to the timeline.
-It then uses an adjacent flushed temporary file and rollback backup. A stale
+and requires every referenced origin or goal predicate to remain defined. It
+then uses an adjacent flushed temporary file and rollback backup. A stale
 editor receives a conflict instead of overwriting a newer filesystem edit.
 
-Variants pin both the compiled program identity and the destination milestone's
-compiled definition identity. Editing a predicate intentionally makes those
-proof pins stale. Such variants remain visible, but the workbench labels the
-proof stale and withholds play/record/continuation anchors until a native replay
-establishes and checks in new proof hashes. The editor changes
-only predicate source; topology, curated variants, game memory, and native game
-state remain read-only.
+Goal-proof records pin both the compiled program identity and the selected
+predicate definition identity. Editing a predicate intentionally makes only
+those proof records stale. Such variants remain structurally playable when
+their exact lineage and fingerprints are valid, but they cannot claim parity,
+score against that goal, or use that predicate for a recording handoff until a
+native replay establishes new proof hashes. The editor changes only predicate
+source; topology, curated variants, game memory, and native game state remain
+read-only.
 
 An exact authored Boot predicate (`phase pre_input`, `stable 1`,
-`boundary.kind == "boot" && boundary.index == 0`) also exposes **Record from
-Boot** on the milestone node itself. This is a real graph root, not an empty
+`boundary.kind == "boot" && boundary.index == 0`) can be bound to the authored
+Boot origin and exposes **Record from Boot**. This is a real graph root, not an empty
 placeholder tape: native code proves that authored boundary, arms the recorder
 before the first PAD read, and stores the resulting draft directly beneath the
-Boot milestone. Its manifest pins the program hash, definition hash, boundary
+Boot origin. Its manifest pins the program hash, definition hash, boundary
 fingerprint, and canonical empty-parent digest. The workbench rejects stale or
 forged root proofs. A Boot-root draft offers **Play from boot** and **Record
 child (fast)**, but omits **Play from parent** because no simulation boundary exists
@@ -211,21 +217,25 @@ The line-oriented format uses declarations such as:
 
 ```text
 timeline intro
-milestone_program intro/milestones.milestones
-milestone process_boot
-milestone link_control
-segment boot_to_link from process_boot to link_control profile boot_to_fsp103
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85 program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
+predicate_program intro/milestones.milestones
+origin boot predicate process_boot
+segment boot_to_link root profile boot_to_fsp103
+segment to_tunnel after boot_to_link profile link_control_to_tunnel_crawl_start
+goal link_control on boot_to_link predicate link_control
+goal tunnel_crawl_start on to_tunnel predicate tunnel_crawl_start
+variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces 5f3f489f2cf561844564368fbc427d85
+proof boot_to_link.golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 continuation main starts root@process-clean-v1
 continue main with boot_to_link.golf439 after root@process-clean-v1
-branch experiment from main at link_control
+branch experiment from main after boot_to_link.golf439
 ```
 
 Artifact forms are `uses candidate`, `uses tas`, and `uses tape`. Baselines are
 generated profile seeds intended for evaluation and standalone preview. Paths
 are relative to the directory containing the timeline. Comments start with a
-hash. Validation rejects duplicate names, missing references, boundary
-mismatches, discontinuous continuations, and cycles.
+hash. Validation rejects duplicate names, missing references, parent-segment
+cycles, goal proofs attached to the wrong segment, boundary mismatches, and
+discontinuous continuations.
 
 Preview an upstream substitution without changing files:
 

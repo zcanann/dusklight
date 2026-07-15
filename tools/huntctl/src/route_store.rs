@@ -13,7 +13,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const ROUTE_OBJECT_SCHEMA: &str = "dusklight-route-object/v1";
+pub const ROUTE_OBJECT_SCHEMA: &str = "dusklight-route-object/v2";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredObject {
@@ -33,8 +33,22 @@ pub enum RouteObject {
         bytes_hex: String,
     },
     Boundary {
-        milestone: String,
+        context: SegmentBoundaryContext,
         fingerprint: String,
+    },
+    Goal {
+        timeline: String,
+        id: String,
+        segment: String,
+        predicate: String,
+    },
+    GoalProof {
+        variant: String,
+        goal: ObjectId,
+        boundary: ObjectId,
+        predicate_program_sha256: String,
+        predicate_definition_sha256: String,
+        first_hit_tick: Option<u64>,
     },
     Evaluation {
         variant: String,
@@ -53,17 +67,40 @@ pub enum RouteObject {
     },
     Snapshot {
         timeline: String,
+        segments: BTreeMap<String, StoredSegment>,
         lineages: BTreeMap<String, ObjectId>,
     },
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundarySide {
+    Start,
+    End,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SegmentBoundaryContext {
+    pub segment: String,
+    pub side: BoundarySide,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoredSegment {
+    pub parent: Option<String>,
+    pub profile: crate::search::SegmentProfile,
+    pub goals: BTreeMap<String, ObjectId>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredLineageStep {
+    pub segment: String,
     pub variant: String,
     pub program: Option<ObjectId>,
     pub tape: ObjectId,
     pub start_boundary: ObjectId,
     pub end_boundary: ObjectId,
+    pub goal_proofs: BTreeMap<String, ObjectId>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -94,6 +131,7 @@ impl fmt::Display for ObjectId {
 pub struct ImportResult {
     pub snapshot: ObjectId,
     pub reference: String,
+    pub segments: BTreeMap<String, StoredSegment>,
     pub lineages: BTreeMap<String, ObjectId>,
 }
 
@@ -252,19 +290,44 @@ impl RouteStore {
         let inspection = timeline.inspect()?;
         let artifacts = self.import_variant_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
+        let goals = self.import_goals(timeline)?;
+        let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
+        let segments = timeline
+            .segments
+            .values()
+            .map(|segment| {
+                let segment_goals = timeline
+                    .goals
+                    .values()
+                    .filter(|goal| goal.segment == segment.name)
+                    .map(|goal| (goal.id.clone(), goals[&goal.id].clone()))
+                    .collect();
+                (
+                    segment.name.clone(),
+                    StoredSegment {
+                        parent: segment.parent.clone(),
+                        profile: segment.profile,
+                        goals: segment_goals,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let mut lineages = BTreeMap::new();
         for lineage in &inspection.lineages {
-            let id = self.store_lineage(timeline, lineage, None, &artifacts, &boundaries)?;
+            let id =
+                self.store_lineage(timeline, lineage, None, &artifacts, &boundaries, &proofs)?;
             lineages.insert(lineage.name.clone(), id);
         }
         let snapshot = self.put(RouteObject::Snapshot {
             timeline: timeline.name.clone(),
+            segments: segments.clone(),
             lineages: lineages.clone(),
         })?;
         self.promote(reference, &snapshot)?;
         Ok(ImportResult {
             snapshot,
             reference: reference.into(),
+            segments,
             lineages,
         })
     }
@@ -272,7 +335,7 @@ impl RouteStore {
     pub fn import_evaluation(
         &self,
         path: &Path,
-        milestone: &str,
+        segment: &str,
         fingerprint: &str,
         reference: Option<&str>,
     ) -> Result<ObjectId, StoreError> {
@@ -302,7 +365,10 @@ impl RouteStore {
             bytes_hex: encode_hex(&tape_bytes),
         })?;
         let boundary = self.put(RouteObject::Boundary {
-            milestone: milestone.into(),
+            context: SegmentBoundaryContext {
+                segment: segment.into(),
+                side: BoundarySide::End,
+            },
             fingerprint: fingerprint.into(),
         })?;
         let id = self.put(RouteObject::Evaluation {
@@ -339,7 +405,16 @@ impl RouteStore {
             .ok_or_else(|| StoreError::UnknownLineage(lineage_name.into()))?;
         let artifacts = self.import_variant_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
-        let id = self.store_lineage(timeline, lineage, Some(parent), &artifacts, &boundaries)?;
+        let goals = self.import_goals(timeline)?;
+        let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
+        let id = self.store_lineage(
+            timeline,
+            lineage,
+            Some(parent),
+            &artifacts,
+            &boundaries,
+            &proofs,
+        )?;
         self.promote(reference, &id)?;
         Ok(id)
     }
@@ -365,7 +440,16 @@ impl RouteStore {
             .ok_or_else(|| StoreError::UnknownLineage(lineage_name.into()))?;
         let artifacts = self.import_variant_artifacts(timeline, source_root)?;
         let boundaries = self.import_boundaries(timeline)?;
-        let id = self.store_lineage(timeline, lineage, Some(parent), &artifacts, &boundaries)?;
+        let goals = self.import_goals(timeline)?;
+        let proofs = self.import_goal_proofs(timeline, &goals, &boundaries)?;
+        let id = self.store_lineage(
+            timeline,
+            lineage,
+            Some(parent),
+            &artifacts,
+            &boundaries,
+            &proofs,
+        )?;
         self.promote(to_reference, &id)?;
         Ok(id)
     }
@@ -480,18 +564,20 @@ impl RouteStore {
     fn import_boundaries(
         &self,
         timeline: &Timeline,
-    ) -> Result<BTreeMap<(String, String), ObjectId>, StoreError> {
+    ) -> Result<BTreeMap<(String, BoundarySide, String), ObjectId>, StoreError> {
         let mut output = BTreeMap::new();
         for variant in timeline.variants.values() {
-            let segment = &timeline.segments[&variant.segment];
-            for (milestone, fingerprint) in [
-                (&segment.from, &variant.start_fingerprint),
-                (&segment.to, &variant.boundary_fingerprint),
+            for (side, fingerprint) in [
+                (BoundarySide::Start, &variant.start_fingerprint),
+                (BoundarySide::End, &variant.boundary_fingerprint),
             ] {
-                let key = (milestone.clone(), fingerprint.clone());
+                let key = (variant.segment.clone(), side, fingerprint.clone());
                 if let std::collections::btree_map::Entry::Vacant(entry) = output.entry(key) {
                     let id = self.put(RouteObject::Boundary {
-                        milestone: milestone.clone(),
+                        context: SegmentBoundaryContext {
+                            segment: variant.segment.clone(),
+                            side,
+                        },
                         fingerprint: fingerprint.clone(),
                     })?;
                     entry.insert(id);
@@ -501,13 +587,72 @@ impl RouteStore {
         Ok(output)
     }
 
+    fn import_goals(&self, timeline: &Timeline) -> Result<BTreeMap<String, ObjectId>, StoreError> {
+        timeline
+            .goals
+            .values()
+            .map(|goal| {
+                self.put(RouteObject::Goal {
+                    timeline: timeline.name.clone(),
+                    id: goal.id.clone(),
+                    segment: goal.segment.clone(),
+                    predicate: goal.predicate.clone(),
+                })
+                .map(|id| (goal.id.clone(), id))
+            })
+            .collect()
+    }
+
+    fn import_goal_proofs(
+        &self,
+        timeline: &Timeline,
+        goals: &BTreeMap<String, ObjectId>,
+        boundaries: &BTreeMap<(String, BoundarySide, String), ObjectId>,
+    ) -> Result<BTreeMap<(String, String), ObjectId>, StoreError> {
+        timeline
+            .proofs
+            .iter()
+            .map(|proof| {
+                let variant = &timeline.variants[&proof.variant];
+                let goal = goals.get(&proof.goal).ok_or_else(|| {
+                    StoreError::InvalidObject(format!(
+                        "proof references unknown goal {:?}",
+                        proof.goal
+                    ))
+                })?;
+                let boundary = boundaries
+                    .get(&(
+                        variant.segment.clone(),
+                        BoundarySide::End,
+                        variant.boundary_fingerprint.clone(),
+                    ))
+                    .ok_or_else(|| {
+                        StoreError::InvalidObject(format!(
+                            "proof for variant {:?} has no segment end boundary",
+                            proof.variant
+                        ))
+                    })?;
+                self.put(RouteObject::GoalProof {
+                    variant: proof.variant.clone(),
+                    goal: goal.clone(),
+                    boundary: boundary.clone(),
+                    predicate_program_sha256: proof.predicate_program_sha256.clone(),
+                    predicate_definition_sha256: proof.predicate_definition_sha256.clone(),
+                    first_hit_tick: proof.first_hit_tick,
+                })
+                .map(|id| ((proof.variant.clone(), proof.goal.clone()), id))
+            })
+            .collect()
+    }
+
     fn store_lineage(
         &self,
         timeline: &Timeline,
         lineage: &ResolvedLineage,
         parent_lineage: Option<ObjectId>,
         artifacts: &BTreeMap<String, (Option<ObjectId>, ObjectId)>,
-        boundaries: &BTreeMap<(String, String), ObjectId>,
+        boundaries: &BTreeMap<(String, BoundarySide, String), ObjectId>,
+        proofs: &BTreeMap<(String, String), ObjectId>,
     ) -> Result<ObjectId, StoreError> {
         let mut steps = Vec::new();
         for step in &lineage.steps {
@@ -515,15 +660,27 @@ impl RouteStore {
             let segment = &timeline.segments[&variant.segment];
             let (program, tape) = &artifacts[&variant.id];
             steps.push(StoredLineageStep {
+                segment: segment.name.clone(),
                 variant: variant.id.clone(),
                 program: program.clone(),
                 tape: tape.clone(),
-                start_boundary: boundaries
-                    [&(segment.from.clone(), variant.start_fingerprint.clone())]
+                start_boundary: boundaries[&(
+                    segment.name.clone(),
+                    BoundarySide::Start,
+                    variant.start_fingerprint.clone(),
+                )]
                     .clone(),
-                end_boundary: boundaries
-                    [&(segment.to.clone(), variant.boundary_fingerprint.clone())]
+                end_boundary: boundaries[&(
+                    segment.name.clone(),
+                    BoundarySide::End,
+                    variant.boundary_fingerprint.clone(),
+                )]
                     .clone(),
+                goal_proofs: proofs
+                    .iter()
+                    .filter(|((proof_variant, _), _)| proof_variant == &variant.id)
+                    .map(|((_, goal), proof)| (goal.clone(), proof.clone()))
+                    .collect(),
             });
         }
         self.put(RouteObject::Lineage {
@@ -594,15 +751,40 @@ impl StoredObject {
                 Ok(())
             }
             RouteObject::Boundary {
-                milestone,
+                context,
                 fingerprint,
-            } if milestone.is_empty() || fingerprint.is_empty() => {
+            } if context.segment.is_empty() || fingerprint.is_empty() => {
                 Err(StoreError::InvalidObject("empty boundary field".into()))
+            }
+            RouteObject::Goal {
+                timeline,
+                id,
+                segment,
+                predicate,
+            } if timeline.is_empty()
+                || id.is_empty()
+                || segment.is_empty()
+                || predicate.is_empty() =>
+            {
+                Err(StoreError::InvalidObject("empty goal field".into()))
+            }
+            RouteObject::GoalProof {
+                variant,
+                predicate_program_sha256,
+                predicate_definition_sha256,
+                ..
+            } if variant.is_empty()
+                || predicate_program_sha256.len() != 64
+                || predicate_definition_sha256.len() != 64 =>
+            {
+                Err(StoreError::InvalidObject("invalid goal proof field".into()))
             }
             RouteObject::Lineage { steps, .. } if steps.is_empty() => {
                 Err(StoreError::InvalidObject("empty lineage".into()))
             }
-            RouteObject::Snapshot { lineages, .. } if lineages.is_empty() => {
+            RouteObject::Snapshot {
+                segments, lineages, ..
+            } if segments.is_empty() || lineages.is_empty() => {
                 Err(StoreError::InvalidObject("empty snapshot".into()))
             }
             _ => Ok(()),
@@ -614,6 +796,9 @@ impl StoredObject {
             RouteObject::Evaluation {
                 artifact, boundary, ..
             } => vec![artifact.clone(), boundary.clone()],
+            RouteObject::GoalProof { goal, boundary, .. } => {
+                vec![goal.clone(), boundary.clone()]
+            }
             RouteObject::Lineage {
                 parent_lineage,
                 steps,
@@ -622,14 +807,24 @@ impl StoredObject {
                 .iter()
                 .cloned()
                 .chain(steps.iter().flat_map(|step| {
-                    step.program.iter().cloned().chain([
-                        step.tape.clone(),
-                        step.start_boundary.clone(),
-                        step.end_boundary.clone(),
-                    ])
+                    step.program
+                        .iter()
+                        .cloned()
+                        .chain([
+                            step.tape.clone(),
+                            step.start_boundary.clone(),
+                            step.end_boundary.clone(),
+                        ])
+                        .chain(step.goal_proofs.values().cloned())
                 }))
                 .collect(),
-            RouteObject::Snapshot { lineages, .. } => lineages.values().cloned().collect(),
+            RouteObject::Snapshot {
+                segments, lineages, ..
+            } => segments
+                .values()
+                .flat_map(|segment| segment.goals.values().cloned())
+                .chain(lineages.values().cloned())
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -817,37 +1012,109 @@ impl std::str::FromStr for ObjectId {
 mod tests {
     use super::*;
 
-    const SOURCE: &str = r#"
+    const PREDICATES: &str = r#"
+milestones 1.0
+milestone control {
+  phase post_sim
+  when boundary.reached
+}
+milestone map {
+  phase post_sim
+  when boundary.reached
+}
+"#;
+
+    fn timeline_source() -> String {
+        let program =
+            crate::milestone_dsl::compile(&crate::milestone_dsl::parse(PREDICATES).unwrap())
+                .unwrap();
+        let program_sha256 = encode_hex(&program.program_sha256);
+        let definition = |name: &str| {
+            encode_hex(
+                &program
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.name == name)
+                    .unwrap()
+                    .sha256,
+            )
+        };
+        format!(
+            r#"
 timeline test
-milestone boot
-milestone control
-milestone map
-segment boot_link from boot to control profile boot_to_fsp103
-segment exit from control to map profile fsp103_to_fsp104
+predicate_program predicates.milestones
+origin boot predicate control
+segment boot_link root profile boot_to_fsp103
+segment exit after boot_link profile fsp103_to_fsp104
+goal control on boot_link predicate control
+goal map on exit predicate map
 variant boot_link.safe incumbent uses baseline boot_to_fsp103 starts clean produces control-v1
 variant exit.safe incumbent uses baseline fsp103_to_fsp104 starts control-v1 produces map-v1
+proof boot_link.safe satisfies control program {program_sha256} predicate {} ticks 439
+proof exit.safe satisfies map program {program_sha256} predicate {} ticks 603
 continuation main starts root@clean
 continue main with boot_link.safe after root@clean
 continue main with exit.safe after boot_link.safe@control-v1
-"#;
+"#,
+            definition("control"),
+            definition("map")
+        )
+    }
 
     #[test]
     fn store_import_fork_append_repair_and_gc_are_structural() {
         let root = std::env::temp_dir().join(format!("huntctl-route-store-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let store = RouteStore::initialize(&root).unwrap();
-        let timeline = Timeline::parse(SOURCE).unwrap();
+        fs::write(root.join("predicates.milestones"), PREDICATES).unwrap();
+        let timeline = Timeline::parse(&timeline_source()).unwrap();
         let imported = store
-            .import_timeline(&timeline, Path::new("."), "routes/main")
+            .import_timeline(&timeline, &root, "routes/main")
             .unwrap();
         assert_eq!(store.resolve_ref("routes/main").unwrap(), imported.snapshot);
+        assert_eq!(
+            imported.segments["exit"].parent.as_deref(),
+            Some("boot_link")
+        );
+        assert!(imported.segments["exit"].goals.contains_key("map"));
+        let snapshot = store.read(&imported.snapshot).unwrap();
+        let RouteObject::Snapshot { segments, .. } = snapshot.value else {
+            panic!("import did not create a snapshot");
+        };
+        assert_eq!(segments["boot_link"].parent, None);
         let main = store
             .fork_lineage("routes/main", "main", "experiments/main")
             .unwrap();
         assert_eq!(store.resolve_ref("experiments/main").unwrap(), main);
+        let RouteObject::Lineage { steps, .. } = store.read(&main).unwrap().value else {
+            panic!("fork did not select a lineage");
+        };
+        assert_eq!(steps[1].segment, "exit");
+        let end = store.read(&steps[1].end_boundary).unwrap();
+        assert!(matches!(
+            end.value,
+            RouteObject::Boundary {
+                context: SegmentBoundaryContext {
+                    segment,
+                    side: BoundarySide::End,
+                },
+                ..
+            } if segment == "exit"
+        ));
+        let map_proof = store
+            .read(steps[1].goal_proofs.get("map").unwrap())
+            .unwrap();
+        assert!(matches!(
+            map_proof.value,
+            RouteObject::GoalProof {
+                variant,
+                first_hit_tick: Some(603),
+                ..
+            } if variant == "exit.safe"
+        ));
 
         let appended = store
-            .append_lineage("experiments/main", &timeline, "main", Path::new("."))
+            .append_lineage("experiments/main", &timeline, "main", &root)
             .unwrap();
         assert_ne!(appended, main);
         let repaired = store
@@ -856,7 +1123,7 @@ continue main with exit.safe after boot_link.safe@control-v1
                 "experiments/repaired",
                 &timeline,
                 "main",
-                Path::new("."),
+                &root,
             )
             .unwrap();
         assert_eq!(store.resolve_ref("experiments/repaired").unwrap(), repaired);
@@ -900,7 +1167,10 @@ continue main with exit.safe after boot_link.safe@control-v1
 
         let unreachable = store
             .put(RouteObject::Boundary {
-                milestone: "unused".into(),
+                context: SegmentBoundaryContext {
+                    segment: "unused".into(),
+                    side: BoundarySide::End,
+                },
                 fingerprint: "unused-v1".into(),
             })
             .unwrap();
@@ -921,7 +1191,10 @@ continue main with exit.safe after boot_link.safe@control-v1
         let store = RouteStore::initialize(&root).unwrap();
         let id = store
             .put(RouteObject::Boundary {
-                milestone: "m".into(),
+                context: SegmentBoundaryContext {
+                    segment: "s".into(),
+                    side: BoundarySide::End,
+                },
                 fingerprint: "f".into(),
             })
             .unwrap();

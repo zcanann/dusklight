@@ -132,13 +132,14 @@
       clearTimeout(toast.timer); toast.timer=setTimeout(()=>element.className='toast', 5000);
     }
     function normalize(raw) {
-      const milestones=(raw.milestones||[]).map((item,index)=>typeof item==='string'?{id:item,ordinal:index}:{...item,id:item.id||item.name,ordinal:item.ordinal??index});
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
+      const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
       const variants=Array.isArray(raw.variants)?raw.variants:Object.entries(raw.variants||{}).map(([id,item])=>({...item,id:item.id||id}));
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),milestones,segments,variants,lineages:raw.lineages||[],drafts:raw.drafts||[]};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,variants,lineages:raw.lineages||[],drafts:raw.drafts||[]};
     }
     const selected = occurrence => selection.occurrence===occurrence;
-    const predicateFor = id => graph.milestone_program?.definitions?.find(item=>item.name===id);
+    const predicateFor = id => graph.predicate_program?.definitions?.find(item=>item.name===id);
+    const goalsFor = segment => graph.goals.filter(goal=>goal.segment===segment);
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort((a,b)=>a.created_unix_ms-b.created_unix_ms);
     const draftsUnderVariant = (id,chain) => draftsUnder('variant',id).filter(draft=>{const lineage=graph.lineages.find(item=>item.name===draft.parent.lineage);const pinned=(lineage?.steps||[]).slice(0,draft.parent.step_index+1).map(step=>step.variant);return draft.parent.step_index===chain.length-1&&pinned.length===chain.length&&pinned.every((variant,index)=>variant===chain[index]);});
     const variantsFor = (segment,parentFingerprint=null) => graph.variants.filter(variant=>variant.segment===segment.id&&(parentFingerprint===null||variant.start_fingerprint===parentFingerprint)).sort((a,b)=>(Number(b.incumbent)-Number(a.incumbent))||a.id.localeCompare(b.id));
@@ -169,10 +170,10 @@
       occurrenceIndex.set(occurrence,{kind:'variant',id:variant.id,chain:nextChain});
       const segment=graph.segments.find(item=>item.id===variant.segment);
       const drafts=draftsUnderVariant(variant.id,nextChain);
-      const outgoing=graph.segments.filter(item=>item.from===segment?.to&&variantsFor(item,variant.boundary_fingerprint).length>0).sort((a,b)=>a.id.localeCompare(b.id));
+      const outgoing=graph.segments.filter(item=>item.parent===segment?.id&&variantsFor(item,variant.boundary_fingerprint).length>0).sort((a,b)=>a.id.localeCompare(b.id));
       const key=occurrence;
       const score=variant.first_hit_tick??variant.ticks;
-      const state=variant.error||['stale','missing'].includes(variant.predicate_proof)?'bad':variant.playable?'ok':'warn';
+      const state=variant.error?'bad':variant.playable?'ok':'warn';
       const tail=`${variant.incumbent?'<span>★</span>':''}${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
       const hasChildren=drafts.length>0||outgoing.length>0;
       const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderSegmentNode(child,variant.boundary_fingerprint,next,nextChain))].join(''):'';
@@ -197,7 +198,7 @@
       if(output.has(variant.id))return output;
       output.add(variant.id);
       const segment=graph.segments.find(item=>item.id===variant.segment);
-      graph.segments.filter(item=>item.from===segment?.to).forEach(next=>variantsFor(next,variant.boundary_fingerprint).forEach(child=>collectCompatibleDescendants(child,output)));
+      graph.segments.filter(item=>item.parent===segment?.id).forEach(next=>variantsFor(next,variant.boundary_fingerprint).forEach(child=>collectCompatibleDescendants(child,output)));
       return output;
     }
     function bootLineages() { return graph.lineages.filter(lineage=>{const first=lineage.steps?.[0];const variant=first&&graph.variants.find(item=>item.id===first.variant);return (variant?.play_anchors||[]).some(anchor=>anchor.lineage===lineage.name&&anchor.prefix_steps===0);}); }
@@ -206,7 +207,7 @@
       preferred.forEach(root=>{if(!roots.some(item=>item.id===root.id))roots.push(root);});
       roots.forEach(root=>collectCompatibleDescendants(root).forEach(id=>remaining.delete(id)));
       while(remaining.size) {
-        const candidates=graph.variants.filter(variant=>remaining.has(variant.id)&&!graph.variants.some(parent=>remaining.has(parent.id)&&graph.segments.find(item=>item.id===parent.segment)?.to===graph.segments.find(item=>item.id===variant.segment)?.from&&parent.boundary_fingerprint===variant.start_fingerprint));
+        const candidates=graph.variants.filter(variant=>remaining.has(variant.id)&&!graph.variants.some(parent=>remaining.has(parent.id)&&graph.segments.find(item=>item.id===variant.segment)?.parent===parent.segment&&parent.boundary_fingerprint===variant.start_fingerprint));
         const chosen=candidates.length?candidates:[graph.variants.filter(variant=>remaining.has(variant.id)).sort((a,b)=>a.id.localeCompare(b.id))[0]];
         chosen.forEach(root=>{if(!remaining.has(root.id))return;roots.push(root);collectCompatibleDescendants(root).forEach(id=>remaining.delete(id));});
       }
@@ -219,12 +220,12 @@
     function renderTree() {
       initializeExpansion();
       occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:[]});
-      const bootVariants=graph.variants.filter(variant=>(variant.play_anchors||[]).some(anchor=>anchor.prefix_steps===0));
+      const bootVariants=graph.variants.filter(variant=>graph.segments.find(segment=>segment.id===variant.segment)?.parent==null&&(variant.play_anchors||[]).some(anchor=>anchor.prefix_steps===0));
       const reachable=new Set();bootVariants.forEach(variant=>collectCompatibleDescendants(variant,reachable));
       const unattached=graph.variants.filter(variant=>!reachable.has(variant.id));
       const bootPinned=bootLineages();const bootPinnedNames=new Set(bootPinned.map(lineage=>lineage.name));
       const nonBootLineageRoots=graph.lineages.filter(lineage=>!bootPinnedNames.has(lineage.name)).map(lineage=>graph.variants.find(variant=>variant.id===lineage.steps?.[0]?.variant)).filter(Boolean);
-      const bootDrafts=graph.drafts.filter(draft=>draft.parent?.kind==='milestone'&&graph.milestones.find(item=>item.id===draft.parent.id)?.recordable_from_boot);
+      const bootDrafts=graph.drafts.filter(draft=>['origin','milestone'].includes(draft.parent?.kind)&&graph.origin?.id===draft.parent.id&&graph.origin.recordable_from_boot);
       const hasBootChildren=bootDrafts.length>0||bootVariants.length>0;
       const children=expanded.has('origin:boot')?[...bootDrafts.map(draft=>renderDraftNode(draft)),renderRootGroups(bootVariants)].join(''):'';
       let html=`${treeRow('origin','boot','origin:boot','Boot','◆','origin:boot',hasBootChildren,`<span>${bootPinned.length} pinned</span>`)}${children?`<div class="tree-children">${children}</div>`:''}`;
@@ -235,34 +236,34 @@
       $('tree').querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;expanded.has(key)?expanded.delete(key):expanded.add(key);renderTree();}));
     }
     function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
-    function goalDetail(goal) {
-      const predicate=predicateFor(goal);
-      if(!predicate)return `<div class="detail-section"><h3>Objective</h3><div class="fields">${field('Goal',goal)}</div></div>`;
-      return `<div class="detail-section"><h3>Objective</h3><div class="fields">${field('Goal',goal)}${field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`)}${field('Definition',predicate.definition_sha256,true)}</div><details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details><div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal)}">Edit objective…</button></div></div>`;
+    function goalDetail(segmentId,proofs=[]) {
+      const goals=goalsFor(segmentId);
+      if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">No parity goal is attached to this segment.</div></div>`;
+      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function anchorPrefix(anchor,includeSelected=false) { const lineage=graph.lineages.find(item=>item.name===anchor.lineage);const count=includeSelected?anchor.step_index+1:anchor.prefix_steps;return (lineage?.steps||[]).slice(0,count).map(step=>step.variant); }
     function sameChain(left,right) { return left.length===right.length&&left.every((value,index)=>value===right[index]); }
     function variantActions(variant,chain) {
       const scopedPlays=(variant.play_anchors||[]).filter(anchor=>sameChain([...anchorPrefix(anchor),variant.id],chain));
       const scopedRecords=(variant.record_anchors||[]).filter(anchor=>sameChain(anchorPrefix(anchor,true),chain));
-      const plays=scopedPlays.map(anchor=>{const repeated=scopedPlays.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-source-milestone="${escapeHtml(anchor.source_milestone)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
-      const records=scopedRecords.map(anchor=>{const repeated=scopedRecords.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const recordLabel=repeated?`${anchor.lineage} @ step ${anchor.step_index}`:anchor.lineage;return `<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-milestone="${escapeHtml(anchor.terminal_milestone)}">Record child · ${escapeHtml(recordLabel)}</button>`;}).join('');
+      const plays=scopedPlays.map(anchor=>{const repeated=scopedPlays.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const playLabel=repeated?`${anchor.lineage} @ step ${anchor.prefix_steps}`:anchor.lineage;return `<button class="play" type="button" data-play-kind="variant" data-play-origin="boot" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-prefix-steps="${anchor.prefix_steps}" data-parent-segment="${escapeHtml(anchor.parent_segment||'')}" data-start-fingerprint="${escapeHtml(anchor.start_fingerprint)}" data-play-label="${escapeHtml(playLabel)}">Play · ${escapeHtml(playLabel)}</button>`;}).join('');
+      const records=scopedRecords.map(anchor=>{const repeated=scopedRecords.filter(candidate=>candidate.lineage===anchor.lineage).length>1;const recordLabel=repeated?`${anchor.lineage} @ step ${anchor.step_index}`:anchor.lineage;return `<button class="record" type="button" data-record-kind="variant" data-id="${escapeHtml(variant.id)}" data-lineage="${escapeHtml(anchor.lineage)}" data-step-index="${anchor.step_index}" data-terminal-goal="${escapeHtml(anchor.goal)}">Record child · ${escapeHtml(recordLabel)} → ${escapeHtml(label(anchor.goal))}</button>`;}).join('');
       return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}</div>`;
     }
     function renderDetail() {
       let html='';const context=occurrenceIndex.get(selection.occurrence)||selection;
       if(selection.kind==='origin'&&selection.id==='boot') {
-        const boot=graph.milestones.find(item=>item.recordable_from_boot);const pinned=bootLineages();
-        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input. Route segments continue from here.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="milestone" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
+        const boot=graph.origin?.recordable_from_boot?graph.origin:null;const pinned=bootLineages();
+        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input. Root segments continue from here.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
       } else if(selection.kind==='origin') {
         const bootNames=new Set(bootLineages().map(lineage=>lineage.name));const pinned=graph.lineages.filter(lineage=>!bootNames.has(lineage.name));
         html=`<div class="detail-kicker">Unattached origins</div><div class="detail-title">Other roots</div><div class="detail-subtitle">Seeded, disconnected, or cyclic route components without a verified console-Boot ancestry. They are kept visible but are never mislabeled as Boot-playable.</div><div class="detail-section"><h3>Pinned routes</h3><div class="fields">${pinned.map(lineage=>field(lineage.name,`${lineage.steps.length} segment${lineage.steps.length===1?'':'s'} · ${lineage.playable?'playable':'blocked'}`)).join('')||field('Routes','None')}</div></div>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment)html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(label(segment.id))}</div><div class="detail-subtitle">A family of input variants that attempts the same objective from a compatible parent boundary.</div><div class="detail-section"><h3>Route</h3><div class="fields">${field('Starts after',segment.from)}${field('Profile',segment.profile)}${field('Checked variants',graph.variants.filter(item=>item.segment===segment.id).length)}</div></div>${goalDetail(segment.to)}`;
+        if(segment)html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(label(segment.id))}</div><div class="detail-subtitle">A structural continuation beneath ${escapeHtml(segment.parent?label(segment.parent):'Boot')}. Goals are optional parity metadata.</div><div class="detail-section"><h3>Route</h3><div class="fields">${field('Parent segment',segment.parent||'Boot')}${field('Profile',segment.profile)}${field('Checked variants',graph.variants.filter(item=>item.segment===segment.id).length)}</div></div>${goalDetail(segment.id)}`;
       } else if(selection.kind==='variant') {
         const variant=graph.variants.find(item=>item.id===selection.id);const segment=variant&&graph.segments.find(item=>item.id===variant.segment);const artifact=variant?.artifact||{};const score=variant&&(variant.first_hit_tick??variant.ticks);
-        if(variant&&segment)html=`<div class="detail-kicker">Segment variant</div><div class="detail-title">${escapeHtml(variant.name||variant.id)}</div><div class="detail-subtitle">${escapeHtml(label(segment.id))}</div><div class="badges">${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}<span class="badge proof-${escapeHtml(variant.predicate_proof)}">proof ${escapeHtml(label(variant.predicate_proof))}</span></div>${variantActions(variant,context.chain)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',variant.start_fingerprint,true)}${field('Output',variant.boundary_fingerprint,true)}${field('Frames',variant.frame_count)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.to)}${variant.error?`<div class="detail-section error-note">${escapeHtml(variant.error)}</div>`:''}`;
+        if(variant&&segment)html=`<div class="detail-kicker">Segment variant</div><div class="detail-title">${escapeHtml(variant.name||variant.id)}</div><div class="detail-subtitle">${escapeHtml(label(segment.id))}</div><div class="badges">${variant.incumbent?'<span class="badge incumbent">incumbent</span>':''}${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(variant.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${variantActions(variant,context.chain)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',variant.start_fingerprint,true)}${field('Output',variant.boundary_fingerprint,true)}${field('Frames',variant.frame_count)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,variant.goal_proofs||[])}${variant.error?`<div class="detail-section error-note">${escapeHtml(variant.error)}</div>`:''}`;
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
         if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}`;}
@@ -279,23 +280,23 @@
     }
     function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
     function editPredicate(id) {
-      if(!graph.milestone_program)return;
+      if(!graph.predicate_program)return;
       $('predicateTitle').textContent=`Edit objective · ${label(id)}`;
-      $('predicateSource').value=graph.milestone_program.source;
-      predicateEditRevision=graph.milestone_program.revision_sha256;
+      $('predicateSource').value=graph.predicate_program.source;
+      predicateEditRevision=graph.predicate_program.revision_sha256;
       $('predicateError').textContent='';
       $('predicateEditor').showModal();
       $('predicateSource').focus();
     }
     async function savePredicate() {
-      if(!graph.milestone_program)return;
+      if(!graph.predicate_program)return;
       const button=$('savePredicate'); button.disabled=true; button.textContent='Compiling…';
       $('predicateError').textContent='';
       try {
         const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value})});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        graph.milestone_program=body;
+        graph.predicate_program=body;
         predicateEditRevision=null;
         $('predicateEditor').close();
         toast('Goal predicates compiled and saved. Variant proof badges now reflect the new definition identities.');
@@ -316,7 +317,7 @@
       const name=variant?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=variant?{selection:{kind:'variant',id,lineage:button.dataset.lineage,prefix_steps:Number(button.dataset.prefixSteps),source_milestone:button.dataset.sourceMilestone},stop:{kind:'milestone',milestone:segment.to},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
+      const payload=variant?{selection:{kind:'variant',id,lineage:button.dataset.lineage,prefix_steps:Number(button.dataset.prefixSteps),parent_segment:button.dataset.parentSegment||null,start_fingerprint:button.dataset.startFingerprint},stop:{kind:'segment',segment:segment.id},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
@@ -372,7 +373,7 @@
     async function record(button) {
       const kind=button.dataset.recordKind, id=button.dataset.id;
       const entered=window.prompt('Optional draft label',''); if(entered===null)return;
-      const parent=kind==='variant'?{kind,id,lineage:button.dataset.lineage,step_index:Number(button.dataset.stepIndex),terminal_milestone:button.dataset.terminalMilestone}:{kind,id};
+      const parent=kind==='variant'?{kind,id,lineage:button.dataset.lineage,step_index:Number(button.dataset.stepIndex),terminal_goal:button.dataset.terminalGoal}:{kind,id};
       button.disabled=true; button.textContent='Launching...';
       try {
         const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered})});
@@ -381,7 +382,7 @@
         const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames hidden, muted, and unpaced first.`:'';
         toast(`Recording ${body.draft_id}.${prefix} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
-      finally { button.disabled=false; button.textContent=kind==='variant'?`Record child · ${button.dataset.lineage}`:kind==='milestone'?'Record from Boot':'Record child'; }
+      finally { button.disabled=false; button.textContent=kind==='variant'?`Record child · ${button.dataset.lineage}`:kind==='origin'?'Record from Boot':'Record child'; }
     }
     async function load() {
       $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';

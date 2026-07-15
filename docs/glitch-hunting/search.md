@@ -52,9 +52,12 @@ The segment profiles are:
 ## Anchored clean-boot suffix search
 
 The tunnel objective uses the anchored library evaluator rather than the
-legacy direct-stage evaluator. `AnchoredObjectiveConfig` supplies an immutable
-absolute prefix tape, compiled DMSP, source milestone and boundary fingerprint,
-and goal milestone. `AnchoredEvaluateConfig` and `AnchoredSearchRunConfig` are
+legacy direct-stage evaluator. Route selection first identifies an exact
+segment occurrence and its structural parent. A goal attached to that segment
+then selects the predicate used for acceptance. `AnchoredObjectiveConfig`
+adapts this into the native evaluator's existing milestone protocol: immutable
+absolute prefix tape, compiled DMSP, source predicate and boundary fingerprint,
+and goal predicate. `AnchoredEvaluateConfig` and `AnchoredSearchRunConfig` are
 the public wiring surfaces for the CLI and route workbench.
 
 The promoted initial suffix is
@@ -84,8 +87,10 @@ Ranking records goal time relative to the source boundary. The winner emits
 both `champion.suffix.tape` for continuation work and a composed
 `champion.tape` for clean-boot visual playback.
 
-The route-aware command derives the prefix, source fingerprint, milestone
-program, and observed seed from the checked-in timeline and lineage:
+The route-aware command derives the prefix, source fingerprint, source goal,
+target goal, program, and observed seed from the checked-in timeline and
+lineage. When either segment has several attached goals, pass `--source-goal`
+or `--goal` explicitly:
 
     huntctl search run-route --timeline routes/intro.timeline --lineage main --segment link_control_to_tunnel_crawl_start --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/tunnel --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 

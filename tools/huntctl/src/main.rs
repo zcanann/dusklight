@@ -538,7 +538,8 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::to_string_pretty(&json!({
                     "valid": true,
                     "timeline": timeline.name,
-                    "milestones": timeline.milestones.len(),
+                    "goals": timeline.goals.len(),
+                    "proofs": timeline.proofs.len(),
                     "segments": timeline.segments.len(),
                     "variants": timeline.variants.len(),
                     "continuations": timeline.continuations.len(),
@@ -901,17 +902,21 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .into());
             }
             let lineage = option(search_args, "--lineage").unwrap_or_else(|| "main".into());
+            let parent_segment = segment
+                .parent
+                .as_ref()
+                .ok_or("anchored route search requires a child segment with an explicit parent")?;
             let prefix = materialize_lineage(
                 &timeline,
                 artifact_root,
                 &lineage,
-                MaterializeTarget::ThroughMilestone(segment.from.clone()),
+                MaterializeTarget::ThroughSegment(parent_segment.clone()),
             )?;
             let through_goal = materialize_lineage(
                 &timeline,
                 artifact_root,
                 &lineage,
-                MaterializeTarget::ThroughMilestone(segment.to.clone()),
+                MaterializeTarget::ThroughSegment(segment.name.clone()),
             )?;
             if through_goal.steps.len() != prefix.steps.len() + 1
                 || through_goal.steps.last().map(|step| step.segment.as_str())
@@ -919,8 +924,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 || through_goal.tape.frames.len() <= prefix.tape.frames.len()
             {
                 return Err(format!(
-                    "lineage {lineage:?} does not contain {segment_name:?} immediately after milestone {:?}",
-                    segment.from
+                    "lineage {lineage:?} does not contain {segment_name:?} immediately after parent segment {parent_segment:?}"
                 )
                 .into());
             }
@@ -991,13 +995,53 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             fs::write(&prefix_path, prefix.tape.encode()?)?;
             let source_path = artifact_root.join(
                 timeline
-                    .milestone_program
+                    .predicate_program
                     .as_ref()
-                    .ok_or("route search requires milestone_program")?,
+                    .ok_or("route search requires predicate_program")?,
             );
             let compiled = milestone_dsl::compile_source(&fs::read_to_string(&source_path)?)?;
             let program_path = objective_root.join("milestones.dmsp");
             fs::write(&program_path, &compiled.bytes)?;
+
+            let select_goal = |segment_id: &str,
+                               requested: Option<String>,
+                               option_name: &str|
+             -> Result<&huntctl::timeline::Goal, Box<dyn Error>> {
+                let attached = timeline
+                    .goals
+                    .values()
+                    .filter(|goal| goal.segment == segment_id)
+                    .collect::<Vec<_>>();
+                if let Some(id) = requested {
+                    let goal = timeline
+                        .goals
+                        .get(&id)
+                        .ok_or_else(|| format!("unknown route goal {id:?}"))?;
+                    if goal.segment != segment_id {
+                        return Err(format!(
+                            "goal {id:?} is attached to segment {:?}, not {segment_id:?}",
+                            goal.segment
+                        )
+                        .into());
+                    }
+                    return Ok(goal);
+                }
+                if attached.len() != 1 {
+                    return Err(format!(
+                        "segment {segment_id:?} has {} goals; select one with {option_name}",
+                        attached.len()
+                    )
+                    .into());
+                }
+                Ok(attached[0])
+            };
+            let source_goal = select_goal(
+                parent_segment,
+                option(search_args, "--source-goal"),
+                "--source-goal GOAL",
+            )?;
+            let target_goal =
+                select_goal(&segment_name, option(search_args, "--goal"), "--goal GOAL")?;
 
             let summary = run_anchored_search(&AnchoredSearchRunConfig {
                 search: SearchRunConfig {
@@ -1021,9 +1065,9 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     milestone_program: program_path,
                     game,
                     dvd,
-                    source_milestone: segment.from.clone(),
+                    source_milestone: source_goal.predicate.clone(),
                     source_boundary_fingerprint: source_fingerprint,
-                    goal_milestone: segment.to.clone(),
+                    goal_milestone: target_goal.predicate.clone(),
                 },
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);

@@ -153,37 +153,40 @@ changes the program hash even when the individual definition hashes remain the
 same. Evidence tied to an old program or definition hash does not prove the new
 predicate; it must be replayed and observed again.
 
-## Timeline proof pins
+## Segment goal proofs
 
 A route opts into authored predicates with a contained path relative to its
-`.timeline` file, then declares the same milestone names in the same order:
+`.timeline` file. Predicates become route goals only when explicitly attached
+to a segment; predicate definitions do not form route topology:
 
 ```text
 timeline intro
-milestone_program intro/milestones.milestones
-milestone process_boot
-milestone link_control
+predicate_program intro/milestones.milestones
+origin boot predicate process_boot
+segment boot_to_link root profile boot_to_fsp103
+goal link_control on boot_to_link predicate link_control
 ```
 
-Every curated variant in such a timeline must pin both identities reported by
-the native milestone evidence:
+Evidence is a separate goal-scoped declaration. A variant may have no proof,
+or independent proofs for several goals attached to its segment:
 
 ```text
-variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces STATE_FINGERPRINT program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
+variant boot_to_link.golf439 incumbent uses tas intro/variants/boot_to_link/golf-439.tas starts process-clean-v1 produces STATE_FINGERPRINT
+proof boot_to_link.golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 ```
 
 The hashes printed by `milestone compile` describe the program to run; copying
-them into a timeline is not proof that a tape reached the predicate. Pins are
-accepted for a curated variant only after a native replay emits the same
+them into a timeline is not proof that a tape reached the predicate. A proof is
+accepted only after a native replay emits the same
 program and definition hashes with its first-hit boundary evidence. `timeline
-inspect`, `timeline status`, store mutation, and compatibility/rebase commands
-reject missing or stale pins. The workbench may still show and play an old tape
-for diagnosis, but marks it unverified and prevents recording or composable
-lineage use until it is replayed and proved again.
+inspect` and the workbench report missing or stale proof per goal. This does not
+invalidate the segment hierarchy, exact fingerprint chain, or ordinary
+playback; it prevents the variant from claiming parity, scoring against that
+goal, or using that goal for a predicate-backed recording handoff.
 
 Program and predicate pins are a pair. Supplying only one, supplying them
-without `milestone_program`, changing any definition, or reordering definitions
-invalidates the relevant proof rather than silently blessing old evidence.
+without `predicate_program`, or changing the referenced definition invalidates
+the relevant goal proof rather than silently blessing old evidence.
 
 ## Read-only guarantee
 
