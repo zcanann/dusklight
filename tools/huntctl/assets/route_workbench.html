@@ -34,13 +34,14 @@
     .graph-canvas { position:absolute; left:0; top:0; transform-origin:0 0; will-change:transform; }
     .graph-edges { position:absolute; inset:0; overflow:visible; pointer-events:none; }
     .graph-edge { fill:none; stroke:#344154; stroke-width:1.5; vector-effect:non-scaling-stroke; }
-    .graph-node { position:absolute; width:184px; height:50px; display:flex; align-items:center; gap:5px; padding:4px 8px 4px 3px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
+    .graph-node { position:absolute; width:220px; height:68px; display:flex; align-items:center; gap:6px; padding:5px 8px 5px 3px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
     .graph-node:hover { border-color:#485970; background:#19212c; }
     .graph-node.selected { border-color:#638ac5; background:#1c2b40; color:#fff; box-shadow:0 0 0 1px rgba(134,174,251,.16),0 7px 22px rgba(0,0,0,.3); }
     .disclosure { width:18px; height:22px; padding:0; border:0; background:transparent; color:#738096; cursor:pointer; line-height:1; }
     .disclosure.open { transform:rotate(90deg); }
     .disclosure.empty { visibility:hidden; }
     .node-copy { min-width:0; flex:1; }
+    .node-thumbnail { width:78px; height:54px; flex:0 0 auto; object-fit:cover; border:1px solid #303b4b; border-radius:5px; background:#080b10; }
     .tree-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:650; }
     .tree-tail { display:flex; gap:5px; align-items:center; margin-top:3px; color:var(--muted); font-size:9px; }
     .dot { width:6px; height:6px; border-radius:50%; background:#5e6a7c; }
@@ -76,12 +77,14 @@
     .advanced summary { cursor:pointer; }
     .advanced .predicate { margin-top:8px; }
     .actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:20px; }
-    .play,.record,.rename,.delete,.edit-predicate { padding:7px 10px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
+    .play,.record,.rename,.delete,.edit-predicate,.capture { padding:7px 10px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
     .play { border:1px solid rgba(109,216,203,.5); background:rgba(109,216,203,.08); color:var(--cyan); }
     .record { border:1px solid rgba(231,189,104,.5); background:rgba(231,189,104,.08); color:var(--amber); }
     .rename,.edit-predicate { border:1px solid rgba(134,174,251,.5); background:rgba(134,174,251,.08); color:var(--blue); }
+    .capture { border:1px solid rgba(134,174,251,.5); background:rgba(134,174,251,.08); color:var(--blue); }
     .delete { border:1px solid rgba(241,120,140,.5); background:rgba(241,120,140,.07); color:var(--red); }
-    .play:disabled,.record:disabled,.rename:disabled,.delete:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
+    .play:disabled,.record:disabled,.rename:disabled,.delete:disabled,.capture:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
+    .detail-thumbnail { display:block; width:min(320px,100%); aspect-ratio:16/9; margin-top:14px; object-fit:cover; border:1px solid var(--line); border-radius:7px; background:#080b10; }
     .empty { padding:20px; color:var(--muted); font-size:11px; }
     .toast { position:fixed; right:16px; bottom:16px; max-width:440px; padding:11px 13px; border:1px solid var(--line); border-radius:7px; background:#171e29; box-shadow:0 18px 50px rgba(0,0,0,.5); font-size:12px; opacity:0; transform:translateY(6px); pointer-events:none; transition:.15s ease; }
     .toast.show { opacity:1; transform:none; }
@@ -189,8 +192,8 @@
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
     const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
-    const NODE_WIDTH=184;
-    const NODE_HEIGHT=50;
+    const NODE_WIDTH=220;
+    const NODE_HEIGHT=68;
     const COLUMN_GAP=76;
     const ROW_GAP=22;
     const GRAPH_PADDING_X=34;
@@ -235,7 +238,8 @@
     function treeRow(node) {
       const open=isExpanded(node.key);
       const selectionData=node.selectable===false?'':`tabindex="0" data-select-kind="${escapeHtml(node.kind)}" data-select-id="${escapeHtml(node.id)}" data-select-occurrence="${escapeHtml(node.occurrence)}"`;
-      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}><button class="disclosure${node.hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(node.key)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
+      const thumbnail=node.thumbnail?`<img class="node-thumbnail" src="${escapeHtml(node.thumbnail)}" alt="" loading="lazy">`:'';
+      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}><button class="disclosure${node.hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(node.key)}" aria-label="${open?'Collapse':'Expand'}">▶</button>${thumbnail}<span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
     }
     function renderDraftNode(draft,path=new Set(),chain=[]) {
       const canonical=entityKey('draft',draft.id);
@@ -247,7 +251,7 @@
       const key=`route:${nextChain.join('/')}`;
       occurrenceIndex.set(key,{kind:'draft',id:draft.id,chain:nextChain});
       const state=draft.playable?'ok':draft.error?'bad':'warn';
-      return {kind:'draft',id:draft.id,occurrence:key,key,name:draft.label||draft.id,tail:`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${state}"></span>`,hasChildren:children.length>0,children:isExpanded(key)?children.map(child=>renderDraftNode(child,next,nextChain)).filter(Boolean):[]};
+      return {kind:'draft',id:draft.id,occurrence:key,key,name:draft.label||draft.id,thumbnail:draft.thumbnail,tail:`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${state}"></span>`,hasChildren:children.length>0,children:isExpanded(key)?children.map(child=>renderDraftNode(child,next,nextChain)).filter(Boolean):[]};
     }
     function renderPlayableSegmentNode(segment,path=new Set(),chain=[]) {
       const canonical=entityKey('segment',segment.id);
@@ -262,7 +266,7 @@
       const score=segment.first_hit_tick??segment.ticks;
       const state=segment.error?'bad':segment.playable?'ok':'warn';
       const children=isExpanded(occurrence)?[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean):[];
-      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
+      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
     }
     function structuralChildren(kind,id) {
       return kind==='segment'?[...childSegments(id).map(item=>['segment',item.id]),...draftsUnder('segment',id).map(item=>['draft',item.id])]:draftsUnder('draft',id).map(item=>['draft',item.id]);
@@ -365,7 +369,8 @@
     function segmentActions(segment) {
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
-      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
+      const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
     }
     function renderDetail() {
       let html='';
@@ -374,10 +379,10 @@
         html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}</section>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}</section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
+        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${segment.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(segment.thumbnail)}" alt="Terminal frame">`:''}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}</section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
-        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
+        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
@@ -389,6 +394,7 @@
       root.querySelectorAll('[data-delete-segment]').forEach(button=>button.addEventListener('click',()=>deleteSegment(button.dataset.deleteSegment,button)));
       root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
+      root.querySelectorAll('[data-capture-kind]').forEach(button=>button.addEventListener('click',()=>captureThumbnail(button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
     }
     function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
@@ -441,6 +447,42 @@
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
         button.disabled=!(segment?.playable||draft?.playable); button.textContent=segment?'Play':origin==='parent'?'Play from parent':'Play from boot';
+      }
+    }
+    async function waitForThumbnail(url,timeoutMs=180000) {
+      const started=Date.now();
+      while(Date.now()-started<timeoutMs) {
+        const response=await fetch(`${url}?ready=${Date.now()}`,{cache:'no-store'});
+        if(response.ok&&response.headers.get('content-type')?.startsWith('image/png'))return;
+        if(response.status!==404) {
+          const body=await response.json().catch(()=>({}));
+          throw new Error(body.error||`Thumbnail capture check failed with HTTP ${response.status}`);
+        }
+        await new Promise(resolve=>setTimeout(resolve,500));
+      }
+      throw new Error('Thumbnail replay did not finish within 3 minutes. The node was left unchanged.');
+    }
+    async function captureThumbnail(button) {
+      const kind=button.dataset.captureKind,id=button.dataset.id;
+      const item=kind==='segment'?graph.segments.find(entry=>entry.id===id):graph.drafts.find(entry=>entry.id===id);
+      if(!item)return;
+      const name=item.name||item.label||id;
+      const original=button.textContent;
+      button.disabled=true; button.textContent='Capturing…';
+      $('status').textContent=`Replaying ${name} for thumbnail…`; $('status').className='status';
+      try {
+        const response=await fetch('/api/thumbnails/capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({selection:{kind,id}})});
+        const body=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        toast(`Replaying ${body.frames} frames hidden and unpaced. The image is assigned only if playback reaches the terminal frame.`);
+        await waitForThumbnail(body.thumbnail);
+        await load();
+        $('status').textContent='Ready'; $('status').className='status ok';
+        toast(`Captured the terminal frame for ${name}.`);
+      } catch(error) {
+        $('status').textContent='Thumbnail failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=false; button.textContent=original;
       }
     }
     async function deleteDraft(id,button) {

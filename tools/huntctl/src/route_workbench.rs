@@ -38,6 +38,11 @@ const SEGMENT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-re
 const SEGMENT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.segment-delete-preview.v1";
 const SEGMENT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-delete-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
+const THUMBNAIL_CAPTURE_SCHEMA: &str = "dusklight.route-workbench.thumbnail-capture.v1";
+const THUMBNAIL_DIRECTORY: &str = "thumbnails";
+const MAX_THUMBNAIL_BYTES: u64 = 2 * 1024 * 1024;
+const THUMBNAIL_WIDTH: u32 = 320;
+const THUMBNAIL_HEIGHT: u32 = 180;
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
 const MAX_HTTP_BODY: usize = 1024 * 1024;
@@ -102,7 +107,10 @@ pub struct GraphDraft {
     pub endpoint_kind: String,
     pub verification: String,
     pub tape_sha256: Option<String>,
+    pub result_tape_sha256: Option<String>,
     pub tape_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -243,6 +251,8 @@ pub struct GraphSegment {
     pub recordable: bool,
     pub record_anchors: Vec<GraphRecordAnchor>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -349,6 +359,12 @@ pub struct BrowserRecordRequest {
         deserialize_with = "deserialize_record_input_countdown_seconds"
     )]
     pub countdown_seconds: u8,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserThumbnailCaptureRequest {
+    pub selection: BrowserSelection,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -512,6 +528,15 @@ pub struct RecordResponse {
     pub manifest: PathBuf,
     pub tape: PathBuf,
     pub frames_before_recording: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ThumbnailCaptureResponse {
+    pub schema: String,
+    pub pid: u32,
+    pub key: String,
+    pub thumbnail: String,
+    pub frames: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -1119,6 +1144,7 @@ pub fn graph_from_timeline(
                 playable,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
                 record_anchors,
+                thumbnail: None,
                 error: loaded.err().map(|error| error.to_string()),
             }
         })
@@ -1152,6 +1178,116 @@ fn graph_with_drafts(
     graph.draft_graph_revision = Some(draft_graph_revision(&manifests)?);
     graph.drafts = graph_drafts_from_manifests(timeline, repository_root, state_root, manifests)?;
     Ok(graph)
+}
+
+fn thumbnail_build_stamp(game: &Path) -> Option<String> {
+    let metadata = fs::metadata(game).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!("{}:{modified}", metadata.len()))
+}
+
+fn thumbnail_key(kind: &str, id: &str, materialization: &str, build_stamp: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"dusklight.route-workbench.thumbnail.v1\0");
+    for value in [kind, id, materialization, build_stamp] {
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value.as_bytes());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn graph_node_thumbnail_key(
+    graph: &WorkbenchGraph,
+    selection: &BrowserSelection,
+    build_stamp: &str,
+) -> Result<String, WorkbenchError> {
+    match selection {
+        BrowserSelection::Segment { id } => {
+            let segment = graph
+                .segments
+                .iter()
+                .find(|segment| segment.id == *id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown segment {id:?}")))?;
+            if !segment.playable {
+                return Err(WorkbenchError::new(format!(
+                    "segment {id:?} is not playable"
+                )));
+            }
+            let identity = format!(
+                "{}\0{}\0{}",
+                segment.boundary_fingerprint, segment.artifact.kind, segment.artifact.value
+            );
+            Ok(thumbnail_key("segment", id, &identity, build_stamp))
+        }
+        BrowserSelection::Draft { id } => {
+            let draft = graph
+                .drafts
+                .iter()
+                .find(|draft| draft.id == *id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown draft {id:?}")))?;
+            if !draft.playable {
+                return Err(WorkbenchError::new(format!("draft {id:?} is not playable")));
+            }
+            let identity = draft.result_tape_sha256.as_deref().ok_or_else(|| {
+                WorkbenchError::new(format!("draft {id:?} has no finalized chain fingerprint"))
+            })?;
+            Ok(thumbnail_key("draft", id, identity, build_stamp))
+        }
+    }
+}
+
+fn thumbnail_url(key: &str) -> String {
+    format!("/api/thumbnails/{key}.png")
+}
+
+fn thumbnail_cache_path(state_root: &Path, key: &str) -> PathBuf {
+    state_root
+        .join(THUMBNAIL_DIRECTORY)
+        .join(format!("{key}.png"))
+}
+
+fn thumbnail_file_is_valid(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() < 8 || metadata.len() > MAX_THUMBNAIL_BYTES {
+        return false;
+    }
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut signature = [0_u8; 8];
+    file.read_exact(&mut signature).is_ok() && signature == *b"\x89PNG\r\n\x1a\n"
+}
+
+fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfig) {
+    let Some(build_stamp) = thumbnail_build_stamp(&config.game) else {
+        return;
+    };
+    for segment in &mut graph.segments {
+        let identity = format!(
+            "{}\0{}\0{}",
+            segment.boundary_fingerprint, segment.artifact.kind, segment.artifact.value
+        );
+        let key = thumbnail_key("segment", &segment.id, &identity, &build_stamp);
+        if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
+            segment.thumbnail = Some(thumbnail_url(&key));
+        }
+    }
+    for draft in &mut graph.drafts {
+        let Some(identity) = draft.result_tape_sha256.as_deref() else {
+            continue;
+        };
+        let key = thumbnail_key("draft", &draft.id, identity, &build_stamp);
+        if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
+            draft.thumbnail = Some(thumbnail_url(&key));
+        }
+    }
 }
 
 fn drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
@@ -2530,7 +2666,9 @@ fn graph_drafts_from_manifests(
                 endpoint_kind: manifest.endpoint_kind,
                 verification: manifest.verification,
                 tape_sha256: manifest.tape_sha256,
+                result_tape_sha256: manifest.result_tape_sha256,
                 tape_bytes: manifest.tape_bytes,
+                thumbnail: None,
                 error,
             }
         })
@@ -3125,6 +3263,121 @@ fn launch_materialized(
         input_tape_end: end.into(),
         origin,
         fast_forward_frames,
+    };
+    Ok((response, child))
+}
+
+fn capture_thumbnail(
+    timeline: &Timeline,
+    config: &WorkbenchConfig,
+    request: &BrowserThumbnailCaptureRequest,
+) -> Result<(ThumbnailCaptureResponse, Child), WorkbenchError> {
+    let game = canonical_file(&config.game, "game executable")?;
+    let dvd = canonical_file(&config.dvd, "DVD image")?;
+    let artifact_root = configured_artifact_root(config)?;
+    let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    let build_stamp = thumbnail_build_stamp(&game)
+        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the game executable"))?;
+    let key = graph_node_thumbnail_key(&graph, &request.selection, &build_stamp)?;
+    let materialized = match &request.selection {
+        BrowserSelection::Segment { id } => {
+            materialize_segment_playback(timeline, &artifact_root, id, None)?
+        }
+        BrowserSelection::Draft { id } => {
+            materialize_draft(timeline, &artifact_root, &config.state_root, id)?
+        }
+    };
+
+    fs::create_dir_all(&config.state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create state root {}: {error}",
+            config.state_root.display()
+        ))
+    })?;
+    let state_parent = fs::canonicalize(&config.state_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve state root {}: {error}",
+            config.state_root.display()
+        ))
+    })?;
+    let thumbnail_root = state_parent.join(THUMBNAIL_DIRECTORY);
+    fs::create_dir_all(&thumbnail_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create thumbnail cache {}: {error}",
+            thumbnail_root.display()
+        ))
+    })?;
+    let thumbnail_root = fs::canonicalize(&thumbnail_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve thumbnail cache {}: {error}",
+            thumbnail_root.display()
+        ))
+    })?;
+    if thumbnail_root.parent() != Some(state_parent.as_path()) {
+        return Err(WorkbenchError::new(
+            "thumbnail cache escapes the workbench state root",
+        ));
+    }
+    let thumbnail_path = thumbnail_root.join(format!("{key}.png"));
+    let renderer_cache_root = state_parent.join("renderer-cache");
+    fs::create_dir_all(&renderer_cache_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create renderer cache {}: {error}",
+            renderer_cache_root.display()
+        ))
+    })?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let session_root =
+        state_parent.join(format!("thumbnail-session-{}-{nonce}", std::process::id()));
+    fs::create_dir(&session_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create fresh thumbnail session {}: {error}",
+            session_root.display()
+        ))
+    })?;
+    let tape_path = session_root.join("playback.tape");
+    let encoded = materialized
+        .tape
+        .encode()
+        .map_err(|error| WorkbenchError::new(error.to_string()))?;
+    fs::write(&tape_path, encoded).map_err(|error| {
+        WorkbenchError::new(format!("cannot write {}: {error}", tape_path.display()))
+    })?;
+
+    let mut command = Command::new(game);
+    command.current_dir(&config.working_directory);
+    append_playback_args(
+        &mut command,
+        &dvd,
+        &tape_path,
+        "release",
+        &session_root,
+        materialized.seed_stage,
+        None,
+    );
+    command
+        .arg("--unpaced")
+        .arg("--exit-after-tape")
+        .arg("--frame-capture-png")
+        .arg(&thumbnail_path)
+        .arg("--frame-capture-width")
+        .arg(THUMBNAIL_WIDTH.to_string())
+        .arg("--frame-capture-height")
+        .arg(THUMBNAIL_HEIGHT.to_string());
+    append_authored_milestone_args(timeline, &artifact_root, &session_root, &mut command, None)?;
+    let child = command.spawn().map_err(|error| {
+        WorkbenchError::new(format!("cannot launch thumbnail capture: {error}"))
+    })?;
+    let response = ThumbnailCaptureResponse {
+        schema: THUMBNAIL_CAPTURE_SCHEMA.into(),
+        pid: child.id(),
+        key: key.clone(),
+        thumbnail: thumbnail_url(&key),
+        frames: materialized.tape.frames.len() as u64,
     };
     Ok((response, child))
 }
@@ -4465,6 +4718,35 @@ struct HttpResponse {
     body: Vec<u8>,
 }
 
+fn thumbnail_response(config: &WorkbenchConfig, request_path: &str) -> HttpResponse {
+    let Some(filename) = request_path.strip_prefix("/api/thumbnails/") else {
+        return json_error(404, "Not Found", "unknown thumbnail");
+    };
+    let Some(key) = filename.strip_suffix(".png") else {
+        return json_error(404, "Not Found", "unknown thumbnail");
+    };
+    if !valid_sha256(key) || filename.len() != 68 {
+        return json_error(404, "Not Found", "unknown thumbnail");
+    }
+    let path = thumbnail_cache_path(&config.state_root, key);
+    if !thumbnail_file_is_valid(&path) {
+        return json_error(404, "Not Found", "thumbnail is not available");
+    }
+    match fs::read(path) {
+        Ok(body) => HttpResponse {
+            status: 200,
+            reason: "OK",
+            content_type: "image/png",
+            body,
+        },
+        Err(error) => json_error(
+            500,
+            "Internal Server Error",
+            &format!("cannot read thumbnail: {error}"),
+        ),
+    }
+}
+
 fn handle_http(
     stream: &mut TcpStream,
     server_address: SocketAddr,
@@ -4480,7 +4762,10 @@ fn handle_http(
                 ("GET", "/api/graph") => load_authoritative_timeline(&config.timeline_path)
                     .and_then(|timeline| {
                         let artifact_root = configured_artifact_root(config)?;
-                        graph_with_drafts(&timeline, &artifact_root, &config.state_root)
+                        let mut graph =
+                            graph_with_drafts(&timeline, &artifact_root, &config.state_root)?;
+                        decorate_graph_thumbnails(&mut graph, config);
+                        Ok(graph)
                     })
                     .and_then(|graph| json_response(&graph))
                     .unwrap_or_else(|error| {
@@ -4514,6 +4799,29 @@ fn handle_http(
                         }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
+                }
+                ("POST", "/api/thumbnails/capture") => {
+                    let result =
+                        serde_json::from_slice::<BrowserThumbnailCaptureRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid thumbnail capture request: {error}"
+                                ))
+                            })
+                            .and_then(|capture_request| {
+                                let timeline = load_authoritative_timeline(&config.timeline_path)?;
+                                capture_thumbnail(&timeline, config, &capture_request)
+                                    .map(|(response, _child)| response)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("GET", path) if path.starts_with("/api/thumbnails/") => {
+                    thumbnail_response(config, path)
                 }
                 ("POST", "/api/record") => {
                     let result = serde_json::from_slice::<BrowserRecordRequest>(&request.body)
@@ -5447,6 +5755,11 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "window.localStorage",
             "countdown_seconds:countdownSeconds",
             "kind==='origin'?0",
+            "data-capture-kind",
+            "captureThumbnail",
+            "/api/thumbnails/capture",
+            "waitForThumbnail",
+            "The node was left unchanged",
         ] {
             assert!(html.contains(required), "missing UI contract {required:?}");
         }
@@ -5456,6 +5769,67 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 "legacy info-dump UI remains: {removed_dump:?}"
             );
         }
+    }
+
+    #[test]
+    fn thumbnail_cache_is_content_addressed_validated_and_path_safe() {
+        let root = temporary_root("thumbnail-cache");
+        let state_root = root.join("state");
+        let game = root.join("game.exe");
+        fs::create_dir(&state_root).unwrap();
+        fs::write(&game, b"build-one").unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: root.join("route.timeline"),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: game.clone(),
+            dvd: root.join("disc.iso"),
+            state_root: state_root.clone(),
+        };
+
+        let stamp = thumbnail_build_stamp(&game).unwrap();
+        let key = thumbnail_key("segment", "boot.one", "boundary-a", &stamp);
+        assert_eq!(key.len(), 64);
+        assert_eq!(
+            key,
+            thumbnail_key("segment", "boot.one", "boundary-a", &stamp)
+        );
+        assert_ne!(
+            key,
+            thumbnail_key("segment", "boot.one", "boundary-b", &stamp)
+        );
+        assert_ne!(
+            key,
+            thumbnail_key("draft", "boot.one", "boundary-a", &stamp)
+        );
+
+        let thumbnail_root = state_root.join(THUMBNAIL_DIRECTORY);
+        fs::create_dir(&thumbnail_root).unwrap();
+        let path = thumbnail_cache_path(&state_root, &key);
+        fs::write(&path, b"not a png").unwrap();
+        assert!(!thumbnail_file_is_valid(&path));
+        assert_eq!(
+            thumbnail_response(&config, &thumbnail_url(&key)).status,
+            404
+        );
+
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(b"terminal-frame");
+        fs::write(&path, &png).unwrap();
+        assert!(thumbnail_file_is_valid(&path));
+        let response = thumbnail_response(&config, &thumbnail_url(&key));
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type, "image/png");
+        assert_eq!(response.body, png);
+        assert_eq!(
+            thumbnail_response(&config, "/api/thumbnails/../secret.png").status,
+            404
+        );
+        assert_eq!(
+            thumbnail_response(&config, "/api/thumbnails/not-a-digest.png").status,
+            404
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

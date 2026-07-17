@@ -198,6 +198,7 @@ AuroraStats dusk::lastFrameAuroraStats;
 float dusk::frameUsagePct = 0.0f;
 
 static void finish_automation_renderer_frame();
+static void finish_automation_frame_capture();
 
 bool launchUILoop() {
     while (dusk::IsRunning && !dusk::IsGameLaunched) {
@@ -487,6 +488,7 @@ void main01(void) {
         }
 
         aurora_end_frame();
+        finish_automation_frame_capture();
         finish_automation_renderer_frame();
         if (finalize_input_tape_fast_forward_reveal()) {
             continue;
@@ -642,6 +644,12 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool inputTapePlaybackFailed;
+static bool frameCaptureEnabled;
+static bool frameCaptureRequested;
+static bool frameCaptureFailed;
+static std::filesystem::path frameCapturePath;
+static std::uint32_t frameCaptureWidth;
+static std::uint32_t frameCaptureHeight;
 static std::size_t inputTapeFastForwardFrames;
 static bool inputTapeFastForwardActive;
 static bool inputTapeFastForwardRevealPending;
@@ -1240,6 +1248,40 @@ static void finish_automation_renderer_frame() {
     }
 }
 
+static std::string frame_capture_error_message() {
+    const std::size_t length = aurora_copy_frame_capture_error(nullptr, 0);
+    if (length == 0) {
+        return "unknown frame capture failure";
+    }
+    std::string error(length + 1, '\0');
+    aurora_copy_frame_capture_error(error.data(), error.size());
+    error.resize(length);
+    return error;
+}
+
+static void finish_automation_frame_capture() {
+    if (!frameCaptureEnabled || !frameCaptureRequested) {
+        return;
+    }
+    const AuroraFrameCaptureStatus status = aurora_get_frame_capture_status();
+    if (status == AURORA_FRAME_CAPTURE_PENDING) {
+        frameCaptureEnabled = false;
+        frameCaptureFailed = true;
+        DuskLog.error("Terminal automation frame capture remained pending after aurora_end_frame");
+        return;
+    }
+    frameCaptureEnabled = false;
+    if (status == AURORA_FRAME_CAPTURE_SUCCEEDED) {
+        DuskLog.info("Captured terminal automation frame to {} ({}x{})",
+                     dusk::io::fs_path_to_string(frameCapturePath), frameCaptureWidth,
+                     frameCaptureHeight);
+        return;
+    }
+    frameCaptureFailed = true;
+    DuskLog.error("Terminal automation frame capture failed: {}",
+                  frame_capture_error_message());
+}
+
 static bool finish_input_tape_tick() {
     auto& player = dusk::automation::input_tape_player();
     auto& inputRecorder = dusk::automation::input_tape_recorder();
@@ -1319,6 +1361,19 @@ static bool finish_input_tape_tick() {
         eyeShredderOracle.finish(automationSimulationTick, automationTapeFrame);
         dusk::IsRunning = false;
         return true;
+    }
+    if (frameCaptureEnabled && !frameCaptureRequested) {
+        const std::string outputPath = dusk::io::fs_path_to_string(frameCapturePath);
+        if (!aurora_capture_next_frame_png(
+                outputPath.c_str(), frameCaptureWidth, frameCaptureHeight))
+        {
+            frameCaptureFailed = true;
+            DuskLog.error("Could not arm terminal automation frame capture: {}",
+                          frame_capture_error_message());
+            dusk::IsRunning = false;
+            return true;
+        }
+        frameCaptureRequested = true;
     }
     if (exitAfterInputTape) {
         dusk::IsRunning = false;
@@ -1823,6 +1878,9 @@ int game_main(int argc, char* argv[]) {
             ("record-input-start-milestone", "Milestone ID required at the exact recording handoff frame", cxxopts::value<std::string>())
             ("record-input-start-fingerprint", "Expected lowercase XXH3-128 boundary fingerprint at recording handoff", cxxopts::value<std::string>())
             ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
+            ("frame-capture-png", "Capture the resolved final input-tape frame to a PNG, hidden on a real renderer", cxxopts::value<std::string>())
+            ("frame-capture-width", "Frame-capture output width (default 320)", cxxopts::value<std::uint32_t>()->default_value("320"))
+            ("frame-capture-height", "Frame-capture output height (default 180)", cxxopts::value<std::uint32_t>()->default_value("180"))
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
             ("renderer-cache-root", "Use an explicit persistent renderer-only shader and pipeline cache", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
@@ -1900,6 +1958,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
+    frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
+    frameCaptureWidth = parsed_arg_options["frame-capture-width"].as<std::uint32_t>();
+    frameCaptureHeight = parsed_arg_options["frame-capture-height"].as<std::uint32_t>();
     const bool explicitlyUnpaced = parsed_arg_options["unpaced"].as<bool>();
     if (hasInputTapeFastForward && (headlessMainLoop || explicitlyUnpaced)) {
         fprintf(stderr,
@@ -1907,7 +1968,8 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     inputTapeFastForwardActive = hasInputTapeFastForward;
-    unpacedMainLoop = headlessMainLoop || explicitlyUnpaced || inputTapeFastForwardActive;
+    unpacedMainLoop = headlessMainLoop || explicitlyUnpaced || inputTapeFastForwardActive ||
+                       frameCaptureEnabled;
     fixedStepMainLoop = unpacedMainLoop || parsed_arg_options["fixed-step"].as<bool>();
     const bool useConfiguredDvd = parsed_arg_options["configured-dvd"].as<bool>();
     if (useConfiguredDvd && parsed_arg_options.count("dvd")) {
@@ -1985,6 +2047,17 @@ int game_main(int argc, char* argv[]) {
             "Input Recording Error: --record-input-countdown-seconds must be between 0 and 10\n");
         return 1;
     }
+    if (frameCaptureEnabled && headlessMainLoop) {
+        fprintf(stderr,
+                "Frame Capture Error: --frame-capture-png requires a real renderer and cannot be combined with --headless\n");
+        return 1;
+    }
+    if (frameCaptureEnabled && parsed_arg_options.count("backend") &&
+        parsed_arg_options["backend"].as<std::string>() == "null") {
+        fprintf(stderr,
+                "Frame Capture Error: --frame-capture-png cannot use the null renderer backend\n");
+        return 1;
+    }
     if (recordInputHandoffCountdownSeconds > 0 &&
         (!hasRecordInputTape || !hasInputTapeFastForward || recordInputFromBoot))
     {
@@ -2002,6 +2075,25 @@ int game_main(int argc, char* argv[]) {
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
     exitAfterInputController =
         parsed_arg_options["exit-after-controller"].as<bool>();
+    if (frameCaptureEnabled) {
+        const std::string outputPath =
+            parsed_arg_options["frame-capture-png"].as<std::string>();
+        if (outputPath.empty() || !hasInputTape || hasInputController || !exitAfterInputTape) {
+            fprintf(stderr,
+                    "Frame Capture Error: --frame-capture-png PATH requires --input-tape, --exit-after-tape, and no input controller\n");
+            return 1;
+        }
+        if (frameCaptureWidth == 0 || frameCaptureHeight == 0 ||
+            frameCaptureWidth > 4096 || frameCaptureHeight > 4096 ||
+            static_cast<std::uint64_t>(frameCaptureWidth) * frameCaptureHeight >
+                16ULL * 1024ULL * 1024ULL)
+        {
+            fprintf(stderr,
+                    "Frame Capture Error: output dimensions must fit within 4096x4096 and 16 million pixels\n");
+            return 1;
+        }
+        frameCapturePath = std::filesystem::u8path(outputPath);
+    }
     const auto bootRecordingCliError = dusk::automation::validate_boot_recording_cli({
         .enabled = recordInputFromBoot,
         .hasOutputTape = hasRecordInputTape,
@@ -2757,7 +2849,7 @@ int game_main(int argc, char* argv[]) {
 #endif
         config.vsync = fixedStepMainLoop ? false : dusk::getSettings().video.enableVsync;
         config.startFullscreen = headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
-        config.startHidden = inputTapeFastForwardActive;
+        config.startHidden = inputTapeFastForwardActive || frameCaptureEnabled;
         config.windowPosX = -1;
         config.windowPosY = -1;
 
@@ -2781,7 +2873,7 @@ int game_main(int argc, char* argv[]) {
         config.pauseOnFocusLost = headlessMainLoop ? false : dusk::getSettings().game.pauseOnFocusLost;
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
-        config.disablePresentation = headlessMainLoop;
+        config.disablePresentation = headlessMainLoop || frameCaptureEnabled;
         config.blockOnPipelineCompilation = deterministicAutomationIo && !headlessMainLoop;
         pipelineWarmupGateEnabled = config.blockOnPipelineCompilation;
         if (config.blockOnPipelineCompilation) {
@@ -2837,6 +2929,15 @@ int game_main(int argc, char* argv[]) {
         aurora_shutdown();
         return 1;
     }
+    if (frameCaptureEnabled &&
+        (SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u) {
+        DuskLog.error("Frame capture Aurora window unexpectedly started visible");
+        dusk::crash_reporting::shutdown();
+        dusk::ShutdownFileLogging();
+        dusk::config::shutdown();
+        aurora_shutdown();
+        return 1;
+    }
     if (inputTapeFastForwardActive && auroraInfo.backend == BACKEND_NULL) {
         DuskLog.error("Input tape fast-forward requires a presentation-capable Aurora backend");
         dusk::crash_reporting::shutdown();
@@ -2878,7 +2979,8 @@ int game_main(int argc, char* argv[]) {
         break;
     }
 
-    dusk::audio::SetOutputMuted(headlessMainLoop || inputTapeFastForwardActive);
+    dusk::audio::SetOutputMuted(headlessMainLoop || inputTapeFastForwardActive ||
+                                frameCaptureEnabled);
     dusk::audio::SetMasterVolume(dusk::audio::MasterVolumeToLinear(dusk::getSettings().audio.masterVolume / 100.0f));
     dusk::audio::SetEnableReverb(dusk::getSettings().audio.enableReverb);
     dusk::audio::EnableHrtf = dusk::getSettings().audio.enableHrtf;
@@ -3179,7 +3281,8 @@ int game_main(int argc, char* argv[]) {
         realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
         milestoneResultWriteFailed || milestoneGoalFailed ||
         eyeShredderOracleResultWriteFailed || eyeShredderOracleFailed ||
-        deterministicTimeAdvanceFailed || inputTapePlaybackFailed;
+        deterministicTimeAdvanceFailed || inputTapePlaybackFailed || frameCaptureFailed ||
+        frameCaptureEnabled;
 
     // Recording status is deliberately the final artifact action. It records
     // the complete process outcome known at the exact point used to choose the
