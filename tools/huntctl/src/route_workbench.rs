@@ -1,9 +1,9 @@
 //! Local, Git-backed route workbench primitives.
 //!
 //! Authored `.timeline` files and the artifacts they name are authoritative.
-//! This module never mutates timeline topology, segment identity, or artifacts. It projects them
-//! as graph JSON, materializes exact parent chains and named continuations, and offers
-//! revision-checked edits for display labels and the timeline-configured milestone program.
+//! It projects timeline topology as graph JSON, materializes exact parent chains and named
+//! continuations, and offers revision-checked edits for labels, segment subtrees, and the
+//! timeline-configured milestone program. Segment input artifacts remain independent Git objects.
 
 use crate::search::Candidate;
 use crate::tape::InputTape;
@@ -35,6 +35,8 @@ const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-prev
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
 const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
 const SEGMENT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-rename-result.v1";
+const SEGMENT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.segment-delete-preview.v1";
+const SEGMENT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-delete-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
@@ -50,7 +52,7 @@ fn milestone_program_edits() -> &'static Mutex<()> {
     EDITS.get_or_init(|| Mutex::new(()))
 }
 
-fn timeline_label_edits() -> &'static Mutex<()> {
+fn timeline_edits() -> &'static Mutex<()> {
     static EDITS: OnceLock<Mutex<()>> = OnceLock::new();
     EDITS.get_or_init(|| Mutex::new(()))
 }
@@ -381,6 +383,19 @@ pub struct BrowserSegmentRenameRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct BrowserSegmentDeletePreviewRequest {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSegmentDeleteApplyRequest {
+    pub id: String,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserMilestoneProgramUpdateRequest {
     pub expected_revision_sha256: String,
     pub source: String,
@@ -424,6 +439,34 @@ pub struct SegmentRenameResult {
     pub schema: String,
     pub id: String,
     pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SegmentDeleteImpact {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SegmentDeletePreview {
+    pub schema: String,
+    pub id: String,
+    pub segments: Vec<SegmentDeleteImpact>,
+    pub goals: Vec<String>,
+    pub proofs: usize,
+    pub lineages: Vec<String>,
+    pub drafts: Vec<DraftDeleteImpact>,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SegmentDeleteResult {
+    pub schema: String,
+    pub id: String,
+    pub segments: Vec<String>,
+    pub drafts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash_transaction: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1287,6 +1330,13 @@ fn draft_descendants(
     if !valid_draft_id(id) || !manifests.contains_key(id) {
         return Err(WorkbenchError::new(format!("unknown draft {id:?}")));
     }
+    Ok(draft_descendants_from_roots(manifests, [id]))
+}
+
+fn draft_descendants_from_roots<'a>(
+    manifests: &BTreeMap<String, DraftManifest>,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> BTreeSet<String> {
     let mut children = BTreeMap::<&str, Vec<&str>>::new();
     for manifest in manifests.values() {
         if let DraftParent::Draft { id: parent, .. } = &manifest.parent {
@@ -1297,7 +1347,7 @@ fn draft_descendants(
         }
     }
     let mut deletion = BTreeSet::new();
-    let mut pending = vec![id];
+    let mut pending = roots.into_iter().collect::<Vec<_>>();
     while let Some(next) = pending.pop() {
         if !deletion.insert(next.to_owned()) {
             continue;
@@ -1306,7 +1356,7 @@ fn draft_descendants(
             pending.extend(descendants.iter().copied());
         }
     }
-    Ok(deletion)
+    deletion
 }
 
 fn draft_graph_revision(
@@ -1737,6 +1787,157 @@ fn rename_segment_in_timeline_source(
     Ok(output)
 }
 
+#[derive(Debug)]
+struct SegmentSourceDeletion {
+    segments: BTreeSet<String>,
+    goals: BTreeSet<String>,
+    proofs: usize,
+    lineages: BTreeSet<String>,
+    replacement: String,
+}
+
+fn segment_descendants(timeline: &Timeline, id: &str) -> Result<BTreeSet<String>, WorkbenchError> {
+    if !timeline.segments.contains_key(id) {
+        return Err(WorkbenchError::new(format!("unknown segment {id:?}")));
+    }
+    let mut children = BTreeMap::<&str, Vec<&str>>::new();
+    for segment in timeline.segments.values() {
+        if let Some(parent) = segment.parent.as_deref() {
+            children.entry(parent).or_default().push(&segment.id);
+        }
+    }
+    let mut deletion = BTreeSet::new();
+    let mut pending = vec![id];
+    while let Some(next) = pending.pop() {
+        if !deletion.insert(next.to_owned()) {
+            continue;
+        }
+        if let Some(descendants) = children.get(next) {
+            pending.extend(descendants.iter().copied());
+        }
+    }
+    Ok(deletion)
+}
+
+fn delete_segment_subtree_in_timeline_source(
+    source: &str,
+    id: &str,
+) -> Result<SegmentSourceDeletion, WorkbenchError> {
+    let timeline =
+        Timeline::parse(source).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let segments = segment_descendants(&timeline, id)?;
+    let goals = timeline
+        .goals
+        .values()
+        .filter(|goal| segments.contains(&goal.segment))
+        .map(|goal| goal.id.clone())
+        .collect::<BTreeSet<_>>();
+    let proofs = timeline
+        .proofs
+        .iter()
+        .filter(|proof| segments.contains(&proof.segment) || goals.contains(&proof.goal))
+        .count();
+
+    let mut lineages = timeline
+        .continuations
+        .values()
+        .filter(|continuation| {
+            !continuation.steps.is_empty()
+                && continuation
+                    .steps
+                    .iter()
+                    .all(|step| segments.contains(&step.segment))
+        })
+        .map(|continuation| continuation.name.clone())
+        .collect::<BTreeSet<_>>();
+    loop {
+        let mut changed = false;
+        for branch in timeline.branches.values() {
+            if lineages.contains(&branch.name) {
+                continue;
+            }
+            let all_steps_removed = !branch.steps.is_empty()
+                && branch
+                    .steps
+                    .iter()
+                    .all(|step| segments.contains(&step.segment));
+            if segments.contains(&branch.after_segment)
+                || lineages.contains(&branch.from_lineage)
+                || all_steps_removed
+            {
+                changed |= lineages.insert(branch.name.clone());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut replacement = String::with_capacity(source.len());
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        let raw = line.trim_end_matches(['\r', '\n']);
+        let tokens =
+            tokenize(raw, index + 1).map_err(|error| WorkbenchError::new(error.to_string()))?;
+        let remove = match tokens.first().map(String::as_str) {
+            Some("segment") | Some("label") => tokens
+                .get(1)
+                .is_some_and(|segment| segments.contains(segment)),
+            Some("goal") => {
+                tokens.get(1).is_some_and(|goal| goals.contains(goal))
+                    || tokens
+                        .get(3)
+                        .is_some_and(|segment| segments.contains(segment))
+            }
+            Some("proof") => {
+                tokens
+                    .get(1)
+                    .is_some_and(|segment| segments.contains(segment))
+                    || tokens.get(3).is_some_and(|goal| goals.contains(goal))
+            }
+            Some("continuation") | Some("branch") => tokens
+                .get(1)
+                .is_some_and(|lineage| lineages.contains(lineage)),
+            Some("continue") => {
+                let removed_lineage = tokens
+                    .get(1)
+                    .is_some_and(|lineage| lineages.contains(lineage));
+                let removed_segment = tokens
+                    .get(3)
+                    .is_some_and(|segment| segments.contains(segment));
+                let removed_parent = tokens.get(5).is_some_and(|pin| {
+                    pin.rsplit_once('@')
+                        .is_some_and(|(parent, _)| segments.contains(parent))
+                });
+                removed_lineage || removed_segment || removed_parent
+            }
+            _ => false,
+        };
+        if !remove {
+            replacement.push_str(line);
+        }
+    }
+
+    let replacement_timeline = Timeline::parse(&replacement)
+        .map_err(|error| WorkbenchError::new(format!("deleted timeline is invalid: {error}")))?;
+    if segments
+        .iter()
+        .any(|segment| replacement_timeline.segments.contains_key(segment))
+        || replacement_timeline.segments.len() + segments.len() != timeline.segments.len()
+    {
+        return Err(WorkbenchError::new(
+            "segment deletion changed unexpected timeline identities",
+        ));
+    }
+
+    Ok(SegmentSourceDeletion {
+        segments,
+        goals,
+        proofs,
+        lineages,
+        replacement,
+    })
+}
+
 fn validated_timeline_edit_path(path: &Path) -> Result<PathBuf, WorkbenchError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         WorkbenchError::new(format!(
@@ -1758,12 +1959,124 @@ fn validated_timeline_edit_path(path: &Path) -> Result<PathBuf, WorkbenchError> 
     })
 }
 
+struct SegmentDeletePlan {
+    preview: SegmentDeletePreview,
+    path: PathBuf,
+    original: Vec<u8>,
+    replacement: String,
+    draft_ids: Vec<String>,
+}
+
+fn segment_delete_plan(
+    timeline_path: &Path,
+    state_root: &Path,
+    id: &str,
+    manifests: &BTreeMap<String, DraftManifest>,
+    active: &BTreeSet<String>,
+) -> Result<SegmentDeletePlan, WorkbenchError> {
+    let path = validated_timeline_edit_path(timeline_path)?;
+    let original = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!("cannot read timeline {}: {error}", path.display()))
+    })?;
+    let source = std::str::from_utf8(&original)
+        .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
+    let deletion = delete_segment_subtree_in_timeline_source(source, id)?;
+
+    let roots = manifests
+        .values()
+        .filter_map(|manifest| match &manifest.parent {
+            DraftParent::Segment { id, .. } if deletion.segments.contains(id) => {
+                Some(manifest.id.as_str())
+            }
+            _ => None,
+        });
+    let draft_deletion = draft_descendants_from_roots(manifests, roots);
+    let drafts_root = validated_drafts_root(state_root)?;
+    for draft_id in &draft_deletion {
+        let manifest = &manifests[draft_id];
+        if draft_is_active(&drafts_root.join(draft_id), manifest, active) {
+            return Err(WorkbenchError::new(format!(
+                "cannot delete segment {id:?}: attached recording {draft_id:?} is active"
+            )));
+        }
+    }
+
+    let graph_revision = draft_graph_revision(manifests)?;
+    let mut digest = Sha256::new();
+    digest.update(b"dusklight.route-workbench.segment-delete.v1\0");
+    digest.update((original.len() as u64).to_le_bytes());
+    digest.update(&original);
+    digest.update(graph_revision.as_bytes());
+    digest.update(deletion.replacement.as_bytes());
+    for segment in &deletion.segments {
+        digest.update((segment.len() as u64).to_le_bytes());
+        digest.update(segment.as_bytes());
+    }
+    for draft in &draft_deletion {
+        digest.update((draft.len() as u64).to_le_bytes());
+        digest.update(draft.as_bytes());
+    }
+    let confirmation_token = format!("{:x}", digest.finalize());
+    let timeline = Timeline::parse(source).expect("validated segment deletion source");
+    let segments = deletion
+        .segments
+        .iter()
+        .map(|segment_id| {
+            let segment = &timeline.segments[segment_id];
+            SegmentDeleteImpact {
+                id: segment_id.clone(),
+                name: segment.name.clone().unwrap_or_else(|| segment_id.clone()),
+            }
+        })
+        .collect();
+    let drafts = draft_deletion
+        .iter()
+        .map(|draft_id| {
+            let manifest = &manifests[draft_id];
+            DraftDeleteImpact {
+                id: draft_id.clone(),
+                label: manifest.label.clone(),
+                status: manifest.status,
+            }
+        })
+        .collect();
+    let draft_ids = draft_deletion.into_iter().collect();
+    Ok(SegmentDeletePlan {
+        preview: SegmentDeletePreview {
+            schema: SEGMENT_DELETE_PREVIEW_SCHEMA.into(),
+            id: id.into(),
+            segments,
+            goals: deletion.goals.into_iter().collect(),
+            proofs: deletion.proofs,
+            lineages: deletion.lineages.into_iter().collect(),
+            drafts,
+            confirmation_token,
+        },
+        path,
+        original,
+        replacement: deletion.replacement,
+        draft_ids,
+    })
+}
+
+fn preview_segment_deletion(
+    timeline_path: &Path,
+    state_root: &Path,
+    id: &str,
+) -> Result<SegmentDeletePreview, WorkbenchError> {
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    Ok(segment_delete_plan(timeline_path, state_root, id, &manifests, &active)?.preview)
+}
+
 fn rename_segment(
     timeline_path: &Path,
     request: &BrowserSegmentRenameRequest,
 ) -> Result<SegmentRenameResult, SegmentRenameError> {
     let name = validate_segment_name(&request.name)?;
-    let _edit = timeline_label_edits()
+    let _edit = timeline_edits()
         .lock()
         .map_err(|_| WorkbenchError::new("timeline label edit lock is poisoned"))?;
     let path = validated_timeline_edit_path(timeline_path)?;
@@ -1898,27 +2211,47 @@ fn draft_trash_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
     Ok(trash)
 }
 
-fn apply_draft_deletion(
-    state_root: &Path,
-    request: &BrowserDraftDeleteApplyRequest,
-) -> Result<DraftDeleteResult, WorkbenchError> {
-    let active = active_recordings()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
-    let preview = draft_delete_preview_locked(state_root, &request.id, &manifests, &active)?;
-    if request.confirmation_token != preview.confirmation_token {
-        return Err(WorkbenchError::new(
-            "draft graph changed after preview; request a new deletion preview",
-        ));
-    }
+struct DraftTrashMove {
+    root: PathBuf,
+    transaction: PathBuf,
+    moved: Vec<(String, PathBuf)>,
+}
 
+impl DraftTrashMove {
+    fn rollback(&mut self) -> Result<(), WorkbenchError> {
+        let mut failures = Vec::new();
+        for (draft_id, moved_path) in self.moved.iter().rev() {
+            if let Err(error) = fs::rename(moved_path, self.root.join(draft_id)) {
+                failures.push(format!("{draft_id}: {error}"));
+            }
+        }
+        if failures.is_empty() {
+            self.moved.clear();
+            let _ = fs::remove_dir(&self.transaction);
+            Ok(())
+        } else {
+            Err(WorkbenchError::new(format!(
+                "cannot restore drafts after failed timeline edit: {}",
+                failures.join(", ")
+            )))
+        }
+    }
+}
+
+fn move_draft_set_to_trash(
+    state_root: &Path,
+    draft_ids: &[String],
+    token: &str,
+) -> Result<Option<DraftTrashMove>, WorkbenchError> {
+    if draft_ids.is_empty() {
+        return Ok(None);
+    }
     let root = validated_drafts_root(state_root)?;
-    let mut sources = Vec::with_capacity(preview.drafts.len());
-    for draft in &preview.drafts {
+    let mut sources = Vec::with_capacity(draft_ids.len());
+    for draft_id in draft_ids {
         sources.push((
-            draft.id.clone(),
-            validated_draft_directory(&root, &draft.id)?,
+            draft_id.clone(),
+            validated_draft_directory(&root, draft_id)?,
         ));
     }
     let trash = draft_trash_root(state_root)?;
@@ -1929,7 +2262,7 @@ fn apply_draft_deletion(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis(),
-        &preview.confirmation_token[..16],
+        &token[..16],
         nonce
     ));
     fs::create_dir(&transaction).map_err(|error| {
@@ -1951,30 +2284,199 @@ fn apply_draft_deletion(
     for (draft_id, source) in &sources {
         let destination = transaction.join(draft_id);
         if let Err(error) = fs::rename(source, &destination) {
-            let mut rollback_errors = Vec::new();
-            for (moved_id, moved_path) in moved.iter().rev() {
-                if let Err(rollback) = fs::rename(moved_path, root.join(moved_id)) {
-                    rollback_errors.push(format!("{moved_id}: {rollback}"));
-                }
-            }
-            let suffix = if rollback_errors.is_empty() {
-                String::new()
-            } else {
-                format!("; rollback failures: {}", rollback_errors.join(", "))
+            let mut transaction_state = DraftTrashMove {
+                root,
+                transaction,
+                moved,
             };
+            let rollback = transaction_state.rollback().err();
+            let suffix = rollback
+                .map(|error| format!("; {error}"))
+                .unwrap_or_default();
             return Err(WorkbenchError::new(format!(
                 "cannot move draft {draft_id:?} into recoverable trash: {error}{suffix}"
             )));
         }
         moved.push((draft_id.clone(), destination));
     }
+    Ok(Some(DraftTrashMove {
+        root,
+        transaction,
+        moved,
+    }))
+}
+
+#[derive(Debug)]
+enum SegmentDeleteError {
+    Conflict(String),
+    Invalid(WorkbenchError),
+}
+
+impl fmt::Display for SegmentDeleteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflict(message) => formatter.write_str(message),
+            Self::Invalid(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<WorkbenchError> for SegmentDeleteError {
+    fn from(error: WorkbenchError) -> Self {
+        Self::Invalid(error)
+    }
+}
+
+fn rollback_draft_move(moved: &mut Option<DraftTrashMove>) -> String {
+    moved
+        .as_mut()
+        .and_then(|transaction| transaction.rollback().err())
+        .map(|error| format!("; {error}"))
+        .unwrap_or_default()
+}
+
+fn apply_segment_deletion(
+    timeline_path: &Path,
+    state_root: &Path,
+    request: &BrowserSegmentDeleteApplyRequest,
+) -> Result<SegmentDeleteResult, SegmentDeleteError> {
+    let _edit = timeline_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("timeline edit lock is poisoned"))?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let plan = segment_delete_plan(timeline_path, state_root, &request.id, &manifests, &active)?;
+    if request.confirmation_token != plan.preview.confirmation_token {
+        return Err(SegmentDeleteError::Conflict(
+            "timeline or attached drafts changed after preview; reload and confirm deletion again"
+                .into(),
+        ));
+    }
+
+    let directory = plan
+        .path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("timeline has no parent directory"))?;
+    let filename = plan
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| WorkbenchError::new("timeline filename is not UTF-8"))?;
+    let nonce = random_session_token()?;
+    let temporary = directory.join(format!(".{filename}.{nonce}.tmp"));
+    let backup = directory.join(format!(".{filename}.{nonce}.rollback"));
+    let mut temporary_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create adjacent timeline temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    temporary_file
+        .write_all(plan.replacement.as_bytes())
+        .and_then(|()| temporary_file.sync_all())
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot flush timeline temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    drop(temporary_file);
+
+    if validated_timeline_edit_path(timeline_path)? != plan.path
+        || fs::read(&plan.path).ok() != Some(plan.original.clone())
+    {
+        return Err(SegmentDeleteError::Conflict(
+            "timeline changed while preparing deletion; reload and retry".into(),
+        ));
+    }
+
+    let mut moved = move_draft_set_to_trash(
+        state_root,
+        &plan.draft_ids,
+        &plan.preview.confirmation_token,
+    )?;
+    if let Err(error) = fs::rename(&plan.path, &backup) {
+        let rollback = rollback_draft_move(&mut moved);
+        return Err(WorkbenchError::new(format!(
+            "cannot stage timeline rollback backup: {error}{rollback}"
+        ))
+        .into());
+    }
+    if fs::read(&backup).ok() != Some(plan.original.clone()) {
+        let restore = fs::rename(&backup, &plan.path).err();
+        let rollback = rollback_draft_move(&mut moved);
+        let restore = restore
+            .map(|error| format!("; cannot restore timeline: {error}"))
+            .unwrap_or_default();
+        return Err(WorkbenchError::new(format!(
+            "timeline changed while staging its rollback backup{restore}{rollback}"
+        ))
+        .into());
+    }
+    if let Err(error) = fs::rename(&temporary, &plan.path) {
+        let restore = fs::rename(&backup, &plan.path).err();
+        let rollback = rollback_draft_move(&mut moved);
+        let restore = restore
+            .map(|restore| format!("; cannot restore timeline: {restore}"))
+            .unwrap_or_default();
+        return Err(WorkbenchError::new(format!(
+            "cannot replace timeline: {error}{restore}{rollback}"
+        ))
+        .into());
+    }
+    temporary_cleanup.0 = None;
+    let _ = fs::remove_file(backup);
+
+    Ok(SegmentDeleteResult {
+        schema: SEGMENT_DELETE_RESULT_SCHEMA.into(),
+        id: request.id.clone(),
+        segments: plan
+            .preview
+            .segments
+            .into_iter()
+            .map(|segment| segment.id)
+            .collect(),
+        drafts: plan.draft_ids,
+        trash_transaction: moved.map(|transaction| transaction.transaction),
+    })
+}
+
+fn apply_draft_deletion(
+    state_root: &Path,
+    request: &BrowserDraftDeleteApplyRequest,
+) -> Result<DraftDeleteResult, WorkbenchError> {
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let preview = draft_delete_preview_locked(state_root, &request.id, &manifests, &active)?;
+    if request.confirmation_token != preview.confirmation_token {
+        return Err(WorkbenchError::new(
+            "draft graph changed after preview; request a new deletion preview",
+        ));
+    }
+
+    let draft_ids = preview
+        .drafts
+        .iter()
+        .map(|draft| draft.id.clone())
+        .collect::<Vec<_>>();
+    let moved = move_draft_set_to_trash(state_root, &draft_ids, &preview.confirmation_token)?
+        .expect("a draft deletion always moves at least one draft");
 
     Ok(DraftDeleteResult {
         schema: DRAFT_DELETE_RESULT_SCHEMA.into(),
         id: request.id.clone(),
         graph_revision: preview.graph_revision,
         drafts: preview.drafts.into_iter().map(|draft| draft.id).collect(),
-        trash_transaction: transaction,
+        trash_transaction: moved.transaction,
     })
 }
 
@@ -4029,6 +4531,53 @@ fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/segments/delete/preview") => {
+                    let result =
+                        serde_json::from_slice::<BrowserSegmentDeletePreviewRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid segment delete preview request: {error}"
+                                ))
+                            })
+                            .and_then(|delete_request| {
+                                preview_segment_deletion(
+                                    &config.timeline_path,
+                                    &config.state_root,
+                                    &delete_request.id,
+                                )
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/segments/delete/apply") => {
+                    let result =
+                        serde_json::from_slice::<BrowserSegmentDeleteApplyRequest>(&request.body)
+                            .map_err(|error| {
+                                SegmentDeleteError::Invalid(WorkbenchError::new(format!(
+                                    "invalid segment delete apply request: {error}"
+                                )))
+                            })
+                            .and_then(|delete_request| {
+                                apply_segment_deletion(
+                                    &config.timeline_path,
+                                    &config.state_root,
+                                    &delete_request,
+                                )
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error @ SegmentDeleteError::Conflict(_)) => {
+                            json_error(409, "Conflict", &error.to_string())
+                        }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/drafts/delete/preview") => {
                     let result =
                         serde_json::from_slice::<BrowserDraftDeletePreviewRequest>(&request.body)
@@ -4877,6 +5426,11 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "data-rename-segment",
             "renameSegment",
             "/api/segments/rename",
+            "data-delete-segment",
+            "Delete subtree",
+            "deleteSegment",
+            "/api/segments/delete/preview",
+            "/api/segments/delete/apply",
             "selection:{kind:'segment',id}",
             "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
@@ -5964,6 +6518,124 @@ continue main with boot_link.tas after root@clean
             &serde_json::to_vec(&request).unwrap(),
         );
         assert_eq!(stale.status, 409);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn segment_delete_rewrites_only_the_selected_structural_subtree() {
+        let source = milestone_timeline_source();
+        let deletion = delete_segment_subtree_in_timeline_source(&source, "link_exit.one").unwrap();
+        assert_eq!(deletion.segments, BTreeSet::from(["link_exit.one".into()]));
+        assert_eq!(deletion.goals, BTreeSet::from(["exit".into()]));
+        assert_eq!(deletion.proofs, 1);
+        assert!(deletion.lineages.is_empty());
+        assert!(!deletion.replacement.contains("segment link_exit.one "));
+        assert!(!deletion.replacement.contains("goal exit "));
+        assert!(!deletion.replacement.contains("proof link_exit.one "));
+        assert!(
+            !deletion
+                .replacement
+                .contains("continue main with link_exit.one ")
+        );
+        assert!(deletion.replacement.contains("segment boot_link.one "));
+        assert!(deletion.replacement.contains("goal control "));
+        assert!(deletion.replacement.contains("proof boot_link.one "));
+        assert!(deletion.replacement.contains("continuation main "));
+        let parsed = Timeline::parse(&deletion.replacement).unwrap();
+        assert_eq!(
+            parsed.segments.keys().collect::<Vec<_>>(),
+            vec!["boot_link.one"]
+        );
+
+        let root_deletion =
+            delete_segment_subtree_in_timeline_source(&source, "boot_link.one").unwrap();
+        assert_eq!(root_deletion.segments.len(), 2);
+        assert_eq!(root_deletion.goals.len(), 2);
+        assert_eq!(root_deletion.proofs, 2);
+        assert_eq!(root_deletion.lineages, BTreeSet::from(["main".into()]));
+        let empty = Timeline::parse(&root_deletion.replacement).unwrap();
+        assert!(empty.segments.is_empty());
+        assert!(empty.goals.is_empty());
+        assert!(empty.proofs.is_empty());
+        assert!(empty.continuations.is_empty());
+    }
+
+    #[test]
+    fn segment_delete_moves_attached_draft_closure_and_rejects_stale_or_active_state() {
+        let root = temporary_root("segment-delete");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, milestone_timeline_source()).unwrap();
+        let state = root.join("state");
+        let parent = install_ready_draft(&root, &state, "draft-segment-delete-parent", &[8]);
+        let mut child = install_ready_draft(&root, &state, "draft-segment-delete-child", &[9]);
+        child.parent = DraftParent::Draft {
+            id: parent.id.clone(),
+            parent_tape_sha256: parent.result_tape_sha256.clone().unwrap(),
+        };
+        child.parent_tape_sha256 = parent.result_tape_sha256.clone().unwrap();
+        let child_directory = drafts_root(&state).unwrap().join(&child.id);
+        fs::remove_file(child_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&child_directory, &child, true).unwrap();
+
+        let installed = scan_draft_manifests(&state).unwrap();
+        assert_eq!(installed.len(), 2);
+        assert!(matches!(
+            &installed[&parent.id].parent,
+            DraftParent::Segment { id, .. } if id == "link_exit.one"
+        ));
+
+        active_recordings().lock().unwrap().insert(child.id.clone());
+        let active = preview_segment_deletion(&timeline_path, &state, "link_exit.one");
+        active_recordings().lock().unwrap().remove(&child.id);
+        assert!(active.unwrap_err().to_string().contains("active"));
+
+        let stale_preview =
+            preview_segment_deletion(&timeline_path, &state, "link_exit.one").unwrap();
+        fs::write(
+            &timeline_path,
+            format!("{}\n# changed after preview\n", milestone_timeline_source()),
+        )
+        .unwrap();
+        let stale = apply_segment_deletion(
+            &timeline_path,
+            &state,
+            &BrowserSegmentDeleteApplyRequest {
+                id: "link_exit.one".into(),
+                confirmation_token: stale_preview.confirmation_token,
+            },
+        );
+        assert!(matches!(stale, Err(SegmentDeleteError::Conflict(_))));
+        assert!(drafts_root(&state).unwrap().join(&parent.id).is_dir());
+        assert!(drafts_root(&state).unwrap().join(&child.id).is_dir());
+
+        fs::write(&timeline_path, milestone_timeline_source()).unwrap();
+        let preview = preview_segment_deletion(&timeline_path, &state, "link_exit.one").unwrap();
+        assert_eq!(preview.segments.len(), 1);
+        assert_eq!(preview.goals, vec!["exit"]);
+        assert_eq!(preview.proofs, 1);
+        assert_eq!(preview.drafts.len(), 2);
+        let result = apply_segment_deletion(
+            &timeline_path,
+            &state,
+            &BrowserSegmentDeleteApplyRequest {
+                id: "link_exit.one".into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.segments, vec!["link_exit.one"]);
+        assert_eq!(result.drafts.len(), 2);
+        assert!(result.trash_transaction.unwrap().join(&parent.id).is_dir());
+        assert!(root.join("second.tape").is_file());
+        let timeline = Timeline::parse(&fs::read_to_string(&timeline_path).unwrap()).unwrap();
+        assert_eq!(
+            timeline.segments.keys().collect::<Vec<_>>(),
+            vec!["boot_link.one"]
+        );
+        assert!(!drafts_root(&state).unwrap().join(&parent.id).exists());
+        assert!(!drafts_root(&state).unwrap().join(&child.id).exists());
         fs::remove_dir_all(root).unwrap();
     }
 

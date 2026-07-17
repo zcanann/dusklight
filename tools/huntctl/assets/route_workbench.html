@@ -232,7 +232,7 @@
     function segmentActions(segment) {
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
-      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button></div>`;
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
     }
     function renderDetail() {
       let html='';
@@ -253,6 +253,7 @@
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
+      root.querySelectorAll('[data-delete-segment]').forEach(button=>button.addEventListener('click',()=>deleteSegment(button.dataset.deleteSegment,button)));
       root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
@@ -328,6 +329,34 @@
         $('status').textContent='Delete failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
         button.disabled=false; button.textContent='Delete…';
+      }
+    }
+    async function deleteSegment(id,button) {
+      button.disabled=true; button.textContent='Checking…';
+      try {
+        const previewResponse=await fetch('/api/segments/delete/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+        const preview=await previewResponse.json().catch(()=>({}));
+        if(!previewResponse.ok)throw new Error(preview.error||`HTTP ${previewResponse.status}`);
+        const segments=(preview.segments||[]).map(item=>`• ${item.name||item.id} (${item.id})`).join('\n');
+        const drafts=(preview.drafts||[]).map(item=>`• ${item.label||item.id} (${item.id})`).join('\n');
+        const segmentCount=(preview.segments||[]).length;
+        const draftCount=(preview.drafts||[]).length;
+        const goalCount=(preview.goals||[]).length;
+        const lineageCount=(preview.lineages||[]).length;
+        const metadata=`${goalCount} goal${goalCount===1?'':'s'}, ${preview.proofs||0} proof${preview.proofs===1?'':'s'}, ${lineageCount} emptied lineage${lineageCount===1?'':'s'}`;
+        const draftSection=draftCount?`\n\nAttached drafts moved to recoverable trash:\n${drafts}`:'';
+        if(!window.confirm(`Delete ${segmentCount} checked-in segment${segmentCount===1?'':'s'} from the timeline?\n\n${segments}\n\nAlso removes ${metadata}.${draftSection}\n\nInput tape/TAS artifacts and predicate definitions are left untouched. Git can restore this edit.`))return;
+        button.textContent='Deleting…';
+        const applyResponse=await fetch('/api/segments/delete/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,confirmation_token:preview.confirmation_token})});
+        const result=await applyResponse.json().catch(()=>({}));
+        if(!applyResponse.ok)throw new Error(result.error||`HTTP ${applyResponse.status}`);
+        selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
+        toast(`Deleted ${(result.segments||[]).length} segment${(result.segments||[]).length===1?'':'s'} from the timeline${(result.drafts||[]).length?` and moved ${(result.drafts||[]).length} attached draft${(result.drafts||[]).length===1?'':'s'} to trash`:''}.`);
+        await load();
+      } catch(error) {
+        $('status').textContent='Delete failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=false; button.textContent='Delete subtree…';
       }
     }
     async function renameDraft(id,button) {

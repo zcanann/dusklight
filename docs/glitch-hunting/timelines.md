@@ -84,6 +84,13 @@ in the Git-owned timeline. The immutable segment ID remains the key used by
 parents, goals, proofs, artifacts, and playback, so renaming never rewrites the
 tree or invalidates evidence.
 
+Segment **Delete subtree** previews and removes the selected segment and every
+structural descendant from the Git-owned timeline. Goals and proofs attached to
+that subtree are removed, named lineages are truncated or removed when emptied,
+and attached draft descendants move to recoverable trash. Input tape/TAS files
+and predicate definitions are deliberately retained because they may be shared;
+Git exposes and can restore the complete topology edit.
+
 **Record child** performs the same deterministic prefix replay, then begins
 recording live port-0 input on the first PAD read after handoff. The prefix can
 run hidden, muted, and unpaced, but it is still simulated rather than replaced
@@ -97,8 +104,8 @@ verification state. Promotion creates a normal checked-in segment. Restarting
 the workbench rediscovers ready drafts from disk.
 
 Draft **Rename** changes only its human label. **Delete** previews and moves the
-selected draft subtree to recoverable trash; it never deletes checked-in route
-objects. Active, corrupt, detached, or path-escaping drafts are rejected.
+selected draft subtree to recoverable trash. Active, corrupt, detached, or
+path-escaping drafts are rejected.
 
 Predicate editing is likewise separate from topology. The server exposes only
 the timeline-configured predicate program, validates optimistic revision
