@@ -1945,7 +1945,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
         }))?,
     )?;
     if mode == "miss" || unstable_miss || (mode == "coordinate-golf" && !hit_goal) {
-        return Err("mock worker goal miss".into());
+        std::process::exit(2);
     }
     Ok(())
 }

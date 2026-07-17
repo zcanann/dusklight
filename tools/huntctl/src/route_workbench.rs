@@ -6115,7 +6115,7 @@ continue main with boot_link.tas after root@clean
         assert!(continuation.playable);
         assert!(continuation.recordable);
         assert_eq!(continuation.predicate_proof, "verified");
-        assert_eq!(continuation.first_hit_tick, Some(150));
+        assert_eq!(continuation.first_hit_tick, Some(149));
         assert_eq!(continuation.goal_proofs.len(), 1);
         assert_eq!(
             continuation.goal_proofs[0].goal,

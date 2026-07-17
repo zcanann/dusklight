@@ -15,7 +15,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -26,6 +26,7 @@ pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v2";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
+const NATIVE_GOAL_MISS_EXIT_CODE: i32 = 2;
 
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
@@ -1913,7 +1914,7 @@ fn run_trial(
             .stderr(Stdio::from(stderr));
         hide_window(&mut command);
         let mut child = command.spawn().map_err(EvaluateError::Launch)?;
-        loop {
+        let status = loop {
             if global_cancel.load(Ordering::Acquire) {
                 evidence.cancelled = true;
                 let _ = child.kill();
@@ -1929,21 +1930,18 @@ fn run_trial(
             match child.try_wait()? {
                 Some(status) => {
                     evidence.exit_code = status.code();
-                    if anchored.is_some() && !status.success() {
-                        return Err(EvaluateError::NativeResult(format!(
-                            "worker exited unsuccessfully with status {status}"
-                        )));
-                    }
-                    break;
+                    break status;
                 }
                 None => thread::sleep(Duration::from_millis(10)),
             }
-        }
-        if let Some(objective) = anchored {
+        };
+        let score = if let Some(objective) = anchored {
             parse_anchored_milestones(&trial.milestones, objective)
         } else {
             parse_native_milestones(&trial.milestones, segment)
-        }
+        }?;
+        validate_native_exit(status, score.goal_reached)?;
+        Ok(score)
     };
     match run() {
         Ok(score) => {
@@ -1958,6 +1956,15 @@ fn run_trial(
     }
     evidence.elapsed_millis = started.elapsed().as_millis();
     evidence
+}
+
+fn validate_native_exit(status: ExitStatus, goal_reached: bool) -> Result<(), EvaluateError> {
+    match (status.code(), goal_reached) {
+        (Some(0), true) | (Some(NATIVE_GOAL_MISS_EXIT_CODE), false) => Ok(()),
+        (code, _) => Err(EvaluateError::NativeResult(format!(
+            "worker exit {code:?} disagrees with goal_reached={goal_reached} (expected 0 for a hit or {NATIVE_GOAL_MISS_EXIT_CODE} for a valid miss)"
+        ))),
+    }
 }
 
 #[derive(Debug)]
@@ -2003,11 +2010,20 @@ struct NativeMilestone {
 struct NativeEvidence {
     boundary_fingerprint: BoundaryFingerprint,
     stage: Option<NativeStageEvidence>,
+    next_stage: Option<NativeNextStageEvidence>,
     player: Option<NativePlayerEvidence>,
 }
 
 #[derive(Deserialize)]
 struct NativeStageEvidence {
+    name: String,
+    room: i32,
+    point: i32,
+}
+
+#[derive(Deserialize)]
+struct NativeNextStageEvidence {
+    enabled: bool,
     name: String,
     room: i32,
     point: i32,
@@ -2158,19 +2174,44 @@ fn parse_anchored_milestones(
         let stage = evidence.stage.as_ref().ok_or_else(|| {
             EvaluateError::NativeResult("anchored goal evidence has no stage object".into())
         })?;
-        let player = evidence.player.as_ref().ok_or_else(|| {
-            EvaluateError::NativeResult("anchored goal evidence has no player object".into())
-        })?;
-        if stage.name != "F_SP104"
-            || stage.room != 1
-            || stage.point != 0
-            || !player.present
-            || !player.is_link
-            || player.procedure_id != 53
-        {
-            return Err(EvaluateError::NativeResult(
-                "anchored goal evidence is not F_SP104 room 1 spawn 0 crawl_start (53)".into(),
-            ));
+        match objective.identity.segment {
+            SegmentProfile::Fsp103ToFsp104 => {
+                let next_stage = evidence.next_stage.as_ref().ok_or_else(|| {
+                    EvaluateError::NativeResult(
+                        "Ordon transition goal evidence has no next_stage object".into(),
+                    )
+                })?;
+                if stage.name != "F_SP103"
+                    || stage.room != 1
+                    || !next_stage.enabled
+                    || next_stage.name != "F_SP104"
+                    || next_stage.room != 1
+                    || next_stage.point != 0
+                {
+                    return Err(EvaluateError::NativeResult(
+                        "anchored goal evidence is not the committed F_SP103 to F_SP104 room 1 spawn 0 transition"
+                            .into(),
+                    ));
+                }
+            }
+            SegmentProfile::LinkControlToTunnelCrawlStart => {
+                let player = evidence.player.as_ref().ok_or_else(|| {
+                    EvaluateError::NativeResult("tunnel goal evidence has no player object".into())
+                })?;
+                if stage.name != "F_SP104"
+                    || stage.room != 1
+                    || stage.point != 0
+                    || !player.present
+                    || !player.is_link
+                    || player.procedure_id != 53
+                {
+                    return Err(EvaluateError::NativeResult(
+                        "anchored goal evidence is not F_SP104 room 1 spawn 0 crawl_start (53)"
+                            .into(),
+                    ));
+                }
+            }
+            SegmentProfile::BootToFsp103 => unreachable!("validated anchored profile"),
         }
         Some(goal_frame - objective.identity.source_boundary_index)
     } else {

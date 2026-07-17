@@ -3391,13 +3391,15 @@ int game_main(int argc, char* argv[]) {
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
         milestoneTracker.goalConfigured() && !milestoneTracker.goalReached();
-    const bool processFailedBeforeRecording =
+    const bool processInfrastructureFailed =
         nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
         realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
-        milestoneResultWriteFailed || milestoneGoalFailed ||
+        milestoneResultWriteFailed ||
         eyeShredderOracleResultWriteFailed || eyeShredderOracleFailed ||
         deterministicTimeAdvanceFailed || inputTapePlaybackFailed || frameCaptureFailed ||
         frameCaptureEnabled;
+    const bool processFailedBeforeRecording =
+        processInfrastructureFailed || milestoneGoalFailed;
 
     // Recording status is deliberately the final artifact action. It records
     // the complete process outcome known at the exact point used to choose the
@@ -3405,7 +3407,13 @@ int game_main(int argc, char* argv[]) {
     // sidecar and sets recordInputFailed before the return below.
     write_recorded_input_tape_on_exit(processFailedBeforeRecording);
 
-    return processFailedBeforeRecording || recordInputFailed ? 1 : 0;
+    if (processInfrastructureFailed || recordInputFailed) {
+        return 1;
+    }
+    // A valid, exhausted search tape that misses its configured goal is a
+    // sample, not an infrastructure failure. Give orchestration an unambiguous
+    // status so it never has to infer that distinction from logs.
+    return milestoneGoalFailed ? 2 : 0;
 }
 
 
