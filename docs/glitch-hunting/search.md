@@ -96,6 +96,15 @@ lineage prefix. The compiled DMSP and materialized prefix are retained in the
 sibling `build/search/tunnel.objective/` directory; attempt and champion
 artifacts remain below the requested output root.
 
+Completed route generations are also projected into the Route Workbench
+automatically, including while a longer farm is still running. Up to four repeat-proved elites from a run appear as ordinary, uncommitted
+siblings beneath the segment whose output fingerprint matches the anchored
+source. Refreshing the graph discovers new results and removes deleted run
+artifacts; no import step or separate search browser is required. Generated
+nodes play from their exact clean-boot tape but cannot be renamed, deleted, or
+used as recording parents until their compact suffix and proof are promoted to
+the Git-owned timeline.
+
 ## Native evaluation
 
 Both the game executable and disc image are explicit. There is no saved-config

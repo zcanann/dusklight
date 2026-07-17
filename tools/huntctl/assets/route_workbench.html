@@ -368,6 +368,7 @@
     }
     function segmentActions(segment) {
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
+      if(segment.generated)return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}</div>`;
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
       return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;

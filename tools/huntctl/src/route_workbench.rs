@@ -5,7 +5,8 @@
 //! continuations, and offers revision-checked edits for labels, segment subtrees, and the
 //! timeline-configured milestone program. Segment input artifacts remain independent Git objects.
 
-use crate::search::Candidate;
+use crate::search::{Candidate, SearchResults};
+use crate::search_evaluator::{AnchoredObjectiveIdentity, BoundaryFingerprint};
 use crate::tape::InputTape;
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
 use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline, tokenize};
@@ -24,7 +25,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v6";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v7";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -45,6 +46,10 @@ const MAX_THUMBNAIL_BYTES: u64 = 2 * 1024 * 1024;
 const THUMBNAIL_WIDTH: u32 = 320;
 const THUMBNAIL_HEIGHT: u32 = 240;
 const MAX_DRAFTS: usize = 10_000;
+const MAX_SEARCH_RUNS: usize = 1_000;
+const MAX_SEARCH_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_GENERATED_SEGMENTS: usize = 16;
+const GENERATED_SEGMENTS_PER_RUN: usize = 4;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
 const MAX_HTTP_BODY: usize = 1024 * 1024;
 
@@ -252,9 +257,50 @@ pub struct GraphSegment {
     pub recordable: bool,
     pub record_anchors: Vec<GraphRecordAnchor>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<GraphGeneratedSegment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphGeneratedSegment {
+    pub kind: String,
+    pub status: String,
+    pub uncommitted: bool,
+    pub run: String,
+    pub generation: u32,
+    pub candidate_id: String,
+    pub candidate: String,
+    pub tape: String,
+    pub objective_sha256: String,
+    pub source_predicate: String,
+    pub goal_predicate: String,
+    pub proof_attempts: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeneratedAnchoredResults {
+    schema: String,
+    objective: AnchoredObjectiveIdentity,
+    results: SearchResults,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeneratedAttempt {
+    candidate_id: String,
+    tape: PathBuf,
+    exit_code: Option<i32>,
+    infrastructure_error: Option<String>,
+    first_hit_tick: Option<u64>,
+    goal_reached: bool,
+    boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
+}
+
+struct GeneratedProjection {
+    segment: GraphSegment,
+    full_tape: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1153,6 +1199,7 @@ pub fn graph_from_timeline(
                 playable,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
                 record_anchors,
+                generated: None,
                 thumbnail: None,
                 error: loaded.err().map(|error| error.to_string()),
             }
@@ -1187,6 +1234,305 @@ fn graph_with_drafts(
     graph.draft_graph_revision = Some(draft_graph_revision(&manifests)?);
     graph.drafts = graph_drafts_from_manifests(timeline, repository_root, state_root, manifests)?;
     Ok(graph)
+}
+
+fn bounded_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_SEARCH_ARTIFACT_BYTES
+    {
+        return None;
+    }
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn median_tick(ticks: &[u64]) -> Option<u64> {
+    let mut ticks = ticks.to_vec();
+    ticks.sort_unstable();
+    ticks.get(ticks.len() / 2).copied()
+}
+
+fn generated_search_projections(
+    timeline: &Timeline,
+    search_root: &Path,
+) -> Vec<GeneratedProjection> {
+    let Ok(root_metadata) = fs::symlink_metadata(search_root) else {
+        return Vec::new();
+    };
+    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+        return Vec::new();
+    }
+    let Ok(canonical_search_root) = fs::canonicalize(search_root) else {
+        return Vec::new();
+    };
+    let authored_boundaries = timeline
+        .segments
+        .values()
+        .map(|segment| segment.end_fingerprint.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut runs = fs::read_dir(search_root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_dir() || entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            let modified = metadata.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    runs.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    runs.truncate(MAX_SEARCH_RUNS);
+
+    let mut projections = Vec::new();
+    let mut seen_boundaries = BTreeSet::new();
+    for (_, run) in runs {
+        let mut completed_generations = fs::read_dir(&run)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let generation = name.to_str()?.strip_prefix('g')?.parse::<u32>().ok()?;
+                entry
+                    .path()
+                    .join("results.json")
+                    .is_file()
+                    .then_some((generation, entry.path()))
+            })
+            .collect::<Vec<_>>();
+        completed_generations.sort_by_key(|item| std::cmp::Reverse(item.0));
+        let Some((generation, generation_root)) = completed_generations.into_iter().next() else {
+            continue;
+        };
+        let Some(results) =
+            bounded_json::<GeneratedAnchoredResults>(&generation_root.join("results.json"))
+        else {
+            continue;
+        };
+        if results.schema != "dusklight-anchored-search-results/v2"
+            || results.results.segment != results.objective.segment
+            || results.objective.digest.len() != 64
+            || !results
+                .objective
+                .digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            continue;
+        }
+        let objective = &results.objective;
+        let Some(parent) = timeline
+            .segments
+            .values()
+            .find(|segment| segment.end_fingerprint == objective.source_boundary_fingerprint)
+        else {
+            continue;
+        };
+        let goal = timeline.goals.values().find(|goal| {
+            goal.predicate == objective.goal_milestone
+                && (goal.segment == parent.id
+                    || timeline.segments.get(&goal.segment).is_some_and(|segment| {
+                        segment.parent.as_deref() == Some(parent.id.as_str())
+                    }))
+        });
+        let display_base = goal
+            .and_then(|goal| timeline.segments.get(&goal.segment))
+            .and_then(|segment| segment.name.clone())
+            .unwrap_or_else(|| objective.goal_milestone.replace('_', " "));
+        let mut ranked = results
+            .results
+            .candidates
+            .iter()
+            .filter(|(_, result)| {
+                result.milestone_depth == 2
+                    && result.attempts >= 2
+                    && result.successes == result.attempts
+                    && result.first_hit_ticks.len() == result.attempts as usize
+                    && result
+                        .first_hit_ticks
+                        .windows(2)
+                        .all(|pair| pair[0] == pair[1])
+            })
+            .map(|(id, result)| (id, result, median_tick(&result.first_hit_ticks).unwrap()))
+            .collect::<Vec<_>>();
+        ranked.sort_by(|left, right| left.2.cmp(&right.2).then_with(|| left.0.cmp(right.0)));
+        ranked.truncate(GENERATED_SEGMENTS_PER_RUN);
+        for (candidate_id, result, tick) in ranked {
+            if candidate_id.len() != 64
+                || !candidate_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                continue;
+            }
+            let candidate_path = generation_root.join(format!("{candidate_id}.candidate.json"));
+            let suffix_path = generation_root.join(format!("{candidate_id}.tape"));
+            let attempt_root = generation_root
+                .join("evaluations")
+                .join("candidates")
+                .join(candidate_id);
+            let mut attempts = Vec::new();
+            for attempt in 1..=result.attempts {
+                let path = attempt_root
+                    .join(format!("attempt-{attempt:03}"))
+                    .join("attempt.json");
+                let Some(evidence) = bounded_json::<GeneratedAttempt>(&path) else {
+                    attempts.clear();
+                    break;
+                };
+                attempts.push(evidence);
+            }
+            let Some(first) = attempts.first() else {
+                continue;
+            };
+            let Some(output_fingerprint) = first
+                .boundary_fingerprints
+                .get(&objective.goal_milestone)
+                .map(|fingerprint| fingerprint.digest.clone())
+            else {
+                continue;
+            };
+            if authored_boundaries.contains(output_fingerprint.as_str())
+                || !native_fingerprint(&output_fingerprint)
+                || !seen_boundaries.insert((
+                    objective.source_boundary_fingerprint.clone(),
+                    output_fingerprint.clone(),
+                ))
+                || attempts.iter().any(|attempt| {
+                    attempt.candidate_id != *candidate_id
+                        || attempt.exit_code != Some(0)
+                        || attempt.infrastructure_error.is_some()
+                        || !attempt.goal_reached
+                        || attempt.first_hit_tick != Some(tick)
+                        || attempt
+                            .boundary_fingerprints
+                            .get(&objective.goal_milestone)
+                            .is_none_or(|fingerprint| fingerprint.digest != output_fingerprint)
+                })
+            {
+                continue;
+            }
+            let (Ok(candidate_path), Ok(suffix_path), Ok(full_tape)) = (
+                fs::canonicalize(&candidate_path),
+                fs::canonicalize(&suffix_path),
+                fs::canonicalize(&first.tape),
+            ) else {
+                continue;
+            };
+            if !candidate_path.starts_with(&canonical_search_root)
+                || !suffix_path.starts_with(&canonical_search_root)
+                || !full_tape.starts_with(&canonical_search_root)
+                || fs::symlink_metadata(&candidate_path)
+                    .ok()
+                    .is_none_or(|metadata| {
+                        !metadata.is_file()
+                            || metadata.file_type().is_symlink()
+                            || metadata.len() > MAX_SEARCH_ARTIFACT_BYTES
+                    })
+                || fs::symlink_metadata(&suffix_path)
+                    .ok()
+                    .is_none_or(|metadata| {
+                        !metadata.is_file()
+                            || metadata.file_type().is_symlink()
+                            || metadata.len() > MAX_SEARCH_ARTIFACT_BYTES
+                    })
+                || fs::symlink_metadata(&full_tape)
+                    .ok()
+                    .is_none_or(|metadata| {
+                        !metadata.is_file()
+                            || metadata.file_type().is_symlink()
+                            || metadata.len() > MAX_SEARCH_ARTIFACT_BYTES
+                    })
+            {
+                continue;
+            }
+            let Ok(suffix_bytes) = fs::read(&suffix_path) else {
+                continue;
+            };
+            if suffix_bytes.len() as u64 > MAX_SEARCH_ARTIFACT_BYTES {
+                continue;
+            }
+            let Ok(suffix) = InputTape::decode(&suffix_bytes) else {
+                continue;
+            };
+            let short_objective = &objective.digest[..16];
+            let short_candidate = &candidate_id[..16];
+            let id = format!("search-{short_objective}-{short_candidate}");
+            let goal_proofs = goal
+                .map(|goal| {
+                    vec![GraphGoalProof {
+                        goal: goal.id.clone(),
+                        predicate: goal.predicate.clone(),
+                        program_sha256: objective.milestone_program_sha256.clone(),
+                        definition_sha256: objective.goal_definition_sha256.clone(),
+                        status: "verified".into(),
+                        first_hit_tick: Some(tick),
+                    }]
+                })
+                .unwrap_or_default();
+            projections.push(GeneratedProjection {
+                segment: GraphSegment {
+                    id,
+                    name: Some(format!("{display_base} · {tick}f")),
+                    parent: Some(parent.id.clone()),
+                    profile: objective.segment.as_str().into(),
+                    artifact: GraphArtifact {
+                        kind: "tape".into(),
+                        value: suffix_path.display().to_string(),
+                    },
+                    start_fingerprint: objective.source_boundary_fingerprint.clone(),
+                    boundary_fingerprint: output_fingerprint,
+                    goal_proofs,
+                    predicate_proof: "verified".into(),
+                    first_hit_tick: Some(tick),
+                    frame_count: Some(suffix.tape.frames.len() as u64),
+                    start_tick: 0,
+                    end_tick: (suffix.tape.frames.len() as u64).checked_sub(1),
+                    ticks: Some(tick),
+                    playable: true,
+                    recordable: false,
+                    record_anchors: Vec::new(),
+                    generated: Some(GraphGeneratedSegment {
+                        kind: "search_candidate".into(),
+                        status: "proved".into(),
+                        uncommitted: true,
+                        run: run.display().to_string(),
+                        generation,
+                        candidate_id: candidate_id.clone(),
+                        candidate: candidate_path.display().to_string(),
+                        tape: suffix_path.display().to_string(),
+                        objective_sha256: objective.digest.clone(),
+                        source_predicate: objective.source_milestone.clone(),
+                        goal_predicate: objective.goal_milestone.clone(),
+                        proof_attempts: result.attempts,
+                    }),
+                    thumbnail: None,
+                    error: None,
+                },
+                full_tape,
+            });
+            if projections.len() >= MAX_GENERATED_SEGMENTS {
+                return projections;
+            }
+        }
+    }
+    projections
+}
+
+fn append_generated_search_segments(
+    graph: &mut WorkbenchGraph,
+    timeline: &Timeline,
+    search_root: &Path,
+) {
+    graph.segments.extend(
+        generated_search_projections(timeline, search_root)
+            .into_iter()
+            .map(|projection| projection.segment),
+    );
 }
 
 fn thumbnail_build_stamp(game: &Path) -> Option<String> {
@@ -3180,7 +3526,7 @@ pub fn materialize_lineage(
 /// Materialize the unique Boot-rooted ancestry of a segment. Named
 /// continuations are bookmarks, not playback authorization: the parent links
 /// and their exact fingerprints are the structural authority.
-fn materialize_segment_chain(
+pub fn materialize_segment_chain(
     timeline: &Timeline,
     repository_root: &Path,
     segment_id: &str,
@@ -4651,6 +4997,46 @@ fn play_segment(
     stop: &BrowserStop,
     handoff: bool,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
+    if !timeline.segments.contains_key(segment_id) {
+        if !matches!(stop, BrowserStop::Segment { segment } if segment == segment_id) {
+            return Err(WorkbenchError::new(
+                "generated search playback only supports its proved endpoint",
+            ));
+        }
+        let projection =
+            generated_search_projections(timeline, &config.repository_root.join("build/search"))
+                .into_iter()
+                .find(|projection| projection.segment.id == segment_id)
+                .ok_or_else(|| {
+                    WorkbenchError::new(format!(
+                        "unknown or expired generated search segment {segment_id:?}"
+                    ))
+                })?;
+        let bytes = fs::read(&projection.full_tape).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot read generated search tape {}: {error}",
+                projection.full_tape.display()
+            ))
+        })?;
+        let tape = InputTape::decode(&bytes)
+            .map_err(|error| WorkbenchError::new(format!("invalid generated tape: {error}")))?
+            .tape;
+        let materialized = MaterializedPlayback {
+            lineage: None,
+            segment: Some(segment_id.into()),
+            tape,
+            seed_stage: None,
+        };
+        return launch_materialized(
+            timeline,
+            config,
+            materialized,
+            handoff,
+            PlaybackOrigin::Boot,
+            None,
+            None,
+        );
+    }
     let local_frame = match stop {
         BrowserStop::Segment { segment } if segment == segment_id => None,
         BrowserStop::Segment { segment } => {
@@ -4902,6 +5288,11 @@ fn handle_http(
                         let artifact_root = configured_artifact_root(config)?;
                         let mut graph =
                             graph_with_drafts(&timeline, &artifact_root, &config.state_root)?;
+                        append_generated_search_segments(
+                            &mut graph,
+                            &timeline,
+                            &config.repository_root.join("build/search"),
+                        );
                         decorate_graph_thumbnails(&mut graph, config);
                         Ok(graph)
                     })
@@ -5359,6 +5750,144 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         .unwrap()
     }
 
+    #[test]
+    fn completed_search_elites_project_as_ephemeral_structural_siblings() {
+        let root = temporary_root("generated-search");
+        let search_root = root.join("build/search");
+        let run = search_root.join("route-run");
+        let generation = run.join("g000");
+        let candidate_id = "c".repeat(64);
+        let attempt_root = generation
+            .join("evaluations/candidates")
+            .join(&candidate_id)
+            .join("attempt-001");
+        fs::create_dir_all(&attempt_root).unwrap();
+        fs::create_dir_all(
+            generation
+                .join("evaluations/candidates")
+                .join(&candidate_id)
+                .join("attempt-002"),
+        )
+        .unwrap();
+        let suffix = generation.join(format!("{candidate_id}.tape"));
+        let candidate = generation.join(format!("{candidate_id}.candidate.json"));
+        let full = attempt_root.join("full.tape");
+        let tape = InputTape {
+            frames: vec![InputFrame::default(); 9],
+            ..InputTape::default()
+        };
+        fs::write(&suffix, tape.encode().unwrap()).unwrap();
+        fs::write(&full, tape.encode().unwrap()).unwrap();
+        fs::write(&candidate, b"{}").unwrap();
+        let objective = serde_json::json!({
+            "schema":"dusklight-anchored-search-objective/v2",
+            "segment":"fsp103_to_fsp104",
+            "digest":"1".repeat(64),
+            "prefix_sha256":"2".repeat(64),
+            "prefix_frames":3,
+            "milestone_program_sha256":"3".repeat(64),
+            "game_sha256":"4".repeat(64),
+            "dvd_sha256":"5".repeat(64),
+            "source_milestone":"control",
+            "source_definition_sha256":"6".repeat(64),
+            "source_boundary_fingerprint":"a".repeat(32),
+            "source_tape_frame":2,
+            "source_boundary_index":3,
+            "goal_milestone":"exit",
+            "goal_definition_sha256":"7".repeat(64)
+        });
+        fs::write(
+            generation.join("results.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema":"dusklight-anchored-search-results/v2",
+                "objective":objective.clone(),
+                "results":{
+                    "schema":"dusklight-search-results/v1",
+                    "segment":"fsp103_to_fsp104",
+                    "candidates":{
+                        (candidate_id.clone()):{
+                            "milestone_depth":2,
+                            "attempts":2,
+                            "successes":2,
+                            "first_hit_ticks":[7,7]
+                        }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        for attempt in 1..=2 {
+            let attempt_dir = generation
+                .join("evaluations/candidates")
+                .join(&candidate_id)
+                .join(format!("attempt-{attempt:03}"));
+            let attempt_tape = if attempt == 1 {
+                full.clone()
+            } else {
+                let path = attempt_dir.join("full.tape");
+                fs::write(&path, tape.encode().unwrap()).unwrap();
+                path
+            };
+            fs::write(
+                attempt_dir.join("attempt.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "candidate_id":candidate_id,
+                    "tape":attempt_tape,
+                    "exit_code":0,
+                    "infrastructure_error":null,
+                    "first_hit_tick":7,
+                    "goal_reached":true,
+                    "boundary_fingerprints":{
+                        "exit":{
+                            "schema":"dusklight.milestone-boundary/v1",
+                            "algorithm":"xxh3-128",
+                            "canonical_encoding":"little-endian-fixed-v1",
+                            "digest":"d".repeat(32)
+                        }
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let route = Timeline::parse(&format!(
+            r#"
+timeline generated
+predicate_program milestones.milestones
+segment parent root profile boot_to_fsp103 uses tape parent.tape starts clean produces {}
+segment reference after parent profile fsp103_to_fsp104 uses tape reference.tape starts {} produces {}
+label reference "To exit"
+goal exit_goal on reference predicate exit
+continuation main starts root@clean
+continue main with parent after root@clean
+continue main with reference after parent@{}
+"#,
+            "a".repeat(32),
+            "a".repeat(32),
+            "b".repeat(32),
+            "a".repeat(32)
+        ))
+        .unwrap();
+        let projected = generated_search_projections(&route, &search_root);
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].segment.parent.as_deref(), Some("parent"));
+        assert_eq!(projected[0].segment.first_hit_tick, Some(7));
+        assert_eq!(projected[0].segment.name.as_deref(), Some("To exit · 7f"));
+        assert_eq!(
+            projected[0]
+                .segment
+                .generated
+                .as_ref()
+                .unwrap()
+                .proof_attempts,
+            2
+        );
+        fs::remove_file(generation.join("results.json")).unwrap();
+        assert!(generated_search_projections(&route, &search_root).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     const MILESTONE_SOURCE: &str = r#"milestones 1.0
 
 milestone boot {
@@ -5483,7 +6012,7 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
         write_tape(&root, "second.tape", &[5, 6, 7]);
         let graph = graph_from_timeline(&timeline(), &root).unwrap();
-        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v6");
+        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v7");
         assert!(graph.origin.is_none());
         assert_eq!(graph.segments.len(), 2);
         assert!(graph.segments.iter().all(|segment| segment.playable));
