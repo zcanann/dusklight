@@ -136,6 +136,7 @@
     const goalsFor = segment => graph.goals.filter(goal=>goal.segment===segment);
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort((a,b)=>a.created_unix_ms-b.created_unix_ms);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
+    const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
     function treeRow(kind,id,occurrence,name,expandKey,hasChildren,tail='') {
       const open=expanded.has(expandKey);
       return `<div class="tree-row${selected(occurrence)?' selected':''}" role="treeitem" tabindex="0" data-select-kind="${escapeHtml(kind)}" data-select-id="${escapeHtml(id)}" data-select-occurrence="${escapeHtml(occurrence)}"><button class="disclosure${hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(expandKey)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="tree-name">${escapeHtml(name)}</span>${tail?`<span class="tree-tail">${tail}</span>`:''}</div>`;
@@ -167,7 +168,7 @@
       const tail=`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
       const hasChildren=drafts.length>0||outgoing.length>0;
       const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain))].join(''):'';
-      return `<div>${treeRow('segment',segment.id,occurrence,segment.name||label(segment.id),key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
+      return `<div>${treeRow('segment',segment.id,occurrence,segmentName(segment.id),key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
     }
     function initializeExpansion() {
       if(expansionInitialized)return;
@@ -191,12 +192,12 @@
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
       if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">This segment has no parity metadata.</div></div>`;
-      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',label(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
+      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function segmentActions(segment) {
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
-      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}</div>`;
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button></div>`;
     }
     function renderDetail() {
       let html='';
@@ -205,7 +206,7 @@
         html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segment.name||label(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?label(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}`;}
+        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
         if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}`;}
@@ -216,6 +217,7 @@
     function bindActions(root) {
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
+      root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
       root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
@@ -304,6 +306,23 @@
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         toast(`Renamed draft to ${body.label}. Its immutable ID and tape were not changed.`);
+        await load();
+      } catch(error) {
+        $('status').textContent='Rename failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=false; button.textContent='Rename…';
+      }
+    }
+    async function renameSegment(id,button) {
+      const segment=graph.segments.find(item=>item.id===id); if(!segment)return;
+      const entered=window.prompt('Rename segment',segmentName(segment.id)); if(entered===null)return;
+      if(entered.trim()===(segment.name||''))return;
+      button.disabled=true; button.textContent='Renaming…';
+      try {
+        const response=await fetch('/api/segments/rename',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,name:entered,expected_name:segment.name??null})});
+        const body=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        toast(`Renamed segment to ${body.name}. Its immutable ID, tape, tree position, goals, and proofs were not changed.`);
         await load();
       } catch(error) {
         $('status').textContent='Rename failed'; $('status').className='status error'; toast(error.message,true);

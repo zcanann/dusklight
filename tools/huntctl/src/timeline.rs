@@ -37,6 +37,8 @@ pub struct Origin {
 pub struct Segment {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub profile: SegmentProfile,
     pub artifact: ArtifactSource,
@@ -980,6 +982,7 @@ struct Parser<'a> {
     predicate_program: Option<PathBuf>,
     origin: Option<Origin>,
     segments: BTreeMap<String, Segment>,
+    segment_labels: BTreeMap<String, (String, usize)>,
     goals: BTreeMap<String, Goal>,
     proofs: Vec<GoalProof>,
     continuations: BTreeMap<String, Continuation>,
@@ -994,6 +997,7 @@ impl<'a> Parser<'a> {
             predicate_program: None,
             origin: None,
             segments: BTreeMap::new(),
+            segment_labels: BTreeMap::new(),
             goals: BTreeMap::new(),
             proofs: Vec::new(),
             continuations: BTreeMap::new(),
@@ -1013,6 +1017,7 @@ impl<'a> Parser<'a> {
                 "predicate_program" => self.parse_predicate_program(&tokens, line_number)?,
                 "origin" => self.parse_origin(&tokens, line_number)?,
                 "segment" => self.parse_segment(&tokens, line_number)?,
+                "label" => self.parse_segment_label(&tokens, line_number)?,
                 "goal" => self.parse_goal(&tokens, line_number)?,
                 "proof" => self.parse_proof(&tokens, line_number)?,
                 "continuation" => self.parse_continuation(&tokens, line_number)?,
@@ -1026,6 +1031,12 @@ impl<'a> Parser<'a> {
                     ));
                 }
             }
+        }
+        for (id, (label, line)) in self.segment_labels {
+            let segment = self.segments.get_mut(&id).ok_or_else(|| {
+                TimelineError::at(line, 1, format!("label references unknown segment {id}"))
+            })?;
+            segment.name = Some(label);
         }
         let timeline = Timeline {
             name: self
@@ -1146,6 +1157,7 @@ impl<'a> Parser<'a> {
         };
         let segment = Segment {
             id: id.clone(),
+            name: None,
             parent,
             profile,
             artifact,
@@ -1158,6 +1170,31 @@ impl<'a> Parser<'a> {
                 line,
                 1,
                 format!("duplicate segment {id}"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn parse_segment_label(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
+        exact_len(tokens, 3, line, "label SEGMENT DISPLAY_NAME")?;
+        let id = tokens[1].clone();
+        let label = tokens[2].trim().to_owned();
+        if label.is_empty() || label.len() > 160 || label.chars().any(char::is_control) {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "segment label must be 1 to 160 UTF-8 bytes without controls",
+            ));
+        }
+        if self
+            .segment_labels
+            .insert(id.clone(), (label, line))
+            .is_some()
+        {
+            return Err(TimelineError::at(
+                line,
+                1,
+                format!("duplicate label for segment {id}"),
             ));
         }
         Ok(())
@@ -1325,7 +1362,7 @@ fn parse_pin(token: &str, line: usize) -> Result<DependencyPin, TimelineError> {
     })
 }
 
-fn tokenize(line: &str, line_number: usize) -> Result<Vec<String>, TimelineError> {
+pub(crate) fn tokenize(line: &str, line_number: usize) -> Result<Vec<String>, TimelineError> {
     let mut output = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
@@ -1487,6 +1524,7 @@ timeline intro
 predicate_program route.milestones
 origin boot predicate process_boot
 segment boot_safe root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
+label boot_safe "Conservative boot"
 segment boot_fast root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng1 produces control-rng1
 segment boot_other_rng root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean-rng2 produces control-rng2
 segment exit_safe after boot_safe profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts control-rng1 produces map-rng1
@@ -1510,6 +1548,10 @@ continue rolls with exit_rolls after boot_safe@control-rng1
         assert_eq!(inspection.timeline.name, "intro");
         assert_eq!(inspection.lineages.len(), 2);
         assert_eq!(timeline.segments["boot_fast"].parent, None);
+        assert_eq!(
+            timeline.segments["boot_safe"].name.as_deref(),
+            Some("Conservative boot")
+        );
         assert_eq!(
             timeline.segments["exit_safe"].parent.as_deref(),
             Some("boot_safe")
@@ -1709,6 +1751,17 @@ continue rolls with exit_rolls after boot_safe@control-rng1
         let error = Timeline::parse("timeline \"unterminated").unwrap_err();
         assert_eq!(error.line, Some(1));
         assert!(error.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn segment_labels_are_unique_bounded_metadata_for_existing_segments() {
+        for source in [
+            "timeline bad\nlabel missing \"Unknown\"",
+            "timeline bad\nsegment root root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces end\nlabel root one\nlabel root two",
+            "timeline bad\nsegment root root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces end\nlabel root \"\"",
+        ] {
+            assert!(Timeline::parse(source).is_err());
+        }
     }
 
     #[test]

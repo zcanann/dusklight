@@ -1,14 +1,14 @@
 //! Local, Git-backed route workbench primitives.
 //!
 //! Authored `.timeline` files and the artifacts they name are authoritative.
-//! This module never mutates timeline topology or curated segments. It projects
-//! them as graph JSON, materializes exact parent chains and named continuations, and offers one
-//! revision-checked source edit for the timeline-configured milestone program.
+//! This module never mutates timeline topology, segment identity, or artifacts. It projects them
+//! as graph JSON, materializes exact parent chains and named continuations, and offers
+//! revision-checked edits for display labels and the timeline-configured milestone program.
 
 use crate::search::Candidate;
 use crate::tape::InputTape;
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
-use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline};
+use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline, tokenize};
 use crate::{milestone_dsl, milestone_dsl::MilestoneProgram};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -24,7 +24,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v5";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v6";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -34,6 +34,7 @@ const DRAFT_TRASH_DIRECTORY: &str = "trash";
 const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-preview.v1";
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
 const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
+const SEGMENT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-rename-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
@@ -45,6 +46,11 @@ fn active_recordings() -> &'static Mutex<BTreeSet<String>> {
 }
 
 fn milestone_program_edits() -> &'static Mutex<()> {
+    static EDITS: OnceLock<Mutex<()>> = OnceLock::new();
+    EDITS.get_or_init(|| Mutex::new(()))
+}
+
+fn timeline_label_edits() -> &'static Mutex<()> {
     static EDITS: OnceLock<Mutex<()>> = OnceLock::new();
     EDITS.get_or_init(|| Mutex::new(()))
 }
@@ -217,6 +223,8 @@ pub struct GraphOrigin {
 pub struct GraphSegment {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub profile: String,
     pub artifact: GraphArtifact,
@@ -339,6 +347,15 @@ pub struct BrowserDraftRenameRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct BrowserSegmentRenameRequest {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub expected_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserMilestoneProgramUpdateRequest {
     pub expected_revision_sha256: String,
     pub source: String,
@@ -375,6 +392,13 @@ pub struct DraftRenameResult {
     pub id: String,
     pub label: String,
     pub graph_revision: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SegmentRenameResult {
+    pub schema: String,
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1008,6 +1032,7 @@ pub fn graph_from_timeline(
                 && materialize_segment_chain(timeline, repository_root, &segment.id).is_ok();
             GraphSegment {
                 id: segment.id.clone(),
+                name: segment.name.clone(),
                 parent: segment.parent.clone(),
                 profile: segment.profile.as_str().into(),
                 artifact: graph_artifact(&segment.artifact),
@@ -1589,6 +1614,230 @@ fn rename_draft_label(
         id: request.id.clone(),
         label,
         graph_revision: draft_graph_revision(&updated)?,
+    })
+}
+
+#[derive(Debug)]
+enum SegmentRenameError {
+    Conflict(String),
+    Invalid(WorkbenchError),
+}
+
+impl fmt::Display for SegmentRenameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conflict(message) => formatter.write_str(message),
+            Self::Invalid(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<WorkbenchError> for SegmentRenameError {
+    fn from(error: WorkbenchError) -> Self {
+        Self::Invalid(error)
+    }
+}
+
+fn validate_segment_name(name: &str) -> Result<String, WorkbenchError> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 160
+        || name.chars().any(char::is_control)
+        || name.contains(['"', '\\'])
+    {
+        return Err(WorkbenchError::new(
+            "segment name must be 1 to 160 UTF-8 bytes without controls, quotes, or backslashes",
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+fn timeline_line_ending(line: &str) -> &str {
+    if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    }
+}
+
+fn rename_segment_in_timeline_source(
+    source: &str,
+    id: &str,
+    name: &str,
+) -> Result<String, WorkbenchError> {
+    let lines = source.split_inclusive('\n').collect::<Vec<_>>();
+    let mut segment_index = None;
+    let mut label_index = None;
+    for (index, line) in lines.iter().enumerate() {
+        let raw = line.trim_end_matches(['\r', '\n']);
+        let tokens =
+            tokenize(raw, index + 1).map_err(|error| WorkbenchError::new(error.to_string()))?;
+        if tokens.first().map(String::as_str) == Some("segment")
+            && tokens.get(1).map(String::as_str) == Some(id)
+        {
+            segment_index = Some(index);
+        }
+        if tokens.first().map(String::as_str) == Some("label")
+            && tokens.get(1).map(String::as_str) == Some(id)
+        {
+            label_index = Some(index);
+        }
+    }
+    let segment_index =
+        segment_index.ok_or_else(|| WorkbenchError::new(format!("unknown segment {id:?}")))?;
+    let preferred_ending = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let authored = format!("label {id} \"{name}\"");
+    let mut output = String::with_capacity(source.len() + authored.len() + 4);
+    for (index, line) in lines.iter().enumerate() {
+        if label_index == Some(index) {
+            output.push_str(&authored);
+            output.push_str(timeline_line_ending(line));
+            continue;
+        }
+        output.push_str(line);
+        if label_index.is_none() && index == segment_index {
+            if timeline_line_ending(line).is_empty() {
+                output.push_str(preferred_ending);
+            }
+            output.push_str(&authored);
+            output.push_str(preferred_ending);
+        }
+    }
+    Ok(output)
+}
+
+fn validated_timeline_edit_path(path: &Path) -> Result<PathBuf, WorkbenchError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot inspect timeline {}: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(WorkbenchError::new(format!(
+            "timeline {} is not a physical regular file",
+            path.display()
+        )));
+    }
+    fs::canonicalize(path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve timeline {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn rename_segment(
+    timeline_path: &Path,
+    request: &BrowserSegmentRenameRequest,
+) -> Result<SegmentRenameResult, SegmentRenameError> {
+    let name = validate_segment_name(&request.name)?;
+    let _edit = timeline_label_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("timeline label edit lock is poisoned"))?;
+    let path = validated_timeline_edit_path(timeline_path)?;
+    let original = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!("cannot read timeline {}: {error}", path.display()))
+    })?;
+    let source = String::from_utf8(original.clone())
+        .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
+    let timeline =
+        Timeline::parse(&source).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let segment = timeline
+        .segments
+        .get(&request.id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown segment {:?}", request.id)))?;
+    if segment.name != request.expected_name {
+        return Err(SegmentRenameError::Conflict(
+            "segment name changed; reload before renaming".into(),
+        ));
+    }
+    let replacement_source = rename_segment_in_timeline_source(&source, &request.id, &name)?;
+    let replacement_timeline = Timeline::parse(&replacement_source)
+        .map_err(|error| WorkbenchError::new(error.to_string()))?;
+    if replacement_timeline
+        .segments
+        .get(&request.id)
+        .and_then(|segment| segment.name.as_deref())
+        != Some(name.as_str())
+    {
+        return Err(
+            WorkbenchError::new("renamed timeline did not preserve segment identity").into(),
+        );
+    }
+
+    let directory = path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("timeline has no parent directory"))?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| WorkbenchError::new("timeline filename is not UTF-8"))?;
+    let nonce = random_session_token()?;
+    let temporary = directory.join(format!(".{filename}.{nonce}.tmp"));
+    let backup = directory.join(format!(".{filename}.{nonce}.rollback"));
+    let mut temporary_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create adjacent timeline temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    temporary_file
+        .write_all(replacement_source.as_bytes())
+        .and_then(|()| temporary_file.sync_all())
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot flush timeline temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    drop(temporary_file);
+
+    if validated_timeline_edit_path(timeline_path)? != path
+        || fs::read(&path).ok() != Some(original.clone())
+    {
+        return Err(SegmentRenameError::Conflict(
+            "timeline changed while preparing rename; reload and retry".into(),
+        ));
+    }
+    fs::rename(&path, &backup).map_err(|error| {
+        WorkbenchError::new(format!("cannot stage timeline rollback backup: {error}"))
+    })?;
+    if fs::read(&backup).ok() != Some(original) {
+        fs::rename(&backup, &path).map_err(|rollback| {
+            WorkbenchError::new(format!(
+                "timeline changed while staging its rollback backup and could not be restored: {rollback}"
+            ))
+        })?;
+        return Err(
+            WorkbenchError::new("timeline changed while staging its rollback backup").into(),
+        );
+    }
+    if let Err(error) = fs::rename(&temporary, &path) {
+        fs::rename(&backup, &path).map_err(|rollback| {
+            WorkbenchError::new(format!(
+                "cannot replace timeline ({error}) or restore rollback backup ({rollback})"
+            ))
+        })?;
+        return Err(WorkbenchError::new(format!("cannot replace timeline: {error}")).into());
+    }
+    temporary_cleanup.0 = None;
+    let _ = fs::remove_file(backup);
+    Ok(SegmentRenameResult {
+        schema: SEGMENT_RENAME_RESULT_SCHEMA.into(),
+        id: request.id.clone(),
+        name,
     })
 }
 
@@ -3807,6 +4056,27 @@ fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/segments/rename") => {
+                    let result =
+                        serde_json::from_slice::<BrowserSegmentRenameRequest>(&request.body)
+                            .map_err(|error| {
+                                SegmentRenameError::Invalid(WorkbenchError::new(format!(
+                                    "invalid segment rename request: {error}"
+                                )))
+                            })
+                            .and_then(|rename_request| {
+                                rename_segment(&config.timeline_path, &rename_request)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error @ SegmentRenameError::Conflict(_)) => {
+                            json_error(409, "Conflict", &error.to_string())
+                        }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/milestone-program") => {
                     let result = serde_json::from_slice::<BrowserMilestoneProgramUpdateRequest>(
                         &request.body,
@@ -4055,6 +4325,7 @@ mod tests {
             r#"
 timeline test
 segment boot_link.one root profile boot_to_fsp103 uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+label boot_link.one "Boot to Link"
 segment link_exit.one after boot_link.one profile fsp103_to_fsp104 uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 continuation main starts root@clean
 continue main with boot_link.one after root@clean
@@ -4188,12 +4459,13 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
         write_tape(&root, "second.tape", &[5, 6, 7]);
         let graph = graph_from_timeline(&timeline(), &root).unwrap();
-        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v5");
+        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v6");
         assert!(graph.origin.is_none());
         assert_eq!(graph.segments.len(), 2);
         assert!(graph.segments.iter().all(|segment| segment.playable));
         assert!(graph.segments.iter().all(|segment| !segment.recordable));
         assert_eq!(graph.segments[0].parent, None);
+        assert_eq!(graph.segments[0].name.as_deref(), Some("Boot to Link"));
         assert_eq!(graph.segments[1].parent.as_deref(), Some("boot_link.one"));
         let playback = materialize_segment_chain(&timeline(), &root, "link_exit.one").unwrap();
         assert_eq!(playback.tape.frames.len(), 7);
@@ -4572,6 +4844,9 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "childSegments",
             "segment.parent==null",
             "segmentActions",
+            "data-rename-segment",
+            "renameSegment",
+            "/api/segments/rename",
             "selection:{kind:'segment',id}",
             "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
@@ -5502,6 +5777,126 @@ continue main with boot_link.tas after root@clean
         let exited = graph_with_drafts(&timeline(), &root, &state).unwrap();
         assert_eq!(exited.drafts[0].status, DraftStatus::Ready);
         assert!(exited.drafts[0].playable);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn segment_rename_edits_only_git_owned_display_metadata() {
+        let root = temporary_root("segment-rename");
+        let path = root.join("route.timeline");
+        fs::write(&path, milestone_timeline_source()).unwrap();
+
+        let first = rename_segment(
+            &path,
+            &BrowserSegmentRenameRequest {
+                id: "boot_link.one".into(),
+                name: "  Boot to Link control  ".into(),
+                expected_name: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(first.name, "Boot to Link control");
+        let first_source = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            first_source
+                .lines()
+                .filter(|line| line.starts_with("label boot_link.one "))
+                .count(),
+            1
+        );
+        let first_timeline = Timeline::parse(&first_source).unwrap();
+        let segment = &first_timeline.segments["boot_link.one"];
+        assert_eq!(segment.name.as_deref(), Some("Boot to Link control"));
+        assert_eq!(segment.parent, None);
+        assert_eq!(segment.end_fingerprint, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(first_timeline.goals["control"].segment, "boot_link.one");
+
+        let stale = rename_segment(
+            &path,
+            &BrowserSegmentRenameRequest {
+                id: "boot_link.one".into(),
+                name: "stale".into(),
+                expected_name: None,
+            },
+        );
+        assert!(matches!(stale, Err(SegmentRenameError::Conflict(_))));
+
+        rename_segment(
+            &path,
+            &BrowserSegmentRenameRequest {
+                id: "boot_link.one".into(),
+                name: "Fast boot".into(),
+                expected_name: Some("Boot to Link control".into()),
+            },
+        )
+        .unwrap();
+        let second_source = fs::read_to_string(&path).unwrap();
+        assert_eq!(second_source.matches("label boot_link.one ").count(), 1);
+        assert_eq!(
+            Timeline::parse(&second_source).unwrap().segments["boot_link.one"]
+                .name
+                .as_deref(),
+            Some("Fast boot")
+        );
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            !name.ends_with(".tmp") && !name.ends_with(".rollback")
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn segment_rename_http_rejects_identity_and_path_smuggling() {
+        let root = temporary_root("segment-rename-http");
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, milestone_timeline_source()).unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: timeline_path.clone(),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: root.join("unused-game"),
+            dvd: root.join("unused-dvd"),
+            state_root: root.join("state"),
+        };
+        let smuggled = serde_json::json!({
+            "id": "boot_link.one",
+            "name": "renamed",
+            "expected_name": null,
+            "path": "../outside.timeline",
+            "new_id": "different-segment"
+        });
+        let rejected = call_http(
+            &config,
+            "POST",
+            "/api/segments/rename",
+            &serde_json::to_vec(&smuggled).unwrap(),
+        );
+        assert_eq!(rejected.status, 400);
+
+        let request = BrowserSegmentRenameRequest {
+            id: "boot_link.one".into(),
+            name: "Named through HTTP".into(),
+            expected_name: None,
+        };
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/segments/rename",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(response.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["id"], "boot_link.one");
+        assert_eq!(body["name"], "Named through HTTP");
+        assert!(body.get("path").is_none());
+        assert!(body.get("new_id").is_none());
+        let stale = call_http(
+            &config,
+            "POST",
+            "/api/segments/rename",
+            &serde_json::to_vec(&request).unwrap(),
+        );
+        assert_eq!(stale.status, 409);
         fs::remove_dir_all(root).unwrap();
     }
 

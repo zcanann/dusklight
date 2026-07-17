@@ -79,6 +79,11 @@ controller ownership when the selected tape ends. Named continuations are
 bookmarks and preferred paths, not playback authorization; an unpinned sibling
 remains playable when its structural chain and fingerprints are valid.
 
+Segment **Rename** writes a human-facing `label` beside the segment declaration
+in the Git-owned timeline. The immutable segment ID remains the key used by
+parents, goals, proofs, artifacts, and playback, so renaming never rewrites the
+tree or invalidates evidence.
+
 **Record child** performs the same deterministic prefix replay, then begins
 recording live port-0 input on the first PAD read after handoff. The prefix can
 run hidden, muted, and unpaced, but it is still simulated rather than replaced
@@ -92,7 +97,7 @@ verification state. Promotion creates a normal checked-in segment. Restarting
 the workbench rediscovers ready drafts from disk.
 
 Draft **Rename** changes only its human label. **Delete** previews and moves the
-selected draft subtree to recoverable trash; it never edits checked-in route
+selected draft subtree to recoverable trash; it never deletes checked-in route
 objects. Active, corrupt, detached, or path-escaping drafts are rejected.
 
 Predicate editing is likewise separate from topology. The server exposes only
@@ -119,7 +124,9 @@ predicate_program intro/milestones.milestones
 origin boot predicate process_boot
 
 segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces LINK_STATE
+label golf439 "Boot to Link control"
 segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human420.tape starts LINK_STATE produces CRAWL_STATE_A
+label human420 "Link control to tunnel crawl"
 segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
 
 goal link_control on golf439 predicate link_control
