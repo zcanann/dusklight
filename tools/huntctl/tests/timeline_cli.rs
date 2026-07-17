@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 2);
+    assert_eq!(summary["segments"], 3);
 
     let status = run(&[
         "timeline",
@@ -53,6 +53,32 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
         "to_ordon_spring_human150"
     );
     assert_eq!(status["workspace"]["steps"][1]["state"], "unchanged");
+
+    let alternative = run(&[
+        "timeline",
+        "status",
+        "--timeline",
+        route.to_str().unwrap(),
+        "--continuation",
+        "main",
+        "--select",
+        "to_ordon_spring_human150=to_ordon_spring_search144",
+    ]);
+    assert!(
+        alternative.status.success(),
+        "{}",
+        String::from_utf8_lossy(&alternative.stderr)
+    );
+    let alternative: serde_json::Value = serde_json::from_slice(&alternative.stdout).unwrap();
+    assert_eq!(
+        alternative["workspace"]["steps"][1]["workspace_segment"],
+        "to_ordon_spring_search144"
+    );
+    assert_eq!(alternative["workspace"]["steps"][1]["state"], "selected");
+    assert_eq!(
+        alternative["workspace"]["steps"][1]["rebase_compatible"],
+        true
+    );
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -920,19 +920,22 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &lineage,
                 MaterializeTarget::ThroughSegment(parent_segment.clone()),
             )?;
-            let through_goal = materialize_lineage(
+            let through_goal = huntctl::route_workbench::materialize_segment_chain(
                 &timeline,
                 artifact_root,
-                &lineage,
-                MaterializeTarget::ThroughSegment(segment.id.clone()),
+                &segment.id,
             )?;
             if through_goal.steps.len() != prefix.steps.len() + 1
                 || through_goal.steps.last().map(|step| step.segment.as_str())
                     != Some(segment_name.as_str())
+                || through_goal.steps[..prefix.steps.len()]
+                    .iter()
+                    .map(|step| step.segment.as_str())
+                    .ne(prefix.steps.iter().map(|step| step.segment.as_str()))
                 || through_goal.tape.frames.len() <= prefix.tape.frames.len()
             {
                 return Err(format!(
-                    "lineage {lineage:?} does not contain {segment_name:?} immediately after parent segment {parent_segment:?}"
+                    "segment {segment_name:?} is not an exact structural child of parent {parent_segment:?} on lineage {lineage:?}"
                 )
                 .into());
             }
