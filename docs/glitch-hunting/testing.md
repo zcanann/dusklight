@@ -160,6 +160,33 @@ open a valid image, Dusklight exits with an error instead of falling back to the
 interactive prelaunch screen. `--automation-data-root` likewise requires an
 input tape and an existing directory.
 
+## Deterministic visual shader warmup
+
+Visual playback from the route workbench keeps a persistent renderer cache at
+`<workbench-state>/renderer-cache`. Gameplay configuration, memory cards, and
+recording state remain isolated per launch; only Aurora's exact GX pipeline
+manifest and Dawn's backend-compiled shader cache are shared.
+
+On a fixed-step visual automation run, Dusklight does not admit simulation
+ticks or emulated VI retraces while previously learned pipelines are still
+compiling. A pipeline first encountered later in the run is compiled
+synchronously before its draw is accepted. This can pause wall-clock playback,
+but it cannot advance game time or display a frame with that draw omitted.
+Headless/null-renderer searches do not pay this cost.
+
+The cache learns incrementally. The first playback of a new route still has to
+compile its new pipeline configurations; later playbacks precompile those
+known configurations before the tape begins. For a direct launch, create a
+stable directory and pass it separately from the disposable automation state:
+
+```powershell
+New-Item -ItemType Directory -Force build/renderer-cache | Out-Null
+New-Item -ItemType Directory -Force build/automation-state/run-001 | Out-Null
+dusklight --dvd game.iso --fixed-step --input-tape run.tape `
+  --automation-data-root build/automation-state/run-001 `
+  --renderer-cache-root build/renderer-cache
+```
+
 ## Authoring a custom tape
 
 Copy the smoke `.tas` fixture, define reusable controller states, add exact

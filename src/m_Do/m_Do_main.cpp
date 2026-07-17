@@ -246,6 +246,7 @@ static bool prepare_automation_pre_input_boundary();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
+static bool pipelineWarmupGateEnabled;
 static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
@@ -345,9 +346,21 @@ void main01(void) {
             continue;
         }
 
+        dusk::lastFrameAuroraStats = *aurora_get_stats();
+
+        // Do not fire an emulated VI retrace while warming renderer-only state: retrace callbacks
+        // are part of the emulated machine and must remain aligned with admitted simulation ticks.
+        if (pipelineWarmupGateEnabled && dusk::lastFrameAuroraStats.queuedPipelines > 0) {
+            mDoGph_gInf_c::updateRenderSize();
+            dusk::ui::update();
+            dusk::game_clock::reset_frame_timer();
+            aurora_end_frame();
+            SDL_Delay(1);
+            continue;
+        }
+
         VIWaitForRetrace();
 
-        dusk::lastFrameAuroraStats = *aurora_get_stats();
         mDoGph_gInf_c::updateRenderSize();
 
         dusk::ui::update();
@@ -1697,6 +1710,7 @@ int game_main(int argc, char* argv[]) {
             ("record-input-start-fingerprint", "Expected lowercase XXH3-128 boundary fingerprint at recording handoff", cxxopts::value<std::string>())
             ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
+            ("renderer-cache-root", "Use an explicit persistent renderer-only shader and pipeline cache", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
@@ -2159,6 +2173,7 @@ int game_main(int argc, char* argv[]) {
 
     std::filesystem::path automationCardRoot;
     std::filesystem::path automationDataRoot;
+    std::filesystem::path rendererCacheRoot;
     if (parsed_arg_options.count("automation-data-root")) {
         if (!hasAutomationInput && !recordInputFromBoot) {
             fprintf(stderr,
@@ -2200,6 +2215,24 @@ int game_main(int argc, char* argv[]) {
         if (cardRootError) {
             fprintf(stderr, "Memory Card Error: cannot resolve automation card root: %s\n",
                     cardRootError.message().c_str());
+            return 1;
+        }
+    }
+    if (parsed_arg_options.count("renderer-cache-root")) {
+        rendererCacheRoot =
+            std::filesystem::u8path(parsed_arg_options["renderer-cache-root"].as<std::string>());
+        std::error_code cacheRootError;
+        if (!std::filesystem::is_directory(rendererCacheRoot, cacheRootError)) {
+            fprintf(stderr, "Renderer Cache Error: cache root '%s' is not a directory%s%s\n",
+                    dusk::io::fs_path_to_string(rendererCacheRoot).c_str(),
+                    cacheRootError ? ": " : "",
+                    cacheRootError ? cacheRootError.message().c_str() : "");
+            return 1;
+        }
+        rendererCacheRoot = std::filesystem::absolute(rendererCacheRoot, cacheRootError);
+        if (cacheRootError) {
+            fprintf(stderr, "Renderer Cache Error: cannot resolve cache root: %s\n",
+                    cacheRootError.message().c_str());
             return 1;
         }
     }
@@ -2582,11 +2615,14 @@ int game_main(int argc, char* argv[]) {
 
     {
         const auto userPathString = dusk::ConfigPath.u8string();
-        const auto cachePathString = dusk::CachePath.u8string();
+        const auto duskCachePathString = dusk::CachePath.u8string();
+        const auto cachePathString =
+            (rendererCacheRoot.empty() ? dusk::CachePath : rendererCacheRoot).u8string();
         AuroraConfig config{};
         config.appName = dusk::AppName;
         config.userPath = reinterpret_cast<const char*>(userPathString.c_str());
-        config.cachePath = reinterpret_cast<const char*>(cachePathString.c_str());
+        config.cachePath = reinterpret_cast<const char*>(duskCachePathString.c_str());
+        config.rendererCachePath = reinterpret_cast<const char*>(cachePathString.c_str());
 #ifdef DUSK_ASSET_DIR
         config.resourcesPath = DUSK_ASSET_DIR;
 #endif
@@ -2617,6 +2653,15 @@ int game_main(int argc, char* argv[]) {
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
         config.disablePresentation = headlessMainLoop;
+        config.blockOnPipelineCompilation = deterministicAutomationIo && !headlessMainLoop;
+        pipelineWarmupGateEnabled = config.blockOnPipelineCompilation;
+        if (config.blockOnPipelineCompilation) {
+            DuskLog.info("Visual automation: pipeline compilation is blocking; simulation draws will not be skipped");
+        }
+        if (!rendererCacheRoot.empty()) {
+            DuskLog.info("Renderer cache root: {}",
+                         dusk::io::fs_path_to_string(rendererCacheRoot));
+        }
         auroraInfo = aurora_initialize(argc, argv, &config);
     }
 

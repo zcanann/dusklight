@@ -2294,6 +2294,13 @@ fn launch_materialized(
             config.state_root.display()
         ))
     })?;
+    let renderer_cache_root = state_parent.join("renderer-cache");
+    fs::create_dir_all(&renderer_cache_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create renderer cache {}: {error}",
+            renderer_cache_root.display()
+        ))
+    })?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -2517,6 +2524,10 @@ fn append_playback_args(
     seed_stage: Option<&str>,
     fast_forward_frames: Option<u64>,
 ) {
+    let renderer_cache_root = state_root
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("renderer-cache");
     command
         .arg("--dvd")
         .arg(dvd)
@@ -2533,6 +2544,8 @@ fn append_playback_args(
         .arg("--fixed-step")
         .arg("--automation-data-root")
         .arg(state_root)
+        .arg("--renderer-cache-root")
+        .arg(&renderer_cache_root)
         .arg("--cvar")
         .arg("game.instantSaves=true")
         .arg("--cvar")
@@ -2716,6 +2729,13 @@ fn record_continuation(
     let continuation = directory.join(DRAFT_TAPE);
     let state = directory.join("state");
     fs::create_dir(&state).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let renderer_cache_root = config.state_root.join("renderer-cache");
+    fs::create_dir_all(&renderer_cache_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create renderer cache {}: {error}",
+            renderer_cache_root.display()
+        ))
+    })?;
     let created_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -2769,6 +2789,8 @@ fn record_continuation(
         .arg("--fixed-step")
         .arg("--automation-data-root")
         .arg(&state)
+        .arg("--renderer-cache-root")
+        .arg(&renderer_cache_root)
         .arg("--cvar")
         .arg("game.instantSaves=true")
         .arg("--cvar")
@@ -5068,6 +5090,13 @@ continue main with boot_link.tas after root@clean
                 .find(|window| window[0] == "--input-tape")
                 .unwrap()[1],
             "full-chain.tape"
+        );
+        assert_eq!(
+            arguments
+                .windows(2)
+                .find(|window| window[0] == "--renderer-cache-root")
+                .unwrap()[1],
+            "renderer-cache"
         );
 
         let mut boot = Command::new("game");
