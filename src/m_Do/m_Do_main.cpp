@@ -647,6 +647,7 @@ static bool mainCalled = false;
 static bool exitAfterInputTape;
 static bool inputTapePlaybackFailed;
 static bool frameCaptureEnabled;
+static bool playbackThumbnailCaptureEnabled;
 static bool frameCaptureRequested;
 static bool frameCaptureFailed;
 static std::filesystem::path frameCapturePath;
@@ -1263,26 +1264,38 @@ static std::string frame_capture_error_message() {
 }
 
 static void finish_automation_frame_capture() {
-    if (!frameCaptureEnabled || !frameCaptureRequested) {
+    if ((!frameCaptureEnabled && !playbackThumbnailCaptureEnabled) || !frameCaptureRequested) {
         return;
     }
+    const bool required = frameCaptureEnabled;
     const AuroraFrameCaptureStatus status = aurora_get_frame_capture_status();
     if (status == AURORA_FRAME_CAPTURE_PENDING) {
         frameCaptureEnabled = false;
-        frameCaptureFailed = true;
-        DuskLog.error("Terminal automation frame capture remained pending after aurora_end_frame");
+        playbackThumbnailCaptureEnabled = false;
+        if (required) {
+            frameCaptureFailed = true;
+            DuskLog.error("Terminal automation frame capture remained pending after aurora_end_frame");
+        } else {
+            DuskLog.warn("Optional playback thumbnail remained pending after aurora_end_frame");
+        }
         return;
     }
     frameCaptureEnabled = false;
+    playbackThumbnailCaptureEnabled = false;
     if (status == AURORA_FRAME_CAPTURE_SUCCEEDED) {
         DuskLog.info("Captured terminal automation frame to {} ({}x{})",
                      dusk::io::fs_path_to_string(frameCapturePath), frameCaptureWidth,
                      frameCaptureHeight);
         return;
     }
-    frameCaptureFailed = true;
-    DuskLog.error("Terminal automation frame capture failed: {}",
-                  frame_capture_error_message());
+    if (required) {
+        frameCaptureFailed = true;
+        DuskLog.error("Terminal automation frame capture failed: {}",
+                      frame_capture_error_message());
+    } else {
+        DuskLog.warn("Optional playback thumbnail capture failed: {}",
+                     frame_capture_error_message());
+    }
 }
 
 static void capture_terminal_recording_thumbnail() {
@@ -1396,18 +1409,24 @@ static bool finish_input_tape_tick() {
         dusk::IsRunning = false;
         return true;
     }
-    if (frameCaptureEnabled && !frameCaptureRequested) {
+    if ((frameCaptureEnabled || playbackThumbnailCaptureEnabled) && !frameCaptureRequested) {
         const std::string outputPath = dusk::io::fs_path_to_string(frameCapturePath);
         if (!aurora_capture_next_frame_png(
                 outputPath.c_str(), frameCaptureWidth, frameCaptureHeight))
         {
-            frameCaptureFailed = true;
-            DuskLog.error("Could not arm terminal automation frame capture: {}",
-                          frame_capture_error_message());
-            dusk::IsRunning = false;
-            return true;
+            if (frameCaptureEnabled) {
+                frameCaptureFailed = true;
+                DuskLog.error("Could not arm terminal automation frame capture: {}",
+                              frame_capture_error_message());
+                dusk::IsRunning = false;
+                return true;
+            }
+            playbackThumbnailCaptureEnabled = false;
+            DuskLog.warn("Could not arm optional playback thumbnail capture: {}",
+                         frame_capture_error_message());
+        } else {
+            frameCaptureRequested = true;
         }
-        frameCaptureRequested = true;
     }
     if (exitAfterInputTape) {
         dusk::IsRunning = false;
@@ -1914,6 +1933,7 @@ int game_main(int argc, char* argv[]) {
             ("record-input-start-fingerprint", "Expected lowercase XXH3-128 boundary fingerprint at recording handoff", cxxopts::value<std::string>())
             ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
             ("frame-capture-png", "Capture the resolved final input-tape frame to a PNG, hidden on a real renderer", cxxopts::value<std::string>())
+            ("input-tape-thumbnail-png", "Best-effort capture of the terminal input-tape frame before live controller handoff", cxxopts::value<std::string>())
             ("frame-capture-width", "Frame-capture output width (default 320)", cxxopts::value<std::uint32_t>()->default_value("320"))
             ("frame-capture-height", "Frame-capture output height (default 180)", cxxopts::value<std::uint32_t>()->default_value("180"))
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
@@ -1994,6 +2014,8 @@ int game_main(int argc, char* argv[]) {
     }
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
     frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
+    playbackThumbnailCaptureEnabled =
+        parsed_arg_options.count("input-tape-thumbnail-png") != 0;
     frameCaptureWidth = parsed_arg_options["frame-capture-width"].as<std::uint32_t>();
     frameCaptureHeight = parsed_arg_options["frame-capture-height"].as<std::uint32_t>();
     const bool explicitlyUnpaced = parsed_arg_options["unpaced"].as<bool>();
@@ -2130,6 +2152,35 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         frameCapturePath = std::filesystem::u8path(outputPath);
+    }
+    if (playbackThumbnailCaptureEnabled) {
+        const std::string outputPath =
+            parsed_arg_options["input-tape-thumbnail-png"].as<std::string>();
+        if (frameCaptureEnabled || outputPath.empty() || !hasInputTape || hasInputController ||
+            exitAfterInputTape || headlessMainLoop) {
+            fprintf(stderr,
+                    "Playback Thumbnail Error: --input-tape-thumbnail-png requires headful input-tape handoff and cannot be combined with terminal frame capture\n");
+            return 1;
+        }
+        if (parsed_arg_options.count("backend") &&
+            parsed_arg_options["backend"].as<std::string>() == "null") {
+            fprintf(stderr,
+                    "Playback Thumbnail Error: a real renderer backend is required\n");
+            return 1;
+        }
+        frameCapturePath = std::filesystem::u8path(outputPath);
+        frameCaptureWidth = 320;
+        frameCaptureHeight = 240;
+        std::error_code filesystemError;
+        const auto parent = frameCapturePath.parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent, filesystemError);
+        }
+        if (filesystemError || std::filesystem::exists(frameCapturePath, filesystemError)) {
+            fprintf(stderr,
+                    "Playback Thumbnail Error: output directory is unavailable or thumbnail already exists\n");
+            return 1;
+        }
     }
     const auto bootRecordingCliError = dusk::automation::validate_boot_recording_cli({
         .enabled = recordInputFromBoot,

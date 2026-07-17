@@ -442,7 +442,9 @@
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent=`Running ${name}`; $('status').className='status ok';
         const detail=body.fast_forward_frames?` Fast-forwarding ${body.fast_forward_frames} parent frames.`:'';
-        toast(`Launched ${name} from ${body.origin||origin}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.`);
+        const thumbnail=body.thumbnail?' Its missing thumbnail will be captured from the same terminal frame.':'';
+        toast(`Launched ${name} from ${body.origin||origin}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
+        if(body.thumbnail)waitForThumbnail(body.thumbnail).then(async()=>{await load();toast(`Captured the terminal frame for ${name} during normal playback.`);}).catch(error=>toast(error.message,true));
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
@@ -452,7 +454,7 @@
     async function waitForThumbnail(url,timeoutMs=180000) {
       const started=Date.now();
       while(Date.now()-started<timeoutMs) {
-        const response=await fetch(`${url}?ready=${Date.now()}`,{cache:'no-store'});
+        const response=await fetch(url,{cache:'no-store'});
         if(response.ok&&response.headers.get('content-type')?.startsWith('image/png'))return;
         if(response.status!==404) {
           const body=await response.json().catch(()=>({}));

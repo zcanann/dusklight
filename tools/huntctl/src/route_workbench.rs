@@ -520,6 +520,8 @@ pub struct PlayResponse {
     pub origin: PlaybackOrigin,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_forward_frames: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -561,6 +563,12 @@ struct MaterializedPlayback {
     segment: Option<String>,
     tape: InputTape,
     seed_stage: Option<&'static str>,
+}
+
+#[derive(Clone, Debug)]
+struct PlaybackThumbnailCapture {
+    path: PathBuf,
+    url: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1289,6 +1297,38 @@ fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfi
             draft.thumbnail = Some(thumbnail_url(&key));
         }
     }
+}
+
+fn prepare_missing_playback_thumbnail(
+    timeline: &Timeline,
+    config: &WorkbenchConfig,
+    selection: &BrowserSelection,
+) -> Result<Option<PlaybackThumbnailCapture>, WorkbenchError> {
+    let game = canonical_file(&config.game, "game executable")?;
+    let artifact_root = configured_artifact_root(config)?;
+    let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    let build_stamp = thumbnail_build_stamp(&game)
+        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the game executable"))?;
+    let key = graph_node_thumbnail_key(&graph, selection, &build_stamp)?;
+    let path = thumbnail_cache_path(&config.state_root, &key);
+    if thumbnail_file_is_valid(&path) {
+        return Ok(None);
+    }
+    fs::create_dir_all(config.state_root.join(THUMBNAIL_DIRECTORY)).map_err(|error| {
+        WorkbenchError::new(format!("cannot create playback thumbnail cache: {error}"))
+    })?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot remove invalid playback thumbnail {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(Some(PlaybackThumbnailCapture {
+        path,
+        url: thumbnail_url(&key),
+    }))
 }
 
 fn install_recording_thumbnail(
@@ -3242,6 +3282,7 @@ pub fn play(
         request.takeover,
         PlaybackOrigin::Boot,
         None,
+        None,
     )
 }
 
@@ -3252,6 +3293,7 @@ fn launch_materialized(
     takeover: bool,
     origin: PlaybackOrigin,
     fast_forward_frames: Option<u64>,
+    thumbnail: Option<PlaybackThumbnailCapture>,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
@@ -3306,6 +3348,11 @@ fn launch_materialized(
         materialized.seed_stage,
         fast_forward_frames,
     );
+    if let Some(thumbnail) = &thumbnail {
+        command
+            .arg("--input-tape-thumbnail-png")
+            .arg(&thumbnail.path);
+    }
     let artifact_root = configured_artifact_root(config)?;
     append_authored_milestone_args(timeline, &artifact_root, &state_root, &mut command, None)?;
     let child = command
@@ -3322,6 +3369,7 @@ fn launch_materialized(
         input_tape_end: end.into(),
         origin,
         fast_forward_frames,
+        thumbnail: thumbnail.map(|thumbnail| thumbnail.url),
     };
     Ok((response, child))
 }
@@ -3459,6 +3507,13 @@ fn play_draft(
             materialized.tape.frames.len() as u64,
         )?),
     };
+    let thumbnail = prepare_missing_playback_thumbnail(
+        timeline,
+        config,
+        &BrowserSelection::Draft {
+            id: draft_id.into(),
+        },
+    )?;
     launch_materialized(
         timeline,
         config,
@@ -3466,6 +3521,7 @@ fn play_draft(
         true,
         origin,
         fast_forward_frames,
+        thumbnail,
     )
 }
 
@@ -4607,6 +4663,13 @@ fn play_segment(
     let artifact_root = configured_artifact_root(config)?;
     let materialized =
         materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
+    let thumbnail = prepare_missing_playback_thumbnail(
+        timeline,
+        config,
+        &BrowserSelection::Segment {
+            id: segment_id.into(),
+        },
+    )?;
     launch_materialized(
         timeline,
         config,
@@ -4614,6 +4677,7 @@ fn play_segment(
         handoff,
         PlaybackOrigin::Boot,
         None,
+        thumbnail,
     )
 }
 
@@ -5834,6 +5898,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "/api/thumbnails/capture",
             "waitForThumbnail",
             "The node was left unchanged",
+            "fetch(url,{cache:'no-store'})",
         ] {
             assert!(html.contains(required), "missing UI contract {required:?}");
         }
@@ -5843,11 +5908,15 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 "legacy info-dump UI remains: {removed_dump:?}"
             );
         }
+        assert!(!html.contains("?ready=${Date.now()}"));
     }
 
     #[test]
     fn thumbnail_cache_is_content_addressed_validated_and_path_safe() {
         let root = temporary_root("thumbnail-cache");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        fs::write(root.join("route.timeline"), b"timeline thumbnail-test\n").unwrap();
         let state_root = root.join("state");
         let game = root.join("game.exe");
         fs::create_dir(&state_root).unwrap();
@@ -5902,6 +5971,29 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         assert_eq!(
             thumbnail_response(&config, "/api/thumbnails/not-a-digest.png").status,
             404
+        );
+
+        let selection = BrowserSelection::Segment {
+            id: "boot_link.one".into(),
+        };
+        let prepared = prepare_missing_playback_thumbnail(&timeline(), &config, &selection)
+            .unwrap()
+            .expect("a missing thumbnail should be prepared for normal playback");
+        assert!(
+            prepared
+                .path
+                .starts_with(state_root.join(THUMBNAIL_DIRECTORY))
+        );
+        assert_eq!(
+            prepared.url,
+            thumbnail_url(prepared.path.file_stem().unwrap().to_str().unwrap())
+        );
+        fs::write(&prepared.path, &png).unwrap();
+        assert!(
+            prepare_missing_playback_thumbnail(&timeline(), &config, &selection)
+                .unwrap()
+                .is_none(),
+            "normal playback must not overwrite an existing valid thumbnail"
         );
         fs::remove_dir_all(root).unwrap();
     }
