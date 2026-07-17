@@ -47,9 +47,12 @@ For route work, choose the single **Glitch Hunt: Route Workbench** entry under
 then opens a browser containing the checked-in segment tree. Every playable
 segment has **Play from boot**; every non-root segment also has **Play from
 parent**. Parent playback runs the exact composed prefix hidden, muted, and
-unpaced, reveals at the parent boundary, then shows the selected segment at
-paced 30 Hz. Both modes use absolute input frames, own all controller ports
-until the selected segment ends, and then release them to live input.
+unpaced, reveals at the parent boundary, then shows the selected segment using
+the global Playback pacing. **Show accelerated prefix** keeps that fast prefix
+visible when desired. Recording pacing is configured separately. These are
+host-pacing controls only: both modes use absolute 30 Hz input frames, own all
+controller ports until the selected segment ends, and then release them to
+live input at normal pacing.
 
 The workbench replaces per-scenario launch configurations and generated-winner
 dropdown entries. Git-owned segments and repeat-proved generated search results

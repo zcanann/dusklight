@@ -19,6 +19,8 @@
     .status.error,.error-note { color:var(--red); }
     .record-pref { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10px; white-space:nowrap; }
     .record-pref select { padding:4px 22px 4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
+    .record-pref input[type="checkbox"] { width:14px; height:14px; margin:0; accent-color:var(--cyan); cursor:pointer; }
+    .prefix-pref { padding:4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:#b5c0d0; cursor:pointer; }
     .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
@@ -108,6 +110,51 @@
     <div class="mark">D</div>
     <div class="title"><strong>Route Workbench</strong><span id="timelineName">Loading Git timeline…</span></div>
     <div class="spacer"></div>
+    <label class="record-pref" title="Host pacing after parent replay and during normal playback; logical input ticks remain deterministic">
+      <span>Playback</span>
+      <select id="playbackSpeed" aria-label="Playback speed">
+        <option value="0">Uncapped</option>
+        <option value="1">1%</option>
+        <option value="5">5%</option>
+        <option value="10">10%</option>
+        <option value="20">20%</option>
+        <option value="30">30%</option>
+        <option value="40">40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+        <option value="100" selected>100%</option>
+        <option value="125">125%</option>
+        <option value="150">150%</option>
+        <option value="175">175%</option>
+        <option value="200">200%</option>
+        <option value="300">300%</option>
+        <option value="400">400%</option>
+      </select>
+    </label>
+    <label class="record-pref" title="Host pacing after parent replay while recording live input; logical input ticks remain deterministic">
+      <span>Recording</span>
+      <select id="recordingSpeed" aria-label="Recording speed">
+        <option value="1">1%</option>
+        <option value="5">5%</option>
+        <option value="10">10%</option>
+        <option value="20">20%</option>
+        <option value="30">30%</option>
+        <option value="40">40%</option>
+        <option value="50">50%</option>
+        <option value="60">60%</option>
+        <option value="70">70%</option>
+        <option value="80">80%</option>
+        <option value="90">90%</option>
+        <option value="100" selected>100%</option>
+      </select>
+    </label>
+    <label class="record-pref prefix-pref" title="Keep the accelerated parent replay visible instead of hiding its window">
+      <input id="showAcceleratedPrefix" type="checkbox">
+      <span>Show accelerated prefix</span>
+    </label>
     <label class="record-pref" title="Pause on the final parent frame before child recording begins">
       <span>Child handoff</span>
       <select id="recordCountdown" aria-label="Child recording handoff countdown">
@@ -157,7 +204,12 @@
     let collapsed = new Set();
     let occurrenceIndex = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
+    const RECORDING_SPEED_STORAGE_KEY='dusklight.route-workbench.recording-speed-percent';
+    const PLAYBACK_SPEED_STORAGE_KEY='dusklight.route-workbench.playback-speed-percent';
+    const SHOW_ACCELERATED_PREFIX_STORAGE_KEY='dusklight.route-workbench.show-accelerated-prefix';
     const DEFAULT_RECORD_COUNTDOWN_SECONDS=3;
+    const RECORDING_SPEEDS=[1,5,10,20,30,40,50,60,70,80,90,100];
+    const PLAYBACK_SPEEDS=[0,1,5,10,20,30,40,50,60,70,80,90,100,125,150,175,200,300,400];
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const label = value => String(value ?? '').replaceAll('_', ' ');
     const short = value => { const text=String(value ?? ''); return text.length > 20 ? `${text.slice(0,8)}…${text.slice(-7)}` : text; };
@@ -175,6 +227,28 @@
       const seconds=validRecordingCountdown($('recordCountdown').value);
       $('recordCountdown').value=String(seconds);
       try { window.localStorage.setItem(RECORD_COUNTDOWN_STORAGE_KEY,String(seconds)); } catch (_) {}
+    }
+    function validSpeed(value,allowed) {
+      const speed=Number(value);
+      return Number.isInteger(speed)&&allowed.includes(speed)?speed:100;
+    }
+    function loadStoredSpeed(key,allowed) {
+      try {
+        const stored=window.localStorage.getItem(key);
+        return stored===null?100:validSpeed(stored,allowed);
+      } catch (_) { return 100; }
+    }
+    function saveSpeed(selectId,key,allowed) {
+      const speed=validSpeed($(selectId).value,allowed);
+      $(selectId).value=String(speed);
+      try { window.localStorage.setItem(key,String(speed)); } catch (_) {}
+    }
+    function loadShowAcceleratedPrefix() {
+      try { return window.localStorage.getItem(SHOW_ACCELERATED_PREFIX_STORAGE_KEY)==='true'; }
+      catch (_) { return false; }
+    }
+    function saveShowAcceleratedPrefix() {
+      try { window.localStorage.setItem(SHOW_ACCELERATED_PREFIX_STORAGE_KEY,String($('showAcceleratedPrefix').checked)); } catch (_) {}
     }
     function toast(message, error=false) {
       const element=$('toast'); element.textContent=message; element.className=`toast show${error?' error':''}`;
@@ -436,15 +510,18 @@
       const name=segment?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
+      const speedPercent=validSpeed($('playbackSpeed').value,PLAYBACK_SPEEDS);
+      const showAcceleratedPrefix=origin==='parent'&&$('showAcceleratedPrefix').checked;
+      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent=`Running ${name}`; $('status').className='status ok';
-        const detail=body.fast_forward_frames?` Fast-forwarding ${body.fast_forward_frames} parent frames.`:'';
+        const detail=body.fast_forward_frames?` Fast-forwarding ${body.fast_forward_frames} parent frames ${showAcceleratedPrefix?'visibly':'hidden'}.`:'';
+        const pacing=speedPercent===0?'uncapped':`at ${speedPercent}%`;
         const thumbnail=body.thumbnail?' Its missing thumbnail will be captured from the same terminal frame.':'';
-        toast(`Launched ${name} from ${body.origin||origin}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
+        toast(`Launched ${name} from ${body.origin||origin} ${pacing}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
         if(body.thumbnail)waitForThumbnail(body.thumbnail).then(async()=>{await load();toast(`Captured the terminal frame for ${name} during normal playback.`);}).catch(error=>toast(error.message,true));
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
@@ -577,14 +654,16 @@
       const entered=window.prompt('Optional draft label',''); if(entered===null)return;
       const parent=kind==='segment'?{kind,id,terminal_goal:button.dataset.terminalGoal||null}:{kind,id};
       const countdownSeconds=kind==='origin'?0:validRecordingCountdown($('recordCountdown').value);
+      const speedPercent=validSpeed($('recordingSpeed').value,RECORDING_SPEEDS);
+      const showAcceleratedPrefix=kind!=='origin'&&$('showAcceleratedPrefix').checked;
       button.disabled=true; button.textContent='Launching...';
       try {
-        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered,countdown_seconds:countdownSeconds})});
+        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered,countdown_seconds:countdownSeconds,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix})});
         const body=await response.json().catch(()=>({})); if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent='Recording live input'; $('status').className='status ok';
-        const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames hidden, muted, and unpaced first.`:'';
+        const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames ${showAcceleratedPrefix?'visibly':'hidden'}, muted, and unpaced first.`:'';
         const countdown=countdownSeconds?` Holding the final parent frame for a ${countdownSeconds}s handoff countdown.`:'';
-        toast(`Recording ${body.draft_id}.${prefix}${countdown} Close Dusklight normally to finalize.`); setTimeout(load,750);
+        toast(`Recording ${body.draft_id} at ${speedPercent}%.${prefix}${countdown} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
       finally { button.disabled=false; button.textContent=kind==='origin'?'Record from Boot':'Record child'; }
     }
@@ -605,7 +684,13 @@
     $('reload').addEventListener('click',load);
     bindGraphPan();
     $('recordCountdown').value=String(loadRecordingCountdown());
+    $('recordingSpeed').value=String(loadStoredSpeed(RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
+    $('playbackSpeed').value=String(loadStoredSpeed(PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
+    $('showAcceleratedPrefix').checked=loadShowAcceleratedPrefix();
     $('recordCountdown').addEventListener('change',saveRecordingCountdown);
+    $('recordingSpeed').addEventListener('change',()=>saveSpeed('recordingSpeed',RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
+    $('playbackSpeed').addEventListener('change',()=>saveSpeed('playbackSpeed',PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
+    $('showAcceleratedPrefix').addEventListener('change',saveShowAcceleratedPrefix);
     $('savePredicate').addEventListener('click',savePredicate);
     $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
     load();

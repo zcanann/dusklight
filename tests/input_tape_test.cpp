@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -850,6 +852,47 @@ void testRecordedRawInputReplaysThroughExactlyOneClamp() {
     REQUIRE(gStatuses[port].err == expectedPostClamp[port].err);
 }
 
+void testRecorderOutputDependsOnPadTicksNotHostPacing() {
+    using namespace dusk::automation;
+
+    std::array<std::array<PADStatus, kInputPortCount>, 4> ticks{};
+    for (auto& statuses : ticks) {
+        for (std::size_t port = 1; port < statuses.size(); ++port) {
+            statuses[port].err = PAD_ERR_NO_CONTROLLER;
+        }
+    }
+    ticks[0][0].stickX = 64;
+    ticks[1][0].button = PAD_BUTTON_A;
+    ticks[2][0].button = PAD_BUTTON_A | PAD_BUTTON_B;
+    ticks[3][0].button = 0;
+
+    const auto record = [&ticks](const std::chrono::milliseconds hostDelay) {
+        InputTapeRecorder recorder;
+        REQUIRE(recorder.start(1, ticks.size(), 30, 1) == InputTapeError::None);
+        for (const auto& statuses : ticks) {
+            if (hostDelay.count() != 0) {
+                std::this_thread::sleep_for(hostDelay);
+            }
+            REQUIRE(recorder.recordTick(statuses) == InputRecordResult::Recorded);
+        }
+        std::vector<std::uint8_t> encoded;
+        REQUIRE(encode_input_tape(recorder.take(), encoded) == InputTapeError::None);
+        return encoded;
+    };
+
+    const auto normalHostPacing = record(std::chrono::milliseconds(0));
+    const auto slowedHostPacing = record(std::chrono::milliseconds(2));
+    REQUIRE(slowedHostPacing == normalHostPacing);
+
+    InputTape roundTrip;
+    REQUIRE(decode_input_tape(slowedHostPacing, roundTrip) == InputTapeError::None);
+    REQUIRE(roundTrip.tickRateNumerator == 30);
+    REQUIRE(roundTrip.tickRateDenominator == 1);
+    REQUIRE(roundTrip.frames.size() == ticks.size());
+    REQUIRE(roundTrip.frames[1].pads[0].buttons == PAD_BUTTON_A);
+    REQUIRE(roundTrip.frames[2].pads[0].buttons == (PAD_BUTTON_A | PAD_BUTTON_B));
+}
+
 } // namespace
 
 extern "C" void PADSetAutomationStatus(const u32 port, const PADStatus* status) {
@@ -918,6 +961,7 @@ int main() {
     testRecorderCapturesAllPortsWithoutGrowing();
     testRecorderArmsUntilExactHandoff();
     testRecordedRawInputReplaysThroughExactlyOneClamp();
+    testRecorderOutputDependsOnPadTicksNotHostPacing();
     std::cout << "input tape tests passed\n";
     return 0;
 }

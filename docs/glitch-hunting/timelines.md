@@ -93,9 +93,10 @@ Git exposes and can restore the complete topology edit.
 
 **Record child** performs the same deterministic prefix replay, then begins
 recording live port-0 input on the first PAD read after handoff. The prefix can
-run hidden, muted, and unpaced, but it is still simulated rather than replaced
-with a partial save. The window becomes visible and normal pacing returns at
-handoff.
+run hidden or visible, muted, and unpaced, but it is still simulated rather
+than replaced with a partial save. The global Recording control selects host
+pacing after handoff; it never changes the deterministic 30 Hz logical tick or
+the one-input-frame-per-tick contract.
 
 Closing Dusklight finalizes the recording beneath the ignored
 `build/automation-state/route-workbench/drafts/` tree. Drafts are temporary
@@ -181,10 +182,13 @@ result, exposes both **Play from boot** and **Play from parent**. Parent playbac
 still composes the complete absolute tape. It verifies that the tape begins
 with the exact current parent chain, runs those parent frames hidden, muted,
 fixed-step, and unpaced, then reveals the submitted parent-boundary image and
-plays only the selected segment visibly at 30 Hz. Input releases to the human
-when the selected segment ends. This is accelerated deterministic replay, not
-a checkpoint or save-state restore; root segments have no parent boundary and
-therefore expose boot playback only.
+plays only the selected segment at the global Playback host-pacing setting.
+The prefix can instead remain visible with **Show accelerated prefix**; it is
+still muted, unpaced, and fully simulated. Playback supports 1%-400% pacing or
+uncapped. Input releases to the human at normal pacing when the selected
+segment ends. None of these controls change logical game time. This is
+accelerated deterministic replay, not a checkpoint or save-state restore; root
+segments have no parent boundary and therefore expose boot playback only.
 
 ## Route store
 

@@ -358,6 +358,13 @@ pub struct BrowserPlayRequest {
     pub handoff: bool,
     #[serde(default)]
     pub origin: PlaybackOrigin,
+    #[serde(
+        default = "default_speed_percent",
+        deserialize_with = "deserialize_playback_speed_percent"
+    )]
+    pub speed_percent: u16,
+    #[serde(default)]
+    pub show_accelerated_prefix: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -377,6 +384,45 @@ pub enum BrowserSelection {
 
 const DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS: u8 = 3;
 const MAX_RECORD_INPUT_COUNTDOWN_SECONDS: u8 = 10;
+const RECORDING_SPEED_PERCENTAGES: &[u16] = &[1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const PLAYBACK_SPEED_PERCENTAGES: &[u16] = &[
+    0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200, 300, 400,
+];
+
+fn default_speed_percent() -> u16 {
+    100
+}
+
+fn deserialize_speed_percent<'de, D>(
+    deserializer: D,
+    allowed: &[u16],
+    description: &str,
+) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let percent = u16::deserialize(deserializer)?;
+    if !allowed.contains(&percent) {
+        return Err(serde::de::Error::custom(format!(
+            "{description} speed percentage {percent} is not supported"
+        )));
+    }
+    Ok(percent)
+}
+
+fn deserialize_playback_speed_percent<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_speed_percent(deserializer, PLAYBACK_SPEED_PERCENTAGES, "playback")
+}
+
+fn deserialize_recording_speed_percent<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_speed_percent(deserializer, RECORDING_SPEED_PERCENTAGES, "recording")
+}
 
 fn default_record_input_countdown_seconds() -> u8 {
     DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS
@@ -406,6 +452,13 @@ pub struct BrowserRecordRequest {
         deserialize_with = "deserialize_record_input_countdown_seconds"
     )]
     pub countdown_seconds: u8,
+    #[serde(
+        default = "default_speed_percent",
+        deserialize_with = "deserialize_recording_speed_percent"
+    )]
+    pub speed_percent: u16,
+    #[serde(default)]
+    pub show_accelerated_prefix: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -564,10 +617,41 @@ pub struct PlayResponse {
     pub frames: u64,
     pub input_tape_end: String,
     pub origin: PlaybackOrigin,
+    pub speed_percent: u16,
+    pub accelerated_prefix_visible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_forward_frames: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlaybackSettings {
+    speed_percent: u16,
+    show_accelerated_prefix: bool,
+}
+
+#[derive(Debug)]
+struct MaterializedLaunchOptions {
+    takeover: bool,
+    origin: PlaybackOrigin,
+    fast_forward_frames: Option<u64>,
+    thumbnail: Option<PlaybackThumbnailCapture>,
+    playback: PlaybackSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlaybackCliOptions<'a> {
+    seed_stage: Option<&'a str>,
+    fast_forward_frames: Option<u64>,
+    playback: PlaybackSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SegmentPlaybackOptions {
+    handoff: bool,
+    origin: PlaybackOrigin,
+    playback: PlaybackSettings,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -577,6 +661,8 @@ pub struct RecordResponse {
     pub manifest: PathBuf,
     pub tape: PathBuf,
     pub frames_before_recording: u64,
+    pub speed_percent: u16,
+    pub accelerated_prefix_visible: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3666,10 +3752,16 @@ pub fn play(
         timeline,
         config,
         materialized,
-        request.takeover,
-        PlaybackOrigin::Boot,
-        None,
-        None,
+        MaterializedLaunchOptions {
+            takeover: request.takeover,
+            origin: PlaybackOrigin::Boot,
+            fast_forward_frames: None,
+            thumbnail: None,
+            playback: PlaybackSettings {
+                speed_percent: 100,
+                show_accelerated_prefix: false,
+            },
+        },
     )
 }
 
@@ -3677,10 +3769,7 @@ fn launch_materialized(
     timeline: &Timeline,
     config: &WorkbenchConfig,
     materialized: MaterializedPlayback,
-    takeover: bool,
-    origin: PlaybackOrigin,
-    fast_forward_frames: Option<u64>,
-    thumbnail: Option<PlaybackThumbnailCapture>,
+    options: MaterializedLaunchOptions,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
@@ -3723,7 +3812,7 @@ fn launch_materialized(
     fs::write(&tape_path, encoded).map_err(|error| {
         WorkbenchError::new(format!("cannot write {}: {error}", tape_path.display()))
     })?;
-    let end = if takeover { "release" } else { "hold" };
+    let end = if options.takeover { "release" } else { "hold" };
     let mut command = Command::new(game);
     command.current_dir(&config.working_directory);
     append_playback_args(
@@ -3732,10 +3821,13 @@ fn launch_materialized(
         &tape_path,
         end,
         &state_root,
-        materialized.seed_stage,
-        fast_forward_frames,
+        PlaybackCliOptions {
+            seed_stage: materialized.seed_stage,
+            fast_forward_frames: options.fast_forward_frames,
+            playback: options.playback,
+        },
     );
-    if let Some(thumbnail) = &thumbnail {
+    if let Some(thumbnail) = &options.thumbnail {
         command
             .arg("--input-tape-thumbnail-png")
             .arg(&thumbnail.path);
@@ -3754,9 +3846,12 @@ fn launch_materialized(
         session_id,
         frames: materialized.tape.frames.len() as u64,
         input_tape_end: end.into(),
-        origin,
-        fast_forward_frames,
-        thumbnail: thumbnail.map(|thumbnail| thumbnail.url),
+        origin: options.origin,
+        speed_percent: options.playback.speed_percent,
+        accelerated_prefix_visible: options.fast_forward_frames.is_some()
+            && options.playback.show_accelerated_prefix,
+        fast_forward_frames: options.fast_forward_frames,
+        thumbnail: options.thumbnail.map(|thumbnail| thumbnail.url),
     };
     Ok((response, child))
 }
@@ -3848,8 +3943,14 @@ fn capture_thumbnail(
         &tape_path,
         "release",
         &session_root,
-        materialized.seed_stage,
-        None,
+        PlaybackCliOptions {
+            seed_stage: materialized.seed_stage,
+            fast_forward_frames: None,
+            playback: PlaybackSettings {
+                speed_percent: 100,
+                show_accelerated_prefix: false,
+            },
+        },
     );
     command
         .arg("--unpaced")
@@ -3879,6 +3980,8 @@ fn play_draft(
     config: &WorkbenchConfig,
     draft_id: &str,
     origin: PlaybackOrigin,
+    speed_percent: u16,
+    show_accelerated_prefix: bool,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_draft(timeline, &artifact_root, &config.state_root, draft_id)?;
@@ -3903,10 +4006,16 @@ fn play_draft(
         timeline,
         config,
         materialized,
-        true,
-        origin,
-        fast_forward_frames,
-        thumbnail,
+        MaterializedLaunchOptions {
+            takeover: true,
+            origin,
+            fast_forward_frames,
+            thumbnail,
+            playback: PlaybackSettings {
+                speed_percent,
+                show_accelerated_prefix,
+            },
+        },
     )
 }
 
@@ -4050,8 +4159,7 @@ fn append_playback_args(
     tape: &Path,
     end: &str,
     state_root: &Path,
-    seed_stage: Option<&str>,
-    fast_forward_frames: Option<u64>,
+    options: PlaybackCliOptions<'_>,
 ) {
     let renderer_cache_root = state_root
         .parent()
@@ -4064,13 +4172,15 @@ fn append_playback_args(
         .arg(tape)
         .arg("--input-tape-end")
         .arg(end);
-    if let Some(frames) = fast_forward_frames {
+    if let Some(frames) = options.fast_forward_frames {
         command
             .arg("--input-tape-fast-forward-frames")
             .arg(frames.to_string());
+        if options.playback.show_accelerated_prefix {
+            command.arg("--input-tape-fast-forward-visible");
+        }
     }
     command
-        .arg("--fixed-step")
         .arg("--automation-data-root")
         .arg(state_root)
         .arg("--renderer-cache-root")
@@ -4083,9 +4193,17 @@ fn append_playback_args(
         .arg("backend.wasPresetChosen=true")
         .arg("--cvar")
         .arg("game.enableMenuPointer=false");
-    if let Some(stage) = seed_stage {
+    append_fixed_step_pacing(command, options.playback.speed_percent);
+    if let Some(stage) = options.seed_stage {
         command.arg("--stage").arg(stage);
     }
+}
+
+fn append_fixed_step_pacing(command: &mut Command, speed_percent: u16) {
+    command
+        .arg("--fixed-step")
+        .arg("--fixed-step-speed-percent")
+        .arg(speed_percent.to_string());
 }
 
 fn validate_draft_label(label: &str) -> Result<String, WorkbenchError> {
@@ -4103,6 +4221,7 @@ fn append_accelerated_recording_prefix(
     playback: &Path,
     parent_frames: usize,
     countdown_seconds: u8,
+    show_accelerated_prefix: bool,
 ) {
     command
         .arg("--input-tape")
@@ -4113,6 +4232,9 @@ fn append_accelerated_recording_prefix(
         .arg(parent_frames.to_string())
         .arg("--record-input-countdown-seconds")
         .arg(countdown_seconds.to_string());
+    if show_accelerated_prefix {
+        command.arg("--input-tape-fast-forward-visible");
+    }
 }
 
 fn record_continuation(
@@ -4310,6 +4432,7 @@ fn record_continuation(
             &playback,
             materialized.tape.frames.len(),
             request.countdown_seconds,
+            request.show_accelerated_prefix,
         );
     }
     command
@@ -4321,7 +4444,6 @@ fn record_continuation(
         .arg("1080000")
         .arg("--record-input-session")
         .arg(&session_token)
-        .arg("--fixed-step")
         .arg("--automation-data-root")
         .arg(&state)
         .arg("--renderer-cache-root")
@@ -4334,6 +4456,7 @@ fn record_continuation(
         .arg("backend.wasPresetChosen=true")
         .arg("--cvar")
         .arg("game.enableMenuPointer=false");
+    append_fixed_step_pacing(&mut command, request.speed_percent);
     if record_from_boot {
         command.arg("--record-input-start-milestone").arg(
             expected_start_milestone
@@ -4407,6 +4530,8 @@ fn record_continuation(
         manifest: directory.join(DRAFT_MANIFEST),
         tape: continuation,
         frames_before_recording: materialized.tape.frames.len() as u64,
+        speed_percent: request.speed_percent,
+        accelerated_prefix_visible: !record_from_boot && request.show_accelerated_prefix,
     })
 }
 
@@ -5034,8 +5159,7 @@ fn play_segment(
     config: &WorkbenchConfig,
     segment_id: &str,
     stop: &BrowserStop,
-    handoff: bool,
-    origin: PlaybackOrigin,
+    options: SegmentPlaybackOptions,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     if !timeline.segments.contains_key(segment_id) {
         if !matches!(stop, BrowserStop::Segment { segment } if segment == segment_id) {
@@ -5068,7 +5192,7 @@ fn play_segment(
             seed_stage: None,
         };
         let artifact_root = configured_artifact_root(config)?;
-        let fast_forward_frames = match origin {
+        let fast_forward_frames = match options.origin {
             PlaybackOrigin::Boot => None,
             PlaybackOrigin::Parent => Some(segment_parent_frame_count(
                 timeline,
@@ -5082,10 +5206,13 @@ fn play_segment(
             timeline,
             config,
             materialized,
-            handoff,
-            origin,
-            fast_forward_frames,
-            None,
+            MaterializedLaunchOptions {
+                takeover: options.handoff,
+                origin: options.origin,
+                fast_forward_frames,
+                thumbnail: None,
+                playback: options.playback,
+            },
         );
     }
     let local_frame = match stop {
@@ -5100,7 +5227,7 @@ fn play_segment(
     let artifact_root = configured_artifact_root(config)?;
     let materialized =
         materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
-    let fast_forward_frames = match origin {
+    let fast_forward_frames = match options.origin {
         PlaybackOrigin::Boot => None,
         PlaybackOrigin::Parent => Some(segment_parent_frame_count(
             timeline,
@@ -5121,10 +5248,13 @@ fn play_segment(
         timeline,
         config,
         materialized,
-        handoff,
-        origin,
-        fast_forward_frames,
-        thumbnail,
+        MaterializedLaunchOptions {
+            takeover: options.handoff,
+            origin: options.origin,
+            fast_forward_frames,
+            thumbnail,
+            playback: options.playback,
+        },
     )
 }
 
@@ -5412,16 +5542,28 @@ fn handle_http(
                             validate_playback_origin(&browser_request)?;
                             let timeline = load_authoritative_timeline(&config.timeline_path)?;
                             let (response, _child) = match &browser_request.selection {
-                                BrowserSelection::Draft { id } => {
-                                    play_draft(&timeline, config, id, browser_request.origin)?
-                                }
+                                BrowserSelection::Draft { id } => play_draft(
+                                    &timeline,
+                                    config,
+                                    id,
+                                    browser_request.origin,
+                                    browser_request.speed_percent,
+                                    browser_request.show_accelerated_prefix,
+                                )?,
                                 BrowserSelection::Segment { id } => play_segment(
                                     &timeline,
                                     config,
                                     id,
                                     &browser_request.stop,
-                                    browser_request.handoff,
-                                    browser_request.origin,
+                                    SegmentPlaybackOptions {
+                                        handoff: browser_request.handoff,
+                                        origin: browser_request.origin,
+                                        playback: PlaybackSettings {
+                                            speed_percent: browser_request.speed_percent,
+                                            show_accelerated_prefix: browser_request
+                                                .show_accelerated_prefix,
+                                        },
+                                    },
                                 )?,
                             };
                             Ok(response)
@@ -6275,6 +6417,8 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 },
                 label: String::new(),
                 countdown_seconds: DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS,
+                speed_percent: 100,
+                show_accelerated_prefix: false,
             },
         )
         .unwrap_err();
@@ -6526,6 +6670,11 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "segment.goal_proofs",
             "id=\"recordCountdown\"",
             "Child handoff",
+            "id=\"recordingSpeed\"",
+            "id=\"playbackSpeed\"",
+            "id=\"showAcceleratedPrefix\"",
+            "speed_percent:speedPercent",
+            "show_accelerated_prefix:showAcceleratedPrefix",
             "window.localStorage",
             "countdown_seconds:countdownSeconds",
             "kind==='origin'?0",
@@ -6684,6 +6833,68 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
+    fn browser_speed_settings_default_and_reject_unlisted_values() {
+        let playback = serde_json::from_str::<BrowserPlayRequest>(
+            r#"{"selection":{"kind":"segment","id":"one"},"stop":{"kind":"segment","segment":"one"},"handoff":true}"#,
+        )
+        .unwrap();
+        assert_eq!(playback.speed_percent, 100);
+        assert!(!playback.show_accelerated_prefix);
+
+        for speed_percent in PLAYBACK_SPEED_PERCENTAGES {
+            let request = serde_json::from_value::<BrowserPlayRequest>(serde_json::json!({
+                "selection": {"kind": "segment", "id": "one"},
+                "stop": {"kind": "segment", "segment": "one"},
+                "handoff": true,
+                "speed_percent": speed_percent,
+            }));
+            assert!(request.is_ok(), "playback speed {speed_percent}");
+        }
+        assert!(
+            serde_json::from_value::<BrowserPlayRequest>(serde_json::json!({
+                "selection": {"kind": "segment", "id": "one"},
+                "stop": {"kind": "segment", "segment": "one"},
+                "handoff": true,
+                "speed_percent": 201,
+            }))
+            .unwrap_err()
+            .to_string()
+            .contains("playback speed percentage 201 is not supported")
+        );
+
+        for speed_percent in RECORDING_SPEED_PERCENTAGES {
+            let request = serde_json::from_value::<BrowserRecordRequest>(serde_json::json!({
+                "parent": {"kind": "draft", "id": "one"},
+                "speed_percent": speed_percent,
+            }));
+            assert!(request.is_ok(), "recording speed {speed_percent}");
+        }
+        assert!(
+            serde_json::from_value::<BrowserRecordRequest>(serde_json::json!({
+                "parent": {"kind": "draft", "id": "one"},
+                "speed_percent": 0,
+            }))
+            .unwrap_err()
+            .to_string()
+            .contains("recording speed percentage 0 is not supported")
+        );
+    }
+
+    #[test]
+    fn recording_speed_is_fixed_step_host_pacing_not_a_tape_rate() {
+        let mut command = Command::new("game");
+        append_fixed_step_pacing(&mut command, 50);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            ["--fixed-step", "--fixed-step-speed-percent", "50"]
+        );
+    }
+
+    #[test]
     fn browser_accepts_segment_playback_from_boot_or_parent() {
         let boot = BrowserPlayRequest {
             selection: BrowserSelection::Segment {
@@ -6692,6 +6903,8 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
             origin: PlaybackOrigin::Boot,
+            speed_percent: 100,
+            show_accelerated_prefix: false,
         };
         assert!(validate_playback_origin(&boot).is_ok());
 
@@ -6702,6 +6915,8 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             stop: BrowserStop::Tick { tick: 1 },
             handoff: true,
             origin: PlaybackOrigin::Parent,
+            speed_percent: 100,
+            show_accelerated_prefix: true,
         };
         assert!(validate_playback_origin(&parent_origin).is_ok());
     }
@@ -7241,8 +7456,14 @@ continue main with boot_link.tas after root@clean
             Path::new("full-chain.tape"),
             "release",
             Path::new("state"),
-            None,
-            Some(9),
+            PlaybackCliOptions {
+                seed_stage: None,
+                fast_forward_frames: Some(9),
+                playback: PlaybackSettings {
+                    speed_percent: 200,
+                    show_accelerated_prefix: true,
+                },
+            },
         );
         let arguments = command
             .get_args()
@@ -7253,6 +7474,18 @@ continue main with boot_link.tas after root@clean
             .position(|argument| argument == "--input-tape-fast-forward-frames")
             .unwrap();
         assert_eq!(arguments[flag + 1], "9");
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "--input-tape-fast-forward-visible")
+        );
+        assert_eq!(
+            arguments
+                .windows(2)
+                .find(|window| window[0] == "--fixed-step-speed-percent")
+                .unwrap()[1],
+            "200"
+        );
         assert_eq!(
             arguments
                 .windows(2)
@@ -7275,8 +7508,14 @@ continue main with boot_link.tas after root@clean
             Path::new("full-chain.tape"),
             "release",
             Path::new("state"),
-            None,
-            None,
+            PlaybackCliOptions {
+                seed_stage: None,
+                fast_forward_frames: None,
+                playback: PlaybackSettings {
+                    speed_percent: 100,
+                    show_accelerated_prefix: false,
+                },
+            },
         );
         assert!(
             !boot
@@ -7290,6 +7529,7 @@ continue main with boot_link.tas after root@clean
             Path::new("playback.tape"),
             nested.parent_frames as usize,
             3,
+            false,
         );
         let recording_arguments = recording
             .get_args()

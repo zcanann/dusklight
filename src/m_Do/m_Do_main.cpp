@@ -251,6 +251,7 @@ static bool prepare_automation_pre_input_boundary();
 static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
+static std::uint16_t fixedStepSpeedPercent = 100;
 static bool pipelineWarmupGateEnabled;
 static std::uint8_t recordInputHandoffCountdownSeconds;
 static bool recordInputHandoffCountdownActive;
@@ -509,7 +510,7 @@ void main01(void) {
 
         double current_fps = 0.0;
         if (fixedStepMainLoop && !unpacedMainLoop) {
-            current_fps = 30.0;
+            current_fps = 30.0 * static_cast<double>(fixedStepSpeedPercent) / 100.0;
         } else if (!unpacedMainLoop &&
                    dusk::getSettings().game.enableFrameInterpolation.getValue() ==
                        dusk::FrameInterpMode::Capped &&
@@ -655,6 +656,7 @@ static std::uint32_t frameCaptureWidth;
 static std::uint32_t frameCaptureHeight;
 static std::size_t inputTapeFastForwardFrames;
 static bool inputTapeFastForwardActive;
+static bool inputTapeFastForwardVisible;
 static bool inputTapeFastForwardRevealPending;
 static bool inputTapeFastForwardAtRecordingHandoff;
 static bool exitAfterInputController;
@@ -1439,6 +1441,11 @@ static bool finish_input_tape_tick() {
             return false;
         }
         player.handoffToLiveInput();
+        if (recordInputTapePath.empty() && fixedStepSpeedPercent != 100) {
+            fixedStepSpeedPercent = 100;
+            unpacedMainLoop = false;
+            DuskLog.info("Input tape complete; live controller pacing restored to 100%");
+        }
         handoff_automation_to_live_input();
         if (automationInputHandedOff) {
             DuskLog.info("Input tape complete; live controller input resumed");
@@ -1499,7 +1506,7 @@ static bool finalize_input_tape_fast_forward_reveal() {
     // The parent-boundary image has now been submitted and renderer telemetry
     // finalized for this outer tick. Revealing here cannot expose the prior
     // N-2 buffer, and the limiter below paces this same completed parent frame.
-    if (!aurora_show_window()) {
+    if (!inputTapeFastForwardVisible && !aurora_show_window()) {
         DuskLog.error("Input tape fast-forward could not reveal the Aurora window after {} frames",
                       inputTapeFastForwardFrames);
         inputTapePlaybackFailed = true;
@@ -1510,7 +1517,7 @@ static bool finalize_input_tape_fast_forward_reveal() {
     // Fixed-step deterministic time remains active. Only remove the unpaced outer-loop mode.
     // Audio and live PAD remain quarantined until a configured host-only countdown reaches zero.
     inputTapeFastForwardActive = false;
-    unpacedMainLoop = false;
+    unpacedMainLoop = fixedStepSpeedPercent == 0;
     if (inputTapeFastForwardAtRecordingHandoff && recordInputHandoffCountdownSeconds > 0) {
         recordInputHandoffCountdownActive = true;
         recordInputHandoffCountdownRemaining =
@@ -1534,9 +1541,16 @@ static bool finalize_input_tape_fast_forward_reveal() {
     } else {
         dusk::audio::SetOutputMuted(false);
     }
-    DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback "
-                 "resumed at paced 30 Hz",
-        inputTapeFastForwardFrames);
+    if (fixedStepSpeedPercent == 0) {
+        DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback "
+                     "resumed uncapped",
+            inputTapeFastForwardFrames);
+    } else {
+        DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback "
+                     "resumed at {}% ({} Hz host pacing)",
+            inputTapeFastForwardFrames, fixedStepSpeedPercent,
+            30.0 * static_cast<double>(fixedStepSpeedPercent) / 100.0);
+    }
     return false;
 }
 
@@ -1913,11 +1927,13 @@ int game_main(int argc, char* argv[]) {
             ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
             ("fixed-step", "Run exactly one deterministic 30 Hz logical tick per presented frame", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("fixed-step-speed-percent", "Host pacing for fixed-step visual automation (0=uncapped, 1-400%, default 100)", cxxopts::value<std::uint16_t>()->default_value("100"))
             ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("headless", "Use the null render backend with an invisible window; implies --unpaced and requires --dvd", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("deterministic-time-start", "Initial signed OS timer tick for fixed-step modes (default 0)", cxxopts::value<std::int64_t>())
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
-            ("input-tape-fast-forward-frames", "Run this many absolute tape frames hidden and unpaced before visible paced playback", cxxopts::value<std::size_t>())
+            ("input-tape-fast-forward-frames", "Run this many absolute tape frames unpaced before selected-segment playback (hidden unless --input-tape-fast-forward-visible)", cxxopts::value<std::size_t>())
+            ("input-tape-fast-forward-visible", "Show the unpaced rendered prefix instead of keeping its window hidden", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
@@ -2012,6 +2028,19 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
     }
+    inputTapeFastForwardVisible = parsed_arg_options["input-tape-fast-forward-visible"].as<bool>();
+    if (inputTapeFastForwardVisible && !hasInputTapeFastForward) {
+        fprintf(stderr,
+                "Input Tape Error: --input-tape-fast-forward-visible requires --input-tape-fast-forward-frames N\n");
+        return 1;
+    }
+    fixedStepSpeedPercent =
+        parsed_arg_options["fixed-step-speed-percent"].as<std::uint16_t>();
+    if (fixedStepSpeedPercent > 400) {
+        fprintf(stderr,
+                "Time Error: --fixed-step-speed-percent must be 0 (uncapped) or between 1 and 400\n");
+        return 1;
+    }
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
     frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
     playbackThumbnailCaptureEnabled =
@@ -2026,7 +2055,7 @@ int game_main(int argc, char* argv[]) {
     }
     inputTapeFastForwardActive = hasInputTapeFastForward;
     unpacedMainLoop = headlessMainLoop || explicitlyUnpaced || inputTapeFastForwardActive ||
-                       frameCaptureEnabled;
+                       frameCaptureEnabled || fixedStepSpeedPercent == 0;
     fixedStepMainLoop = unpacedMainLoop || parsed_arg_options["fixed-step"].as<bool>();
     const bool useConfiguredDvd = parsed_arg_options["configured-dvd"].as<bool>();
     if (useConfiguredDvd && parsed_arg_options.count("dvd")) {
@@ -2903,8 +2932,9 @@ int game_main(int argc, char* argv[]) {
                      inputTapeFrameCount, inputTapeEnd, exitAfterInputTape);
     }
     if (hasInputTapeFastForward) {
-        DuskLog.info("Input tape fast-forward: first {} frames hidden, muted, fixed-step, and unpaced",
-                     inputTapeFastForwardFrames);
+        DuskLog.info("Input tape fast-forward: first {} frames {}, muted, fixed-step, and unpaced",
+                     inputTapeFastForwardFrames,
+                     inputTapeFastForwardVisible ? "visible" : "hidden");
     }
     if (hasInputController) {
         DuskLog.info("Input controller: {} ({} frames, {} layers, prefix={}, exit={})",
@@ -2964,7 +2994,8 @@ int game_main(int argc, char* argv[]) {
 #endif
         config.vsync = fixedStepMainLoop ? false : dusk::getSettings().video.enableVsync;
         config.startFullscreen = headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
-        config.startHidden = inputTapeFastForwardActive || frameCaptureEnabled;
+        config.startHidden =
+            (inputTapeFastForwardActive && !inputTapeFastForwardVisible) || frameCaptureEnabled;
         config.windowPosX = -1;
         config.windowPosY = -1;
 
@@ -3035,7 +3066,7 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
     }
-    if (inputTapeFastForwardActive &&
+    if (inputTapeFastForwardActive && !inputTapeFastForwardVisible &&
         (SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u) {
         DuskLog.error("Input tape fast-forward Aurora window unexpectedly started visible");
         dusk::crash_reporting::shutdown();

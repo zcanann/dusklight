@@ -214,9 +214,12 @@ and simulation in unpaced fixed-step mode. Once frame `N - 1` has completed its
 simulation tick, the completed-frame count is exactly `N`, but the window stays
 hidden until `aurora_end_frame` has submitted that parent-boundary image. Audio
 output is then restored and the same deterministic fixed-step clock continues
-with a paced 30 Hz outer loop; that limiter paces the just-completed parent
-frame. The first exposed buffer is therefore the parent boundary, and the next
-PAD read consumes child frame `N`. The tape is neither seeked nor truncated and
+with the configured host pacing (`--fixed-step-speed-percent`, where `0` is
+uncapped). `--input-tape-fast-forward-visible` keeps the accelerated rendered
+prefix on screen instead of hiding it. Neither option changes the 30 Hz logical
+clock or input-frame mapping. The first exposed buffer is therefore the parent
+boundary, and the next PAD read consumes child frame `N`. The tape is neither
+seeked nor truncated and
 no gameplay state is snapshotted or restored. Conditioned tapes,
 looping/holding end behavior, headless/unpaced launches, and exit-after-tape
 are rejected so the reveal boundary and eventual live handoff remain
