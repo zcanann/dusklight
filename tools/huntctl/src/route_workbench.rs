@@ -30,6 +30,7 @@ const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
 const DRAFT_LAUNCH: &str = "launch.json";
 const DRAFT_TAPE: &str = "continuation.tape";
+const DRAFT_TERMINAL_THUMBNAIL: &str = "terminal.png";
 const DRAFT_TRASH_DIRECTORY: &str = "trash";
 const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-preview.v1";
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
@@ -42,7 +43,7 @@ const THUMBNAIL_CAPTURE_SCHEMA: &str = "dusklight.route-workbench.thumbnail-capt
 const THUMBNAIL_DIRECTORY: &str = "thumbnails";
 const MAX_THUMBNAIL_BYTES: u64 = 2 * 1024 * 1024;
 const THUMBNAIL_WIDTH: u32 = 320;
-const THUMBNAIL_HEIGHT: u32 = 180;
+const THUMBNAIL_HEIGHT: u32 = 240;
 const MAX_DRAFTS: usize = 10_000;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
 const MAX_HTTP_BODY: usize = 1024 * 1024;
@@ -1193,7 +1194,7 @@ fn thumbnail_build_stamp(game: &Path) -> Option<String> {
 
 fn thumbnail_key(kind: &str, id: &str, materialization: &str, build_stamp: &str) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"dusklight.route-workbench.thumbnail.v1\0");
+    digest.update(b"dusklight.route-workbench.thumbnail.v2-4x3\0");
     for value in [kind, id, materialization, build_stamp] {
         digest.update((value.len() as u64).to_le_bytes());
         digest.update(value.as_bytes());
@@ -1288,6 +1289,64 @@ fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfi
             draft.thumbnail = Some(thumbnail_url(&key));
         }
     }
+}
+
+fn install_recording_thumbnail(
+    directory: &Path,
+    manifest: &DraftManifest,
+    config: &WorkbenchConfig,
+) -> Result<(), WorkbenchError> {
+    let source = directory.join(DRAFT_TERMINAL_THUMBNAIL);
+    if manifest.status != DraftStatus::Ready {
+        let _ = fs::remove_file(source);
+        return Ok(());
+    }
+    if !source.exists() {
+        return Ok(());
+    }
+    if !thumbnail_file_is_valid(&source) {
+        let _ = fs::remove_file(source);
+        return Err(WorkbenchError::new(
+            "native recording terminal thumbnail is invalid",
+        ));
+    }
+    let identity = manifest.result_tape_sha256.as_deref().ok_or_else(|| {
+        WorkbenchError::new("ready recording lacks a finalized chain fingerprint")
+    })?;
+    let build_stamp = thumbnail_build_stamp(&config.game)
+        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the recording game executable"))?;
+    let key = thumbnail_key("draft", &manifest.id, identity, &build_stamp);
+    let thumbnail_root = config.state_root.join(THUMBNAIL_DIRECTORY);
+    fs::create_dir_all(&thumbnail_root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot create recording thumbnail cache {}: {error}",
+            thumbnail_root.display()
+        ))
+    })?;
+    let destination = thumbnail_cache_path(&config.state_root, &key);
+    if thumbnail_file_is_valid(&destination) {
+        fs::remove_file(&source).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot remove duplicate recording thumbnail {}: {error}",
+                source.display()
+            ))
+        })?;
+        return Ok(());
+    }
+    if destination.exists() {
+        fs::remove_file(&destination).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot replace invalid recording thumbnail {}: {error}",
+                destination.display()
+            ))
+        })?;
+    }
+    fs::rename(&source, &destination).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot install recording thumbnail {}: {error}",
+            destination.display()
+        ))
+    })
 }
 
 fn drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
@@ -3815,6 +3874,8 @@ fn record_continuation(
     command
         .arg("--record-input-tape")
         .arg(&continuation)
+        .arg("--record-input-thumbnail-png")
+        .arg(directory.join(DRAFT_TERMINAL_THUMBNAIL))
         .arg("--record-input-capacity")
         .arg("1080000")
         .arg("--record-input-session")
@@ -3889,7 +3950,16 @@ fn record_continuation(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(draft_id.clone());
     let monitor_id = draft_id.clone();
-    thread::spawn(move || monitor_recording(child, monitor_directory, manifest, monitor_id));
+    let monitor_config = config.clone();
+    thread::spawn(move || {
+        monitor_recording(
+            child,
+            monitor_directory,
+            manifest,
+            monitor_id,
+            monitor_config,
+        )
+    });
     Ok(RecordResponse {
         pid,
         draft_id,
@@ -3904,6 +3974,7 @@ fn monitor_recording(
     directory: PathBuf,
     mut manifest: DraftManifest,
     draft_id: String,
+    config: WorkbenchConfig,
 ) {
     match child.wait() {
         Ok(exit) => finalize_recording(&directory, &mut manifest, Some(exit.success())),
@@ -3911,6 +3982,9 @@ fn monitor_recording(
             manifest.status = DraftStatus::ProcessFailure;
             manifest.error = Some(format!("cannot wait for Dusklight: {error}"));
         }
+    }
+    if let Err(error) = install_recording_thumbnail(&directory, &manifest, &config) {
+        eprintln!("Route Workbench: {error}");
     }
     let _ = write_draft_manifest(&directory, &manifest, true);
     active_recordings()
@@ -6207,6 +6281,48 @@ continue main with boot_link.tas after root@clean
         };
         write_draft_manifest(&directory, &manifest, true).unwrap();
         manifest
+    }
+
+    #[test]
+    fn successful_human_recording_installs_its_terminal_thumbnail_once() {
+        let root = temporary_root("recording-thumbnail");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let state = root.join("state");
+        let id = "draft-recording-thumbnail";
+        let manifest = install_ready_draft(&root, &state, id, &[8, 9]);
+        let directory = state.join("drafts").join(id);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(b"retained-terminal-frame");
+        fs::write(directory.join(DRAFT_TERMINAL_THUMBNAIL), &png).unwrap();
+        let game = root.join("game.exe");
+        fs::write(&game, b"game-build").unwrap();
+        let config = WorkbenchConfig {
+            timeline_path: root.join("route.timeline"),
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: game.clone(),
+            dvd: root.join("disc.iso"),
+            state_root: state.clone(),
+        };
+
+        install_recording_thumbnail(&directory, &manifest, &config).unwrap();
+        assert!(!directory.join(DRAFT_TERMINAL_THUMBNAIL).exists());
+        let key = thumbnail_key(
+            "draft",
+            id,
+            manifest.result_tape_sha256.as_deref().unwrap(),
+            &thumbnail_build_stamp(&game).unwrap(),
+        );
+        assert_eq!(fs::read(thumbnail_cache_path(&state, &key)).unwrap(), png);
+
+        let mut graph = graph_with_drafts(&timeline(), &root, &state).unwrap();
+        decorate_graph_thumbnails(&mut graph, &config);
+        assert_eq!(
+            graph.drafts[0].thumbnail.as_deref(),
+            Some(thumbnail_url(&key).as_str())
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn write_success_status(directory: &Path, manifest: &DraftManifest, frame_count: u64) {

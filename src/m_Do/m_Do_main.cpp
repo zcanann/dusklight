@@ -199,6 +199,7 @@ float dusk::frameUsagePct = 0.0f;
 
 static void finish_automation_renderer_frame();
 static void finish_automation_frame_capture();
+static void capture_terminal_recording_thumbnail();
 
 bool launchUILoop() {
     while (dusk::IsRunning && !dusk::IsGameLaunched) {
@@ -341,6 +342,7 @@ void main01(void) {
                 dusk::ImGuiEngine_Initialize(event->windowSize.scale);
                 break;
             case AURORA_EXIT:
+                capture_terminal_recording_thumbnail();
                 goto exit;
             }
 
@@ -675,6 +677,7 @@ static dusk::automation::InputTape realizedInputTape;
 static bool realizedInputTapeWriteFailed;
 static std::filesystem::path recordInputTapePath;
 static std::filesystem::path recordInputStatusPath;
+static std::filesystem::path recordInputThumbnailPath;
 static std::size_t recordInputFrameCapacity;
 static bool recordInputHandoffReached;
 static bool recordInputStartBoundaryVerified;
@@ -1282,6 +1285,37 @@ static void finish_automation_frame_capture() {
                   frame_capture_error_message());
 }
 
+static void capture_terminal_recording_thumbnail() {
+    if (recordInputThumbnailPath.empty()) {
+        return;
+    }
+    const auto& recorder = dusk::automation::input_tape_recorder();
+    if (!recordInputHandoffReached || recordInputFailed || recorder.frameCount() == 0) {
+        DuskLog.info("Skipping terminal recording thumbnail because the recording is not a successful non-empty handoff");
+        return;
+    }
+    if (!aurora_begin_retained_frame()) {
+        DuskLog.warn("Could not retain the terminal recording frame for thumbnail capture");
+        return;
+    }
+    const std::string outputPath = dusk::io::fs_path_to_string(recordInputThumbnailPath);
+    const bool armed = aurora_capture_next_frame_png(outputPath.c_str(), 320, 240);
+    if (!armed) {
+        DuskLog.warn("Could not arm terminal recording thumbnail capture: {}",
+                     frame_capture_error_message());
+        aurora_end_frame();
+        return;
+    }
+    aurora_end_frame();
+    if (aurora_get_frame_capture_status() != AURORA_FRAME_CAPTURE_SUCCEEDED) {
+        DuskLog.warn("Terminal recording thumbnail capture failed: {}",
+                     frame_capture_error_message());
+        return;
+    }
+    DuskLog.info("Captured terminal human recording frame to {} (320x240, no simulation tick)",
+                 outputPath);
+}
+
 static bool finish_input_tape_tick() {
     auto& player = dusk::automation::input_tape_player();
     auto& inputRecorder = dusk::automation::input_tape_recorder();
@@ -1871,6 +1905,7 @@ int game_main(int argc, char* argv[]) {
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
+            ("record-input-thumbnail-png", "Capture the retained terminal frame when a human input recording closes cleanly", cxxopts::value<std::string>())
             ("record-input-from-boot", "Begin headful live recording at an authored pre-input Boot boundary", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("record-input-countdown-seconds", "Visible host-only delay before an accelerated child recording handoff (0-10, default 0)", cxxopts::value<std::uint8_t>()->default_value("0"))
             ("record-input-capacity", "Maximum live-input frames to retain (default 1080000 = 10 hours at 30 Hz)", cxxopts::value<std::size_t>()->default_value("1080000"))
@@ -2037,6 +2072,8 @@ int game_main(int argc, char* argv[]) {
         parsed_arg_options.count("realized-input-tape") != 0;
     const bool hasRecordInputTape =
         parsed_arg_options.count("record-input-tape") != 0;
+    const bool hasRecordInputThumbnail =
+        parsed_arg_options.count("record-input-thumbnail-png") != 0;
     recordInputFromBoot = parsed_arg_options["record-input-from-boot"].as<bool>();
     recordInputHandoffCountdownSeconds =
         parsed_arg_options["record-input-countdown-seconds"].as<std::uint8_t>();
@@ -2201,6 +2238,26 @@ int game_main(int argc, char* argv[]) {
         recordInputStatusPath = recordInputTapePath;
         recordInputStatusPath += ".status.json";
         std::error_code filesystemError;
+        if (hasRecordInputThumbnail) {
+            const std::string thumbnailPath =
+                parsed_arg_options["record-input-thumbnail-png"].as<std::string>();
+            if (thumbnailPath.empty()) {
+                fprintf(stderr,
+                        "Input Recording Error: --record-input-thumbnail-png PATH cannot be empty\n");
+                return 1;
+            }
+            recordInputThumbnailPath = std::filesystem::u8path(thumbnailPath);
+            const auto thumbnailParent = recordInputThumbnailPath.parent_path();
+            if (!thumbnailParent.empty()) {
+                std::filesystem::create_directories(thumbnailParent, filesystemError);
+            }
+            if (filesystemError) {
+                fprintf(stderr,
+                        "Input Recording Error: cannot create thumbnail output directory: %s\n",
+                        filesystemError.message().c_str());
+                return 1;
+            }
+        }
         const auto parent = recordInputTapePath.parent_path();
         if (!parent.empty()) {
             std::filesystem::create_directories(parent, filesystemError);
@@ -2224,15 +2281,22 @@ int game_main(int argc, char* argv[]) {
                     filesystemError.message().c_str());
             return 1;
         }
-        if (tapeExists || statusExists) {
+        const bool thumbnailExists = !recordInputThumbnailPath.empty() &&
+            std::filesystem::exists(recordInputThumbnailPath, filesystemError);
+        if (filesystemError) {
+            fprintf(stderr, "Input Recording Error: cannot inspect thumbnail output: %s\n",
+                    filesystemError.message().c_str());
+            return 1;
+        }
+        if (tapeExists || statusExists || thumbnailExists) {
             fprintf(stderr,
-                    "Input Recording Error: output tape or status already exists; recording never overwrites a draft\n");
+                    "Input Recording Error: output tape, status, or thumbnail already exists; recording never overwrites a draft\n");
             return 1;
         }
     } else if (recordInputFromBoot || hasRecordInputSession || hasRecordStartMilestone ||
-               hasRecordStartFingerprint) {
+               hasRecordStartFingerprint || hasRecordInputThumbnail) {
         fprintf(stderr,
-                "Input Recording Error: recording session and start-boundary options require --record-input-tape PATH\n");
+                "Input Recording Error: recording session, thumbnail, and start-boundary options require --record-input-tape PATH\n");
         return 1;
     }
     if (hasActorCatalog) {
