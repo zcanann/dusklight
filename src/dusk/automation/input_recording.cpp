@@ -129,6 +129,77 @@ const char* boot_recording_error_message(const BootRecordingError error) {
     return "unknown Boot recording error";
 }
 
+RecordingStartError bind_recording_start(const MilestoneTracker& tracker,
+    const MilestoneProgram& program, const std::string_view milestone,
+    const std::string_view expectedFingerprint, const std::uint64_t expectedTapeFrame,
+    RecordingStartBinding& binding) {
+    binding = {};
+    if (const MilestoneDefinition* definition = find_milestone(milestone); definition != nullptr) {
+        const auto hit = std::ranges::find(tracker.hits(), definition->id, &MilestoneHit::id);
+        if (hit == tracker.hits().end())
+            return RecordingStartError::MilestoneNotRequested;
+        if (!hit->hit)
+            return RecordingStartError::MilestoneNotHit;
+        if (hit->tapeFrame != expectedTapeFrame)
+            return RecordingStartError::WrongTapeFrame;
+        if (hit->evidence.boundaryFingerprint != expectedFingerprint)
+            return RecordingStartError::FingerprintMismatch;
+        binding = {
+            .milestone = std::string(definition->name),
+            .boundaryFingerprint = hit->evidence.boundaryFingerprint,
+            .boundaryIndex = expectedTapeFrame + 1,
+            .tapeFrame = hit->tapeFrame,
+        };
+        return RecordingStartError::None;
+    }
+
+    const MilestoneProgramDefinition* definition = program.find(milestone);
+    if (definition == nullptr)
+        return RecordingStartError::UnknownMilestone;
+    const auto hit =
+        std::ranges::find(tracker.authoredHits(), milestone, &AuthoredMilestoneHit::id);
+    if (hit == tracker.authoredHits().end())
+        return RecordingStartError::MilestoneNotRequested;
+    if (!hit->hit)
+        return RecordingStartError::MilestoneNotHit;
+    if (hit->tapeFrame != expectedTapeFrame)
+        return RecordingStartError::WrongTapeFrame;
+    if (hit->evidence.boundaryFingerprint != expectedFingerprint)
+        return RecordingStartError::FingerprintMismatch;
+    if (hit->programDigest != program.digest() ||
+        hit->definitionDigest != definition->definitionDigest)
+        return RecordingStartError::StaleProgram;
+    binding = {
+        .milestone = hit->id,
+        .boundaryFingerprint = hit->evidence.boundaryFingerprint,
+        .programDigest = hit->programDigest,
+        .definitionDigest = hit->definitionDigest,
+        .boundaryIndex = hit->boundaryIndex,
+        .tapeFrame = hit->tapeFrame,
+    };
+    return RecordingStartError::None;
+}
+
+const char* recording_start_error_message(const RecordingStartError error) {
+    switch (error) {
+    case RecordingStartError::None:
+        return "no error";
+    case RecordingStartError::UnknownMilestone:
+        return "start milestone is not registered";
+    case RecordingStartError::MilestoneNotRequested:
+        return "start milestone was not selected";
+    case RecordingStartError::MilestoneNotHit:
+        return "start milestone was not hit";
+    case RecordingStartError::WrongTapeFrame:
+        return "start milestone first hit is not the final parent tape frame";
+    case RecordingStartError::FingerprintMismatch:
+        return "start milestone fingerprint mismatch";
+    case RecordingStartError::StaleProgram:
+        return "start milestone was produced by stale predicate bytecode";
+    }
+    return "unknown recording start error";
+}
+
 FastForwardBoundaryError validate_fast_forward_boundary(const std::uint64_t requestedFrames,
     const std::uint64_t tapeFrames, const bool recording,
     const bool tapeEndReleasesInput) {

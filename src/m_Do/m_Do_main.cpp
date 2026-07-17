@@ -625,7 +625,6 @@ static bool recordInputFailed;
 static bool recordInputCapacityReported;
 static std::string recordInputError;
 static std::string recordInputSessionToken;
-static std::optional<dusk::automation::MilestoneId> recordInputStartMilestone;
 static std::string recordInputStartMilestoneName;
 static std::string recordInputExpectedStartFingerprint;
 static std::string recordInputStartFingerprint;
@@ -804,25 +803,30 @@ static void handoff_automation_to_live_input() {
 
     PADPrepareAutomationHandoff();
     if (!recordInputTapePath.empty()) {
-        if (recordInputStartMilestone.has_value()) {
-            const auto& hits = dusk::automation::milestone_tracker().hits();
-            const auto hit = std::ranges::find(
-                hits, *recordInputStartMilestone, &dusk::automation::MilestoneHit::id);
-            if (hit == hits.end() || !hit->hit || hit->tapeFrame != automationTapeFrame ||
-                hit->evidence.boundaryFingerprint != recordInputExpectedStartFingerprint) {
+        if (!recordInputStartMilestoneName.empty()) {
+            dusk::automation::RecordingStartBinding binding;
+            const auto error =
+                dusk::automation::bind_recording_start(dusk::automation::milestone_tracker(),
+                    dusk::automation::milestone_program(), recordInputStartMilestoneName,
+                    recordInputExpectedStartFingerprint, automationTapeFrame, binding);
+            if (error != dusk::automation::RecordingStartError::None) {
                 recordInputFailed = true;
                 recordInputStartBoundaryMismatch = true;
-                recordInputError = fmt::format(
-                    "recording start boundary mismatch for {} at tape frame {}",
-                    dusk::automation::milestone_name(*recordInputStartMilestone),
-                    automationTapeFrame);
+                recordInputError =
+                    fmt::format("recording start boundary mismatch for {} at tape frame {}: {}",
+                        recordInputStartMilestoneName, automationTapeFrame,
+                        dusk::automation::recording_start_error_message(error));
                 DuskLog.error("{}", recordInputError);
                 dusk::IsRunning = false;
                 return;
             }
-            recordInputStartTapeFrame = hit->tapeFrame;
-            recordInputStartFingerprint = hit->evidence.boundaryFingerprint;
+            recordInputStartMilestoneName = std::move(binding.milestone);
+            recordInputStartTapeFrame = binding.tapeFrame;
+            recordInputStartFingerprint = std::move(binding.boundaryFingerprint);
+            recordInputStartProgramDigest = std::move(binding.programDigest);
+            recordInputStartDefinitionDigest = std::move(binding.definitionDigest);
             recordInputStartBoundaryKind = "tick";
+            recordInputStartBoundaryIndex = binding.boundaryIndex;
         }
         auto& recorder = dusk::automation::input_tape_recorder();
         if (!recorder.begin()) {
@@ -1959,16 +1963,6 @@ int game_main(int argc, char* argv[]) {
             const std::string startMilestoneName =
                 parsed_arg_options["record-input-start-milestone"].as<std::string>();
             recordInputStartMilestoneName = startMilestoneName;
-            if (!recordInputFromBoot) {
-                const auto* startMilestone =
-                    dusk::automation::find_milestone(startMilestoneName);
-                if (startMilestone == nullptr) {
-                    fprintf(stderr, "Input Recording Error: unknown start milestone '%s'\n",
-                            startMilestoneName.c_str());
-                    return 1;
-                }
-                recordInputStartMilestone = startMilestone->id;
-            }
         }
         if (hasRecordStartFingerprint) {
             recordInputExpectedStartFingerprint =
@@ -2153,18 +2147,27 @@ int game_main(int argc, char* argv[]) {
         }
         milestoneResultPath = std::filesystem::u8path(resultPath);
     }
-    if (hasRecordInputTape && recordInputStartMilestone.has_value()) {
+    if (hasRecordInputTape && !recordInputFromBoot && !recordInputStartMilestoneName.empty()) {
         auto& tracker = dusk::automation::milestone_tracker();
-        const bool startIsObserved = std::ranges::find(
-            tracker.hits(), *recordInputStartMilestone,
-            &dusk::automation::MilestoneHit::id) != tracker.hits().end();
+        const auto* builtin = dusk::automation::find_milestone(recordInputStartMilestoneName);
+        const bool startIsObserved =
+            (builtin != nullptr &&
+                std::ranges::find(tracker.hits(), builtin->id,
+                    &dusk::automation::MilestoneHit::id) != tracker.hits().end()) ||
+            std::ranges::find(tracker.authoredHits(), recordInputStartMilestoneName,
+                &dusk::automation::AuthoredMilestoneHit::id) != tracker.authoredHits().end();
         if (hasMilestones && !startIsObserved) {
             fprintf(stderr,
                     "Input Recording Error: --milestones LIST must include the recording start milestone\n");
             return 1;
         }
         if (!hasMilestones) {
-            const std::array requested{*recordInputStartMilestone};
+            if (builtin == nullptr) {
+                fprintf(stderr, "Input Recording Error: unknown start milestone '%s'\n",
+                        recordInputStartMilestoneName.c_str());
+                return 1;
+            }
+            const std::array requested{builtin->id};
             std::string milestoneError;
             if (!tracker.configure(requested, std::nullopt, milestoneError)) {
                 fprintf(stderr, "Input Recording Error: cannot configure start milestone: %s\n",

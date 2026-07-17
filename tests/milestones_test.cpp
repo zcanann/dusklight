@@ -410,6 +410,36 @@ void testAcceleratedParentRecordingBoundaryAndRevealOrdering() {
     REQUIRE(accelerated_recording_reveal_ready(false, false, false));
 }
 
+void testAuthoredParentRecordingStartBinding() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(
+        decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    MilestoneTracker tracker;
+    const std::vector<std::string> requested{"link_control"};
+    std::string error;
+    REQUIRE(tracker.configureNames(requested, std::nullopt, program, error));
+
+    tracker.observeBoundary(
+        f_sp103(), MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 440, 439, 439);
+    REQUIRE(tracker.authoredHits()[0].hit);
+    const std::string fingerprint = tracker.authoredHits()[0].evidence.boundaryFingerprint;
+    RecordingStartBinding binding;
+    REQUIRE(bind_recording_start(tracker, program, "link_control", fingerprint, 438, binding) ==
+            RecordingStartError::WrongTapeFrame);
+    REQUIRE(
+        bind_recording_start(tracker, program, "link_control", "00000000000000000000000000000000",
+            439, binding) == RecordingStartError::FingerprintMismatch);
+    REQUIRE(bind_recording_start(tracker, program, "link_control", fingerprint, 439, binding) ==
+            RecordingStartError::None);
+    REQUIRE(binding.milestone == "link_control");
+    REQUIRE(binding.tapeFrame == 439);
+    REQUIRE(binding.boundaryIndex == 440);
+    REQUIRE(binding.boundaryFingerprint == fingerprint);
+    REQUIRE(binding.programDigest == program.digest());
+    REQUIRE(binding.definitionDigest == program.find("link_control")->definitionDigest);
+}
+
 }  // namespace
 
 int main() {
@@ -423,6 +453,7 @@ int main() {
     testMalformedAuthoredProgramIsRejected();
     testBootRecordingGuardrailsAndBeginOrdering();
     testAcceleratedParentRecordingBoundaryAndRevealOrdering();
+    testAuthoredParentRecordingStartBinding();
     std::cout << "milestone tests passed\n";
     return 0;
 }

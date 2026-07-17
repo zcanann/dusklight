@@ -38,6 +38,16 @@ enum class FastForwardBoundaryError {
     TapeEndRequiresRelease,
 };
 
+enum class RecordingStartError {
+    None,
+    UnknownMilestone,
+    MilestoneNotRequested,
+    MilestoneNotHit,
+    WrongTapeFrame,
+    FingerprintMismatch,
+    StaleProgram,
+};
+
 struct BootRecordingCliRequest {
     bool enabled = false;
     bool hasOutputTape = false;
@@ -64,6 +74,15 @@ struct ParentRecordingBoundary {
     std::uint64_t tapeFrame = 0;
 };
 
+struct RecordingStartBinding {
+    std::string milestone;
+    std::string boundaryFingerprint;
+    std::string programDigest;
+    std::string definitionDigest;
+    std::uint64_t boundaryIndex = 0;
+    std::uint64_t tapeFrame = 0;
+};
+
 using BootRecordingBegin = bool (*)(void* context);
 using BootRecordingReleaseInput = void (*)(void* context);
 
@@ -82,6 +101,17 @@ BootRecordingError begin_authored_boot_recording(const MilestoneTracker& tracker
     BootRecordingReleaseInput releaseInput, void* context, BootRecordingBinding& binding);
 
 const char* boot_recording_error_message(BootRecordingError error);
+
+/**
+ * Binds a parent-tape handoff to either a built-in or authored milestone first-hit. The caller
+ * supplies the exact final parent frame, so a predicate hit earlier in the tape cannot authorize
+ * live recording even if its game-state fingerprint happens to match again later.
+ */
+RecordingStartError bind_recording_start(const MilestoneTracker& tracker,
+    const MilestoneProgram& program, std::string_view milestone,
+    std::string_view expectedFingerprint, std::uint64_t expectedTapeFrame,
+    RecordingStartBinding& binding);
+const char* recording_start_error_message(RecordingStartError error);
 
 /**
  * Ordinary playback must retain at least one visible tape frame. An exact tape-end reveal is only
