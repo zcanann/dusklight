@@ -176,6 +176,16 @@ access remains deferred until a full checkpoint can reproduce live actors,
 collision, loaders, heaps, and host-side state; until then exact prefix replay
 is authoritative.
 
+Every playable non-root segment, including an uncommitted generated search
+result, exposes both **Play from boot** and **Play from parent**. Parent playback
+still composes the complete absolute tape. It verifies that the tape begins
+with the exact current parent chain, runs those parent frames hidden, muted,
+fixed-step, and unpaced, then reveals the submitted parent-boundary image and
+plays only the selected segment visibly at 30 Hz. Input releases to the human
+when the selected segment ends. This is accelerated deterministic replay, not
+a checkpoint or save-state restore; root segments have no parent boundary and
+therefore expose boot playback only.
+
 ## Route store
 
 The content-addressed route store is an optional derived index, not route

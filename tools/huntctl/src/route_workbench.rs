@@ -5035,6 +5035,7 @@ fn play_segment(
     segment_id: &str,
     stop: &BrowserStop,
     handoff: bool,
+    origin: PlaybackOrigin,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     if !timeline.segments.contains_key(segment_id) {
         if !matches!(stop, BrowserStop::Segment { segment } if segment == segment_id) {
@@ -5066,13 +5067,24 @@ fn play_segment(
             tape,
             seed_stage: None,
         };
+        let artifact_root = configured_artifact_root(config)?;
+        let fast_forward_frames = match origin {
+            PlaybackOrigin::Boot => None,
+            PlaybackOrigin::Parent => Some(segment_parent_frame_count(
+                timeline,
+                &artifact_root,
+                projection.segment.parent.as_deref(),
+                &materialized.tape,
+                segment_id,
+            )?),
+        };
         return launch_materialized(
             timeline,
             config,
             materialized,
             handoff,
-            PlaybackOrigin::Boot,
-            None,
+            origin,
+            fast_forward_frames,
             None,
         );
     }
@@ -5088,6 +5100,16 @@ fn play_segment(
     let artifact_root = configured_artifact_root(config)?;
     let materialized =
         materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
+    let fast_forward_frames = match origin {
+        PlaybackOrigin::Boot => None,
+        PlaybackOrigin::Parent => Some(segment_parent_frame_count(
+            timeline,
+            &artifact_root,
+            timeline.segments[segment_id].parent.as_deref(),
+            &materialized.tape,
+            segment_id,
+        )?),
+    };
     let thumbnail = prepare_missing_playback_thumbnail(
         timeline,
         config,
@@ -5100,10 +5122,46 @@ fn play_segment(
         config,
         materialized,
         handoff,
-        PlaybackOrigin::Boot,
-        None,
+        origin,
+        fast_forward_frames,
         thumbnail,
     )
+}
+
+fn segment_parent_frame_count(
+    timeline: &Timeline,
+    repository_root: &Path,
+    parent_id: Option<&str>,
+    full_tape: &InputTape,
+    segment_id: &str,
+) -> Result<u64, WorkbenchError> {
+    let parent_id = parent_id.ok_or_else(|| {
+        WorkbenchError::new(format!(
+            "segment {segment_id:?} begins at Boot and has no parent playback boundary"
+        ))
+    })?;
+    let parent = materialize_segment_chain(timeline, repository_root, parent_id)?.tape;
+    let parent_frames = parent.frames.len();
+    let continuation_frames = full_tape.frames.len().saturating_sub(parent_frames);
+    validate_parent_boundary(
+        parent_frames as u64,
+        continuation_frames as u64,
+        full_tape.frames.len() as u64,
+    )
+    .map_err(|_| {
+        WorkbenchError::new(format!(
+            "segment {segment_id:?} has no nonempty continuation after its parent"
+        ))
+    })?;
+    if full_tape.tick_rate_numerator != parent.tick_rate_numerator
+        || full_tape.tick_rate_denominator != parent.tick_rate_denominator
+        || full_tape.frames[..parent_frames] != parent.frames
+    {
+        return Err(WorkbenchError::new(format!(
+            "segment {segment_id:?} playback does not begin with its exact parent chain"
+        )));
+    }
+    Ok(parent_frames as u64)
 }
 
 fn materialize_draft(
@@ -5265,10 +5323,13 @@ fn play_target(request: &PlayRequest) -> Result<MaterializeTarget, WorkbenchErro
 
 fn validate_playback_origin(request: &BrowserPlayRequest) -> Result<(), WorkbenchError> {
     if request.origin == PlaybackOrigin::Parent
-        && !matches!(request.selection, BrowserSelection::Draft { .. })
+        && !matches!(
+            request.selection,
+            BrowserSelection::Draft { .. } | BrowserSelection::Segment { .. }
+        )
     {
         return Err(WorkbenchError::new(
-            "parent-origin playback requires a ready draft selection",
+            "parent-origin playback requires a segment or ready draft selection",
         ));
     }
     Ok(())
@@ -5360,6 +5421,7 @@ fn handle_http(
                                     id,
                                     &browser_request.stop,
                                     browser_request.handoff,
+                                    browser_request.origin,
                                 )?,
                             };
                             Ok(response)
@@ -6622,7 +6684,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
-    fn browser_accepts_segments_from_boot_and_rejects_parent_origin() {
+    fn browser_accepts_segment_playback_from_boot_or_parent() {
         let boot = BrowserPlayRequest {
             selection: BrowserSelection::Segment {
                 id: "link_exit.one".into(),
@@ -6641,7 +6703,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             handoff: true,
             origin: PlaybackOrigin::Parent,
         };
-        assert!(validate_playback_origin(&parent_origin).is_err());
+        assert!(validate_playback_origin(&parent_origin).is_ok());
     }
 
     #[test]
@@ -6756,6 +6818,17 @@ continue main with boot_link.tas after root@clean
         let playback =
             materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
         assert_eq!(playback.tape.frames.len(), 590);
+        assert_eq!(
+            segment_parent_frame_count(
+                &route,
+                artifact_root,
+                segment.parent.as_deref(),
+                &playback.tape,
+                segment_id,
+            )
+            .unwrap(),
+            440
+        );
         assert_eq!(playback.lineage, None);
         assert_eq!(playback.segment.as_deref(), Some(segment_id));
         assert_eq!(
@@ -6772,6 +6845,30 @@ continue main with boot_link.tas after root@clean
         assert_eq!(
             first_local_frame.tape.frames.last(),
             continuation.frames.first()
+        );
+        let root_playback =
+            materialize_segment_playback(&route, artifact_root, "golf439", None).unwrap();
+        assert!(
+            segment_parent_frame_count(
+                &route,
+                artifact_root,
+                None,
+                &root_playback.tape,
+                "golf439",
+            )
+            .is_err()
+        );
+        let mut tampered = playback.tape.clone();
+        tampered.frames[0].pads[0].stick_x = tampered.frames[0].pads[0].stick_x.wrapping_add(1);
+        assert!(
+            segment_parent_frame_count(
+                &route,
+                artifact_root,
+                segment.parent.as_deref(),
+                &tampered,
+                segment_id,
+            )
+            .is_err()
         );
         let sibling_request = r#"{
             "selection":{"kind":"segment","id":"another_segment"},

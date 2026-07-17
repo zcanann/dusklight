@@ -367,7 +367,7 @@
       return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function segmentActions(segment) {
-      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play</button>`:'';
+      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play from boot</button>${segment.parent?`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-id="${escapeHtml(segment.id)}">Play from parent</button>`:''}`:'';
       if(segment.generated)return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}</div>`;
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
@@ -436,7 +436,7 @@
       const name=segment?.name||draft?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
-      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin:'boot'}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
+      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
@@ -449,7 +449,7 @@
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(segment?.playable||draft?.playable); button.textContent=segment?'Play':origin==='parent'?'Play from parent':'Play from boot';
+        button.disabled=!(segment?.playable||draft?.playable); button.textContent=origin==='parent'?'Play from parent':'Play from boot';
       }
     }
     async function waitForThumbnail(url,timeoutMs=180000) {

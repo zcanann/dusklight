@@ -205,8 +205,10 @@ dusklight --dvd game.iso `
   --input-tape-fast-forward-frames 12345
 ```
 
-The frame count is the exact composed length of the selected draft's direct
-parent and must satisfy `0 < N < tape frame count`. Dusklight starts a real
+The frame count is the exact composed length of the selected segment or draft's
+direct parent and must satisfy `0 < N < tape frame count`. The workbench first
+verifies that those `N` frames byte-match the current parent chain, including
+for generated search nodes. Dusklight starts a real
 presentation-capable backend hidden, mutes host audio, and runs full rendering
 and simulation in unpaced fixed-step mode. Once frame `N - 1` has completed its
 simulation tick, the completed-frame count is exactly `N`, but the window stays

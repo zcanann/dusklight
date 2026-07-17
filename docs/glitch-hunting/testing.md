@@ -45,14 +45,16 @@ Visual Studio developer shell.
 For route work, choose the single **Glitch Hunt: Route Workbench** entry under
 **Run and Debug** and press F5. VS Code builds Dusklight and the Rust workbench,
 then opens a browser containing the checked-in segment tree. Every playable
-segment has a **Play & Handoff** action. Playback uses absolute
-input frames, owns all controller ports until the segment ends, and then
-releases them to live input.
+segment has **Play from boot**; every non-root segment also has **Play from
+parent**. Parent playback runs the exact composed prefix hidden, muted, and
+unpaced, reveals at the parent boundary, then shows the selected segment at
+paced 30 Hz. Both modes use absolute input frames, own all controller ports
+until the selected segment ends, and then release them to live input.
 
 The workbench replaces per-scenario launch configurations and generated-winner
-dropdown entries. Git-owned segments appear in the graph automatically; ignored
-search populations do not appear until a result is deliberately promoted into
-`routes/`.
+dropdown entries. Git-owned segments and repeat-proved generated search results
+appear in the same graph; generated nodes remain uncommitted and restricted
+until their tape and proof are promoted into `routes/`.
 
 See [Route segment trees and Git](timelines.md) for lineage semantics.
 
