@@ -131,6 +131,12 @@ pipeline-progress[open] {
     filter: opacity(1);
 }
 
+/* A deterministic playback gate is already an intentional loading screen. */
+pipeline-progress[warmup] {
+    filter: opacity(1);
+    transition: none;
+}
+
 pipeline-status {
     display: flex;
     align-items: center;

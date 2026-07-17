@@ -347,10 +347,13 @@ void main01(void) {
         }
 
         dusk::lastFrameAuroraStats = *aurora_get_stats();
+        const bool pipelineWarmupActive =
+            pipelineWarmupGateEnabled && dusk::lastFrameAuroraStats.queuedPipelines > 0;
+        dusk::ui::set_pipeline_warmup_active(pipelineWarmupActive);
 
         // Do not fire an emulated VI retrace while warming renderer-only state: retrace callbacks
         // are part of the emulated machine and must remain aligned with admitted simulation ticks.
-        if (pipelineWarmupGateEnabled && dusk::lastFrameAuroraStats.queuedPipelines > 0) {
+        if (pipelineWarmupActive) {
             mDoGph_gInf_c::updateRenderSize();
             dusk::ui::update();
             dusk::game_clock::reset_frame_timer();

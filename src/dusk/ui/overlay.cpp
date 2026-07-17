@@ -25,6 +25,7 @@
 namespace dusk::ui {
 namespace {
 aurora::Module Log{"dusk::ui::overlay"};
+bool sPipelineWarmupActive = false;
 
 const Rml::String kDocumentSource = R"RML(
 <rml>
@@ -199,6 +200,10 @@ void remove_element(Rml::Element*& elem) noexcept {
 }
 
 }  // namespace
+
+void set_pipeline_warmup_active(bool active) noexcept {
+    sPipelineWarmupActive = active;
+}
 
 static std::string FormatTime(OSTime ticks) {
     OSCalendarTime t;
@@ -430,8 +435,10 @@ void Overlay::update_pipeline_progress() {
     const uint32_t queuedPipelines = stats != nullptr ? stats->queuedPipelines : 0;
     if (queuedPipelines == 0) {
         mPipelineProgress->RemoveAttribute("open");
+        mPipelineProgress->RemoveAttribute("warmup");
         mPipelineProgressActive = false;
         mPipelineBatchCreatedBase = 0;
+        mPipelineBatchTotal = 0;
         mLastQueuedPipelines = 0;
         return;
     }
@@ -440,27 +447,38 @@ void Overlay::update_pipeline_progress() {
     if (!mPipelineProgressActive || createdPipelines < mPipelineBatchCreatedBase) {
         mPipelineProgressActive = true;
         mPipelineBatchCreatedBase = createdPipelines;
+        mPipelineBatchTotal = queuedPipelines;
         mPipelineProgressStartTime = clock::now();
         mLastQueuedPipelines = 0;
     }
 
     const uint32_t builtPipelines = createdPipelines - mPipelineBatchCreatedBase;
-    const uint32_t totalPipelines = queuedPipelines + builtPipelines;
-    const float progress = totalPipelines > 0 ? static_cast<float>(builtPipelines) /
-                                                    static_cast<float>(totalPipelines) :
-                                                0.0f;
+    mPipelineBatchTotal = std::max(mPipelineBatchTotal, queuedPipelines + builtPipelines);
+    const float progress = mPipelineBatchTotal > 0 ? static_cast<float>(builtPipelines) /
+                                                         static_cast<float>(mPipelineBatchTotal) :
+                                                     0.0f;
 
     if (queuedPipelines != mLastQueuedPipelines) {
         mLastQueuedPipelines = queuedPipelines;
-        const auto noun = queuedPipelines == 1 ? "pipeline" : "pipelines";
-        mPipelineProgressLabel->SetInnerRML(
-            escape(fmt::format("Building {} {}", queuedPipelines, noun)));
+        if (sPipelineWarmupActive) {
+            mPipelineProgressLabel->SetInnerRML(escape(
+                fmt::format("Precompiling shaders · {}/{}", builtPipelines, mPipelineBatchTotal)));
+        } else {
+            const auto noun = queuedPipelines == 1 ? "pipeline" : "pipelines";
+            mPipelineProgressLabel->SetInnerRML(
+                escape(fmt::format("Building {} {}", queuedPipelines, noun)));
+        }
     }
     mPipelineProgressBar->SetAttribute("value", progress);
 
-    if (clock::now() >= mPipelineProgressStartTime + kPipelineProgressOpenDelay) {
+    if (sPipelineWarmupActive) {
+        mPipelineProgress->SetAttribute("warmup", "");
+        mPipelineProgress->SetAttribute("open", "");
+    } else if (clock::now() >= mPipelineProgressStartTime + kPipelineProgressOpenDelay) {
+        mPipelineProgress->RemoveAttribute("warmup");
         mPipelineProgress->SetAttribute("open", "");
     } else {
+        mPipelineProgress->RemoveAttribute("warmup");
         mPipelineProgress->RemoveAttribute("open");
     }
 }

@@ -6,6 +6,10 @@
 
 namespace dusk::ui {
 
+// Renderer-only warmup is driven by the host loop while emulated time is gated.
+// Keep this state outside the game so displaying progress cannot affect playback.
+void set_pipeline_warmup_active(bool active) noexcept;
+
 class Overlay : public Document {
 public:
     Overlay();
@@ -34,6 +38,7 @@ private:
     clock::time_point mPipelineProgressStartTime;
     Uint64 mFpsLastUpdate = 0;
     uint32_t mPipelineBatchCreatedBase = 0;
+    uint32_t mPipelineBatchTotal = 0;
     uint32_t mLastQueuedPipelines = 0;
     bool mPipelineProgressActive = false;
 };
