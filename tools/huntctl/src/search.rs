@@ -840,6 +840,24 @@ pub fn evolve_population_with_proposals(
     config: EvolutionConfig,
     proposals: &[Candidate],
 ) -> Result<PopulationManifest, SearchError> {
+    evolve_population_with_retained_and_proposals(
+        source_manifest_path,
+        results,
+        output,
+        config,
+        &[],
+        proposals,
+    )
+}
+
+pub fn evolve_population_with_retained_and_proposals(
+    source_manifest_path: &Path,
+    results: &SearchResults,
+    output: &Path,
+    config: EvolutionConfig,
+    retained: &[Candidate],
+    proposals: &[Candidate],
+) -> Result<PopulationManifest, SearchError> {
     if config.population_size == 0
         || config.elite_count == 0
         || config.elite_count > config.population_size
@@ -875,6 +893,18 @@ pub fn evolve_population_with_proposals(
         .iter()
         .map(Candidate::id)
         .collect::<Result<HashSet<_>, _>>()?;
+    for candidate in retained {
+        if next.len() >= config.population_size {
+            break;
+        }
+        candidate.validate()?;
+        if candidate.segment != source.segment {
+            return Err(SearchError::InvalidPopulation);
+        }
+        if ids.insert(candidate.id()?) {
+            next.push(candidate.clone());
+        }
+    }
     for proposal in proposals {
         if next.len() >= config.population_size {
             break;
@@ -1767,6 +1797,61 @@ mod tests {
         assert!(next.members.iter().skip(2).all(|member| {
             member.ancestry.generation == 1 && member.ancestry.parent_id.is_some()
         }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn evolution_retains_an_exact_archived_candidate_before_new_proposals() {
+        let root =
+            std::env::temp_dir().join(format!("huntctl-search-retained-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let first = write_seed_population(
+            &root.join("g0"),
+            Candidate::baseline(SegmentProfile::Fsp103ToFsp104),
+            6,
+            121,
+        )
+        .unwrap();
+        let retained_member = &first.members[5];
+        let retained: Candidate = serde_json::from_slice(
+            &fs::read(root.join("g0").join(&retained_member.candidate_file)).unwrap(),
+        )
+        .unwrap();
+        let results = SearchResults {
+            schema: RESULTS_SCHEMA.into(),
+            segment: first.segment,
+            candidates: first
+                .members
+                .iter()
+                .enumerate()
+                .map(|(index, member)| {
+                    (
+                        member.candidate_id.clone(),
+                        CandidateResult {
+                            milestone_depth: 2,
+                            attempts: 1,
+                            successes: 1,
+                            first_hit_ticks: vec![100 + index as u64],
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let next = evolve_population_with_retained_and_proposals(
+            &root.join("g0/manifest.json"),
+            &results,
+            &root.join("g1"),
+            EvolutionConfig {
+                population_size: 6,
+                elite_count: 1,
+                rng_seed: 122,
+            },
+            std::slice::from_ref(&retained),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(next.members[1].candidate_id, retained.id().unwrap());
+        assert_eq!(next.members[1].ancestry, retained.ancestry);
         fs::remove_dir_all(root).unwrap();
     }
 }

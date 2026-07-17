@@ -1,12 +1,13 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
 use crate::artifact::Digest as ArtifactDigest;
+use crate::behavior_archive::{BehaviorArchive, describe_behavior};
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
 use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates};
 use crate::search::{
     Candidate, CandidateResult, EvolutionConfig, POPULATION_SCHEMA, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population,
-    evolve_population_with_proposals, rank_population, write_explicit_population,
+    evolve_population_with_retained_and_proposals, rank_population, write_explicit_population,
     write_seed_population,
 };
 use crate::tape::{InputTape, RawPadState};
@@ -978,6 +979,7 @@ pub fn run_anchored_search(
     )?;
     let mut final_results = None;
     let mut training_corpora = BTreeMap::<String, TransitionCorpus>::new();
+    let mut behavior_archive = BehaviorArchive::default();
     for generation in 0..search.generations {
         let manifest_path = population_root.join("manifest.json");
         let results_path = population_root.join("results.json");
@@ -1019,29 +1021,73 @@ pub fn run_anchored_search(
                 .entry(attempt.candidate_id.clone())
                 .or_insert(corpus);
         }
+        let member_by_id: BTreeMap<_, _> = manifest
+            .members
+            .iter()
+            .map(|member| (member.candidate_id.as_str(), member))
+            .collect();
+        let mut evaluated_episodes = BTreeMap::new();
+        for row in &leaderboard {
+            let Some(corpus) = generation_corpora.get(&row.candidate_id) else {
+                continue;
+            };
+            let member = member_by_id[row.candidate_id.as_str()];
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(population_root.join(&member.candidate_file))?)?;
+            let episode = QEpisode {
+                candidate,
+                corpus: corpus.clone(),
+            };
+            behavior_archive
+                .consider(episode.clone(), row.score, generation)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            evaluated_episodes.insert(row.candidate_id.clone(), episode);
+        }
         final_results = Some(results);
         if generation + 1 < search.generations {
             let next_root = search.output_root.join(format!("g{:03}", generation + 1));
-            let member_by_id: BTreeMap<_, _> = manifest
-                .members
-                .iter()
-                .map(|member| (member.candidate_id.as_str(), member))
-                .collect();
             let mut q_episodes = Vec::new();
+            let mut elite_ids = HashSet::new();
+            let mut elite_descriptors = Vec::new();
             for row in leaderboard.iter().take(search.elite_count) {
-                let Some(corpus) = generation_corpora.get(&row.candidate_id) else {
+                elite_ids.insert(row.candidate_id.clone());
+                let Some(episode) = evaluated_episodes.get(&row.candidate_id) else {
                     continue;
                 };
-                let member = member_by_id[row.candidate_id.as_str()];
-                let candidate: Candidate = serde_json::from_slice(&fs::read(
-                    population_root.join(&member.candidate_file),
-                )?)?;
-                q_episodes.push(QEpisode {
-                    candidate,
-                    corpus: corpus.clone(),
-                });
+                elite_descriptors.push(
+                    describe_behavior(&episode.corpus)
+                        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?,
+                );
+                q_episodes.push(episode.clone());
             }
-            let q_budget = (search.population_size - search.elite_count).div_ceil(2);
+            let non_elite_budget = search.population_size - search.elite_count;
+            let archive_budget = if non_elite_budget >= 3 {
+                (non_elite_budget / 4).max(1)
+            } else {
+                0
+            };
+            let archived = behavior_archive
+                .select_diverse(&elite_ids, &elite_descriptors, archive_budget)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            let archive_summary = behavior_archive
+                .summary(&archived)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            write_json(
+                &population_root.join("behavior-archive.json"),
+                &archive_summary,
+            )?;
+            let archived_candidates = archived
+                .iter()
+                .map(|entry| entry.episode.candidate.clone())
+                .collect::<Vec<_>>();
+            let mut q_ids = elite_ids;
+            for entry in &archived {
+                let id = entry.episode.candidate.id()?;
+                if q_ids.insert(id) {
+                    q_episodes.push(entry.episode.clone());
+                }
+            }
+            let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
             let q_result = if q_budget == 0 || q_episodes.is_empty() {
                 Err("no non-elite slots or aligned elite episodes are available".to_string())
             } else {
@@ -1089,7 +1135,7 @@ pub fn run_anchored_search(
                     Vec::new()
                 }
             };
-            manifest = evolve_population_with_proposals(
+            manifest = evolve_population_with_retained_and_proposals(
                 &manifest_path,
                 &final_results.as_ref().unwrap().results,
                 &next_root,
@@ -1098,6 +1144,7 @@ pub fn run_anchored_search(
                     elite_count: search.elite_count,
                     rng_seed: search.rng_seed + u64::from(generation) + 1,
                 },
+                &archived_candidates,
                 &q_candidates,
             )?;
             population_root = next_root;

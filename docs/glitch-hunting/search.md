@@ -225,11 +225,18 @@ provide aligned candidate tapes on which the learner may intervene; training
 can use every compatible episode observed so far without confusing a losing
 episode with an eligible parent.
 
-After elites are retained, fitted-Q proposals receive half of the remaining
-population budget. They alternate between the highest predicted mean-Q action
-change and an uncertainty-weighted action change. Each change replaces a one-,
-two-, or four-frame window with an exact canonical controller sample, compiles
-back to an ordinary candidate, and goes through the same cold-process milestone
+After elites are retained, up to one quarter of the non-elite slots preserve a
+bounded behavior archive. Its coarse descriptor covers terminal map/room,
+player procedure, midpoint and terminal position, closest scene exit, and the
+sequence of player procedures. Farthest-first selection keeps proved routes
+which differ from the current elites even when they are not currently fastest.
+The archive keeps at most 256 descriptors and one best episode per descriptor.
+
+Fitted-Q proposals receive half of the slots left after archive retention. They
+alternate between the highest predicted mean-Q action change and an
+uncertainty-weighted action change. Each change replaces a one-, two-, or
+four-frame window with an exact canonical controller sample, compiles back to
+an ordinary candidate, and goes through the same cold-process milestone
 evaluator as every other route. Unsupported schemas, misaligned tape/action
 pairs, and insufficient action coverage disable Q proposals for that generation
 rather than weakening evaluation. Remaining slots use the structured mutation
@@ -243,3 +250,13 @@ closed-loop route smoke, both Q proposals replayed and reached the 138-frame
 goal; the accompanying 137-frame improvement came from a conventional deletion
 mutation, not from Q. The distinction matters: executing learned proposals is
 proved, while global-search superiority is not yet claimed.
+
+A later five-generation, 12-candidate farm produced the first attributable
+learned improvement. The structured generation-zero elite reached Ordon Spring
+in 134 simulation ticks. An uncertainty-selected Q intervention changed frames
+101..103 to action 18 and reached it in 129 ticks. The exact learned candidate
+then passed three independent cold replays at 129/129/129. This is evidence that
+the learned layer can discover a useful non-obvious local action, not evidence
+that it dominates deterministic roll-spacing or waypoint search in general.
+Generation-local `behavior-archive.json` records which alternate routes were
+retained and why.

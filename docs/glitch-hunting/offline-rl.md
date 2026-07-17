@@ -120,6 +120,13 @@ windows become normal candidates and cannot bypass cold replay, predicate
 proof, or determinism checks. A generation-local `q-proposals.json` makes the
 sample budget and proposal ancestry inspectable.
 
+A bounded behavior archive prevents fastest-first selection from erasing every
+different route. It retains one best episode per coarse map, procedure, path,
+position, and exit-distance descriptor, then reserves a small population budget
+for entries farthest from the current elites. Those retained episodes are also
+eligible Q parents. `behavior-archive.json` records the selected candidate IDs
+and exact descriptors.
+
 ## Promotion boundary
 
 Trace v1 omits per-tick RNG, collision contacts, ground/wall polygons, camera
@@ -132,8 +139,8 @@ The next promotion gates are:
 1. add gameplay trace v2 fields needed for a credible movement state;
 2. collect whole-episode perturbed tapes across all supported actions;
 3. split train/validation by episode and boundary fingerprint, never by frame;
-4. add behavior/terminal archive novelty to the existing fitted-Q tape
-   proposals; and
+4. add larger temporal options such as waypoint-seek and deterministic
+   roll-spacing policies to the learned action hierarchy; and
 5. require exhaustive local golf plus repeated cold replay before promotion.
 
 Snapshots and persistent engine sessions improve sample throughput, but they do
