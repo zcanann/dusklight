@@ -1871,6 +1871,19 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
     let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
+    if let Some(path) = option(args, "--gameplay-trace") {
+        let mut trace = Vec::with_capacity(36 + 102);
+        trace.extend_from_slice(b"DUSKTRCE");
+        trace.extend_from_slice(&1_u16.to_le_bytes());
+        trace.extend_from_slice(&102_u16.to_le_bytes());
+        trace.extend_from_slice(&30_u32.to_le_bytes());
+        trace.extend_from_slice(&1_u32.to_le_bytes());
+        trace.extend_from_slice(&1_u64.to_le_bytes());
+        trace.extend_from_slice(&0_u32.to_le_bytes());
+        trace.extend_from_slice(&0_u32.to_le_bytes());
+        trace.extend_from_slice(&[0_u8; 102]);
+        fs::write(path, trace)?;
+    }
     let second_attempt = state_root.contains("attempt-002");
     let unstable_miss = mode == "unstable-goal" && second_attempt;
     let coordinate_golf_tick = if mode == "coordinate-golf" {

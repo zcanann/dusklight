@@ -13,7 +13,9 @@
 //! otherwise poison a fitted-Q batch.
 
 use crate::artifact::Digest;
-use crate::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
+#[cfg(test)]
+use crate::tape::RawPadState;
+use crate::tape::{InputFrame, InputTape, WaitCondition};
 use crate::trace::{self, DecodedTrace, TraceRecord};
 use crate::transition_corpus::{
     MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
@@ -26,8 +28,10 @@ use std::f32::consts::PI;
 use std::fmt;
 
 const TRACE_HEADER_SIZE: usize = 36;
+const BUTTON_A: u16 = 0x0100;
 const BUTTON_B: u16 = 0x0200;
-const ACTION_MACRO_KIND_PAD_FRAME_V1: u16 = 1;
+const BUTTON_A_B: u16 = BUTTON_A | BUTTON_B;
+const ACTION_MACRO_KIND_PAD_FRAME_V2: u16 = 2;
 
 /// Stable descriptor hashed into every corpus produced by this bridge.
 ///
@@ -70,15 +74,19 @@ pub const MOVEMENT_FEATURE_SCHEMA_V1: &str = concat!(
     "elapsed_div1024,remaining_div1024"
 );
 
-/// Action zero is neutral. IDs 1..=16 are full-stick headings without B, and
-/// IDs 17..=32 are the same controller states with B held. Heading zero is
-/// `(0, 127)` and
-/// headings advance clockwise in 22.5-degree increments in stick space.
-pub const MOVEMENT_ACTION_SCHEMA_V1: &str = concat!(
-    "dusklight.offline-rl.pad-frame/v1;",
-    "duration=1;neutral=0;heading_without_b=1+k;heading_with_b=17+k;",
-    "k=0..15;stick_x=round(sin(k*pi/8)*127);",
-    "stick_y=round(cos(k*pi/8)*127);buttons=0_or_0x0200"
+/// The 68 discrete actions are the Cartesian product of four button states and
+/// 17 direction states. Direction zero is neutral; directions 1..=16 are the
+/// nearest post-PADClamp heading in clockwise 22.5-degree increments starting
+/// at forward. Exact raw stick coordinates and buttons remain in the action
+/// parameters so a proposal layer can recover or perturb the observed input.
+pub const MOVEMENT_ACTION_SCHEMA_V2: &str = concat!(
+    "dusklight.offline-rl.pad-frame/v2;duration=1;",
+    "action_id=button_mode*17+direction;",
+    "button_mode=0:none,1:a,2:b,3:a+b;",
+    "direction=0:clamped_neutral,1+k:nearest_heading_k;",
+    "k=0..15;heading_x=round(sin(k*pi/8)*127);",
+    "heading_y=round(cos(k*pi/8)*127);",
+    "parameters=raw_stick_x_i16,raw_stick_y_i16,buttons_i16"
 );
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,7 +231,7 @@ impl fmt::Display for OfflineRlError {
                 stick_y,
             } => write!(
                 formatter,
-                "tape frame {frame} action buttons=0x{buttons:04x} stick=({stick_x},{stick_y}) is outside the v1 catalog"
+                "tape frame {frame} action buttons=0x{buttons:04x} stick=({stick_x},{stick_y}) is outside the v2 catalog"
             ),
             Self::AppliedInputMismatch {
                 frame,
@@ -281,8 +289,8 @@ pub fn movement_feature_schema_digest_v1() -> Digest {
     digest(MOVEMENT_FEATURE_SCHEMA_V1.as_bytes())
 }
 
-pub fn movement_action_schema_digest_v1() -> Digest {
-    digest(MOVEMENT_ACTION_SCHEMA_V1.as_bytes())
+pub fn movement_action_schema_digest_v2() -> Digest {
+    digest(MOVEMENT_ACTION_SCHEMA_V2.as_bytes())
 }
 
 /// Decodes and validates both artifacts before extracting exploratory data.
@@ -404,7 +412,7 @@ pub fn extract_exploratory(
 
     Ok(TransitionCorpus::new(
         movement_feature_schema_digest_v1(),
-        movement_action_schema_digest_v1(),
+        movement_action_schema_digest_v2(),
         MOVEMENT_FEATURE_COUNT_V1,
         transitions,
     )?)
@@ -458,7 +466,17 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
         return Err(OfflineRlError::PortZeroNotOwned(frame_index));
     }
     for (port, pad) in frame.pads.iter().enumerate().skip(1) {
-        if *pad != RawPadState::default() {
+        let owned = frame.owned_ports & (1 << port) != 0;
+        let active = pad.buttons != 0
+            || pad.stick_x != 0
+            || pad.stick_y != 0
+            || pad.substick_x != 0
+            || pad.substick_y != 0
+            || pad.trigger_left != 0
+            || pad.trigger_right != 0
+            || pad.analog_a != 0
+            || pad.analog_b != 0;
+        if owned && active {
             return Err(OfflineRlError::UnsupportedSecondaryPad {
                 frame: frame_index,
                 port,
@@ -478,35 +496,31 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
         return Err(OfflineRlError::UnsupportedPrimaryPad(frame_index));
     }
 
-    let action_id = if pad.buttons == 0 && pad.stick_x == 0 && pad.stick_y == 0 {
-        0
-    } else {
-        let with_b = match pad.buttons {
-            0 => false,
-            BUTTON_B => true,
-            _ => {
-                return Err(OfflineRlError::UnsupportedAction {
-                    frame: frame_index,
-                    buttons: pad.buttons,
-                    stick_x: pad.stick_x,
-                    stick_y: pad.stick_y,
-                });
-            }
-        };
-        let heading = (0_u32..16)
-            .find(|heading| heading_stick(*heading) == (pad.stick_x, pad.stick_y))
-            .ok_or(OfflineRlError::UnsupportedAction {
+    let button_mode = match pad.buttons {
+        0 => 0,
+        BUTTON_A => 1,
+        BUTTON_B => 2,
+        BUTTON_A_B => 3,
+        _ => {
+            return Err(OfflineRlError::UnsupportedAction {
                 frame: frame_index,
                 buttons: pad.buttons,
                 stick_x: pad.stick_x,
                 stick_y: pad.stick_y,
-            })?;
-        1 + heading + if with_b { 16 } else { 0 }
+            });
+        }
     };
+    let clamped = pad_clamp_main_stick(pad.stick_x, pad.stick_y);
+    let direction = if clamped == (0, 0) {
+        0
+    } else {
+        1 + nearest_heading(clamped.0, clamped.1)
+    };
+    let action_id = button_mode * 17 + direction;
 
     Ok(MacroAction {
         action_id,
-        macro_kind: ACTION_MACRO_KIND_PAD_FRAME_V1,
+        macro_kind: ACTION_MACRO_KIND_PAD_FRAME_V2,
         parameters: vec![
             i16::from(pad.stick_x),
             i16::from(pad.stick_y),
@@ -587,6 +601,16 @@ fn heading_stick(heading: u32) -> (i8, i8) {
         (radians.sin() * 127.0).round() as i8,
         (radians.cos() * 127.0).round() as i8,
     )
+}
+
+fn nearest_heading(stick_x: i8, stick_y: i8) -> u32 {
+    (0_u32..16)
+        .max_by_key(|heading| {
+            let candidate = heading_stick(*heading);
+            i32::from(stick_x) * i32::from(candidate.0)
+                + i32::from(stick_y) * i32::from(candidate.1)
+        })
+        .expect("the fixed heading catalog is non-empty")
 }
 
 fn movement_features(
@@ -792,7 +816,7 @@ mod tests {
         assert_eq!(corpus.transitions[0].action.action_id, 1);
         assert_eq!(corpus.transitions[1].state[17], 20.0 / 8192.0);
         assert_eq!(corpus.transitions[1].next_state[17], 30.0 / 8192.0);
-        assert_eq!(corpus.transitions[1].action.action_id, 21);
+        assert_eq!(corpus.transitions[1].action.action_id, 39);
         assert!(!corpus.transitions[0].terminal);
         assert!(corpus.transitions[1].terminal);
     }
@@ -849,7 +873,7 @@ mod tests {
         let (mut trace, tape) = fixture();
         trace.records[1].buttons = BUTTON_B;
         let corpus = extract_exploratory(&trace, &tape, config(2, 2)).unwrap();
-        assert_eq!(corpus.transitions[0].action.action_id, 21);
+        assert_eq!(corpus.transitions[0].action.action_id, 39);
     }
 
     #[test]
@@ -898,13 +922,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_raw_action() {
+    fn quantizes_arbitrary_stick_and_a_b_combinations_without_losing_raw_parameters() {
+        let (mut trace, mut tape) = fixture();
+        tape.frames[1].pads[0].stick_x = 70;
+        tape.frames[1].pads[0].stick_y = 127;
+        tape.frames[1].pads[0].buttons = BUTTON_A | BUTTON_B;
+        let clamped = pad_clamp_main_stick(70, 127);
+        trace.records[1].stick_x = clamped.0;
+        trace.records[1].stick_y = clamped.1;
+        trace.records[1].buttons = BUTTON_A | BUTTON_B;
+        let corpus = extract_exploratory(&trace, &tape, config(1, 1)).unwrap();
+        let action = &corpus.transitions[0].action;
+        assert_eq!(action.action_id, 3 * 17 + 2);
+        assert_eq!(action.parameters, [70, 127, (BUTTON_A | BUTTON_B) as i16]);
+    }
+
+    #[test]
+    fn rejects_buttons_outside_the_movement_catalog() {
         let (trace, mut tape) = fixture();
-        tape.frames[1].pads[0].stick_x = 7;
-        let error = extract_exploratory(&trace, &tape, config(1, 1)).unwrap_err();
+        tape.frames[1].pads[0].buttons = 0x1000;
         assert!(matches!(
-            error,
-            OfflineRlError::UnsupportedAction { frame: 1, .. }
+            extract_exploratory(&trace, &tape, config(1, 1)),
+            Err(OfflineRlError::UnsupportedAction { frame: 1, .. })
         ));
     }
 

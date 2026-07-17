@@ -77,11 +77,22 @@ absolute tape, and extract transitions from the replay trace. This prevents an
 observation-feedback policy from being mistaken for a self-contained action
 sequence.
 
-The v1 movement action catalog is neutral plus 16 full-stick headings, with or
-without B held. B is an executable controller state, not a claim that Link
-actually began a roll. The 49-field observed-state vector includes stage,
-room, player procedure, position, velocity, facing, prior applied input, event
-state, nearest-exit diagnostics, and finite-horizon time.
+The v2 movement action catalog has 68 classes: four button states (none, A, B,
+and A+B) crossed with neutral or 16 nearest post-`PADClamp` headings. Exact raw
+stick coordinates and buttons remain attached as compact action parameters, so
+human curves are not rounded out of the corpus and a proposal layer can reuse
+or perturb the observed sample. The 49-field observed-state vector includes
+stage, room, player procedure, position, velocity, facing, prior applied input,
+event state, nearest-exit diagnostics, and finite-horizon time.
+
+Anchored native farming retains a gameplay trace for the first proof repetition
+of every candidate. After milestone validation, the evaluator automatically
+extracts the source-to-terminal window into `transitions.dtcz`, pins its source
+and successful terminal references to the native boundary evidence, and records
+both paths and transition count in `evaluation.json`. Later identical proof
+repetitions do not duplicate the learning episode. Trace or extraction failure
+is explicit learning metadata but cannot turn valid milestone evidence into a
+different gameplay result.
 
 Example using an explicitly selected successful window:
 
@@ -93,10 +104,11 @@ huntctl learn extract-trace `
   --output build/search/intro-first-exit.dtcz
 ```
 
-One checked plumbing run produced 388 transitions: 364 forward and 24 right.
-The learner ranked forward at the initial route-control state. This only proves
-the extraction and fitting path; a single successful behavior trace contains
-no evidence about counterfactual rolls or other headings.
+One checked real route run produced 139 transitions from the 138-tick Ordon
+Spring incumbent and fitted the forest-Q learner directly from the evaluator
+artifact. This proves the automatic extraction and fitting path; a single
+successful behavior trace still contains no evidence about counterfactual
+actions.
 
 ## Promotion boundary
 
@@ -108,11 +120,10 @@ non-authoritative and must not promote a learned route.
 The next promotion gates are:
 
 1. add gameplay trace v2 fields needed for a credible movement state;
-2. make native evaluator attempts retain trace plus exact milestone evidence;
-3. collect whole-episode perturbed tapes across all supported actions;
-4. split train/validation by episode and boundary fingerprint, never by frame;
-5. use fitted Q and archive novelty to propose tapes; and
-6. require exhaustive local golf plus repeated cold replay before promotion.
+2. collect whole-episode perturbed tapes across all supported actions;
+3. split train/validation by episode and boundary fingerprint, never by frame;
+4. use fitted Q and archive novelty to propose tapes; and
+5. require exhaustive local golf plus repeated cold replay before promotion.
 
 Snapshots and persistent engine sessions improve sample throughput, but they do
 not change these evidence requirements.

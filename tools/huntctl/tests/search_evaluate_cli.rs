@@ -99,7 +99,14 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
             .unwrap()
             .iter()
             .all(|attempt| {
-                attempt["boundary_fingerprints"]["entered-f-sp104"].is_object()
+                let learning_trace_is_correct = if attempt["attempt"] == 1 {
+                    attempt["gameplay_trace_error"].is_null()
+                        && Path::new(attempt["gameplay_trace"].as_str().unwrap()).is_file()
+                } else {
+                    attempt["gameplay_trace"].is_null() && attempt["gameplay_trace_error"].is_null()
+                };
+                learning_trace_is_correct
+                    && attempt["boundary_fingerprints"]["entered-f-sp104"].is_object()
                     && Path::new(attempt["state_root"].as_str().unwrap()).is_dir()
                     && Path::new(attempt["milestone_result"].as_str().unwrap()).is_file()
             })

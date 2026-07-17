@@ -1,5 +1,7 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
+use crate::artifact::Digest as ArtifactDigest;
+use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
 use crate::search::{
     Candidate, CandidateResult, EvolutionConfig, POPULATION_SCHEMA, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population, rank_population,
@@ -7,6 +9,7 @@ use crate::search::{
 };
 use crate::tape::{InputTape, RawPadState};
 use crate::tape_chain::{ChainSegment, concatenate};
+use crate::transition_corpus::{StateReference, StateReferenceKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -22,7 +25,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v2";
-pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v2";
+pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v3";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
@@ -150,6 +153,16 @@ pub struct AttemptEvidence {
     pub artifact_root: PathBuf,
     pub state_root: PathBuf,
     pub milestone_result: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gameplay_trace: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gameplay_trace_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_corpus: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_corpus_error: Option<String>,
     pub stdout: PathBuf,
     pub stderr: PathBuf,
     pub elapsed_millis: u128,
@@ -1684,6 +1697,7 @@ struct Trial {
     root: PathBuf,
     state: PathBuf,
     milestones: PathBuf,
+    gameplay_trace: Option<PathBuf>,
     stdout: PathBuf,
     stderr: PathBuf,
 }
@@ -1727,6 +1741,7 @@ fn build_trials(
                 suffix_tape: None,
                 state: root.join("state"),
                 milestones: root.join("milestones.json"),
+                gameplay_trace: (attempt == 1).then(|| root.join("gameplay.trace")),
                 stdout: root.join("stdout.txt"),
                 stderr: root.join("stderr.txt"),
                 root,
@@ -1806,6 +1821,7 @@ fn build_anchored_trials(
                 suffix_tape: Some(suffix_path.clone()),
                 state: root.join("state"),
                 milestones: root.join("milestones.json"),
+                gameplay_trace: (attempt == 1).then(|| root.join("gameplay.trace")),
                 stdout: root.join("stdout.txt"),
                 stderr: root.join("stderr.txt"),
                 root,
@@ -1833,6 +1849,11 @@ fn run_trial(
         artifact_root: trial.root.clone(),
         state_root: trial.state.clone(),
         milestone_result: trial.milestones.clone(),
+        gameplay_trace: None,
+        gameplay_trace_error: None,
+        transition_corpus: None,
+        transition_count: None,
+        transition_corpus_error: None,
         stdout: trial.stdout.clone(),
         stderr: trial.stderr.clone(),
         elapsed_millis: 0,
@@ -1898,7 +1919,11 @@ fn run_trial(
             .arg("--milestone-goal")
             .arg(&goal)
             .arg("--milestone-result")
-            .arg(&trial.milestones)
+            .arg(&trial.milestones);
+        if let Some(gameplay_trace) = &trial.gameplay_trace {
+            command.arg("--gameplay-trace").arg(gameplay_trace);
+        }
+        command
             .arg("--cvar")
             .arg("game.instantSaves=true")
             .arg("--cvar")
@@ -1954,8 +1979,152 @@ fn run_trial(
         }
         Err(error) => evidence.infrastructure_error = Some(error.to_string()),
     }
+    if let Some(path) = &trial.gameplay_trace {
+        match fs::read(path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| crate::trace::decode(&bytes).map_err(|error| error.to_string()))
+            .and_then(|trace| {
+                if trace.capacity_exhausted {
+                    Err("gameplay trace capacity was exhausted".into())
+                } else if trace.records.is_empty() {
+                    Err("gameplay trace contains no records".into())
+                } else {
+                    Ok(())
+                }
+            }) {
+            Ok(()) => evidence.gameplay_trace = Some(path.clone()),
+            Err(error) => evidence.gameplay_trace_error = Some(error),
+        }
+    }
+    if evidence.infrastructure_error.is_none()
+        && evidence.gameplay_trace.is_some()
+        && let Some(objective) = anchored
+    {
+        match extract_trial_transition_corpus(trial, &evidence, objective) {
+            Ok((path, count)) => {
+                evidence.transition_corpus = Some(path);
+                evidence.transition_count = Some(count);
+            }
+            Err(error) => evidence.transition_corpus_error = Some(error),
+        }
+    }
     evidence.elapsed_millis = started.elapsed().as_millis();
     evidence
+}
+
+fn extract_trial_transition_corpus(
+    trial: &Trial,
+    evidence: &AttemptEvidence,
+    objective: &PreparedAnchoredObjective,
+) -> Result<(PathBuf, u64), String> {
+    let trace_path = evidence
+        .gameplay_trace
+        .as_ref()
+        .ok_or_else(|| "validated gameplay trace is missing".to_string())?;
+    let trace_bytes = fs::read(trace_path).map_err(|error| error.to_string())?;
+    let decoded = crate::trace::decode(&trace_bytes).map_err(|error| error.to_string())?;
+    let start_tape_frame = objective
+        .identity
+        .source_tape_frame
+        .checked_add(1)
+        .ok_or_else(|| "learning range start overflows".to_string())?;
+    let end_tape_frame = if evidence.goal_reached {
+        evidence
+            .milestone_observations
+            .get(&objective.identity.goal_milestone)
+            .map(|observation| observation.tape_frame)
+            .ok_or_else(|| "goal hit lacks a tape-frame observation".to_string())?
+    } else {
+        decoded
+            .records
+            .last()
+            .and_then(|record| record.tape_frame)
+            .ok_or_else(|| "goal miss trace lacks a final tape frame".to_string())?
+    };
+    if end_tape_frame < start_tape_frame {
+        return Err(format!(
+            "learning range {start_tape_frame}..={end_tape_frame} is empty"
+        ));
+    }
+    let tape_bytes = fs::read(&trial.tape).map_err(|error| error.to_string())?;
+    let start_reference = learning_boundary_reference(
+        &objective.identity.digest,
+        &objective.identity.source_milestone,
+        &objective.identity.source_boundary_fingerprint,
+    );
+    let terminal_reference = if evidence.goal_reached {
+        let boundary = evidence
+            .boundary_fingerprints
+            .get(&objective.identity.goal_milestone)
+            .ok_or_else(|| "goal hit lacks a terminal boundary fingerprint".to_string())?;
+        Some(learning_boundary_reference(
+            &objective.identity.digest,
+            &objective.identity.goal_milestone,
+            &boundary.digest,
+        ))
+    } else {
+        None
+    };
+    let episode_digest = learning_episode_digest(
+        &objective.identity.digest,
+        &trial.candidate_id,
+        &trace_bytes,
+    );
+    let corpus = extract_exploratory_from_bytes(
+        &trace_bytes,
+        &tape_bytes,
+        ExploratoryExtractConfig {
+            episode_digest,
+            start_tape_frame,
+            end_tape_frame,
+            start_reference: Some(start_reference),
+            terminal_reference,
+            end_is_terminal: evidence.goal_reached,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let count = u64::try_from(corpus.transitions.len())
+        .map_err(|_| "transition count does not fit u64".to_string())?;
+    let path = trial.root.join("transitions.dtcz");
+    corpus
+        .write_zstd_file(&path, 3)
+        .map_err(|error| error.to_string())?;
+    Ok((path, count))
+}
+
+fn learning_episode_digest(
+    objective_digest: &str,
+    candidate_id: &str,
+    trace_bytes: &[u8],
+) -> ArtifactDigest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.search-learning-episode/v1\0");
+    for bytes in [
+        objective_digest.as_bytes(),
+        candidate_id.as_bytes(),
+        trace_bytes,
+    ] {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+    ArtifactDigest(hasher.finalize().into())
+}
+
+fn learning_boundary_reference(
+    objective_digest: &str,
+    milestone: &str,
+    boundary_fingerprint: &str,
+) -> StateReference {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.search-learning-boundary/v1\0");
+    for value in [objective_digest, milestone, boundary_fingerprint] {
+        hasher.update((value.len() as u64).to_le_bytes());
+        hasher.update(value.as_bytes());
+    }
+    StateReference {
+        kind: StateReferenceKind::Boundary,
+        digest: ArtifactDigest(hasher.finalize().into()),
+    }
 }
 
 fn validate_native_exit(status: ExitStatus, goal_reached: bool) -> Result<(), EvaluateError> {
