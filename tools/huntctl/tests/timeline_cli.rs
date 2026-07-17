@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 3);
+    assert_eq!(summary["segments"], 4);
 
     let status = run(&[
         "timeline",
