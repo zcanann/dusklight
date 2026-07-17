@@ -103,6 +103,13 @@ child segments: they carry one parent, continuation input, fingerprints, and
 verification state. Promotion creates a normal checked-in segment. Restarting
 the workbench rediscovers ready drafts from disk.
 
+Terminal thumbnails are an illustrative cache, not proof data. A proved
+segment image is owned by its terminal boundary fingerprint; an unproved draft
+image is owned by its finalized tape digest. Rebuilding Dusklight or renaming a
+segment therefore does not invalidate the image. Each graph refresh prunes PNG
+cache entries which are no longer reachable from any current segment, draft,
+or projected search result.
+
 Draft **Rename** changes only its human label. **Delete** previews and moves the
 selected draft subtree to recoverable trash. Active, corrupt, detached, or
 path-escaping drafts are rejected.

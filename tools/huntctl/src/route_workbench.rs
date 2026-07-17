@@ -1535,21 +1535,10 @@ fn append_generated_search_segments(
     );
 }
 
-fn thumbnail_build_stamp(game: &Path) -> Option<String> {
-    let metadata = fs::metadata(game).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_nanos();
-    Some(format!("{}:{modified}", metadata.len()))
-}
-
-fn thumbnail_key(kind: &str, id: &str, materialization: &str, build_stamp: &str) -> String {
+fn thumbnail_key(kind: &str, materialization: &str) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"dusklight.route-workbench.thumbnail.v2-4x3\0");
-    for value in [kind, id, materialization, build_stamp] {
+    digest.update(b"dusklight.route-workbench.thumbnail.v3-4x3\0");
+    for value in [kind, materialization] {
         digest.update((value.len() as u64).to_le_bytes());
         digest.update(value.as_bytes());
     }
@@ -1559,7 +1548,6 @@ fn thumbnail_key(kind: &str, id: &str, materialization: &str, build_stamp: &str)
 fn graph_node_thumbnail_key(
     graph: &WorkbenchGraph,
     selection: &BrowserSelection,
-    build_stamp: &str,
 ) -> Result<String, WorkbenchError> {
     match selection {
         BrowserSelection::Segment { id } => {
@@ -1573,11 +1561,7 @@ fn graph_node_thumbnail_key(
                     "segment {id:?} is not playable"
                 )));
             }
-            let identity = format!(
-                "{}\0{}\0{}",
-                segment.boundary_fingerprint, segment.artifact.kind, segment.artifact.value
-            );
-            Ok(thumbnail_key("segment", id, &identity, build_stamp))
+            Ok(thumbnail_key("segment", &segment.boundary_fingerprint))
         }
         BrowserSelection::Draft { id } => {
             let draft = graph
@@ -1591,7 +1575,7 @@ fn graph_node_thumbnail_key(
             let identity = draft.result_tape_sha256.as_deref().ok_or_else(|| {
                 WorkbenchError::new(format!("draft {id:?} has no finalized chain fingerprint"))
             })?;
-            Ok(thumbnail_key("draft", id, identity, build_stamp))
+            Ok(thumbnail_key("draft", identity))
         }
     }
 }
@@ -1620,16 +1604,78 @@ fn thumbnail_file_is_valid(path: &Path) -> bool {
     file.read_exact(&mut signature).is_ok() && signature == *b"\x89PNG\r\n\x1a\n"
 }
 
-fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfig) {
-    let Some(build_stamp) = thumbnail_build_stamp(&config.game) else {
-        return;
+fn reachable_thumbnail_keys(graph: &WorkbenchGraph) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    for segment in &graph.segments {
+        keys.insert(thumbnail_key("segment", &segment.boundary_fingerprint));
+    }
+    for draft in &graph.drafts {
+        if let Some(identity) = draft.result_tape_sha256.as_deref() {
+            keys.insert(thumbnail_key("draft", identity));
+        }
+    }
+    keys
+}
+
+fn prune_orphaned_thumbnails(
+    graph: &WorkbenchGraph,
+    state_root: &Path,
+) -> Result<usize, WorkbenchError> {
+    let thumbnail_root = state_root.join(THUMBNAIL_DIRECTORY);
+    let entries = match fs::read_dir(&thumbnail_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(WorkbenchError::new(format!(
+                "cannot inspect thumbnail cache {}: {error}",
+                thumbnail_root.display()
+            )));
+        }
     };
+    let reachable = reachable_thumbnail_keys(graph);
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect thumbnail cache {}: {error}",
+                thumbnail_root.display()
+            ))
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect thumbnail cache entry {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let Some(filename) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(key) = filename.strip_suffix(".png") else {
+            continue;
+        };
+        if !valid_sha256(key) || reachable.contains(key) {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(WorkbenchError::new(format!(
+                    "cannot prune orphaned thumbnail {}: {error}",
+                    entry.path().display()
+                )));
+            }
+        }
+    }
+    Ok(removed)
+}
+
+fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfig) {
     for segment in &mut graph.segments {
-        let identity = format!(
-            "{}\0{}\0{}",
-            segment.boundary_fingerprint, segment.artifact.kind, segment.artifact.value
-        );
-        let key = thumbnail_key("segment", &segment.id, &identity, &build_stamp);
+        let key = thumbnail_key("segment", &segment.boundary_fingerprint);
         if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
             segment.thumbnail = Some(thumbnail_url(&key));
         }
@@ -1638,7 +1684,7 @@ fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfi
         let Some(identity) = draft.result_tape_sha256.as_deref() else {
             continue;
         };
-        let key = thumbnail_key("draft", &draft.id, identity, &build_stamp);
+        let key = thumbnail_key("draft", identity);
         if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
             draft.thumbnail = Some(thumbnail_url(&key));
         }
@@ -1650,12 +1696,9 @@ fn prepare_missing_playback_thumbnail(
     config: &WorkbenchConfig,
     selection: &BrowserSelection,
 ) -> Result<Option<PlaybackThumbnailCapture>, WorkbenchError> {
-    let game = canonical_file(&config.game, "game executable")?;
     let artifact_root = configured_artifact_root(config)?;
     let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
-    let build_stamp = thumbnail_build_stamp(&game)
-        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the game executable"))?;
-    let key = graph_node_thumbnail_key(&graph, selection, &build_stamp)?;
+    let key = graph_node_thumbnail_key(&graph, selection)?;
     let path = thumbnail_cache_path(&config.state_root, &key);
     if thumbnail_file_is_valid(&path) {
         return Ok(None);
@@ -1699,9 +1742,7 @@ fn install_recording_thumbnail(
     let identity = manifest.result_tape_sha256.as_deref().ok_or_else(|| {
         WorkbenchError::new("ready recording lacks a finalized chain fingerprint")
     })?;
-    let build_stamp = thumbnail_build_stamp(&config.game)
-        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the recording game executable"))?;
-    let key = thumbnail_key("draft", &manifest.id, identity, &build_stamp);
+    let key = thumbnail_key("draft", identity);
     let thumbnail_root = config.state_root.join(THUMBNAIL_DIRECTORY);
     fs::create_dir_all(&thumbnail_root).map_err(|error| {
         WorkbenchError::new(format!(
@@ -3729,9 +3770,7 @@ fn capture_thumbnail(
     let dvd = canonical_file(&config.dvd, "DVD image")?;
     let artifact_root = configured_artifact_root(config)?;
     let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
-    let build_stamp = thumbnail_build_stamp(&game)
-        .ok_or_else(|| WorkbenchError::new("cannot fingerprint the game executable"))?;
-    let key = graph_node_thumbnail_key(&graph, &request.selection, &build_stamp)?;
+    let key = graph_node_thumbnail_key(&graph, &request.selection)?;
     let materialized = match &request.selection {
         BrowserSelection::Segment { id } => {
             materialize_segment_playback(timeline, &artifact_root, id, None)?
@@ -5293,6 +5332,9 @@ fn handle_http(
                             &timeline,
                             &config.repository_root.join("build/search"),
                         );
+                        if let Err(error) = prune_orphaned_thumbnails(&graph, &config.state_root) {
+                            eprintln!("thumbnail cache pruning warning: {error}");
+                        }
                         decorate_graph_thumbnails(&mut graph, config);
                         Ok(graph)
                     })
@@ -6464,20 +6506,22 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             state_root: state_root.clone(),
         };
 
-        let stamp = thumbnail_build_stamp(&game).unwrap();
-        let key = thumbnail_key("segment", "boot.one", "boundary-a", &stamp);
+        let key = thumbnail_key("segment", "boundary-a");
         assert_eq!(key.len(), 64);
+        assert_eq!(key, thumbnail_key("segment", "boundary-a"));
+        assert_ne!(key, thumbnail_key("segment", "boundary-b"));
+        assert_ne!(key, thumbnail_key("draft", "boundary-a"));
+
+        fs::write(&game, b"a completely different game build").unwrap();
         assert_eq!(
             key,
-            thumbnail_key("segment", "boot.one", "boundary-a", &stamp)
+            thumbnail_key("segment", "boundary-a"),
+            "rebuilding the executable must not invalidate an illustrative thumbnail"
         );
-        assert_ne!(
+        assert_eq!(
             key,
-            thumbnail_key("segment", "boot.one", "boundary-b", &stamp)
-        );
-        assert_ne!(
-            key,
-            thumbnail_key("draft", "boot.one", "boundary-a", &stamp)
+            thumbnail_key("segment", "boundary-a"),
+            "renaming a segment must not invalidate its terminal-state thumbnail"
         );
 
         let thumbnail_root = state_root.join(THUMBNAIL_DIRECTORY);
@@ -6529,6 +6573,22 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 .is_none(),
             "normal playback must not overwrite an existing valid thumbnail"
         );
+
+        let graph = graph_from_timeline(&timeline(), &root).unwrap();
+        let reachable_key = graph_node_thumbnail_key(&graph, &selection).unwrap();
+        let reachable_path = thumbnail_cache_path(&state_root, &reachable_key);
+        if !reachable_path.exists() {
+            fs::write(&reachable_path, &png).unwrap();
+        }
+        let orphan_key = "f".repeat(64);
+        let orphan_path = thumbnail_cache_path(&state_root, &orphan_key);
+        fs::write(&orphan_path, &png).unwrap();
+        let unrelated_path = state_root.join(THUMBNAIL_DIRECTORY).join("README.txt");
+        fs::write(&unrelated_path, b"not managed by the PNG cache").unwrap();
+        assert_eq!(prune_orphaned_thumbnails(&graph, &state_root).unwrap(), 2);
+        assert!(reachable_path.exists());
+        assert!(!orphan_path.exists());
+        assert!(unrelated_path.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -6935,12 +6995,7 @@ continue main with boot_link.tas after root@clean
 
         install_recording_thumbnail(&directory, &manifest, &config).unwrap();
         assert!(!directory.join(DRAFT_TERMINAL_THUMBNAIL).exists());
-        let key = thumbnail_key(
-            "draft",
-            id,
-            manifest.result_tape_sha256.as_deref().unwrap(),
-            &thumbnail_build_stamp(&game).unwrap(),
-        );
+        let key = thumbnail_key("draft", manifest.result_tape_sha256.as_deref().unwrap());
         assert_eq!(fs::read(thumbnail_cache_path(&state, &key)).unwrap(), png);
 
         let mut graph = graph_with_drafts(&timeline(), &root, &state).unwrap();
