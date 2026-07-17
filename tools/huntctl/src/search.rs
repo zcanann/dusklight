@@ -830,6 +830,16 @@ pub fn evolve_population(
     output: &Path,
     config: EvolutionConfig,
 ) -> Result<PopulationManifest, SearchError> {
+    evolve_population_with_proposals(source_manifest_path, results, output, config, &[])
+}
+
+pub fn evolve_population_with_proposals(
+    source_manifest_path: &Path,
+    results: &SearchResults,
+    output: &Path,
+    config: EvolutionConfig,
+    proposals: &[Candidate],
+) -> Result<PopulationManifest, SearchError> {
     if config.population_size == 0
         || config.elite_count == 0
         || config.elite_count > config.population_size
@@ -865,6 +875,18 @@ pub fn evolve_population(
         .iter()
         .map(Candidate::id)
         .collect::<Result<HashSet<_>, _>>()?;
+    for proposal in proposals {
+        if next.len() >= config.population_size {
+            break;
+        }
+        proposal.validate()?;
+        if proposal.segment != source.segment || proposal.ancestry.generation != generation {
+            return Err(SearchError::InvalidPopulation);
+        }
+        if ids.insert(proposal.id()?) {
+            next.push(proposal.clone());
+        }
+    }
     let mut rng = SplitMix64::new(config.rng_seed);
     let mut attempts = 0;
     while next.len() < config.population_size {

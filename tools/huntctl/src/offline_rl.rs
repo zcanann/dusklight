@@ -13,9 +13,7 @@
 //! otherwise poison a fitted-Q batch.
 
 use crate::artifact::Digest;
-#[cfg(test)]
-use crate::tape::RawPadState;
-use crate::tape::{InputFrame, InputTape, WaitCondition};
+use crate::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
 use crate::trace::{self, DecodedTrace, TraceRecord};
 use crate::transition_corpus::{
     MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
@@ -496,27 +494,12 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
         return Err(OfflineRlError::UnsupportedPrimaryPad(frame_index));
     }
 
-    let button_mode = match pad.buttons {
-        0 => 0,
-        BUTTON_A => 1,
-        BUTTON_B => 2,
-        BUTTON_A_B => 3,
-        _ => {
-            return Err(OfflineRlError::UnsupportedAction {
-                frame: frame_index,
-                buttons: pad.buttons,
-                stick_x: pad.stick_x,
-                stick_y: pad.stick_y,
-            });
-        }
-    };
-    let clamped = pad_clamp_main_stick(pad.stick_x, pad.stick_y);
-    let direction = if clamped == (0, 0) {
-        0
-    } else {
-        1 + nearest_heading(clamped.0, clamped.1)
-    };
-    let action_id = button_mode * 17 + direction;
+    let action_id = movement_action_id_v2(pad).ok_or(OfflineRlError::UnsupportedAction {
+        frame: frame_index,
+        buttons: pad.buttons,
+        stick_x: pad.stick_x,
+        stick_y: pad.stick_y,
+    })?;
 
     Ok(MacroAction {
         action_id,
@@ -527,6 +510,36 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
             pad.buttons as i16,
         ],
     })
+}
+
+/// Maps an exact raw primary pad state into the learned v2 class while keeping
+/// quantization semantics shared by extraction and proposal validation.
+pub fn movement_action_id_v2(pad: RawPadState) -> Option<u32> {
+    if pad.substick_x != 0
+        || pad.substick_y != 0
+        || pad.trigger_left != 0
+        || pad.trigger_right != 0
+        || pad.analog_a != 0
+        || pad.analog_b != 0
+        || !pad.connected
+        || pad.error != 0
+    {
+        return None;
+    }
+    let button_mode = match pad.buttons {
+        0 => 0,
+        BUTTON_A => 1,
+        BUTTON_B => 2,
+        BUTTON_A_B => 3,
+        _ => return None,
+    };
+    let clamped = pad_clamp_main_stick(pad.stick_x, pad.stick_y);
+    let direction = if clamped == (0, 0) {
+        0
+    } else {
+        1 + nearest_heading(clamped.0, clamped.1)
+    };
+    Some(button_mode * 17 + direction)
 }
 
 /// Predicts the exact primary buttons/stick which `JUTGamePad::read()` records
@@ -601,6 +614,35 @@ fn heading_stick(heading: u32) -> (i8, i8) {
         (radians.sin() * 127.0).round() as i8,
         (radians.cos() * 127.0).round() as i8,
     )
+}
+
+/// Canonical executable pad state for one v2 learned action class. Observed
+/// transitions retain their exact raw parameters; this representative is used
+/// only when a policy proposes a class which was not copied from an episode.
+pub fn canonical_movement_pad_v2(action_id: u32) -> Option<RawPadState> {
+    if action_id >= 4 * 17 {
+        return None;
+    }
+    let button_mode = action_id / 17;
+    let direction = action_id % 17;
+    let buttons = match button_mode {
+        0 => 0,
+        1 => BUTTON_A,
+        2 => BUTTON_B,
+        3 => BUTTON_A_B,
+        _ => unreachable!("button mode was range checked"),
+    };
+    let (stick_x, stick_y) = if direction == 0 {
+        (0, 0)
+    } else {
+        heading_stick(direction - 1)
+    };
+    Some(RawPadState {
+        buttons,
+        stick_x,
+        stick_y,
+        ..RawPadState::default()
+    })
 }
 
 fn nearest_heading(stick_x: i8, stick_y: i8) -> u32 {
@@ -945,6 +987,37 @@ mod tests {
             extract_exploratory(&trace, &tape, config(1, 1)),
             Err(OfflineRlError::UnsupportedAction { frame: 1, .. })
         ));
+    }
+
+    #[test]
+    fn every_v2_action_has_a_canonical_pad_in_its_own_class() {
+        for action_id in 0..68 {
+            let pad = canonical_movement_pad_v2(action_id).unwrap();
+            let frame = InputFrame {
+                owned_ports: 1,
+                pads: [
+                    pad,
+                    RawPadState {
+                        connected: false,
+                        error: -1,
+                        ..RawPadState::default()
+                    },
+                    RawPadState {
+                        connected: false,
+                        error: -1,
+                        ..RawPadState::default()
+                    },
+                    RawPadState {
+                        connected: false,
+                        error: -1,
+                        ..RawPadState::default()
+                    },
+                ],
+                ..InputFrame::default()
+            };
+            assert_eq!(classify_action(&frame, 1).unwrap().action_id, action_id);
+        }
+        assert!(canonical_movement_pad_v2(68).is_none());
     }
 
     #[test]

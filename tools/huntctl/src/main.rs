@@ -950,7 +950,17 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 tick_rate_denominator: through_goal.tape.tick_rate_denominator,
                 frames: through_goal.tape.frames[prefix.tape.frames.len()..].to_vec(),
             };
-            let seed_candidate = Candidate::from_absolute_tape(segment.profile, &suffix)?;
+            let observed_candidate = Candidate::from_absolute_tape(segment.profile, &suffix)?;
+            let seed_candidate = if let Some(path) = option(search_args, "--candidate") {
+                let candidate: Candidate = serde_json::from_slice(&fs::read(path)?)?;
+                candidate.validate()?;
+                if candidate.segment != segment.profile {
+                    return Err("route-search candidate profile does not match the segment".into());
+                }
+                candidate
+            } else {
+                observed_candidate
+            };
 
             let output = required_path(search_args, "--output")?;
             let game = required_path(search_args, "--game")?;
@@ -1809,7 +1819,7 @@ fn print_usage() {
         "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
     eprintln!(
-        "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
+        "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
         "\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"

@@ -9,6 +9,7 @@ pub mod milestone_dsl;
 pub mod offline_rl;
 pub mod pool;
 pub mod protocol;
+pub mod q_search;
 pub mod route_store;
 pub mod route_workbench;
 pub mod search;

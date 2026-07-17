@@ -2,14 +2,16 @@
 
 use crate::artifact::Digest as ArtifactDigest;
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
+use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates};
 use crate::search::{
     Candidate, CandidateResult, EvolutionConfig, POPULATION_SCHEMA, PopulationManifest,
-    RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population, rank_population,
-    write_explicit_population, write_seed_population,
+    RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population,
+    evolve_population_with_proposals, rank_population, write_explicit_population,
+    write_seed_population,
 };
 use crate::tape::{InputTape, RawPadState};
 use crate::tape_chain::{ChainSegment, concatenate};
-use crate::transition_corpus::{StateReference, StateReferenceKind};
+use crate::transition_corpus::{StateReference, StateReferenceKind, TransitionCorpus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -975,10 +977,11 @@ pub fn run_anchored_search(
         search.rng_seed,
     )?;
     let mut final_results = None;
+    let mut training_corpora = BTreeMap::<String, TransitionCorpus>::new();
     for generation in 0..search.generations {
         let manifest_path = population_root.join("manifest.json");
         let results_path = population_root.join("results.json");
-        let (_, results) = evaluate_anchored_population_internal(
+        let (report, results) = evaluate_anchored_population_internal(
             &AnchoredEvaluateConfig {
                 evaluation: EvaluateConfig {
                     population_path: manifest_path.clone(),
@@ -998,10 +1001,95 @@ pub fn run_anchored_search(
         )?;
         let leaderboard = rank_population(&manifest, &results.results)?;
         write_json(&population_root.join("leaderboard.json"), &leaderboard)?;
+        let mut generation_corpora = BTreeMap::new();
+        for attempt in &report.attempts {
+            let Some(path) = attempt.transition_corpus.as_ref() else {
+                continue;
+            };
+            let corpus = TransitionCorpus::read_zstd_file(path)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            let digest = corpus
+                .content_digest()
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?
+                .to_string();
+            training_corpora
+                .entry(digest)
+                .or_insert_with(|| corpus.clone());
+            generation_corpora
+                .entry(attempt.candidate_id.clone())
+                .or_insert(corpus);
+        }
         final_results = Some(results);
         if generation + 1 < search.generations {
             let next_root = search.output_root.join(format!("g{:03}", generation + 1));
-            manifest = evolve_population(
+            let member_by_id: BTreeMap<_, _> = manifest
+                .members
+                .iter()
+                .map(|member| (member.candidate_id.as_str(), member))
+                .collect();
+            let mut q_episodes = Vec::new();
+            for row in leaderboard.iter().take(search.elite_count) {
+                let Some(corpus) = generation_corpora.get(&row.candidate_id) else {
+                    continue;
+                };
+                let member = member_by_id[row.candidate_id.as_str()];
+                let candidate: Candidate = serde_json::from_slice(&fs::read(
+                    population_root.join(&member.candidate_file),
+                )?)?;
+                q_episodes.push(QEpisode {
+                    candidate,
+                    corpus: corpus.clone(),
+                });
+            }
+            let q_budget = (search.population_size - search.elite_count).div_ceil(2);
+            let q_result = if q_budget == 0 || q_episodes.is_empty() {
+                Err("no non-elite slots or aligned elite episodes are available".to_string())
+            } else {
+                let corpora: Vec<_> = training_corpora.values().cloned().collect();
+                propose_q_candidates(
+                    &corpora,
+                    &q_episodes,
+                    QProposalConfig {
+                        generation: generation + 1,
+                        max_proposals: q_budget,
+                        iterations: 12,
+                        trees_per_action: 15,
+                        seed: search.rng_seed + u64::from(generation) + 1,
+                    },
+                )
+                .map_err(|error| error.to_string())
+            };
+            let q_candidates = match q_result {
+                Ok(batch) => {
+                    let candidate_ids = batch
+                        .candidates
+                        .iter()
+                        .map(Candidate::id)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    write_json(
+                        &population_root.join("q-proposals.json"),
+                        &serde_json::json!({
+                            "status": "ready",
+                            "summary": batch.summary,
+                            "candidate_ids": candidate_ids,
+                        }),
+                    )?;
+                    batch.candidates
+                }
+                Err(error) => {
+                    write_json(
+                        &population_root.join("q-proposals.json"),
+                        &serde_json::json!({
+                            "status": "unavailable",
+                            "error": error,
+                            "training_corpora": training_corpora.len(),
+                            "aligned_elite_episodes": q_episodes.len(),
+                        }),
+                    )?;
+                    Vec::new()
+                }
+            };
+            manifest = evolve_population_with_proposals(
                 &manifest_path,
                 &final_results.as_ref().unwrap().results,
                 &next_root,
@@ -1010,6 +1098,7 @@ pub fn run_anchored_search(
                     elite_count: search.elite_count,
                     rng_seed: search.rng_seed + u64::from(generation) + 1,
                 },
+                &q_candidates,
             )?;
             population_root = next_root;
         }

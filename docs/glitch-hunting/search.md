@@ -1,9 +1,13 @@
 # Milestone-backed route search
 
-Route search is a finite-sample optimization loop over deterministic controller
-programs. It does not use DDQN yet. With tens of clients, retaining proven
-elites and making structured mutations spends samples on roll timing, headings,
-segment lengths, and boot-menu timing instead of relearning controller basics.
+Route search is a finite-sample hybrid optimizer over deterministic controller
+programs. Structured waypoint, roll-timing, heading, duration, and deletion
+operators remain strong specialists. A native fitted-Q layer learns from the
+authenticated state/action transitions produced by completed trials and uses
+its finite-batch estimates to propose additional local interventions. This is
+deliberately not an end-to-end pixel DDQN: with tens of clients, deterministic
+specialists provide useful priors while the learned layer can test movements
+outside their hand-authored neighborhood.
 
 C++ is the scoring authority: it reports the first simulation tick and complete
 boundary fingerprint for each memory-backed milestone. Rust owns candidates,
@@ -62,7 +66,9 @@ the public wiring surfaces for the CLI and route workbench.
 
 The observed segment tape imports losslessly and becomes the initial seed; an
 anchored run fails configuration validation rather than silently substituting a
-synthetic route.
+synthetic route. Pass `--candidate FILE` to `search run-route` to repeat or
+continue from an exact previously mined suffix candidate; its segment profile
+must match the selected timeline segment.
 
 Every trial concatenates the same immutable prefix with one candidate suffix
 and boots that complete tape in a clean process. It does not pass `--stage`.
@@ -209,3 +215,31 @@ deletion alone. Candidate IDs hash segment plus input program, so identical
 tapes deduplicate even if
 separate search branches rediscover them; ancestry records the retained parent
 and mutation for every generation.
+
+## Hybrid fitted-Q proposals
+
+For anchored movement searches, every proved candidate's first repetition
+retains a compact transition corpus. Corpora are content-deduplicated across
+generations and fitted together. The current generation's repeat-proved elites
+provide aligned candidate tapes on which the learner may intervene; training
+can use every compatible episode observed so far without confusing a losing
+episode with an eligible parent.
+
+After elites are retained, fitted-Q proposals receive half of the remaining
+population budget. They alternate between the highest predicted mean-Q action
+change and an uncertainty-weighted action change. Each change replaces a one-,
+two-, or four-frame window with an exact canonical controller sample, compiles
+back to an ordinary candidate, and goes through the same cold-process milestone
+evaluator as every other route. Unsupported schemas, misaligned tape/action
+pairs, and insufficient action coverage disable Q proposals for that generation
+rather than weakening evaluation. Remaining slots use the structured mutation
+operators, so waypoint and roll specialists are never displaced wholesale.
+
+Each generation writes `q-proposals.json` with its training size, action
+coverage, considered states, intervention counts, and proposal count (or an
+explicit unavailable reason). Candidate ancestry marks `q_Exploit` and
+`q_Explore` proposals, making equal-budget attribution auditable. In the first
+closed-loop route smoke, both Q proposals replayed and reached the 138-frame
+goal; the accompanying 137-frame improvement came from a conventional deletion
+mutation, not from Q. The distinction matters: executing learned proposals is
+proved, while global-search superiority is not yet claimed.

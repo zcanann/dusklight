@@ -18,7 +18,9 @@ the learner consumes immutable observations and ranks discrete input actions.
   depth so malformed batches cannot create unbounded training work;
 - a fixed eight-transition shortest-path benchmark queried at held-out feature
   vectors; and
-- an exploratory gameplay-trace bridge with exact post-tick alignment.
+- an exploratory gameplay-trace bridge with exact post-tick alignment; and
+- a closed-loop fitted-Q proposal layer that returns ordinary deterministic
+  candidates to the native milestone evaluator.
 
 Run the implementation benchmark directly:
 
@@ -110,6 +112,14 @@ artifact. This proves the automatic extraction and fitting path; a single
 successful behavior trace still contains no evidence about counterfactual
 actions.
 
+Anchored search now accumulates content-deduplicated episode corpora across
+generations. It fits Q on compatible batches, scores tape-aligned states from
+repeat-proved elites, and alternates mean-Q exploitation with
+ensemble-disagreement exploration. Proposed one-, two-, and four-frame action
+windows become normal candidates and cannot bypass cold replay, predicate
+proof, or determinism checks. A generation-local `q-proposals.json` makes the
+sample budget and proposal ancestry inspectable.
+
 ## Promotion boundary
 
 Trace v1 omits per-tick RNG, collision contacts, ground/wall polygons, camera
@@ -122,7 +132,8 @@ The next promotion gates are:
 1. add gameplay trace v2 fields needed for a credible movement state;
 2. collect whole-episode perturbed tapes across all supported actions;
 3. split train/validation by episode and boundary fingerprint, never by frame;
-4. use fitted Q and archive novelty to propose tapes; and
+4. add behavior/terminal archive novelty to the existing fitted-Q tape
+   proposals; and
 5. require exhaustive local golf plus repeated cold replay before promotion.
 
 Snapshots and persistent engine sessions improve sample throughput, but they do
