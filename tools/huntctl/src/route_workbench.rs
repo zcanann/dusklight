@@ -5909,6 +5909,8 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             );
         }
         assert!(!html.contains("?ready=${Date.now()}"));
+        assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));
+        assert!(!html.contains("${segmentActions(segment)}</section>"));
     }
 
     #[test]
