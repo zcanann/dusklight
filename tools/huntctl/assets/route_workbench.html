@@ -8,7 +8,7 @@
     :root { color-scheme: dark; --bg:#0b0e13; --panel:#121720; --panel2:#171e29; --line:#293241; --text:#e8edf5; --muted:#8c98aa; --cyan:#6dd8cb; --blue:#86aefb; --amber:#e7bd68; --red:#f1788c; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
     * { box-sizing:border-box; }
     body { margin:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--text); }
-    button,textarea { font:inherit; }
+    button,select,textarea { font:inherit; }
     header { height:48px; display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--line); background:#0d1117; }
     .mark { width:24px; height:24px; display:grid; place-items:center; border-radius:5px; background:var(--cyan); color:#07100f; font-size:12px; font-weight:900; }
     .title strong { display:block; font-size:13px; }
@@ -17,6 +17,8 @@
     .status { color:var(--muted); font-size:11px; }
     .status.ok { color:var(--cyan); }
     .status.error,.error-note { color:var(--red); }
+    .record-pref { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10px; white-space:nowrap; }
+    .record-pref select { padding:4px 22px 4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     main { height:calc(100vh - 48px); display:grid; grid-template-columns:minmax(300px,420px) minmax(420px,1fr); }
     .browser { min-width:0; overflow:auto; border-right:1px solid var(--line); }
@@ -86,6 +88,22 @@
     <div class="mark">D</div>
     <div class="title"><strong>Route Workbench</strong><span id="timelineName">Loading Git timeline…</span></div>
     <div class="spacer"></div>
+    <label class="record-pref" title="Pause on the final parent frame before child recording begins">
+      <span>Child handoff</span>
+      <select id="recordCountdown" aria-label="Child recording handoff countdown">
+        <option value="0">0 sec</option>
+        <option value="1">1 sec</option>
+        <option value="2">2 sec</option>
+        <option value="3" selected>3 sec</option>
+        <option value="4">4 sec</option>
+        <option value="5">5 sec</option>
+        <option value="6">6 sec</option>
+        <option value="7">7 sec</option>
+        <option value="8">8 sec</option>
+        <option value="9">9 sec</option>
+        <option value="10">10 sec</option>
+      </select>
+    </label>
     <span id="status" class="status">Connecting…</span>
     <button id="reload" class="reload" type="button">Reload</button>
   </header>
@@ -119,9 +137,26 @@
     let expanded = new Set(['origin:boot']);
     let expansionInitialized = false;
     let occurrenceIndex = new Map();
+    const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
+    const DEFAULT_RECORD_COUNTDOWN_SECONDS=3;
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const label = value => String(value ?? '').replaceAll('_', ' ');
     const short = value => { const text=String(value ?? ''); return text.length > 20 ? `${text.slice(0,8)}…${text.slice(-7)}` : text; };
+    function validRecordingCountdown(value) {
+      const seconds=Number(value);
+      return Number.isInteger(seconds)&&seconds>=0&&seconds<=10?seconds:DEFAULT_RECORD_COUNTDOWN_SECONDS;
+    }
+    function loadRecordingCountdown() {
+      try {
+        const stored=window.localStorage.getItem(RECORD_COUNTDOWN_STORAGE_KEY);
+        return stored===null?DEFAULT_RECORD_COUNTDOWN_SECONDS:validRecordingCountdown(stored);
+      } catch (_) { return DEFAULT_RECORD_COUNTDOWN_SECONDS; }
+    }
+    function saveRecordingCountdown() {
+      const seconds=validRecordingCountdown($('recordCountdown').value);
+      $('recordCountdown').value=String(seconds);
+      try { window.localStorage.setItem(RECORD_COUNTDOWN_STORAGE_KEY,String(seconds)); } catch (_) {}
+    }
     function toast(message, error=false) {
       const element=$('toast'); element.textContent=message; element.className=`toast show${error?' error':''}`;
       clearTimeout(toast.timer); toast.timer=setTimeout(()=>element.className='toast', 5000);
@@ -334,13 +369,15 @@
       const kind=button.dataset.recordKind, id=button.dataset.id;
       const entered=window.prompt('Optional draft label',''); if(entered===null)return;
       const parent=kind==='segment'?{kind,id,terminal_goal:button.dataset.terminalGoal||null}:{kind,id};
+      const countdownSeconds=kind==='origin'?0:validRecordingCountdown($('recordCountdown').value);
       button.disabled=true; button.textContent='Launching...';
       try {
-        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered})});
+        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered,countdown_seconds:countdownSeconds})});
         const body=await response.json().catch(()=>({})); if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent='Recording live input'; $('status').className='status ok';
         const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames hidden, muted, and unpaced first.`:'';
-        toast(`Recording ${body.draft_id}.${prefix} Close Dusklight normally to finalize.`); setTimeout(load,750);
+        const countdown=countdownSeconds?` Holding the final parent frame for a ${countdownSeconds}s handoff countdown.`:'';
+        toast(`Recording ${body.draft_id}.${prefix}${countdown} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
       finally { button.disabled=false; button.textContent=kind==='origin'?'Record from Boot':'Record child'; }
     }
@@ -359,6 +396,8 @@
       }
     }
     $('reload').addEventListener('click',load);
+    $('recordCountdown').value=String(loadRecordingCountdown());
+    $('recordCountdown').addEventListener('change',saveRecordingCountdown);
     $('savePredicate').addEventListener('click',savePredicate);
     $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
     load();

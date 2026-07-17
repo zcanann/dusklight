@@ -120,9 +120,17 @@ const char* recording_start_error_message(RecordingStartError error);
 FastForwardBoundaryError validate_fast_forward_boundary(std::uint64_t requestedFrames,
     std::uint64_t tapeFrames, bool recording, bool tapeEndReleasesInput);
 
-/** Guard used immediately before revealing an exact tape-end recording handoff. */
-bool accelerated_recording_reveal_ready(
-    bool exactTapeEndHandoff, bool handoffReached, bool recorderIsRecording);
+/**
+ * Guard used immediately before revealing an exact tape-end recording handoff. The boundary must
+ * be fully verified before the parent frame becomes visible, but recorder activation may be
+ * deliberately deferred by a host-only countdown.
+ */
+bool accelerated_recording_reveal_ready(bool exactTapeEndHandoff, bool boundaryVerified);
+
+constexpr std::uint8_t RecordingHandoffCountdownMaximumSeconds = 10;
+
+/** Converts a positive remaining duration to the human-facing 3, 2, 1 countdown label. */
+std::uint8_t recording_handoff_countdown_display_seconds(std::uint64_t remainingMilliseconds);
 
 /** Maps an exact N-frame absolute prefix to its post-simulation handoff boundary. */
 ParentRecordingBoundary exact_parent_recording_boundary(std::uint64_t completedFrames);

@@ -316,12 +316,37 @@ pub enum BrowserSelection {
     Segment { id: String },
 }
 
+const DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS: u8 = 3;
+const MAX_RECORD_INPUT_COUNTDOWN_SECONDS: u8 = 10;
+
+fn default_record_input_countdown_seconds() -> u8 {
+    DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS
+}
+
+fn deserialize_record_input_countdown_seconds<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let seconds = u8::deserialize(deserializer)?;
+    if seconds > MAX_RECORD_INPUT_COUNTDOWN_SECONDS {
+        return Err(serde::de::Error::custom(format!(
+            "recording handoff countdown must be between 0 and {MAX_RECORD_INPUT_COUNTDOWN_SECONDS} seconds"
+        )));
+    }
+    Ok(seconds)
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserRecordRequest {
     pub parent: BrowserRecordParent,
     #[serde(default)]
     pub label: String,
+    #[serde(
+        default = "default_record_input_countdown_seconds",
+        deserialize_with = "deserialize_record_input_countdown_seconds"
+    )]
+    pub countdown_seconds: u8,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -2822,6 +2847,7 @@ fn append_accelerated_recording_prefix(
     command: &mut Command,
     playback: &Path,
     parent_frames: usize,
+    countdown_seconds: u8,
 ) {
     command
         .arg("--input-tape")
@@ -2829,7 +2855,9 @@ fn append_accelerated_recording_prefix(
         .arg("--input-tape-end")
         .arg("release")
         .arg("--input-tape-fast-forward-frames")
-        .arg(parent_frames.to_string());
+        .arg(parent_frames.to_string())
+        .arg("--record-input-countdown-seconds")
+        .arg(countdown_seconds.to_string());
 }
 
 fn record_continuation(
@@ -3026,6 +3054,7 @@ fn record_continuation(
             &mut command,
             &playback,
             materialized.tape.frames.len(),
+            request.countdown_seconds,
         );
     }
     command
@@ -4614,6 +4643,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                     terminal_goal: "control".into(),
                 },
                 label: String::new(),
+                countdown_seconds: DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS,
             },
         )
         .unwrap_err();
@@ -4851,6 +4881,11 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
             "segment.goal_proofs",
+            "id=\"recordCountdown\"",
+            "Child handoff",
+            "window.localStorage",
+            "countdown_seconds:countdownSeconds",
+            "kind==='origin'?0",
         ] {
             assert!(html.contains(required), "missing UI contract {required:?}");
         }
@@ -4860,6 +4895,35 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 "legacy info-dump UI remains: {removed_dump:?}"
             );
         }
+    }
+
+    #[test]
+    fn browser_record_countdown_defaults_to_three_and_rejects_out_of_range_values() {
+        let defaulted = serde_json::from_str::<BrowserRecordRequest>(
+            r#"{"parent":{"kind":"draft","id":"draft-one"},"label":"child"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            defaulted.countdown_seconds,
+            DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS
+        );
+
+        for seconds in [0, MAX_RECORD_INPUT_COUNTDOWN_SECONDS] {
+            let request = serde_json::from_value::<BrowserRecordRequest>(serde_json::json!({
+                "parent": {"kind": "draft", "id": "draft-one"},
+                "label": "child",
+                "countdown_seconds": seconds,
+            }))
+            .unwrap();
+            assert_eq!(request.countdown_seconds, seconds);
+        }
+
+        let error = serde_json::from_value::<BrowserRecordRequest>(serde_json::json!({
+            "parent": {"kind": "draft", "id": "draft-one"},
+            "countdown_seconds": MAX_RECORD_INPUT_COUNTDOWN_SECONDS + 1,
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("between 0 and 10 seconds"));
     }
 
     #[test]
@@ -5395,6 +5459,7 @@ continue main with boot_link.tas after root@clean
             &mut recording,
             Path::new("playback.tape"),
             nested.parent_frames as usize,
+            3,
         );
         let recording_arguments = recording
             .get_args()
@@ -5408,7 +5473,9 @@ continue main with boot_link.tas after root@clean
                 "--input-tape-end",
                 "release",
                 "--input-tape-fast-forward-frames",
-                "9"
+                "9",
+                "--record-input-countdown-seconds",
+                "3"
             ]
         );
         fs::remove_dir_all(root).unwrap();

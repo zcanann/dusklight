@@ -229,18 +229,21 @@ dusklight --dvd game.iso --fixed-step `
   --input-tape build/exact-parent-chain.tape `
   --input-tape-end release `
   --input-tape-fast-forward-frames 12345 `
+  --record-input-countdown-seconds 3 `
   --record-input-tape build/child-continuation.tape
 ```
 
 On the final prefix tick, native code arms reveal but keeps the submitted
-parent-boundary frame hidden. The normal verified handoff begins the already
-armed recorder and releases input quarantine. Only after both conditions are
-true does Dusklight reveal the parent boundary, restore audio and pacing, and
-enter the next outer loop. That loop's PAD read is therefore simultaneously
-the first live child input, recorded frame zero, and the first input consumed
-while the window is visible. A missing or failed recorder handoff aborts while
-the window remains hidden. Without `--record-input-tape`, equality remains an
-error so ordinary Play from parent always retains a visible tape continuation.
+parent-boundary frame hidden. Dusklight verifies and binds that exact boundary,
+submits it, then reveals it. An optional 0-10 second host-only countdown redraws
+only its overlay over the retained parent image: it admits no VI retrace,
+emulated time, PAD read, game/audio tick, or tape frame. At zero, Dusklight
+begins the already armed recorder, prepares the physical controller handoff,
+releases input quarantine, restores audio, and enters the next outer loop.
+That loop's PAD read is therefore simultaneously the first live child input
+and recorded frame zero. A missing or failed boundary proof aborts while the
+window remains hidden. Without `--record-input-tape`, equality remains an error
+so ordinary Play from parent always retains a visible tape continuation.
 The recording status binds this unnamed handoff with `start_boundary_kind` set
 to `"tick"`, `start_boundary_index` set to `N`, and `start_tape_frame` set to
 `N - 1`; milestone and fingerprint remain null when the parent draft did not

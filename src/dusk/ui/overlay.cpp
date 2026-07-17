@@ -26,6 +26,7 @@ namespace dusk::ui {
 namespace {
 aurora::Module Log{"dusk::ui::overlay"};
 bool sPipelineWarmupActive = false;
+std::uint8_t sRecordingHandoffCountdownSeconds = 0;
 
 const Rml::String kDocumentSource = R"RML(
 <rml>
@@ -41,6 +42,10 @@ const Rml::String kDocumentSource = R"RML(
         </pipeline-status>
         <progress id="pipeline-progress-bar" />
     </pipeline-progress>
+    <handoff-countdown id="handoff-countdown">
+        <countdown-label>Control in</countdown-label>
+        <countdown-value id="handoff-countdown-value" />
+    </handoff-countdown>
     <speedrun-timer id="speedrun-timer">
         <speedrun-rta id="speedrun-rta" />
         <speedrun-igt id="speedrun-igt" />
@@ -205,6 +210,10 @@ void set_pipeline_warmup_active(bool active) noexcept {
     sPipelineWarmupActive = active;
 }
 
+void set_recording_handoff_countdown(const std::uint8_t remainingSeconds) noexcept {
+    sRecordingHandoffCountdownSeconds = remainingSeconds;
+}
+
 static std::string FormatTime(OSTime ticks) {
     OSCalendarTime t;
     OSTicksToCalendarTime(ticks, &t);
@@ -216,6 +225,8 @@ Overlay::Overlay() : Document(kDocumentSource, true, DocumentScope::Overlay) {
     mPipelineProgress = mDocument->GetElementById("pipeline-progress");
     mPipelineProgressLabel = mDocument->GetElementById("pipeline-progress-label");
     mPipelineProgressBar = mDocument->GetElementById("pipeline-progress-bar");
+    mRecordingHandoffCountdown = mDocument->GetElementById("handoff-countdown");
+    mRecordingHandoffCountdownValue = mDocument->GetElementById("handoff-countdown-value");
     mSpeedrunTimer = mDocument->GetElementById("speedrun-timer");
     mSpeedrunRta = mDocument->GetElementById("speedrun-rta");
     mSpeedrunIgt = mDocument->GetElementById("speedrun-igt");
@@ -287,6 +298,7 @@ void Overlay::update() {
     }
 
     update_pipeline_progress();
+    update_recording_handoff_countdown();
 
 #if !(defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS && !TARGET_OS_MACCATALYST))
     if (getSettings().game.speedrunMode && getSettings().game.liveSplitEnabled) {
@@ -481,6 +493,19 @@ void Overlay::update_pipeline_progress() {
         mPipelineProgress->RemoveAttribute("warmup");
         mPipelineProgress->RemoveAttribute("open");
     }
+}
+
+void Overlay::update_recording_handoff_countdown() {
+    if (mRecordingHandoffCountdown == nullptr || mRecordingHandoffCountdownValue == nullptr) {
+        return;
+    }
+    if (sRecordingHandoffCountdownSeconds == 0) {
+        mRecordingHandoffCountdown->RemoveAttribute("open");
+        return;
+    }
+    mRecordingHandoffCountdownValue->SetInnerRML(
+        fmt::format("{}", sRecordingHandoffCountdownSeconds));
+    mRecordingHandoffCountdown->SetAttribute("open", "");
 }
 
 bool Overlay::handle_nav_command(Rml::Event& event, NavCommand cmd) {

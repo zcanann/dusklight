@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <system_error>
@@ -238,6 +239,8 @@ bool launchUILoop() {
 static bool finish_input_tape_tick();
 static bool arm_input_tape_fast_forward_reveal();
 static bool finalize_input_tape_fast_forward_reveal();
+static bool verify_recording_start_boundary();
+static void complete_recording_handoff_countdown();
 static bool finish_simulation_tick();
 static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
@@ -247,6 +250,10 @@ static bool automation_oracle_rejected_before_loop();
 static bool unpacedMainLoop;
 static bool fixedStepMainLoop;
 static bool pipelineWarmupGateEnabled;
+static std::uint8_t recordInputHandoffCountdownSeconds;
+static bool recordInputHandoffCountdownActive;
+static std::chrono::steady_clock::duration recordInputHandoffCountdownRemaining{};
+static std::chrono::steady_clock::time_point recordInputHandoffCountdownLastFrame{};
 static void write_automation_oracle_result_on_exit();
 static void write_name_entry_trace_on_exit();
 static void write_gameplay_trace_on_exit();
@@ -341,7 +348,11 @@ void main01(void) {
 
         eventsDone:;
 
-        if (!aurora_begin_frame()) {
+        const bool recordingCountdownFrame = recordInputHandoffCountdownActive;
+        if (!(recordingCountdownFrame ? aurora_begin_retained_frame() : aurora_begin_frame())) {
+            if (recordingCountdownFrame) {
+                recordInputHandoffCountdownLastFrame = std::chrono::steady_clock::now();
+            }
             DuskLog.debug("aurora_begin_frame returned false, skipping draw this frame");
             continue;
         }
@@ -354,10 +365,47 @@ void main01(void) {
         // Do not fire an emulated VI retrace while warming renderer-only state: retrace callbacks
         // are part of the emulated machine and must remain aligned with admitted simulation ticks.
         if (pipelineWarmupActive) {
+            if (recordingCountdownFrame) {
+                recordInputHandoffCountdownLastFrame = std::chrono::steady_clock::now();
+            }
             mDoGph_gInf_c::updateRenderSize();
             dusk::ui::update();
             dusk::game_clock::reset_frame_timer();
             aurora_end_frame();
+            SDL_Delay(1);
+            continue;
+        }
+
+        if (recordingCountdownFrame) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = now - recordInputHandoffCountdownLastFrame;
+            recordInputHandoffCountdownLastFrame = now;
+            if (elapsed >= recordInputHandoffCountdownRemaining) {
+                recordInputHandoffCountdownRemaining = {};
+                dusk::ui::set_recording_handoff_countdown(0);
+            } else {
+                recordInputHandoffCountdownRemaining -= elapsed;
+                const auto remainingNanoseconds =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        recordInputHandoffCountdownRemaining)
+                        .count();
+                const auto remainingMilliseconds =
+                    static_cast<std::uint64_t>((remainingNanoseconds + 999'999) / 1'000'000);
+                dusk::ui::set_recording_handoff_countdown(
+                    dusk::automation::recording_handoff_countdown_display_seconds(
+                        remainingMilliseconds));
+            }
+
+            // This frame updates only the host overlay over the retained final parent image.
+            // It admits no VI retrace, emulated time, PAD read, game/audio tick, or tape frame.
+            mDoGph_gInf_c::updateRenderSize();
+            dusk::ui::update();
+            dusk::game_clock::reset_frame_timer();
+            aurora_end_frame();
+            if (recordInputHandoffCountdownRemaining == std::chrono::steady_clock::duration::zero())
+            {
+                complete_recording_handoff_countdown();
+            }
             SDL_Delay(1);
             continue;
         }
@@ -621,6 +669,7 @@ static std::filesystem::path recordInputTapePath;
 static std::filesystem::path recordInputStatusPath;
 static std::size_t recordInputFrameCapacity;
 static bool recordInputHandoffReached;
+static bool recordInputStartBoundaryVerified;
 static bool recordInputFailed;
 static bool recordInputCapacityReported;
 static std::string recordInputError;
@@ -796,38 +845,55 @@ static bool auxiliary_live_input_enabled() {
     return !automationInputQuarantine && !recorder.isArmed();
 }
 
+static bool verify_recording_start_boundary() {
+    if (recordInputTapePath.empty() || recordInputStartBoundaryVerified) {
+        return true;
+    }
+    if (!recordInputStartMilestoneName.empty()) {
+        dusk::automation::RecordingStartBinding binding;
+        const auto error = dusk::automation::bind_recording_start(
+            dusk::automation::milestone_tracker(), dusk::automation::milestone_program(),
+            recordInputStartMilestoneName, recordInputExpectedStartFingerprint,
+            automationTapeFrame, binding);
+        if (error != dusk::automation::RecordingStartError::None) {
+            recordInputFailed = true;
+            recordInputStartBoundaryMismatch = true;
+            recordInputError =
+                fmt::format("recording start boundary mismatch for {} at tape frame {}: {}",
+                    recordInputStartMilestoneName, automationTapeFrame,
+                    dusk::automation::recording_start_error_message(error));
+            DuskLog.error("{}", recordInputError);
+            dusk::IsRunning = false;
+            return false;
+        }
+        recordInputStartMilestoneName = std::move(binding.milestone);
+        recordInputStartTapeFrame = binding.tapeFrame;
+        recordInputStartFingerprint = std::move(binding.boundaryFingerprint);
+        recordInputStartProgramDigest = std::move(binding.programDigest);
+        recordInputStartDefinitionDigest = std::move(binding.definitionDigest);
+        recordInputStartBoundaryKind = "tick";
+        recordInputStartBoundaryIndex = binding.boundaryIndex;
+    }
+    if (inputTapeFastForwardAtRecordingHandoff) {
+        const auto boundary = dusk::automation::exact_parent_recording_boundary(
+            dusk::automation::input_tape_player().consumedFrameCount());
+        recordInputStartBoundaryKind = "tick";
+        recordInputStartBoundaryIndex = boundary.boundaryIndex;
+        recordInputStartTapeFrame = boundary.tapeFrame;
+    }
+    recordInputStartBoundaryVerified = true;
+    return true;
+}
+
 static void handoff_automation_to_live_input() {
-    if (automationInputHandedOff) {
+    if (automationInputHandedOff || !verify_recording_start_boundary()) {
         return;
     }
 
+    // Suppress any button held while automation or its visible countdown owned input. The first
+    // child frame is sampled only after the user releases those inherited physical states.
     PADPrepareAutomationHandoff();
     if (!recordInputTapePath.empty()) {
-        if (!recordInputStartMilestoneName.empty()) {
-            dusk::automation::RecordingStartBinding binding;
-            const auto error =
-                dusk::automation::bind_recording_start(dusk::automation::milestone_tracker(),
-                    dusk::automation::milestone_program(), recordInputStartMilestoneName,
-                    recordInputExpectedStartFingerprint, automationTapeFrame, binding);
-            if (error != dusk::automation::RecordingStartError::None) {
-                recordInputFailed = true;
-                recordInputStartBoundaryMismatch = true;
-                recordInputError =
-                    fmt::format("recording start boundary mismatch for {} at tape frame {}: {}",
-                        recordInputStartMilestoneName, automationTapeFrame,
-                        dusk::automation::recording_start_error_message(error));
-                DuskLog.error("{}", recordInputError);
-                dusk::IsRunning = false;
-                return;
-            }
-            recordInputStartMilestoneName = std::move(binding.milestone);
-            recordInputStartTapeFrame = binding.tapeFrame;
-            recordInputStartFingerprint = std::move(binding.boundaryFingerprint);
-            recordInputStartProgramDigest = std::move(binding.programDigest);
-            recordInputStartDefinitionDigest = std::move(binding.definitionDigest);
-            recordInputStartBoundaryKind = "tick";
-            recordInputStartBoundaryIndex = binding.boundaryIndex;
-        }
         auto& recorder = dusk::automation::input_tape_recorder();
         if (!recorder.begin()) {
             recordInputFailed = true;
@@ -837,13 +903,6 @@ static void handoff_automation_to_live_input() {
             return;
         }
         recordInputHandoffReached = true;
-        if (inputTapeFastForwardAtRecordingHandoff) {
-            const auto boundary = dusk::automation::exact_parent_recording_boundary(
-                dusk::automation::input_tape_player().consumedFrameCount());
-            recordInputStartBoundaryKind = "tick";
-            recordInputStartBoundaryIndex = boundary.boundaryIndex;
-            recordInputStartTapeFrame = boundary.tapeFrame;
-        }
         DuskLog.info("Input recording started at live-input handoff (capacity={} frames)",
                      recordInputFrameCapacity);
     }
@@ -1060,6 +1119,21 @@ static void release_boot_recording_input(void*) {
     automationInputHandedOff = true;
 }
 
+static void complete_recording_handoff_countdown() {
+    recordInputHandoffCountdownActive = false;
+    dusk::automation::input_tape_player().handoffToLiveInput();
+    handoff_automation_to_live_input();
+    if (!automationInputHandedOff) {
+        return;
+    }
+    dusk::audio::SetOutputMuted(false);
+    DuskLog.info(
+        "Recording handoff countdown complete at simulation tick {}, consumed parent frames {}, "
+        "recorded child frames {}; live controller input and child frame 0 resumed",
+        automationSimulationTick, dusk::automation::input_tape_player().consumedFrameCount(),
+        dusk::automation::input_tape_recorder().frameCount());
+}
+
 static bool prepare_automation_pre_input_boundary() {
     if (record_milestone_pre_input_boundary()) return true;
     if (!recordInputFromBoot || recordInputHandoffReached) return false;
@@ -1251,6 +1325,11 @@ static bool finish_input_tape_tick() {
         return true;
     }
     if (!headlessMainLoop && !automationInputHandedOff) {
+        if (inputTapeFastForwardAtRecordingHandoff && inputTapeFastForwardRevealPending) {
+            // The submitted parent image must be revealed (and any host countdown completed)
+            // before recorder activation and the first child PAD read.
+            return false;
+        }
         player.handoffToLiveInput();
         handoff_automation_to_live_input();
         if (automationInputHandedOff) {
@@ -1277,6 +1356,9 @@ static bool arm_input_tape_fast_forward_reveal() {
         dusk::IsRunning = false;
         return true;
     }
+    if (inputTapeFastForwardAtRecordingHandoff && !verify_recording_start_boundary()) {
+        return true;
+    }
     // This runs post-simulation after tape frame N-1. Do not expose the window
     // yet: aurora_end_frame must first submit this parent-boundary image while
     // still hidden. The next mDoCPd_c::read will consume child frame N.
@@ -1290,16 +1372,17 @@ static bool finalize_input_tape_fast_forward_reveal() {
     }
     inputTapeFastForwardRevealPending = false;
 
-    auto& recorder = dusk::automation::input_tape_recorder();
     if (!dusk::automation::accelerated_recording_reveal_ready(
-            inputTapeFastForwardAtRecordingHandoff, recordInputHandoffReached,
-            recorder.isRecording())) {
-        DuskLog.error("Exact tape-end reveal reached before the recording handoff was live; refusing to expose an invalid child boundary");
+            inputTapeFastForwardAtRecordingHandoff, recordInputStartBoundaryVerified))
+    {
+        DuskLog.error("Exact tape-end reveal reached before its recording boundary was verified; "
+                      "refusing to expose an invalid child boundary");
         inputTapePlaybackFailed = true;
         recordInputFailed = true;
         recordInputStartBoundaryMismatch = true;
         if (recordInputError.empty()) {
-            recordInputError = "accelerated parent replay reached reveal before recorder begin";
+            recordInputError =
+                "accelerated parent replay reached reveal before boundary verification";
         }
         dusk::IsRunning = false;
         return true;
@@ -1316,13 +1399,36 @@ static bool finalize_input_tape_fast_forward_reveal() {
         return true;
     }
 
-    // Fixed-step deterministic time remains active. Only remove the unpaced
-    // outer-loop mode, then restore host audio for the visible continuation.
+    // Fixed-step deterministic time remains active. Only remove the unpaced outer-loop mode.
+    // Audio and live PAD remain quarantined until a configured host-only countdown reaches zero.
     inputTapeFastForwardActive = false;
     unpacedMainLoop = false;
-    dusk::audio::SetOutputMuted(false);
-    DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback resumed at paced 30 Hz",
-                 inputTapeFastForwardFrames);
+    if (inputTapeFastForwardAtRecordingHandoff && recordInputHandoffCountdownSeconds > 0) {
+        recordInputHandoffCountdownActive = true;
+        recordInputHandoffCountdownRemaining =
+            std::chrono::seconds(recordInputHandoffCountdownSeconds);
+        recordInputHandoffCountdownLastFrame = std::chrono::steady_clock::now();
+        dusk::ui::set_recording_handoff_countdown(recordInputHandoffCountdownSeconds);
+        DuskLog.info("Input tape fast-forward complete after exactly {} frames at simulation tick "
+                     "{} with {} recorded child frames; holding verified parent boundary for a "
+                     "visible {} second recording handoff countdown",
+            inputTapeFastForwardFrames, automationSimulationTick,
+            dusk::automation::input_tape_recorder().frameCount(),
+            recordInputHandoffCountdownSeconds);
+        return true;
+    }
+
+    if (inputTapeFastForwardAtRecordingHandoff) {
+        complete_recording_handoff_countdown();
+        if (!automationInputHandedOff) {
+            return true;
+        }
+    } else {
+        dusk::audio::SetOutputMuted(false);
+    }
+    DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback "
+                 "resumed at paced 30 Hz",
+        inputTapeFastForwardFrames);
     return false;
 }
 
@@ -1711,6 +1817,7 @@ int game_main(int argc, char* argv[]) {
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-from-boot", "Begin headful live recording at an authored pre-input Boot boundary", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("record-input-countdown-seconds", "Visible host-only delay before an accelerated child recording handoff (0-10, default 0)", cxxopts::value<std::uint8_t>()->default_value("0"))
             ("record-input-capacity", "Maximum live-input frames to retain (default 1080000 = 10 hours at 30 Hz)", cxxopts::value<std::size_t>()->default_value("1080000"))
             ("record-input-session", "Optional 128-bit lowercase-hex launch token echoed in recording status", cxxopts::value<std::string>())
             ("record-input-start-milestone", "Milestone ID required at the exact recording handoff frame", cxxopts::value<std::string>())
@@ -1869,6 +1976,22 @@ int game_main(int argc, char* argv[]) {
     const bool hasRecordInputTape =
         parsed_arg_options.count("record-input-tape") != 0;
     recordInputFromBoot = parsed_arg_options["record-input-from-boot"].as<bool>();
+    recordInputHandoffCountdownSeconds =
+        parsed_arg_options["record-input-countdown-seconds"].as<std::uint8_t>();
+    if (recordInputHandoffCountdownSeconds >
+        dusk::automation::RecordingHandoffCountdownMaximumSeconds)
+    {
+        fprintf(stderr,
+            "Input Recording Error: --record-input-countdown-seconds must be between 0 and 10\n");
+        return 1;
+    }
+    if (recordInputHandoffCountdownSeconds > 0 &&
+        (!hasRecordInputTape || !hasInputTapeFastForward || recordInputFromBoot))
+    {
+        fprintf(stderr, "Input Recording Error: --record-input-countdown-seconds requires "
+                        "accelerated child recording from an input tape\n");
+        return 1;
+    }
     const bool hasRecordInputSession =
         parsed_arg_options.count("record-input-session") != 0;
     const bool hasRecordStartMilestone =

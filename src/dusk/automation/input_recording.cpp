@@ -210,9 +210,18 @@ FastForwardBoundaryError validate_fast_forward_boundary(const std::uint64_t requ
     return FastForwardBoundaryError::None;
 }
 
-bool accelerated_recording_reveal_ready(const bool exactTapeEndHandoff,
-    const bool handoffReached, const bool recorderIsRecording) {
-    return !exactTapeEndHandoff || (handoffReached && recorderIsRecording);
+bool accelerated_recording_reveal_ready(
+    const bool exactTapeEndHandoff, const bool boundaryVerified) {
+    return !exactTapeEndHandoff || boundaryVerified;
+}
+
+std::uint8_t recording_handoff_countdown_display_seconds(
+    const std::uint64_t remainingMilliseconds) {
+    if (remainingMilliseconds == 0)
+        return 0;
+    const std::uint64_t roundedUp = (remainingMilliseconds + 999) / 1000;
+    return static_cast<std::uint8_t>(
+        std::min<std::uint64_t>(roundedUp, RecordingHandoffCountdownMaximumSeconds));
 }
 
 ParentRecordingBoundary exact_parent_recording_boundary(const std::uint64_t completedFrames) {

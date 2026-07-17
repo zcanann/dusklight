@@ -392,22 +392,29 @@ void testAcceleratedParentRecordingBoundaryAndRevealOrdering() {
     REQUIRE(boundary.boundaryIndex == 10);
     REQUIRE(boundary.tapeFrame == 9);
 
-    // Exact tape-end reveal is forbidden until the normal handoff has both marked the boundary
-    // reached and begun the armed recorder. The first live PAD read follows reveal.
+    // The exact parent boundary is verified before reveal. Recorder activation and quarantine
+    // release deliberately follow the visible host-only countdown, before the first live PAD read.
     std::vector<int> order;
-    bool handoffReached = false;
-    bool recorderRecording = false;
-    REQUIRE(!accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
-    recorderRecording = true;
-    order.push_back(1);  // recorder.begin()
-    REQUIRE(!accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
-    handoffReached = true;
-    order.push_back(2);  // live-input handoff/quarantine release
-    REQUIRE(accelerated_recording_reveal_ready(true, handoffReached, recorderRecording));
-    order.push_back(3);  // window reveal after hidden parent frame submission
-    order.push_back(4);  // first visible live PAD read
+    bool boundaryVerified = false;
+    REQUIRE(!accelerated_recording_reveal_ready(true, boundaryVerified));
+    boundaryVerified = true;
+    order.push_back(1);  // verify exact parent boundary
+    REQUIRE(accelerated_recording_reveal_ready(true, boundaryVerified));
+    order.push_back(2);  // submit parent frame, reveal, and run host-only countdown
+    order.push_back(3);  // recorder.begin() and live-input quarantine release
+    order.push_back(4);  // first live PAD read
     REQUIRE(order == std::vector<int>({1, 2, 3, 4}));
-    REQUIRE(accelerated_recording_reveal_ready(false, false, false));
+    REQUIRE(accelerated_recording_reveal_ready(false, false));
+
+    REQUIRE(recording_handoff_countdown_display_seconds(0) == 0);
+    REQUIRE(recording_handoff_countdown_display_seconds(1) == 1);
+    REQUIRE(recording_handoff_countdown_display_seconds(999) == 1);
+    REQUIRE(recording_handoff_countdown_display_seconds(1000) == 1);
+    REQUIRE(recording_handoff_countdown_display_seconds(1001) == 2);
+    REQUIRE(recording_handoff_countdown_display_seconds(2999) == 3);
+    REQUIRE(recording_handoff_countdown_display_seconds(3000) == 3);
+    REQUIRE(recording_handoff_countdown_display_seconds(10001) ==
+            RecordingHandoffCountdownMaximumSeconds);
 }
 
 void testAuthoredParentRecordingStartBinding() {

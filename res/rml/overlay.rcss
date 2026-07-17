@@ -22,6 +22,7 @@ body {
 
 fps,
 pipeline-progress,
+handoff-countdown,
 toast {
     position: absolute;
     border: 1dp #92875B;
@@ -129,6 +130,41 @@ pipeline-progress {
 
 pipeline-progress[open] {
     filter: opacity(1);
+}
+
+handoff-countdown {
+    left: 50%;
+    bottom: 40dp;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10dp;
+    z-index: 110;
+    padding: 10dp 18dp;
+    border-radius: 7dp;
+    backdrop-filter: blur(5dp);
+    filter: opacity(0);
+    pointer-events: none;
+}
+
+handoff-countdown[open] {
+    filter: opacity(1);
+}
+
+countdown-label {
+    font-family: "Fira Sans Condensed";
+    font-size: 18dp;
+    font-weight: bold;
+    text-transform: uppercase;
+    color: #92875B;
+}
+
+countdown-value {
+    min-width: 1em;
+    font-size: 30dp;
+    font-weight: bold;
+    color: #C2A42D;
+    text-align: center;
 }
 
 /* A deterministic playback gate is already an intentional loading screen. */
