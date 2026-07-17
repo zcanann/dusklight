@@ -1477,7 +1477,7 @@ fn generated_search_projections(
             projections.push(GeneratedProjection {
                 segment: GraphSegment {
                     id,
-                    name: Some(format!("{display_base} · {tick}f")),
+                    name: Some(format!("{display_base} · {tick}f · {}", &candidate_id[..6])),
                     parent: Some(parent.id.clone()),
                     profile: objective.segment.as_str().into(),
                     artifact: GraphArtifact {
@@ -5873,7 +5873,10 @@ continue main with reference after parent@{}
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].segment.parent.as_deref(), Some("parent"));
         assert_eq!(projected[0].segment.first_hit_tick, Some(7));
-        assert_eq!(projected[0].segment.name.as_deref(), Some("To exit · 7f"));
+        assert_eq!(
+            projected[0].segment.name.as_deref(),
+            Some("To exit · 7f · cccccc")
+        );
         assert_eq!(
             projected[0]
                 .segment
