@@ -36,8 +36,8 @@ An existing absolute boot tape can be imported without hand-authoring JSON:
     huntctl search import-tape --segment boot_to_fsp103 --tape build/boot.tape --output build/boot.candidate.json
 
 Boot import is lossless and deliberately narrow. It accepts neutral frames and
-zero-stick typed A/B/Start pulses. The anchored tunnel profile also accepts an
-absolute port-one movement tape: it run-length encodes the complete raw pad
+zero-stick typed A/B/Start pulses. Both anchored movement profiles accept an
+absolute port-one movement tape: they run-length encode the complete raw pad
 state as `pad_run` actions, including analog samples and trigger values, and
 verifies that compilation reproduces every source byte. Reactive waits and
 noncanonical secondary-port state remain rejected.
@@ -51,8 +51,8 @@ The segment profiles are:
 
 ## Anchored clean-boot suffix search
 
-The tunnel objective uses the anchored library evaluator rather than the
-legacy direct-stage evaluator. Route selection first identifies an exact
+Movement objectives beneath a proved parent segment use the anchored library
+evaluator. Route selection first identifies an exact
 segment occurrence and its structural parent. A goal attached to that segment
 then selects the predicate used for acceptance. `AnchoredObjectiveConfig`
 adapts this into the native evaluator's existing milestone protocol: immutable
@@ -60,11 +60,9 @@ absolute prefix tape, compiled DMSP, source predicate and boundary fingerprint,
 and goal predicate. `AnchoredEvaluateConfig` and `AnchoredSearchRunConfig` are
 the public wiring surfaces for the CLI and route workbench.
 
-The promoted initial suffix is
-`routes/intro/segments/human420.tape`. It is
-421 frames and imports losslessly; this profile has no synthetic baseline, so
-an anchored run fails configuration validation unless an observed suffix was
-explicitly imported as its seed.
+The observed segment tape imports losslessly and becomes the initial seed; an
+anchored run fails configuration validation rather than silently substituting a
+synthetic route.
 
 Every trial concatenates the same immutable prefix with one candidate suffix
 and boots that complete tape in a clean process. It does not pass `--stage`.
@@ -74,8 +72,7 @@ and goal milestones. A result is accepted only when all of the following match:
 - DMSP program and source/goal definition digests;
 - the source milestone's final prefix frame, boundary index, and pinned
   boundary fingerprint;
-- the goal evidence's F_SP104 room 1 spawn 0, Link identity, and procedure 53
-  (`crawl_start`).
+- the exact source and goal predicates selected from the timeline.
 
 The content-derived objective digest covers the prefix bytes, DMSP bytes,
 game executable and DVD SHA-256 identities, source proof, and goal. Anchored
@@ -92,7 +89,7 @@ target goal, program, and observed seed from the checked-in timeline and
 lineage. When either segment has several attached goals, pass `--source-goal`
 or `--goal` explicitly:
 
-    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment human420 --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/tunnel --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
+    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment to_ordon_spring_human150 --source-goal link_control --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
 It refuses a timeline segment that is not immediately after the requested
 lineage prefix. The compiled DMSP and materialized prefix are retained in the
@@ -113,10 +110,13 @@ Any launch failure, timeout, missing result, malformed schema, contradictory
 milestone sequence, or evidence-write failure cancels the population and makes
 the command fail. A legitimate goal miss remains a valid partial sample.
 
-For the F_SP103 route, entry into F_SP104 proves the destination while the
-earlier verified source-exit tick is the score. This keeps host loading latency
-out of route golf. The full ready, exit, and entered boundary fingerprints stay
-in attempt evidence for lineage compatibility decisions.
+For the current F_SP103 route, the objective is the first committed transition
+to F_SP104 room 1 spawn 0. Shader compilation and host filesystem latency must
+freeze simulation and therefore can never enter the score. If emulated DVD
+latency advances guest simulation deterministically, those guest ticks may be
+meaningful to a later load-complete objective, but they are downstream of this
+load-zone golf. Boundary fingerprints remain in attempt evidence for lineage
+compatibility decisions.
 
 ## Complete generation loop
 

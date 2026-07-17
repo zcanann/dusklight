@@ -6087,7 +6087,7 @@ continue main with boot_link.tas after root@clean
             graph
                 .segments
                 .iter()
-                .find(|segment| segment.id == "human420")
+                .find(|segment| segment.id == "to_ordon_spring_human150")
                 .and_then(|segment| segment.parent.as_deref()),
             Some("golf439")
         );
@@ -6107,25 +6107,28 @@ continue main with boot_link.tas after root@clean
         assert_eq!(segment.goal_proofs.len(), 1);
         assert_eq!(segment.goal_proofs[0].goal, "link_control");
         assert_eq!(segment.record_anchors.len(), 1);
-        let sibling = graph
+        let continuation = graph
             .segments
             .iter()
-            .find(|segment| segment.id == "human_alt420")
+            .find(|segment| segment.id == "to_ordon_spring_human150")
             .unwrap();
-        assert!(sibling.playable);
-        assert!(sibling.recordable);
-        assert_eq!(sibling.predicate_proof, "verified");
-        assert_eq!(sibling.first_hit_tick, Some(420));
-        assert_eq!(sibling.goal_proofs.len(), 1);
-        assert_eq!(sibling.goal_proofs[0].goal, "tunnel_crawl_start");
-        assert_eq!(sibling.record_anchors.len(), 1);
+        assert!(continuation.playable);
+        assert!(continuation.recordable);
+        assert_eq!(continuation.predicate_proof, "verified");
+        assert_eq!(continuation.first_hit_tick, Some(150));
+        assert_eq!(continuation.goal_proofs.len(), 1);
+        assert_eq!(
+            continuation.goal_proofs[0].goal,
+            "ordon_spring_load_committed"
+        );
+        assert_eq!(continuation.record_anchors.len(), 1);
         let boot = graph.origin.as_ref().unwrap();
         assert!(boot.recordable_from_boot);
         assert_eq!(boot.id, "boot");
     }
 
     #[test]
-    fn checked_in_intro_siblings_compose_their_exact_boot_prefix() {
+    fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
@@ -6143,46 +6146,44 @@ continue main with boot_link.tas after root@clean
         .unwrap();
         assert_eq!(prefix.tape.frames.len(), 440);
 
-        for (segment_id, expected_output) in [
-            ("human420", "0aee9b9dfc150ff0c0b44c36408922a3"),
-            ("human_alt420", "56b236160fbdff1ead7fed80441b7c99"),
-        ] {
-            let segment = &route.segments[segment_id];
-            assert_eq!(segment.end_fingerprint, expected_output);
-            let card = graph
-                .segments
-                .iter()
-                .find(|candidate| candidate.id == segment_id)
-                .unwrap();
-            assert!(card.playable);
-            assert_eq!(card.parent.as_deref(), Some("golf439"));
-            let continuation = load_segment_tape(segment, artifact_root).unwrap();
-            assert_eq!(continuation.frames.len(), 421);
-            let playback =
-                materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
-            assert_eq!(playback.tape.frames.len(), 861);
-            assert_eq!(playback.lineage, None);
-            assert_eq!(playback.segment.as_deref(), Some(segment_id));
-            assert_eq!(
-                &playback.tape.frames[..prefix.tape.frames.len()],
-                prefix.tape.frames.as_slice()
-            );
-            assert_eq!(
-                &playback.tape.frames[prefix.tape.frames.len()..],
-                continuation.frames.as_slice()
-            );
-            let first_local_frame =
-                materialize_segment_playback(&route, artifact_root, segment_id, Some(0)).unwrap();
-            assert_eq!(first_local_frame.tape.frames.len(), 441);
-            assert_eq!(
-                first_local_frame.tape.frames.last(),
-                continuation.frames.first()
-            );
-        }
-
+        let (segment_id, expected_output) = (
+            "to_ordon_spring_human150",
+            "d6d0b3ad849688d3f3a81b4ecef16077",
+        );
+        let segment = &route.segments[segment_id];
+        assert_eq!(segment.end_fingerprint, expected_output);
+        let card = graph
+            .segments
+            .iter()
+            .find(|candidate| candidate.id == segment_id)
+            .unwrap();
+        assert!(card.playable);
+        assert_eq!(card.parent.as_deref(), Some("golf439"));
+        let continuation = load_segment_tape(segment, artifact_root).unwrap();
+        assert_eq!(continuation.frames.len(), 150);
+        let playback =
+            materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
+        assert_eq!(playback.tape.frames.len(), 590);
+        assert_eq!(playback.lineage, None);
+        assert_eq!(playback.segment.as_deref(), Some(segment_id));
+        assert_eq!(
+            &playback.tape.frames[..prefix.tape.frames.len()],
+            prefix.tape.frames.as_slice()
+        );
+        assert_eq!(
+            &playback.tape.frames[prefix.tape.frames.len()..],
+            continuation.frames.as_slice()
+        );
+        let first_local_frame =
+            materialize_segment_playback(&route, artifact_root, segment_id, Some(0)).unwrap();
+        assert_eq!(first_local_frame.tape.frames.len(), 441);
+        assert_eq!(
+            first_local_frame.tape.frames.last(),
+            continuation.frames.first()
+        );
         let sibling_request = r#"{
-            "selection":{"kind":"segment","id":"human_alt420"},
-            "stop":{"kind":"segment","segment":"human_alt420"},
+            "selection":{"kind":"segment","id":"another_segment"},
+            "stop":{"kind":"segment","segment":"another_segment"},
             "handoff":true,
             "origin":"boot"
         }"#;

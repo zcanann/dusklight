@@ -26,13 +26,20 @@ pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v2";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
-const ANCHORED_PROFILE: SegmentProfile = SegmentProfile::LinkControlToTunnelCrawlStart;
+
+fn is_anchored_profile(profile: SegmentProfile) -> bool {
+    matches!(
+        profile,
+        SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+    )
+}
 
 /// Immutable proof inputs for a clean-boot suffix search. The prefix is an
 /// absolute compact tape, compiled DMSP, game executable, and DVD image;
 /// callers may materialize the route inputs through any management UX.
 #[derive(Clone, Debug)]
 pub struct AnchoredObjectiveConfig {
+    pub segment: SegmentProfile,
     pub prefix_tape: PathBuf,
     pub milestone_program: PathBuf,
     pub game: PathBuf,
@@ -58,6 +65,7 @@ pub struct AnchoredSearchRunConfig {
 #[serde(deny_unknown_fields)]
 pub struct AnchoredObjectiveIdentity {
     pub schema: String,
+    pub segment: SegmentProfile,
     pub digest: String,
     pub prefix_sha256: String,
     pub prefix_frames: u64,
@@ -304,6 +312,12 @@ fn prepare_anchored_objective(
     config: &AnchoredObjectiveConfig,
     runtime_program: PathBuf,
 ) -> Result<PreparedAnchoredObjective, EvaluateError> {
+    if !is_anchored_profile(config.segment) {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "anchored objective requires a movement segment, got {}",
+            config.segment.as_str()
+        )));
+    }
     if config.source_milestone.is_empty()
         || config.goal_milestone.is_empty()
         || config.source_milestone == config.goal_milestone
@@ -376,7 +390,7 @@ fn prepare_anchored_objective(
     let dvd_sha256 = sha256_file(&config.dvd, "DVD image")?;
     let digest_payload = serde_json::to_vec(&serde_json::json!({
         "schema": "dusklight-anchored-search-objective/v2",
-        "segment": ANCHORED_PROFILE,
+        "segment": config.segment,
         "prefix_sha256": prefix_sha256,
         "prefix_frames": prefix_frames,
         "milestone_program_sha256": milestone_program_sha256,
@@ -392,6 +406,7 @@ fn prepare_anchored_objective(
     }))?;
     let identity = AnchoredObjectiveIdentity {
         schema: "dusklight-anchored-search-objective/v2".into(),
+        segment: config.segment,
         digest: hex_bytes(
             &Sha256::new()
                 .chain_update(b"dusklight.anchored-search-objective/v2\0")
@@ -469,7 +484,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     let population_bytes = fs::read(&config.population_path)?;
     let manifest: PopulationManifest = serde_json::from_slice(&population_bytes)?;
     validate_manifest(&manifest, &config.population_path)?;
-    if manifest.segment == ANCHORED_PROFILE {
+    if manifest.segment == SegmentProfile::LinkControlToTunnelCrawlStart {
         return Err(EvaluateError::InvalidConfig(
             "link_control_to_tunnel_crawl_start requires evaluate_anchored_population".into(),
         ));
@@ -597,11 +612,11 @@ fn evaluate_anchored_population_internal(
     validate_anchored_execution_paths(&config.objective, &base.game, &base.dvd)?;
     let manifest: PopulationManifest = serde_json::from_slice(&fs::read(&base.population_path)?)?;
     validate_manifest(&manifest, &base.population_path)?;
-    if manifest.segment != ANCHORED_PROFILE {
+    if !is_anchored_profile(manifest.segment) || manifest.segment != config.objective.segment {
         return Err(EvaluateError::InvalidConfig(format!(
-            "anchored evaluation requires segment {}, got {}",
-            ANCHORED_PROFILE.as_str(),
-            manifest.segment.as_str()
+            "anchored evaluation segment {} does not match objective {}",
+            manifest.segment.as_str(),
+            config.objective.segment.as_str()
         )));
     }
     let runtime_program = base.output_root.join("objective.dmsp");
@@ -646,6 +661,7 @@ fn evaluate_anchored_population_internal(
     let cancelled = Arc::new(AtomicBool::new(false));
     let outcomes = Arc::new(Mutex::new(Vec::with_capacity(trials.len())));
     let worker_count = base.workers.min(trials.len()).max(1);
+    let segment = manifest.segment;
     thread::scope(|scope| {
         for _ in 0..worker_count {
             let trials = Arc::clone(&trials);
@@ -664,7 +680,7 @@ fn evaluate_anchored_population_internal(
                         break;
                     };
                     let mut evidence =
-                        run_trial(base, ANCHORED_PROFILE, trial, &cancelled, Some(&objective));
+                        run_trial(base, segment, trial, &cancelled, Some(&objective));
                     if let Err(error) = write_json(&trial.root.join("attempt.json"), &evidence) {
                         evidence.infrastructure_error =
                             Some(format!("could not persist attempt evidence: {error}"));
@@ -896,11 +912,16 @@ pub fn run_anchored_search(
     config: &AnchoredSearchRunConfig,
 ) -> Result<AnchoredSearchRunSummary, EvaluateError> {
     let search = &config.search;
-    if search.segment != ANCHORED_PROFILE {
+    if !is_anchored_profile(search.segment) {
         return Err(EvaluateError::InvalidConfig(format!(
-            "anchored search requires segment {}",
-            ANCHORED_PROFILE.as_str()
+            "anchored search requires a movement segment, got {}",
+            search.segment.as_str()
         )));
+    }
+    if config.objective.segment != search.segment {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored search segment does not match its objective".into(),
+        ));
     }
     if search.generations == 0
         || search.population_size == 0
@@ -922,7 +943,7 @@ pub fn run_anchored_search(
                 .into(),
         )
     })?;
-    if seed.segment != ANCHORED_PROFILE {
+    if seed.segment != search.segment {
         return Err(EvaluateError::InvalidConfig(
             "anchored seed candidate has the wrong segment profile".into(),
         ));
@@ -2652,6 +2673,7 @@ milestone tunnel_crawl_start {
         fs::write(&dvd_path, b"disc-build").unwrap();
         let prepared = prepare_anchored_objective(
             &AnchoredObjectiveConfig {
+                segment: SegmentProfile::LinkControlToTunnelCrawlStart,
                 prefix_tape: prefix_path,
                 milestone_program: program_path,
                 game: game_path,
@@ -2725,11 +2747,17 @@ milestone tunnel_crawl_start {
         let suffix = InputTape::decode(&fs::read(suffix_path).unwrap())
             .unwrap()
             .tape;
-        let candidate = Candidate::from_absolute_tape(ANCHORED_PROFILE, &suffix).unwrap();
-        let population_root = root.join("population");
-        let manifest =
-            write_explicit_population(&population_root, ANCHORED_PROFILE, 0, vec![candidate])
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::LinkControlToTunnelCrawlStart, &suffix)
                 .unwrap();
+        let population_root = root.join("population");
+        let manifest = write_explicit_population(
+            &population_root,
+            SegmentProfile::LinkControlToTunnelCrawlStart,
+            0,
+            vec![candidate],
+        )
+        .unwrap();
         let trials = build_anchored_trials(
             &manifest,
             &fs::canonicalize(&population_root).unwrap(),

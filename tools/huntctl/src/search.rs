@@ -377,8 +377,11 @@ impl Candidate {
         if tape.frames.is_empty() {
             return Err(SearchError::NonCanonicalTape("tape is empty".into()));
         }
-        if segment == SegmentProfile::LinkControlToTunnelCrawlStart {
-            return Self::from_movement_tape(tape);
+        if matches!(
+            segment,
+            SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+        ) {
+            return Self::from_movement_tape(segment, tape);
         }
         #[derive(Clone, Copy, Eq, PartialEq)]
         enum State {
@@ -497,7 +500,7 @@ impl Candidate {
         Ok(candidate)
     }
 
-    fn from_movement_tape(tape: &InputTape) -> Result<Self, SearchError> {
+    fn from_movement_tape(segment: SegmentProfile, tape: &InputTape) -> Result<Self, SearchError> {
         let disconnected = RawPadState {
             connected: false,
             error: -1,
@@ -526,7 +529,7 @@ impl Candidate {
         }
         let candidate = Self {
             schema: CANDIDATE_SCHEMA.into(),
-            segment: SegmentProfile::LinkControlToTunnelCrawlStart,
+            segment,
             actions: runs
                 .into_iter()
                 .map(|(pad, frames)| MacroAction::PadRun { pad, frames })
@@ -1489,7 +1492,7 @@ mod tests {
     }
 
     #[test]
-    fn absolute_boot_tape_inference_is_lossless_and_rejects_analog() {
+    fn absolute_tape_inference_keeps_route_analog_but_boot_rejects_it() {
         let source = Candidate::baseline(SegmentProfile::BootToFsp103)
             .compile()
             .unwrap();
@@ -1503,11 +1506,23 @@ mod tests {
                 .any(|action| matches!(action, MacroAction::Press { .. }))
         );
 
-        let analog = Candidate::baseline(SegmentProfile::Fsp103ToFsp104)
+        let mut analog = Candidate::baseline(SegmentProfile::Fsp103ToFsp104)
             .compile()
             .unwrap();
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        for frame in &mut analog.frames {
+            frame.owned_ports = 0x01;
+            frame.pads[1..].fill(disconnected);
+        }
+        let imported_route =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &analog).unwrap();
+        assert_eq!(imported_route.compile().unwrap(), analog);
         assert!(matches!(
-            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &analog),
+            Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &analog),
             Err(SearchError::NonCanonicalTape(_))
         ));
 

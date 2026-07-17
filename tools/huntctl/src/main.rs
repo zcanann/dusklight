@@ -899,10 +899,12 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .segments
                 .get(&segment_name)
                 .ok_or_else(|| format!("unknown timeline segment {segment_name:?}"))?;
-            if segment.profile != SegmentProfile::LinkControlToTunnelCrawlStart {
+            if !matches!(
+                segment.profile,
+                SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+            ) {
                 return Err(format!(
-                    "route search currently requires profile {}, got {}",
-                    SegmentProfile::LinkControlToTunnelCrawlStart.as_str(),
+                    "route search requires an anchored movement profile, got {}",
                     segment.profile.as_str()
                 )
                 .into());
@@ -1070,6 +1072,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     rng_seed,
                 },
                 objective: AnchoredObjectiveConfig {
+                    segment: segment.profile,
                     prefix_tape: prefix_path,
                     milestone_program: program_path,
                     game,
