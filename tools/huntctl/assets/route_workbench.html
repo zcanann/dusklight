@@ -25,9 +25,13 @@
     .pane-title { height:34px; display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--line); background:#0f141c; color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
     .browser .pane-title { position:absolute; z-index:5; top:0; left:0; right:0; pointer-events:none; background:rgba(15,20,28,.94); backdrop-filter:blur(5px); }
     .pane-hint { margin-left:auto; color:#697689; font-weight:500; letter-spacing:0; text-transform:none; }
-    .tree { position:absolute; inset:34px 0 0; overflow:auto; overscroll-behavior:contain; cursor:grab; font-size:12px; }
+    .graph-controls { display:flex; align-items:center; gap:3px; margin-left:10px; pointer-events:auto; }
+    .graph-controls button { min-width:25px; height:23px; padding:0 6px; border:1px solid var(--line); border-radius:4px; background:#151b24; color:#aeb9c9; cursor:pointer; font-size:10px; line-height:1; }
+    .graph-controls button:hover { border-color:#46556a; color:var(--text); }
+    .graph-controls .zoom-value { min-width:48px; color:var(--blue); }
+    .tree { position:absolute; inset:34px 0 0; overflow:hidden; overscroll-behavior:contain; cursor:grab; font-size:12px; touch-action:none; }
     .tree.panning { cursor:grabbing; user-select:none; }
-    .graph-canvas { position:relative; min-width:100%; min-height:100%; }
+    .graph-canvas { position:absolute; left:0; top:0; transform-origin:0 0; will-change:transform; }
     .graph-edges { position:absolute; inset:0; overflow:visible; pointer-events:none; }
     .graph-edge { fill:none; stroke:#344154; stroke-width:1.5; vector-effect:non-scaling-stroke; }
     .graph-node { position:absolute; width:184px; height:50px; display:flex; align-items:center; gap:5px; padding:4px 8px 4px 3px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
@@ -45,7 +49,12 @@
     .dot.bad { background:var(--red); }
     .details { min-width:0; min-height:0; overflow:auto; border-top:1px solid var(--line); background:var(--panel); }
     .details .pane-title { position:sticky; top:0; z-index:2; }
-    .detail-body { width:min(1180px,100%); padding:18px 26px 48px; }
+    .detail-body { width:100%; padding:18px 26px 48px; display:grid; grid-template-columns:minmax(240px,320px) minmax(0,1fr); gap:24px; align-items:start; }
+    .property-summary,.property-content { min-width:0; }
+    .property-content { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:18px 24px; align-items:start; }
+    .property-content .detail-section { margin-top:0; min-width:0; }
+    .property-content .error-note { grid-column:1/-1; }
+    .detail-body>.empty { grid-column:1/-1; }
     .detail-kicker { color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
     .detail-title { margin:5px 0 4px; font-size:20px; font-weight:700; }
     .detail-subtitle { color:var(--muted); font-size:12px; line-height:1.5; }
@@ -87,7 +96,8 @@
     .editor-actions { display:flex; justify-content:flex-end; gap:7px; }
     .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
     .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
-    @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.detail-body{padding:16px}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
+    @media (max-width:900px) { .detail-body{grid-template-columns:1fr}.property-content{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))} }
+    @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.detail-body{padding:16px}.property-content{grid-template-columns:1fr}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
   </style>
 </head>
 <body>
@@ -116,7 +126,7 @@
   </header>
   <main>
     <section class="browser" aria-label="Route graph">
-      <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · scroll in either direction</span></div>
+      <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · wheel to zoom</span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
       <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
     </section>
     <aside class="details" aria-label="Selection details">
@@ -185,10 +195,43 @@
     const ROW_GAP=22;
     const GRAPH_PADDING_X=34;
     const GRAPH_PADDING_Y=30;
+    const MIN_GRAPH_ZOOM=.4;
+    const MAX_GRAPH_ZOOM=1.8;
     const entityKey = (kind,id) => `${kind}:${id}`;
     const typedPath = (chain,kind,id) => [...chain,entityKey(kind,id)];
     let renderedEntities = new Set();
+    let graphCamera = {x:0,y:0,zoom:1};
+    let graphSize = {width:1,height:1};
     const isExpanded = key => !collapsed.has(key);
+    const clampGraphZoom = zoom => Math.min(MAX_GRAPH_ZOOM,Math.max(MIN_GRAPH_ZOOM,zoom));
+    function zoomCameraAt(camera,nextZoom,anchor) {
+      const zoom=clampGraphZoom(nextZoom);
+      const logicalX=(anchor.x-camera.x)/camera.zoom;
+      const logicalY=(anchor.y-camera.y)/camera.zoom;
+      return {x:anchor.x-logicalX*zoom,y:anchor.y-logicalY*zoom,zoom};
+    }
+    function applyGraphCamera() {
+      const canvas=$('tree').querySelector('.graph-canvas');
+      if(canvas)canvas.style.transform=`translate(${graphCamera.x}px,${graphCamera.y}px) scale(${graphCamera.zoom})`;
+      $('zoomReset').textContent=`${Math.round(graphCamera.zoom*100)}%`;
+    }
+    function setGraphZoom(zoom,anchor) {
+      const viewport=$('tree');
+      const point=anchor||{x:viewport.clientWidth/2,y:viewport.clientHeight/2};
+      graphCamera=zoomCameraAt(graphCamera,zoom,point);
+      applyGraphCamera();
+    }
+    function resetGraphCamera() {
+      graphCamera={x:0,y:0,zoom:1};
+      applyGraphCamera();
+    }
+    function fitGraphCamera() {
+      const viewport=$('tree');
+      const margin=24;
+      const zoom=clampGraphZoom(Math.min((viewport.clientWidth-margin*2)/graphSize.width,(viewport.clientHeight-margin*2)/graphSize.height,1));
+      graphCamera={x:(viewport.clientWidth-graphSize.width*zoom)/2,y:(viewport.clientHeight-graphSize.height*zoom)/2,zoom};
+      applyGraphCamera();
+    }
     function treeRow(node) {
       const open=isExpanded(node.key);
       const selectionData=node.selectable===false?'':`tabindex="0" data-select-kind="${escapeHtml(node.kind)}" data-select-id="${escapeHtml(node.id)}" data-select-occurrence="${escapeHtml(node.occurrence)}"`;
@@ -257,7 +300,6 @@
     }
     function renderTree() {
       const viewport=$('tree');
-      const scroll={left:viewport.scrollLeft,top:viewport.scrollTop};
       occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:['origin:boot']});
       renderedEntities=new Set();
       const roots=graph.segments.filter(segment=>segment.parent==null).sort((a,b)=>a.id.localeCompare(b.id));
@@ -276,11 +318,12 @@
       const nodes=[];const edges=[];
       let top=GRAPH_PADDING_Y;
       forest.forEach(item=>{placeGraphNode(item,0,top,nodes,edges);top+=item.span+ROW_GAP;});
-      const width=Math.max(viewport.clientWidth,GRAPH_PADDING_X+nodes.reduce((max,node)=>Math.max(max,node.x+NODE_WIDTH),0));
-      const height=Math.max(viewport.clientHeight,GRAPH_PADDING_Y+nodes.reduce((max,node)=>Math.max(max,node.y+NODE_HEIGHT),0));
+      const width=GRAPH_PADDING_X+nodes.reduce((max,node)=>Math.max(max,node.x+NODE_WIDTH),0);
+      const height=GRAPH_PADDING_Y+nodes.reduce((max,node)=>Math.max(max,node.y+NODE_HEIGHT),0);
+      graphSize={width,height};
       const paths=edges.map(edge=>{const x1=edge.from.x+NODE_WIDTH,y1=edge.from.y+NODE_HEIGHT/2,x2=edge.to.x,y2=edge.to.y+NODE_HEIGHT/2,curve=Math.max(32,(x2-x1)*.48);return `<path class="graph-edge" d="M ${x1} ${y1} C ${x1+curve} ${y1}, ${x2-curve} ${y2}, ${x2} ${y2}"/>`;}).join('');
       viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
-      viewport.scrollLeft=scroll.left;viewport.scrollTop=scroll.top;
+      applyGraphCamera();
       viewport.querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
       viewport.querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;collapsed.has(key)?collapsed.delete(key):collapsed.add(key);renderTree();}));
     }
@@ -290,15 +333,27 @@
       const finish=event=>{if(!pan)return;pan=null;viewport.classList.remove('panning');if(viewport.hasPointerCapture(event.pointerId))viewport.releasePointerCapture(event.pointerId);};
       viewport.addEventListener('pointerdown',event=>{
         if(event.button!==0||event.target.closest('.graph-node'))return;
-        pan={x:event.clientX,y:event.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};
+        pan={x:event.clientX,y:event.clientY,cameraX:graphCamera.x,cameraY:graphCamera.y};
         viewport.classList.add('panning');
         viewport.setPointerCapture(event.pointerId);
         event.preventDefault();
       });
-      viewport.addEventListener('pointermove',event=>{if(!pan)return;viewport.scrollLeft=pan.left-(event.clientX-pan.x);viewport.scrollTop=pan.top-(event.clientY-pan.y);});
+      viewport.addEventListener('pointermove',event=>{if(!pan)return;graphCamera.x=pan.cameraX+event.clientX-pan.x;graphCamera.y=pan.cameraY+event.clientY-pan.y;applyGraphCamera();});
       viewport.addEventListener('pointerup',finish);
       viewport.addEventListener('pointercancel',finish);
-      viewport.addEventListener('wheel',event=>{if(!event.shiftKey||event.deltaX!==0)return;viewport.scrollLeft+=event.deltaY;event.preventDefault();},{passive:false});
+      viewport.addEventListener('wheel',event=>{
+        if(event.target.closest('.graph-node,button,select,input,textarea'))return;
+        if(event.shiftKey){graphCamera.x-=event.deltaY;applyGraphCamera();event.preventDefault();return;}
+        if(Math.abs(event.deltaX)>Math.abs(event.deltaY)){graphCamera.x-=event.deltaX;graphCamera.y-=event.deltaY;applyGraphCamera();event.preventDefault();return;}
+        const bounds=viewport.getBoundingClientRect();
+        const anchor={x:event.clientX-bounds.left,y:event.clientY-bounds.top};
+        setGraphZoom(graphCamera.zoom*Math.exp(-event.deltaY*.0015),anchor);
+        event.preventDefault();
+      },{passive:false});
+      $('zoomOut').addEventListener('click',()=>setGraphZoom(graphCamera.zoom/1.2));
+      $('zoomIn').addEventListener('click',()=>setGraphZoom(graphCamera.zoom*1.2));
+      $('zoomReset').addEventListener('click',resetGraphCamera);
+      $('zoomFit').addEventListener('click',fitGraphCamera);
     }
     function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
     function goalDetail(segmentId,proofs=[]) {
@@ -316,13 +371,13 @@
       let html='';
       if(selection.kind==='origin'&&selection.id==='boot') {
         const boot=graph.origin?.recordable_from_boot?graph.origin:null;
-        html=`<div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}`;
+        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}</section>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}<div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}`;}
+        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div><div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div>${segmentActions(segment)}</section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div></div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
-        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}`;}
+        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div><div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
