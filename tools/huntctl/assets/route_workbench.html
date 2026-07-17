@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dusklight Route Tree</title>
+  <title>Dusklight Route Graph</title>
   <style>
     :root { color-scheme: dark; --bg:#0b0e13; --panel:#121720; --panel2:#171e29; --line:#293241; --text:#e8edf5; --muted:#8c98aa; --cyan:#6dd8cb; --blue:#86aefb; --amber:#e7bd68; --red:#f1788c; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
     * { box-sizing:border-box; }
@@ -20,25 +20,32 @@
     .record-pref { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10px; white-space:nowrap; }
     .record-pref select { padding:4px 22px 4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
-    main { height:calc(100vh - 48px); display:grid; grid-template-columns:minmax(300px,420px) minmax(420px,1fr); }
-    .browser { min-width:0; overflow:auto; border-right:1px solid var(--line); }
-    .pane-title { position:sticky; top:0; z-index:2; height:34px; display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--line); background:#0f141c; color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
-    .tree { padding:6px; font-size:12px; }
-    .tree-children { margin-left:13px; padding-left:8px; border-left:1px solid #242d3a; }
-    .tree-row { min-height:27px; display:flex; align-items:center; gap:5px; padding:2px 6px 2px 2px; border-radius:4px; color:#cfd6e2; cursor:default; user-select:none; }
-    .tree-row:hover { background:#151c26; }
-    .tree-row.selected { background:#20314a; color:#fff; }
+    main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
+    .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
+    .pane-title { height:34px; display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--line); background:#0f141c; color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+    .browser .pane-title { position:absolute; z-index:5; top:0; left:0; right:0; pointer-events:none; background:rgba(15,20,28,.94); backdrop-filter:blur(5px); }
+    .pane-hint { margin-left:auto; color:#697689; font-weight:500; letter-spacing:0; text-transform:none; }
+    .tree { position:absolute; inset:34px 0 0; overflow:auto; overscroll-behavior:contain; cursor:grab; font-size:12px; }
+    .tree.panning { cursor:grabbing; user-select:none; }
+    .graph-canvas { position:relative; min-width:100%; min-height:100%; }
+    .graph-edges { position:absolute; inset:0; overflow:visible; pointer-events:none; }
+    .graph-edge { fill:none; stroke:#344154; stroke-width:1.5; vector-effect:non-scaling-stroke; }
+    .graph-node { position:absolute; width:184px; height:50px; display:flex; align-items:center; gap:5px; padding:4px 8px 4px 3px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
+    .graph-node:hover { border-color:#485970; background:#19212c; }
+    .graph-node.selected { border-color:#638ac5; background:#1c2b40; color:#fff; box-shadow:0 0 0 1px rgba(134,174,251,.16),0 7px 22px rgba(0,0,0,.3); }
     .disclosure { width:18px; height:22px; padding:0; border:0; background:transparent; color:#738096; cursor:pointer; line-height:1; }
     .disclosure.open { transform:rotate(90deg); }
     .disclosure.empty { visibility:hidden; }
-    .tree-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .tree-tail { margin-left:auto; display:flex; gap:5px; align-items:center; color:var(--muted); font-size:9px; }
+    .node-copy { min-width:0; flex:1; }
+    .tree-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:650; }
+    .tree-tail { display:flex; gap:5px; align-items:center; margin-top:3px; color:var(--muted); font-size:9px; }
     .dot { width:6px; height:6px; border-radius:50%; background:#5e6a7c; }
     .dot.ok { background:var(--cyan); }
     .dot.warn { background:var(--amber); }
     .dot.bad { background:var(--red); }
-    .details { min-width:0; overflow:auto; background:var(--panel); }
-    .detail-body { width:min(720px,100%); padding:22px 26px 60px; }
+    .details { min-width:0; min-height:0; overflow:auto; border-top:1px solid var(--line); background:var(--panel); }
+    .details .pane-title { position:sticky; top:0; z-index:2; }
+    .detail-body { width:min(1180px,100%); padding:18px 26px 48px; }
     .detail-kicker { color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
     .detail-title { margin:5px 0 4px; font-size:20px; font-weight:700; }
     .detail-subtitle { color:var(--muted); font-size:12px; line-height:1.5; }
@@ -80,7 +87,7 @@
     .editor-actions { display:flex; justify-content:flex-end; gap:7px; }
     .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
     .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
-    @media (max-width:760px) { body{overflow:auto} main{height:auto;min-height:calc(100vh - 48px);grid-template-columns:1fr}.browser{height:45vh;border-right:0;border-bottom:1px solid var(--line)}.details{min-height:55vh}.status{display:none}.detail-body{padding:18px}.fields{grid-template-columns:110px 1fr} }
+    @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.detail-body{padding:16px}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
   </style>
 </head>
 <body>
@@ -108,12 +115,12 @@
     <button id="reload" class="reload" type="button">Reload</button>
   </header>
   <main>
-    <section class="browser" aria-label="Route tree">
-      <div class="pane-title">Route</div>
+    <section class="browser" aria-label="Route graph">
+      <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · scroll in either direction</span></div>
       <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
     </section>
     <aside class="details" aria-label="Selection details">
-      <div class="pane-title">Details</div>
+      <div class="pane-title">Properties</div>
       <div id="detail" class="detail-body"><div class="empty">Select a route entry.</div></div>
     </aside>
   </main>
@@ -134,8 +141,7 @@
     let graph = null;
     let predicateEditRevision = null;
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
-    let expanded = new Set(['origin:boot']);
-    let expansionInitialized = false;
+    let collapsed = new Set();
     let occurrenceIndex = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
     const DEFAULT_RECORD_COUNTDOWN_SECONDS=3;
@@ -169,58 +175,130 @@
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = id => graph.predicate_program?.definitions?.find(item=>item.name===id);
     const goalsFor = segment => graph.goals.filter(goal=>goal.segment===segment);
-    const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort((a,b)=>a.created_unix_ms-b.created_unix_ms);
+    const compareDrafts = (a,b) => (a.created_unix_ms??0)-(b.created_unix_ms??0)||a.id.localeCompare(b.id);
+    const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
     const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
-    function treeRow(kind,id,occurrence,name,expandKey,hasChildren,tail='') {
-      const open=expanded.has(expandKey);
-      return `<div class="tree-row${selected(occurrence)?' selected':''}" role="treeitem" tabindex="0" data-select-kind="${escapeHtml(kind)}" data-select-id="${escapeHtml(id)}" data-select-occurrence="${escapeHtml(occurrence)}"><button class="disclosure${hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(expandKey)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="tree-name">${escapeHtml(name)}</span>${tail?`<span class="tree-tail">${tail}</span>`:''}</div>`;
+    const NODE_WIDTH=184;
+    const NODE_HEIGHT=50;
+    const COLUMN_GAP=76;
+    const ROW_GAP=22;
+    const GRAPH_PADDING_X=34;
+    const GRAPH_PADDING_Y=30;
+    const entityKey = (kind,id) => `${kind}:${id}`;
+    const typedPath = (chain,kind,id) => [...chain,entityKey(kind,id)];
+    let renderedEntities = new Set();
+    const isExpanded = key => !collapsed.has(key);
+    function treeRow(node) {
+      const open=isExpanded(node.key);
+      const selectionData=node.selectable===false?'':`tabindex="0" data-select-kind="${escapeHtml(node.kind)}" data-select-id="${escapeHtml(node.id)}" data-select-occurrence="${escapeHtml(node.occurrence)}"`;
+      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}><button class="disclosure${node.hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(node.key)}" aria-label="${open?'Collapse':'Expand'}">▶</button><span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
     }
     function renderDraftNode(draft,path=new Set(),chain=[]) {
-      if(path.has(draft.id))return '';
-      const next=new Set(path);next.add(draft.id);
-      const nextChain=[...chain,draft.id];
+      const canonical=entityKey('draft',draft.id);
+      if(path.has(canonical)||renderedEntities.has(canonical))return null;
+      renderedEntities.add(canonical);
+      const next=new Set(path);next.add(canonical);
+      const nextChain=typedPath(chain,'draft',draft.id);
       const children=draftsUnder('draft',draft.id);
-      const key=`draft:${nextChain.join('>')}`;
+      const key=`route:${nextChain.join('/')}`;
       occurrenceIndex.set(key,{kind:'draft',id:draft.id,chain:nextChain});
-      const tail=`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${draft.playable?'ok':draft.error?'bad':'warn'}"></span>`;
-      const rendered=expanded.has(key)?children.map(child=>renderDraftNode(child,next,nextChain)).join(''):'';
-      return `<div>${treeRow('draft',draft.id,key,draft.label||draft.id,key,children.length>0,tail)}${rendered?`<div class="tree-children">${rendered}</div>`:''}</div>`;
+      const state=draft.playable?'ok':draft.error?'bad':'warn';
+      return {kind:'draft',id:draft.id,occurrence:key,key,name:draft.label||draft.id,tail:`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${state}"></span>`,hasChildren:children.length>0,children:isExpanded(key)?children.map(child=>renderDraftNode(child,next,nextChain)).filter(Boolean):[]};
     }
     function renderPlayableSegmentNode(segment,path=new Set(),chain=[]) {
-      if(path.has(segment.id)) {
-        return '';
-      }
-      const next=new Set(path);next.add(segment.id);
-      const nextChain=[...chain,segment.id];
-      const occurrence=`segment:${nextChain.join('>')}`;
+      const canonical=entityKey('segment',segment.id);
+      if(path.has(canonical)||renderedEntities.has(canonical))return null;
+      renderedEntities.add(canonical);
+      const next=new Set(path);next.add(canonical);
+      const nextChain=typedPath(chain,'segment',segment.id);
+      const occurrence=`route:${nextChain.join('/')}`;
       occurrenceIndex.set(occurrence,{kind:'segment',id:segment.id,chain:nextChain});
-      const drafts=draftsUnder('segment',segment.id);
       const outgoing=childSegments(segment.id);
-      const key=occurrence;
+      const drafts=draftsUnder('segment',segment.id);
       const score=segment.first_hit_tick??segment.ticks;
       const state=segment.error?'bad':segment.playable?'ok':'warn';
-      const tail=`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`;
-      const hasChildren=drafts.length>0||outgoing.length>0;
-      const children=expanded.has(key)?[...drafts.map(draft=>renderDraftNode(draft,new Set(),nextChain)),...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain))].join(''):'';
-      return `<div>${treeRow('segment',segment.id,occurrence,segmentName(segment.id),key,hasChildren,tail)}${children?`<div class="tree-children">${children}</div>`:''}</div>`;
+      const children=isExpanded(occurrence)?[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean):[];
+      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
     }
-    function initializeExpansion() {
-      if(expansionInitialized)return;
-      expansionInitialized=true;
-      expanded.add('origin:boot');
+    function structuralChildren(kind,id) {
+      return kind==='segment'?[...childSegments(id).map(item=>['segment',item.id]),...draftsUnder('segment',id).map(item=>['draft',item.id])]:draftsUnder('draft',id).map(item=>['draft',item.id]);
+    }
+    function collectReachable(kind,id,seen) {
+      const canonical=entityKey(kind,id);
+      if(seen.has(canonical))return;
+      seen.add(canonical);
+      structuralChildren(kind,id).forEach(([childKind,childId])=>collectReachable(childKind,childId,seen));
+    }
+    function detachedRoots(reachable) {
+      const all=[...graph.segments.slice().sort((a,b)=>a.id.localeCompare(b.id)).map(item=>['segment',item.id]),...graph.drafts.slice().sort(compareDrafts).map(item=>['draft',item.id])];
+      const unresolved=all.filter(([kind,id])=>!reachable.has(entityKey(kind,id)));
+      const unresolvedKeys=new Set(unresolved.map(([kind,id])=>entityKey(kind,id)));
+      const claimed=new Set();
+      const roots=[];
+      const claim=(kind,id)=>{const canonical=entityKey(kind,id);if(claimed.has(canonical)||!unresolvedKeys.has(canonical))return;claimed.add(canonical);structuralChildren(kind,id).forEach(([childKind,childId])=>claim(childKind,childId));};
+      const parentKey=(kind,id)=>{if(kind==='segment'){const item=graph.segments.find(segment=>segment.id===id);return item?.parent==null?null:entityKey('segment',item?.parent);}const item=graph.drafts.find(draft=>draft.id===id);return ['segment','draft'].includes(item?.parent?.kind)?entityKey(item.parent.kind,item.parent.id):item?.parent?.kind==='milestone'||item?.parent?.kind==='origin'?'origin:boot':null;};
+      unresolved.filter(([kind,id])=>!unresolvedKeys.has(parentKey(kind,id))).forEach(([kind,id])=>{if(!claimed.has(entityKey(kind,id))){roots.push([kind,id]);claim(kind,id);}});
+      unresolved.forEach(([kind,id])=>{if(!claimed.has(entityKey(kind,id))){roots.push([kind,id]);claim(kind,id);}});
+      return roots;
+    }
+    function measureGraphNode(node) {
+      node.children.forEach(measureGraphNode);
+      const childSpan=node.children.reduce((sum,child)=>sum+child.span,0)+Math.max(0,node.children.length-1)*ROW_GAP;
+      node.span=Math.max(NODE_HEIGHT,childSpan);
+    }
+    function placeGraphNode(node,depth,top,nodes,edges) {
+      node.x=GRAPH_PADDING_X+depth*(NODE_WIDTH+COLUMN_GAP);
+      node.y=top+(node.span-NODE_HEIGHT)/2;
+      nodes.push(node);
+      const childSpan=node.children.reduce((sum,child)=>sum+child.span,0)+Math.max(0,node.children.length-1)*ROW_GAP;
+      let childTop=top+(node.span-childSpan)/2;
+      node.children.forEach(child=>{placeGraphNode(child,depth+1,childTop,nodes,edges);edges.push({from:node,to:child});childTop+=child.span+ROW_GAP;});
     }
     function renderTree() {
-      initializeExpansion();
-      occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:[]});
+      const viewport=$('tree');
+      const scroll={left:viewport.scrollLeft,top:viewport.scrollTop};
+      occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:['origin:boot']});
+      renderedEntities=new Set();
       const roots=graph.segments.filter(segment=>segment.parent==null).sort((a,b)=>a.id.localeCompare(b.id));
-      const bootDrafts=graph.drafts.filter(draft=>['origin','milestone'].includes(draft.parent?.kind)&&graph.origin?.id===draft.parent.id&&graph.origin.recordable_from_boot);
-      const hasBootChildren=bootDrafts.length>0||roots.length>0;
-      const children=expanded.has('origin:boot')?[...bootDrafts.map(draft=>renderDraftNode(draft)),...roots.map(segment=>renderPlayableSegmentNode(segment))].join(''):'';
-      const html=`${treeRow('origin','boot','origin:boot','Boot','origin:boot',hasBootChildren)}${children?`<div class="tree-children">${children}</div>`:''}`;
-      $('tree').innerHTML=html||'<div class="empty">No route segments.</div>';
-      $('tree').querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
-      $('tree').querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;expanded.has(key)?expanded.delete(key):expanded.add(key);renderTree();}));
+      const bootDrafts=graph.drafts.filter(draft=>draft.parent?.kind==='milestone'||(draft.parent?.kind==='origin'&&draft.parent.id===graph.origin?.id)).sort(compareDrafts);
+      const reachable=new Set();
+      roots.forEach(segment=>collectReachable('segment',segment.id,reachable));
+      bootDrafts.forEach(draft=>collectReachable('draft',draft.id,reachable));
+      const bootChildren=isExpanded('origin:boot')?[...roots.map(segment=>renderPlayableSegmentNode(segment,new Set(),['origin:boot'])),...bootDrafts.map(draft=>renderDraftNode(draft,new Set(),['origin:boot']))].filter(Boolean):[];
+      const boot={kind:'origin',id:'boot',occurrence:'origin:boot',key:'origin:boot',name:'Boot',tail:'<span>frame 0</span><span class="dot ok"></span>',hasChildren:roots.length>0||bootDrafts.length>0,children:bootChildren};
+      const detached=detachedRoots(reachable);
+      const detachedChildren=isExpanded('synthetic:detached')?detached.map(([kind,id])=>kind==='segment'?renderPlayableSegmentNode(graph.segments.find(item=>item.id===id),new Set(),['synthetic:detached']):renderDraftNode(graph.drafts.find(item=>item.id===id),new Set(),['synthetic:detached'])).filter(Boolean):[];
+      const forest=[boot];
+      if(detached.length)forest.push({kind:'synthetic',id:'detached',occurrence:'synthetic:detached',key:'synthetic:detached',name:'Detached / invalid',tail:`<span>${detached.length} component${detached.length===1?'':'s'}</span><span class="dot bad"></span>`,selectable:false,hasChildren:true,children:detachedChildren});
+      const root={kind:'synthetic',id:'workspace',occurrence:'synthetic:workspace',key:'synthetic:workspace',name:'Workspace',tail:'',selectable:false,hasChildren:true,children:forest};
+      measureGraphNode(root);
+      const nodes=[];const edges=[];
+      let top=GRAPH_PADDING_Y;
+      forest.forEach(item=>{placeGraphNode(item,0,top,nodes,edges);top+=item.span+ROW_GAP;});
+      const width=Math.max(viewport.clientWidth,GRAPH_PADDING_X+nodes.reduce((max,node)=>Math.max(max,node.x+NODE_WIDTH),0));
+      const height=Math.max(viewport.clientHeight,GRAPH_PADDING_Y+nodes.reduce((max,node)=>Math.max(max,node.y+NODE_HEIGHT),0));
+      const paths=edges.map(edge=>{const x1=edge.from.x+NODE_WIDTH,y1=edge.from.y+NODE_HEIGHT/2,x2=edge.to.x,y2=edge.to.y+NODE_HEIGHT/2,curve=Math.max(32,(x2-x1)*.48);return `<path class="graph-edge" d="M ${x1} ${y1} C ${x1+curve} ${y1}, ${x2-curve} ${y2}, ${x2} ${y2}"/>`;}).join('');
+      viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
+      viewport.scrollLeft=scroll.left;viewport.scrollTop=scroll.top;
+      viewport.querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
+      viewport.querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;collapsed.has(key)?collapsed.delete(key):collapsed.add(key);renderTree();}));
+    }
+    function bindGraphPan() {
+      const viewport=$('tree');
+      let pan=null;
+      const finish=event=>{if(!pan)return;pan=null;viewport.classList.remove('panning');if(viewport.hasPointerCapture(event.pointerId))viewport.releasePointerCapture(event.pointerId);};
+      viewport.addEventListener('pointerdown',event=>{
+        if(event.button!==0||event.target.closest('.graph-node'))return;
+        pan={x:event.clientX,y:event.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};
+        viewport.classList.add('panning');
+        viewport.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      });
+      viewport.addEventListener('pointermove',event=>{if(!pan)return;viewport.scrollLeft=pan.left-(event.clientX-pan.x);viewport.scrollTop=pan.top-(event.clientY-pan.y);});
+      viewport.addEventListener('pointerup',finish);
+      viewport.addEventListener('pointercancel',finish);
+      viewport.addEventListener('wheel',event=>{if(!event.shiftKey||event.deltaX!==0)return;viewport.scrollLeft+=event.deltaY;event.preventDefault();},{passive:false});
     }
     function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
     function goalDetail(segmentId,proofs=[]) {
@@ -425,6 +503,7 @@
       }
     }
     $('reload').addEventListener('click',load);
+    bindGraphPan();
     $('recordCountdown').value=String(loadRecordingCountdown());
     $('recordCountdown').addEventListener('change',saveRecordingCountdown);
     $('savePredicate').addEventListener('click',savePredicate);

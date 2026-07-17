@@ -5412,12 +5412,19 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     #[test]
-    fn browser_ui_is_a_compact_segment_tree_with_selection_details() {
+    fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         let html = include_str!("../assets/route_workbench.html");
         for required in [
-            "aria-label=\"Route tree\"",
+            "aria-label=\"Route graph\"",
             "id=\"tree\"",
             "id=\"detail\"",
+            "graph-canvas",
+            "graph-edges",
+            "placeGraphNode",
+            "bindGraphPan",
+            "Detached / invalid",
+            "grid-template-rows",
+            "let collapsed = new Set()",
             "data-select-kind",
             "renderPlayableSegmentNode",
             "childSegments",
