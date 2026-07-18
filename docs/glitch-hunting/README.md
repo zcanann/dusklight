@@ -89,6 +89,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Project scope and objective selection](scope.md) defines the cheap objective
   conformance suite, objective-driven expansion rule, deferred work, and current
   won't-do boundaries.
+- [Objective conformance suites](objective-suites.md) defines the
+  content-addressed case contract and strict artifact validator for ordinary
+  stage-ready, movement, interaction, and object-manipulation tests.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.

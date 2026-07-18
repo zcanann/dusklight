@@ -6,6 +6,13 @@ roadmap documents describe the larger target.
 ## Working foundations
 
 - `orig/` is ignored as local extracted-game data.
+- `dusklight-objective-suite/v1` binds each positive or negative-control case to
+  exact boot, scenario, objective, observation view, action schema, query facts,
+  seed input, budgets, repetitions, and expected terminal class. `huntctl
+  harness validate-suite` resolves repository-relative artifacts, rejects path
+  escape or stale hashes, and validates the bound fixture, milestone, view,
+  tape, or controller formats. Suite execution and the four checked-in cheap
+  objective cases remain open work.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific

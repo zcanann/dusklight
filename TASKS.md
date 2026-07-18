@@ -29,7 +29,7 @@ tests. Ambitious research and exhaustive coverage live in
 
 ## 1. Immediate objective conformance suite
 
-- [ ] Define a small versioned suite manifest binding each case to its stage or
+- [x] Define a small versioned suite manifest binding each case to its stage or
   process boot, scenario fixture, objective program, required query facts,
   controller/tape seed, time budget, and expected terminal class.
 - [ ] Check in a **stage-ready** case that boots directly into a map and proves
