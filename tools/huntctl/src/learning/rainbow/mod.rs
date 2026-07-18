@@ -11,6 +11,10 @@ pub use n_step::{NStepError, aggregate_n_step};
 use crate::double_q::ablation::{QComponent, QComponentConfig, QComponentModel};
 use crate::double_q::{DoubleQ, DoubleQConfig, DoubleQError, DoubleQEstimate};
 use crate::fqi::Transition;
+use crate::learning::calibration::{
+    DiscreteQCalibrationReport, DiscreteQEstimator, calibrate_discrete_q,
+};
+use crate::low_data_baselines::{ReturnSample, empirical_return_samples};
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
@@ -53,9 +57,12 @@ impl Default for RainbowAblationConfig {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct HeldOutMetrics {
     pub transitions: usize,
+    pub supported_logged_actions: usize,
+    pub unsupported_logged_actions: usize,
     pub mean_absolute_td_error: f64,
     pub root_mean_squared_td_error: f64,
     pub logged_action_greedy_rate: f64,
+    pub observed_return_calibration: DiscreteQCalibrationReport,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -92,6 +99,7 @@ impl RainbowAblationReport {
         training: &[Transition],
         training_episode_groups: &[u64],
         held_out: &[Transition],
+        held_out_episode_groups: &[u64],
         config: &RainbowAblationConfig,
     ) -> Result<Self, RainbowAblationError> {
         validate_common(training, held_out, config)?;
@@ -100,6 +108,8 @@ impl RainbowAblationReport {
                 "training episode groups must match training transitions",
             ));
         }
+        let held_out_samples =
+            held_out_return_samples(held_out, held_out_episode_groups, config.critic.discount)?;
         let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
         let treatment = QComponentModel::fit(
             feature_width,
@@ -112,8 +122,18 @@ impl RainbowAblationReport {
                 ..QComponentConfig::default()
             },
         )?;
-        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
-        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        let baseline_metrics = evaluate_model(
+            &baseline,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
+        let treatment_metrics = evaluate_model(
+            &treatment,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
         Ok(Self::single_component(
             training.len(),
             held_out.len(),
@@ -134,6 +154,7 @@ impl RainbowAblationReport {
         training: &[Transition],
         training_episode_groups: &[u64],
         held_out: &[Transition],
+        held_out_episode_groups: &[u64],
         config: &RainbowAblationConfig,
     ) -> Result<Self, RainbowAblationError> {
         validate_common(training, held_out, config)?;
@@ -142,6 +163,8 @@ impl RainbowAblationReport {
                 "training episode groups must match training transitions",
             ));
         }
+        let held_out_samples =
+            held_out_return_samples(held_out, held_out_episode_groups, config.critic.discount)?;
         let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
         let treatment = QComponentModel::fit(
             feature_width,
@@ -157,8 +180,18 @@ impl RainbowAblationReport {
                 noisy_initial_stddev: QComponentConfig::default().noisy_initial_stddev,
             },
         )?;
-        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
-        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        let baseline_metrics = evaluate_model(
+            &baseline,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
+        let treatment_metrics = evaluate_model(
+            &treatment,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
         Ok(Self::single_component(
             training.len(),
             held_out.len(),
@@ -179,6 +212,7 @@ impl RainbowAblationReport {
         training: &[Transition],
         training_episode_groups: &[u64],
         held_out: &[Transition],
+        held_out_episode_groups: &[u64],
         config: &RainbowAblationConfig,
     ) -> Result<Self, RainbowAblationError> {
         validate_common(training, held_out, config)?;
@@ -187,6 +221,8 @@ impl RainbowAblationReport {
                 "training episode groups must match training transitions",
             ));
         }
+        let held_out_samples =
+            held_out_return_samples(held_out, held_out_episode_groups, config.critic.discount)?;
         let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
         let treatment = QComponentModel::fit(
             feature_width,
@@ -200,8 +236,18 @@ impl RainbowAblationReport {
                 ..QComponentConfig::default()
             },
         )?;
-        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
-        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        let baseline_metrics = evaluate_model(
+            &baseline,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
+        let treatment_metrics = evaluate_model(
+            &treatment,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
         Ok(Self::single_component(
             training.len(),
             held_out.len(),
@@ -222,6 +268,7 @@ impl RainbowAblationReport {
         training: &[Transition],
         training_episode_groups: &[u64],
         held_out: &[Transition],
+        held_out_episode_groups: &[u64],
         config: &RainbowAblationConfig,
     ) -> Result<Self, RainbowAblationError> {
         validate_common(training, held_out, config)?;
@@ -235,6 +282,8 @@ impl RainbowAblationReport {
                 "n-step ablation horizon must be within 2..=64",
             ));
         }
+        let held_out_samples =
+            held_out_return_samples(held_out, held_out_episode_groups, config.critic.discount)?;
         let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
         let aggregated = aggregate_n_step(
             training,
@@ -243,8 +292,18 @@ impl RainbowAblationReport {
             config.critic.discount,
         )?;
         let treatment = DoubleQ::fit(feature_width, actions, &aggregated, &config.critic)?;
-        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
-        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        let baseline_metrics = evaluate_model(
+            &baseline,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
+        let treatment_metrics = evaluate_model(
+            &treatment,
+            held_out,
+            &held_out_samples,
+            config.critic.discount,
+        )?;
         Ok(Self::single_component(
             training.len(),
             held_out.len(),
@@ -354,18 +413,36 @@ impl HeldOutQModel for QComponentModel {
     }
 }
 
-fn evaluate_model<M: HeldOutQModel>(
+fn held_out_return_samples(
+    held_out: &[Transition],
+    episode_groups: &[u64],
+    discount: f64,
+) -> Result<Vec<ReturnSample>, RainbowAblationError> {
+    empirical_return_samples(held_out, episode_groups, discount as f32)
+        .map_err(|error| RainbowAblationError::Returns(error.to_string()))
+}
+
+fn evaluate_model<M: HeldOutQModel + DiscreteQEstimator>(
     model: &M,
     held_out: &[Transition],
+    held_out_samples: &[ReturnSample],
     discount: f64,
 ) -> Result<HeldOutMetrics, RainbowAblationError> {
     let mut absolute_error = 0.0;
     let mut squared_error = 0.0;
     let mut greedy_matches = 0_usize;
+    let mut supported_logged_actions = 0_usize;
+    let mut unsupported_logged_actions = 0_usize;
     for transition in held_out {
-        let prediction = model
-            .held_out_estimate(&transition.state, transition.action)?
-            .mean;
+        let prediction = match model.held_out_estimate(&transition.state, transition.action) {
+            Ok(estimate) => estimate.mean,
+            Err(DoubleQError::UnknownAction(_)) => {
+                unsupported_logged_actions += 1;
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        supported_logged_actions += 1;
         let target = if transition.terminal {
             f64::from(transition.reward)
         } else {
@@ -380,12 +457,26 @@ fn evaluate_model<M: HeldOutQModel>(
             greedy_matches += 1;
         }
     }
-    let count = held_out.len() as f64;
+    if supported_logged_actions == 0 {
+        return Err(RainbowAblationError::Invalid(
+            "held-out data has no actions supported by training",
+        ));
+    }
+    let count = supported_logged_actions as f64;
+    let observed_return_calibration = calibrate_discrete_q(
+        model,
+        held_out_samples,
+        "dusklight-q-component-held-out-calibration/v1",
+    )
+    .map_err(|error| RainbowAblationError::Calibration(error.to_string()))?;
     Ok(HeldOutMetrics {
         transitions: held_out.len(),
+        supported_logged_actions,
+        unsupported_logged_actions,
         mean_absolute_td_error: absolute_error / count,
         root_mean_squared_td_error: (squared_error / count).sqrt(),
         logged_action_greedy_rate: greedy_matches as f64 / count,
+        observed_return_calibration,
     })
 }
 
@@ -394,6 +485,8 @@ pub enum RainbowAblationError {
     Invalid(&'static str),
     NStep(String),
     Learner(String),
+    Returns(String),
+    Calibration(String),
 }
 
 impl fmt::Display for RainbowAblationError {
@@ -403,6 +496,15 @@ impl fmt::Display for RainbowAblationError {
             Self::NStep(message) => write!(formatter, "n-step aggregation failed: {message}"),
             Self::Learner(message) => {
                 write!(formatter, "Rainbow ablation learner failed: {message}")
+            }
+            Self::Returns(message) => {
+                write!(
+                    formatter,
+                    "Rainbow ablation held-out returns failed: {message}"
+                )
+            }
+            Self::Calibration(message) => {
+                write!(formatter, "Rainbow ablation calibration failed: {message}")
             }
         }
     }
@@ -466,6 +568,7 @@ mod tests {
             &training,
             &[10, 10, 20, 20],
             &training,
+            &[10, 10, 20, 20],
             &config,
         )
         .unwrap();
@@ -475,6 +578,7 @@ mod tests {
             &training,
             &[10, 10, 20, 20],
             &training,
+            &[10, 10, 20, 20],
             &config,
         )
         .unwrap();
@@ -516,6 +620,7 @@ mod tests {
             &training,
             &[10, 10, 20, 20],
             &training,
+            &[10, 10, 20, 20],
             &config,
         )
         .unwrap();
@@ -556,6 +661,7 @@ mod tests {
             &training,
             &[10, 10, 20, 20],
             &training,
+            &[10, 10, 20, 20],
             &config,
         )
         .unwrap();
@@ -598,6 +704,7 @@ mod tests {
             &training,
             &[10, 10, 20, 20],
             &training,
+            &[10, 10, 20, 20],
             &config,
         )
         .unwrap();

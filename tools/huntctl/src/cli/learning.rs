@@ -188,6 +188,7 @@ pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
             &training.transitions,
             &training.episode_groups,
             &held_out.transitions,
+            &held_out.episode_groups,
             &config,
         )?,
         "n-step" => RainbowAblationReport::evaluate_n_step(
@@ -196,6 +197,7 @@ pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
             &training.transitions,
             &training.episode_groups,
             &held_out.transitions,
+            &held_out.episode_groups,
             &config,
         )?,
         "distributional-values" => RainbowAblationReport::evaluate_distributional_values(
@@ -204,6 +206,7 @@ pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
             &training.transitions,
             &training.episode_groups,
             &held_out.transitions,
+            &held_out.episode_groups,
             &config,
         )?,
         "noisy-exploration" => RainbowAblationReport::evaluate_noisy_exploration(
@@ -212,6 +215,7 @@ pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
             &training.transitions,
             &training.episode_groups,
             &held_out.transitions,
+            &held_out.episode_groups,
             &config,
         )?,
         _ => {

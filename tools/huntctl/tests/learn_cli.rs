@@ -766,6 +766,7 @@ fn q_component_ablation_cli_runs_only_one_equal_budget_treatment() {
             transition(0.0, ADVANCE, 2.5, 1.0, true),
             transition(1.0, WAIT, -0.5, 2.0, true),
             transition(1.0, ADVANCE, 2.5, 2.0, true),
+            transition(2.0, 77, 9.0, 3.0, true),
         ],
     )
     .unwrap()
@@ -832,6 +833,22 @@ fn q_component_ablation_cli_runs_only_one_equal_budget_treatment() {
         assert_eq!(
             report["ablation"]["evaluation"]["equal_gradient_update_budget"],
             true
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["baseline"]["supported_logged_actions"],
+            4
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["baseline"]["unsupported_logged_actions"],
+            1
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["baseline"]["observed_return_calibration"]["held_out_samples"],
+            5
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["baseline"]["observed_return_calibration"]["unsupported_observed_action_samples"],
+            1
         );
         assert_eq!(report["ablation"]["combined_rainbow_configuration"], false);
         assert_eq!(report["ablation"]["promotion_authority"], false);
