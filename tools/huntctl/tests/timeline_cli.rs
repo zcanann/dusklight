@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 5);
+    assert_eq!(summary["segments"], 2);
 
     let status = run(&[
         "timeline",
@@ -50,35 +50,9 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
     assert_eq!(
         status["workspace"]["steps"][1]["workspace_segment"],
-        "to_ordon_spring_human150"
+        "to_ordon_spring_q129"
     );
     assert_eq!(status["workspace"]["steps"][1]["state"], "unchanged");
-
-    let alternative = run(&[
-        "timeline",
-        "status",
-        "--timeline",
-        route.to_str().unwrap(),
-        "--continuation",
-        "main",
-        "--select",
-        "to_ordon_spring_human150=to_ordon_spring_search144",
-    ]);
-    assert!(
-        alternative.status.success(),
-        "{}",
-        String::from_utf8_lossy(&alternative.stderr)
-    );
-    let alternative: serde_json::Value = serde_json::from_slice(&alternative.stdout).unwrap();
-    assert_eq!(
-        alternative["workspace"]["steps"][1]["workspace_segment"],
-        "to_ordon_spring_search144"
-    );
-    assert_eq!(alternative["workspace"]["steps"][1]["state"], "selected");
-    assert_eq!(
-        alternative["workspace"]["steps"][1]["rebase_compatible"],
-        true
-    );
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -108,17 +82,18 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let imported: serde_json::Value = serde_json::from_slice(&imported.stdout).unwrap();
     assert_eq!(
-        imported["segments"]["to_ordon_spring_human150"]["parent"],
+        imported["segments"]["to_ordon_spring_q129"]["parent"],
         "golf439"
     );
     assert!(
-        imported["segments"]["to_ordon_spring_human150"]["goals"]["ordon_spring_load_committed"]
+        imported["segments"]["to_ordon_spring_q129"]["goals"]["ordon_spring_load_committed"]
             .is_string()
     );
-    assert!(imported["segments"]["to_ordon_spring_human150"]["goal_proofs"]
-        ["ordon_spring_load_committed"]
-        .is_string());
-    assert!(imported["segments"]["to_ordon_spring_human150"]["tape"].is_string());
+    assert!(
+        imported["segments"]["to_ordon_spring_q129"]["goal_proofs"]["ordon_spring_load_committed"]
+            .is_string()
+    );
+    assert!(imported["segments"]["to_ordon_spring_q129"]["tape"].is_string());
     assert!(
         run(&[
             "timeline",

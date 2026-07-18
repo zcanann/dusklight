@@ -432,7 +432,7 @@
       if(segment.generated)return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}</div>`;
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
-      const hasSiblings=segment.parent&&graph.segments.some(item=>!item.generated&&item.id!==segment.id&&item.parent===segment.parent);
+      const hasSiblings=segment.parent&&(graph.segments.some(item=>item.id!==segment.id&&item.parent===segment.parent)||graph.drafts.some(item=>item.parent?.kind==='segment'&&item.parent.id===segment.parent));
       const siblingDelete=hasSiblings?`<button class="delete" type="button" data-delete-siblings="${escapeHtml(segment.id)}">Keep this; delete siblings…</button>`:'';
       return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button>${siblingDelete}<button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
     }
@@ -617,19 +617,25 @@
         const preview=await previewResponse.json().catch(()=>({}));
         if(!previewResponse.ok)throw new Error(preview.error||`HTTP ${previewResponse.status}`);
         const roots=(preview.sibling_roots||[]).map(item=>`• ${item.name||item.id} (${item.id})`).join('\n');
+        const draftRoots=(preview.draft_roots||[]).map(item=>`• ${item.label||item.id} (${item.id})`).join('\n');
+        const generated=(preview.generated||[]).map(item=>`• ${item.name||item.id} (${item.candidate_id})`).join('\n');
         const rootCount=(preview.sibling_roots||[]).length;
+        const draftRootCount=(preview.draft_roots||[]).length;
+        const generatedCount=(preview.generated||[]).length;
         const segmentCount=(preview.segments||[]).length;
         const descendantCount=segmentCount-rootCount;
         const draftCount=(preview.drafts||[]).length;
         const goalCount=(preview.goals||[]).length;
         const lineageCount=(preview.lineages||[]).length;
-        const attached=draftCount?` Attached drafts: ${draftCount} (moved to recoverable trash).`:'';
-        if(!window.confirm(`Keep ${segmentName(keepId)} and delete every other structural sibling subtree?\n\nSibling roots being deleted (${rootCount}):\n${roots}\n\nTotal removal: ${segmentCount} checked-in segments (${rootCount} roots + ${descendantCount} descendants), ${goalCount} goals, ${preview.proofs||0} proofs, and ${lineageCount} emptied lineages.${attached}\n\nThe selected segment and its descendants are retained. Input tape/TAS artifacts and predicate definitions are left untouched. Git can restore this edit.`))return;
+        const authoredSection=rootCount?`\n\nChecked-in sibling roots (${rootCount}):\n${roots}`:'';
+        const draftSection=draftRootCount?`\n\nDirect draft sibling roots (${draftRootCount}, moved with descendants to recoverable trash):\n${draftRoots}`:'';
+        const generatedSection=generatedCount?`\n\nGenerated search siblings (${generatedCount}, recoverably hidden by candidate ID):\n${generated}`:'';
+        if(!window.confirm(`Keep ${segmentName(keepId)} and remove every other displayed sibling?${authoredSection}${draftSection}${generatedSection}\n\nTotal removal: ${segmentCount} checked-in segments (${rootCount} roots + ${descendantCount} descendants), ${draftCount} drafts, ${generatedCount} generated candidates, ${goalCount} goals, ${preview.proofs||0} proofs, and ${lineageCount} emptied lineages.\n\nThe selected segment and its descendants are retained. Input tape/TAS artifacts and predicate definitions are left untouched. Git can restore timeline edits.`))return;
         button.textContent='Deleting…';
         const applyResponse=await fetch('/api/segments/delete-siblings/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keep_id:keepId,confirmation_token:preview.confirmation_token})});
         const result=await applyResponse.json().catch(()=>({}));
         if(!applyResponse.ok)throw new Error(result.error||`HTTP ${applyResponse.status}`);
-        toast(`Kept ${segmentName(keepId)} and deleted ${(result.segments||[]).length} segment${(result.segments||[]).length===1?'':'s'} across ${(result.sibling_roots||[]).length} sibling subtree${(result.sibling_roots||[]).length===1?'':'s'}.`);
+        toast(`Kept ${segmentName(keepId)}; removed ${(result.segments||[]).length} checked-in segment${(result.segments||[]).length===1?'':'s'}, ${(result.drafts||[]).length} draft${(result.drafts||[]).length===1?'':'s'}, and ${(result.generated_candidates||[]).length} generated candidate${(result.generated_candidates||[]).length===1?'':'s'}.`);
         await load();
       } catch(error) {
         $('status').textContent='Delete failed'; $('status').className='status error'; toast(error.message,true);

@@ -92,10 +92,15 @@ and predicate definitions are deliberately retained because they may be shared;
 Git exposes and can restore the complete topology edit.
 
 **Keep this; delete siblings** treats the selected checked-in segment as the
-survivor, previews every structural sibling root and descendant that would be
-removed, and applies the same guarded topology transaction. Root segments,
-generated results, sibling-less selections, stale confirmations, and active
-recording subtrees are rejected.
+survivor and previews every sibling currently displayed beneath the same
+parent. Checked-in sibling subtrees are removed from the authored timeline,
+direct sibling drafts and their descendants move to recoverable trash, and the
+exact visible generated candidates are hidden by content ID without deleting
+their search artifacts. Compatible goals, proofs, and named-continuation steps
+are re-anchored to the survivor. New future search candidates remain visible.
+The complete displayed set is bound into the confirmation token; root segments,
+empty selections, stale confirmations, and active recording subtrees are
+rejected.
 
 **Record child** performs an exact windowless, muted, uncapped prefix replay,
 then begins recording live port-0 input on the first PAD read after handoff.

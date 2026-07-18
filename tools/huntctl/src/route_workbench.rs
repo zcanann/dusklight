@@ -33,6 +33,9 @@ const DRAFT_LAUNCH: &str = "launch.json";
 const DRAFT_TAPE: &str = "continuation.tape";
 const DRAFT_TERMINAL_THUMBNAIL: &str = "terminal.png";
 const DRAFT_TRASH_DIRECTORY: &str = "trash";
+const GENERATED_SEARCH_TOMBSTONES: &str = "generated-search-tombstones.json";
+const GENERATED_SEARCH_TOMBSTONE_SCHEMA: &str =
+    "dusklight.route-workbench.generated-search-tombstones.v1";
 const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-preview.v1";
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
 const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
@@ -603,6 +606,8 @@ pub struct SiblingDeletePreview {
     pub schema: String,
     pub keep_id: String,
     pub sibling_roots: Vec<SegmentDeleteImpact>,
+    pub draft_roots: Vec<DraftDeleteImpact>,
+    pub generated: Vec<GeneratedDeleteImpact>,
     pub segments: Vec<SegmentDeleteImpact>,
     pub goals: Vec<String>,
     pub proofs: usize,
@@ -616,10 +621,27 @@ pub struct SiblingDeleteResult {
     pub schema: String,
     pub keep_id: String,
     pub sibling_roots: Vec<String>,
+    pub draft_roots: Vec<String>,
+    pub generated_candidates: Vec<String>,
     pub segments: Vec<String>,
     pub drafts: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trash_transaction: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GeneratedDeleteImpact {
+    pub id: String,
+    pub name: String,
+    pub candidate_id: String,
+    pub run: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedSearchTombstones {
+    schema: String,
+    candidate_ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1645,16 +1667,78 @@ fn generated_search_projections(
     projections
 }
 
+fn generated_search_tombstone_path(state_root: &Path) -> PathBuf {
+    state_root.join(GENERATED_SEARCH_TOMBSTONES)
+}
+
+fn load_generated_search_tombstones(
+    state_root: &Path,
+) -> Result<GeneratedSearchTombstones, WorkbenchError> {
+    let path = generated_search_tombstone_path(state_root);
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return Ok(GeneratedSearchTombstones {
+            schema: GENERATED_SEARCH_TOMBSTONE_SCHEMA.into(),
+            candidate_ids: BTreeSet::new(),
+        });
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > MAX_SEARCH_ARTIFACT_BYTES
+    {
+        return Err(WorkbenchError::new(
+            "generated search tombstones are not a bounded physical file",
+        ));
+    }
+    let tombstones: GeneratedSearchTombstones =
+        serde_json::from_slice(&fs::read(&path).map_err(|error| {
+            WorkbenchError::new(format!("cannot read generated search tombstones: {error}"))
+        })?)
+        .map_err(|error| WorkbenchError::new(format!("invalid search tombstones: {error}")))?;
+    if tombstones.schema != GENERATED_SEARCH_TOMBSTONE_SCHEMA
+        || tombstones.candidate_ids.iter().any(|id| {
+            id.len() != 64
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+    {
+        return Err(WorkbenchError::new(
+            "generated search tombstones have an invalid schema or candidate ID",
+        ));
+    }
+    Ok(tombstones)
+}
+
+fn visible_generated_search_projections(
+    timeline: &Timeline,
+    search_root: &Path,
+    state_root: &Path,
+) -> Result<Vec<GeneratedProjection>, WorkbenchError> {
+    let hidden = load_generated_search_tombstones(state_root)?.candidate_ids;
+    Ok(generated_search_projections(timeline, search_root)
+        .into_iter()
+        .filter(|projection| {
+            projection
+                .segment
+                .generated
+                .as_ref()
+                .is_none_or(|generated| !hidden.contains(&generated.candidate_id))
+        })
+        .collect())
+}
+
 fn append_generated_search_segments(
     graph: &mut WorkbenchGraph,
     timeline: &Timeline,
     search_root: &Path,
-) {
+    state_root: &Path,
+) -> Result<(), WorkbenchError> {
     graph.segments.extend(
-        generated_search_projections(timeline, search_root)
+        visible_generated_search_projections(timeline, search_root, state_root)?
             .into_iter()
             .map(|projection| projection.segment),
     );
+    Ok(())
 }
 
 fn thumbnail_key(kind: &str, materialization: &str) -> String {
@@ -2583,34 +2667,101 @@ fn delete_segment_subtree_in_timeline_source(
     delete_segment_subtrees_in_timeline_source(source, [id])
 }
 
+#[cfg(test)]
 fn delete_segment_subtrees_in_timeline_source<'a>(
     source: &str,
     roots: impl IntoIterator<Item = &'a str>,
 ) -> Result<SegmentSourceDeletion, WorkbenchError> {
+    delete_segment_subtrees_in_timeline_source_preferring(source, roots, None)
+}
+
+fn delete_segment_subtrees_in_timeline_source_preferring<'a>(
+    source: &str,
+    roots: impl IntoIterator<Item = &'a str>,
+    preferred_goal_anchor: Option<&str>,
+) -> Result<SegmentSourceDeletion, WorkbenchError> {
     let timeline =
         Timeline::parse(source).map_err(|error| WorkbenchError::new(error.to_string()))?;
     let segments = segment_descendants_from_roots(&timeline, roots)?;
-    let goals = timeline
+    let mut reanchored_goals = BTreeMap::<String, String>::new();
+    let mut goals = BTreeSet::new();
+    for goal in timeline
         .goals
         .values()
         .filter(|goal| segments.contains(&goal.segment))
-        .map(|goal| goal.id.clone())
-        .collect::<BTreeSet<_>>();
+    {
+        let reference = &timeline.segments[&goal.segment];
+        let mut compatible = timeline
+            .proofs
+            .iter()
+            .filter(|proof| proof.goal == goal.id && !segments.contains(&proof.segment))
+            .filter_map(|proof| timeline.segments.get(&proof.segment))
+            .filter(|candidate| {
+                candidate.parent == reference.parent
+                    && candidate.profile == reference.profile
+                    && candidate.start_fingerprint == reference.start_fingerprint
+            })
+            .map(|candidate| candidate.id.clone())
+            .collect::<BTreeSet<_>>();
+        let anchor = preferred_goal_anchor
+            .filter(|preferred| compatible.contains(*preferred))
+            .map(str::to_owned)
+            .or_else(|| compatible.pop_first());
+        if let Some(anchor) = anchor {
+            reanchored_goals.insert(goal.id.clone(), anchor);
+        } else {
+            goals.insert(goal.id.clone());
+        }
+    }
     let proofs = timeline
         .proofs
         .iter()
         .filter(|proof| segments.contains(&proof.segment) || goals.contains(&proof.goal))
         .count();
 
+    let mut reanchored_steps = BTreeMap::<(String, String), String>::new();
+    if let Some(preferred_id) = preferred_goal_anchor
+        && let Some(preferred) = timeline.segments.get(preferred_id)
+        && !segments.contains(preferred_id)
+    {
+        let mut collect = |lineage: &str, steps: &[crate::timeline::ContinuationStep]| {
+            if steps.iter().any(|step| step.segment == preferred_id) {
+                return;
+            }
+            for step in steps.iter().filter(|step| segments.contains(&step.segment)) {
+                let removed = &timeline.segments[&step.segment];
+                let expected_parent = preferred.parent.as_deref().unwrap_or("root");
+                if removed.parent == preferred.parent
+                    && removed.profile == preferred.profile
+                    && removed.start_fingerprint == preferred.start_fingerprint
+                    && step.after.parent_segment == expected_parent
+                    && step.after.checkpoint_fingerprint == preferred.start_fingerprint
+                {
+                    reanchored_steps.insert(
+                        (lineage.to_owned(), step.segment.clone()),
+                        preferred_id.to_owned(),
+                    );
+                }
+            }
+        };
+        for continuation in timeline.continuations.values() {
+            collect(&continuation.name, &continuation.steps);
+        }
+        for branch in timeline.branches.values() {
+            collect(&branch.name, &branch.steps);
+        }
+    }
+
     let mut lineages = timeline
         .continuations
         .values()
         .filter(|continuation| {
             !continuation.steps.is_empty()
-                && continuation
-                    .steps
-                    .iter()
-                    .all(|step| segments.contains(&step.segment))
+                && continuation.steps.iter().all(|step| {
+                    segments.contains(&step.segment)
+                        && !reanchored_steps
+                            .contains_key(&(continuation.name.clone(), step.segment.clone()))
+                })
         })
         .map(|continuation| continuation.name.clone())
         .collect::<BTreeSet<_>>();
@@ -2621,10 +2772,11 @@ fn delete_segment_subtrees_in_timeline_source<'a>(
                 continue;
             }
             let all_steps_removed = !branch.steps.is_empty()
-                && branch
-                    .steps
-                    .iter()
-                    .all(|step| segments.contains(&step.segment));
+                && branch.steps.iter().all(|step| {
+                    segments.contains(&step.segment)
+                        && !reanchored_steps
+                            .contains_key(&(branch.name.clone(), step.segment.clone()))
+                });
             if segments.contains(&branch.after_segment)
                 || lineages.contains(&branch.from_lineage)
                 || all_steps_removed
@@ -2642,6 +2794,32 @@ fn delete_segment_subtrees_in_timeline_source<'a>(
         let raw = line.trim_end_matches(['\r', '\n']);
         let tokens =
             tokenize(raw, index + 1).map_err(|error| WorkbenchError::new(error.to_string()))?;
+        if tokens.first().map(String::as_str) == Some("goal")
+            && let Some(goal_id) = tokens.get(1)
+            && let Some(anchor) = reanchored_goals.get(goal_id)
+        {
+            replacement.push_str(&format!(
+                "goal {} on {} predicate {}{}",
+                goal_id,
+                anchor,
+                tokens
+                    .get(5)
+                    .expect("parsed goal declaration has a predicate"),
+                timeline_line_ending(line)
+            ));
+            continue;
+        }
+        if tokens.first().map(String::as_str) == Some("continue")
+            && let (Some(lineage), Some(segment), Some(pin)) =
+                (tokens.get(1), tokens.get(3), tokens.get(5))
+            && let Some(anchor) = reanchored_steps.get(&(lineage.clone(), segment.clone()))
+        {
+            replacement.push_str(&format!(
+                "continue {lineage} with {anchor} after {pin}{}",
+                timeline_line_ending(line)
+            ));
+            continue;
+        }
         let remove = match tokens.first().map(String::as_str) {
             Some("segment") | Some("label") => tokens
                 .get(1)
@@ -2726,10 +2904,18 @@ fn validated_timeline_edit_path(path: &Path) -> Result<PathBuf, WorkbenchError> 
 struct SegmentDeletePlan {
     preview: SegmentDeletePreview,
     deletion_roots: Vec<String>,
+    direct_draft_roots: Vec<String>,
     path: PathBuf,
     original: Vec<u8>,
     replacement: String,
     draft_ids: Vec<String>,
+}
+
+struct SegmentDeleteScope<'a> {
+    deletion_roots: Vec<String>,
+    direct_draft_roots: Vec<String>,
+    operation_domain: &'static [u8],
+    preferred_goal_anchor: Option<&'a str>,
 }
 
 fn segment_delete_plan(
@@ -2743,8 +2929,12 @@ fn segment_delete_plan(
         timeline_path,
         state_root,
         id,
-        vec![id.to_owned()],
-        b"subtree",
+        SegmentDeleteScope {
+            deletion_roots: vec![id.to_owned()],
+            direct_draft_roots: Vec::new(),
+            operation_domain: b"subtree",
+            preferred_goal_anchor: None,
+        },
         manifests,
         active,
     )
@@ -2754,22 +2944,45 @@ fn segment_delete_plan_for_roots(
     timeline_path: &Path,
     state_root: &Path,
     request_id: &str,
-    deletion_roots: Vec<String>,
-    operation_domain: &[u8],
+    scope: SegmentDeleteScope<'_>,
     manifests: &BTreeMap<String, DraftManifest>,
     active: &BTreeSet<String>,
 ) -> Result<SegmentDeletePlan, WorkbenchError> {
+    let SegmentDeleteScope {
+        deletion_roots,
+        direct_draft_roots,
+        operation_domain,
+        preferred_goal_anchor,
+    } = scope;
     let path = validated_timeline_edit_path(timeline_path)?;
     let original = fs::read(&path).map_err(|error| {
         WorkbenchError::new(format!("cannot read timeline {}: {error}", path.display()))
     })?;
     let source = std::str::from_utf8(&original)
         .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
-    let deletion = delete_segment_subtrees_in_timeline_source(
-        source,
-        deletion_roots.iter().map(String::as_str),
-    )?;
+    let deletion = if deletion_roots.is_empty() {
+        SegmentSourceDeletion {
+            segments: BTreeSet::new(),
+            goals: BTreeSet::new(),
+            proofs: 0,
+            lineages: BTreeSet::new(),
+            replacement: source.into(),
+        }
+    } else {
+        delete_segment_subtrees_in_timeline_source_preferring(
+            source,
+            deletion_roots.iter().map(String::as_str),
+            preferred_goal_anchor,
+        )?
+    };
 
+    for draft_id in &direct_draft_roots {
+        if !manifests.contains_key(draft_id) {
+            return Err(WorkbenchError::new(format!(
+                "unknown direct sibling draft {draft_id:?}"
+            )));
+        }
+    }
     let roots = manifests
         .values()
         .filter_map(|manifest| match &manifest.parent {
@@ -2777,7 +2990,8 @@ fn segment_delete_plan_for_roots(
                 Some(manifest.id.as_str())
             }
             _ => None,
-        });
+        })
+        .chain(direct_draft_roots.iter().map(String::as_str));
     let draft_deletion = draft_descendants_from_roots(manifests, roots);
     let drafts_root = validated_drafts_root(state_root)?;
     for draft_id in &draft_deletion {
@@ -2843,6 +3057,7 @@ fn segment_delete_plan_for_roots(
             confirmation_token,
         },
         deletion_roots,
+        direct_draft_roots,
         path,
         original,
         replacement: deletion.replacement,
@@ -2862,10 +3077,10 @@ fn preview_segment_deletion(
     Ok(segment_delete_plan(timeline_path, state_root, id, &manifests, &active)?.preview)
 }
 
-fn structural_sibling_roots(
+fn structural_sibling_context(
     timeline: &Timeline,
     keep_id: &str,
-) -> Result<Vec<String>, WorkbenchError> {
+) -> Result<(String, Vec<String>), WorkbenchError> {
     let selected = timeline
         .segments
         .get(keep_id)
@@ -2879,21 +3094,23 @@ fn structural_sibling_roots(
         .filter(|segment| segment.id != keep_id && segment.parent.as_deref() == Some(parent))
         .map(|segment| segment.id.clone())
         .collect::<Vec<_>>();
-    if roots.is_empty() {
-        return Err(WorkbenchError::new(format!(
-            "segment {keep_id:?} has no structural siblings to delete"
-        )));
-    }
-    Ok(roots)
+    Ok((parent.into(), roots))
+}
+
+struct SiblingDeletePlan {
+    deletion: SegmentDeletePlan,
+    generated: Vec<GeneratedDeleteImpact>,
+    generated_candidate_ids: Vec<String>,
 }
 
 fn sibling_delete_plan(
     timeline_path: &Path,
+    repository_root: &Path,
     state_root: &Path,
     keep_id: &str,
     manifests: &BTreeMap<String, DraftManifest>,
     active: &BTreeSet<String>,
-) -> Result<SegmentDeletePlan, WorkbenchError> {
+) -> Result<SiblingDeletePlan, WorkbenchError> {
     let initial_path = validated_timeline_edit_path(timeline_path)?;
     let initial_source = fs::read_to_string(&initial_path).map_err(|error| {
         WorkbenchError::new(format!(
@@ -2903,13 +3120,24 @@ fn sibling_delete_plan(
     })?;
     let initial_timeline =
         Timeline::parse(&initial_source).map_err(|error| WorkbenchError::new(error.to_string()))?;
-    let roots = structural_sibling_roots(&initial_timeline, keep_id)?;
-    let plan = segment_delete_plan_for_roots(
+    let (parent_id, roots) = structural_sibling_context(&initial_timeline, keep_id)?;
+    let direct_draft_roots = manifests
+        .values()
+        .filter_map(|manifest| match &manifest.parent {
+            DraftParent::Segment { id, .. } if id == &parent_id => Some(manifest.id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut plan = segment_delete_plan_for_roots(
         timeline_path,
         state_root,
         keep_id,
-        roots.clone(),
-        b"delete-siblings",
+        SegmentDeleteScope {
+            deletion_roots: roots.clone(),
+            direct_draft_roots,
+            operation_domain: b"delete-siblings",
+            preferred_goal_anchor: Some(keep_id),
+        },
         manifests,
         active,
     )?;
@@ -2919,7 +3147,7 @@ fn sibling_delete_plan(
         .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
     let planned_timeline =
         Timeline::parse(planned_source).map_err(|error| WorkbenchError::new(error.to_string()))?;
-    if structural_sibling_roots(&planned_timeline, keep_id)? != roots
+    if structural_sibling_context(&planned_timeline, keep_id)? != (parent_id.clone(), roots)
         || plan
             .preview
             .segments
@@ -2930,36 +3158,94 @@ fn sibling_delete_plan(
             "timeline topology changed while planning sibling deletion; reload and retry",
         ));
     }
-    Ok(plan)
+    let generated = visible_generated_search_projections(
+        &planned_timeline,
+        &repository_root.join("build/search"),
+        state_root,
+    )?
+    .into_iter()
+    .filter(|projection| projection.segment.parent.as_deref() == Some(parent_id.as_str()))
+    .filter_map(|projection| {
+        let generated = projection.segment.generated?;
+        Some(GeneratedDeleteImpact {
+            id: projection.segment.id,
+            name: projection
+                .segment
+                .name
+                .unwrap_or_else(|| generated.candidate_id.clone()),
+            candidate_id: generated.candidate_id,
+            run: generated.run,
+        })
+    })
+    .collect::<Vec<_>>();
+    if plan.deletion_roots.is_empty() && plan.direct_draft_roots.is_empty() && generated.is_empty()
+    {
+        return Err(WorkbenchError::new(format!(
+            "segment {keep_id:?} has no displayed siblings to delete"
+        )));
+    }
+    let tombstones = load_generated_search_tombstones(state_root)?;
+    let mut digest = Sha256::new();
+    digest.update(b"dusklight.route-workbench.displayed-sibling-delete.v1\0");
+    digest.update(plan.preview.confirmation_token.as_bytes());
+    digest.update(
+        serde_json::to_vec(&tombstones)
+            .map_err(|error| WorkbenchError::new(format!("cannot hash tombstones: {error}")))?,
+    );
+    for candidate in &generated {
+        digest.update(candidate.candidate_id.as_bytes());
+        digest.update(candidate.run.as_bytes());
+    }
+    plan.preview.confirmation_token = format!("{:x}", digest.finalize());
+    let generated_candidate_ids = generated
+        .iter()
+        .map(|candidate| candidate.candidate_id.clone())
+        .collect();
+    Ok(SiblingDeletePlan {
+        deletion: plan,
+        generated,
+        generated_candidate_ids,
+    })
 }
 
-fn sibling_preview(plan: &SegmentDeletePlan) -> SiblingDeletePreview {
+fn sibling_preview(plan: &SiblingDeletePlan) -> SiblingDeletePreview {
+    let deletion = &plan.deletion;
     let root_ids = plan
+        .deletion
         .deletion_roots
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     SiblingDeletePreview {
         schema: SIBLING_DELETE_PREVIEW_SCHEMA.into(),
-        keep_id: plan.preview.id.clone(),
-        sibling_roots: plan
+        keep_id: deletion.preview.id.clone(),
+        sibling_roots: deletion
             .preview
             .segments
             .iter()
             .filter(|segment| root_ids.contains(segment.id.as_str()))
             .cloned()
             .collect(),
-        segments: plan.preview.segments.clone(),
-        goals: plan.preview.goals.clone(),
-        proofs: plan.preview.proofs,
-        lineages: plan.preview.lineages.clone(),
-        drafts: plan.preview.drafts.clone(),
-        confirmation_token: plan.preview.confirmation_token.clone(),
+        draft_roots: deletion
+            .preview
+            .drafts
+            .iter()
+            .filter(|draft| deletion.direct_draft_roots.contains(&draft.id))
+            .cloned()
+            .collect(),
+        generated: plan.generated.clone(),
+        segments: deletion.preview.segments.clone(),
+        goals: deletion.preview.goals.clone(),
+        proofs: deletion.preview.proofs,
+        lineages: deletion.preview.lineages.clone(),
+        drafts: deletion.preview.drafts.clone(),
+        confirmation_token: deletion.preview.confirmation_token.clone(),
     }
 }
 
 fn preview_sibling_deletion(
     timeline_path: &Path,
+    repository_root: &Path,
     state_root: &Path,
     keep_id: &str,
 ) -> Result<SiblingDeletePreview, WorkbenchError> {
@@ -2967,7 +3253,14 @@ fn preview_sibling_deletion(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let manifests = scan_draft_manifests_with_active(state_root, &active)?;
-    let plan = sibling_delete_plan(timeline_path, state_root, keep_id, &manifests, &active)?;
+    let plan = sibling_delete_plan(
+        timeline_path,
+        repository_root,
+        state_root,
+        keep_id,
+        &manifests,
+        &active,
+    )?;
     Ok(sibling_preview(&plan))
 }
 
@@ -3366,8 +3659,131 @@ fn apply_segment_deletion(
     })
 }
 
+struct AppliedTombstoneEdit {
+    target: PathBuf,
+    backup: Option<PathBuf>,
+    had_original: bool,
+    active: bool,
+}
+
+impl AppliedTombstoneEdit {
+    fn rollback(&mut self) -> Result<(), WorkbenchError> {
+        if !self.active {
+            return Ok(());
+        }
+        if self.target.exists() {
+            fs::remove_file(&self.target).map_err(|error| {
+                WorkbenchError::new(format!("cannot roll back search tombstones: {error}"))
+            })?;
+        }
+        if self.had_original {
+            let backup = self.backup.as_ref().ok_or_else(|| {
+                WorkbenchError::new("search tombstone rollback backup is missing")
+            })?;
+            fs::rename(backup, &self.target).map_err(|error| {
+                WorkbenchError::new(format!("cannot restore search tombstones: {error}"))
+            })?;
+        }
+        self.active = false;
+        Ok(())
+    }
+
+    fn commit(mut self) {
+        if let Some(backup) = self.backup.take() {
+            let _ = fs::remove_file(backup);
+        }
+        self.active = false;
+    }
+}
+
+impl Drop for AppliedTombstoneEdit {
+    fn drop(&mut self) {
+        let _ = self.rollback();
+    }
+}
+
+fn apply_generated_search_tombstones(
+    state_root: &Path,
+    candidate_ids: &[String],
+) -> Result<Option<AppliedTombstoneEdit>, WorkbenchError> {
+    if candidate_ids.is_empty() {
+        return Ok(None);
+    }
+    fs::create_dir_all(state_root).map_err(|error| {
+        WorkbenchError::new(format!("cannot create state root for tombstones: {error}"))
+    })?;
+    let root = fs::canonicalize(state_root)
+        .map_err(|error| WorkbenchError::new(format!("cannot resolve state root: {error}")))?;
+    let target = root.join(GENERATED_SEARCH_TOMBSTONES);
+    let original = match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(WorkbenchError::new(
+                    "generated search tombstones are not a physical file",
+                ));
+            }
+            Some(fs::read(&target).map_err(|error| {
+                WorkbenchError::new(format!("cannot read search tombstones: {error}"))
+            })?)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(WorkbenchError::new(format!(
+                "cannot inspect search tombstones: {error}"
+            )));
+        }
+    };
+    let mut tombstones = load_generated_search_tombstones(&root)?;
+    tombstones
+        .candidate_ids
+        .extend(candidate_ids.iter().cloned());
+    let replacement = serde_json::to_vec_pretty(&tombstones)
+        .map_err(|error| WorkbenchError::new(format!("cannot encode tombstones: {error}")))?;
+    let nonce = random_session_token()?;
+    let temporary = root.join(format!(".{GENERATED_SEARCH_TOMBSTONES}.{nonce}.tmp"));
+    let backup = original
+        .as_ref()
+        .map(|_| root.join(format!(".{GENERATED_SEARCH_TOMBSTONES}.{nonce}.rollback")));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| WorkbenchError::new(format!("cannot stage tombstones: {error}")))?;
+    file.write_all(&replacement)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| WorkbenchError::new(format!("cannot flush tombstones: {error}")))?;
+    drop(file);
+    let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    if fs::read(&target).ok() != original {
+        return Err(WorkbenchError::new(
+            "generated search tombstones changed while preparing deletion",
+        ));
+    }
+    if let Some(backup) = &backup {
+        fs::rename(&target, backup).map_err(|error| {
+            WorkbenchError::new(format!("cannot stage search tombstone rollback: {error}"))
+        })?;
+    }
+    if let Err(error) = fs::rename(&temporary, &target) {
+        if let Some(backup) = &backup {
+            let _ = fs::rename(backup, &target);
+        }
+        return Err(WorkbenchError::new(format!(
+            "cannot install generated search tombstones: {error}"
+        )));
+    }
+    temporary_cleanup.0 = None;
+    Ok(Some(AppliedTombstoneEdit {
+        target,
+        backup,
+        had_original: original.is_some(),
+        active: true,
+    }))
+}
+
 fn apply_sibling_deletion(
     timeline_path: &Path,
+    repository_root: &Path,
     state_root: &Path,
     request: &BrowserSiblingDeleteApplyRequest,
 ) -> Result<SiblingDeleteResult, SegmentDeleteError> {
@@ -3380,23 +3796,41 @@ fn apply_sibling_deletion(
     let manifests = scan_draft_manifests_with_active(state_root, &active)?;
     let plan = sibling_delete_plan(
         timeline_path,
+        repository_root,
         state_root,
         &request.keep_id,
         &manifests,
         &active,
     )?;
-    if request.confirmation_token != plan.preview.confirmation_token {
+    if request.confirmation_token != plan.deletion.preview.confirmation_token {
         return Err(SegmentDeleteError::Conflict(
             "timeline or attached drafts changed after preview; reload and confirm sibling deletion again"
                 .into(),
         ));
     }
-    let sibling_roots = plan.deletion_roots.clone();
-    let result = apply_segment_delete_plan(timeline_path, state_root, plan)?;
+    let sibling_roots = plan.deletion.deletion_roots.clone();
+    let draft_roots = plan.deletion.direct_draft_roots.clone();
+    let generated_candidates = plan.generated_candidate_ids.clone();
+    let mut tombstone_edit =
+        apply_generated_search_tombstones(state_root, &plan.generated_candidate_ids)?;
+    let result = match apply_segment_delete_plan(timeline_path, state_root, plan.deletion) {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(edit) = tombstone_edit.as_mut() {
+                edit.rollback()?;
+            }
+            return Err(error);
+        }
+    };
+    if let Some(edit) = tombstone_edit {
+        edit.commit();
+    }
     Ok(SiblingDeleteResult {
         schema: SIBLING_DELETE_RESULT_SCHEMA.into(),
         keep_id: request.keep_id.clone(),
         sibling_roots,
+        draft_roots,
+        generated_candidates,
         segments: result.segments,
         drafts: result.drafts,
         trash_transaction: result.trash_transaction,
@@ -5407,15 +5841,18 @@ fn play_segment(
                 "generated search playback only supports its proved endpoint",
             ));
         }
-        let projection =
-            generated_search_projections(timeline, &config.repository_root.join("build/search"))
-                .into_iter()
-                .find(|projection| projection.segment.id == segment_id)
-                .ok_or_else(|| {
-                    WorkbenchError::new(format!(
-                        "unknown or expired generated search segment {segment_id:?}"
-                    ))
-                })?;
+        let projection = visible_generated_search_projections(
+            timeline,
+            &config.repository_root.join("build/search"),
+            &config.state_root,
+        )?
+        .into_iter()
+        .find(|projection| projection.segment.id == segment_id)
+        .ok_or_else(|| {
+            WorkbenchError::new(format!(
+                "unknown or expired generated search segment {segment_id:?}"
+            ))
+        })?;
         let bytes = fs::read(&projection.full_tape).map_err(|error| {
             WorkbenchError::new(format!(
                 "cannot read generated search tape {}: {error}",
@@ -5779,7 +6216,8 @@ fn handle_http(
                             &mut graph,
                             &timeline,
                             &config.repository_root.join("build/search"),
-                        );
+                            &config.state_root,
+                        )?;
                         if let Err(error) = prune_orphaned_thumbnails(&graph, &config.state_root) {
                             eprintln!("thumbnail cache pruning warning: {error}");
                         }
@@ -5932,6 +6370,7 @@ fn handle_http(
                             .and_then(|delete_request| {
                                 preview_sibling_deletion(
                                     &config.timeline_path,
+                                    &config.repository_root,
                                     &config.state_root,
                                     &delete_request.keep_id,
                                 )
@@ -5954,6 +6393,7 @@ fn handle_http(
                             .and_then(|delete_request| {
                                 apply_sibling_deletion(
                                     &config.timeline_path,
+                                    &config.repository_root,
                                     &config.state_root,
                                     &delete_request,
                                 )
@@ -6404,7 +6844,7 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
             )
             .unwrap();
         }
-        let route = Timeline::parse(&format!(
+        let route_source = format!(
             r#"
 timeline generated
 predicate_program milestones.milestones
@@ -6420,8 +6860,10 @@ continue main with reference after parent@{}
             "a".repeat(32),
             "b".repeat(32),
             "a".repeat(32)
-        ))
-        .unwrap();
+        );
+        let route = Timeline::parse(&route_source).unwrap();
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, &route_source).unwrap();
         let projected = generated_search_projections(&route, &search_root);
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].segment.parent.as_deref(), Some("parent"));
@@ -6438,6 +6880,39 @@ continue main with reference after parent@{}
                 .unwrap()
                 .proof_attempts,
             2
+        );
+        let state = root.join("state");
+        let preview = preview_sibling_deletion(&timeline_path, &root, &state, "reference").unwrap();
+        assert!(preview.segments.is_empty());
+        assert!(preview.draft_roots.is_empty());
+        assert_eq!(preview.generated.len(), 1);
+        assert_eq!(preview.generated[0].candidate_id, candidate_id);
+        let result = apply_sibling_deletion(
+            &timeline_path,
+            &root,
+            &state,
+            &BrowserSiblingDeleteApplyRequest {
+                keep_id: "reference".into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        )
+        .unwrap();
+        assert!(result.segments.is_empty());
+        assert_eq!(result.generated_candidates, vec![candidate_id.clone()]);
+        assert!(
+            candidate.is_file(),
+            "search artifacts must remain recoverable"
+        );
+        assert!(
+            visible_generated_search_projections(&route, &search_root, &state)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            load_generated_search_tombstones(&state)
+                .unwrap()
+                .candidate_ids
+                .contains(&candidate_id)
         );
         fs::remove_file(generation.join("results.json")).unwrap();
         assert!(generated_search_projections(&route, &search_root).is_empty());
@@ -6515,6 +6990,26 @@ segment keep_child after keep profile fsp103_to_fsp104 uses tape keep-child.tape
 segment right after root profile fsp103_to_fsp104 uses tape right.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces ffffffffffffffffffffffffffffffff
 "#
         .into()
+    }
+
+    fn sibling_timeline_with_shared_goal_source() -> String {
+        let digest = "11".repeat(32);
+        format!(
+            r#"
+timeline siblings
+predicate_program sibling.milestones
+segment root root profile boot_to_fsp103 uses tape root.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment incumbent after root profile fsp103_to_fsp104 uses tape incumbent.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment keep after root profile fsp103_to_fsp104 uses tape keep.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces cccccccccccccccccccccccccccccccc
+segment unrelated_profile after root profile link_control_to_tunnel_crawl_start uses tape unrelated.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces dddddddddddddddddddddddddddddddd
+goal destination on incumbent predicate destination
+proof incumbent satisfies destination program {digest} predicate {digest} ticks 150
+proof keep satisfies destination program {digest} predicate {digest} ticks 129
+continuation main starts root@clean
+continue main with root after root@clean
+continue main with incumbent after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"#
+        )
     }
 
     fn timeline_with_milestone_program(root: &Path) -> Timeline {
@@ -6988,7 +7483,10 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "deleteSiblings",
             "/api/segments/delete-siblings/preview",
             "/api/segments/delete-siblings/apply",
-            "Sibling roots being deleted",
+            "Checked-in sibling roots",
+            "Direct draft sibling roots",
+            "Generated search siblings",
+            "remove every other displayed sibling",
             "The selected segment and its descendants are retained",
             "selection:{kind:'segment',id}",
             "stop:{kind:'segment',segment:id}",
@@ -7281,7 +7779,7 @@ continue main with boot_link.tas after root@clean
             graph
                 .segments
                 .iter()
-                .find(|segment| segment.id == "to_ordon_spring_human150")
+                .find(|segment| segment.id == "to_ordon_spring_q129")
                 .and_then(|segment| segment.parent.as_deref()),
             Some("golf439")
         );
@@ -7304,12 +7802,12 @@ continue main with boot_link.tas after root@clean
         let continuation = graph
             .segments
             .iter()
-            .find(|segment| segment.id == "to_ordon_spring_human150")
+            .find(|segment| segment.id == "to_ordon_spring_q129")
             .unwrap();
         assert!(continuation.playable);
         assert!(continuation.recordable);
         assert_eq!(continuation.predicate_proof, "verified");
-        assert_eq!(continuation.first_hit_tick, Some(149));
+        assert_eq!(continuation.first_hit_tick, Some(129));
         assert_eq!(continuation.goal_proofs.len(), 1);
         assert_eq!(
             continuation.goal_proofs[0].goal,
@@ -7340,10 +7838,8 @@ continue main with boot_link.tas after root@clean
         .unwrap();
         assert_eq!(prefix.tape.frames.len(), 440);
 
-        let (segment_id, expected_output) = (
-            "to_ordon_spring_human150",
-            "d6d0b3ad849688d3f3a81b4ecef16077",
-        );
+        let (segment_id, expected_output) =
+            ("to_ordon_spring_q129", "d6d1ef15e2d651046734f9c5c7d49687");
         let segment = &route.segments[segment_id];
         assert_eq!(segment.end_fingerprint, expected_output);
         let card = graph
@@ -7354,10 +7850,10 @@ continue main with boot_link.tas after root@clean
         assert!(card.playable);
         assert_eq!(card.parent.as_deref(), Some("golf439"));
         let continuation = load_segment_tape(segment, artifact_root).unwrap();
-        assert_eq!(continuation.frames.len(), 150);
+        assert_eq!(continuation.frames.len(), 130);
         let playback =
             materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
-        assert_eq!(playback.tape.frames.len(), 590);
+        assert_eq!(playback.tape.frames.len(), 570);
         assert_eq!(
             segment_parent_frame_count(
                 &route,
@@ -8495,8 +8991,28 @@ continue main with boot_link.tas after root@clean
             fs::write(root.join(artifact), artifact.as_bytes()).unwrap();
         }
         let state = root.join("state");
+        write_tape(&root, "first.tape", &[1, 2, 3]);
+        write_tape(&root, "second.tape", &[4, 5]);
+        let mut direct = install_ready_draft(&root, &state, "draft-direct-sibling", &[6]);
+        direct.parent = DraftParent::Segment {
+            id: "root".into(),
+            terminal_milestone: "unused".into(),
+            boundary_fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        };
+        let direct_directory = drafts_root(&state).unwrap().join(&direct.id);
+        fs::remove_file(direct_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&direct_directory, &direct, true).unwrap();
+        let mut child = install_ready_draft(&root, &state, "draft-direct-child", &[7]);
+        child.parent = DraftParent::Draft {
+            id: direct.id.clone(),
+            parent_tape_sha256: direct.result_tape_sha256.clone().unwrap(),
+        };
+        child.parent_tape_sha256 = direct.result_tape_sha256.clone().unwrap();
+        let child_directory = drafts_root(&state).unwrap().join(&child.id);
+        fs::remove_file(child_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&child_directory, &child, true).unwrap();
 
-        let preview = preview_sibling_deletion(&timeline_path, &state, "keep").unwrap();
+        let preview = preview_sibling_deletion(&timeline_path, &root, &state, "keep").unwrap();
         assert_eq!(preview.keep_id, "keep");
         assert_eq!(
             preview
@@ -8514,8 +9030,18 @@ continue main with boot_link.tas after root@clean
                 .collect::<Vec<_>>(),
             vec!["left", "left_child", "right"]
         );
+        assert_eq!(
+            preview
+                .draft_roots
+                .iter()
+                .map(|draft| draft.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["draft-direct-sibling"]
+        );
+        assert_eq!(preview.drafts.len(), 2);
         let result = apply_sibling_deletion(
             &timeline_path,
+            &root,
             &state,
             &BrowserSiblingDeleteApplyRequest {
                 keep_id: "keep".into(),
@@ -8525,6 +9051,10 @@ continue main with boot_link.tas after root@clean
         .unwrap();
         assert_eq!(result.sibling_roots, vec!["left", "right"]);
         assert_eq!(result.segments, vec!["left", "left_child", "right"]);
+        assert_eq!(result.draft_roots, vec!["draft-direct-sibling"]);
+        assert_eq!(result.drafts.len(), 2);
+        assert!(!direct_directory.exists());
+        assert!(!child_directory.exists());
 
         let timeline = Timeline::parse(&fs::read_to_string(&timeline_path).unwrap()).unwrap();
         assert_eq!(
@@ -8552,24 +9082,73 @@ continue main with boot_link.tas after root@clean
     }
 
     #[test]
+    fn sibling_delete_reanchors_a_deleted_reference_goal_to_its_proved_survivor() {
+        let root = temporary_root("sibling-delete-goal-reanchor");
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, sibling_timeline_with_shared_goal_source()).unwrap();
+        let state = root.join("state");
+
+        let preview = preview_sibling_deletion(&timeline_path, &root, &state, "keep").unwrap();
+        assert!(preview.goals.is_empty());
+        assert_eq!(preview.proofs, 1);
+        assert!(preview.lineages.is_empty());
+        assert_eq!(
+            preview
+                .sibling_roots
+                .iter()
+                .map(|segment| segment.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["incumbent", "unrelated_profile"]
+        );
+
+        apply_sibling_deletion(
+            &timeline_path,
+            &root,
+            &state,
+            &BrowserSiblingDeleteApplyRequest {
+                keep_id: "keep".into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        )
+        .unwrap();
+
+        let replacement = fs::read_to_string(&timeline_path).unwrap();
+        assert!(replacement.contains("goal destination on keep predicate destination"));
+        assert!(!replacement.contains("proof incumbent satisfies destination"));
+        assert!(replacement.contains("proof keep satisfies destination"));
+        assert!(
+            replacement
+                .contains("continue main with keep after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert!(!replacement.contains("continue main with incumbent"));
+        let timeline = Timeline::parse(&replacement).unwrap();
+        assert_eq!(timeline.goals["destination"].segment, "keep");
+        assert_eq!(timeline.proofs.len(), 1);
+        assert_eq!(timeline.proofs[0].segment, "keep");
+        assert_eq!(timeline.proofs[0].first_hit_tick, Some(129));
+        assert_eq!(timeline.continuations["main"].steps[1].segment, "keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn sibling_delete_rejects_roots_lonely_segments_stale_tokens_and_smuggled_fields() {
         let root = temporary_root("sibling-delete-guards");
         let timeline_path = root.join("route.timeline");
         fs::write(&timeline_path, sibling_timeline_source()).unwrap();
         let state = root.join("state");
         assert!(
-            preview_sibling_deletion(&timeline_path, &state, "root")
+            preview_sibling_deletion(&timeline_path, &root, &state, "root")
                 .unwrap_err()
                 .to_string()
                 .contains("root segment")
         );
         assert!(
-            preview_sibling_deletion(&timeline_path, &state, "keep_child")
+            preview_sibling_deletion(&timeline_path, &root, &state, "keep_child")
                 .unwrap_err()
                 .to_string()
-                .contains("no structural siblings")
+                .contains("no displayed siblings")
         );
-        assert!(preview_sibling_deletion(&timeline_path, &state, "../keep").is_err());
+        assert!(preview_sibling_deletion(&timeline_path, &root, &state, "../keep").is_err());
 
         write_tape(&root, "first.tape", &[1, 2, 3]);
         write_tape(&root, "second.tape", &[4, 5]);
@@ -8586,12 +9165,12 @@ continue main with boot_link.tas after root@clean
             .lock()
             .unwrap()
             .insert(active_draft.id.clone());
-        let active = preview_sibling_deletion(&timeline_path, &state, "keep");
+        let active = preview_sibling_deletion(&timeline_path, &root, &state, "keep");
         active_recordings().lock().unwrap().remove(&active_draft.id);
         assert!(active.unwrap_err().to_string().contains("active"));
         fs::remove_dir_all(active_directory).unwrap();
 
-        let preview = preview_sibling_deletion(&timeline_path, &state, "keep").unwrap();
+        let preview = preview_sibling_deletion(&timeline_path, &root, &state, "keep").unwrap();
         fs::write(
             &timeline_path,
             format!("{}\n# topology revision\n", sibling_timeline_source()),
@@ -8599,6 +9178,7 @@ continue main with boot_link.tas after root@clean
         .unwrap();
         let stale = apply_sibling_deletion(
             &timeline_path,
+            &root,
             &state,
             &BrowserSiblingDeleteApplyRequest {
                 keep_id: "keep".into(),
