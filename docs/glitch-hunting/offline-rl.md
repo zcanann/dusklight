@@ -260,6 +260,18 @@ replace memory fields that already exist. The admission report binds the
 objective, complete signal inventory, and console gap evidence, and has no
 promotion authority.
 
+`learning/transfer_learning.rs` creates bounded multi-task/transfer experiments
+without combining incompatible evidence. Maps, tactic families, and goal
+families may vary, but feature schema, action schema, fidelity profile, code
+build, and game-data build must match the target exactly. Every source and the
+target retain a distinct authenticated corpus manifest and contribute the same
+declared decision budget.
+
+Only an encoder is shared; task heads remain separate, corpora are not
+physically merged, and transfer output is candidate-only. An action/fidelity
+or build mismatch, duplicate domain, or under-budget source rejects the plan
+before training, and the plan has no promotion authority.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:

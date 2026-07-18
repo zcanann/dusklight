@@ -900,7 +900,7 @@ simple random baseline.
 - [x] Consider latent visual/world models only for observations unavailable from
   memory or for console-transfer fidelity; memory-backed state should remain the
   sample-efficient default.
-- [ ] Research multi-task and transfer learning across compatible maps, tactics,
+- [x] Research multi-task and transfer learning across compatible maps, tactics,
   and goal families without merging incompatible fidelity or action schemas.
 
 ### RL readiness gates
