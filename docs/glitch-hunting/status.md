@@ -6,6 +6,11 @@ roadmap documents describe the larger target.
 ## Working foundations
 
 - `orig/` is ignored as local extracted-game data.
+- Portable artifact identities validate all build, protocol, game-data,
+  scenario, predicate, action/observation schema, and settings fields as
+  nonempty or nonzero. `huntctl identity compare` applies operation-specific
+  compatibility rules and reports every required mismatch; automatic
+  enforcement across every artifact-consuming command remains incomplete.
 - Aurora exposes an exclusive automation pad source. Owned ports replace
   keyboard, physical, touch, and ordinary virtual input for that tick.
 - DUSKTAPE v3.2 has matching C++ and Rust codecs. It zstd-compresses the canonical

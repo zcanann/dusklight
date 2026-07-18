@@ -166,7 +166,8 @@ horizontally toward imagined whole-game completeness.
   training, checkpoint restore, and cross-build comparison.
 - [ ] Make every CLI and workbench action reject mismatched identity instead of
   implicitly using whatever binary, disc, or configured path is available.
-- [ ] Add a human-readable identity diff explaining every rejection.
+- [x] Add a human-readable identity diff explaining every rejection through
+  the explicit `huntctl identity compare` compatibility boundary.
 
 ### P0: first-divergence tooling
 

@@ -38,6 +38,15 @@ These are conservative rules. Relaxing one requires a new identity schema or an
 explicit mode revision; callers may not silently omit a field. Rejections list
 every mismatched required field with expected and received values.
 
+`huntctl identity compare --mode MODE --expected EXPECTED.json --actual
+ACTUAL.json` validates that both portable identity documents are complete, then
+applies the selected operation's rules. A rejection prints every incompatible
+field, including both values; a successful comparison emits a small JSON
+report. This is currently an explicit inspection/enforcement boundary. Wiring
+the same check into every artifact-consuming command and the route workbench is
+still open work, so callers must not treat this command as proof that all CLI
+paths are already guarded.
+
 ## Scenario
 
 A `Scenario` describes repeatable initial conditions, not just a map:
