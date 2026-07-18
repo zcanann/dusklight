@@ -870,7 +870,7 @@ simple random baseline.
   partially observable after Trace v2.
 - [x] Add DeepSets/attention over variable actor sets only when fixed slots fail
   and the corpus is large enough.
-- [ ] Evaluate graph encoders for actor relationships and local collision graphs
+- [x] Evaluate graph encoders for actor relationships and local collision graphs
   only against simpler representations under equal sample budgets.
 - [ ] Keep static map geometry in a spatial service or local encoder; never feed
   the complete raw mesh to an MLP every tick.

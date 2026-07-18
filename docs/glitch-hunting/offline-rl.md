@@ -203,6 +203,16 @@ objective-query attention, both canonicalized so actor enumeration order cannot
 change bytes or digests. The readiness artifact is non-promotional; native
 held-out comparison still decides whether either encoder replaces fixed slots.
 
+Graph representations use `dusklight-graph-encoder-comparison/v1`, never a
+standalone graph score. Each run names either `actor_relationships` or
+`local_collision`, authenticates the fixed representation and simpler-baseline
+report, rejects shared sample identities across dataset digests, and fits both a
+pooled fixed baseline and bounded one-hop directed message passing on exactly
+the same training and held-out rows. The simpler representation remains the
+decision unless graph held-out MSE improves by the declared threshold (10% by
+default). A controlled topology-only fixture proves the graph branch can expose
+signal unavailable to equal-count pooling; the report remains non-promotional.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
