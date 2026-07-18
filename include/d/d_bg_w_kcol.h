@@ -13,6 +13,13 @@ class cBgS_PolyPassChk;
 class dBgPc;
 struct dBgS_CaptPoly;
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+// DUSKLIGHT OBSERVATION-ONLY APERTURE: declaration only; adapter body lives in automation.
+namespace dusk::automation {
+struct GameplayTraceCollisionReadAdapter;
+}
+#endif
+
 struct KC_PrismData {
     /* 0x0 */ BE(f32) height;
     /* 0x4 */ BE(u16) pos_i;
@@ -118,6 +125,10 @@ public:
     void getTri1Pos(KC_PrismData* pd, Vec** nrm) const { *nrm = &m_pkc_head->m_pos_data[pd->pos_i]; }
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: const backing-store reads only.
+    friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+#endif
     /* 0x18 */ KC_Header* m_pkc_head;
     /* 0x1C */ dBgPlc m_code;
     /* 0x20 */ cM3dGAab m_bnd;

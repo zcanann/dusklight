@@ -37,7 +37,10 @@ layout, vtable, or control-flow change is permitted.
 `PlayerCollisionSurfaces` version 1 is optional and has a fixed 496-byte stride:
 a 16-byte set header followed by six 80-byte surface records. A fixed bound
 keeps native work and output predictable. The channel is known but is not added
-to the default channel set until its cost has been measured.
+to the default channel set until its cost has been measured. Requesting it also
+requires the Stage channel: stage identity is part of the static join, and all
+pending-stage flags and masks must be cross-checked against the same record's
+Stage payload rather than becoming unverified duplicated state.
 
 The set header is:
 
@@ -49,7 +52,7 @@ The set header is:
 | 6 | `u8` | backing code records resolved |
 | 7 | `u8` | SCLS destinations resolved |
 | 8 | `u16` | raw Link explicit-exit field |
-| 10 | `u8` | surfaces whose destination equals the same-tick pending stage |
+| 10 | `u8` | bit mask, in canonical slot order, of surfaces whose destination equals the same-tick pending stage |
 | 11 | 5 bytes | zero |
 
 Set flags are fixed as bit 0 `current-room-valid`, bit 1

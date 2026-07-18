@@ -161,7 +161,11 @@ and throughput remain unmeasured.
 
 The real `intro-first-exit` absolute tape also produced three byte-identical
 925-record Trace v2 artifacts across independent cold headless runs (Link
-control 439, trigger 827, `F_SP104` load 858). The first conformance attempt
+control 439, collision-surface proof 826, trigger 827, `F_SP104` load 858).
+Channel 10 proves the transition through cached KCL prism 2217, PLC attribute
+19, exit 1, and the exact room-1 SCLS destination; its raw code and geometry
+indices match the independently parsed content-addressed room archive. The
+first conformance attempt
 exposed varying uninitialized camera-view bytes at tick 300; the observer now
 marks unrealized camera state `Unavailable`, and the runner fails if complete
 trace SHA-256 values ever disagree again.

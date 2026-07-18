@@ -54,8 +54,28 @@ const COLLISION_WALL_HIT: u16 = 1 << 0;
 const COLLISION_WALL_OWNER_PRESENT: u16 = 1 << 1;
 const COLLISION_WALL_IDENTITY_PRESENT: u16 = 1 << 2;
 const COLLISION_WALL_KNOWN_FLAGS: u16 = 0x7;
+const COLLISION_SURFACE_SET_ROOM_VALID: u32 = 1 << 0;
+const COLLISION_SURFACE_SET_EXPLICIT_LINK_EXIT: u32 = 1 << 1;
+const COLLISION_SURFACE_SET_NEXT_STAGE_PENDING: u32 = 1 << 2;
+const COLLISION_SURFACE_SET_KNOWN_FLAGS: u32 = 0x7;
+const COLLISION_SURFACE_IDENTITY_PRESENT: u32 = 1 << 0;
+const COLLISION_SURFACE_OWNER_PRESENT: u32 = 1 << 1;
+const COLLISION_SURFACE_BACKING_PRESENT: u32 = 1 << 2;
+const COLLISION_SURFACE_CODES_PRESENT: u32 = 1 << 3;
+const COLLISION_SURFACE_MATERIAL_PRESENT: u32 = 1 << 4;
+const COLLISION_SURFACE_GROUP_PRESENT: u32 = 1 << 5;
+const COLLISION_SURFACE_SOURCE_ROOM_PRESENT: u32 = 1 << 6;
+const COLLISION_SURFACE_SOURCE_ROOM_EXACT: u32 = 1 << 7;
+const COLLISION_SURFACE_SCLS_SOURCE_PRESENT: u32 = 1 << 8;
+const COLLISION_SURFACE_DESTINATION_PRESENT: u32 = 1 << 9;
+const COLLISION_SURFACE_PENDING_MATCH: u32 = 1 << 10;
+const COLLISION_SURFACE_GEOMETRY_PRESENT: u32 = 1 << 11;
+const COLLISION_SURFACE_KCL_HEIGHT_PRESENT: u32 = 1 << 12;
+const COLLISION_SURFACE_KNOWN_FLAGS: u32 = 0x1fff;
 const INVALID_U16_ID: u16 = u16::MAX;
 const INVALID_U32_ID: u32 = u32::MAX;
+const INVALID_I8: i8 = i8::MIN;
+const INVALID_I16: i16 = i16::MIN;
 
 // Compatibility flags retained for the movement-v1 featurizer.
 const LEGACY_PLAYER_PRESENT: u32 = 1 << 0;
@@ -78,10 +98,11 @@ pub enum TraceChannel {
     Camera = 7,
     PlayerAction = 8,
     PlayerBackgroundCollision = 9,
+    PlayerCollisionSurfaces = 10,
 }
 
 impl TraceChannel {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Core,
         Self::Stage,
         Self::AppliedPads,
@@ -92,6 +113,7 @@ impl TraceChannel {
         Self::Camera,
         Self::PlayerAction,
         Self::PlayerBackgroundCollision,
+        Self::PlayerCollisionSurfaces,
     ];
 
     pub const fn bit(self) -> u64 {
@@ -114,11 +136,12 @@ impl TraceChannel {
             Self::Camera => "camera",
             Self::PlayerAction => "player_action",
             Self::PlayerBackgroundCollision => "player_background_collision",
+            Self::PlayerCollisionSurfaces => "player_collision_surfaces",
         }
     }
 }
 
-const KNOWN_CHANNELS: u64 = (1 << 10) - 1;
+const KNOWN_CHANNELS: u64 = (1 << 11) - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -299,6 +322,67 @@ pub struct TracePlayerBackgroundCollision {
     pub final_position: [f32; 3],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceCollisionSurfaceKind {
+    Ground,
+    Roof,
+    Water,
+    Wall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceCollisionBackingFormat {
+    Dzb,
+    Kcl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TraceCollisionSurfaceDestination {
+    pub stage_name: String,
+    pub room: i8,
+    pub layer: i8,
+    pub point: i16,
+    pub wipe: u8,
+    pub wipe_time: u8,
+    pub time_hour: i8,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceCollisionSurface {
+    pub flags: u32,
+    pub kind: TraceCollisionSurfaceKind,
+    pub wall_slot: u8,
+    pub backing_format: Option<TraceCollisionBackingFormat>,
+    pub raw_code_word_mask: u8,
+    pub bg_index: Option<u16>,
+    pub poly_index: Option<u16>,
+    pub owner_session_process_id: Option<u32>,
+    pub material_row: Option<u16>,
+    pub group_row: Option<u16>,
+    pub raw_code_words: [u32; 5],
+    pub raw_exit_id: Option<u8>,
+    pub source_room: Option<i8>,
+    pub source_room_exact: bool,
+    pub scls_source_room: Option<i8>,
+    pub destination: Option<TraceCollisionSurfaceDestination>,
+    pub source_geometry_indices: Vec<u16>,
+    pub kcl_prism_height: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TracePlayerCollisionSurfaces {
+    pub flags: u32,
+    pub link_room: Option<i8>,
+    pub identity_count: u8,
+    pub backing_count: u8,
+    pub destination_count: u8,
+    pub raw_link_exit: u16,
+    pub pending_match_mask: u8,
+    pub surfaces: [TraceCollisionSurface; 6],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TraceRecord {
     pub boundary_index: u64,
@@ -347,6 +431,7 @@ pub struct TraceRecord {
     pub camera: Option<TraceCamera>,
     pub player_action: Option<TracePlayerAction>,
     pub player_background_collision: Option<TracePlayerBackgroundCollision>,
+    pub player_collision_surfaces: Option<TracePlayerCollisionSurfaces>,
 }
 
 impl Default for TraceRecord {
@@ -398,6 +483,7 @@ impl Default for TraceRecord {
             camera: None,
             player_action: None,
             player_background_collision: None,
+            player_collision_surfaces: None,
         }
     }
 }
@@ -521,6 +607,7 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
         (TraceChannel::Camera, 1) => 48,
         (TraceChannel::PlayerAction, 1) => 104,
         (TraceChannel::PlayerBackgroundCollision, 1) => 128,
+        (TraceChannel::PlayerCollisionSurfaces, 1) => 496,
         _ => return None,
     };
     Some(ChannelDefinition { stride })
@@ -829,6 +916,13 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
             "missing required gameplay trace core channel".into(),
         ));
     }
+    if descriptors.contains_key(&(TraceChannel::PlayerCollisionSurfaces as u16))
+        && !descriptors.contains_key(&(TraceChannel::Stage as u16))
+    {
+        return Err(TraceError(
+            "player collision surfaces require the Stage channel".into(),
+        ));
+    }
     for channel in TraceChannel::ALL {
         if requested_channels & channel.bit() != 0 && !descriptors.contains_key(&(channel as u16)) {
             return Err(TraceError(format!(
@@ -884,6 +978,7 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
                 "contradictory gameplay trace v2 boundary".into(),
             ));
         }
+        validate_collision_surface_joins(record)?;
     }
     Ok(DecodedTrace {
         version: 2,
@@ -914,6 +1009,12 @@ fn validate_channel_status(
                     | TraceChannelStatus::Unavailable
             ),
             (TraceChannel::PlayerBackgroundCollision, 1) => matches!(
+                status,
+                TraceChannelStatus::Present
+                    | TraceChannelStatus::Absent
+                    | TraceChannelStatus::Unavailable
+            ),
+            (TraceChannel::PlayerCollisionSurfaces, 1) => matches!(
                 status,
                 TraceChannelStatus::Present
                     | TraceChannelStatus::Absent
@@ -1135,6 +1236,9 @@ fn decode_v2_channel(
         }
         TraceChannel::PlayerBackgroundCollision => {
             decode_player_background_collision_v1(bytes, record)?
+        }
+        TraceChannel::PlayerCollisionSurfaces => {
+            decode_player_collision_surfaces_v1(bytes, record)?
         }
     }
     Ok(())
@@ -1558,6 +1662,424 @@ fn decode_player_background_collision_v1(
     Ok(())
 }
 
+fn decode_player_collision_surfaces_v1(
+    bytes: &[u8],
+    record: &mut TraceRecord,
+) -> Result<(), TraceError> {
+    let flags = u32_at(bytes, 0);
+    if flags & !COLLISION_SURFACE_SET_KNOWN_FLAGS != 0
+        || bytes[10] & !0x3f != 0
+        || bytes[11..16].iter().any(|value| *value != 0)
+    {
+        return Err(TraceError(
+            "invalid gameplay trace collision-surface set header".into(),
+        ));
+    }
+    let room_valid = flags & COLLISION_SURFACE_SET_ROOM_VALID != 0;
+    let raw_room = bytes[4] as i8;
+    if room_valid != (raw_room != INVALID_I8) || room_valid && !(-1..=63).contains(&raw_room) {
+        return Err(TraceError(
+            "invalid gameplay trace collision-surface Link room".into(),
+        ));
+    }
+    let raw_link_exit = u16_at(bytes, 8);
+    if (flags & COLLISION_SURFACE_SET_EXPLICIT_LINK_EXIT != 0) != (raw_link_exit != 0x003f) {
+        return Err(TraceError(
+            "collision-surface explicit Link exit flag disagrees with raw field".into(),
+        ));
+    }
+
+    let surfaces: [TraceCollisionSurface; 6] = (0..6)
+        .map(|index| {
+            decode_collision_surface(&bytes[16 + index * 80..16 + (index + 1) * 80], index)
+        })
+        .collect::<Result<Vec<_>, TraceError>>()?
+        .try_into()
+        .expect("six collision surface slots");
+    let identity_count = surfaces
+        .iter()
+        .filter(|surface| surface.flags & COLLISION_SURFACE_IDENTITY_PRESENT != 0)
+        .count() as u8;
+    let backing_count = surfaces
+        .iter()
+        .filter(|surface| surface.flags & COLLISION_SURFACE_BACKING_PRESENT != 0)
+        .count() as u8;
+    let destination_count = surfaces
+        .iter()
+        .filter(|surface| surface.flags & COLLISION_SURFACE_DESTINATION_PRESENT != 0)
+        .count() as u8;
+    let pending_match_mask = surfaces
+        .iter()
+        .enumerate()
+        .fold(0_u8, |mask, (index, surface)| {
+            mask | (((surface.flags & COLLISION_SURFACE_PENDING_MATCH != 0) as u8) << index)
+        });
+    if bytes[5] != identity_count
+        || bytes[6] != backing_count
+        || bytes[7] != destination_count
+        || bytes[10] != pending_match_mask
+    {
+        return Err(TraceError(
+            "collision-surface set counts or pending-match mask disagree with slots".into(),
+        ));
+    }
+    if flags & COLLISION_SURFACE_SET_EXPLICIT_LINK_EXIT != 0
+        && surfaces[0].flags & COLLISION_SURFACE_PENDING_MATCH != 0
+    {
+        return Err(TraceError(
+            "explicit Link exit cannot attribute the pending transition to ground collision".into(),
+        ));
+    }
+    if surfaces
+        .iter()
+        .filter_map(|surface| surface.scls_source_room)
+        .any(|room| !room_valid || room != raw_room)
+    {
+        return Err(TraceError(
+            "collision-surface SCLS source disagrees with Link room".into(),
+        ));
+    }
+
+    record.player_collision_surfaces = Some(TracePlayerCollisionSurfaces {
+        flags,
+        link_room: room_valid.then_some(raw_room),
+        identity_count,
+        backing_count,
+        destination_count,
+        raw_link_exit,
+        pending_match_mask,
+        surfaces,
+    });
+    Ok(())
+}
+
+fn decode_collision_surface(
+    bytes: &[u8],
+    expected_index: usize,
+) -> Result<TraceCollisionSurface, TraceError> {
+    let flags = u32_at(bytes, 0);
+    if flags & !COLLISION_SURFACE_KNOWN_FLAGS != 0
+        || bytes[51] != 0
+        || bytes[76..80].iter().any(|value| *value != 0)
+    {
+        return Err(TraceError(format!(
+            "invalid gameplay trace collision surface {expected_index} flags or reserved bytes"
+        )));
+    }
+    let (expected_kind, expected_slot) = match expected_index {
+        0 => (TraceCollisionSurfaceKind::Ground, 0),
+        1 => (TraceCollisionSurfaceKind::Roof, 0),
+        2 => (TraceCollisionSurfaceKind::Water, 0),
+        3..=5 => (TraceCollisionSurfaceKind::Wall, (expected_index - 3) as u8),
+        _ => unreachable!("bounded collision surface slot"),
+    };
+    let kind = match bytes[4] {
+        1 => TraceCollisionSurfaceKind::Ground,
+        2 => TraceCollisionSurfaceKind::Roof,
+        3 => TraceCollisionSurfaceKind::Water,
+        4 => TraceCollisionSurfaceKind::Wall,
+        value => {
+            return Err(TraceError(format!(
+                "invalid gameplay trace collision surface kind {value}"
+            )));
+        }
+    };
+    if kind != expected_kind || bytes[5] != expected_slot {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has a noncanonical kind or wall slot"
+        )));
+    }
+
+    let has = |flag| flags & flag != 0;
+    let identity = has(COLLISION_SURFACE_IDENTITY_PRESENT);
+    let owner_present = has(COLLISION_SURFACE_OWNER_PRESENT);
+    let backing_present = has(COLLISION_SURFACE_BACKING_PRESENT);
+    let codes_present = has(COLLISION_SURFACE_CODES_PRESENT);
+    let material_present = has(COLLISION_SURFACE_MATERIAL_PRESENT);
+    let group_present = has(COLLISION_SURFACE_GROUP_PRESENT);
+    let source_room_present = has(COLLISION_SURFACE_SOURCE_ROOM_PRESENT);
+    let source_room_exact = has(COLLISION_SURFACE_SOURCE_ROOM_EXACT);
+    let scls_source_present = has(COLLISION_SURFACE_SCLS_SOURCE_PRESENT);
+    let destination_present = has(COLLISION_SURFACE_DESTINATION_PRESENT);
+    let pending_match = has(COLLISION_SURFACE_PENDING_MATCH);
+    let geometry_present = has(COLLISION_SURFACE_GEOMETRY_PRESENT);
+    let kcl_height_present = has(COLLISION_SURFACE_KCL_HEIGHT_PRESENT);
+    if (flags & !COLLISION_SURFACE_IDENTITY_PRESENT) != 0 && !identity
+        || source_room_exact && !source_room_present
+        || pending_match && (!scls_source_present || !destination_present)
+        || (scls_source_present || destination_present || pending_match)
+            && kind != TraceCollisionSurfaceKind::Ground
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has incoherent presence or provenance flags"
+        )));
+    }
+
+    let bg = u16_at(bytes, 8);
+    let poly = u16_at(bytes, 10);
+    validate_identity_pair(bg, poly, identity, "surface")?;
+    let owner = u32_at(bytes, 12);
+    validate_owner(owner, owner_present, "surface")?;
+    let material = u16_at(bytes, 16);
+    let group = u16_at(bytes, 18);
+    if (material != INVALID_U16_ID) != material_present
+        || (group != INVALID_U16_ID) != group_present
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} row sentinels disagree with flags"
+        )));
+    }
+
+    let backing_format = match bytes[6] {
+        0 if !backing_present => None,
+        1 if backing_present => Some(TraceCollisionBackingFormat::Dzb),
+        2 if backing_present => Some(TraceCollisionBackingFormat::Kcl),
+        value => {
+            return Err(TraceError(format!(
+                "collision surface {expected_index} has invalid backing format {value}"
+            )));
+        }
+    };
+    let raw_code_word_mask = bytes[7];
+    if raw_code_word_mask & !0x1f != 0
+        || codes_present != (raw_code_word_mask != 0)
+        || codes_present && (!backing_present || raw_code_word_mask & 1 == 0)
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has invalid raw-code presence"
+        )));
+    }
+    let raw_code_words = std::array::from_fn(|word| u32_at(bytes, 20 + word * 4));
+    if raw_code_words.iter().enumerate().any(|(word, value)| {
+        let present = raw_code_word_mask & (1 << word) != 0;
+        !present && *value != 0
+    }) {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has data in an absent raw-code word"
+        )));
+    }
+    match backing_format {
+        None => {
+            if codes_present
+                || material_present
+                || group_present
+                || geometry_present
+                || kcl_height_present
+            {
+                return Err(TraceError(format!(
+                    "collision surface {expected_index} has backing fields without backing"
+                )));
+            }
+        }
+        Some(TraceCollisionBackingFormat::Dzb) => {
+            if kcl_height_present {
+                return Err(TraceError(format!(
+                    "collision surface {expected_index} has inconsistent DZB backing"
+                )));
+            }
+        }
+        Some(TraceCollisionBackingFormat::Kcl) => {
+            if group_present {
+                return Err(TraceError(format!(
+                    "collision surface {expected_index} has inconsistent KCL backing"
+                )));
+            }
+        }
+    }
+
+    let raw_exit = bytes[40];
+    if codes_present {
+        if raw_exit != (raw_code_words[0] & 0x3f) as u8 {
+            return Err(TraceError(format!(
+                "collision surface {expected_index} raw exit disagrees with collision code"
+            )));
+        }
+    } else if raw_exit != u8::MAX {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has a raw exit without collision codes"
+        )));
+    }
+
+    let raw_source_room = bytes[41] as i8;
+    let raw_scls_room = bytes[42] as i8;
+    if source_room_present != (raw_source_room != INVALID_I8)
+        || source_room_present && !(-1..=63).contains(&raw_source_room)
+        || scls_source_present != (raw_scls_room != INVALID_I8)
+        || scls_source_present && !(-1..=63).contains(&raw_scls_room)
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has invalid room sentinels"
+        )));
+    }
+
+    let destination_name = decode_name(&bytes[68..76])?;
+    let destination_room = bytes[43] as i8;
+    let destination_layer = bytes[44] as i8;
+    let destination_wipe = bytes[45];
+    let destination_wipe_time = bytes[46];
+    let destination_time_hour = bytes[47] as i8;
+    let destination_point = i16_at(bytes, 48);
+    if destination_present {
+        if !scls_source_present
+            || !codes_present
+            || raw_exit == 0x3f
+            || raw_exit == u8::MAX
+            || destination_name.is_empty()
+            || !(-1..=63).contains(&destination_room)
+            || !(destination_layer == -1 || (0..=14).contains(&destination_layer))
+            || destination_point < 0
+            || destination_wipe_time > 7
+            || !(-1..=30).contains(&destination_time_hour)
+        {
+            return Err(TraceError(format!(
+                "collision surface {expected_index} has an invalid destination"
+            )));
+        }
+    } else if !destination_name.is_empty()
+        || destination_room != INVALID_I8
+        || destination_layer != INVALID_I8
+        || destination_wipe != u8::MAX
+        || destination_wipe_time != u8::MAX
+        || destination_time_hour != INVALID_I8
+        || destination_point != INVALID_I16
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} destination sentinels disagree with flags"
+        )));
+    }
+
+    let geometry_count = usize::from(bytes[50]);
+    let geometry_indices: [u16; 6] = std::array::from_fn(|index| u16_at(bytes, 52 + index * 2));
+    if geometry_present != (geometry_count != 0)
+        || geometry_count > 6
+        || geometry_indices
+            .iter()
+            .enumerate()
+            .any(|(index, value)| (*value != INVALID_U16_ID) != (index < geometry_count))
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has invalid source geometry"
+        )));
+    }
+
+    let kcl_prism_height = f32_at(bytes, 64);
+    if !kcl_prism_height.is_finite()
+        || kcl_height_present && backing_format != Some(TraceCollisionBackingFormat::Kcl)
+        || !kcl_height_present && kcl_prism_height != 0.0
+    {
+        return Err(TraceError(format!(
+            "collision surface {expected_index} has invalid KCL prism height"
+        )));
+    }
+
+    Ok(TraceCollisionSurface {
+        flags,
+        kind,
+        wall_slot: bytes[5],
+        backing_format,
+        raw_code_word_mask,
+        bg_index: identity.then_some(bg),
+        poly_index: identity.then_some(poly),
+        owner_session_process_id: owner_present.then_some(owner),
+        material_row: material_present.then_some(material),
+        group_row: group_present.then_some(group),
+        raw_code_words,
+        raw_exit_id: codes_present.then_some(raw_exit),
+        source_room: source_room_present.then_some(raw_source_room),
+        source_room_exact,
+        scls_source_room: scls_source_present.then_some(raw_scls_room),
+        destination: destination_present.then_some(TraceCollisionSurfaceDestination {
+            stage_name: destination_name,
+            room: destination_room,
+            layer: destination_layer,
+            point: destination_point,
+            wipe: destination_wipe,
+            wipe_time: destination_wipe_time,
+            time_hour: destination_time_hour,
+        }),
+        source_geometry_indices: geometry_indices[..geometry_count].to_vec(),
+        kcl_prism_height: kcl_height_present.then_some(kcl_prism_height),
+    })
+}
+
+fn validate_collision_surface_joins(record: &TraceRecord) -> Result<(), TraceError> {
+    let Some(surfaces) = &record.player_collision_surfaces else {
+        return Ok(());
+    };
+    let stage_present =
+        record.channel_status.get(&TraceChannel::Stage) == Some(&TraceChannelStatus::Present);
+    if !stage_present {
+        return Err(TraceError(
+            "player collision surfaces require present Stage observations".into(),
+        ));
+    }
+    let pending = surfaces.flags & COLLISION_SURFACE_SET_NEXT_STAGE_PENDING != 0;
+    if pending != record.next_stage_enabled {
+        return Err(TraceError(
+            "collision-surface pending-stage flag disagrees with Stage channel".into(),
+        ));
+    }
+    for (index, surface) in surfaces.surfaces.iter().enumerate() {
+        let matches_stage = pending
+            && surface.destination.as_ref().is_some_and(|destination| {
+                destination.stage_name == record.next_stage_name
+                    && destination.room == record.next_room
+                    && destination.layer == record.next_layer
+                    && destination.point == record.next_point
+            });
+        if matches_stage != (surface.flags & COLLISION_SURFACE_PENDING_MATCH != 0) {
+            return Err(TraceError(format!(
+                "collision surface {index} pending-stage match disagrees with Stage channel"
+            )));
+        }
+    }
+
+    let Some(collision) = &record.player_background_collision else {
+        return Ok(());
+    };
+    let wall_identity = |index: usize| {
+        let wall = &collision.walls[index];
+        (
+            wall.bg_index,
+            wall.poly_index,
+            wall.owner_session_process_id,
+        )
+    };
+    let expected: [(Option<u16>, Option<u16>, Option<u32>); 6] = [
+        (
+            collision.ground_bg_index,
+            collision.ground_poly_index,
+            collision.ground_owner_session_process_id,
+        ),
+        (
+            collision.roof_bg_index,
+            collision.roof_poly_index,
+            collision.roof_owner_session_process_id,
+        ),
+        (
+            collision.water_bg_index,
+            collision.water_poly_index,
+            collision.water_owner_session_process_id,
+        ),
+        wall_identity(0),
+        wall_identity(1),
+        wall_identity(2),
+    ];
+    for (index, (surface, expected)) in surfaces.surfaces.iter().zip(expected).enumerate() {
+        let actual = (
+            surface.bg_index,
+            surface.poly_index,
+            surface.owner_session_process_id,
+        );
+        if actual != expected {
+            return Err(TraceError(format!(
+                "collision surface {index} identity or owner disagrees with background collision"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_identity_pair(bg: u16, poly: u16, present: bool, kind: &str) -> Result<(), TraceError> {
     if (bg != INVALID_U16_ID) != present || (poly != INVALID_U16_ID) != present {
         return Err(TraceError(format!(
@@ -1962,6 +2484,154 @@ mod tests {
     }
 
     #[test]
+    fn v2_decodes_collision_surfaces_and_pending_ground_destination() {
+        let decoded = decode(&build_v2_trace(vec![
+            (
+                TraceChannel::Stage,
+                1,
+                TraceChannelStatus::Present,
+                stage_payload(true),
+            ),
+            (
+                TraceChannel::PlayerCollisionSurfaces,
+                1,
+                TraceChannelStatus::Present,
+                collision_surfaces_pending_ground_payload(),
+            ),
+        ]))
+        .unwrap();
+        assert_eq!(
+            decoded.channel_formats[&TraceChannel::PlayerCollisionSurfaces],
+            TraceChannelWireFormat {
+                version: 1,
+                stride: 496
+            }
+        );
+        let set = decoded.records[0]
+            .player_collision_surfaces
+            .as_ref()
+            .unwrap();
+        assert_eq!(set.link_room, Some(1));
+        assert_eq!(set.identity_count, 1);
+        assert_eq!(set.backing_count, 1);
+        assert_eq!(set.destination_count, 1);
+        assert_eq!(set.pending_match_mask, 1);
+        let ground = &set.surfaces[0];
+        assert_eq!(ground.kind, TraceCollisionSurfaceKind::Ground);
+        assert_eq!(
+            ground.backing_format,
+            Some(TraceCollisionBackingFormat::Kcl)
+        );
+        assert_eq!(ground.bg_index, Some(7));
+        assert_eq!(ground.poly_index, Some(2217));
+        assert_eq!(ground.material_row, Some(19));
+        assert_eq!(ground.raw_exit_id, Some(1));
+        assert_eq!(ground.source_geometry_indices, vec![2, 3, 5, 7, 11]);
+        assert_eq!(ground.kcl_prism_height, Some(42.5));
+        assert_eq!(ground.destination.as_ref().unwrap().stage_name, "F_SP104");
+        assert!(
+            set.surfaces[1..]
+                .iter()
+                .all(|surface| surface.bg_index.is_none())
+        );
+    }
+
+    #[test]
+    fn v2_cross_checks_collision_surface_cache_identity() {
+        let channels = vec![
+            (
+                TraceChannel::Stage,
+                1,
+                TraceChannelStatus::Present,
+                stage_payload(true),
+            ),
+            (
+                TraceChannel::PlayerBackgroundCollision,
+                1,
+                TraceChannelStatus::Present,
+                background_collision_with_ground(7, 2217),
+            ),
+            (
+                TraceChannel::PlayerCollisionSurfaces,
+                1,
+                TraceChannelStatus::Present,
+                collision_surfaces_pending_ground_payload(),
+            ),
+        ];
+        decode(&build_v2_trace(channels.clone())).unwrap();
+
+        let mut mismatched = channels;
+        mismatched[1].3[18..20].copy_from_slice(&841_u16.to_le_bytes());
+        let error = decode(&build_v2_trace(mismatched)).unwrap_err();
+        assert!(error.to_string().contains("identity or owner disagrees"));
+    }
+
+    #[test]
+    fn v2_rejects_collision_surface_wire_corruption() {
+        let build = |surface_payload| {
+            build_v2_trace(vec![
+                (
+                    TraceChannel::Stage,
+                    1,
+                    TraceChannelStatus::Present,
+                    stage_payload(true),
+                ),
+                (
+                    TraceChannel::PlayerCollisionSurfaces,
+                    1,
+                    TraceChannelStatus::Present,
+                    surface_payload,
+                ),
+            ])
+        };
+
+        let mut payload = collision_surfaces_pending_ground_payload();
+        payload[16 + 40] = 2;
+        assert!(
+            decode(&build(payload))
+                .unwrap_err()
+                .to_string()
+                .contains("raw exit disagrees")
+        );
+
+        let mut payload = collision_surfaces_pending_ground_payload();
+        payload[10] = 0;
+        assert!(
+            decode(&build(payload))
+                .unwrap_err()
+                .to_string()
+                .contains("pending-match mask")
+        );
+
+        let mut payload = collision_surfaces_pending_ground_payload();
+        payload[16 + 76] = 1;
+        assert!(
+            decode(&build(payload))
+                .unwrap_err()
+                .to_string()
+                .contains("reserved")
+        );
+
+        let mut payload = collision_surfaces_pending_ground_payload();
+        write_f32(&mut payload, 16 + 64, f32::NAN);
+        assert!(
+            decode(&build(payload))
+                .unwrap_err()
+                .to_string()
+                .contains("prism height")
+        );
+
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerCollisionSurfaces,
+            1,
+            TraceChannelStatus::Present,
+            empty_collision_surfaces_payload(),
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("require the Stage channel"));
+    }
+
+    #[test]
     fn v2_rejects_known_channel_version_stride_and_status_mismatches() {
         let wrong_version = build_v2_trace(vec![(
             TraceChannel::SceneExit,
@@ -2026,6 +2696,27 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("status NotSampled")
+        );
+
+        let collision_surfaces_truncated = build_v2_trace(vec![
+            (
+                TraceChannel::Stage,
+                1,
+                TraceChannelStatus::Present,
+                stage_payload(false),
+            ),
+            (
+                TraceChannel::PlayerCollisionSurfaces,
+                1,
+                TraceChannelStatus::Truncated,
+                empty_collision_surfaces_payload(),
+            ),
+        ]);
+        assert!(
+            decode(&collision_surfaces_truncated)
+                .unwrap_err()
+                .to_string()
+                .contains("status Truncated")
         );
     }
 
@@ -2320,6 +3011,131 @@ mod tests {
         {
             write_f32(&mut payload, 92 + index * 4, value);
         }
+        payload
+    }
+
+    fn stage_payload(next_pending: bool) -> Vec<u8> {
+        let mut payload = vec![0; 32];
+        payload[0..7].copy_from_slice(b"F_SP103");
+        payload[8] = 1;
+        payload[9] = u8::MAX;
+        payload[10..12].copy_from_slice(&1_i16.to_le_bytes());
+        if next_pending {
+            payload[12..19].copy_from_slice(b"F_SP104");
+            payload[20] = 1;
+            payload[21] = u8::MAX;
+            payload[22..24].copy_from_slice(&0_i16.to_le_bytes());
+            payload[24..28].copy_from_slice(&1_u32.to_le_bytes());
+        } else {
+            payload[20] = u8::MAX;
+            payload[21] = u8::MAX;
+            payload[22..24].copy_from_slice(&(-1_i16).to_le_bytes());
+        }
+        payload
+    }
+
+    fn empty_collision_surface(payload: &mut [u8], index: usize) {
+        let offset = 16 + index * 80;
+        payload[offset + 4] = match index {
+            0 => 1,
+            1 => 2,
+            2 => 3,
+            3..=5 => 4,
+            _ => unreachable!(),
+        };
+        payload[offset + 5] = index.saturating_sub(3) as u8;
+        for field in [8, 10, 16, 18] {
+            payload[offset + field..offset + field + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        payload[offset + 12..offset + 16].copy_from_slice(&u32::MAX.to_le_bytes());
+        payload[offset + 40] = u8::MAX;
+        payload[offset + 41] = INVALID_I8 as u8;
+        payload[offset + 42] = INVALID_I8 as u8;
+        payload[offset + 43] = INVALID_I8 as u8;
+        payload[offset + 44] = INVALID_I8 as u8;
+        payload[offset + 45] = u8::MAX;
+        payload[offset + 46] = u8::MAX;
+        payload[offset + 47] = INVALID_I8 as u8;
+        payload[offset + 48..offset + 50].copy_from_slice(&INVALID_I16.to_le_bytes());
+        for geometry in 0..6 {
+            let field = offset + 52 + geometry * 2;
+            payload[field..field + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+    }
+
+    fn empty_collision_surfaces_payload() -> Vec<u8> {
+        let mut payload = vec![0; 496];
+        payload[0..4].copy_from_slice(&COLLISION_SURFACE_SET_ROOM_VALID.to_le_bytes());
+        payload[4] = 1;
+        payload[8..10].copy_from_slice(&0x003f_u16.to_le_bytes());
+        for index in 0..6 {
+            empty_collision_surface(&mut payload, index);
+        }
+        payload
+    }
+
+    fn collision_surfaces_pending_ground_payload() -> Vec<u8> {
+        let mut payload = empty_collision_surfaces_payload();
+        payload[0..4].copy_from_slice(
+            &(COLLISION_SURFACE_SET_ROOM_VALID | COLLISION_SURFACE_SET_NEXT_STAGE_PENDING)
+                .to_le_bytes(),
+        );
+        payload[5] = 1;
+        payload[6] = 1;
+        payload[7] = 1;
+        payload[10] = 1;
+        let offset = 16;
+        let flags = COLLISION_SURFACE_IDENTITY_PRESENT
+            | COLLISION_SURFACE_BACKING_PRESENT
+            | COLLISION_SURFACE_CODES_PRESENT
+            | COLLISION_SURFACE_MATERIAL_PRESENT
+            | COLLISION_SURFACE_SOURCE_ROOM_PRESENT
+            | COLLISION_SURFACE_SOURCE_ROOM_EXACT
+            | COLLISION_SURFACE_SCLS_SOURCE_PRESENT
+            | COLLISION_SURFACE_DESTINATION_PRESENT
+            | COLLISION_SURFACE_PENDING_MATCH
+            | COLLISION_SURFACE_GEOMETRY_PRESENT
+            | COLLISION_SURFACE_KCL_HEIGHT_PRESENT;
+        payload[offset..offset + 4].copy_from_slice(&flags.to_le_bytes());
+        payload[offset + 6] = 2;
+        payload[offset + 7] = 0x1f;
+        payload[offset + 8..offset + 10].copy_from_slice(&7_u16.to_le_bytes());
+        payload[offset + 10..offset + 12].copy_from_slice(&2217_u16.to_le_bytes());
+        payload[offset + 16..offset + 18].copy_from_slice(&19_u16.to_le_bytes());
+        payload[offset + 20..offset + 24].copy_from_slice(&1_u32.to_le_bytes());
+        payload[offset + 24..offset + 28].copy_from_slice(&0x1234_u32.to_le_bytes());
+        payload[offset + 28..offset + 32].copy_from_slice(&0x5678_u32.to_le_bytes());
+        payload[offset + 32..offset + 36].copy_from_slice(&0x9abc_u32.to_le_bytes());
+        payload[offset + 36..offset + 40].copy_from_slice(&0xdef0_u32.to_le_bytes());
+        payload[offset + 40] = 1;
+        payload[offset + 41] = 1;
+        payload[offset + 42] = 1;
+        payload[offset + 43] = 1;
+        payload[offset + 44] = u8::MAX;
+        payload[offset + 45] = 0;
+        payload[offset + 46] = 3;
+        payload[offset + 47] = u8::MAX;
+        payload[offset + 48..offset + 50].copy_from_slice(&0_i16.to_le_bytes());
+        payload[offset + 50] = 5;
+        for (geometry, value) in [2_u16, 3, 5, 7, 11].into_iter().enumerate() {
+            let field = offset + 52 + geometry * 2;
+            payload[field..field + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        write_f32(&mut payload, offset + 64, 42.5);
+        payload[offset + 68..offset + 75].copy_from_slice(b"F_SP104");
+        payload
+    }
+
+    fn background_collision_with_ground(bg: u16, poly: u16) -> Vec<u8> {
+        let mut payload = background_collision_v1_payload();
+        let flags = u32_at(&payload, 0)
+            | COLLISION_GROUND_PROBE_VALID
+            | COLLISION_GROUND_CONTACT
+            | COLLISION_GROUND_IDENTITY_PRESENT;
+        payload[0..4].copy_from_slice(&flags.to_le_bytes());
+        write_f32(&mut payload, 4, 0.0);
+        payload[16..18].copy_from_slice(&bg.to_le_bytes());
+        payload[18..20].copy_from_slice(&poly.to_le_bytes());
         payload
     }
 

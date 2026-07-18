@@ -74,20 +74,33 @@ The native `--gameplay-trace` v2 stream records explicit post-simulation
 boundaries and channel status, the current/pending stage tuple, all four
 post-clamp pads, Link motion/action/animation state, event control, both global
 RNG streams, realized camera, exact live `SCENE_EXIT` actor volumes, and Link's
-already-resolved background-collision cache on every completed tick.
+already-resolved background-collision cache on every completed tick. Optional
+channel 10 also decodes the six cached surface identities directly from bounded
+DZB/KCL backing tables, including raw material words, source geometry indices,
+and ground-exit SCLS resolution. It never issues a fresh collision query.
 `huntctl trace inspect` extracts the milestones; `timeline` exposes state
 changes and input frames; `compare` ranks several traces by milestone depth and
 tick. Immutable v1 files remain decodable.
 
-The July 17, 2026 three-run matrix produced one byte-identical 925-record trace
-(SHA-256 `d9b1a792aa142c4e5aa97b67d97c838ac3ac877dec6206e3b3682e54d9e9d01e`).
-It also disproved an earlier assumption about the first load zone. At tick 826,
+The July 17, 2026 channel-10 matrix produced three byte-identical 925-record
+traces (SHA-256
+`6684fe14c53e6fbc1daa351f6c1149f3d06d5a2226c11dd5d021aa66b30bd4c0`). At
+tick 826, cached ground identity `bg 0/poly 2217` resolves as KCL prism 2217,
+PLC attribute 19, raw exit 1, and room-1 SCLS destination `F_SP104`, room 1,
+point 0. Its source indices are position 672 and normals 7913 through 7916.
+The offline archive reader independently joins it to KCL SHA-256
+`6c0170b0b2bb7edf72a76e3a7b4c4c99c3d59c8aae27c59cdeaa708e90ff16be` and
+PLC SHA-256
+`3bd424f6fc4509d6c5e36872a7dc248d48a43d0ae122b0b1fc83b3001523c91b`, then
+reconstructs the exact triangle and point-distance query.
+
+The earlier matrix also disproved an assumption about the first load zone. At tick 826,
 the pending transition becomes `F_SP104`, room 1, point 0, while the only live
 `SCENE_EXIT` actor is 5,215.09 units from Link, has realized signed distance
 3,846.9988, is not latched, and resolves to `F_SP103`, room 0, point 102. The
 actual transition is driven by exit metadata on Link's cached ground-collision
 polygon. Consequently, `SCENE_EXIT` actor telemetry and collision-polygon exit
-telemetry are separate facts; the latter remains the next load-zone query slice.
+telemetry are separate facts and are never substituted for one another.
 
 The first-control milestone also requires event ID `-1`. Checking only
 `eventRunning == false` is insufficient because player construction briefly

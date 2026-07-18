@@ -137,6 +137,12 @@ def main() -> int:
                     failures.append(
                         f"{path}:{number}: automation friend/read adapter is not {OBSERVER}-guarded"
                     )
+                source_lines = source.splitlines()
+                aperture_context = "\n".join(source_lines[max(0, number - 3) : number])
+                if "DUSKLIGHT OBSERVATION-ONLY APERTURE" not in aperture_context:
+                    failures.append(
+                        f"{path}:{number}: automation friend lacks observation-only aperture marker"
+                    )
 
     # Every live-state mutation used to emulate an original-console memory
     # consequence must be impossible in read-only observer builds.
@@ -170,6 +176,11 @@ def main() -> int:
         "checkArea(",
         "checkWork(",
         ".GetTriPla(",
+        ".getPrismData(",
+        ".getPolyCode(",
+        ".GetExitId(",
+        ".GetSpecialCode(",
+        ".GetTriPnt(",
         ".GroundCross(",
         ".LineCross(",
         ".CrrPos(",

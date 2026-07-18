@@ -65,6 +65,7 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $artifactRoot = Join-Path $repoRoot "build\test-results\$scenarioName\$stamp"
 New-Item -ItemType Directory -Force $stateBase, $artifactRoot | Out-Null
 $triggerTicks = @()
+$collisionProofTicks = @()
 $traceHashes = @()
 $failures = @()
 
@@ -82,6 +83,7 @@ for ($run = 1; $run -le $Runs; $run++) {
             "--input-tape-end", "hold",
             "--automation-data-root", $state,
             "--gameplay-trace", $tracePath,
+            "--gameplay-trace-channels", "all",
             "--cvar", "game.instantSaves=true",
             "--cvar", "backend.cardFileType=1",
             "--cvar", "backend.wasPresetChosen=true",
@@ -101,6 +103,34 @@ for ($run = 1; $run -le $Runs; $run++) {
         $summaryText = $summaryText -join [Environment]::NewLine
         [System.IO.File]::WriteAllText($summaryPath, $summaryText, [System.Text.UTF8Encoding]::new($false))
         $summary = $summaryText | ConvertFrom-Json
+        $timelineText = & cargo run --quiet --manifest-path $manifest -- trace timeline $tracePath
+        if ($LASTEXITCODE -ne 0) { throw "Could not decode the collision-surface timeline in $tracePath" }
+        $timeline = ($timelineText -join [Environment]::NewLine) | ConvertFrom-Json
+        $collisionProof = $timeline | Where-Object {
+            $null -ne $_.player_collision_surfaces -and
+            ([int]$_.player_collision_surfaces.pending_match_mask -band 1) -ne 0
+        } | Select-Object -First 1
+        if ($null -eq $collisionProof) {
+            throw "$scenarioName did not prove its pending transition through cached ground collision metadata"
+        }
+        $ground = $collisionProof.player_collision_surfaces.surfaces[0]
+        $expectedCodes = @(16321, 16639, 4278451968, 0, 1048831)
+        $expectedGeometry = @(672, 7913, 7914, 7915, 7916)
+        $codesMatch = (Compare-Object @($ground.raw_code_words) $expectedCodes -SyncWindow 0).Count -eq 0
+        $geometryMatch = (Compare-Object @($ground.source_geometry_indices) $expectedGeometry -SyncWindow 0).Count -eq 0
+        $collisionProofInvalid =
+            $collisionProof.next_stage_name -ne "F_SP104" -or
+            [int]$collisionProof.next_room -ne 1 -or
+            $ground.backing_format -ne "kcl" -or
+            [int]$ground.bg_index -ne 0 -or [int]$ground.poly_index -ne 2217 -or
+            [int]$ground.material_row -ne 19 -or [int]$ground.raw_exit_id -ne 1 -or
+            -not $codesMatch -or -not $geometryMatch -or
+            $ground.destination.stage_name -ne "F_SP104" -or
+            [int]$ground.destination.room -ne 1 -or
+            [int]$ground.destination.point -ne 0
+        if ($collisionProofInvalid) {
+            throw "$scenarioName collision-surface proof disagrees with the content-addressed F_SP103 room-1 prism 2217"
+        }
         $missedFirstExit = $null -eq $summary.route_control -or
             $null -eq $summary.first_loading_trigger -or
             $summary.first_loading_transition.location.stage_name -ne "F_SP104" -or
@@ -114,6 +144,7 @@ for ($run = 1; $run -le $Runs; $run++) {
             throw "$scenarioName missed a semantic milestone; see $summaryPath"
         }
         $triggerTicks += [uint64]$summary.first_loading_trigger.simulation_tick
+        $collisionProofTicks += [uint64]$collisionProof.simulation_tick
         $traceHashes += (Get-FileHash -LiteralPath $tracePath -Algorithm SHA256).Hash.ToLowerInvariant()
         Write-Host "  PASS control=$($summary.route_control.simulation_tick) first-exit=$($summary.first_loading_trigger.simulation_tick) load=$($summary.first_loading_transition.simulation_tick) intro=$($summary.intro_cutscene.simulation_tick)" -ForegroundColor Green
     } catch {
@@ -160,6 +191,7 @@ $matrixSummary = [ordered]@{
     first_exit_tick_median = $medianTriggerTick
     first_exit_tick_max = $maximumTriggerTick
     first_exit_tick_spread = $triggerSpread
+    collision_surface_proof_ticks = $collisionProofTicks
     trace_sha256 = $traceHashes
     trace_replay_byte_exact = $traceReplayExact
     failures = $failures

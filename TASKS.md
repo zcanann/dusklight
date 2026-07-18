@@ -421,14 +421,20 @@ all be copied into every per-frame neural observation.
   already-resolved Acch ground/roof/water/wall caches, polygon/owner presence,
   stored ground plane, and old-to-final frame displacement. This is not yet
   actor/attack/push contact coverage or per-pass correction attribution.
-- [ ] Resolve transition metadata from Link's already-cached collision polygons,
+- [x] Resolve transition metadata from Link's already-cached collision polygons,
   including exit ID, room SCLS destination, material/code, and stable polygon
   identity. The checked `F_SP103` to `F_SP104` route is ground-polygon-driven;
   its unrelated live `SCENE_EXIT` actor remains outside and points back into
   `F_SP103`, so actor-volume telemetry must never stand in for this load zone.
+  Optional Trace v2 channel 10 copies all six bounded Acch surfaces, preserves
+  raw DZB/KCL codes and geometry indices, and joins prism 2217 to the
+  content-addressed room-1 KCL/PLC source without calling gameplay queries.
 - [ ] Join collision exit polygons to static triangle/region geometry so a
   controller can optimize signed distance and approach direction before the
-  transition fires, without issuing a fresh gameplay collision query.
+  transition fires, without issuing a fresh gameplay collision query. The
+  bounded offline KCL/PLC inspector now reconstructs and measures an exact
+  prism/point pair; the remaining work is compiling that static fact into a
+  task-local controller/model observation rather than querying the game.
 - [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
   subject IDs, polygon IDs, normals, penetration, relative velocity, material,
   and begin/persist/end phase.

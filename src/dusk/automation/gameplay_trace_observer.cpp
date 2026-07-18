@@ -8,6 +8,8 @@
 #include "d/actor/d_a_alink.h"
 #include "d/actor/d_a_scene_exit.h"
 #include "d/actor/d_a_scene_exit2.h"
+#include "d/d_bg_w.h"
+#include "d/d_bg_w_kcol.h"
 #include "d/d_com_inf_game.h"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
@@ -33,6 +35,65 @@ struct GameplayTraceCollisionReadAdapter {
     static float waterHeight(const dBgS_SplGrpChk& value) { return value.m_height; }
     static const cM3dGPla& groundPlane(const dBgS_Acch& value) { return value.field_0xa0; }
     static const cXyz* oldPosition(const dBgS_Acch& value) { return value.pm_old_pos; }
+
+    static bool copyKclSurface(const dBgWKCol& value, const std::uint16_t polygon,
+        GameplayTraceCollisionSurfaceSample& output) {
+        const KC_Header* header = value.m_pkc_head;
+        const sBgPlc* plc = value.m_code.m_base;
+        if (header == nullptr || plc == nullptr || static_cast<u32>(plc->magic) != 0x53504c43u ||
+            static_cast<u16>(plc->m_code_size) != sizeof(sBgPc))
+        {
+            return false;
+        }
+        const Vec* positions = header->m_pos_data;
+        const Vec* normals = header->m_nrm_data;
+        const KC_PrismData* prisms = header->m_prism_data;
+        const BE(u32)* blocks = header->m_block_data;
+        if (positions == nullptr || normals == nullptr || prisms == nullptr || blocks == nullptr ||
+            polygon == 0)
+            return false;
+        const auto positionAddress = reinterpret_cast<std::uintptr_t>(positions);
+        const auto normalAddress = reinterpret_cast<std::uintptr_t>(normals);
+        const auto prismAddress = reinterpret_cast<std::uintptr_t>(prisms);
+        const auto blockAddress = reinterpret_cast<std::uintptr_t>(blocks);
+        if (normalAddress <= positionAddress || prismAddress <= normalAddress ||
+            blockAddress <= prismAddress ||
+            (blockAddress - prismAddress) % sizeof(KC_PrismData) != 0)
+            return false;
+        const std::size_t positionCount = (normalAddress - positionAddress) / sizeof(Vec);
+        const std::size_t normalCount = (prismAddress - normalAddress) / sizeof(Vec);
+        const std::size_t prismCount = (blockAddress - prismAddress) / sizeof(KC_PrismData);
+        if (positionCount == 0 || normalCount == 0 || polygon >= prismCount)
+            return false;
+        const KC_PrismData& prism = prisms[polygon];
+        const std::uint16_t attribute = prism.attribute;
+        if (attribute >= static_cast<u16>(plc->m_num))
+            return false;
+        const float height = prism.height;
+        if (!std::isfinite(height))
+            return false;
+        const std::array<std::uint16_t, 6> sourceIndices = {
+            prism.pos_i, prism.fnrm_i, prism.enrm1_i, prism.enrm2_i, prism.enrm3_i, 0xffff};
+        if (sourceIndices[0] >= positionCount ||
+            std::any_of(sourceIndices.begin() + 1, sourceIndices.begin() + 5,
+                [normalCount](const std::uint16_t index) { return index >= normalCount; }))
+            return false;
+        const sBgPc& code = plc->m_code[attribute];
+        output.backingFormat = GameplayTraceCollisionBackingKcl;
+        output.materialIndex = attribute;
+        output.rawCodes = {code.code0, code.code1, code.code2, code.code3, code.code4};
+        output.rawCodePresenceMask = 0x1f;
+        output.rawExitId = output.rawCodes[0] & 0x3f;
+        output.sourceGeometryIndexCount = 5;
+        output.sourceGeometryIndices = sourceIndices;
+        output.kclPrismHeight = height;
+        output.flags |= GameplayTraceCollisionSurfaceBackingResolved |
+                        GameplayTraceCollisionSurfaceRawCodesPresent |
+                        GameplayTraceCollisionSurfaceMaterialPresent |
+                        GameplayTraceCollisionSurfaceGeometryPresent |
+                        GameplayTraceCollisionSurfaceKclHeightPresent;
+        return true;
+    }
 };
 
 namespace {
@@ -49,7 +110,8 @@ bool copy_plane(const cM3dGPla& plane, std::array<float, 4>& output) {
 }
 
 bool copy_poly_identity(const cBgS_PolyInfo& poly, std::uint16_t& bgIndex, std::uint16_t& polyIndex,
-    std::uint32_t& ownerSessionProcessId) {
+    std::uint32_t& ownerSessionProcessId, const dBgW_Base** backing = nullptr,
+    const fopAc_ac_c** ownerActor = nullptr) {
     if (!poly.ChkSetInfo())
         return false;
     const int bg = poly.GetBgIndex();
@@ -58,18 +120,68 @@ bool copy_poly_identity(const cBgS_PolyInfo& poly, std::uint16_t& bgIndex, std::
         return false;
     bgIndex = static_cast<std::uint16_t>(bg);
     polyIndex = static_cast<std::uint16_t>(polygon);
-
     const dBgS& background = dComIfG_Bgsp();
     const cBgS_ChkElm& element = background.m_chk_element[bg];
-    if (!element.ChkUsed() || background.GetBgWBasePointer(poly) == nullptr) {
+    if (!element.ChkUsed() || element.m_bgw_base_ptr == nullptr)
         return true;
-    }
     if (!poly.ChkSafe(element.m_bgw_base_ptr, element.m_actor_id))
         return true;
-    const fopAc_ac_c* owner = background.cBgS::GetActorPointer(bg);
-    if (owner == nullptr)
-        return true;
-    ownerSessionProcessId = static_cast<std::uint32_t>(fopAcM_GetID(owner));
+    if (backing != nullptr)
+        *backing = element.m_bgw_base_ptr;
+    const fopAc_ac_c* owner = element.m_actor_ptr;
+    if (ownerActor != nullptr)
+        *ownerActor = owner;
+    if (owner != nullptr)
+        ownerSessionProcessId = static_cast<std::uint32_t>(fopAcM_GetID(owner));
+    return true;
+}
+
+bool copy_dzb_surface(
+    const dBgW& backing, const std::uint16_t polygon, GameplayTraceCollisionSurfaceSample& output) {
+    const cBgD_t* bgd = backing.pm_bgd;
+    if (bgd == nullptr)
+        return false;
+    const int vertexCount = bgd->m_v_num;
+    const int triangleCount = bgd->m_t_num;
+    const int materialCount = bgd->m_ti_num;
+    const int groupCount = bgd->m_g_num;
+    const cBgD_Tri_t* triangles = bgd->m_t_tbl;
+    const cBgD_Ti_t* materials = bgd->m_ti_tbl;
+    const cBgD_Grp_t* groups = bgd->m_g_tbl;
+    if (vertexCount <= 0 || triangleCount <= 0 || materialCount <= 0 || groupCount <= 0 ||
+        triangles == nullptr || materials == nullptr || groups == nullptr ||
+        polygon >= triangleCount)
+    {
+        return false;
+    }
+    const cBgD_Tri_t& triangle = triangles[polygon];
+    const std::uint16_t material = triangle.m_id;
+    const std::uint16_t group = triangle.m_grp;
+    if (material >= materialCount || group >= groupCount)
+        return false;
+    const std::array<std::uint16_t, 3> vertices{
+        triangle.m_vtx_idx0, triangle.m_vtx_idx1, triangle.m_vtx_idx2};
+    if (std::any_of(vertices.begin(), vertices.end(), [vertexCount](const std::uint16_t index) {
+            return index == 0xffff || index >= vertexCount;
+        }))
+    {
+        return false;
+    }
+    const cBgD_Ti_t& code = materials[material];
+    output.backingFormat = GameplayTraceCollisionBackingDzb;
+    output.materialIndex = material;
+    output.groupIndex = group;
+    output.rawCodes = {
+        code.m_info0, code.m_info1, code.m_info2, code.m_passFlag, groups[group].m_info};
+    output.rawCodePresenceMask = 0x1f;
+    output.rawExitId = output.rawCodes[0] & 0x3f;
+    output.sourceGeometryIndexCount = 3;
+    output.sourceGeometryIndices = {vertices[0], vertices[1], vertices[2], 0xffff, 0xffff, 0xffff};
+    output.flags |= GameplayTraceCollisionSurfaceBackingResolved |
+                    GameplayTraceCollisionSurfaceRawCodesPresent |
+                    GameplayTraceCollisionSurfaceMaterialPresent |
+                    GameplayTraceCollisionSurfaceGroupPresent |
+                    GameplayTraceCollisionSurfaceGeometryPresent;
     return true;
 }
 
@@ -102,6 +214,61 @@ void copy_destination(GameplayTraceSceneExitSample& output, const std::int8_t sc
     if (output.destinationTimeHour >= 31)
         output.destinationTimeHour = -1;
     output.flags |= GameplayTraceSceneExitDestinationValid;
+}
+
+void copy_surface_destination(
+    GameplayTraceCollisionSurfaceSample& output, const stage_scls_info_class& destination) {
+    std::memcpy(output.destinationStage.data(), destination.mStage, output.destinationStage.size());
+    output.destinationRoom = destination.mRoom;
+    output.destinationLayer = static_cast<std::int8_t>(destination.field_0xb & 0x0f);
+    if (output.destinationLayer >= 15)
+        output.destinationLayer = -1;
+    output.destinationPoint = destination.mStart;
+    output.destinationWipe = destination.mWipe == 15 ? 0 : destination.mWipe;
+    output.destinationWipeTime = (destination.field_0xb >> 5) & 7;
+    output.destinationTimeHour = static_cast<std::int8_t>(
+        ((destination.field_0xa >> 4) & 0x0f) | (destination.field_0xb & 0x10));
+    if (output.destinationTimeHour >= 31)
+        output.destinationTimeHour = -1;
+    output.flags |= GameplayTraceCollisionSurfaceDestinationPresent;
+}
+
+void copy_collision_surface(
+    const cBgS_PolyInfo& poly, GameplayTraceCollisionSurfaceSample& output) {
+    const dBgW_Base* backing = nullptr;
+    const fopAc_ac_c* owner = nullptr;
+    if (!copy_poly_identity(
+            poly, output.bgIndex, output.polyIndex, output.ownerSessionProcessId, &backing, &owner))
+    {
+        return;
+    }
+    output.flags |= GameplayTraceCollisionSurfaceIdentityPresent;
+    if (owner != nullptr)
+        output.flags |= GameplayTraceCollisionSurfaceOwnerPresent;
+
+    if (backing == nullptr)
+        return;
+    for (std::int8_t room = 0; room < 64; ++room) {
+        if (dStage_roomControl_c::mStatus[room].mpBgW == backing) {
+            output.sourceRoom = room;
+            output.flags |= GameplayTraceCollisionSurfaceSourceRoomPresent |
+                            GameplayTraceCollisionSurfaceSourceRoomExact;
+            break;
+        }
+    }
+    if ((output.flags & GameplayTraceCollisionSurfaceSourceRoomPresent) == 0 && owner != nullptr) {
+        const int room = fopAcM_GetRoomNo(owner);
+        if (room >= -1 && room < 64) {
+            output.sourceRoom = static_cast<std::int8_t>(room);
+            output.flags |= GameplayTraceCollisionSurfaceSourceRoomPresent;
+        }
+    }
+
+    if (const auto* dzb = dynamic_cast<const dBgW*>(backing); dzb != nullptr) {
+        copy_dzb_surface(*dzb, output.polyIndex, output);
+    } else if (const auto* kcl = dynamic_cast<const dBgWKCol*>(backing); kcl != nullptr) {
+        GameplayTraceCollisionReadAdapter::copyKclSurface(*kcl, output.polyIndex, output);
+    }
 }
 
 float box_signed_distance(const cXyz& local, const cXyz& extent, bool& inside) {
@@ -239,8 +406,9 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
         }
     }
 
-    const bool wantsPlayer = wants(Channel::PlayerMotion) || wants(Channel::PlayerAction) ||
-                             wants(Channel::SceneExit) || wants(Channel::PlayerBackgroundCollision);
+    const bool wantsPlayer =
+        wants(Channel::PlayerMotion) || wants(Channel::PlayerAction) || wants(Channel::SceneExit) ||
+        wants(Channel::PlayerBackgroundCollision) || wants(Channel::PlayerCollisionSurfaces);
     const fopAc_ac_c* player = wantsPlayer ? dComIfGp_getPlayer(0) : nullptr;
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
     const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
@@ -563,6 +731,93 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                 output.finalPosition = {finalPosition.x, finalPosition.y, finalPosition.z};
                 output.resolvedFrameDisplacement = {finalPosition.x - oldPosition->x,
                     finalPosition.y - oldPosition->y, finalPosition.z - oldPosition->z};
+            }
+        }
+    }
+
+    if (wants(Channel::PlayerCollisionSurfaces)) {
+        sample.playerCollisionSurfacesStatus = player == nullptr ? Status::Absent :
+                                               link == nullptr   ? Status::Unavailable :
+                                                                   Status::Present;
+        if (link != nullptr) {
+            auto& output = sample.playerCollisionSurfaces;
+            const int currentRoom = fopAcM_GetRoomNo(link);
+            if (currentRoom >= -1 && currentRoom < 64) {
+                output.currentRoom = static_cast<std::int8_t>(currentRoom);
+                output.flags |= GameplayTraceCollisionSurfaceCurrentRoomValid;
+            }
+            output.rawLinkExit = link->mExitID;
+            if (output.rawLinkExit != 0x003f)
+                output.flags |= GameplayTraceCollisionSurfaceExplicitLinkExitPresent;
+            if (sample.stageStatus == Status::Present &&
+                (sample.stage.flags & GameplayTraceNextStageEnabled) != 0)
+            {
+                output.flags |= GameplayTraceCollisionSurfaceNextStagePending;
+            }
+
+            const dBgS_Acch& acch = link->mLinkAcch;
+            const u32 acchFlags = GameplayTraceCollisionReadAdapter::flags(acch);
+            const bool groundValid = (acchFlags & dBgS_Acch::FLAG_GRND_NONE) == 0 &&
+                                     std::isfinite(acch.GetGroundH()) &&
+                                     acch.GetGroundH() != -G_CM3D_F_INF;
+            const bool roofValid = (acchFlags & dBgS_Acch::FLAG_ROOF_NONE) == 0 &&
+                                   std::isfinite(acch.GetRoofHeight()) &&
+                                   acch.GetRoofHeight() != G_CM3D_F_INF;
+            const bool waterValid =
+                (acchFlags & dBgS_Acch::FLAG_WATER_NONE) == 0 &&
+                (acchFlags & dBgS_Acch::FLAG_WATER_HIT) != 0 &&
+                std::isfinite(GameplayTraceCollisionReadAdapter::waterHeight(acch.m_wtr)) &&
+                GameplayTraceCollisionReadAdapter::waterHeight(acch.m_wtr) != -G_CM3D_F_INF;
+            if (groundValid)
+                copy_collision_surface(acch.m_gnd, output.surfaces[0]);
+            if (roofValid)
+                copy_collision_surface(acch.m_roof, output.surfaces[1]);
+            if (waterValid)
+                copy_collision_surface(acch.m_wtr, output.surfaces[2]);
+            if ((acchFlags & dBgS_Acch::FLAG_WALL_NONE) == 0) {
+                for (std::size_t wall = 0; wall < 3; ++wall) {
+                    if ((GameplayTraceCollisionReadAdapter::wallFlags(link->mAcchCir[wall]) &
+                            dBgS_AcchCir::FLAG_WALL_HIT) != 0)
+                    {
+                        copy_collision_surface(link->mAcchCir[wall], output.surfaces[wall + 3]);
+                    }
+                }
+            }
+
+            auto& ground = output.surfaces[0];
+            if ((output.flags & GameplayTraceCollisionSurfaceCurrentRoomValid) != 0 &&
+                (ground.flags & GameplayTraceCollisionSurfaceRawCodesPresent) != 0 &&
+                ground.rawExitId != 0x3f)
+            {
+                ground.sclsSourceRoom = output.currentRoom;
+                ground.flags |= GameplayTraceCollisionSurfaceSclsSourcePresent;
+                const stage_scls_info_dummy_class* table = loaded_scls_for_room(output.currentRoom);
+                if (table != nullptr && table->m_entries != nullptr && table->num > 0 &&
+                    table->num <= 256 && ground.rawExitId < table->num)
+                {
+                    copy_surface_destination(ground, table->m_entries[ground.rawExitId]);
+                }
+            }
+
+            for (std::size_t slot = 0; slot < output.surfaces.size(); ++slot) {
+                auto& surface = output.surfaces[slot];
+                if ((surface.flags & GameplayTraceCollisionSurfaceIdentityPresent) != 0)
+                    ++output.identityCount;
+                if ((surface.flags & GameplayTraceCollisionSurfaceBackingResolved) != 0)
+                    ++output.backingCodeCount;
+                if ((surface.flags & GameplayTraceCollisionSurfaceDestinationPresent) != 0) {
+                    ++output.destinationCount;
+                    const bool matches =
+                        (output.flags & GameplayTraceCollisionSurfaceNextStagePending) != 0 &&
+                        surface.destinationStage == sample.stage.nextStageName &&
+                        surface.destinationRoom == sample.stage.nextRoom &&
+                        surface.destinationLayer == sample.stage.nextLayer &&
+                        surface.destinationPoint == sample.stage.nextPoint;
+                    if (matches) {
+                        surface.flags |= GameplayTraceCollisionSurfaceDestinationMatchesPending;
+                        output.pendingStageMatchMask |= static_cast<std::uint8_t>(1u << slot);
+                    }
+                }
             }
         }
     }

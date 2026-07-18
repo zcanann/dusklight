@@ -35,6 +35,7 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::Camera, 1, 48, false},
     ChannelDefinition{GameplayTraceChannel::PlayerAction, 1, 104, false},
     ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
+    ChannelDefinition{GameplayTraceChannel::PlayerCollisionSurfaces, 1, 496, false},
 };
 
 struct ChannelLayout {
@@ -189,6 +190,53 @@ void write_player_background_collision(
     write_vec3(stream, sample.finalPosition);
 }
 
+void write_collision_surface(
+    std::ostream& stream, const GameplayTraceCollisionSurfaceSample& sample) {
+    write_integer(stream, sample.flags);
+    write_integer(stream, sample.kind);
+    write_integer(stream, sample.wallSlot);
+    write_integer(stream, sample.backingFormat);
+    write_integer(stream, sample.rawCodePresenceMask);
+    write_integer(stream, sample.bgIndex);
+    write_integer(stream, sample.polyIndex);
+    write_integer(stream, sample.ownerSessionProcessId);
+    write_integer(stream, sample.materialIndex);
+    write_integer(stream, sample.groupIndex);
+    for (const std::uint32_t code : sample.rawCodes)
+        write_integer(stream, code);
+    write_integer(stream, sample.rawExitId);
+    write_integer(stream, sample.sourceRoom);
+    write_integer(stream, sample.sclsSourceRoom);
+    write_integer(stream, sample.destinationRoom);
+    write_integer(stream, sample.destinationLayer);
+    write_integer(stream, sample.destinationWipe);
+    write_integer(stream, sample.destinationWipeTime);
+    write_integer(stream, sample.destinationTimeHour);
+    write_integer(stream, sample.destinationPoint);
+    write_integer(stream, sample.sourceGeometryIndexCount);
+    write_integer<std::uint8_t>(stream, 0);
+    for (const std::uint16_t index : sample.sourceGeometryIndices)
+        write_integer(stream, index);
+    write_float(stream, sample.kclPrismHeight);
+    stream.write(sample.destinationStage.data(), sample.destinationStage.size());
+    write_integer<std::uint32_t>(stream, 0);
+}
+
+void write_player_collision_surfaces(
+    std::ostream& stream, const GameplayTracePlayerCollisionSurfacesSample& sample) {
+    write_integer(stream, sample.flags);
+    write_integer(stream, sample.currentRoom);
+    write_integer(stream, sample.identityCount);
+    write_integer(stream, sample.backingCodeCount);
+    write_integer(stream, sample.destinationCount);
+    write_integer(stream, sample.rawLinkExit);
+    write_integer(stream, sample.pendingStageMatchMask);
+    for (std::size_t index = 0; index < 5; ++index)
+        write_integer<std::uint8_t>(stream, 0);
+    for (const GameplayTraceCollisionSurfaceSample& surface : sample.surfaces)
+        write_collision_surface(stream, surface);
+}
+
 void write_rng(std::ostream& stream, const GameRngSnapshot& sample) {
     write_integer(stream, sample.version);
     write_integer(stream, sample.streamCount);
@@ -265,6 +313,8 @@ GameplayTraceChannelStatus status_for(
         return sample.playerActionStatus;
     case GameplayTraceChannel::PlayerBackgroundCollision:
         return sample.playerBackgroundCollisionStatus;
+    case GameplayTraceChannel::PlayerCollisionSurfaces:
+        return sample.playerCollisionSurfacesStatus;
     }
     return GameplayTraceChannelStatus::Unavailable;
 }
@@ -302,6 +352,9 @@ void write_payload(
     case GameplayTraceChannel::PlayerBackgroundCollision:
         write_player_background_collision(stream, sample.playerBackgroundCollision);
         break;
+    case GameplayTraceChannel::PlayerCollisionSurfaces:
+        write_player_collision_surfaces(stream, sample.playerCollisionSurfaces);
+        break;
     }
 }
 
@@ -337,6 +390,13 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
     }
     if ((requested & ~GameplayTraceKnownChannels) != 0) {
         error = "gameplay trace requests unknown channels";
+        return false;
+    }
+    if ((requested & gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) !=
+            0 &&
+        (requested & gameplay_trace_channel_bit(GameplayTraceChannel::Stage)) == 0)
+    {
+        error = "gameplay trace collision surfaces require the stage channel";
         return false;
     }
     for (const GameplayTraceSample& sample : recorder.samples()) {
@@ -406,6 +466,10 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                     GameplayTraceCollisionGroundIdentityPresent |
                     GameplayTraceCollisionRoofIdentityPresent |
                     GameplayTraceCollisionWaterIdentityPresent)) != 0 ||
+            (sample.playerCollisionSurfaces.flags &
+                ~(GameplayTraceCollisionSurfaceCurrentRoomValid |
+                    GameplayTraceCollisionSurfaceExplicitLinkExitPresent |
+                    GameplayTraceCollisionSurfaceNextStagePending)) != 0 ||
             (sample.appliedPads.validPorts & ~0x0fu) != 0 ||
             (sample.appliedPads.ownedPorts & ~0x0fu) != 0)
         {
@@ -413,7 +477,8 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             return false;
         }
         if (sample.sceneExitStatus == GameplayTraceChannelStatus::Truncated ||
-            sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Truncated)
+            sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Truncated ||
+            sample.playerCollisionSurfacesStatus == GameplayTraceChannelStatus::Truncated)
         {
             error = "gameplay trace scalar query channel cannot be truncated";
             return false;
@@ -615,6 +680,227 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                 }
             }
         }
+        if (sample.playerCollisionSurfacesStatus == GameplayTraceChannelStatus::Present) {
+            const auto& set = sample.playerCollisionSurfaces;
+            const auto setHas = [&set](
+                                    const std::uint32_t flag) { return (set.flags & flag) != 0; };
+            const bool roomValid = setHas(GameplayTraceCollisionSurfaceCurrentRoomValid);
+            const bool explicitExit = setHas(GameplayTraceCollisionSurfaceExplicitLinkExitPresent);
+            const bool pending = setHas(GameplayTraceCollisionSurfaceNextStagePending);
+            const bool stagePending = sample.stageStatus == GameplayTraceChannelStatus::Present &&
+                                      (sample.stage.flags & GameplayTraceNextStageEnabled) != 0;
+            if ((roomValid ? set.currentRoom < -1 || set.currentRoom >= 64 :
+                             set.currentRoom != -128) ||
+                explicitExit != (set.rawLinkExit != 0x003f) || pending != stagePending ||
+                (set.pendingStageMatchMask & ~0x3fu) != 0)
+            {
+                error = "gameplay trace collision-surface set header is inconsistent";
+                return false;
+            }
+
+            std::uint8_t identityCount = 0;
+            std::uint8_t backingCount = 0;
+            std::uint8_t destinationCount = 0;
+            std::uint8_t matchMask = 0;
+            for (std::size_t slot = 0; slot < set.surfaces.size(); ++slot) {
+                const GameplayTraceCollisionSurfaceSample& surface = set.surfaces[slot];
+                const std::uint8_t expectedKind = slot == 0 ? GameplayTraceCollisionSurfaceGround :
+                                                  slot == 1 ? GameplayTraceCollisionSurfaceRoof :
+                                                  slot == 2 ? GameplayTraceCollisionSurfaceWater :
+                                                              GameplayTraceCollisionSurfaceWall;
+                const std::uint8_t expectedWallSlot =
+                    slot < 3 ? 0 : static_cast<std::uint8_t>(slot - 3);
+                constexpr std::uint32_t knownSurfaceFlags =
+                    GameplayTraceCollisionSurfaceIdentityPresent |
+                    GameplayTraceCollisionSurfaceOwnerPresent |
+                    GameplayTraceCollisionSurfaceBackingResolved |
+                    GameplayTraceCollisionSurfaceRawCodesPresent |
+                    GameplayTraceCollisionSurfaceMaterialPresent |
+                    GameplayTraceCollisionSurfaceGroupPresent |
+                    GameplayTraceCollisionSurfaceSourceRoomPresent |
+                    GameplayTraceCollisionSurfaceSourceRoomExact |
+                    GameplayTraceCollisionSurfaceSclsSourcePresent |
+                    GameplayTraceCollisionSurfaceDestinationPresent |
+                    GameplayTraceCollisionSurfaceDestinationMatchesPending |
+                    GameplayTraceCollisionSurfaceGeometryPresent |
+                    GameplayTraceCollisionSurfaceKclHeightPresent;
+                if (surface.kind != expectedKind || surface.wallSlot != expectedWallSlot ||
+                    (surface.flags & ~knownSurfaceFlags) != 0 ||
+                    surface.backingFormat > GameplayTraceCollisionBackingKcl ||
+                    (surface.rawCodePresenceMask & ~0x1fu) != 0)
+                {
+                    error = "gameplay trace collision-surface discriminator is inconsistent";
+                    return false;
+                }
+
+                const auto has = [&surface](const std::uint32_t flag) {
+                    return (surface.flags & flag) != 0;
+                };
+                const bool identity = has(GameplayTraceCollisionSurfaceIdentityPresent);
+                const bool owner = has(GameplayTraceCollisionSurfaceOwnerPresent);
+                const bool backing = has(GameplayTraceCollisionSurfaceBackingResolved);
+                const bool codes = has(GameplayTraceCollisionSurfaceRawCodesPresent);
+                const bool material = has(GameplayTraceCollisionSurfaceMaterialPresent);
+                const bool group = has(GameplayTraceCollisionSurfaceGroupPresent);
+                const bool sourceRoom = has(GameplayTraceCollisionSurfaceSourceRoomPresent);
+                const bool sourceRoomExact = has(GameplayTraceCollisionSurfaceSourceRoomExact);
+                const bool sclsSource = has(GameplayTraceCollisionSurfaceSclsSourcePresent);
+                const bool destination = has(GameplayTraceCollisionSurfaceDestinationPresent);
+                const bool destinationMatch =
+                    has(GameplayTraceCollisionSurfaceDestinationMatchesPending);
+                const bool geometry = has(GameplayTraceCollisionSurfaceGeometryPresent);
+                const bool kclHeight = has(GameplayTraceCollisionSurfaceKclHeightPresent);
+                identityCount += identity ? 1 : 0;
+                backingCount += backing ? 1 : 0;
+                destinationCount += destination ? 1 : 0;
+                if (destinationMatch)
+                    matchMask |= static_cast<std::uint8_t>(1u << slot);
+
+                const bool bgPresent = surface.bgIndex != 0xffff;
+                const bool polygonPresent = surface.polyIndex != 0xffff;
+                if (bgPresent != polygonPresent || identity != bgPresent ||
+                    owner != (surface.ownerSessionProcessId != 0xffffffffu) ||
+                    (owner && !identity) ||
+                    backing != (surface.backingFormat != GameplayTraceCollisionBackingNone) ||
+                    (backing && !identity) || codes != (surface.rawCodePresenceMask != 0) ||
+                    (codes && (!backing || (surface.rawCodePresenceMask & 1u) == 0)) ||
+                    material != (surface.materialIndex != 0xffff) || (material && !backing) ||
+                    group != (surface.groupIndex != 0xffff) ||
+                    (group &&
+                        (!backing || surface.backingFormat != GameplayTraceCollisionBackingDzb)) ||
+                    (sourceRoom && !identity) || sourceRoomExact && !sourceRoom ||
+                    (sourceRoom ? (surface.sourceRoom < -1 || surface.sourceRoom >= 64) :
+                                  surface.sourceRoom != -128) ||
+                    (sclsSource ? (slot != 0 || !identity || !roomValid ||
+                                      surface.sclsSourceRoom != set.currentRoom ||
+                                      surface.sclsSourceRoom < -1 || surface.sclsSourceRoom >= 64) :
+                                  surface.sclsSourceRoom != -128) ||
+                    (destination && (slot != 0 || !sclsSource || !codes ||
+                                        surface.rawExitId == 0x3f || surface.rawExitId == 0xff)) ||
+                    (destinationMatch && (!destination || !pending)) ||
+                    (geometry ? (!backing || surface.sourceGeometryIndexCount == 0 ||
+                                    surface.sourceGeometryIndexCount > 6) :
+                                surface.sourceGeometryIndexCount != 0) ||
+                    (kclHeight &&
+                        (!backing || surface.backingFormat != GameplayTraceCollisionBackingKcl ||
+                            !std::isfinite(surface.kclPrismHeight))) ||
+                    (!kclHeight && surface.kclPrismHeight != 0.0f))
+                {
+                    error = "gameplay trace collision-surface presence is inconsistent";
+                    return false;
+                }
+                for (std::size_t word = 0; word < surface.rawCodes.size(); ++word) {
+                    if ((surface.rawCodePresenceMask & (1u << word)) == 0 &&
+                        surface.rawCodes[word] != 0)
+                    {
+                        error = "gameplay trace collision-surface raw-code mask is inconsistent";
+                        return false;
+                    }
+                }
+                if ((codes && surface.rawExitId != (surface.rawCodes[0] & 0x3fu)) ||
+                    (!codes && surface.rawExitId != 0xff))
+                {
+                    error = "gameplay trace collision-surface exit code is inconsistent";
+                    return false;
+                }
+                for (std::size_t index = 0; index < surface.sourceGeometryIndices.size(); ++index) {
+                    const bool indexPresent = geometry && index < surface.sourceGeometryIndexCount;
+                    if (indexPresent == (surface.sourceGeometryIndices[index] == 0xffff)) {
+                        error =
+                            "gameplay trace collision-surface geometry indices are inconsistent";
+                        return false;
+                    }
+                }
+
+                bool destinationNameValid = surface.destinationStage[0] != '\0';
+                bool nameTerminated = false;
+                for (const unsigned char character : surface.destinationStage) {
+                    if (character == 0) {
+                        nameTerminated = true;
+                    } else if (nameTerminated || character < 0x20 || character > 0x7e) {
+                        destinationNameValid = false;
+                    }
+                }
+                const bool destinationFieldsValid =
+                    destinationNameValid && surface.destinationRoom >= -1 &&
+                    surface.destinationRoom < 64 && surface.destinationLayer >= -1 &&
+                    surface.destinationLayer < 15 && surface.destinationPoint >= 0 &&
+                    surface.destinationWipeTime <= 7 && surface.destinationTimeHour >= -1 &&
+                    surface.destinationTimeHour < 31;
+                const bool destinationFieldsAbsent =
+                    std::all_of(surface.destinationStage.begin(), surface.destinationStage.end(),
+                        [](const char value) { return value == '\0'; }) &&
+                    surface.destinationRoom == -128 && surface.destinationLayer == -128 &&
+                    surface.destinationPoint == -32768 && surface.destinationWipe == 0xff &&
+                    surface.destinationWipeTime == 0xff && surface.destinationTimeHour == -128;
+                if ((destination && !destinationFieldsValid) ||
+                    (!destination && !destinationFieldsAbsent))
+                {
+                    error = "gameplay trace collision-surface destination is inconsistent";
+                    return false;
+                }
+                const bool tupleMatchesPending =
+                    destination && pending &&
+                    surface.destinationStage == sample.stage.nextStageName &&
+                    surface.destinationRoom == sample.stage.nextRoom &&
+                    surface.destinationLayer == sample.stage.nextLayer &&
+                    surface.destinationPoint == sample.stage.nextPoint;
+                if (destinationMatch != tupleMatchesPending) {
+                    error = "gameplay trace collision-surface pending-stage match is inconsistent";
+                    return false;
+                }
+            }
+            if (set.identityCount != identityCount || set.backingCodeCount != backingCount ||
+                set.destinationCount != destinationCount || set.pendingStageMatchMask != matchMask)
+            {
+                error = "gameplay trace collision-surface aggregate counts are inconsistent";
+                return false;
+            }
+
+            if (sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Present) {
+                const auto identitiesAgree =
+                    [](const GameplayTraceCollisionSurfaceSample& surface, const std::uint16_t bg,
+                        const std::uint16_t polygon, const std::uint32_t owner,
+                        const bool identityPresent, const bool ownerPresent) {
+                        const bool surfaceIdentity =
+                            (surface.flags & GameplayTraceCollisionSurfaceIdentityPresent) != 0;
+                        const bool surfaceOwner =
+                            (surface.flags & GameplayTraceCollisionSurfaceOwnerPresent) != 0;
+                        return surfaceIdentity == identityPresent && surfaceOwner == ownerPresent &&
+                               (!identityPresent ||
+                                   (surface.bgIndex == bg && surface.polyIndex == polygon)) &&
+                               (!ownerPresent || surface.ownerSessionProcessId == owner);
+                    };
+                const auto& collision = sample.playerBackgroundCollision;
+                if (!identitiesAgree(set.surfaces[0], collision.groundBgIndex,
+                        collision.groundPolyIndex, collision.groundOwnerSessionProcessId,
+                        (collision.flags & GameplayTraceCollisionGroundIdentityPresent) != 0,
+                        (collision.flags & GameplayTraceCollisionGroundOwnerPresent) != 0) ||
+                    !identitiesAgree(set.surfaces[1], collision.roofBgIndex,
+                        collision.roofPolyIndex, collision.roofOwnerSessionProcessId,
+                        (collision.flags & GameplayTraceCollisionRoofIdentityPresent) != 0,
+                        (collision.flags & GameplayTraceCollisionRoofOwnerPresent) != 0) ||
+                    !identitiesAgree(set.surfaces[2], collision.waterBgIndex,
+                        collision.waterPolyIndex, collision.waterOwnerSessionProcessId,
+                        (collision.flags & GameplayTraceCollisionWaterIdentityPresent) != 0,
+                        (collision.flags & GameplayTraceCollisionWaterOwnerPresent) != 0))
+                {
+                    error = "gameplay trace collision channels disagree on cached surfaces";
+                    return false;
+                }
+                for (std::size_t wall = 0; wall < collision.walls.size(); ++wall) {
+                    const auto& legacy = collision.walls[wall];
+                    if (!identitiesAgree(set.surfaces[wall + 3], legacy.bgIndex, legacy.polyIndex,
+                            legacy.ownerSessionProcessId,
+                            (legacy.flags & GameplayTraceCollisionWallIdentityPresent) != 0,
+                            (legacy.flags & GameplayTraceCollisionWallOwnerPresent) != 0))
+                    {
+                        error = "gameplay trace collision channels disagree on cached walls";
+                        return false;
+                    }
+                }
+            }
+        }
         std::uint8_t connectedPorts = 0;
         for (std::size_t port = 0; port < sample.appliedPads.pads.size(); ++port) {
             const RawPadState& pad = sample.appliedPads.pads[port];
@@ -749,6 +1035,8 @@ bool parse_gameplay_trace_channels(
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction);
         } else if (token == "player-background-collision") {
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision);
+        } else if (token == "player-collision-surfaces") {
+            bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
         } else if (token == "all")
             bit = GameplayTraceKnownChannels;
         else {
@@ -766,6 +1054,13 @@ bool parse_gameplay_trace_channels(
     }
     if ((channels & gameplay_trace_channel_bit(GameplayTraceChannel::Core)) == 0) {
         error = "gameplay trace channel list must include core";
+        return false;
+    }
+    if ((channels & gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) !=
+            0 &&
+        (channels & gameplay_trace_channel_bit(GameplayTraceChannel::Stage)) == 0)
+    {
+        error = "gameplay trace collision surfaces require the stage channel";
         return false;
     }
     return true;

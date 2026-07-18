@@ -6,6 +6,7 @@
 #include "d/d_bg_s_chk.h"
 
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
+// DUSKLIGHT OBSERVATION-ONLY APERTURE: declaration only; adapter body lives in automation.
 namespace dusk::automation {
 struct GameplayTraceCollisionReadAdapter;
 }
@@ -38,6 +39,7 @@ public:
 
 private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: const cached-result reads only.
     friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
 #endif
     /* 0x3C */ cXyz m_ground;

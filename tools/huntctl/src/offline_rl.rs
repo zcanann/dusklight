@@ -155,6 +155,9 @@ pub enum OfflineRlError {
         actual_version: Option<u16>,
         actual_stride: Option<usize>,
     },
+    UnsupportedObservationChannel {
+        channel: &'static str,
+    },
     InputProvenance {
         frame: u64,
         input_source: u8,
@@ -264,6 +267,10 @@ impl fmt::Display for OfflineRlError {
             } => write!(
                 formatter,
                 "movement-state/v1 requires {channel} version {expected_version} stride {expected_stride}, got version {actual_version:?} stride {actual_stride:?}"
+            ),
+            Self::UnsupportedObservationChannel { channel } => write!(
+                formatter,
+                "movement-state/v1 rejects state-bearing observation channel {channel}"
             ),
             Self::InputProvenance {
                 frame,
@@ -484,6 +491,14 @@ pub fn extract_exploratory(
 fn validate_movement_trace_format(trace: &DecodedTrace) -> Result<(), OfflineRlError> {
     if trace.version != 2 {
         return Ok(());
+    }
+    if trace
+        .channel_formats
+        .contains_key(&TraceChannel::PlayerCollisionSurfaces)
+    {
+        return Err(OfflineRlError::UnsupportedObservationChannel {
+            channel: TraceChannel::PlayerCollisionSurfaces.name(),
+        });
     }
     let actual = trace.channel_formats.get(&TraceChannel::SceneExit);
     if actual.is_none_or(|format| format.version != 1 || format.stride != 24) {
@@ -1075,6 +1090,26 @@ mod tests {
                 expected_stride: 24,
                 actual_version: Some(2),
                 actual_stride: Some(88),
+            }
+        ));
+    }
+
+    #[test]
+    fn movement_state_v1_rejects_collision_surface_semantics() {
+        let (mut trace, tape) = fixture();
+        trace.version = 2;
+        trace.channel_formats.insert(
+            TraceChannel::PlayerCollisionSurfaces,
+            crate::trace::TraceChannelWireFormat {
+                version: 1,
+                stride: 496,
+            },
+        );
+        let error = extract_exploratory(&trace, &tape, config(1, 2)).unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineRlError::UnsupportedObservationChannel {
+                channel: "player_collision_surfaces"
             }
         ));
     }

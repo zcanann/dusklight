@@ -32,6 +32,7 @@ use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::timeline::Timeline;
 use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transport::ProcessTransport;
+use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -71,6 +72,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "timeline" => command_timeline(&args[1..]),
         "search" => command_search(&args[1..]),
         "learn" => command_learn(&args[1..]),
+        "world" => command_world(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "mock-search-worker" => mock_search_worker(&args[1..]),
@@ -80,6 +82,84 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         _ => usage_error(),
     }
+}
+
+fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("kcl") => {
+            let prism_index: u16 = option(&args[1..], "--prism")
+                .ok_or("missing required --prism INDEX")?
+                .parse()?;
+            let archive_path = option(&args[1..], "--archive").map(PathBuf::from);
+            let kcl_path = option(&args[1..], "--kcl").map(PathBuf::from);
+            let plc_path = option(&args[1..], "--plc").map(PathBuf::from);
+
+            let (kcl, plc, source) = match (archive_path, kcl_path, plc_path) {
+                (Some(archive), None, None) => {
+                    let kcl_name =
+                        option(&args[1..], "--kcl-name").unwrap_or_else(|| "room.kcl".into());
+                    let plc_name =
+                        option(&args[1..], "--plc-name").unwrap_or_else(|| "room.plc".into());
+                    let archive_bytes = fs::read(&archive)?;
+                    let kcl = extract_rarc_resource(&archive_bytes, &kcl_name)?;
+                    let plc = extract_rarc_resource(&archive_bytes, &plc_name)?;
+                    let source = json!({
+                        "kind": "rarc",
+                        "archive": archive,
+                        "kcl_resource": kcl_name,
+                        "plc_resource": plc_name,
+                    });
+                    (kcl, plc, source)
+                }
+                (None, Some(kcl), Some(plc)) => {
+                    let source = json!({
+                        "kind": "loose_files",
+                        "kcl": kcl,
+                        "plc": plc,
+                    });
+                    (fs::read(&kcl)?, fs::read(&plc)?, source)
+                }
+                _ => {
+                    return Err(
+                        "world kcl requires either --archive PATH or both --kcl PATH --plc PATH"
+                            .into(),
+                    );
+                }
+            };
+            let inspection = KclPlc::parse(&kcl, &plc)?.inspect_prism(prism_index)?;
+            let point_query = option(&args[1..], "--point")
+                .map(|value| parse_world_point(&value))
+                .transpose()?
+                .map(|point| query_prism_point(&inspection.prism, point))
+                .transpose()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "source": source,
+                    "inspection": inspection,
+                    "point_query": point_query,
+                }))?
+            );
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn parse_world_point(value: &str) -> Result<Vec3, Box<dyn Error>> {
+    let components = value.split(',').collect::<Vec<_>>();
+    if components.len() != 3 {
+        return Err("--point must be exactly X,Y,Z".into());
+    }
+    let point = Vec3 {
+        x: components[0].parse()?,
+        y: components[1].parse()?,
+        z: components[2].parse()?,
+    };
+    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+        return Err("--point components must be finite".into());
+    }
+    Ok(point)
 }
 
 fn command_milestone(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -1823,6 +1903,9 @@ fn print_usage() {
     );
     eprintln!(
         "\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
+    );
+    eprintln!(
+        "\nOffline world geometry:\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
     );
 }
 

@@ -32,6 +32,7 @@ enum class GameplayTraceChannel : std::uint16_t {
     Camera = 7,
     PlayerAction = 8,
     PlayerBackgroundCollision = 9,
+    PlayerCollisionSurfaces = 10,
 };
 
 constexpr std::uint64_t gameplay_trace_channel_bit(const GameplayTraceChannel channel) {
@@ -48,8 +49,11 @@ inline constexpr std::uint64_t GameplayTraceKnownChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::Rng) |
     gameplay_trace_channel_bit(GameplayTraceChannel::Camera) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction) |
-    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision);
-inline constexpr std::uint64_t GameplayTraceDefaultChannels = GameplayTraceKnownChannels;
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+inline constexpr std::uint64_t GameplayTraceDefaultChannels =
+    GameplayTraceKnownChannels &
+    ~gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
 
 enum class GameplayTraceChannelStatus : std::uint8_t {
     NotSampled = 0,
@@ -135,6 +139,41 @@ enum GameplayTraceCollisionWallFlags : std::uint16_t {
     GameplayTraceCollisionWallHit = 1u << 0,
     GameplayTraceCollisionWallOwnerPresent = 1u << 1,
     GameplayTraceCollisionWallIdentityPresent = 1u << 2,
+};
+
+enum GameplayTraceCollisionSurfaceSetFlags : std::uint32_t {
+    GameplayTraceCollisionSurfaceCurrentRoomValid = 1u << 0,
+    GameplayTraceCollisionSurfaceExplicitLinkExitPresent = 1u << 1,
+    GameplayTraceCollisionSurfaceNextStagePending = 1u << 2,
+};
+
+enum GameplayTraceCollisionSurfaceFlags : std::uint32_t {
+    GameplayTraceCollisionSurfaceIdentityPresent = 1u << 0,
+    GameplayTraceCollisionSurfaceOwnerPresent = 1u << 1,
+    GameplayTraceCollisionSurfaceBackingResolved = 1u << 2,
+    GameplayTraceCollisionSurfaceRawCodesPresent = 1u << 3,
+    GameplayTraceCollisionSurfaceMaterialPresent = 1u << 4,
+    GameplayTraceCollisionSurfaceGroupPresent = 1u << 5,
+    GameplayTraceCollisionSurfaceSourceRoomPresent = 1u << 6,
+    GameplayTraceCollisionSurfaceSourceRoomExact = 1u << 7,
+    GameplayTraceCollisionSurfaceSclsSourcePresent = 1u << 8,
+    GameplayTraceCollisionSurfaceDestinationPresent = 1u << 9,
+    GameplayTraceCollisionSurfaceDestinationMatchesPending = 1u << 10,
+    GameplayTraceCollisionSurfaceGeometryPresent = 1u << 11,
+    GameplayTraceCollisionSurfaceKclHeightPresent = 1u << 12,
+};
+
+enum GameplayTraceCollisionSurfaceKind : std::uint8_t {
+    GameplayTraceCollisionSurfaceGround = 1,
+    GameplayTraceCollisionSurfaceRoof = 2,
+    GameplayTraceCollisionSurfaceWater = 3,
+    GameplayTraceCollisionSurfaceWall = 4,
+};
+
+enum GameplayTraceCollisionBackingFormat : std::uint8_t {
+    GameplayTraceCollisionBackingNone = 0,
+    GameplayTraceCollisionBackingDzb = 1,
+    GameplayTraceCollisionBackingKcl = 2,
 };
 
 struct GameplayTraceCoreSample {
@@ -245,6 +284,55 @@ struct GameplayTracePlayerBackgroundCollisionSample {
     std::array<float, 3> finalPosition{};
 };
 
+struct GameplayTraceCollisionSurfaceSample {
+    std::uint32_t flags = 0;
+    std::uint8_t kind = 0;
+    std::uint8_t wallSlot = 0;
+    std::uint8_t backingFormat = GameplayTraceCollisionBackingNone;
+    std::uint8_t rawCodePresenceMask = 0;
+    std::uint16_t bgIndex = 0xffff;
+    std::uint16_t polyIndex = 0xffff;
+    std::uint32_t ownerSessionProcessId = 0xffffffffu;
+    std::uint16_t materialIndex = 0xffff;
+    std::uint16_t groupIndex = 0xffff;
+    std::array<std::uint32_t, 5> rawCodes{};
+    std::uint8_t rawExitId = 0xff;
+    std::int8_t sourceRoom = -128;
+    std::int8_t sclsSourceRoom = -128;
+    std::int8_t destinationRoom = -128;
+    std::int8_t destinationLayer = -128;
+    std::uint8_t destinationWipe = 0xff;
+    std::uint8_t destinationWipeTime = 0xff;
+    std::int8_t destinationTimeHour = -128;
+    std::int16_t destinationPoint = -32768;
+    std::uint8_t sourceGeometryIndexCount = 0;
+    std::array<std::uint16_t, 6> sourceGeometryIndices{
+        0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff};
+    float kclPrismHeight = 0.0f;
+    std::array<char, 8> destinationStage{};
+};
+
+struct GameplayTracePlayerCollisionSurfacesSample {
+    GameplayTracePlayerCollisionSurfacesSample() {
+        surfaces[0].kind = GameplayTraceCollisionSurfaceGround;
+        surfaces[1].kind = GameplayTraceCollisionSurfaceRoof;
+        surfaces[2].kind = GameplayTraceCollisionSurfaceWater;
+        for (std::size_t index = 0; index < 3; ++index) {
+            surfaces[index + 3].kind = GameplayTraceCollisionSurfaceWall;
+            surfaces[index + 3].wallSlot = static_cast<std::uint8_t>(index);
+        }
+    }
+
+    std::uint32_t flags = 0;
+    std::int8_t currentRoom = -128;
+    std::uint8_t identityCount = 0;
+    std::uint8_t backingCodeCount = 0;
+    std::uint8_t destinationCount = 0;
+    std::uint16_t rawLinkExit = 0x003f;
+    std::uint8_t pendingStageMatchMask = 0;
+    std::array<GameplayTraceCollisionSurfaceSample, 6> surfaces{};
+};
+
 struct GameplayTraceCameraSample {
     std::int16_t viewYaw = 0;
     std::int16_t controlledYaw = 0;
@@ -284,6 +372,7 @@ struct GameplayTraceSample {
     GameplayTraceCameraSample camera{};
     GameplayTracePlayerActionSample playerAction{};
     GameplayTracePlayerBackgroundCollisionSample playerBackgroundCollision{};
+    GameplayTracePlayerCollisionSurfacesSample playerCollisionSurfaces{};
 
     GameplayTraceChannelStatus stageStatus = GameplayTraceChannelStatus::NotSampled;
     GameplayTraceChannelStatus appliedPadsStatus = GameplayTraceChannelStatus::NotSampled;
@@ -294,6 +383,8 @@ struct GameplayTraceSample {
     GameplayTraceChannelStatus cameraStatus = GameplayTraceChannelStatus::NotSampled;
     GameplayTraceChannelStatus playerActionStatus = GameplayTraceChannelStatus::NotSampled;
     GameplayTraceChannelStatus playerBackgroundCollisionStatus =
+        GameplayTraceChannelStatus::NotSampled;
+    GameplayTraceChannelStatus playerCollisionSurfacesStatus =
         GameplayTraceChannelStatus::NotSampled;
 };
 

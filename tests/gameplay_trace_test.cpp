@@ -74,6 +74,51 @@ void testChannelParser() {
             (gameplay_trace_channel_bit(GameplayTraceChannel::Core) |
                 gameplay_trace_channel_bit(GameplayTraceChannel::SceneExit) |
                 gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision)));
+    REQUIRE(parse_gameplay_trace_channels("core,stage,player-collision-surfaces", channels, error));
+    REQUIRE((channels &
+                gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) != 0);
+    REQUIRE(!parse_gameplay_trace_channels("core,player-collision-surfaces", channels, error));
+    REQUIRE(parse_gameplay_trace_channels("all", channels, error));
+    REQUIRE(channels == GameplayTraceKnownChannels);
+    REQUIRE((GameplayTraceDefaultChannels &
+                gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) == 0);
+}
+
+void testCollisionSurfaceLayout(const std::filesystem::path& path) {
+    using namespace dusk::automation;
+    constexpr std::uint64_t channels =
+        gameplay_trace_channel_bit(GameplayTraceChannel::Core) |
+        gameplay_trace_channel_bit(GameplayTraceChannel::Stage) |
+        gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+    GameplayTraceRecorder recorder;
+    recorder.start(1, channels);
+    GameplayTraceSample value = sample(9);
+    value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+    value.playerCollisionSurfacesStatus = GameplayTraceChannelStatus::Present;
+    recorder.record(value);
+    recorder.stop();
+
+    std::string error;
+    REQUIRE(write_gameplay_trace(path, recorder, error));
+    const auto bytes = readFile(path);
+    REQUIRE(bytes.size() == 819);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 10);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 496);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 322);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 323);
+    REQUIRE(bytes[322] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
+    constexpr std::size_t payload = 323;
+    REQUIRE(readLittle<std::uint32_t>(bytes, payload) == 0);
+    REQUIRE(readLittle<std::int8_t>(bytes, payload + 4) == -128);
+    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 8) == 0x003f);
+    REQUIRE(bytes[payload + 16 + 4] == GameplayTraceCollisionSurfaceGround);
+    REQUIRE(bytes[payload + 16 + 80 + 4] == GameplayTraceCollisionSurfaceRoof);
+    REQUIRE(bytes[payload + 16 + 160 + 4] == GameplayTraceCollisionSurfaceWater);
+    REQUIRE(bytes[payload + 16 + 240 + 4] == GameplayTraceCollisionSurfaceWall);
+    REQUIRE(bytes[payload + 16 + 240 + 5] == 0);
+    REQUIRE(bytes[payload + 16 + 400 + 5] == 2);
+    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 16 + 8) == 0xffff);
 }
 
 void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path) {
@@ -417,13 +462,16 @@ int main() {
     const auto invalidPath = directory / "invalid.trace";
     const auto exhaustedPath = directory / "exhausted.trace";
     const auto observerChannelsPath = directory / "observer-channels.trace";
+    const auto collisionSurfacesPath = directory / "collision-surfaces.trace";
     testExactV2Layout(exactPath);
     testSceneExitAndBackgroundCollisionLayout(observerChannelsPath);
+    testCollisionSurfaceLayout(collisionSurfacesPath);
     testValidationAndCapacity(invalidPath, exhaustedPath);
     testNewChannelValidation(directory);
     REQUIRE(std::filesystem::remove(exactPath));
     REQUIRE(std::filesystem::remove(exhaustedPath));
     REQUIRE(std::filesystem::remove(observerChannelsPath));
+    REQUIRE(std::filesystem::remove(collisionSurfacesPath));
     REQUIRE(std::filesystem::remove(directory));
     std::cout << "Gameplay trace tests passed\n";
     return 0;
