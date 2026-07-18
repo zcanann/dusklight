@@ -393,16 +393,22 @@ transitions, retains the original reward for audit, and writes a separately
 configured finite achievement reward while setting `reward_recomputed: true`.
 Relabeled samples always retain `promotion_authority: false`.
 
-`SelectedOption` closes the high-level/low-level hierarchy without giving the
-learner raw-frame authority. It takes the top typed descriptor from an
-`OptionValueModel`, executes the corresponding deterministic `GameTacticPlan`,
-and captures the realized range as an `OptionExecution`. A proved policy step
-exists only when the selected ID, option type, and complete parameter map equal
-the realized descriptor and that execution validates against the complete
-canonical tape. A different tactic, parameter set, emitted frame, or unrelated
-tape change invalidates the proof. The serialized step records each layer and
-still has no promotion authority until the surrounding native objective and
-cold-replay gates pass.
+`select_and_execute` closes the high-level/low-level hierarchy without giving
+the learner raw-frame authority. `TacticOptionCandidate::new` derives each typed
+descriptor from its deterministic `GameTacticPlan`, so the action catalog and
+executor cannot be authored independently. Selection fails unless the model's
+entire option catalog has a unique exact executor. It then takes the top option,
+appends the plan's deterministic frames to the canonical prefix, and captures
+the realized range as an `OptionExecution`.
+
+An executed policy step exists only when the selected ID, option type, and
+complete parameter map equal the realized descriptor and that execution
+validates against the complete output tape. A missing executor, different
+tactic or parameter set, emitted-frame change, or unrelated prefix-tape change
+invalidates the proof. The serialized step includes the selected ranking, full
+tape, execution, and explicit descriptor/frame checks; it still has no
+promotion authority until the surrounding native objective and cold-replay
+gates pass.
 
 ### Nearest-neighbor and tabular return baselines
 
