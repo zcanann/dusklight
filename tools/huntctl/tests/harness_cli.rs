@@ -739,6 +739,64 @@ fn execution_reports_missing_trace_families_as_unsupported() {
 
 #[cfg(unix)]
 #[test]
+fn host_timeout_retains_authenticated_partial_artifacts() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_native_execution(&root, &request_draft, executable);
+    let wrapper = write_mock_native_wrapper_mode(&root, executable, Some("timeout"));
+    let mut request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_draft).unwrap()).unwrap();
+    request.executable = artifact("inputs/dusklight", wrapper.as_bytes());
+    request.host_timeout_seconds = 1;
+    request.artifact_destination = "artifacts/mock-host-timeout".into();
+    request.content_sha256 = Digest::ZERO;
+    fs::write(&request_draft, serde_json::to_vec_pretty(&request).unwrap()).unwrap();
+    let request_path = root.join("run-request.json");
+
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(sealed.status.success());
+    let executed = Command::new(executable)
+        .args(["harness", "execute", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let result: HarnessRunResult = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(result.terminal, HarnessTerminalReason::HostTimeout);
+    assert!(!result.objective.reached);
+    assert!(!result.artifacts.complete);
+    assert!(result.artifacts.stdout.is_some());
+    assert!(result.artifacts.stderr.is_some());
+    assert!(result.artifacts.realized_input.is_none());
+    assert!(result.artifacts.gameplay_trace.is_none());
+    assert!(result.artifacts.objective_result.is_none());
+
+    let request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    let artifact_root = root.join(&request.artifact_destination);
+    assert!(artifact_root.join("result.json").is_file());
+    result.validate_files(&request, &artifact_root).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn executes_a_reactive_controller_through_the_authenticated_boundary() {
     let executable = env!("CARGO_BIN_EXE_huntctl");
     let (root, request, result) =
