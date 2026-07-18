@@ -3,6 +3,7 @@
 //! This artifact is deliberately unrelated to `DUSKTAPE` and `DUSKCTRL`.
 
 pub mod experiment;
+pub mod parameter_search;
 #[cfg(feature = "experimental-interventions")]
 pub mod runtime;
 
@@ -183,6 +184,12 @@ impl fmt::Display for InterventionTapeError {
 impl Error for InterventionTapeError {}
 
 impl InterventionTape {
+    pub fn canonicalize(&mut self) {
+        self.interventions.sort_by_key(|intervention| {
+            (intervention.start_tick, intervention_sort_key(intervention))
+        });
+    }
+
     pub fn validate(&self) -> Result<(), InterventionTapeError> {
         if self.duration_ticks == 0 || self.duration_ticks > MAX_TIMELINE_TICKS {
             return Err(error("intervention timeline duration is invalid"));
@@ -335,9 +342,7 @@ impl InterventionTape {
                 .ok_or_else(|| error("intervention DSL has no timeline declaration"))?,
             interventions,
         };
-        tape.interventions.sort_by_key(|intervention| {
-            (intervention.start_tick, intervention_sort_key(intervention))
-        });
+        tape.canonicalize();
         tape.validate()?;
         Ok(tape)
     }
