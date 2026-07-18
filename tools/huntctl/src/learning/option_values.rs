@@ -275,14 +275,18 @@ fn validate_sample(
     feature_width: usize,
     sample: &OptionValueSample,
 ) -> Result<(), OptionValueError> {
-    if sample.action.option_id.is_empty()
-        || sample.action.option_id.len() > 128
+    if !valid_name(&sample.action.option_id, 96)
+        || matches!(
+            &sample.action.option_type,
+            OptionType::Custom(name) if !valid_name(name, 96)
+        )
         || sample.action.parameters.len() > 64
         || sample
             .action
             .parameters
             .keys()
-            .any(|name| name.is_empty() || name.len() > 64)
+            .any(|name| !valid_name(name, 64))
+        || sample.action.parameters.values().any(invalid_parameter)
         || sample.state.len() != feature_width
         || sample.next_state.len() != feature_width
         || sample
@@ -297,6 +301,28 @@ fn validate_sample(
         return Err(OptionValueError::Invalid("invalid realized option sample"));
     }
     Ok(())
+}
+
+fn invalid_parameter(parameter: &OptionParameter) -> bool {
+    match parameter {
+        OptionParameter::F32Bits(bits) => !f32::from_bits(*bits).is_finite(),
+        OptionParameter::Vec3F32Bits(bits) => bits
+            .iter()
+            .any(|component| !f32::from_bits(*component).is_finite()),
+        OptionParameter::Text(value) => {
+            value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control)
+        }
+        OptionParameter::Digest(value) => *value == Digest::ZERO,
+        _ => false,
+    }
+}
+
+fn valid_name(value: &str, maximum: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
+        })
 }
 
 fn sha256(bytes: &[u8]) -> Digest {
@@ -426,6 +452,32 @@ mod tests {
         let mut config = OptionValueConfig::default();
         config.fitted_q.backup_steps = 2;
         assert!(OptionValueModel::fit(1, &[valid], &[1], &config).is_err());
+    }
+
+    #[test]
+    fn rejects_descriptors_that_cannot_be_executed() {
+        let invalid_parameters = [
+            OptionParameter::F32Bits(f32::NAN.to_bits()),
+            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(), f32::INFINITY.to_bits(), 0]),
+            OptionParameter::Text("bad\ntext".into()),
+            OptionParameter::Digest(Digest::ZERO),
+        ];
+        for parameter in invalid_parameters {
+            let mut invalid = sample(0.0, action("roll", OptionType::Roll), 2, 1.0, true, 1);
+            invalid.action.parameters.insert("value".into(), parameter);
+            assert!(
+                OptionValueModel::fit(1, &[invalid], &[1], &OptionValueConfig::default()).is_err()
+            );
+        }
+        let invalid = sample(
+            0.0,
+            action("roll", OptionType::Custom("spaces are invalid".into())),
+            2,
+            1.0,
+            true,
+            1,
+        );
+        assert!(OptionValueModel::fit(1, &[invalid], &[1], &OptionValueConfig::default()).is_err());
     }
 
     #[test]
