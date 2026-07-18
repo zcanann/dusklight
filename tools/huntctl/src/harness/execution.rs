@@ -27,6 +27,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const VALID_GOAL_MISS_EXIT_CODE: i32 = 2;
+const CONTROLLER_PROTOCOL_FAILURE_EXIT_CODE: i32 = 3;
 const FULL_TRACE_MAXIMUM_TICKS: u64 = 131_071;
 
 /// Dispatches one authenticated request to its execution adapter.
@@ -868,6 +869,13 @@ fn classify_execution(
                 (Some(0 | VALID_GOAL_MISS_EXIT_CODE), _, _) => ClassifiedExecution {
                     terminal: HarnessTerminalReason::ProtocolFailure,
                     message: "native process omitted or contradicted required proof artifacts"
+                        .into(),
+                    proof_complete: false,
+                    unsupported_detail: None,
+                },
+                (Some(CONTROLLER_PROTOCOL_FAILURE_EXIT_CODE), _, _) => ClassifiedExecution {
+                    terminal: HarnessTerminalReason::ProtocolFailure,
+                    message: "controller did not return one valid action for its pre-input request"
                         .into(),
                     proof_complete: false,
                     unsupported_detail: None,

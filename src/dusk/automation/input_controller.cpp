@@ -1054,6 +1054,33 @@ InputControllerEvaluation InputControllerProgram::evaluateDetailed(
     return result;
 }
 
+InputControllerStepResponse InputControllerProgram::respond(
+    const InputControllerStepRequest& request) const {
+    InputControllerStepResponse response{
+        .majorVersion = kInputControllerStepMajorVersion,
+        .minorVersion = kInputControllerStepMinorVersion,
+        .simulationTick = request.simulationTick,
+        .inputFrame = request.inputFrame,
+        .controllerFrame = request.controllerFrame,
+    };
+    if (request.majorVersion != kInputControllerStepMajorVersion ||
+        request.minorVersion != kInputControllerStepMinorVersion)
+    {
+        response.error = InputControllerStepError::UnsupportedVersion;
+        return response;
+    }
+    if (request.phase != InputControllerObservationPhase::PreInput) {
+        response.error = InputControllerStepError::InvalidPhase;
+        return response;
+    }
+    if (finished(request.controllerFrame)) {
+        response.error = InputControllerStepError::InvalidFrame;
+        return response;
+    }
+    response.evaluation = evaluateDetailed(request.controllerFrame, request.observation);
+    return response;
+}
+
 const char* input_controller_error_message(const InputControllerError error) {
     switch (error) {
     case InputControllerError::None:

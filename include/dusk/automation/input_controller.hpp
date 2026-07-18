@@ -155,6 +155,45 @@ struct InputControllerEvaluation {
     std::uint16_t terminalLayer = 0xffff;
 };
 
+inline constexpr std::uint16_t kInputControllerStepMajorVersion = 1;
+inline constexpr std::uint16_t kInputControllerStepMinorVersion = 0;
+
+enum class InputControllerObservationPhase : std::uint8_t {
+    PreInput = 1,
+};
+
+enum class InputControllerStepError : std::uint8_t {
+    None = 0,
+    UnsupportedVersion = 1,
+    InvalidPhase = 2,
+    InvalidFrame = 3,
+};
+
+// One immutable observation offered immediately before the named input frame.
+// The copied ControllerObservation contains no writable game pointer.
+struct InputControllerStepRequest {
+    std::uint16_t majorVersion = kInputControllerStepMajorVersion;
+    std::uint16_t minorVersion = kInputControllerStepMinorVersion;
+    InputControllerObservationPhase phase = InputControllerObservationPhase::PreInput;
+    std::uint64_t simulationTick = 0;
+    std::uint64_t inputFrame = 0;
+    std::uint32_t controllerFrame = 0;
+    ControllerObservation observation;
+};
+
+// A synchronous controller must return exactly one fixed-size raw PAD action
+// for the request it was given. Echoed counters prevent a stale response from
+// being consumed at another logical boundary.
+struct InputControllerStepResponse {
+    std::uint16_t majorVersion = kInputControllerStepMajorVersion;
+    std::uint16_t minorVersion = kInputControllerStepMinorVersion;
+    std::uint64_t simulationTick = 0;
+    std::uint64_t inputFrame = 0;
+    std::uint32_t controllerFrame = 0;
+    InputControllerStepError error = InputControllerStepError::None;
+    InputControllerEvaluation evaluation;
+};
+
 struct InputControllerLayer {
     InputControllerLayerKind kind = InputControllerLayerKind::Bezier;
     InputControllerBlend blend = InputControllerBlend::Replace;
@@ -210,6 +249,9 @@ public:
         std::uint32_t frame, const ControllerObservation& observation) const;
     [[nodiscard]] InputControllerEvaluation evaluateDetailed(
         std::uint32_t frame, const ControllerObservation& observation) const;
+    /** Validate and answer one versioned pre-input request without allocating. */
+    [[nodiscard]] InputControllerStepResponse respond(
+        const InputControllerStepRequest& request) const;
 
 private:
     std::uint32_t mDuration = 0;

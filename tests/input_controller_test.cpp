@@ -824,6 +824,43 @@ void testVersion14CompositionSurfacesAndClamps() {
     REQUIRE(decode_input_controller(oldVersion, rejected) == InputControllerError::InvalidLayerKind);
 }
 
+void testVersionedPreInputStepContract() {
+    using namespace dusk::automation;
+    auto bytes = makeProgram(2, 1);
+    setBezier(layer(bytes, 0), 0, 0, 2, {12, -34, 12, -34, 12, -34, 12, -34});
+    const InputControllerProgram program = decode(bytes);
+    const InputControllerStepRequest request{
+        .majorVersion = kInputControllerStepMajorVersion,
+        .minorVersion = kInputControllerStepMinorVersion,
+        .phase = InputControllerObservationPhase::PreInput,
+        .simulationTick = 77,
+        .inputFrame = 41,
+        .controllerFrame = 0,
+        .observation = {},
+    };
+    const InputControllerStepResponse response = program.respond(request);
+    REQUIRE(response.error == InputControllerStepError::None);
+    REQUIRE(response.majorVersion == request.majorVersion);
+    REQUIRE(response.minorVersion == request.minorVersion);
+    REQUIRE(response.simulationTick == request.simulationTick);
+    REQUIRE(response.inputFrame == request.inputFrame);
+    REQUIRE(response.controllerFrame == request.controllerFrame);
+    REQUIRE(response.evaluation.input.stickX == 12);
+    REQUIRE(response.evaluation.input.stickY == -34);
+    REQUIRE(program.respond(request).evaluation.input == response.evaluation.input);
+
+    InputControllerStepRequest invalid = request;
+    ++invalid.minorVersion;
+    REQUIRE(program.respond(invalid).error == InputControllerStepError::UnsupportedVersion);
+    REQUIRE(program.respond(invalid).evaluation.input == RawPadState{});
+    invalid = request;
+    invalid.phase = static_cast<InputControllerObservationPhase>(0);
+    REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidPhase);
+    invalid = request;
+    invalid.controllerFrame = program.duration();
+    REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFrame);
+}
+
 }  // namespace
 
 int main() {
@@ -841,5 +878,6 @@ int main() {
     testStrictCanonicalValidation();
     testMaximumDurationAndEmptyLayerSet();
     testVersion14CompositionSurfacesAndClamps();
+    testVersionedPreInputStepContract();
     return 0;
 }

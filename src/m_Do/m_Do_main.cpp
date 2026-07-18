@@ -674,6 +674,7 @@ static bool inputControllerConfigured;
 static bool inputControllerStarted;
 static bool inputControllerCompleted;
 static bool inputControllerTargetLost;
+static bool inputControllerProtocolFailed;
 static std::uint16_t inputControllerTerminalLayer = 0xffff;
 static std::uint32_t inputControllerTerminalFrame;
 static bool inputControllerFrameApplied;
@@ -802,8 +803,34 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
     dusk::automation::ControllerObservationStorage observationStorage;
     const auto observation =
         dusk::automation::capture_controller_observation(observationStorage);
-    const dusk::automation::InputControllerEvaluation evaluation =
-        inputControllerProgram.evaluateDetailed(inputControllerNextFrame, observation);
+    const std::uint64_t inputFrame =
+        static_cast<std::uint64_t>(inputControllerPrefixFrames) + inputControllerNextFrame;
+    const dusk::automation::InputControllerStepRequest request{
+        .majorVersion = dusk::automation::kInputControllerStepMajorVersion,
+        .minorVersion = dusk::automation::kInputControllerStepMinorVersion,
+        .phase = dusk::automation::InputControllerObservationPhase::PreInput,
+        .simulationTick = automationSimulationTick,
+        .inputFrame = inputFrame,
+        .controllerFrame = inputControllerNextFrame,
+        .observation = observation,
+    };
+    const dusk::automation::InputControllerStepResponse response =
+        inputControllerProgram.respond(request);
+    if (response.error != dusk::automation::InputControllerStepError::None ||
+        response.majorVersion != request.majorVersion ||
+        response.minorVersion != request.minorVersion ||
+        response.simulationTick != request.simulationTick ||
+        response.inputFrame != request.inputFrame ||
+        response.controllerFrame != request.controllerFrame)
+    {
+        inputControllerProtocolFailed = true;
+        inputControllerTerminalFrame = inputControllerNextFrame;
+        inputControllerNextFrame = inputControllerProgram.duration();
+        DuskLog.error("Input controller returned no valid action for pre-input frame {}",
+                      inputControllerTerminalFrame);
+        return;
+    }
+    const dusk::automation::InputControllerEvaluation& evaluation = response.evaluation;
     if (evaluation.terminalReason ==
         dusk::automation::InputControllerTerminalReason::TargetLost)
     {
@@ -826,8 +853,7 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
     const PADStatus status = dusk::automation::raw_pad_state_to_pad_status(raw);
     PADSetAutomationStatus(0, &status);
 
-    automationPreparedInputFrame =
-        static_cast<std::uint64_t>(inputControllerPrefixFrames) + inputControllerNextFrame;
+    automationPreparedInputFrame = inputFrame;
     inputControllerFrameApplied = true;
     ++inputControllerNextFrame;
 #endif
@@ -2928,6 +2954,7 @@ int game_main(int argc, char* argv[]) {
         inputControllerStarted = false;
         inputControllerCompleted = false;
         inputControllerTargetLost = false;
+        inputControllerProtocolFailed = false;
         inputControllerTerminalLayer = 0xffff;
         inputControllerTerminalFrame = 0;
     }
@@ -3566,6 +3593,9 @@ int game_main(int argc, char* argv[]) {
     // A valid, exhausted search tape that misses its configured goal is a
     // sample, not an infrastructure failure. Give orchestration an unambiguous
     // status so it never has to infer that distinction from logs.
+    if (inputControllerProtocolFailed) {
+        return 3;
+    }
     return milestoneGoalFailed || inputControllerTargetLost ? 2 : 0;
 }
 
