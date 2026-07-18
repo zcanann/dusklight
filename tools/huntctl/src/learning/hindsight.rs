@@ -5,14 +5,20 @@
 //! recomputed from the relabeled predicate; an observed reward is never copied.
 
 use super::goal_conditioning::{CompiledObjectiveVector, GoalConditioningError};
+use super::option_values::OptionValueSample;
+use crate::artifact::Digest;
 use crate::milestone_dsl::{
     CompiledMilestones, EvaluationPhase, Expression, Field, MilestoneDefinition, decode,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
 pub const HINDSIGHT_RELABEL_DECISION_SCHEMA_V1: &str = "dusklight-hindsight-relabel-decision/v1";
+pub const HINDSIGHT_PREDICATE_EVIDENCE_SCHEMA_V1: &str =
+    "dusklight-hindsight-predicate-evidence/v1";
+pub const HINDSIGHT_RELABELED_OPTION_SCHEMA_V1: &str = "dusklight-hindsight-relabeled-option/v1";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +46,128 @@ pub struct AdmittedHindsightGoal {
     pub objective: CompiledObjectiveVector,
     pub semantic_class: &'static str,
     pub reward_policy: &'static str,
+}
+
+/// Native predicate results bound to the exact compact transition and raw tape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HindsightPredicateEvidence {
+    pub schema: String,
+    pub objective_vector_sha256: Digest,
+    pub program_sha256: Digest,
+    pub definition_sha256: Digest,
+    pub pre_observation_sha256: Digest,
+    pub post_observation_sha256: Digest,
+    pub state_sha256: Digest,
+    pub next_state_sha256: Digest,
+    pub realized_tape_sha256: Digest,
+    pub pre_satisfied: bool,
+    pub post_satisfied: bool,
+    pub evaluator: String,
+}
+
+impl HindsightPredicateEvidence {
+    pub fn bind(
+        goal: &AdmittedHindsightGoal,
+        transition: &OptionValueSample,
+        pre_observation_sha256: Digest,
+        post_observation_sha256: Digest,
+        pre_satisfied: bool,
+        post_satisfied: bool,
+    ) -> Result<Self, HindsightError> {
+        let evidence = Self {
+            schema: HINDSIGHT_PREDICATE_EVIDENCE_SCHEMA_V1.into(),
+            objective_vector_sha256: goal.objective.vector_sha256,
+            program_sha256: goal.objective.program_sha256,
+            definition_sha256: goal.objective.definition_sha256,
+            pre_observation_sha256,
+            post_observation_sha256,
+            state_sha256: state_digest(&transition.state),
+            next_state_sha256: state_digest(&transition.next_state),
+            realized_tape_sha256: transition.realized_tape_sha256,
+            pre_satisfied,
+            post_satisfied,
+            evaluator: "native_compiled_milestone_pre_post".into(),
+        };
+        evidence.validate(goal, transition)?;
+        Ok(evidence)
+    }
+
+    fn validate(
+        &self,
+        goal: &AdmittedHindsightGoal,
+        transition: &OptionValueSample,
+    ) -> Result<(), HindsightError> {
+        if self.schema != HINDSIGHT_PREDICATE_EVIDENCE_SCHEMA_V1
+            || self.objective_vector_sha256 != goal.objective.vector_sha256
+            || self.program_sha256 != goal.objective.program_sha256
+            || self.definition_sha256 != goal.objective.definition_sha256
+            || self.pre_observation_sha256 == Digest::ZERO
+            || self.post_observation_sha256 == Digest::ZERO
+            || self.pre_observation_sha256 == self.post_observation_sha256
+            || self.state_sha256 != state_digest(&transition.state)
+            || self.next_state_sha256 != state_digest(&transition.next_state)
+            || self.realized_tape_sha256 != transition.realized_tape_sha256
+            || self.realized_tape_sha256 == Digest::ZERO
+            || self.pre_satisfied
+            || !self.post_satisfied
+            || self.evaluator != "native_compiled_milestone_pre_post"
+        {
+            return Err(HindsightError::InvalidEvidence);
+        }
+        Ok(())
+    }
+}
+
+/// Auditable output: the original reward is retained, while training consumes
+/// the independently configured relabeled achievement reward.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RelabeledHindsightOption {
+    pub schema: &'static str,
+    pub objective: CompiledObjectiveVector,
+    pub transition: OptionValueSample,
+    pub original_reward: f32,
+    pub reward_recomputed: bool,
+    pub evidence: HindsightPredicateEvidence,
+    pub promotion_authority: bool,
+}
+
+impl AdmittedHindsightGoal {
+    pub fn relabel_transition(
+        &self,
+        transition: &OptionValueSample,
+        evidence: HindsightPredicateEvidence,
+        achievement_reward: f32,
+    ) -> Result<RelabeledHindsightOption, HindsightError> {
+        self.objective.validate()?;
+        evidence.validate(self, transition)?;
+        if !achievement_reward.is_finite() {
+            return Err(HindsightError::InvalidReward);
+        }
+        let original_reward = transition.reward;
+        let mut relabeled = transition.clone();
+        relabeled.reward = achievement_reward;
+        relabeled.terminal = true;
+        Ok(RelabeledHindsightOption {
+            schema: HINDSIGHT_RELABELED_OPTION_SCHEMA_V1,
+            objective: self.objective.clone(),
+            transition: relabeled,
+            original_reward,
+            reward_recomputed: true,
+            evidence,
+            promotion_authority: false,
+        })
+    }
+}
+
+fn state_digest(state: &[f32]) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.hindsight.compact-state/v1\0");
+    hasher.update((state.len() as u64).to_le_bytes());
+    for value in state {
+        hasher.update(value.to_bits().to_le_bytes());
+    }
+    Digest(hasher.finalize().into())
 }
 
 impl HindsightRelabelDecision {
@@ -124,6 +252,8 @@ pub enum HindsightError {
     UnknownDefinition(usize),
     InvalidObjective(String),
     Ineligible(Vec<HindsightRejection>),
+    InvalidEvidence,
+    InvalidReward,
 }
 
 impl fmt::Display for HindsightError {
@@ -142,6 +272,12 @@ impl fmt::Display for HindsightError {
                 formatter,
                 "hindsight objective is semantically ineligible: {reasons:?}"
             ),
+            Self::InvalidEvidence => formatter.write_str(
+                "hindsight predicate evidence is stale, detached, or not a false-to-true hit",
+            ),
+            Self::InvalidReward => {
+                formatter.write_str("hindsight achievement reward must be finite")
+            }
         }
     }
 }
@@ -156,11 +292,14 @@ impl From<GoalConditioningError> for HindsightError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::option_values::OptionActionDescriptor;
     use super::*;
     use crate::milestone_dsl::{
         Comparison, Expression, Field, LanguageVersion, MilestoneDefinition, MilestoneProgram,
         RngStream, Value, ValueProjection, ValueProjectionItem, compile,
     };
+    use crate::option_execution::OptionType;
+    use std::collections::BTreeMap;
 
     fn compare(field: Field, value: Value) -> Expression {
         Expression::Compare {
@@ -179,6 +318,22 @@ mod tests {
             then: Vec::new(),
             within_ticks: None,
             projections: Vec::new(),
+        }
+    }
+
+    fn option_sample() -> OptionValueSample {
+        OptionValueSample {
+            action: OptionActionDescriptor {
+                option_id: "move".into(),
+                option_type: OptionType::Move,
+                parameters: BTreeMap::new(),
+            },
+            state: vec![0.0],
+            duration_ticks: 4,
+            reward: -0.25,
+            next_state: vec![1.0],
+            terminal: false,
+            realized_tape_sha256: Digest([3; 32]),
         }
     }
 
@@ -238,5 +393,82 @@ mod tests {
                 Err(HindsightError::Ineligible(vec![reason]))
             );
         }
+    }
+
+    #[test]
+    fn relabel_requires_bound_false_to_true_native_evidence_and_recomputes_reward() {
+        let compiled = compile(&MilestoneProgram {
+            version: LanguageVersion { major: 1, minor: 4 },
+            definitions: vec![definition(
+                "room_one",
+                compare(Field::StageRoom, Value::I32(1)),
+            )],
+        })
+        .unwrap();
+        let goal = HindsightRelabelDecision::evaluate(&compiled, 0)
+            .unwrap()
+            .admit()
+            .unwrap();
+        let transition = option_sample();
+        let evidence = HindsightPredicateEvidence::bind(
+            &goal,
+            &transition,
+            Digest([4; 32]),
+            Digest([5; 32]),
+            false,
+            true,
+        )
+        .unwrap();
+        let relabeled = goal
+            .relabel_transition(&transition, evidence, 10.0)
+            .unwrap();
+        assert_eq!(relabeled.original_reward, -0.25);
+        assert_eq!(relabeled.transition.reward, 10.0);
+        assert!(relabeled.transition.terminal);
+        assert!(relabeled.reward_recomputed);
+        assert!(!relabeled.promotion_authority);
+    }
+
+    #[test]
+    fn rejects_already_satisfied_or_detached_transition_evidence() {
+        let compiled = compile(&MilestoneProgram {
+            version: LanguageVersion { major: 1, minor: 4 },
+            definitions: vec![definition(
+                "room_one",
+                compare(Field::StageRoom, Value::I32(1)),
+            )],
+        })
+        .unwrap();
+        let goal = HindsightRelabelDecision::evaluate(&compiled, 0)
+            .unwrap()
+            .admit()
+            .unwrap();
+        let transition = option_sample();
+        assert_eq!(
+            HindsightPredicateEvidence::bind(
+                &goal,
+                &transition,
+                Digest([4; 32]),
+                Digest([5; 32]),
+                true,
+                true,
+            ),
+            Err(HindsightError::InvalidEvidence)
+        );
+        let evidence = HindsightPredicateEvidence::bind(
+            &goal,
+            &transition,
+            Digest([4; 32]),
+            Digest([5; 32]),
+            false,
+            true,
+        )
+        .unwrap();
+        let mut detached = transition.clone();
+        detached.next_state[0] = 2.0;
+        assert_eq!(
+            goal.relabel_transition(&detached, evidence, 10.0),
+            Err(HindsightError::InvalidEvidence)
+        );
     }
 }
