@@ -23,6 +23,9 @@ first cheap-objective learning and winner-narrowing loop.
 - [ ] Multi-objective or whole-route tournaments, Pareto archives, exhaustive
   proposer combinations, automatic route-history integration, and campaign
   management beyond one explicitly selected objective.
+- [ ] Migrate every specialized legacy beam, CEM/CMA-ES, Bayesian, tournament,
+  minimization, and golf entry point to the authenticated executor unless an
+  active cheap-objective loop first demonstrates that it needs that algorithm.
 - [ ] Complete identity materialization across every historical artifact and
   automatic compatibility enforcement in inactive legacy CLIs.
 - [ ] Whole-game semantic hashing, periodic divergence capture, exhaustive

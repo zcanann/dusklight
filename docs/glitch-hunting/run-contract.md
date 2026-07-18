@@ -3,8 +3,8 @@
 `dusklight-harness-run-request/v2` and
 `dusklight-harness-run-result/v2` are the canonical materialized boundary for
 one harness attempt. They describe execution and evidence; they do not yet
-mean that every legacy tape, search, or learning command executes through this
-boundary.
+replace every specialized legacy command, but tape, reactive-controller,
+search-candidate, and learned-proposal execution now share this boundary.
 
 ## Request
 
@@ -75,6 +75,11 @@ huntctl harness validate-run-result --result RESULT.json \
 
 huntctl harness execute --request REQUEST.json --repository-root DIR \
   [--attempt N]
+
+huntctl search evaluate --population MANIFEST.json --output DIR \
+  --run-request REQUEST.json --repository-root DIR
+huntctl search run --segment ID --output DIR \
+  --run-request REQUEST.json --repository-root DIR [SEARCH OPTIONS]
 ```
 
 The native executor currently routes neutral, compiled TAS-source, absolute
@@ -83,7 +88,14 @@ records one absolute tape, launches an isolated native process, authenticates
 the milestone result, realized tape, gameplay trace and observation inventory,
 classifies the terminal, and seals `result.json` beneath the requested
 destination. Exact controller target loss is distinct from input exhaustion.
-Search and learned-proposal adapters remain open.
+Authenticated search treats the request as the sole execution authority: game,
+game data, working directory, host timeout, and game arguments cannot be
+overridden at the search command. Every attempt derives a new request binding
+the candidate tape, RNG seed, and isolated destination, then retains the sealed
+request/result paths and digests in `dusklight-search-attempt/v5`. Candidate
+ancestry remains separate proposal provenance. Consequently fitted-Q candidates
+enter the same evaluator as ordinary search candidates without gaining scoring
+or promotion authority.
 
 `harness inspect-objective` prints the full source objective, program and
 definition identities, phase and stability, required families and facts,
@@ -99,4 +111,8 @@ mock native process, executes reactive control into a realized tape, proves
 exact target loss and missing trace families remain typed failures, and verifies
 overwrite refusal. A host-timeout integration case retains authenticated
 stdout/stderr while refusing complete replay-proof status; crash-unit coverage
-does the same for whatever partial artifacts exist before failure.
+does the same for whatever partial artifacts exist before failure. Search
+integration covers direct and multi-generation evaluation, rejects conflicting
+execution flags, and verifies ordinary and learned-origin candidates retain the
+same objective/run identity while producing independently authenticated
+request/result pairs.

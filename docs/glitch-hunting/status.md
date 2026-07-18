@@ -32,10 +32,12 @@ roadmap documents describe the larger target.
   `huntctl harness execute` now routes neutral, TAS-source, absolute-tape, and
   reactive-controller seeds through an isolated native process, retains the
   controller's absolute realized tape, and seals the typed result. Exact target
-  loss is not exhaustion. Search evaluators and learners have not yet been
-  routed through this common boundary. `harness inspect-objective` presents the
-  authenticated source, identities, requirements, progress, first-hit boundary,
-  and missing evidence in one human-readable view.
+  loss is not exhaustion. Search evaluation v5 derives one authenticated
+  candidate request per attempt and retains its sealed request/result digests;
+  multi-generation and fitted-Q-origin candidates use that same executor and
+  cannot override request-owned execution inputs. `harness inspect-objective`
+  presents the authenticated source, identities, requirements, progress,
+  first-hit boundary, and missing evidence in one human-readable view.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific

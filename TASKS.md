@@ -60,8 +60,8 @@ judgment.
 - [x] Define one authenticated run request and one typed run result covering
   the executable, game data, scenario, objective, observations, actions, seed,
   budgets, fidelity, evidence, and terminal reason.
-- [ ] Route tape playback, reactive control, search candidates, and learned
-  proposals through that same request/result executor.
+- [x] Route tape playback, reactive control, the active population search, and
+  learned proposals through that same request/result executor.
 - [ ] Give a controller one versioned pre-input observation and require one
   bounded action response without game-state mutation authority.
 - [ ] Enforce the logical-tick budget independently of host timeout and retain
