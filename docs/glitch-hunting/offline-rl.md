@@ -295,17 +295,18 @@ Rainbow configuration.
 
 ```sh
 huntctl learn ablate-q --component distributional-values \
-  --training build/corpus/train.dtcz \
-  --held-out build/corpus/test.dtcz \
+  --dataset build/dataset.json --split test \
   --output build/ablation/distributional.json
 ```
 
 The report authenticates both corpus sets, rejects overlapping files or
-digests, and records held-out Bellman error, logged-action agreement, gradient
-updates, and component-specific diagnostics. Baseline and treatment must have
-the same gradient-update budget. No component is adopted automatically:
-held-out Bellman error is not native objective success, and every proposal
-still requires equal-budget native evaluation and cold replay proof.
+digests, and records held-out Bellman error, observed simulator return MAE and
+RMSE, calibration bins, exact-state proposal win rate and regret, unsupported
+held-out actions, logged-action agreement, gradient updates, and
+component-specific diagnostics. Baseline and treatment must have the same
+gradient-update budget. No component is adopted automatically: these metrics
+are not native objective success, and every proposal still requires
+equal-budget native evaluation and cold replay proof.
 
 The experimental implementations are isolated under `learning/double_q/` and
 do not alter the production learner. Dueling heads factor value and centered
@@ -313,6 +314,11 @@ advantages; n-step returns preserve terminal versus truncated episode ends;
 categorical values use a bounded projected support; and noisy exploration uses
 learned factorized parameter noise during training while deterministic mean
 weights are used for held-out ranking.
+
+The compact checked-in tests prove deterministic mechanics, schema behavior,
+budget equality, and OOD accounting only. They are not evidence for adopting a
+component. Run all four treatments separately on a frozen corpus that meets the
+RL readiness gates before considering any combined Rainbow configuration.
 
 ### Nearest-neighbor and tabular return baselines
 

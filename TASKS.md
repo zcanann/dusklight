@@ -831,8 +831,10 @@ simple random baseline.
   dataset-constrained alternative.
 - [x] Add bootstrapped/twin/ensemble critics and episode-level resampling.
 - [x] Add prioritized replay with bounded importance correction and diagnostics.
-- [x] Evaluate dueling heads, n-step returns, distributional values, and noisy
-  exploration one component at a time before adopting a Rainbow configuration.
+- [x] Implement isolated, equal-update-budget evaluators for dueling heads,
+  n-step returns, distributional values, and noisy exploration.
+- [ ] Evaluate those four components one at a time on a readiness-qualified,
+  content-disjoint corpus before adopting a Rainbow configuration.
 - [ ] Mask structurally unavailable actions for efficiency while retaining an
   explicit exploration path for nominally invalid inputs that may cause bugs.
 
