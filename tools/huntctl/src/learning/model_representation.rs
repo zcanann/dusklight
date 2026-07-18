@@ -17,6 +17,7 @@ pub const FIXED_MODEL_REPRESENTATION_SCHEMA_V1: &str = "dusklight-fixed-model-re
 pub const DEFAULT_CATEGORICAL_EMBEDDING_WIDTH: usize = 4;
 pub const DEFAULT_ACTOR_SLOTS: usize = 4;
 pub const DEFAULT_GEOMETRY_SLOTS: usize = 4;
+pub const MAX_LOCAL_GEOMETRY_PROBES: usize = 32;
 const MAX_CATEGORIES_PER_FIELD: usize = 4096;
 const ACTOR_SLOT_WIDTH: usize = 17;
 const GEOMETRY_SLOT_WIDTH: usize = 14;
@@ -36,6 +37,14 @@ impl LocalGeometryProbe {
     pub fn from_point_report(
         report: &WorldPointQueryReport,
     ) -> Result<Vec<Self>, ModelRepresentationError> {
+        if report.request.limit == 0
+            || report.request.limit > MAX_LOCAL_GEOMETRY_PROBES
+            || report.returned_count != report.results.len()
+            || report.returned_count > report.request.limit
+            || report.results.len() > MAX_LOCAL_GEOMETRY_PROBES
+        {
+            return Err(ModelRepresentationError::InvalidGeometry);
+        }
         report
             .results
             .iter()
@@ -419,6 +428,9 @@ impl FixedModelRepresentationEncoder {
         context: &RepresentationContext<'_>,
     ) -> Result<(), ModelRepresentationError> {
         let probes = context.geometry.unwrap_or_default();
+        if probes.len() > MAX_LOCAL_GEOMETRY_PROBES {
+            return Err(ModelRepresentationError::InvalidGeometry);
+        }
         for probe in probes {
             probe.validate()?;
         }
@@ -765,6 +777,24 @@ milestone target_room {
                 ..actor_start + 3 * encoder.actor_slot_width]
                 .iter()
                 .all(|mask| *mask == 0.0)
+        );
+    }
+
+    #[test]
+    fn complete_mesh_sized_geometry_input_fails_before_encoding() {
+        let (encoder, state, objective) = fixture();
+        let probes = vec![probe("surface", 1.0); MAX_LOCAL_GEOMETRY_PROBES + 1];
+        assert_eq!(
+            encoder.encode(RepresentationContext {
+                state: &state,
+                objective: &objective,
+                player_position: [0.0; 3],
+                player_yaw: 0,
+                player_session_process_id: None,
+                selected_actors: None,
+                geometry: Some(&probes),
+            }),
+            Err(ModelRepresentationError::InvalidGeometry)
         );
     }
 }
