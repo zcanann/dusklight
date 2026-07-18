@@ -10,6 +10,15 @@ use std::fmt;
 pub const Q_BEAM_PRIOR_SCHEMA_V1: &str = "dusklight-q-beam-priors/v1";
 const MAX_PRIOR_ENTRIES: usize = 1_000_000;
 
+pub fn option_catalog_sha256<T: Serialize>(catalog: &T) -> Result<Digest, PlanningPriorError> {
+    let bytes =
+        serde_json::to_vec(catalog).map_err(|error| PlanningPriorError::new(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.beam-option-catalog/v1\0");
+    hasher.update(bytes);
+    Ok(Digest(hasher.finalize().into()))
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QBeamPrior {
@@ -85,6 +94,10 @@ impl QBeamPriorTable {
             || self.uncertainty_penalty < 0.0
             || self.entries.is_empty()
             || self.entries.len() > MAX_PRIOR_ENTRIES
+            || !self.entries.windows(2).all(|pair| {
+                (&pair[0].parent_candidate_id, pair[0].option_index)
+                    < (&pair[1].parent_candidate_id, pair[1].option_index)
+            })
             || self.route_authority
             || self.promotion_authority
             || self.table_sha256 != self.digest()?

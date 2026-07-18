@@ -17,6 +17,7 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::planning_priors::QBeamPriorTable;
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
@@ -2831,10 +2832,20 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             seed_candidate.validate()?;
             let options: Vec<huntctl::search::MacroAction> =
                 serde_json::from_slice(&fs::read(required_path(search_args, "--options")?)?)?;
+            let q_priors: Option<QBeamPriorTable> = option(search_args, "--q-priors")
+                .map(|path| {
+                    fs::read(path)
+                        .map_err(Box::<dyn Error>::from)
+                        .and_then(|bytes| {
+                            serde_json::from_slice(&bytes).map_err(Box::<dyn Error>::from)
+                        })
+                })
+                .transpose()?;
             let summary = run_beam_search(&BeamSearchConfig {
                 segment: seed_candidate.segment,
                 seed_candidate,
                 options,
+                q_priors,
                 game: required_path(search_args, "--game")?,
                 dvd: required_path(search_args, "--dvd")?,
                 output_root: required_path(search_args, "--output")?,
@@ -4608,7 +4619,7 @@ fn print_usage() {
         "\nTape recording:\n  huntctl tape record SEED.tape OUTPUT.tape --game PATH --dvd PATH --state-root DIR [--capacity N] [--timeout-seconds N] [--game-arg ARG]..."
     );
     eprintln!(
-        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search beam --candidate SEED.json --options OPTIONS.json --game PATH --dvd PATH --output DIR [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n  huntctl search tournament --definition TOURNAMENT.json --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n  huntctl search golf-path --plan PATH.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--point-step N] [--duration-step N] [--phase-step N] [--cancellation-step N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search beam --candidate SEED.json --options OPTIONS.json [--q-priors PRIORS.json] --game PATH --dvd PATH --output DIR [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n  huntctl search tournament --definition TOURNAMENT.json --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n  huntctl search golf-path --plan PATH.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--point-step N] [--duration-step N] [--phase-step N] [--cancellation-step N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
     eprintln!(
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"

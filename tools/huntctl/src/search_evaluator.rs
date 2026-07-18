@@ -19,6 +19,7 @@ use crate::episode::{
 };
 use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
+use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
 use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates_with_lineage};
 use crate::search::{
@@ -153,6 +154,7 @@ pub struct BeamSearchConfig {
     pub segment: SegmentProfile,
     pub seed_candidate: Candidate,
     pub options: Vec<MacroAction>,
+    pub q_priors: Option<QBeamPriorTable>,
     pub game: PathBuf,
     pub dvd: PathBuf,
     pub output_root: PathBuf,
@@ -178,6 +180,12 @@ pub struct BeamSearchSummary {
     pub duplicate_proposals: usize,
     pub beam_pruned_prefixes: usize,
     pub terminal_bound_pruned_children: usize,
+    pub q_prior_table_sha256: Option<ArtifactDigest>,
+    pub q_prior_model_sha256: Option<ArtifactDigest>,
+    pub q_prior_ranked_children: usize,
+    pub q_prior_role: &'static str,
+    pub native_rollout_ranking_authority: bool,
+    pub policy_owns_route: bool,
     pub depths_evaluated: u32,
     pub champion_id: String,
     pub champion_score: LexicographicScore,
@@ -1278,6 +1286,13 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
         ));
     }
     config.seed_candidate.validate()?;
+    let option_catalog_sha256 = option_catalog_sha256(&config.options)
+        .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))?;
+    if let Some(priors) = &config.q_priors {
+        priors
+            .validate_for_catalog(option_catalog_sha256, config.options.len())
+            .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))?;
+    }
     fs::create_dir_all(&config.output_root)?;
     let mut seen = HashSet::new();
     seen.insert(config.seed_candidate.id()?);
@@ -1286,6 +1301,7 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
     let mut duplicate_proposals = 0_usize;
     let mut beam_pruned_prefixes = 0_usize;
     let mut terminal_bound_pruned_children = 0_usize;
+    let mut q_prior_ranked_children = 0_usize;
     let mut depths_evaluated = 0_u32;
     let mut champion: Option<(LexicographicScore, String, Candidate)> = None;
 
@@ -1361,9 +1377,21 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
         'parents: for parent in frontier {
             let parent_id = parent.id()?;
             let parent_frames = parent.frame_count();
-            for (option_index, option) in config.options.iter().enumerate() {
+            let option_indices = config.q_priors.as_ref().map_or_else(
+                || (0..config.options.len()).collect::<Vec<_>>(),
+                |priors| priors.ranked_option_indices(&parent_id, config.options.len()),
+            );
+            for option_index in option_indices {
                 if evaluated + next.len() >= config.candidate_budget {
                     break 'parents;
+                }
+                let option = &config.options[option_index];
+                if config
+                    .q_priors
+                    .as_ref()
+                    .is_some_and(|priors| priors.has_prior(&parent_id, option_index))
+                {
+                    q_prior_ranked_children += 1;
                 }
                 let mut child = parent.clone();
                 child.actions.push(option.clone());
@@ -1399,7 +1427,7 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
     fs::write(&champion_candidate, serde_json::to_vec_pretty(&champion)?)?;
     fs::write(&champion_tape, champion.compile()?.encode()?)?;
     let summary = BeamSearchSummary {
-        schema: "dusklight-beam-search/v1",
+        schema: "dusklight-beam-search/v2",
         segment: config.segment,
         beam_width: config.beam_width,
         maximum_depth: config.maximum_depth,
@@ -1409,6 +1437,12 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
         duplicate_proposals,
         beam_pruned_prefixes,
         terminal_bound_pruned_children,
+        q_prior_table_sha256: config.q_priors.as_ref().map(|priors| priors.table_sha256),
+        q_prior_model_sha256: config.q_priors.as_ref().map(|priors| priors.model_sha256),
+        q_prior_ranked_children,
+        q_prior_role: "supported_child_ordering_only",
+        native_rollout_ranking_authority: true,
+        policy_owns_route: false,
         depths_evaluated,
         champion_id,
         champion_score,
