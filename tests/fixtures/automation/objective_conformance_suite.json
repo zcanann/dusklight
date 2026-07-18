@@ -1,6 +1,6 @@
 {
-  "schema": "dusklight-objective-suite/v1",
-  "content_sha256": "83910200b708ae3b4d5796bf085061cf1abf6ec160c53d58089b88f8a942de4d",
+  "schema": "dusklight-objective-suite/v2",
+  "content_sha256": "b6c7ad681e5b81a6de5e18b207fd0fd00327c531401c6cc679414bcc6de5b065",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [

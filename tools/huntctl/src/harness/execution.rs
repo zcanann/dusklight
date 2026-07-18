@@ -8,7 +8,7 @@ use super::observation_contract::{
 use super::run_contract::{
     HarnessBoundaryFingerprint, HarnessFidelityMode, HarnessObjectiveResult, HarnessRunArtifacts,
     HarnessRunRequest, HarnessRunResult, HarnessRunTiming, HarnessTerminalDetail,
-    HarnessTerminalReason, HarnessWorkerIdentity, RUN_RESULT_SCHEMA_V1,
+    HarnessTerminalReason, HarnessWorkerIdentity, RUN_RESULT_SCHEMA_V2,
 };
 use crate::artifact::Digest;
 use crate::milestone_dsl;
@@ -783,7 +783,7 @@ fn build_result(
         .unwrap_or(0)
         .min(request.logical_tick_budget);
     let mut result = HarnessRunResult {
-        schema: RUN_RESULT_SCHEMA_V1.into(),
+        schema: RUN_RESULT_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         request_id: request.id.clone(),
         request_sha256: request.content_sha256,

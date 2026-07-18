@@ -1,7 +1,7 @@
 use huntctl::Digest;
 use huntctl::artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity};
 use huntctl::harness::objective_suite::{
-    ArtifactReference, ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V1, ObjectiveBoot,
+    ArtifactReference, ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot,
     ObjectiveCaseRole, ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuite,
     ObjectiveSuiteCase, ObservationViewReference, SchemaIdentity,
 };
@@ -13,7 +13,7 @@ use huntctl::harness::run_contract::{
     HarnessBoundaryFingerprint, HarnessFidelityMode, HarnessObjectiveResult,
     HarnessProtocolIdentity, HarnessRunArtifacts, HarnessRunRequest, HarnessRunResult,
     HarnessRunTiming, HarnessTerminalDetail, HarnessTerminalReason, HarnessWorkerIdentity,
-    RUN_REQUEST_SCHEMA_V1, RUN_RESULT_SCHEMA_V1,
+    RUN_REQUEST_SCHEMA_V2, RUN_RESULT_SCHEMA_V2,
 };
 use huntctl::milestone_dsl;
 use huntctl::observation_view::movement_state_v2_spec;
@@ -91,7 +91,7 @@ fn write_suite(root: &Path) -> PathBuf {
     .unwrap();
 
     let mut suite = ObjectiveSuite {
-        schema: OBJECTIVE_SUITE_SCHEMA_V1.into(),
+        schema: OBJECTIVE_SUITE_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         id: "core-conformance/v1".into(),
         description: "Cheap objective cases proving the public harness boundary.".into(),
@@ -197,7 +197,7 @@ fn write_run_request_draft(root: &Path, suite_path: &Path) -> PathBuf {
         settings_digest: Digest([8; 32]),
     };
     let request = HarnessRunRequest {
-        schema: RUN_REQUEST_SCHEMA_V1.into(),
+        schema: RUN_REQUEST_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         id: "stage-ready-cli".into(),
         executable: artifact("inputs/dusklight", executable),
@@ -234,7 +234,7 @@ fn write_run_result_draft(root: &Path, request: &HarnessRunRequest) -> (PathBuf,
     fs::write(artifact_root.join("objective.json"), evidence).unwrap();
     let objective = artifact("objective.json", evidence);
     let result = HarnessRunResult {
-        schema: RUN_RESULT_SCHEMA_V1.into(),
+        schema: RUN_RESULT_SCHEMA_V2.into(),
         content_sha256: Digest::ZERO,
         request_id: request.id.clone(),
         request_sha256: request.content_sha256,

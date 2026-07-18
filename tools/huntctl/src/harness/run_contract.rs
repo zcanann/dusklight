@@ -17,8 +17,8 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub const RUN_REQUEST_SCHEMA_V1: &str = "dusklight-harness-run-request/v1";
-pub const RUN_RESULT_SCHEMA_V1: &str = "dusklight-harness-run-result/v1";
+pub const RUN_REQUEST_SCHEMA_V2: &str = "dusklight-harness-run-request/v2";
+pub const RUN_RESULT_SCHEMA_V2: &str = "dusklight-harness-run-result/v2";
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
 const MAX_HOST_TIMEOUT_SECONDS: u32 = 86_400;
 const MAX_FACTS: usize = 128;
@@ -193,7 +193,7 @@ pub struct HarnessRunResultValidationReport {
 
 impl HarnessRunRequest {
     pub fn validate(&self) -> Result<(), HarnessRunContractError> {
-        if self.schema != RUN_REQUEST_SCHEMA_V1 {
+        if self.schema != RUN_REQUEST_SCHEMA_V2 {
             return Err(contract_error("unsupported harness run-request schema"));
         }
         validate_id("request id", &self.id)?;
@@ -309,7 +309,7 @@ impl HarnessRunRequest {
     fn compute_content_sha256(&self) -> Result<Digest, HarnessRunContractError> {
         let mut identity = self.clone();
         identity.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.harness-run-request/v1\0", &identity)
+        canonical_digest(b"dusklight.harness-run-request/v2\0", &identity)
     }
 
     fn as_bound_case(&self) -> ObjectiveSuiteCase {
@@ -368,7 +368,7 @@ impl HarnessRunResult {
         request: &HarnessRunRequest,
     ) -> Result<(), HarnessRunContractError> {
         request.validate()?;
-        if self.schema != RUN_RESULT_SCHEMA_V1
+        if self.schema != RUN_RESULT_SCHEMA_V2
             || self.request_id != request.id
             || self.request_sha256 != request.content_sha256
             || self.identity != request.identity
@@ -463,7 +463,7 @@ impl HarnessRunResult {
     fn compute_content_sha256(&self) -> Result<Digest, HarnessRunContractError> {
         let mut identity = self.clone();
         identity.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.harness-run-result/v1\0", &identity)
+        canonical_digest(b"dusklight.harness-run-result/v2\0", &identity)
     }
 
     fn artifact_references(&self) -> Vec<(&'static str, &ArtifactReference)> {
@@ -959,7 +959,7 @@ mod tests {
             settings_digest: Digest([8; 32]),
         };
         let mut request = HarnessRunRequest {
-            schema: RUN_REQUEST_SCHEMA_V1.into(),
+            schema: RUN_REQUEST_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             id: "stage-ready-attempt".into(),
             executable: artifact("inputs/dusklight", executable),
@@ -1014,7 +1014,7 @@ mod tests {
         fs::write(root.join("objective.json"), evidence).unwrap();
         let objective = artifact("objective.json", evidence);
         let mut result = HarnessRunResult {
-            schema: RUN_RESULT_SCHEMA_V1.into(),
+            schema: RUN_RESULT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             request_id: request.id.clone(),
             request_sha256: request.content_sha256,

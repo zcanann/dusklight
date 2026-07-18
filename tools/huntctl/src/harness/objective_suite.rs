@@ -16,7 +16,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub const OBJECTIVE_SUITE_SCHEMA_V1: &str = "dusklight-objective-suite/v1";
+pub const OBJECTIVE_SUITE_SCHEMA_V2: &str = "dusklight-objective-suite/v2";
 const MAX_CASES: usize = 64;
 const MAX_TEXT_BYTES: usize = 2_048;
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
@@ -136,7 +136,7 @@ pub struct ObjectiveSuiteValidationReport {
 
 impl ObjectiveSuite {
     pub fn validate(&self) -> Result<(), ObjectiveSuiteError> {
-        if self.schema != OBJECTIVE_SUITE_SCHEMA_V1 {
+        if self.schema != OBJECTIVE_SUITE_SCHEMA_V2 {
             return Err(suite_error("unsupported objective-suite schema"));
         }
         validate_id("suite id", &self.id)?;
@@ -218,7 +218,7 @@ impl ObjectiveSuite {
         let encoded = serde_json::to_vec(&(&self.schema, &self.id, &self.description, &self.cases))
             .map_err(|error| suite_error(format!("cannot encode objective suite: {error}")))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.objective-suite/v1\0");
+        hasher.update(b"dusklight.objective-suite/v2\0");
         hasher.update((encoded.len() as u64).to_le_bytes());
         hasher.update(encoded);
         Ok(Digest(hasher.finalize().into()))
@@ -785,7 +785,7 @@ mod tests {
         negative.control_for = Some(positive.id.clone());
         negative.expected_terminal = ExpectedTerminalClass::ObjectiveMiss;
         let mut suite = ObjectiveSuite {
-            schema: OBJECTIVE_SUITE_SCHEMA_V1.into(),
+            schema: OBJECTIVE_SUITE_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             id: "core-conformance/v1".into(),
             description: "Cheap end-to-end harness conformance cases.".into(),

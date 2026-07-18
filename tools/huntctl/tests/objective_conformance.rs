@@ -1,5 +1,5 @@
 use huntctl::harness::objective_suite::{
-    ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V1, ObjectiveBoot, ObjectiveSeed, ObjectiveSuite,
+    ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot, ObjectiveSeed, ObjectiveSuite,
 };
 use huntctl::learning::offline_rl::movement_action_schema_digest_v2;
 use huntctl::milestone_dsl;
@@ -15,7 +15,7 @@ fn checked_suite() -> (PathBuf, ObjectiveSuite) {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(suite.schema, OBJECTIVE_SUITE_SCHEMA_V1);
+    assert_eq!(suite.schema, OBJECTIVE_SUITE_SCHEMA_V2);
     let report = suite.validate_files(&repository).unwrap();
     assert_eq!(report.case_count, 2);
     assert_eq!(report.positive_count, 2);
