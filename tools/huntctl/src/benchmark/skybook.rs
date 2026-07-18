@@ -9,7 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-pub const SKYBOOK_MANIFEST_SCHEMA: &str = "dusklight-skybook-manifest/v1";
+pub const SKYBOOK_MANIFEST_SCHEMA: &str = "dusklight-skybook-manifest/v2";
 const MAX_POSTS: usize = 4_096;
 const MAX_POST_BYTES: usize = 4 * 1_024 * 1_024;
 
@@ -28,7 +28,15 @@ pub struct SkybookManifest {
     pub schema: String,
     pub content_sha256: Digest,
     pub source: SkybookSourceIdentity,
+    pub alias_rules: Vec<SkybookAliasRule>,
     pub pages: Vec<SkybookPage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkybookAliasRule {
+    pub original: String,
+    pub canonical: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -44,8 +52,13 @@ pub struct SkybookPage {
     pub authors: Vec<String>,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
+    pub canonical_tags: Vec<String>,
+    pub resolved_aliases: Vec<SkybookAliasRule>,
     pub platforms: Vec<String>,
     pub maps: Vec<String>,
+    pub canonical_platforms: Vec<String>,
+    pub canonical_maps: Vec<String>,
+    pub canonical_regions: Vec<String>,
     pub date: Option<String>,
     pub front_matter: BTreeMap<String, Vec<String>>,
     pub body_markdown: String,
@@ -144,6 +157,7 @@ impl SkybookManifest {
                 post_count: pages.len(),
                 categorized_glitch_count,
             },
+            alias_rules: alias_rules(),
             pages,
         };
         manifest.content_sha256 = manifest.compute_content_sha256()?;
@@ -156,6 +170,9 @@ impl SkybookManifest {
             return Err(import_error("unknown Skybook manifest schema"));
         }
         validate_source_identity(&self.source.repository_url, &self.source.git_revision)?;
+        if self.alias_rules != alias_rules() {
+            return Err(import_error("Skybook alias catalog is invalid"));
+        }
         if self.pages.is_empty()
             || self.pages.len() > MAX_POSTS
             || self.source.post_count != self.pages.len()
@@ -181,6 +198,11 @@ impl SkybookManifest {
             );
             if page.source_url != expected_url
                 || page.body_sha256 != sha256(page.body_markdown.as_bytes())
+                || page.canonical_tags != canonicalize_tags(&page.tags).0
+                || page.resolved_aliases != canonicalize_tags(&page.tags).1
+                || page.canonical_platforms != prefixed_values(&page.canonical_tags, "platform-")
+                || page.canonical_maps != prefixed_values(&page.canonical_tags, "map-")
+                || page.canonical_regions != prefixed_values(&page.canonical_tags, "region-")
             {
                 return Err(import_error("Skybook page source binding is invalid"));
             }
@@ -213,10 +235,13 @@ impl SkybookManifest {
     }
 
     fn compute_content_sha256(&self) -> Result<Digest, SkybookImportError> {
-        let encoded = serde_json::to_vec(&(&self.schema, &self.source, &self.pages))
-            .map_err(|error| import_error(format!("cannot encode Skybook manifest: {error}")))?;
+        let encoded =
+            serde_json::to_vec(&(&self.schema, &self.source, &self.alias_rules, &self.pages))
+                .map_err(|error| {
+                    import_error(format!("cannot encode Skybook manifest: {error}"))
+                })?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.skybook-manifest/v1\0");
+        hasher.update(b"dusklight.skybook-manifest/v2\0");
         hasher.update((encoded.len() as u64).to_le_bytes());
         hasher.update(encoded);
         Ok(Digest(hasher.finalize().into()))
@@ -267,11 +292,15 @@ fn parse_page(
     let description = required_scalar(&front_matter, "description", source_path)?;
     let categories = values(&front_matter, "categories");
     let tags = values(&front_matter, "tags");
+    let (canonical_tags, resolved_aliases) = canonicalize_tags(&tags);
     let mut authors = values(&front_matter, "authors");
     authors.extend(values(&front_matter, "author"));
     sort_dedup(&mut authors);
     let platforms = prefixed_values(&tags, "platform-");
     let maps = prefixed_values(&tags, "map-");
+    let canonical_platforms = prefixed_values(&canonical_tags, "platform-");
+    let canonical_maps = prefixed_values(&canonical_tags, "map-");
+    let canonical_regions = prefixed_values(&canonical_tags, "region-");
     let date = front_matter
         .get("date")
         .and_then(|values| values.first())
@@ -296,8 +325,13 @@ fn parse_page(
         authors,
         categories,
         tags,
+        canonical_tags,
+        resolved_aliases,
         platforms,
         maps,
+        canonical_platforms,
+        canonical_maps,
+        canonical_regions,
         date,
         front_matter,
         body_markdown,
@@ -575,6 +609,46 @@ fn is_image_target(target: &str) -> bool {
         })
 }
 
+const TAG_ALIASES: [(&str, &str); 7] = [
+    ("castle-town-sewers", "map-castle-town-sewers"),
+    ("map-snowpeak-mountain", "map-snowpeak-mountains"),
+    ("map-zora-river", "map-zoras-river"),
+    ("platform-gcn", "platform-gamecube"),
+    ("platform-hd", "platform-wii-u-hd"),
+    ("platform-pal", "region-pal"),
+    ("reference", "type-reference"),
+];
+
+fn alias_rules() -> Vec<SkybookAliasRule> {
+    TAG_ALIASES
+        .iter()
+        .map(|(original, canonical)| SkybookAliasRule {
+            original: (*original).into(),
+            canonical: (*canonical).into(),
+        })
+        .collect()
+}
+
+fn canonicalize_tags(tags: &[String]) -> (Vec<String>, Vec<SkybookAliasRule>) {
+    let mut canonical_tags = Vec::with_capacity(tags.len());
+    let mut resolved_aliases = Vec::new();
+    for tag in tags {
+        if let Some((_, canonical)) = TAG_ALIASES.iter().find(|(original, _)| tag == original) {
+            canonical_tags.push((*canonical).into());
+            resolved_aliases.push(SkybookAliasRule {
+                original: tag.clone(),
+                canonical: (*canonical).into(),
+            });
+        } else {
+            canonical_tags.push(tag.clone());
+        }
+    }
+    sort_dedup(&mut canonical_tags);
+    resolved_aliases.sort();
+    resolved_aliases.dedup();
+    (canonical_tags, resolved_aliases)
+}
+
 fn prefixed_values(tags: &[String], prefix: &str) -> Vec<String> {
     let mut output = tags
         .iter()
@@ -676,7 +750,7 @@ mod tests {
             "description:\r\n",
             "authors: [alice, bob]\r\n",
             "categories: [Glitches]\r\n",
-            "tags: [type-glitch, platform-gc, map-forest-temple]\r\n",
+            "tags: [type-glitch, platform-gcn, platform-pal, map-snowpeak-mountain, reference]\r\n",
             "date: 2026-01-01 00:00:00\r\n",
             "---\r\n\r\n",
             "See [Step Clip](/posts/step-clip) and [notes](https://example.com/source).\r\n",
@@ -695,8 +769,16 @@ mod tests {
         assert_eq!(manifest.source.post_count, 1);
         assert_eq!(manifest.source.categorized_glitch_count, 1);
         let page = &manifest.pages[0];
-        assert_eq!(page.platforms, ["gc"]);
-        assert_eq!(page.maps, ["forest-temple"]);
+        assert_eq!(page.platforms, ["gcn", "pal"]);
+        assert_eq!(page.maps, ["snowpeak-mountain"]);
+        assert!(page.tags.contains(&"platform-gcn".into()));
+        assert_eq!(page.source_path, "_posts/example-clip.md");
+        assert_eq!(page.canonical_platforms, ["gamecube"]);
+        assert_eq!(page.canonical_maps, ["snowpeak-mountains"]);
+        assert_eq!(page.canonical_regions, ["pal"]);
+        assert!(page.canonical_tags.contains(&"type-reference".into()));
+        assert_eq!(page.resolved_aliases.len(), 4);
+        assert_eq!(manifest.alias_rules.len(), TAG_ALIASES.len());
         assert_eq!(page.authors, ["alice", "bob"]);
         assert!(page.description.is_empty());
         assert_eq!(
