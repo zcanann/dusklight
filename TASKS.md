@@ -1289,7 +1289,3 @@ whole-Skybook replication, exhaustive query coverage, or a new learner.
    capabilities rather than expanding the toolbox speculatively.
 5. [ ] Review with a human and choose whether to attempt the next page, defer
    it, or stop the pilot.
-
-That slice immediately improves inspection, predicates, manual TAS work,
-search, and future Skybook reproduction. It also creates the first dataset on
-which a neural Q method can be evaluated honestly.
