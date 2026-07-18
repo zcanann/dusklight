@@ -8,6 +8,7 @@ pub mod ensemble_q;
 pub mod factorized_actions;
 pub mod fqi;
 pub mod goal_conditioning;
+pub mod hindsight;
 pub mod iql;
 pub mod low_data_baselines;
 pub mod offline_rl;
