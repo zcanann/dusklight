@@ -6,6 +6,7 @@
 //! target copy evaluates it. Target copies are synchronized after a declared
 //! number of gradient updates.
 
+pub mod ablation;
 pub mod prioritized;
 
 use crate::artifact::Digest;
