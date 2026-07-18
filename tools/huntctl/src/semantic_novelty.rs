@@ -166,11 +166,12 @@ impl SemanticNoveltyDescriptor {
         for record in &trace.records {
             push_changed(&mut descriptor.procedure_sequence, record.player_proc_id)?;
             push_changed(&mut descriptor.event_sequence, event_fact(record))?;
-            push_changed(&mut descriptor.contact_sequence, contact_state(record))?;
-            push_changed(
-                &mut descriptor.actor_relationship_sequence,
-                actor_relationship_state(record)?,
-            )?;
+            if let Some(contact) = contact_state(record) {
+                push_changed(&mut descriptor.contact_sequence, contact)?;
+            }
+            if let Some(relationships) = actor_relationship_state(record)? {
+                push_changed(&mut descriptor.actor_relationship_sequence, relationships)?;
+            }
             push_changed(&mut descriptor.flag_sequence, flag_state(record))?;
 
             let state = semantic_state(record);
@@ -235,7 +236,10 @@ fn event_fact(record: &TraceRecord) -> EventFact {
     }
 }
 
-fn contact_state(record: &TraceRecord) -> ContactState {
+fn contact_state(record: &TraceRecord) -> Option<ContactState> {
+    if record.player_background_collision.is_none() && record.player_collision_surfaces.is_none() {
+        return None;
+    }
     let mut surfaces = record
         .player_collision_surfaces
         .iter()
@@ -270,23 +274,20 @@ fn contact_state(record: &TraceRecord) -> ContactState {
         })
         .collect::<Vec<_>>();
     surfaces.sort();
-    ContactState {
+    Some(ContactState {
         background_flags: record
             .player_background_collision
             .as_ref()
             .map(|collision| collision.flags),
         surfaces,
-    }
+    })
 }
 
 fn actor_relationship_state(
     record: &TraceRecord,
-) -> Result<ActorRelationshipState, SemanticNoveltyError> {
+) -> Result<Option<ActorRelationshipState>, SemanticNoveltyError> {
     let Some(selected) = record.selected_actors.as_ref() else {
-        return Ok(ActorRelationshipState {
-            actors: Vec::new(),
-            observation_truncated: false,
-        });
+        return Ok(None);
     };
     let mut actors = selected
         .actors
@@ -313,10 +314,10 @@ fn actor_relationship_state(
         })
         .collect::<Result<Vec<_>, SemanticNoveltyError>>()?;
     actors.sort();
-    Ok(ActorRelationshipState {
+    Ok(Some(ActorRelationshipState {
         actors,
         observation_truncated: selected.truncated,
-    })
+    }))
 }
 
 fn flag_state(record: &TraceRecord) -> FlagState {

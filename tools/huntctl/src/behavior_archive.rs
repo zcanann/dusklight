@@ -17,6 +17,7 @@ const POSITION_BIN_WORLD_UNITS: f32 = 256.0;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BehaviorContext {
+    pub procedure_sequence_identity: Option<String>,
     pub event_sequence_identity: Option<String>,
     pub state_transition_identity: Option<String>,
     pub actor_relationship_identity: Option<String>,
@@ -36,6 +37,7 @@ pub struct BehaviorContext {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct BehaviorDescriptor {
+    pub procedure_sequence_identity: Option<String>,
     pub event_sequence_identity: Option<String>,
     pub state_transition_identity: Option<String>,
     pub actor_relationship_identity: Option<String>,
@@ -294,6 +296,7 @@ pub fn describe_behavior_with_context(
         }
     }
     Ok(BehaviorDescriptor {
+        procedure_sequence_identity: context.procedure_sequence_identity.clone(),
         event_sequence_identity: context.event_sequence_identity.clone(),
         state_transition_identity: context.state_transition_identity.clone(),
         actor_relationship_identity: context.actor_relationship_identity.clone(),
@@ -320,6 +323,7 @@ pub fn describe_behavior_with_context(
 
 fn validate_context(context: &BehaviorContext) -> Result<(), BehaviorArchiveError> {
     for (name, digest) in [
+        ("procedure sequence", &context.procedure_sequence_identity),
         ("event sequence", &context.event_sequence_identity),
         ("state transition", &context.state_transition_identity),
         ("actor relationship", &context.actor_relationship_identity),
@@ -368,6 +372,9 @@ fn novelty(
 
 fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) -> u128 {
     let mut distance = 0_u128;
+    if left.procedure_sequence_identity != right.procedure_sequence_identity {
+        distance += 1_u128 << 127;
+    }
     for (shift, differs) in [
         (
             126,
@@ -604,6 +611,10 @@ mod tests {
                 ..BehaviorContext::default()
             },
             BehaviorContext {
+                procedure_sequence_identity: Some("50".repeat(32)),
+                ..contexts_base()
+            },
+            BehaviorContext {
                 event_sequence_identity: Some("51".repeat(32)),
                 ..contexts_base()
             },
@@ -629,12 +640,12 @@ mod tests {
                 .consider_with_context(episode(100.0, 4.0, 8), score(10), index as u32, context)
                 .unwrap();
         }
-        assert_eq!(archive.len(), 11);
+        assert_eq!(archive.len(), 12);
         let descriptors = archive.entries.keys().cloned().collect::<Vec<_>>();
         let selected = archive
-            .select_diverse(&HashSet::new(), &descriptors[..1], 10)
+            .select_diverse(&HashSet::new(), &descriptors[..1], 11)
             .unwrap();
-        assert_eq!(selected.len(), 10);
+        assert_eq!(selected.len(), 11);
         let summary = archive.summary(&selected).unwrap();
         assert_eq!(summary.schema, "dusklight-behavior-archive/v3");
         assert_eq!(

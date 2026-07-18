@@ -3993,13 +3993,38 @@ fn address_attempt_artifacts(
 }
 
 fn archive_behavior_context(evidence: &AttemptEvidence) -> Result<BehaviorContext, EvaluateError> {
-    let mut semantic_axes = (None, None, None, None, None);
+    let mut semantic_axes = (None, None, None, None, None, None, None);
     let contact_behavior_identity = if let Some(path) = evidence.gameplay_trace.as_ref() {
         let bytes = fs::read(path)?;
         let trace = crate::trace::decode(&bytes)
             .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
-        semantic_axes = trace_semantic_archive_axes(&trace);
-        trace_contact_behavior_identity(&trace)?
+        let boundaries = evidence
+            .boundary_fingerprints
+            .iter()
+            .map(
+                |(name, value)| crate::semantic_novelty::BoundaryFingerprintFact {
+                    name: name.clone(),
+                    schema: value.schema.clone(),
+                    algorithm: value.algorithm.clone(),
+                    canonical_encoding: value.canonical_encoding.clone(),
+                    digest: value.digest.clone(),
+                },
+            )
+            .collect();
+        let descriptor =
+            crate::semantic_novelty::SemanticNoveltyDescriptor::from_trace(&trace, boundaries)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        let axes = descriptor.axis_identities();
+        semantic_axes = (
+            axes.procedure_sequence,
+            axes.event_sequence,
+            axes.state_transitions,
+            axes.actor_relationships,
+            axes.flags,
+            axes.kinematic_extrema,
+            axes.contacts,
+        );
+        semantic_axes.6.clone()
     } else {
         None
     };
@@ -4008,114 +4033,13 @@ fn archive_behavior_context(evidence: &AttemptEvidence) -> Result<BehaviorContex
         &evidence.value_projections,
         contact_behavior_identity,
     );
-    context.event_sequence_identity = semantic_axes.0;
-    context.state_transition_identity = semantic_axes.1;
-    context.actor_relationship_identity = semantic_axes.2;
-    context.flag_state_identity = semantic_axes.3;
-    context.kinematic_extrema_identity = semantic_axes.4;
+    context.procedure_sequence_identity = semantic_axes.0;
+    context.event_sequence_identity = semantic_axes.1;
+    context.state_transition_identity = semantic_axes.2;
+    context.actor_relationship_identity = semantic_axes.3;
+    context.flag_state_identity = semantic_axes.4;
+    context.kinematic_extrema_identity = semantic_axes.5;
     Ok(context)
-}
-
-fn trace_semantic_archive_axes(
-    trace: &crate::trace::DecodedTrace,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
-    let mut events = Vec::new();
-    let mut transitions = Vec::new();
-    let mut actors = Vec::new();
-    let mut flags = Vec::new();
-    let mut extrema = [
-        [f32::INFINITY; 3],
-        [f32::NEG_INFINITY; 3],
-        [f32::INFINITY; 3],
-        [f32::NEG_INFINITY; 3],
-    ];
-    for record in &trace.records {
-        events.push(
-            serde_json::to_vec(&(
-                record.event_id,
-                record.event_mode,
-                record.event_status,
-                record.event_map_tool_id,
-                record
-                    .event_name_hash_present
-                    .then_some(record.event_name_hash),
-            ))
-            .unwrap(),
-        );
-        transitions.push(
-            serde_json::to_vec(&(
-                &record.stage_name,
-                record.room,
-                record.layer,
-                &record.next_stage_name,
-                record.next_room,
-                record.next_layer,
-                record.next_stage_enabled,
-                record.player_proc_id,
-            ))
-            .unwrap(),
-        );
-        flags.push(
-            serde_json::to_vec(&(
-                record.flags,
-                record
-                    .player_background_collision
-                    .as_ref()
-                    .map(|value| value.flags),
-                record
-                    .player_collision_surfaces
-                    .as_ref()
-                    .map(|value| value.flags),
-            ))
-            .unwrap(),
-        );
-        if let Some(selected) = &record.selected_actors {
-            let stable = selected
-                .actors
-                .iter()
-                .map(|actor| {
-                    (
-                        actor.actor_name,
-                        actor.set_id,
-                        actor.home_room,
-                        actor.current_room,
-                        actor.health,
-                        actor.status,
-                        [
-                            actor.position[0] - record.position[0],
-                            actor.position[1] - record.position[1],
-                            actor.position[2] - record.position[2],
-                        ],
-                    )
-                })
-                .collect::<Vec<_>>();
-            actors.push(
-                serde_json::to_vec(&(selected.observed_count, selected.truncated, stable)).unwrap(),
-            );
-        }
-        for axis in 0..3 {
-            extrema[0][axis] = extrema[0][axis].min(record.position[axis]);
-            extrema[1][axis] = extrema[1][axis].max(record.position[axis]);
-            extrema[2][axis] = extrema[2][axis].min(record.velocity[axis]);
-            extrema[3][axis] = extrema[3][axis].max(record.velocity[axis]);
-        }
-    }
-    let extrema_rows = (!trace.records.is_empty())
-        .then(|| vec![serde_json::to_vec(&extrema).unwrap()])
-        .unwrap_or_default();
-    (
-        archive_axis_identity(b"events/v1", &events),
-        archive_axis_identity(b"transitions/v1", &transitions),
-        archive_axis_identity(b"actor-relationships/v1", &actors),
-        archive_axis_identity(b"flags/v1", &flags),
-        archive_axis_identity(b"kinematic-extrema/v1", &extrema_rows),
-    )
 }
 
 fn archive_behavior_context_from_evidence(
@@ -4173,6 +4097,7 @@ fn archive_behavior_context_from_evidence(
         downstream.push(encoded);
     }
     BehaviorContext {
+        procedure_sequence_identity: None,
         event_sequence_identity: None,
         state_transition_identity: None,
         actor_relationship_identity: None,
@@ -4184,50 +4109,6 @@ fn archive_behavior_context_from_evidence(
         boundary_state_identity: archive_axis_identity(b"boundaries/v1", &downstream_boundaries),
         downstream_state_identity: archive_axis_identity(b"downstream/v1", &downstream),
     }
-}
-
-/// Hash the exact observed collision/contact trajectory after removing native
-/// session process IDs. Consecutive identical contact states are run-deduplicated
-/// so the axis describes touched geometry and contact transitions rather than
-/// merely episode duration.
-fn trace_contact_behavior_identity(
-    trace: &crate::trace::DecodedTrace,
-) -> Result<Option<String>, EvaluateError> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"dusklight-contact-behavior/v1\0");
-    let mut previous = None::<Vec<u8>>;
-    let mut states = 0_u64;
-    for record in &trace.records {
-        if record.player_background_collision.is_none()
-            && record.player_collision_surfaces.is_none()
-        {
-            continue;
-        }
-        let mut background = record.player_background_collision.clone();
-        if let Some(background) = background.as_mut() {
-            background.ground_owner_session_process_id = None;
-            background.roof_owner_session_process_id = None;
-            background.water_owner_session_process_id = None;
-            for wall in &mut background.walls {
-                wall.owner_session_process_id = None;
-            }
-        }
-        let mut surfaces = record.player_collision_surfaces.clone();
-        if let Some(surfaces) = surfaces.as_mut() {
-            for surface in &mut surfaces.surfaces {
-                surface.owner_session_process_id = None;
-            }
-        }
-        let encoded = serde_json::to_vec(&(background, surfaces))?;
-        if previous.as_ref() == Some(&encoded) {
-            continue;
-        }
-        hasher.update((encoded.len() as u64).to_le_bytes());
-        hasher.update(&encoded);
-        previous = Some(encoded);
-        states += 1;
-    }
-    Ok((states != 0).then(|| format!("{:x}", hasher.finalize())))
 }
 
 fn archive_axis_identity(domain: &[u8], entries: &[Vec<u8>]) -> Option<String> {
@@ -5558,20 +5439,15 @@ milestone tunnel_crawl_start {
             }
         }
 
-        let reference = trace_contact_behavior_identity(&contact_trace(1, 7, 1))
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            reference,
-            trace_contact_behavior_identity(&contact_trace(1, 99, 3))
+        let contact_identity = |trace| {
+            crate::semantic_novelty::SemanticNoveltyDescriptor::from_trace(&trace, Vec::new())
                 .unwrap()
+                .axis_identities()
+                .contacts
                 .unwrap()
-        );
-        assert_ne!(
-            reference,
-            trace_contact_behavior_identity(&contact_trace(2, 7, 1))
-                .unwrap()
-                .unwrap()
-        );
+        };
+        let reference = contact_identity(contact_trace(1, 7, 1));
+        assert_eq!(reference, contact_identity(contact_trace(1, 99, 3)));
+        assert_ne!(reference, contact_identity(contact_trace(2, 7, 1)));
     }
 }
