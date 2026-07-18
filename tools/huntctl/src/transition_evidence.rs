@@ -1,6 +1,10 @@
 //! Exact phase/provenance sidecars for compact learner transition corpora.
 
 use crate::artifact::Digest;
+use crate::episode::{
+    EpisodeLineage, EpisodeManifest, EpisodeObjectiveIdentity, EpisodeOutcomeClass,
+};
+use crate::harness::run_contract::HarnessTerminalReason;
 use crate::option_execution::OptionExecution;
 use crate::tape::{InputFrame, InputTape};
 use crate::trace::{
@@ -13,6 +17,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const TRANSITION_EVIDENCE_SCHEMA_V1: &str = "dusklight-transition-evidence/v1";
+pub const IMMUTABLE_EPISODE_SCHEMA_V1: &str = "dusklight-immutable-episode/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +197,266 @@ pub struct TransitionEvidenceBuild<'a> {
     pub start_tape_frame: u64,
     pub end_tape_frame: u64,
     pub terminal_reason: Option<TerminalReasonEvidence>,
+}
+
+/// One content-sealed episode view. It resolves the manifest, compact corpus,
+/// and sparse transition-evidence joins once so consumers cannot shift an
+/// action or reward onto the wrong observation boundary.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmutableEpisodeArtifact {
+    pub schema: String,
+    pub content_sha256: Digest,
+    pub episode_sha256: Digest,
+    pub objective: EpisodeObjectiveIdentity,
+    pub lineage: EpisodeLineage,
+    pub terminal: HarnessTerminalReason,
+    pub terminal_detail: String,
+    pub realized_tape_sha256: Digest,
+    pub gameplay_trace_sha256: Digest,
+    pub transition_corpus_sha256: Digest,
+    pub transition_evidence_sha256: Digest,
+    pub steps: Vec<ImmutableEpisodeStep>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmutableEpisodeStep {
+    pub index: u64,
+    pub pre_input_state: ImmutableEpisodeState,
+    pub consumed_action: ExactActionEvidence,
+    pub duration_ticks: u32,
+    pub post_simulation_state: ImmutableEpisodeState,
+    pub objective: PredicateTransitionEvidence,
+    pub reward: RewardEvidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<TerminalReasonEvidence>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmutableEpisodeState {
+    /// The canonical post-simulation boundary that becomes the immutable
+    /// state observed immediately before the next input is consumed.
+    pub boundary: ObservationBoundaryEvidence,
+    pub features: Vec<f32>,
+    pub event: EventFactsEvidence,
+    pub entities: EntityFactsEvidence,
+}
+
+pub struct ImmutableEpisodeBuild<'a> {
+    pub manifest: &'a EpisodeManifest,
+    pub corpus: &'a TransitionCorpus,
+    pub evidence: &'a TransitionEvidenceBundle,
+    pub transition_evidence_sha256: Digest,
+    pub terminal: HarnessTerminalReason,
+    pub terminal_detail: &'a str,
+}
+
+impl ImmutableEpisodeArtifact {
+    pub fn build(input: ImmutableEpisodeBuild<'_>) -> Result<Self, TransitionEvidenceError> {
+        input
+            .manifest
+            .validate(input.corpus)
+            .map_err(|error| TransitionEvidenceError::new(error.to_string()))?;
+        input.evidence.validate(input.corpus)?;
+        if input.transition_evidence_sha256 == Digest::ZERO
+            || input.manifest.artifacts.transition_evidence_sha256
+                != input.transition_evidence_sha256
+            || input.manifest.artifacts.absolute_tape_sha256 != input.evidence.tape_sha256
+            || input.manifest.artifacts.gameplay_trace_sha256 != input.evidence.trace_sha256
+            || input.manifest.artifacts.transition_corpus_sha256 != input.evidence.corpus_sha256
+            || input.manifest.outcome.class != outcome_class(input.terminal)
+        {
+            return Err(TransitionEvidenceError::new(
+                "immutable episode source identities do not agree",
+            ));
+        }
+        let mut steps = Vec::with_capacity(input.corpus.transitions.len());
+        for (transition, evidence) in input
+            .corpus
+            .transitions
+            .iter()
+            .zip(&input.evidence.transitions)
+        {
+            steps.push(ImmutableEpisodeStep {
+                index: evidence.corpus_transition_index,
+                pre_input_state: ImmutableEpisodeState {
+                    boundary: evidence.pre_action.clone(),
+                    features: transition.state.clone(),
+                    event: input.evidence.event_side_table[evidence.event.pre_action as usize]
+                        .clone(),
+                    entities: input.evidence.entity_side_table
+                        [evidence.entities.pre_action as usize]
+                        .clone(),
+                },
+                consumed_action: evidence.action.clone(),
+                duration_ticks: evidence.duration_ticks,
+                post_simulation_state: ImmutableEpisodeState {
+                    boundary: evidence.post_action.clone(),
+                    features: transition.next_state.clone(),
+                    event: input.evidence.event_side_table[evidence.event.post_action as usize]
+                        .clone(),
+                    entities: input.evidence.entity_side_table
+                        [evidence.entities.post_action as usize]
+                        .clone(),
+                },
+                objective: evidence.predicate.clone(),
+                reward: evidence.reward.clone(),
+                terminal_reason: evidence.terminal_reason.clone(),
+            });
+        }
+        let mut artifact = Self {
+            schema: IMMUTABLE_EPISODE_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            episode_sha256: input.manifest.episode_sha256,
+            objective: input.manifest.objective.clone(),
+            lineage: input.manifest.lineage.clone(),
+            terminal: input.terminal,
+            terminal_detail: input.terminal_detail.into(),
+            realized_tape_sha256: input.evidence.tape_sha256,
+            gameplay_trace_sha256: input.evidence.trace_sha256,
+            transition_corpus_sha256: input.evidence.corpus_sha256,
+            transition_evidence_sha256: input.transition_evidence_sha256,
+            steps,
+        };
+        artifact.content_sha256 = artifact.compute_content_sha256()?;
+        artifact.validate()?;
+        Ok(artifact)
+    }
+
+    pub fn validate(&self) -> Result<(), TransitionEvidenceError> {
+        if self.schema != IMMUTABLE_EPISODE_SCHEMA_V1
+            || self.content_sha256 == Digest::ZERO
+            || self.episode_sha256 == Digest::ZERO
+            || self.objective.digest == Digest::ZERO
+            || self.realized_tape_sha256 == Digest::ZERO
+            || self.gameplay_trace_sha256 == Digest::ZERO
+            || self.transition_corpus_sha256 == Digest::ZERO
+            || self.transition_evidence_sha256 == Digest::ZERO
+            || self.terminal_detail.is_empty()
+            || self.terminal_detail.len() > 8_192
+            || self
+                .terminal_detail
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+            || self.steps.is_empty()
+            || self.content_sha256 != self.compute_content_sha256()?
+        {
+            return Err(TransitionEvidenceError::new(
+                "immutable episode identity or required field is invalid",
+            ));
+        }
+        for (index, step) in self.steps.iter().enumerate() {
+            if step.index != index as u64
+                || step.duration_ticks == 0
+                || step.pre_input_state.boundary.phase != EvidencePhase::PostSimulation
+                || step.post_simulation_state.boundary.phase != EvidencePhase::PostSimulation
+                || step.post_simulation_state.boundary.simulation_tick
+                    != step.pre_input_state.boundary.simulation_tick
+                        + u64::from(step.duration_ticks)
+                || step.pre_input_state.features.is_empty()
+                || step.pre_input_state.features.len() != step.post_simulation_state.features.len()
+                || !canonical_features(&step.pre_input_state.features)
+                || !canonical_features(&step.post_simulation_state.features)
+                || step.reward.components.is_empty()
+                || !step.reward.training_reward.is_finite()
+                || step
+                    .reward
+                    .components
+                    .iter()
+                    .any(|component| !component.value.is_finite())
+            {
+                return Err(TransitionEvidenceError::new(
+                    "immutable episode step alignment is invalid",
+                ));
+            }
+            validate_exact_action(
+                &step.consumed_action,
+                step.duration_ticks,
+                self.realized_tape_sha256,
+            )?;
+            if let ExactActionEvidence::PadFrame { tape_frame, .. } = &step.consumed_action
+                && (step.post_simulation_state.boundary.tape_frame != Some(*tape_frame)
+                    || step
+                        .pre_input_state
+                        .boundary
+                        .tape_frame
+                        .and_then(|frame| frame.checked_add(1))
+                        != Some(*tape_frame))
+            {
+                return Err(TransitionEvidenceError::new(
+                    "immutable episode action is shifted from its state boundaries",
+                ));
+            }
+            if let Some(next) = self.steps.get(index + 1)
+                && (step.post_simulation_state.boundary.reference_sha256
+                    != next.pre_input_state.boundary.reference_sha256
+                    || step.post_simulation_state.features != next.pre_input_state.features)
+            {
+                return Err(TransitionEvidenceError::new(
+                    "immutable episode states do not form one ordered chain",
+                ));
+            }
+            if index + 1 != self.steps.len() && step.terminal_reason.is_some() {
+                return Err(TransitionEvidenceError::new(
+                    "immutable episode terminal reason appears before the final step",
+                ));
+            }
+        }
+        let last = self.steps.last().expect("nonempty was checked");
+        if self.terminal == HarnessTerminalReason::Reached
+            && (!last.objective.post_action.reached
+                || last.terminal_reason != Some(TerminalReasonEvidence::ObjectiveReached))
+        {
+            return Err(TransitionEvidenceError::new(
+                "reached episode lacks aligned objective terminal evidence",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_content_sha256(&self) -> Result<Digest, TransitionEvidenceError> {
+        let mut unsigned = self.clone();
+        unsigned.content_sha256 = Digest::ZERO;
+        let bytes = serde_json::to_vec(&unsigned)
+            .map_err(|error| TransitionEvidenceError::new(error.to_string()))?;
+        let mut hasher = sha2::Sha256::new();
+        use sha2::Digest as _;
+        hasher.update(b"dusklight.immutable-episode/v1\0");
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+fn canonical_features(features: &[f32]) -> bool {
+    features
+        .iter()
+        .all(|value| value.is_finite() && value.to_bits() != (-0.0_f32).to_bits())
+}
+
+fn outcome_class(terminal: HarnessTerminalReason) -> EpisodeOutcomeClass {
+    match terminal {
+        HarnessTerminalReason::Reached => EpisodeOutcomeClass::Successful,
+        HarnessTerminalReason::Exhausted
+        | HarnessTerminalReason::Impossible
+        | HarnessTerminalReason::TargetLost
+        | HarnessTerminalReason::Rejected
+        | HarnessTerminalReason::Cancelled => EpisodeOutcomeClass::Failed,
+        HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch => {
+            EpisodeOutcomeClass::Unsupported
+        }
+        HarnessTerminalReason::HostTimeout | HarnessTerminalReason::Hung => {
+            EpisodeOutcomeClass::TimedOut
+        }
+        HarnessTerminalReason::WorkerCrashed | HarnessTerminalReason::GameCrashed => {
+            EpisodeOutcomeClass::Crashed
+        }
+        HarnessTerminalReason::IdentityMismatch
+        | HarnessTerminalReason::ProtocolFailure
+        | HarnessTerminalReason::Nondeterministic => EpisodeOutcomeClass::Desynced,
+    }
 }
 
 impl TransitionEvidenceBundle {
@@ -659,9 +924,15 @@ impl Error for TransitionEvidenceError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::episode::{
+        EPISODE_CONTEXT_SCHEMA_V1, EpisodeContext, EpisodeManifestBuild, EpisodeOutcome,
+        EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
+        RunBuildIdentity,
+    };
     use crate::tape::RawPadState;
     use crate::trace::{TraceGoalProgress, TraceSelectedActor, TraceSelectedActors};
     use crate::transition_corpus::{MacroAction, StateReference, Transition};
+    use sha2::Digest as ShaDigest;
 
     fn reference(byte: u8) -> StateReference {
         StateReference {
@@ -801,6 +1072,51 @@ mod tests {
         })
     }
 
+    fn manifest(corpus: &TransitionCorpus, evidence_sha256: Digest) -> EpisodeManifest {
+        let context = EpisodeContext {
+            schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+            run_build: RunBuildIdentity {
+                executable_sha256: Digest([0x77; 32]),
+                dusklight_commit: Some("abc123".into()),
+                aurora_commit: Some("def456".into()),
+                target: Some("aarch64-apple-darwin".into()),
+                profile: Some("debug".into()),
+                feature_digest: None,
+            },
+            objective: EpisodeObjectiveIdentity {
+                id: "test-objective".into(),
+                digest: Digest([0x88; 32]),
+            },
+            producer: EpisodeProducerIdentity {
+                kind: EpisodeProducerKind::Evolution,
+                name: "huntctl".into(),
+                version: "1".into(),
+            },
+            seed: EpisodeSeed::Deterministic { value: 42 },
+            worker_id: "worker-0".into(),
+            lineage: EpisodeLineage {
+                candidate_id: Some("candidate-a".into()),
+                parent_candidate_id: Some("candidate-parent".into()),
+                generation: 2,
+                intervention: None,
+            },
+            outcome: EpisodeOutcome {
+                class: EpisodeOutcomeClass::Successful,
+                reason: "objective reached".into(),
+            },
+        };
+        EpisodeManifest::build(EpisodeManifestBuild {
+            context: &context,
+            boot: &Default::default(),
+            corpus,
+            query_view_id: "movement-state/v2",
+            tape_sha256: Digest([0x66; 32]),
+            trace_sha256: Digest([0x55; 32]),
+            transition_evidence_sha256: evidence_sha256,
+        })
+        .unwrap()
+    }
+
     #[test]
     fn records_exact_phase_aligned_transition_evidence() {
         let (corpus, trace, tape) = fixture();
@@ -839,6 +1155,82 @@ mod tests {
         let decoded: TransitionEvidenceBundle = serde_json::from_slice(&encoded).unwrap();
         decoded.validate(&corpus).unwrap();
         assert_eq!(decoded, bundle);
+    }
+
+    #[test]
+    fn seals_one_self_contained_aligned_episode() {
+        let (corpus, trace, tape) = fixture();
+        let evidence = build(
+            &corpus,
+            &trace,
+            &tape,
+            Some(TerminalReasonEvidence::ObjectiveReached),
+        )
+        .unwrap();
+        let evidence_sha256 =
+            Digest(sha2::Sha256::digest(serde_json::to_vec_pretty(&evidence).unwrap()).into());
+        let manifest = manifest(&corpus, evidence_sha256);
+        let artifact = ImmutableEpisodeArtifact::build(ImmutableEpisodeBuild {
+            manifest: &manifest,
+            corpus: &corpus,
+            evidence: &evidence,
+            transition_evidence_sha256: evidence_sha256,
+            terminal: HarnessTerminalReason::Reached,
+            terminal_detail: "objective reached with complete replay proof",
+        })
+        .unwrap();
+        assert_eq!(artifact.steps.len(), 1);
+        assert_eq!(artifact.steps[0].pre_input_state.features, [1.0]);
+        assert_eq!(artifact.steps[0].post_simulation_state.features, [2.0]);
+        assert_eq!(
+            artifact.lineage.candidate_id.as_deref(),
+            Some("candidate-a")
+        );
+        assert_eq!(artifact.realized_tape_sha256, Digest([0x66; 32]));
+
+        let encoded = serde_json::to_vec(&artifact).unwrap();
+        let decoded: ImmutableEpisodeArtifact = serde_json::from_slice(&encoded).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded, artifact);
+    }
+
+    #[test]
+    fn rejects_tampering_and_one_tick_action_shifts() {
+        let (corpus, trace, tape) = fixture();
+        let evidence = build(
+            &corpus,
+            &trace,
+            &tape,
+            Some(TerminalReasonEvidence::ObjectiveReached),
+        )
+        .unwrap();
+        let evidence_sha256 =
+            Digest(sha2::Sha256::digest(serde_json::to_vec_pretty(&evidence).unwrap()).into());
+        let manifest = manifest(&corpus, evidence_sha256);
+        let artifact = ImmutableEpisodeArtifact::build(ImmutableEpisodeBuild {
+            manifest: &manifest,
+            corpus: &corpus,
+            evidence: &evidence,
+            transition_evidence_sha256: evidence_sha256,
+            terminal: HarnessTerminalReason::Reached,
+            terminal_detail: "objective reached with complete replay proof",
+        })
+        .unwrap();
+
+        let mut tampered = artifact.clone();
+        tampered.steps[0].reward.training_reward = 99.0;
+        assert!(tampered.validate().is_err());
+
+        let mut shifted = artifact;
+        shifted.steps[0].post_simulation_state.boundary.tape_frame = Some(2);
+        shifted.content_sha256 = shifted.compute_content_sha256().unwrap();
+        assert!(
+            shifted
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("shifted")
+        );
     }
 
     #[test]
