@@ -139,6 +139,10 @@ roadmap documents describe the larger target.
   run/trace/oracle artifacts and requires the treatment's write audit. The
   paired executor orders the disabled control before the exact treatment and
   validates both returned artifact sets against the shared plan.
+- Bounded intervention parameter search covers timing, duration, vector/curve
+  components, facing, health, and timers with deterministic canonical proposals.
+  Predicate-preserving minimization reduces those axes toward neutral values
+  while retaining the exact resulting `DUSKINTR` and evaluation count.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.

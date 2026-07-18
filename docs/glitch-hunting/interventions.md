@@ -124,6 +124,20 @@ their typed identities. Independent fields and actors may share an interval.
 Spawn and despawn are lifecycle writes and conflict with every simultaneous
 write to the same placed identity.
 
+`intervention::parameter_search` defines up to 16 typed, bounded axes over start
+tick, duration, vector or cubic-curve components, facing yaw, health, and named
+timer duration. It emits at most 4,096 deterministic low-discrepancy proposals,
+deduplicates their canonical `DUSKINTR` bytes, and discards candidates that fail
+the normal timeline, semantic-bound, or overlap validation. Parameter values
+are applied to the seed's original intervention indices before canonical
+reordering, so timing search cannot silently retarget an axis.
+
+The minimizer moves each declared axis toward zero or its nearest allowed bound
+and performs bounded refinement only while the caller's exact causal predicate
+continues to pass. Integer-backed timing, yaw, health, and timer values use
+their canonical rounded representation; the result reports the realized values,
+exact minimized tape, and evaluation count.
+
 An intervention timeline may coexist with a reactive controller, but the two
 remain separate streams keyed to the same simulation tick. The controller sees
 the observation produced by the previous completed tick; the intervention

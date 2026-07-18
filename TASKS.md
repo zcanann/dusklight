@@ -959,7 +959,7 @@ uninspectable random tapes.
   understood.
 - [x] Reuse exact stable selectors; reject target loss and overlapping writes.
 - [x] Run identical no-intervention controls and retain both artifacts.
-- [ ] Add parameter search/minimization for intervention timing and magnitude.
+- [x] Add parameter search/minimization for intervention timing and magnitude.
 - [ ] Mark results as existence/mechanism evidence until normal input reproduces
   the setup.
 - [ ] Keep arbitrary address writes in a separately named unsafe lab build, if
