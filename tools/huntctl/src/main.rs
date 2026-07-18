@@ -4278,6 +4278,8 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     if decoded.tape.frames.is_empty() {
         return Err("tape run requires at least one input frame".into());
     }
+    let logical_tick_budget = u64::try_from(decoded.tape.frames.len())
+        .map_err(|_| "tape run input length does not fit u64")?;
     fs::create_dir_all(&state_root)?;
     let renderer_cache = state_root
         .parent()
@@ -4315,6 +4317,8 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         .arg(&dvd)
         .arg("--input-tape")
         .arg(&input)
+        .arg("--automation-tick-budget")
+        .arg(logical_tick_budget.to_string())
         .arg("--automation-data-root")
         .arg(&state_root)
         .arg("--renderer-cache-root")
@@ -4633,6 +4637,8 @@ fn evaluate_minimize_tape(
     fs::create_dir_all(&root)?;
     let tape_path = root.join("candidate.tape");
     fs::write(&tape_path, tape.encode()?)?;
+    let logical_tick_budget = u64::try_from(tape.frames.len())
+        .map_err(|_| "minimization candidate length does not fit u64")?;
     let mut accepted: Option<TapeMinimizeProof> = None;
     let mut missed = false;
     for repetition in 1..=repetitions {
@@ -4653,6 +4659,8 @@ fn evaluate_minimize_tape(
             .arg(&tape_path)
             .arg("--input-tape-end")
             .arg("hold")
+            .arg("--automation-tick-budget")
+            .arg(logical_tick_budget.to_string())
             .arg("--automation-data-root")
             .arg(&state)
             .arg("--renderer-cache-root")
