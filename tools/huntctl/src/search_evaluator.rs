@@ -17,6 +17,8 @@ use crate::episode::{
     EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
     RunBuildIdentity,
 };
+use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
+use crate::harness::run_contract::HarnessRunRequest;
 use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
@@ -136,6 +138,73 @@ pub struct EvaluateConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    /// Authenticated request template used to turn each candidate into an
+    /// ordinary core-harness run. Legacy callers may omit this while they are
+    /// migrated, but new evaluator entry points should provide it.
+    pub harness: Option<HarnessEvaluateConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HarnessEvaluateConfig {
+    pub repository_root: PathBuf,
+    pub request_template: HarnessRunRequest,
+}
+
+/// Derive one candidate-specific request without weakening any identity from
+/// the authenticated template. The candidate tape and destination become part
+/// of the new request digest; every other objective/build/protocol binding is
+/// retained byte-for-byte.
+pub fn derive_candidate_request(
+    template: &HarnessRunRequest,
+    repository_root: &Path,
+    tape_path: &Path,
+    artifact_destination: &str,
+    rng_seed: u64,
+) -> Result<HarnessRunRequest, EvaluateError> {
+    template.validate_files(repository_root).map_err(|error| {
+        EvaluateError::InvalidConfig(format!("invalid harness request template: {error}"))
+    })?;
+    let repository_root = fs::canonicalize(repository_root)?;
+    let tape_path = fs::canonicalize(tape_path)?;
+    let relative = tape_path.strip_prefix(&repository_root).map_err(|_| {
+        EvaluateError::InvalidConfig(format!(
+            "candidate tape is outside the harness repository root: {}",
+            tape_path.display()
+        ))
+    })?;
+    let path = relative
+        .to_str()
+        .ok_or_else(|| EvaluateError::InvalidConfig("candidate tape path is not UTF-8".into()))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let bytes = fs::read(&tape_path)?;
+    let tape = InputTape::decode(&bytes)?;
+    let ticks = u64::try_from(tape.tape.frames.len()).map_err(|_| {
+        EvaluateError::InvalidConfig("candidate tape length does not fit u64".into())
+    })?;
+    if ticks == 0 || ticks > template.logical_tick_budget {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "candidate tape requires {ticks} ticks but template budget is {}",
+            template.logical_tick_budget
+        )));
+    }
+
+    let mut request = template.clone();
+    request.input = ObjectiveSeed::Tape {
+        artifact: ArtifactReference {
+            path,
+            sha256: ArtifactDigest(Sha256::digest(&bytes).into()),
+        },
+    };
+    request.rng_seed = rng_seed;
+    request.artifact_destination = artifact_destination.into();
+    request.content_sha256 = ArtifactDigest::ZERO;
+    request
+        .refresh_content_sha256()
+        .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))?;
+    request.validate_files(&repository_root).map_err(|error| {
+        EvaluateError::InvalidConfig(format!("candidate request is invalid: {error}"))
+    })?;
+    Ok(request)
 }
 
 #[derive(Clone, Debug)]
@@ -1227,6 +1296,7 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
+            harness: None,
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -1349,6 +1419,7 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
+            harness: None,
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -1582,6 +1653,7 @@ pub fn run_continuous_search(
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
+            harness: None,
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -1773,6 +1845,7 @@ pub fn run_bayesian_search(
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
+            harness: None,
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -2045,6 +2118,7 @@ pub fn run_proposer_tournament(
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
+        harness: None,
     })?;
     let evaluation_wall_millis = started.elapsed().as_millis();
     let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
@@ -2287,6 +2361,7 @@ pub fn run_anchored_search(
                     workers: search.workers,
                     repetitions: search.repetitions,
                     timeout: search.timeout,
+                    harness: None,
                 },
                 objective: config.objective.clone(),
             },
@@ -3250,6 +3325,7 @@ fn evaluate_boot_batch_with_report(
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
+        harness: None,
     })?;
     let mut proven = Vec::new();
     for candidate in candidates {
@@ -4942,6 +5018,7 @@ fn normalize_evaluate_config(config: &EvaluateConfig) -> Result<EvaluateConfig, 
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
+        harness: config.harness.clone(),
     })
 }
 

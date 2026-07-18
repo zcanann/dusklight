@@ -2911,6 +2911,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
                 timeout: timeout_option(search_args)?,
+                harness: None,
             })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
