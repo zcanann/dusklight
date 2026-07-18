@@ -19,7 +19,10 @@ use sha2::{Digest as _, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 fn digest(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
@@ -34,12 +37,13 @@ fn artifact(path: &str, bytes: &[u8]) -> ArtifactReference {
 
 fn unique_root() -> PathBuf {
     std::env::temp_dir().join(format!(
-        "huntctl-harness-cli-{}-{}",
+        "huntctl-harness-cli-{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT_ROOT.fetch_add(1, Ordering::Relaxed),
     ))
 }
 
