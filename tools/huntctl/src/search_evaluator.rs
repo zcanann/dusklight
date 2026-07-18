@@ -17,8 +17,9 @@ use crate::episode::{
     EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
     RunBuildIdentity,
 };
+use crate::harness::execution::execute_request;
 use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
-use crate::harness::run_contract::HarnessRunRequest;
+use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessTerminalReason};
 use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
@@ -57,8 +58,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v4";
-pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v4";
+pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v5";
+pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v5";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
@@ -494,6 +495,12 @@ pub struct AttemptEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suffix_tape: Option<PathBuf>,
     pub artifact_root: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_request: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_result: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_terminal: Option<HarnessTerminalReason>,
     pub state_root: PathBuf,
     pub milestone_result: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3568,6 +3575,9 @@ fn run_trial(
         tape: trial.tape.clone(),
         suffix_tape: trial.suffix_tape.clone(),
         artifact_root: trial.root.clone(),
+        harness_request: None,
+        harness_result: None,
+        harness_terminal: None,
         state_root: trial.state.clone(),
         milestone_result: trial.milestones.clone(),
         gameplay_trace: None,
@@ -3600,6 +3610,16 @@ fn run_trial(
         value_projections: BTreeMap::new(),
     };
     let mut run = || -> Result<TrialScore, EvaluateError> {
+        if let Some(harness) = &config.harness {
+            return run_harness_trial(
+                harness,
+                segment,
+                trial,
+                global_cancel,
+                anchored,
+                &mut evidence,
+            );
+        }
         fs::create_dir_all(&trial.state)?;
         let stdout = File::create(&trial.stdout)?;
         let stderr = File::create(&trial.stderr)?;
@@ -3708,8 +3728,13 @@ fn run_trial(
         }
         Err(error) => evidence.infrastructure_error = Some(error.to_string()),
     }
-    if let Some(path) = &trial.gameplay_trace {
-        match fs::read(path)
+    let gameplay_trace = evidence
+        .gameplay_trace
+        .clone()
+        .or_else(|| trial.gameplay_trace.clone());
+    evidence.gameplay_trace = None;
+    if let Some(path) = gameplay_trace {
+        match fs::read(&path)
             .map_err(|error| error.to_string())
             .and_then(|bytes| crate::trace::decode(&bytes).map_err(|error| error.to_string()))
             .and_then(|trace| {
@@ -3726,7 +3751,7 @@ fn run_trial(
                     Ok(())
                 }
             }) {
-            Ok(()) => evidence.gameplay_trace = Some(path.clone()),
+            Ok(()) => evidence.gameplay_trace = Some(path),
             Err(error) => evidence.gameplay_trace_error = Some(error),
         }
     }
@@ -3751,7 +3776,275 @@ fn run_trial(
     evidence
 }
 
+fn run_harness_trial(
+    harness: &HarnessEvaluateConfig,
+    segment: SegmentProfile,
+    trial: &Trial,
+    global_cancel: &AtomicBool,
+    anchored: Option<&PreparedAnchoredObjective>,
+    evidence: &mut AttemptEvidence,
+) -> Result<TrialScore, EvaluateError> {
+    if global_cancel.load(Ordering::Acquire) {
+        evidence.cancelled = true;
+        return Err(EvaluateError::Cancelled);
+    }
+    let repository_root = fs::canonicalize(&harness.repository_root)?;
+    fs::create_dir_all(&trial.root)?;
+    let trial_root = fs::canonicalize(&trial.root)?;
+    let artifact_root = trial_root.join("harness");
+    let destination = artifact_root
+        .strip_prefix(&repository_root)
+        .map_err(|_| {
+            EvaluateError::InvalidConfig(format!(
+                "search output must be beneath the harness repository root: {}",
+                artifact_root.display()
+            ))
+        })?
+        .to_str()
+        .ok_or_else(|| EvaluateError::InvalidConfig("search output path is not UTF-8".into()))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let request = derive_candidate_request(
+        &harness.request_template,
+        &repository_root,
+        &trial.tape,
+        &destination,
+        trial.rng_seed,
+    )?;
+    if let Some(objective) = anchored
+        && (request.objective.goal != objective.identity.goal_milestone
+            || request.objective.program_sha256.to_string()
+                != objective.identity.milestone_program_sha256)
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored search request template does not bind the prepared objective".into(),
+        ));
+    }
+
+    let request_path = trial_root.join("request.json");
+    write_json(&request_path, &request)?;
+    let result = execute_request(&request, &repository_root, trial.attempt)
+        .map_err(|error| EvaluateError::NativeResult(error.to_string()))?;
+    let result_path = artifact_root.join("result.json");
+    evidence.artifact_root = artifact_root.clone();
+    evidence.harness_request = Some(request_path);
+    evidence.harness_result = Some(result_path);
+    evidence.harness_terminal = Some(result.terminal);
+    evidence.state_root = artifact_root.join("state");
+    evidence.milestone_result =
+        harness_artifact_path(&artifact_root, result.artifacts.objective_result.as_ref())
+            .unwrap_or_else(|| artifact_root.join("objective.json"));
+    evidence.gameplay_trace =
+        harness_artifact_path(&artifact_root, result.artifacts.gameplay_trace.as_ref());
+    evidence.stdout = harness_artifact_path(&artifact_root, result.artifacts.stdout.as_ref())
+        .unwrap_or_else(|| artifact_root.join("stdout.txt"));
+    evidence.stderr = harness_artifact_path(&artifact_root, result.artifacts.stderr.as_ref())
+        .unwrap_or_else(|| artifact_root.join("stderr.txt"));
+    evidence.elapsed_millis = u128::from(result.timing.host_elapsed_millis);
+    evidence.exit_code = match result.terminal {
+        HarnessTerminalReason::Reached => Some(0),
+        HarnessTerminalReason::Exhausted | HarnessTerminalReason::TargetLost => {
+            Some(NATIVE_GOAL_MISS_EXIT_CODE)
+        }
+        _ => None,
+    };
+    evidence.timed_out = result.terminal == HarnessTerminalReason::HostTimeout;
+    evidence.cancelled = result.terminal == HarnessTerminalReason::Cancelled;
+
+    match result.terminal {
+        HarnessTerminalReason::Reached | HarnessTerminalReason::Exhausted => score_harness_result(
+            &result,
+            &request,
+            &evidence.milestone_result,
+            &trial.boot,
+            segment,
+            anchored,
+        ),
+        _ => Ok(empty_harness_score()),
+    }
+}
+
+fn harness_artifact_path(
+    artifact_root: &Path,
+    reference: Option<&ArtifactReference>,
+) -> Option<PathBuf> {
+    reference.map(|reference| artifact_root.join(&reference.path))
+}
+
+fn empty_harness_score() -> TrialScore {
+    TrialScore {
+        depth: 0,
+        deepest: "none".into(),
+        score_tick: None,
+        goal_reached: false,
+        milestone_observations: BTreeMap::new(),
+        boundary_fingerprints: BTreeMap::new(),
+        value_projections: BTreeMap::new(),
+    }
+}
+
+fn score_harness_result(
+    result: &HarnessRunResult,
+    request: &HarnessRunRequest,
+    objective_result: &Path,
+    expected_boot: &TapeBoot,
+    segment: SegmentProfile,
+    anchored: Option<&PreparedAnchoredObjective>,
+) -> Result<TrialScore, EvaluateError> {
+    let native: NativeMilestoneResult = serde_json::from_slice(&fs::read(objective_result)?)?;
+    if native.schema.name != "dusklight.automation.milestones"
+        || native.schema.version != 5
+        || native.goal.as_deref() != Some(request.objective.goal.as_str())
+        || native.program_digest.as_deref() != Some(&request.objective.program_sha256.to_string())
+        || native.milestones.len() != 1
+    {
+        return Err(EvaluateError::NativeResult(
+            "core-harness objective artifact does not match its request".into(),
+        ));
+    }
+    validate_native_boot(&native, expected_boot)?;
+    let milestone = &native.milestones[0];
+    if milestone.id != request.objective.goal
+        || milestone.hit != result.objective.reached
+        || native.goal_reached != result.objective.reached
+    {
+        return Err(EvaluateError::NativeResult(
+            "core-harness result contradicts its native objective artifact".into(),
+        ));
+    }
+    if !milestone.hit {
+        return Ok(if let Some(objective) = anchored {
+            anchored_source_score(objective)
+        } else {
+            empty_harness_score()
+        });
+    }
+    let (sim_tick, tape_frame, evidence) = match (
+        milestone.sim_tick,
+        milestone.tape_frame,
+        milestone.evidence.as_ref(),
+    ) {
+        (Some(sim_tick), Some(tape_frame), Some(evidence)) => (sim_tick, tape_frame, evidence),
+        _ => {
+            return Err(EvaluateError::NativeResult(
+                "reached harness objective omitted tick or boundary evidence".into(),
+            ));
+        }
+    };
+    validate_fingerprint(&evidence.boundary_fingerprint)?;
+    let mut observations = BTreeMap::new();
+    observations.insert(
+        milestone.id.clone(),
+        MilestoneObservation {
+            sim_tick,
+            tape_frame,
+            boundary_index: milestone.boundary_index,
+            phase: milestone.phase.clone(),
+            stable_ticks: milestone.stable_ticks,
+            definition_digest: milestone.definition_digest.clone(),
+            program_digest: milestone.program_digest.clone(),
+        },
+    );
+    let mut fingerprints = BTreeMap::new();
+    fingerprints.insert(milestone.id.clone(), evidence.boundary_fingerprint.clone());
+    let projections = validate_value_projections(milestone.projections.as_ref())?;
+    let value_projections = if projections.is_empty() {
+        BTreeMap::new()
+    } else {
+        BTreeMap::from([(milestone.id.clone(), projections)])
+    };
+    if let Some(objective) = anchored {
+        let mut score = anchored_source_score(objective);
+        score.depth = 2;
+        score.deepest = milestone.id.clone();
+        score.score_tick = Some(
+            tape_frame
+                .checked_sub(objective.identity.source_boundary_index)
+                .ok_or_else(|| {
+                    EvaluateError::NativeResult(
+                        "anchored harness goal fired inside the immutable prefix".into(),
+                    )
+                })?,
+        );
+        score.goal_reached = true;
+        score.milestone_observations.extend(observations);
+        score.boundary_fingerprints.extend(fingerprints);
+        score.value_projections = value_projections;
+        return Ok(score);
+    }
+    let depth = match segment {
+        SegmentProfile::BootToFsp103 => 2,
+        SegmentProfile::Fsp103ToFsp104 => 4,
+        SegmentProfile::LinkControlToTunnelCrawlStart => unreachable!("anchored profile"),
+    };
+    Ok(TrialScore {
+        depth,
+        deepest: milestone.id.clone(),
+        score_tick: Some(sim_tick),
+        goal_reached: true,
+        milestone_observations: observations,
+        boundary_fingerprints: fingerprints,
+        value_projections,
+    })
+}
+
+fn anchored_source_score(objective: &PreparedAnchoredObjective) -> TrialScore {
+    TrialScore {
+        depth: 1,
+        deepest: objective.identity.source_milestone.clone(),
+        score_tick: Some(0),
+        goal_reached: false,
+        milestone_observations: BTreeMap::from([(
+            objective.identity.source_milestone.clone(),
+            MilestoneObservation {
+                sim_tick: objective.identity.source_tape_frame,
+                tape_frame: objective.identity.source_tape_frame,
+                boundary_index: Some(objective.identity.source_boundary_index),
+                phase: Some(objective.source.phase.clone()),
+                stable_ticks: Some(objective.source.stable_ticks),
+                definition_digest: Some(objective.source.digest.clone()),
+                program_digest: Some(objective.identity.milestone_program_sha256.clone()),
+            },
+        )]),
+        boundary_fingerprints: BTreeMap::from([(
+            objective.identity.source_milestone.clone(),
+            BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v1".into(),
+                digest: objective.identity.source_boundary_fingerprint.clone(),
+            },
+        )]),
+        value_projections: BTreeMap::new(),
+    }
+}
+
 fn classify_attempt_outcome(evidence: &AttemptEvidence) -> EpisodeOutcome {
+    if let Some(terminal) = evidence.harness_terminal {
+        let class = match terminal {
+            HarnessTerminalReason::Reached => EpisodeOutcomeClass::Successful,
+            HarnessTerminalReason::Exhausted
+            | HarnessTerminalReason::Impossible
+            | HarnessTerminalReason::TargetLost
+            | HarnessTerminalReason::Rejected => EpisodeOutcomeClass::Failed,
+            HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch => {
+                EpisodeOutcomeClass::Unsupported
+            }
+            HarnessTerminalReason::HostTimeout | HarnessTerminalReason::Hung => {
+                EpisodeOutcomeClass::TimedOut
+            }
+            HarnessTerminalReason::WorkerCrashed | HarnessTerminalReason::GameCrashed => {
+                EpisodeOutcomeClass::Crashed
+            }
+            HarnessTerminalReason::IdentityMismatch
+            | HarnessTerminalReason::ProtocolFailure
+            | HarnessTerminalReason::Nondeterministic => EpisodeOutcomeClass::Desynced,
+            HarnessTerminalReason::Cancelled => EpisodeOutcomeClass::Failed,
+        };
+        return EpisodeOutcome {
+            class,
+            reason: format!("core harness terminal: {}", terminal.name()),
+        };
+    }
     classify_outcome(
         evidence.timed_out,
         evidence.cancelled,
@@ -4989,6 +5282,29 @@ fn validate_evaluate_config(config: &EvaluateConfig) -> Result<(), EvaluateError
             "working directory does not exist: {}",
             config.working_directory.display()
         )));
+    }
+    if let Some(harness) = &config.harness {
+        let repository_root = fs::canonicalize(&harness.repository_root)?;
+        harness
+            .request_template
+            .validate_files(&repository_root)
+            .map_err(|error| {
+                EvaluateError::InvalidConfig(format!("invalid harness request template: {error}"))
+            })?;
+        if fs::canonicalize(repository_root.join(&harness.request_template.executable.path))?
+            != config.game
+            || fs::canonicalize(repository_root.join(&harness.request_template.game_data.path))?
+                != config.dvd
+        {
+            return Err(EvaluateError::InvalidConfig(
+                "--game/--dvd do not match the authenticated run request".into(),
+            ));
+        }
+        if !config.game_args_prefix.is_empty() {
+            return Err(EvaluateError::InvalidConfig(
+                "authenticated search evaluation rejects unauthenticated --game-arg values".into(),
+            ));
+        }
     }
     if directory_is_nonempty(&config.output_root)? {
         return Err(EvaluateError::InvalidConfig(format!(

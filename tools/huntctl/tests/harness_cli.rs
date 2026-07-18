@@ -828,3 +828,83 @@ fn reports_an_exact_controller_target_loss_without_calling_it_exhaustion() {
         .unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn search_evaluation_emits_one_authenticated_request_and_result_per_attempt() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_native_execution(&root, &request_draft, executable);
+    let mut request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_draft).unwrap()).unwrap();
+    request.logical_tick_budget = 1_000;
+    request.content_sha256 = Digest::ZERO;
+    fs::write(&request_draft, serde_json::to_vec_pretty(&request).unwrap()).unwrap();
+    let request_path = root.join("run-request.json");
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+
+    let population = root.join("population");
+    let seeded = Command::new(executable)
+        .args(["search", "seed", "--segment", "boot_to_fsp103", "--output"])
+        .arg(&population)
+        .args(["--size", "1", "--rng-seed", "42"])
+        .output()
+        .unwrap();
+    assert!(
+        seeded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+
+    let output = root.join("search-evaluation");
+    let evaluated = Command::new(executable)
+        .args(["search", "evaluate", "--population"])
+        .arg(population.join("manifest.json"))
+        .arg("--game")
+        .arg(root.join("inputs/dusklight"))
+        .arg("--dvd")
+        .arg(root.join("inputs/game.iso"))
+        .arg("--output")
+        .arg(&output)
+        .args(["--workers", "1", "--repetitions", "1", "--run-request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        evaluated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evaluated.stderr)
+    );
+    let report: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-search-evaluation/v5");
+    assert_eq!(report["attempts"][0]["harness_terminal"], "reached");
+    let request = PathBuf::from(report["attempts"][0]["harness_request"].as_str().unwrap());
+    let result = PathBuf::from(report["attempts"][0]["harness_result"].as_str().unwrap());
+    assert!(request.is_file());
+    assert!(result.is_file());
+    let run_request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
+    let run_result: HarnessRunResult = serde_json::from_slice(&fs::read(&result).unwrap()).unwrap();
+    assert_eq!(run_result.request_sha256, run_request.content_sha256);
+    run_result
+        .validate_files(&run_request, result.parent().unwrap())
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
