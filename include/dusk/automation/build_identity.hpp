@@ -25,13 +25,14 @@ struct BuildIdentity {
     std::string_view buildType;
     std::string_view featureSwitches;
     std::string_view featureDigest;
+    std::string_view fidelityProfile;
     std::string_view platform;
     std::string_view architecture;
     std::uint32_t pointerBits;
     bool dirty;
 };
 
-[[nodiscard]] BuildIdentity current_build_identity() noexcept;
+[[nodiscard]] BuildIdentity current_build_identity(std::string_view fidelityProfile) noexcept;
 
 }  // namespace dusk::automation
 

@@ -3,6 +3,7 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "dusk/automation/build_identity.hpp"
+#include "dusk/automation/name_entry_observer.hpp"
 
 #include "d/d_com_inf_game.h"
 #include "d/d_s_play.h"
@@ -123,7 +124,11 @@ bool write_actor_catalog(
         });
     }
 
-    const BuildIdentity build = current_build_identity();
+    const auto& nameEntryObserver = name_entry_observer();
+    const BuildIdentity build = current_build_identity(
+        nameEntryObserver.cursorBreakoutShadowEnabled()
+            ? "cursor_breakout_shadow"
+            : "observe_only");
     json document{
         {"schema", "dusklight.actor-catalog.v1"},
         {"build",
@@ -140,6 +145,7 @@ bool write_actor_catalog(
                 {"build_type", build.buildType},
                 {"feature_switches", build.featureSwitches},
                 {"feature_digest", build.featureDigest},
+                {"fidelity_profile", build.fidelityProfile},
                 {"platform", build.platform},
                 {"architecture", build.architecture},
                 {"pointer_bits", build.pointerBits},

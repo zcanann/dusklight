@@ -55,8 +55,17 @@ json protocol_fields(std::string_view type, bool ok) {
     };
 }
 
-json build_identity_json() {
-    const BuildIdentity build = current_build_identity();
+std::string_view fidelity_profile_from_command_line(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--cursor-breakout-shadow") {
+            return "cursor_breakout_shadow";
+        }
+    }
+    return "observe_only";
+}
+
+json build_identity_json(const std::string_view fidelityProfile) {
+    const BuildIdentity build = current_build_identity(fidelityProfile);
     return {
         {"version", build.version},
         {"describe", build.describe},
@@ -70,6 +79,7 @@ json build_identity_json() {
         {"build_type", build.buildType},
         {"feature_switches", build.featureSwitches},
         {"feature_digest", build.featureDigest},
+        {"fidelity_profile", build.fidelityProfile},
         {"platform", build.platform},
         {"architecture", build.architecture},
         {"pointer_bits", build.pointerBits},
@@ -77,9 +87,9 @@ json build_identity_json() {
     };
 }
 
-json hello_response() {
+json hello_response(const std::string_view fidelityProfile) {
     json response = protocol_fields("hello", true);
-    response["build"] = build_identity_json();
+    response["build"] = build_identity_json(fidelityProfile);
     response["capabilities"] = {
         {"persistent_control", true},
         {"engine_session", false},
@@ -109,7 +119,7 @@ void write_response(const json& response) {
     std::cout << response.dump() << '\n' << std::flush;
 }
 
-int run_worker() {
+int run_worker(const std::string_view fidelityProfile) {
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) {
@@ -136,7 +146,7 @@ int run_worker() {
 
         const std::string command = commandValue->get<std::string>();
         if (command == "hello") {
-            json response = hello_response();
+            json response = hello_response(fidelityProfile);
             copy_request_id(request, response);
             write_response(response);
         } else if (command == "ping") {
@@ -161,14 +171,15 @@ int run_worker() {
 }  // namespace
 
 std::optional<int> run_from_command_line(int argc, char* argv[]) {
+    const std::string_view fidelityProfile = fidelity_profile_from_command_line(argc, argv);
     switch (detect_invocation(argc, argv)) {
     case InvocationMode::None:
         return std::nullopt;
     case InvocationMode::Hello:
-        write_response(hello_response());
+        write_response(hello_response(fidelityProfile));
         return 0;
     case InvocationMode::Worker:
-        return run_worker();
+        return run_worker(fidelityProfile);
     case InvocationMode::Conflict:
         write_response(error_response(
             "conflicting_mode", "choose either --automation-hello or --automation-worker"));

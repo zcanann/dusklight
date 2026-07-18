@@ -4646,7 +4646,7 @@ fn command_hello(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut client = WorkerClient::new(ProcessTransport::spawn(program, &worker_args)?);
     let hello = client.handshake()?.clone();
     println!(
-        "protocol={CONTROL_PROTOCOL_NAME}/{} version={} revision={} dirty_digest={} aurora={} compiler={} target={} config={} features={} platform={}/{} pointer_bits={}",
+        "protocol={CONTROL_PROTOCOL_NAME}/{} version={} revision={} dirty_digest={} aurora={} compiler={} target={} config={} features={} fidelity={} platform={}/{} pointer_bits={}",
         CONTROL_PROTOCOL_VERSION,
         hello.build.version,
         hello.build.revision,
@@ -4656,6 +4656,7 @@ fn command_hello(args: &[String]) -> Result<(), Box<dyn Error>> {
         hello.build.compiler_target,
         hello.build.build_type,
         hello.build.feature_digest,
+        hello.build.fidelity_profile,
         hello.build.platform,
         hello.build.architecture,
         hello.build.pointer_bits
@@ -4825,6 +4826,8 @@ fn print_usage() {
 
 fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let revision = option(args, "--mock-revision").unwrap_or_else(|| "mock".into());
+    let fidelity_profile =
+        option(args, "--mock-fidelity-profile").unwrap_or_else(|| "observe_only".into());
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -4839,7 +4842,7 @@ fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "version": "mock", "describe": revision, "revision": revision, "branch": "test",
                     "dirty_digest": "", "source_date": "1970-01-01", "aurora_revision": "mock-aurora",
                     "compiler": "mock-compiler", "compiler_target": "mock-target", "build_type": "test",
-                    "feature_switches": "mock=ON", "feature_digest": "mock-feature-digest", "platform": env::consts::OS,
+                    "feature_switches": "mock=ON", "feature_digest": "mock-feature-digest", "fidelity_profile": fidelity_profile, "platform": env::consts::OS,
                     "architecture": env::consts::ARCH, "pointer_bits": usize::BITS, "dirty": false
                 },
                 "capabilities": {

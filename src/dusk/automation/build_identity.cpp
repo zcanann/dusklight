@@ -4,7 +4,7 @@
 
 namespace dusk::automation {
 
-BuildIdentity current_build_identity() noexcept {
+BuildIdentity current_build_identity(const std::string_view fidelityProfile) noexcept {
     constexpr std::string_view describe = DUSK_WC_DESCRIBE;
     constexpr std::string_view dirtyDigest = DUSK_DIRTY_DIGEST;
 
@@ -21,6 +21,7 @@ BuildIdentity current_build_identity() noexcept {
         .buildType = DUSK_BUILD_TYPE,
         .featureSwitches = DUSK_FEATURE_SWITCHES,
         .featureDigest = DUSK_FEATURE_DIGEST,
+        .fidelityProfile = fidelityProfile,
         .platform = DUSK_PLATFORM_NAME,
         .architecture = DUSK_ARCH,
         .pointerBits = static_cast<std::uint32_t>(sizeof(void*) * 8),

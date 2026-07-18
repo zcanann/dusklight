@@ -22,6 +22,7 @@ pub struct WorkerBuildIdentity {
     pub build_type: String,
     pub feature_switches: String,
     pub feature_digest: String,
+    pub fidelity_profile: String,
     pub platform: String,
     pub architecture: String,
     pub pointer_bits: u32,
@@ -118,6 +119,11 @@ impl HelloResponse {
             "build.feature_digest",
             self.build.feature_digest,
             actual.build.feature_digest
+        );
+        compare!(
+            "build.fidelity_profile",
+            self.build.fidelity_profile,
+            actual.build.fidelity_profile
         );
         compare!("build.platform", self.build.platform, actual.build.platform);
         compare!(
