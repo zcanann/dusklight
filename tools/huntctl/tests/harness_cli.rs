@@ -142,6 +142,31 @@ fn validates_a_content_bound_suite_and_rejects_a_stale_artifact() {
     assert_eq!(report["case_count"], 1);
     assert_eq!(report["positive_count"], 1);
 
+    let mut draft: ObjectiveSuite =
+        serde_json::from_slice(&fs::read(&suite_path).unwrap()).unwrap();
+    draft.content_sha256 = Digest::ZERO;
+    let draft_path = root.join("suite.draft.json");
+    let sealed_path = root.join("suite.sealed.json");
+    fs::write(&draft_path, serde_json::to_vec_pretty(&draft).unwrap()).unwrap();
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-suite", "--input"])
+        .arg(&draft_path)
+        .arg("--output")
+        .arg(&sealed_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+    let sealed_suite: ObjectiveSuite =
+        serde_json::from_slice(&fs::read(&sealed_path).unwrap()).unwrap();
+    sealed_suite.validate_files(&root).unwrap();
+    assert_ne!(sealed_suite.content_sha256, Digest::ZERO);
+
     fs::write(
         root.join("cases/stage-ready/objective.milestones"),
         b"tampered",

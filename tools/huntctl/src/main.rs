@@ -152,9 +152,34 @@ fn command_harness(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => {
-            Err("harness command: validate-suite --suite SUITE.json [--repository-root DIR]".into())
+        Some("seal-suite") => {
+            let command_args = &args[1..];
+            let input = required_path(command_args, "--input")?;
+            let output = required_path(command_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "objective suite output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let mut suite: ObjectiveSuite = serde_json::from_slice(&fs::read(&input)?)?;
+            suite.refresh_content_sha256()?;
+            let report = suite.validate_files(&repository_root)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, suite.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
         }
+        _ => Err("harness command: validate-suite --suite SUITE.json [--repository-root DIR] | seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]".into()),
     }
 }
 
@@ -4790,7 +4815,7 @@ fn print_usage() {
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
-        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]"
+        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]"
     );
     eprintln!(
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
