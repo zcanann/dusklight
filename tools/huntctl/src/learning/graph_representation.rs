@@ -12,6 +12,8 @@ const MAX_SAMPLES: usize = 100_000;
 const MAX_NODES: usize = 128;
 const MAX_EDGES: usize = 1024;
 const MAX_FEATURE_WIDTH: usize = 128;
+const MAX_REGRESSION_FEATURE_CELLS: usize = 16_000_000;
+const MAX_RIDGE_SOLVER_ITERATIONS: usize = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -306,47 +308,71 @@ fn fit_evaluate(
 
 fn ridge_fit(rows: &RegressionRows, penalty: f64) -> Result<Vec<f64>, GraphRepresentationError> {
     let width = rows.features[0].len();
-    let mut matrix = vec![vec![0.0; width + 1]; width];
+    let mut right_hand_side = vec![0.0; width];
     for (features, target) in rows.features.iter().zip(&rows.targets) {
-        for row in 0..width {
-            matrix[row][width] += features[row] * target;
-            for column in 0..width {
-                matrix[row][column] += features[row] * features[column];
-            }
+        for (output, feature) in right_hand_side.iter_mut().zip(features) {
+            *output += feature * target;
         }
     }
-    for (index, row) in matrix.iter_mut().enumerate().skip(1) {
-        row[index] += penalty;
-    }
-    for pivot in 0..width {
-        let best = (pivot..width)
-            .max_by(|left, right| {
-                matrix[*left][pivot]
-                    .abs()
-                    .total_cmp(&matrix[*right][pivot].abs())
-            })
-            .unwrap();
-        if matrix[best][pivot].abs() <= 1.0e-12 {
+    let mut weights = vec![0.0; width];
+    let mut residual = right_hand_side.clone();
+    let mut direction = residual.clone();
+    let mut residual_norm = dot(&residual, &residual);
+    for _ in 0..MAX_RIDGE_SOLVER_ITERATIONS.min(width.saturating_mul(2).max(1)) {
+        if residual_norm <= 1.0e-20 {
+            break;
+        }
+        let product = ridge_normal_product(rows, &direction, penalty);
+        let denominator = dot(&direction, &product);
+        if !denominator.is_finite() || denominator <= 1.0e-20 {
             return Err(GraphRepresentationError::new(
-                "graph comparison ridge system is singular",
+                "graph ridge conjugate-gradient system is not positive definite",
             ));
         }
-        matrix.swap(pivot, best);
-        let divisor = matrix[pivot][pivot];
-        for column in pivot..=width {
-            matrix[pivot][column] /= divisor;
+        let alpha = residual_norm / denominator;
+        for index in 0..width {
+            weights[index] += alpha * direction[index];
+            residual[index] -= alpha * product[index];
         }
-        for row in 0..width {
-            if row == pivot {
-                continue;
-            }
-            let factor = matrix[row][pivot];
-            for column in pivot..=width {
-                matrix[row][column] -= factor * matrix[pivot][column];
-            }
+        let next_norm = dot(&residual, &residual);
+        if !next_norm.is_finite() {
+            return Err(GraphRepresentationError::new(
+                "graph ridge solver became non-finite",
+            ));
+        }
+        let beta = next_norm / residual_norm;
+        for index in 0..width {
+            direction[index] = residual[index] + beta * direction[index];
+        }
+        residual_norm = next_norm;
+    }
+    if weights.iter().any(|weight| !weight.is_finite()) {
+        return Err(GraphRepresentationError::new(
+            "graph ridge weights are non-finite",
+        ));
+    }
+    Ok(weights)
+}
+
+fn ridge_normal_product(rows: &RegressionRows, vector: &[f64], penalty: f64) -> Vec<f64> {
+    let mut output = vec![0.0; vector.len()];
+    for features in &rows.features {
+        let projection = dot(features, vector);
+        for (value, feature) in output.iter_mut().zip(features) {
+            *value += feature * projection;
         }
     }
-    Ok(matrix.into_iter().map(|row| row[width]).collect())
+    for index in 1..output.len() {
+        output[index] += penalty * vector[index];
+    }
+    output
+}
+
+fn dot(left: &[f64], right: &[f64]) -> f64 {
+    left.iter()
+        .zip(right)
+        .map(|(left, right)| left * right)
+        .sum()
 }
 
 fn mse(rows: &RegressionRows, weights: &[f64]) -> f64 {
@@ -404,6 +430,23 @@ fn validate_inputs(
     if node_width == 0 || node_width > MAX_FEATURE_WIDTH || base_width > MAX_FEATURE_WIDTH {
         return Err(GraphRepresentationError::new(
             "graph sample feature width is invalid",
+        ));
+    }
+    let simple_width = 3_usize
+        .checked_add(base_width)
+        .and_then(|value| value.checked_add(node_width * 3))
+        .ok_or_else(|| GraphRepresentationError::new("graph feature width overflowed"))?;
+    let graph_width = simple_width
+        .checked_add(node_width * 2 + 1)
+        .ok_or_else(|| GraphRepresentationError::new("graph feature width overflowed"))?;
+    let feature_cells = training
+        .len()
+        .checked_add(held_out.len())
+        .and_then(|rows| rows.checked_mul(simple_width + graph_width))
+        .ok_or_else(|| GraphRepresentationError::new("graph feature-cell count overflowed"))?;
+    if feature_cells > MAX_REGRESSION_FEATURE_CELLS {
+        return Err(GraphRepresentationError::new(
+            "graph comparison exceeds its bounded feature-cell budget",
         ));
     }
     let mut identities = BTreeSet::new();
