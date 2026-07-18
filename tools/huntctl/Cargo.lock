@@ -222,16 +222,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "dusklight-automation-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "zstd",
+]
+
+[[package]]
+name = "dusklight-evidence"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "serde",
+ "serde_json",
+ "sha2",
+ "zstd",
+]
+
+[[package]]
 name = "dusklight-huntctl"
 version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
  "arrow-schema",
+ "dusklight-automation-contracts",
+ "dusklight-evidence",
+ "dusklight-worker-protocol",
+ "dusklight-world",
  "serde",
  "serde_json",
  "sha2",
  "zstd",
+]
+
+[[package]]
+name = "dusklight-worker-protocol"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dusklight-world"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

@@ -80,6 +80,10 @@ pub struct TapeVersion {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the canonical stage fixture stays inline so tape values have no hidden heap indirection"
+)]
 pub enum TapeBoot {
     #[default]
     Process,

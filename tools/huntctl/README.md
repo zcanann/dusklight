@@ -1,16 +1,25 @@
 # huntctl
 
-`huntctl` is the Rust control plane for persistent Dusklight simulation
-workers. It owns worker lifecycle, request correlation, capability discovery,
-batch-model types, and portable artifact identity. The game loop and per-tick
-work remain in native C++.
+`huntctl` is the Rust orchestration and CLI layer for Dusklight automation.
+Portable contracts, immutable evidence, worker communication, and read-only
+world queries live in smaller workspace crates with one-way dependencies. The
+game loop and per-tick work remain in native C++.
+
+## Crate boundaries
+
+The enforced dependency graph and ownership rules are documented in
+[`crates/README.md`](crates/README.md). Existing `huntctl::artifact`,
+`huntctl::tape`, `huntctl::episode`, `huntctl::client`, and world-query paths
+remain compatibility re-exports; their implementations are not owned by the
+root crate anymore.
 
 ## Build and test
 
 ```console
-cargo build --manifest-path tools/huntctl/Cargo.toml
-cargo test --manifest-path tools/huntctl/Cargo.toml
-cargo clippy --manifest-path tools/huntctl/Cargo.toml --all-targets -- -D warnings
+cargo build --manifest-path tools/huntctl/Cargo.toml --workspace
+cargo test --manifest-path tools/huntctl/Cargo.toml --workspace --all-targets
+cargo clippy --manifest-path tools/huntctl/Cargo.toml --workspace --all-targets -- -D warnings
+python3 tests/huntctl_crate_boundary_test.py
 ```
 
 ## Native worker
@@ -73,10 +82,10 @@ Use `huntctl.exe` in the worker path on Windows.
 
 ## Coarse batch model
 
-`src/protocol.rs` defines an explicit, little-endian framed model for the next
-engine-session phase: build and artifact identities, `Hello`, `RunBatch`,
-`Replay`, terminal outcomes, capability bits, and strict decoders. These types
-are not sent to the bootstrap-only native worker yet.
+`crates/worker/src/protocol.rs` defines an explicit, little-endian framed model
+for the next engine-session phase: build and artifact identities, `Hello`,
+`RunBatch`, `Replay`, terminal outcomes, capability bits, and strict decoders.
+These types are not sent to the bootstrap-only native worker yet.
 
 The model sends complete tapes or candidate batches. It never serializes Rust
 or C++ memory layouts and never performs per-tick IPC. Large traces and images

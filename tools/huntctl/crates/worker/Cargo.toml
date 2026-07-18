@@ -1,0 +1,11 @@
+[package]
+name = "dusklight-worker-protocol"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Dusklight worker protocol, transport, client, and local pool"
+
+[dependencies]
+dusklight-automation-contracts = { path = "../contracts" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
