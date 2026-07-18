@@ -11,6 +11,8 @@ pub const HISTORY_CRITIC_COMPARISON_SCHEMA_V1: &str = "dusklight-history-critic-
 const MAX_EPISODES: usize = 4096;
 const MAX_SEQUENCE_STEPS: usize = 250_000;
 const MAX_FEATURE_WIDTH: usize = 4096;
+const MAX_REGRESSION_FEATURE_CELLS: usize = 8_000_000;
+const MAX_RIDGE_SOLVER_ITERATIONS: usize = 512;
 
 #[derive(Clone, Debug)]
 pub struct SequenceEpisode {
@@ -252,9 +254,24 @@ fn validate_inputs(
             ));
         }
     }
-    if steps > MAX_SEQUENCE_STEPS {
+    let single_width = 1_usize
+        .checked_add(width)
+        .ok_or_else(|| HistoryCriticError::new("history feature width overflowed"))?;
+    let stack_width = config
+        .stack_depth
+        .checked_mul(width + 1)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| HistoryCriticError::new("history stack width overflowed"))?;
+    let recurrent_width = 1_usize
+        .checked_add(width)
+        .and_then(|value| value.checked_add(config.recurrent_width))
+        .ok_or_else(|| HistoryCriticError::new("recurrent feature width overflowed"))?;
+    let feature_cells = steps
+        .checked_mul(single_width + stack_width + recurrent_width)
+        .ok_or_else(|| HistoryCriticError::new("history feature-cell count overflowed"))?;
+    if steps > MAX_SEQUENCE_STEPS || feature_cells > MAX_REGRESSION_FEATURE_CELLS {
         return Err(HistoryCriticError::new(
-            "history comparison exceeds its step budget",
+            "history comparison exceeds its bounded step or feature-cell budget",
         ));
     }
     Ok(width)
@@ -450,45 +467,71 @@ fn fit_evaluate(
 
 fn ridge_fit(rows: &RegressionRows, penalty: f64) -> Result<Vec<f64>, HistoryCriticError> {
     let width = rows.features[0].len();
-    let mut matrix = vec![vec![0.0; width + 1]; width];
+    let mut right_hand_side = vec![0.0; width];
     for (features, target) in rows.features.iter().zip(&rows.targets) {
-        for row in 0..width {
-            matrix[row][width] += features[row] * target;
-            for column in 0..width {
-                matrix[row][column] += features[row] * features[column];
-            }
+        for (output, feature) in right_hand_side.iter_mut().zip(features) {
+            *output += feature * target;
         }
     }
-    for (index, row) in matrix.iter_mut().enumerate().skip(1) {
-        row[index] += penalty;
+    let mut weights = vec![0.0; width];
+    let mut residual = right_hand_side.clone();
+    let mut direction = residual.clone();
+    let mut residual_norm = dot(&residual, &residual);
+    for _ in 0..MAX_RIDGE_SOLVER_ITERATIONS.min(width.saturating_mul(2).max(1)) {
+        if residual_norm <= 1.0e-20 {
+            break;
+        }
+        let product = ridge_normal_product(rows, &direction, penalty);
+        let denominator = dot(&direction, &product);
+        if !denominator.is_finite() || denominator <= 1.0e-20 {
+            return Err(HistoryCriticError::new(
+                "history ridge conjugate-gradient system is not positive definite",
+            ));
+        }
+        let alpha = residual_norm / denominator;
+        for index in 0..width {
+            weights[index] += alpha * direction[index];
+            residual[index] -= alpha * product[index];
+        }
+        let next_norm = dot(&residual, &residual);
+        if !next_norm.is_finite() {
+            return Err(HistoryCriticError::new(
+                "history ridge solver became non-finite",
+            ));
+        }
+        let beta = next_norm / residual_norm;
+        for index in 0..width {
+            direction[index] = residual[index] + beta * direction[index];
+        }
+        residual_norm = next_norm;
     }
-    for pivot in 0..width {
-        let best = (pivot..width)
-            .max_by(|left, right| {
-                matrix[*left][pivot]
-                    .abs()
-                    .total_cmp(&matrix[*right][pivot].abs())
-            })
-            .unwrap();
-        if matrix[best][pivot].abs() <= 1.0e-12 {
-            return Err(HistoryCriticError::new("history ridge system is singular"));
-        }
-        matrix.swap(pivot, best);
-        let divisor = matrix[pivot][pivot];
-        for column in pivot..=width {
-            matrix[pivot][column] /= divisor;
-        }
-        for row in 0..width {
-            if row == pivot {
-                continue;
-            }
-            let factor = matrix[row][pivot];
-            for column in pivot..=width {
-                matrix[row][column] -= factor * matrix[pivot][column];
-            }
+    if weights.iter().any(|weight| !weight.is_finite()) {
+        return Err(HistoryCriticError::new(
+            "history ridge weights are non-finite",
+        ));
+    }
+    Ok(weights)
+}
+
+fn ridge_normal_product(rows: &RegressionRows, vector: &[f64], penalty: f64) -> Vec<f64> {
+    let mut output = vec![0.0; vector.len()];
+    for features in &rows.features {
+        let projection = dot(features, vector);
+        for (value, feature) in output.iter_mut().zip(features) {
+            *value += feature * projection;
         }
     }
-    Ok(matrix.into_iter().map(|row| row[width]).collect())
+    for index in 1..output.len() {
+        output[index] += penalty * vector[index];
+    }
+    output
+}
+
+fn dot(left: &[f64], right: &[f64]) -> f64 {
+    left.iter()
+        .zip(right)
+        .map(|(left, right)| left * right)
+        .sum()
 }
 
 fn mean_squared_error(rows: &RegressionRows, weights: &[f64]) -> f64 {
