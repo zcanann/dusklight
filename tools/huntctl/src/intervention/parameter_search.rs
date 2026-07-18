@@ -524,4 +524,35 @@ mod tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn timing_search_can_reorder_a_target_and_still_emit_canonical_tape() {
+        let tape = InterventionTape::compile_dsl(
+            "timeline 20\nat 5 for 1 before_game_tick process 7 require actor_exists set_health 1\nat 8 for 1 before_game_tick process 8 require actor_exists set_health 2",
+        )
+        .unwrap();
+        let template = InterventionParameterTemplate::new(
+            tape,
+            vec![InterventionParameterAxis {
+                name: "second_start".into(),
+                intervention_index: 1,
+                parameter: InterventionParameter::StartTick,
+                minimum: 1.0,
+                maximum: 8.0,
+            }],
+        )
+        .unwrap();
+        let candidate = template.candidate(&[1.0]).unwrap();
+        assert_eq!(candidate.interventions[0].start_tick, 1);
+        assert!(matches!(
+            candidate.interventions[0].operation,
+            InterventionOperation::SetHealth { value: 2 }
+        ));
+        candidate.validate().unwrap();
+        assert!(
+            template
+                .search_candidates(MAX_INTERVENTION_SEARCH_CANDIDATES + 1)
+                .is_err()
+        );
+    }
 }
