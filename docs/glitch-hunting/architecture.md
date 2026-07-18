@@ -80,6 +80,14 @@ cost, and placement uses end-to-end p95 nanoseconds per row rather than kernel
 time alone. Even a native win produces only a batch-placement candidate: the
 report always denies per-tick inference and carries no promotion authority.
 
+`dusklight-inference-conformance/v1` repeats the Rust CPU batch at least twice
+and requires every output bit to match before sealing its output digest.
+Accelerator output is compared with an explicitly recorded absolute-plus-
+relative tolerance and bound to the accelerator build, frozen model, and input
+corpus. Maximum observed errors and pass/fail status remain in the artifact;
+an out-of-tolerance backend is recorded as nonconformant, never rounded into a
+pass, and conformance itself is not promotion evidence.
+
 ### C++ worker
 
 - owns the game process and calls the game loop directly;

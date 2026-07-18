@@ -886,7 +886,7 @@ simple random baseline.
   batching costs; do not put a network in the game tick by default.
 - [x] Hash feature schema, action schema, objective, normalization, code/data
   build, corpus manifest, seed, optimizer, and model bytes.
-- [ ] Add deterministic CPU inference tests and tolerance-declared accelerator
+- [x] Add deterministic CPU inference tests and tolerance-declared accelerator
   tests.
 
 ### P2: planning and model-based research
