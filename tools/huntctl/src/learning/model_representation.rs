@@ -157,6 +157,7 @@ impl FixedModelRepresentationEncoder {
             || normalization.means.len() != width
             || normalization.standard_deviations.len() != width
             || training_states.is_empty()
+            || normalization.sample_count != training_states.len() as u64
             || training_states
                 .iter()
                 .any(|state| state.len() != width || state.iter().any(|value| !value.is_finite()))
@@ -690,6 +691,25 @@ milestone target_room {
                     geometry: None,
                 })
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn normalization_must_describe_the_exact_training_state_count() {
+        let spec = movement_state_v2_spec();
+        let width = spec.features.len();
+        let states = vec![vec![0.0; width], vec![0.0; width]];
+        let detached = NormalizationStatistics {
+            schema: "dusklight-normalization/v1".into(),
+            feature_schema_sha256: spec.digest().unwrap(),
+            training_episode_sha256: vec![Digest([9; 32])],
+            sample_count: 3,
+            means: vec![0.0; width],
+            standard_deviations: vec![1.0; width],
+        };
+        assert_eq!(
+            FixedModelRepresentationEncoder::fit(&spec, &detached, &states),
+            Err(ModelRepresentationError::InvalidNormalization)
         );
     }
 
