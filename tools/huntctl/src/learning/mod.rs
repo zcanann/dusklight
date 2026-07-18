@@ -18,7 +18,6 @@ pub mod inference_conformance;
 pub mod inference_placement;
 pub mod iql;
 pub mod local_dynamics;
-pub mod local_dynamics;
 pub mod low_data_baselines;
 pub mod model_ownership;
 pub mod model_representation;

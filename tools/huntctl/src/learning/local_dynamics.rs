@@ -3,7 +3,7 @@
 use crate::artifact::Digest;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
