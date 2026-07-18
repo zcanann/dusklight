@@ -112,6 +112,46 @@ pub enum HarnessTerminalReason {
     Rejected,
 }
 
+impl HarnessTerminalReason {
+    pub const ALL: [Self; 15] = [
+        Self::Reached,
+        Self::Exhausted,
+        Self::Impossible,
+        Self::Unsupported,
+        Self::CapabilityMismatch,
+        Self::IdentityMismatch,
+        Self::HostTimeout,
+        Self::Cancelled,
+        Self::WorkerCrashed,
+        Self::GameCrashed,
+        Self::ProtocolFailure,
+        Self::Hung,
+        Self::TargetLost,
+        Self::Nondeterministic,
+        Self::Rejected,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Reached => "reached",
+            Self::Exhausted => "exhausted",
+            Self::Impossible => "impossible",
+            Self::Unsupported => "unsupported",
+            Self::CapabilityMismatch => "capability_mismatch",
+            Self::IdentityMismatch => "identity_mismatch",
+            Self::HostTimeout => "host_timeout",
+            Self::Cancelled => "cancelled",
+            Self::WorkerCrashed => "worker_crashed",
+            Self::GameCrashed => "game_crashed",
+            Self::ProtocolFailure => "protocol_failure",
+            Self::Hung => "hung",
+            Self::TargetLost => "target_lost",
+            Self::Nondeterministic => "nondeterministic",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarnessTerminalDetail {
@@ -1236,5 +1276,18 @@ mod tests {
         result.refresh_content_sha256().unwrap();
         assert!(result.validate_against(&request).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_reason_names_are_stable_and_round_trip() {
+        for terminal in HarnessTerminalReason::ALL {
+            let encoded = serde_json::to_string(&terminal).unwrap();
+            assert_eq!(encoded, format!("\"{}\"", terminal.name()));
+            assert_eq!(
+                serde_json::from_str::<HarnessTerminalReason>(&encoded).unwrap(),
+                terminal
+            );
+        }
+        assert_eq!(HarnessTerminalReason::ALL.len(), 15);
     }
 }

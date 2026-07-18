@@ -19,6 +19,7 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::harness::execution::execute_request;
+use huntctl::harness::inspection::inspect_objective;
 use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
 use huntctl::learning::batch::load_fqi_batch;
@@ -257,7 +258,37 @@ fn command_harness(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
-        _ => Err("harness command: validate-suite|seal-suite|validate-run-request|seal-run-request|validate-run-result|seal-run-result|execute (use --help for arguments)".into()),
+        Some("inspect-objective") => {
+            let command_args = &args[1..];
+            let request_path = required_path(command_args, "--request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(&request_path)?)?;
+            let result_path = option(command_args, "--result").map(PathBuf::from);
+            let result: Option<HarnessRunResult> = result_path
+                .as_ref()
+                .map(|path| -> Result<_, Box<dyn Error>> {
+                    Ok(serde_json::from_slice(&fs::read(path)?)?)
+                })
+                .transpose()?;
+            let artifact_root = option(command_args, "--artifact-root").map(PathBuf::from);
+            if result.is_some() != artifact_root.is_some() {
+                return Err(
+                    "harness inspect-objective requires --result and --artifact-root together"
+                        .into(),
+                );
+            }
+            let inspection = inspect_objective(
+                &request,
+                &repository_root,
+                result.as_ref().zip(artifact_root.as_deref()),
+            )?;
+            print!("{inspection}");
+            Ok(())
+        }
+        _ => Err("harness command: validate-suite|seal-suite|validate-run-request|seal-run-request|validate-run-result|seal-run-result|execute|inspect-objective (use --help for arguments)".into()),
     }
 }
 
@@ -4916,7 +4947,7 @@ fn print_usage() {
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
-        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness execute --request REQUEST.json [--repository-root DIR] [--attempt N]"
+        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness execute --request REQUEST.json [--repository-root DIR] [--attempt N]\n  huntctl harness inspect-objective --request REQUEST.json [--result RESULT.json --artifact-root DIR] [--repository-root DIR]"
     );
     eprintln!(
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"

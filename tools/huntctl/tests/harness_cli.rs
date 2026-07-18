@@ -530,6 +530,20 @@ fn seals_and_validates_a_complete_run_boundary() {
         .unwrap();
     assert!(validated_request.status.success());
 
+    let pending_inspection = Command::new(executable)
+        .args(["harness", "inspect-objective", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(pending_inspection.status.success());
+    let pending_text = String::from_utf8(pending_inspection.stdout).unwrap();
+    assert!(pending_text.contains("Objective: stage_ready"));
+    assert!(pending_text.contains("Progress: not run"));
+    assert!(pending_text.contains("  - run result"));
+    assert!(pending_text.contains("Source objective:\n---\n"));
+
     let (result_draft, artifact_root) = write_run_result_draft(&root, &request);
     let result_path = root.join("run-result.json");
     let sealed_result = Command::new(executable)
@@ -570,6 +584,27 @@ fn seals_and_validates_a_complete_run_boundary() {
     let report: Value = serde_json::from_slice(&validated_result.stdout).unwrap();
     assert_eq!(report["terminal"], "reached");
     assert_eq!(report["artifacts_complete"], true);
+
+    let completed_inspection = Command::new(executable)
+        .args(["harness", "inspect-objective", "--request"])
+        .arg(&request_path)
+        .arg("--result")
+        .arg(&result_path)
+        .arg("--artifact-root")
+        .arg(&artifact_root)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        completed_inspection.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed_inspection.stderr)
+    );
+    let completed_text = String::from_utf8(completed_inspection.stdout).unwrap();
+    assert!(completed_text.contains("Progress: reached at logical tick 5"));
+    assert!(completed_text.contains("First-hit boundary:"));
+    assert!(completed_text.contains("Missing evidence:\n  - none"));
 
     let overwrite = Command::new(executable)
         .args(["harness", "seal-run-result", "--input"])
