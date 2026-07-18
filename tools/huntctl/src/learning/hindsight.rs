@@ -159,7 +159,7 @@ mod tests {
     use super::*;
     use crate::milestone_dsl::{
         Comparison, Expression, Field, LanguageVersion, MilestoneDefinition, MilestoneProgram,
-        Value, compile,
+        RngStream, Value, ValueProjection, ValueProjectionItem, compile,
     };
 
     fn compare(field: Field, value: Value) -> Expression {
@@ -207,9 +207,16 @@ mod tests {
         sequence.then = vec![compare(Field::StageRoom, Value::I32(2))];
         sequence.within_ticks = Some(30);
         let timeline = definition("frame", compare(Field::TapeFrame, Value::U64(100)));
+        let mut projection = definition("project", compare(Field::StageRoom, Value::I32(1)));
+        projection.projections = vec![ValueProjection {
+            name: "rng".into(),
+            items: vec![ValueProjectionItem::Rng {
+                stream: RngStream::Primary,
+            }],
+        }];
         let compiled = compile(&MilestoneProgram {
             version: LanguageVersion { major: 1, minor: 4 },
-            definitions: vec![pre_input, stable, sequence, timeline],
+            definitions: vec![pre_input, stable, sequence, timeline, projection],
         })
         .unwrap();
 
@@ -218,6 +225,7 @@ mod tests {
             HindsightRejection::StableHistory,
             HindsightRejection::SequenceHistory,
             HindsightRejection::TimelinePosition,
+            HindsightRejection::ValueProjection,
         ]
         .into_iter()
         .enumerate()
