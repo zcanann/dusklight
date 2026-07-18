@@ -447,6 +447,17 @@ transition coordinate and a filtered ray resolve prism 2217 / `F_SP104`, while
 an unfiltered point deliberately resolves nearer prism 2187. The service is
 offline Rust only and introduces no native or gameplay changes.
 
+The read-only Skybook importer now pins
+`qwertyquerty/skybook@e9104852ff6b87862b67100f58aaa729096b42dc` and materializes
+a self-contained 483-page manifest, including 452 categorized glitch pages.
+It preserves complete front matter and Markdown while extracting titles,
+descriptions, authors, categories, tags, platform/map tags, internal links,
+external sources, images, and video evidence. The manifest content identity is
+`b31e49f23ec79eee0d49783532f8bda8799b0eb2871a9da5e2e67ebed94fc270`;
+an independent import produced byte-identical JSON. Alias normalization,
+capability mapping, independent readiness states, and benchmark definitions
+remain roadmap work.
+
 ## Known gaps
 
 - `OSAlarm` dispatch, the separate SDK `__OSGetSystemTime`, and non-SDK host

@@ -83,6 +83,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   classification, typed supporting facts, and completeness requirements.
 - [Experimental interventions](interventions.md) defines the separately gated
   mutation-tape boundary for causal glitch-hunting experiments.
+- [Skybook benchmark import](skybook.md) documents the revision-pinned,
+  content-addressed requirements manifest and its read-only import boundary.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.

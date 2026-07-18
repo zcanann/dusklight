@@ -979,10 +979,10 @@ not merely a list of tapes to transcribe.
 
 ### P0: import a read-only benchmark manifest
 
-- [ ] Record the Skybook Git revision and parse front matter, title,
+- [x] Record the Skybook Git revision and parse front matter, title,
   description, category, tags, internal links, platform, map, source links,
   images, and video evidence.
-- [ ] Generate a content-addressed manifest without editing or depending on
+- [x] Generate a content-addressed manifest without editing or depending on
   Skybook at runtime.
 - [ ] Normalize aliases while retaining original names and source paths.
 - [ ] Map each page to required scenarios, actions, observations, oracles,
