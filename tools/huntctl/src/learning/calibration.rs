@@ -1,5 +1,6 @@
 //! Held-out calibration for discrete fitted-Q proposal models.
 
+use crate::double_q::ablation::QComponentModel;
 use crate::double_q::{DoubleQ, DoubleQError};
 use crate::fqi::{FittedQ, FqiError};
 use crate::low_data_baselines::ReturnSample;
@@ -11,7 +12,7 @@ use std::fmt;
 pub const MAX_CALIBRATION_SAMPLES: usize = 250_000;
 const CALIBRATION_BINS: usize = 10;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CalibrationBin {
     pub samples: usize,
     pub minimum_prediction: f64,
@@ -21,7 +22,7 @@ pub struct CalibrationBin {
     pub mean_absolute_error: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiscreteQCalibrationReport {
     pub schema: &'static str,
     pub held_out_samples: usize,
@@ -77,6 +78,24 @@ impl DiscreteQEstimator for DoubleQ {
             .first()
             .map(|estimate| estimate.action)
             .ok_or_else(|| "discrete Q model returned an empty ranking".into())
+    }
+}
+
+impl DiscreteQEstimator for QComponentModel {
+    fn calibration_estimate(&self, state: &[f32], action: u32) -> Result<Option<f64>, String> {
+        match self.estimate(state, action) {
+            Ok(estimate) => Ok(Some(estimate.mean)),
+            Err(DoubleQError::UnknownAction(_)) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn calibration_best_action(&self, state: &[f32]) -> Result<u32, String> {
+        self.rank_actions(state)
+            .map_err(|error| error.to_string())?
+            .first()
+            .map(|estimate| estimate.action)
+            .ok_or_else(|| "Q component model returned an empty ranking".into())
     }
 }
 
