@@ -1000,7 +1000,8 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let mut feature_count = None;
             let mut transitions = Vec::new();
             let mut episode_groups = Vec::new();
-            for (episode_group, input) in inputs.iter().enumerate() {
+            let mut next_episode_group = 0_u64;
+            for input in &inputs {
                 let corpus = TransitionCorpus::read_zstd_file(input)?;
                 if feature_schema.is_some_and(|value| value != corpus.feature_schema)
                     || action_schema.is_some_and(|value| value != corpus.action_schema)
@@ -1011,16 +1012,29 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 feature_schema = Some(corpus.feature_schema);
                 action_schema = Some(corpus.action_schema);
                 feature_count = Some(corpus.feature_count);
+                let mut ended_terminal = false;
                 for transition in corpus.transitions {
+                    let terminal = transition.terminal;
                     transitions.push(FqiTransition {
                         state: transition.state,
                         action: transition.action.action_id,
                         duration: transition.duration_ticks,
                         reward: transition.reward,
                         next_state: transition.next_state,
-                        terminal: transition.terminal,
+                        terminal,
                     });
-                    episode_groups.push(episode_group as u64);
+                    episode_groups.push(next_episode_group);
+                    ended_terminal = terminal;
+                    if terminal {
+                        next_episode_group = next_episode_group
+                            .checked_add(1)
+                            .ok_or("baseline episode-group count overflowed")?;
+                    }
+                }
+                if !ended_terminal {
+                    next_episode_group = next_episode_group
+                        .checked_add(1)
+                        .ok_or("baseline episode-group count overflowed")?;
                 }
             }
             let query_index = usize_option(learn_args, "--query-transition", 0)?;
@@ -1233,6 +1247,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let mut feature_count = None;
             let mut transitions = Vec::new();
             let mut episode_groups = Vec::new();
+            let mut next_episode_group = 0_u64;
             let mut training_corpus_sha256 = Vec::new();
             let mut action_support = BTreeMap::<u32, usize>::new();
             let shaping_path = option(learn_args, "--shaping").map(PathBuf::from);
@@ -1249,7 +1264,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 None
             };
             let mut shaping_records = Vec::new();
-            for (episode_group, input) in inputs.iter().enumerate() {
+            for input in &inputs {
                 let corpus = TransitionCorpus::read_zstd_file(input)?;
                 training_corpus_sha256.push(corpus.content_digest()?);
                 if feature_schema.is_some_and(|value| value != corpus.feature_schema)
@@ -1284,8 +1299,10 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
                 transitions.reserve(corpus.transitions.len());
+                let mut ended_terminal = false;
                 for (transition_index, transition) in corpus.transitions.into_iter().enumerate() {
                     let action = transition.action.action_id;
+                    let terminal = transition.terminal;
                     if !action_support.contains_key(&action)
                         && action_support.len() >= MAX_FQI_ACTIONS
                     {
@@ -1302,7 +1319,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                             &transition.next_state,
                             transition.reward,
                             transition.duration_ticks,
-                            transition.terminal,
+                            terminal,
                             config.discount,
                         )?;
                         let training_reward = breakdown.training_reward;
@@ -1323,9 +1340,20 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                         duration: transition.duration_ticks,
                         reward,
                         next_state: transition.next_state,
-                        terminal: transition.terminal,
+                        terminal,
                     });
-                    episode_groups.push(episode_group as u64);
+                    episode_groups.push(next_episode_group);
+                    ended_terminal = terminal;
+                    if terminal {
+                        next_episode_group = next_episode_group
+                            .checked_add(1)
+                            .ok_or("learn fit episode-group count overflowed")?;
+                    }
+                }
+                if !ended_terminal {
+                    next_episode_group = next_episode_group
+                        .checked_add(1)
+                        .ok_or("learn fit episode-group count overflowed")?;
                 }
             }
             let declared_categorical = repeated_option(learn_args, "--categorical-feature")
@@ -1471,7 +1499,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "training_dataset": dataset_path,
                     "training_dataset_sha256": dataset_manifest.as_ref().map(|manifest| manifest.dataset_sha256),
                     "transition_count": transitions.len(),
-                    "episode_groups": inputs.len(),
+                    "episode_groups": episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
                     "bootstrap_unit": model.bootstrap_unit(),
                     "query_transition": query_index,
                     "query_side": query_side,

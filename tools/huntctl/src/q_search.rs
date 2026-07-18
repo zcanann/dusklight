@@ -168,7 +168,8 @@ pub fn propose_q_candidates(
     let mut transitions = Vec::new();
     let mut episode_groups = Vec::new();
     let mut actions = BTreeSet::new();
-    for (episode_group, corpus) in training_corpora.iter().enumerate() {
+    let mut next_episode_group = 0_u64;
+    for corpus in training_corpora {
         corpus
             .validate()
             .map_err(|error| QSearchError::new(error.to_string()))?;
@@ -180,6 +181,7 @@ pub fn propose_q_candidates(
                 "Q proposal corpus does not use the authenticated movement schemas",
             ));
         }
+        let mut ended_terminal = false;
         for transition in &corpus.transitions {
             actions.insert(transition.action.action_id);
             transitions.push(FqiTransition {
@@ -190,7 +192,18 @@ pub fn propose_q_candidates(
                 next_state: transition.next_state.clone(),
                 terminal: transition.terminal,
             });
-            episode_groups.push(episode_group as u64);
+            episode_groups.push(next_episode_group);
+            ended_terminal = transition.terminal;
+            if transition.terminal {
+                next_episode_group = next_episode_group.checked_add(1).ok_or_else(|| {
+                    QSearchError::new("Q proposal episode-group count overflowed")
+                })?;
+            }
+        }
+        if !ended_terminal {
+            next_episode_group = next_episode_group
+                .checked_add(1)
+                .ok_or_else(|| QSearchError::new("Q proposal episode-group count overflowed"))?;
         }
     }
     let actions: Vec<_> = actions.into_iter().collect();

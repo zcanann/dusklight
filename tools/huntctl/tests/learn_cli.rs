@@ -206,7 +206,7 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         let baseline: serde_json::Value = serde_json::from_slice(&baseline.stdout).unwrap();
         assert_eq!(baseline["schema"], "dusklight-low-data-baseline/v1");
         assert!(!baseline["ranking"].as_array().unwrap().is_empty());
-        assert_eq!(baseline["episode_groups"], 1);
+        assert_eq!(baseline["episode_groups"], 2);
     }
 
     let shaping_path = root.join("shaping.json");

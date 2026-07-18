@@ -129,9 +129,12 @@ each option's declared simulation-tick duration contributes its exact
 `gamma^duration` factor. An episodic terminal zeros continuation immediately.
 At a nonterminal truncated end, the target may bootstrap from that final
 observed `next_state` using the prior fitted iteration, but it never consumes a
-reward or state from the next episode. The model artifact and ranking report
-record the selected backup length. Focused tests cover multi-tick options,
-early terminal stopping, and truncated group boundaries.
+reward or state from the next episode. Terminal records split multiple episodes
+inside a compacted input corpus; a file that ends without a terminal closes one
+truncated episode. The model artifact and ranking report record the selected
+backup length. Focused tests cover cumulative multi-tick option discounting,
+terminal zeroing, truncated-model continuation, cross-episode isolation, and
+bounded CLI validation.
 
 ### Nearest-neighbor and tabular return baselines
 
