@@ -100,7 +100,10 @@ def main() -> int:
     name_header = root / "include/d/d_name.h"
     failures.extend(require_guard(name_header, ("automationObserve()",), OBSERVER))
     failures.extend(require_guard(name_header, ("automationCursorMove()",), FIDELITY))
-    for path in (root / "include").rglob("*.h"):
+    observer_headers = tuple((root / "include").rglob("*.h")) + tuple(
+        (root / "include").rglob("*.hpp")
+    )
+    for path in observer_headers:
         source = path.read_text(encoding="utf-8")
         if not re.search(r"friend.*(?:dusk::automation|ReadAdapter)", source):
             continue
@@ -135,6 +138,38 @@ def main() -> int:
     for path in observer_sources:
         failures.extend(require_guard(path, native_read_needles, OBSERVER))
 
+    forbidden_live_effects = (
+        "const_cast<",
+        "dComIfGp_set",
+        "dComIfGs_set",
+        "fopAcM_onSwitch",
+        "fopAcM_offSwitch",
+        "setSceneChangeOK(",
+        "dStage_changeScene(",
+        "checkArea(",
+        "checkWork(",
+        ".GetTriPla(",
+        ".GroundCross(",
+        ".LineCross(",
+        ".CrrPos(",
+        ".GroundCheck(",
+        ".LineCheck(",
+        ".ClrGround",
+        ".SetGround",
+        ".ClrWall",
+        ".SetWall",
+        ".ClrWater",
+        ".SetWater",
+        "cM_rnd(",
+        "cM_rndF(",
+        "cM_rndFX(",
+    )
+    for path in observer_sources:
+        source = path.read_text(encoding="utf-8")
+        for needle in forbidden_live_effects:
+            if needle in source:
+                failures.append(f"{path}: observer contains forbidden live effect {needle}")
+
     main_source = (root / "src/m_Do/m_Do_main.cpp").read_text(encoding="utf-8")
     forbidden_main_reads = (
         "dComIfGp_getStartStage",
@@ -161,16 +196,17 @@ def main() -> int:
     for option in (OBSERVER, FIDELITY):
         if not re.search(rf"option\({option}\s+.*?\sOFF\)", cmake, re.DOTALL):
             failures.append(f"CMake option {option} must exist and default OFF")
-    for source in (
-        "src/d/d_file_select.cpp",
-        "src/d/d_name.cpp",
-        "src/dusk/automation/actor_catalog.cpp",
-        "src/dusk/automation/game_state_observer.cpp",
-        "src/dusk/automation/gameplay_trace_observer.cpp",
-        "src/m_Do/m_Do_main.cpp",
-    ):
-        if source not in cmake:
-            failures.append(f"CMake observer source gate omits {source}")
+    target_definitions = re.search(
+        r"target_compile_definitions\(dusklight\s+PRIVATE(?P<body>.*?)\)", cmake, re.DOTALL
+    )
+    if target_definitions is None:
+        failures.append("dusklight target compile definitions are missing")
+    else:
+        body = target_definitions.group("body")
+        for option in (OBSERVER, FIDELITY):
+            expected = f"{option}=$<BOOL:${{{option}}}>"
+            if expected not in body:
+                failures.append(f"dusklight target-wide compile gate omits {option}")
 
     if failures:
         print("Automation boundary violations:", file=sys.stderr)

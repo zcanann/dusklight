@@ -12,8 +12,17 @@
 
 class fopAc_ac_c;
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+struct GameplayTraceCollisionReadAdapter;
+}
+#endif
+
 class dBgS_AcchCir : public cBgS_PolyInfo {
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+#endif
     /* 0x10 */ u32 m_flags;
     /* 0x14 */ cM3dGCir m_cir;
     /* 0x28 */ f32 m_wall_rr;
@@ -198,6 +207,9 @@ public:
     f32 GetCz() const { return pm_pos->z; }
     
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+#endif
     /* 0x02C */ u32 m_flags;
     /* 0x030 */ cXyz* pm_pos;
     /* 0x034 */ cXyz* pm_old_pos;

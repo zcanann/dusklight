@@ -73,10 +73,21 @@ Success is semantic, not a screenshot or a sleep:
 The native `--gameplay-trace` v2 stream records explicit post-simulation
 boundaries and channel status, the current/pending stage tuple, all four
 post-clamp pads, Link motion/action/animation state, event control, both global
-RNG streams, realized camera, and nearest scene exit on every completed tick.
+RNG streams, realized camera, exact live `SCENE_EXIT` actor volumes, and Link's
+already-resolved background-collision cache on every completed tick.
 `huntctl trace inspect` extracts the milestones; `timeline` exposes state
 changes and input frames; `compare` ranks several traces by milestone depth and
 tick. Immutable v1 files remain decodable.
+
+The July 17, 2026 three-run matrix produced one byte-identical 925-record trace
+(SHA-256 `d9b1a792aa142c4e5aa97b67d97c838ac3ac877dec6206e3b3682e54d9e9d01e`).
+It also disproved an earlier assumption about the first load zone. At tick 826,
+the pending transition becomes `F_SP104`, room 1, point 0, while the only live
+`SCENE_EXIT` actor is 5,215.09 units from Link, has realized signed distance
+3,846.9988, is not latched, and resolves to `F_SP103`, room 0, point 102. The
+actual transition is driven by exit metadata on Link's cached ground-collision
+polygon. Consequently, `SCENE_EXIT` actor telemetry and collision-polygon exit
+telemetry are separate facts; the latter remains the next load-zone query slice.
 
 The first-control milestone also requires event ID `-1`. Checking only
 `eventRunning == false` is insufficient because player construction briefly
@@ -137,10 +148,11 @@ other deterministic I/O paths. The checked boot then reproduced its exact
 strict trace 20/20 times in one batch and 45/45 independent cold runs. The tape
 still contains only absolute input; no reactive readiness check masks drift.
 
-Small physics populations also remain: identical input from identical reported
-control coordinates reaches the first exit within a four-tick band. The runner
-records min/median/max/spread and requires every run to reach the semantic
-milestones. It does not claim false single-tick determinism.
+An older matrix showed a four-tick band from apparently identical route state;
+that is framework-bug evidence, not an acceptable robustness distribution. The
+current three-run absolute tape reached control 439, trigger 827, and load 858
+with zero spread and byte-identical complete traces. Larger repeated matrices
+remain required as the observation and reset substrate evolves.
 
 This result closes the measured title-side scheduling leak, not every possible
 PC-port side channel. New asynchronous loaders must either be made part of the

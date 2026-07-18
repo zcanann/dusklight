@@ -50,6 +50,11 @@ not become route history until explicitly promoted.
   the last resort and requires an explicit field-by-field audit plus A/B replay
   parity evidence; changing gameplay code or layout is not an acceptable
   shortcut.
+- Query code is instrumentation, never native gameplay implementation. Every
+  query-only include, friend declaration, adapter body, and sampling hook must
+  be visibly delimited by `DUSK_ENABLE_AUTOMATION_OBSERVERS`; compiling with the
+  option off must erase it. Even an observationally equivalent gameplay edit is
+  forbidden when an out-of-line read adapter can obtain the same fact.
 - Experimental writes are a separate compile-time-disabled intervention
   capability with explicit runtime opt-in and an unavoidable mutation audit.
   An intervention result is never represented as ordinary TAS proof.
@@ -377,11 +382,26 @@ all be copied into every per-frame neural observation.
 
 ### P0: collision and local geometry
 
-- [ ] Replace Trace v2's provisional nearest-`SCENE_EXIT` actor-origin distance
+- [x] Replace Trace v2's provisional nearest-`SCENE_EXIT` actor-origin distance
   before it is used by `movement-state/v2`. Decode the realized oriented exit
   volume and destination, report inside/signed-distance/latch/commit state, and
-  assign a stable exit identity; an actor origin kilometers from the active
-  volume is not load-zone geometry.
+  retain the ingredients for stable placed identity; an actor origin kilometers
+  from its realized volume is not geometry. Scene-exit v2 and its old v1 decoder
+  are distinct wire contracts; movement-state/v1 rejects v2 rather than silently
+  reinterpreting it. This channel describes `SCENE_EXIT`/`SCENE_EXIT2` actors,
+  not every transition mechanism.
+- [x] Add the first read-only Link background-collision slice by copying the
+  already-resolved Acch ground/roof/water/wall caches, polygon/owner presence,
+  stored ground plane, and old-to-final frame displacement. This is not yet
+  actor/attack/push contact coverage or per-pass correction attribution.
+- [ ] Resolve transition metadata from Link's already-cached collision polygons,
+  including exit ID, room SCLS destination, material/code, and stable polygon
+  identity. The checked `F_SP103` to `F_SP104` route is ground-polygon-driven;
+  its unrelated live `SCENE_EXIT` actor remains outside and points back into
+  `F_SP103`, so actor-volume telemetry must never stand in for this load zone.
+- [ ] Join collision exit polygons to static triangle/region geometry so a
+  controller can optimize signed distance and approach direction before the
+  transition fires, without issuing a fresh gameplay collision query.
 - [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
   subject IDs, polygon IDs, normals, penetration, relative velocity, material,
   and begin/persist/end phase.
@@ -1082,7 +1102,8 @@ query, model, or browser request can create unbounded native work.
 - [ ] Design the typed fact/query schema and static world-inventory format.
 - [x] Implement the first Trace v2 slice for Link, global RNG, camera, action
   timers/animations, exact input, stage/event state, and explicit missingness.
-- [ ] Extend Trace v2 with resolved collision/contact, local geometry,
+- [ ] Extend the initial Trace v2 background-collision cache with actor/push/
+  attack contacts, per-pass correction, local geometry,
   objective state, and bounded selected actors.
 - [ ] Add query/trace cost accounting and observational-inertness tests.
 
@@ -1134,8 +1155,9 @@ const-only Link/RNG/camera/action slice now exist; the remaining vertical slice
 is:
 
 1. A versioned objective-specific observation specification.
-2. Per-tick local collision contacts/correction, nearest load-zone geometry,
-   and selected actor slots, extending the existing Link/RNG/camera/input facts.
+2. Extend exact `SCENE_EXIT` actor volumes and the initial cached Link
+   background-collision channel with polygon exit metadata, actor contacts,
+   per-pass correction, local geometry, and selected actor slots.
 3. A static `F_SP103`/Ordon world inventory with stable collision, placement,
    exit, and trigger IDs.
 4. Whole-episode trace extraction with explicit missingness and exact action

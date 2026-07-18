@@ -148,6 +148,13 @@ pub enum OfflineRlError {
         channel: &'static str,
         status: Option<TraceChannelStatus>,
     },
+    UnsupportedObservationChannelFormat {
+        channel: &'static str,
+        expected_version: u16,
+        expected_stride: usize,
+        actual_version: Option<u16>,
+        actual_stride: Option<usize>,
+    },
     InputProvenance {
         frame: u64,
         input_source: u8,
@@ -247,6 +254,16 @@ impl fmt::Display for OfflineRlError {
             } => write!(
                 formatter,
                 "trace frame {frame} requires present {channel} observations, found {status:?}"
+            ),
+            Self::UnsupportedObservationChannelFormat {
+                channel,
+                expected_version,
+                expected_stride,
+                actual_version,
+                actual_stride,
+            } => write!(
+                formatter,
+                "movement-state/v1 requires {channel} version {expected_version} stride {expected_stride}, got version {actual_version:?} stride {actual_stride:?}"
             ),
             Self::InputProvenance {
                 frame,
@@ -380,6 +397,7 @@ pub fn extract_exploratory(
     if end_index >= tape.frames.len() {
         return Err(OfflineRlError::TapeFrameOutOfRange(config.end_tape_frame));
     }
+    validate_movement_trace_format(decoded_trace)?;
 
     let records = records_by_tape_frame(decoded_trace)?;
     let first_state_frame = config.start_tape_frame - 1;
@@ -461,6 +479,23 @@ pub fn extract_exploratory(
         MOVEMENT_FEATURE_COUNT_V1,
         transitions,
     )?)
+}
+
+fn validate_movement_trace_format(trace: &DecodedTrace) -> Result<(), OfflineRlError> {
+    if trace.version != 2 {
+        return Ok(());
+    }
+    let actual = trace.channel_formats.get(&TraceChannel::SceneExit);
+    if actual.is_none_or(|format| format.version != 1 || format.stride != 24) {
+        return Err(OfflineRlError::UnsupportedObservationChannelFormat {
+            channel: TraceChannel::SceneExit.name(),
+            expected_version: 1,
+            expected_stride: 24,
+            actual_version: actual.map(|format| format.version),
+            actual_stride: actual.map(|format| format.stride),
+        });
+    }
+    Ok(())
 }
 
 fn validate_movement_observation(
@@ -984,6 +1019,7 @@ mod tests {
                 tick_rate_denominator: 1,
                 requested_channels: 0,
                 capacity_exhausted: false,
+                channel_formats: BTreeMap::new(),
                 records: vec![record(0, 10.0), first_applied, second_applied],
             },
             InputTape {
@@ -1017,6 +1053,30 @@ mod tests {
         assert_eq!(corpus.transitions[1].action.action_id, 39);
         assert!(!corpus.transitions[0].terminal);
         assert!(corpus.transitions[1].terminal);
+    }
+
+    #[test]
+    fn movement_state_v1_rejects_scene_exit_v2_semantics() {
+        let (mut trace, tape) = fixture();
+        trace.version = 2;
+        trace.channel_formats.insert(
+            TraceChannel::SceneExit,
+            crate::trace::TraceChannelWireFormat {
+                version: 2,
+                stride: 88,
+            },
+        );
+        let error = extract_exploratory(&trace, &tape, config(1, 2)).unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineRlError::UnsupportedObservationChannelFormat {
+                channel: "scene_exit",
+                expected_version: 1,
+                expected_stride: 24,
+                actual_version: Some(2),
+                actual_stride: Some(88),
+            }
+        ));
     }
 
     #[test]

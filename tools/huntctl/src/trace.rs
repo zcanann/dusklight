@@ -23,6 +23,39 @@ const KNOWN_INPUT_SOURCES: u8 = INPUT_TAPE | INPUT_CONTROLLER | INPUT_LIVE;
 const PLAYER_IS_LINK: u32 = 1 << 0;
 const EVENT_RUNNING: u32 = 1 << 0;
 const EVENT_NAME_HASH_PRESENT: u32 = 1 << 1;
+const SCENE_EXIT_VOLUME_VALID: u32 = 1 << 0;
+const SCENE_EXIT_PLAYER_INSIDE: u32 = 1 << 1;
+const SCENE_EXIT_PLAYER_LATCHED: u32 = 1 << 2;
+const SCENE_EXIT_CHANGE_OK: u32 = 1 << 3;
+const SCENE_EXIT_CHANGE_STARTED: u32 = 1 << 4;
+const SCENE_EXIT_DESTINATION_VALID: u32 = 1 << 5;
+const SCENE_EXIT_OBSERVED_COUNT_SATURATED: u32 = 1 << 6;
+const SCENE_EXIT_KNOWN_FLAGS: u32 = 0x7f;
+const COLLISION_GROUND_PROBE_VALID: u32 = 1 << 0;
+const COLLISION_GROUND_CONTACT: u32 = 1 << 1;
+const COLLISION_GROUND_LANDING: u32 = 1 << 2;
+const COLLISION_GROUND_PLANE_VALID: u32 = 1 << 4;
+const COLLISION_GROUND_OWNER_PRESENT: u32 = 1 << 5;
+const COLLISION_WALL_CONTACT: u32 = 1 << 6;
+const COLLISION_ROOF_PROBE_VALID: u32 = 1 << 7;
+const COLLISION_ROOF_CONTACT: u32 = 1 << 8;
+const COLLISION_ROOF_OWNER_PRESENT: u32 = 1 << 9;
+const COLLISION_WATER_PROBE_ENABLED: u32 = 1 << 10;
+const COLLISION_WATER_SURFACE_FOUND: u32 = 1 << 11;
+const COLLISION_WATER_IN: u32 = 1 << 12;
+const COLLISION_WATER_OWNER_PRESENT: u32 = 1 << 13;
+const COLLISION_WALL_PROBE_ENABLED: u32 = 1 << 14;
+const COLLISION_TRAJECTORY_VALID: u32 = 1 << 15;
+const COLLISION_GROUND_IDENTITY_PRESENT: u32 = 1 << 16;
+const COLLISION_ROOF_IDENTITY_PRESENT: u32 = 1 << 17;
+const COLLISION_WATER_IDENTITY_PRESENT: u32 = 1 << 18;
+const COLLISION_KNOWN_FLAGS: u32 = 0x7ffff;
+const COLLISION_WALL_HIT: u16 = 1 << 0;
+const COLLISION_WALL_OWNER_PRESENT: u16 = 1 << 1;
+const COLLISION_WALL_IDENTITY_PRESENT: u16 = 1 << 2;
+const COLLISION_WALL_KNOWN_FLAGS: u16 = 0x7;
+const INVALID_U16_ID: u16 = u16::MAX;
+const INVALID_U32_ID: u32 = u32::MAX;
 
 // Compatibility flags retained for the movement-v1 featurizer.
 const LEGACY_PLAYER_PRESENT: u32 = 1 << 0;
@@ -44,10 +77,11 @@ pub enum TraceChannel {
     Rng = 6,
     Camera = 7,
     PlayerAction = 8,
+    PlayerBackgroundCollision = 9,
 }
 
 impl TraceChannel {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Core,
         Self::Stage,
         Self::AppliedPads,
@@ -57,6 +91,7 @@ impl TraceChannel {
         Self::Rng,
         Self::Camera,
         Self::PlayerAction,
+        Self::PlayerBackgroundCollision,
     ];
 
     pub const fn bit(self) -> u64 {
@@ -78,11 +113,12 @@ impl TraceChannel {
             Self::Rng => "rng",
             Self::Camera => "camera",
             Self::PlayerAction => "player_action",
+            Self::PlayerBackgroundCollision => "player_background_collision",
         }
     }
 }
 
-const KNOWN_CHANNELS: u64 = (1 << 9) - 1;
+const KNOWN_CHANNELS: u64 = (1 << 10) - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -184,6 +220,85 @@ pub struct TraceAppliedPads {
     pub pads: [RawPadState; 4],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceSceneExitKind {
+    OrientedBox,
+    RadialXz,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceSceneExit {
+    pub session_process_id: u32,
+    pub raw_parameters: u32,
+    pub flags: u32,
+    pub signed_distance_to_volume: f32,
+    pub actor_name: i16,
+    pub set_id: u16,
+    pub exit_id: u8,
+    pub path_id: u8,
+    pub argument_1: u8,
+    pub switch_no: u8,
+    pub kind: TraceSceneExitKind,
+    pub observed_count: u8,
+    pub observed_count_saturated: bool,
+    pub home_room: i8,
+    pub link_exit_direction: Option<u8>,
+    pub link_exit_id: Option<u16>,
+    pub shape_yaw: i16,
+    pub actor_action: Option<u8>,
+    pub player_local_position: [f32; 3],
+    pub volume_extent: [f32; 3],
+    pub home_position: [f32; 3],
+    pub destination: Option<TraceSceneExitDestination>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TraceSceneExitDestination {
+    pub stage_name: String,
+    pub room: i8,
+    pub layer: i8,
+    pub point: i16,
+    pub wipe: u8,
+    pub wipe_time: u8,
+    pub time_hour: i8,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceCollisionWall {
+    pub identity_present: bool,
+    pub bg_index: Option<u16>,
+    pub poly_index: Option<u16>,
+    pub owner_session_process_id: Option<u32>,
+    pub angle_y: i16,
+    pub flags: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TracePlayerBackgroundCollision {
+    pub flags: u32,
+    pub ground_height: f32,
+    pub roof_height: f32,
+    pub water_height: f32,
+    pub ground_bg_index: Option<u16>,
+    pub ground_poly_index: Option<u16>,
+    pub ground_owner_session_process_id: Option<u32>,
+    pub ground_plane: [f32; 4],
+    pub ground_identity_present: bool,
+    pub roof_bg_index: Option<u16>,
+    pub roof_poly_index: Option<u16>,
+    pub roof_owner_session_process_id: Option<u32>,
+    pub roof_identity_present: bool,
+    pub water_bg_index: Option<u16>,
+    pub water_poly_index: Option<u16>,
+    pub water_owner_session_process_id: Option<u32>,
+    pub water_identity_present: bool,
+    pub walls: [TraceCollisionWall; 3],
+    pub old_position: [f32; 3],
+    pub resolved_frame_displacement: [f32; 3],
+    pub final_position: [f32; 3],
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TraceRecord {
     pub boundary_index: u64,
@@ -226,10 +341,12 @@ pub struct TraceRecord {
     pub nearest_scene_exit_actor_name: Option<i16>,
     pub nearest_scene_exit_position: [f32; 3],
     pub nearest_scene_exit_distance: Option<f32>,
+    pub scene_exit: Option<TraceSceneExit>,
     pub applied_pads: Option<TraceAppliedPads>,
     pub rng: Option<TraceRngSnapshot>,
     pub camera: Option<TraceCamera>,
     pub player_action: Option<TracePlayerAction>,
+    pub player_background_collision: Option<TracePlayerBackgroundCollision>,
 }
 
 impl Default for TraceRecord {
@@ -275,10 +392,12 @@ impl Default for TraceRecord {
             nearest_scene_exit_actor_name: None,
             nearest_scene_exit_position: [0.0; 3],
             nearest_scene_exit_distance: None,
+            scene_exit: None,
             applied_pads: None,
             rng: None,
             camera: None,
             player_action: None,
+            player_background_collision: None,
         }
     }
 }
@@ -357,7 +476,14 @@ pub struct DecodedTrace {
     pub tick_rate_denominator: u32,
     pub requested_channels: u64,
     pub capacity_exhausted: bool,
+    pub channel_formats: BTreeMap<TraceChannel, TraceChannelWireFormat>,
     pub records: Vec<TraceRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TraceChannelWireFormat {
+    pub version: u16,
+    pub stride: usize,
 }
 
 impl DecodedTrace {
@@ -379,54 +505,31 @@ impl Error for TraceError {}
 
 #[derive(Clone, Copy)]
 struct ChannelDefinition {
-    version: u16,
     stride: usize,
 }
 
-fn channel_definition(channel: TraceChannel) -> ChannelDefinition {
-    match channel {
-        TraceChannel::Core => ChannelDefinition {
-            version: 1,
-            stride: 32,
-        },
-        TraceChannel::Stage => ChannelDefinition {
-            version: 1,
-            stride: 32,
-        },
-        TraceChannel::AppliedPads => ChannelDefinition {
-            version: 1,
-            stride: 52,
-        },
-        TraceChannel::PlayerMotion => ChannelDefinition {
-            version: 1,
-            stride: 52,
-        },
-        TraceChannel::Event => ChannelDefinition {
-            version: 1,
-            stride: 16,
-        },
-        TraceChannel::SceneExit => ChannelDefinition {
-            version: 1,
-            stride: 24,
-        },
-        TraceChannel::Rng => ChannelDefinition {
-            version: 1,
-            stride: 64,
-        },
-        TraceChannel::Camera => ChannelDefinition {
-            version: 1,
-            stride: 48,
-        },
-        TraceChannel::PlayerAction => ChannelDefinition {
-            version: 1,
-            stride: 104,
-        },
-    }
+fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefinition> {
+    let stride = match (channel, version) {
+        (TraceChannel::Core, 1) => 32,
+        (TraceChannel::Stage, 1) => 32,
+        (TraceChannel::AppliedPads, 1) => 52,
+        (TraceChannel::PlayerMotion, 1) => 52,
+        (TraceChannel::Event, 1) => 16,
+        (TraceChannel::SceneExit, 1) => 24,
+        (TraceChannel::SceneExit, 2) => 88,
+        (TraceChannel::Rng, 1) => 64,
+        (TraceChannel::Camera, 1) => 48,
+        (TraceChannel::PlayerAction, 1) => 104,
+        (TraceChannel::PlayerBackgroundCollision, 1) => 128,
+        _ => return None,
+    };
+    Some(ChannelDefinition { stride })
 }
 
 #[derive(Clone)]
 struct ChannelDescriptor {
     channel: Option<TraceChannel>,
+    version: u16,
     flags: u32,
     stride: usize,
     status_offset: usize,
@@ -494,6 +597,7 @@ fn decode_v1(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
             | TraceChannel::Event.bit()
             | TraceChannel::SceneExit.bit(),
         capacity_exhausted: u32_at(bytes, 28) != 0,
+        channel_formats: BTreeMap::new(),
         records,
     })
 }
@@ -668,11 +772,17 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
         regions.push((payload_offset, payload_end));
         let channel = TraceChannel::from_id(id);
         if let Some(channel) = channel {
-            let definition = channel_definition(channel);
-            if version != definition.version || stride != definition.stride {
-                return Err(TraceError(format!(
-                    "unsupported gameplay trace channel {} version {version} / stride {stride}",
+            let definition = channel_definition(channel, version).ok_or_else(|| {
+                TraceError(format!(
+                    "unsupported gameplay trace channel {} version {version}",
                     channel.name()
+                ))
+            })?;
+            if stride != definition.stride {
+                return Err(TraceError(format!(
+                    "unsupported gameplay trace channel {} version {version} stride {stride}; expected {}",
+                    channel.name(),
+                    definition.stride
                 )));
             }
             if requested_channels & channel.bit() == 0 {
@@ -691,6 +801,7 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
                 id,
                 ChannelDescriptor {
                     channel,
+                    version,
                     flags,
                     stride,
                     status_offset,
@@ -733,10 +844,18 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
     }
 
     let mut records = vec![TraceRecord::default(); count];
+    let mut channel_formats = BTreeMap::new();
     for descriptor in descriptors.values() {
         let Some(channel) = descriptor.channel else {
             continue;
         };
+        channel_formats.insert(
+            channel,
+            TraceChannelWireFormat {
+                version: descriptor.version,
+                stride: descriptor.stride,
+            },
+        );
         debug_assert_eq!(descriptor.status_length, count);
         debug_assert_eq!(descriptor.payload_length, count * descriptor.stride);
         for (index, record) in records.iter_mut().enumerate() {
@@ -744,10 +863,16 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
             if channel == TraceChannel::Core && status != TraceChannelStatus::Present {
                 return Err(TraceError("gameplay trace core is not present".into()));
             }
+            validate_channel_status(channel, descriptor.version, status)?;
             record.channel_status.insert(channel, status);
             if status == TraceChannelStatus::Present || status == TraceChannelStatus::Truncated {
                 let start = descriptor.payload_offset + index * descriptor.stride;
-                decode_v2_channel(channel, &bytes[start..start + descriptor.stride], record)?;
+                decode_v2_channel(
+                    channel,
+                    descriptor.version,
+                    &bytes[start..start + descriptor.stride],
+                    record,
+                )?;
             }
         }
     }
@@ -766,12 +891,48 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
         tick_rate_denominator: u32_at(bytes, 16),
         requested_channels,
         capacity_exhausted: file_flags & FILE_CAPACITY_EXHAUSTED != 0,
+        channel_formats,
         records,
     })
 }
 
+fn validate_channel_status(
+    channel: TraceChannel,
+    version: u16,
+    status: TraceChannelStatus,
+) -> Result<(), TraceError> {
+    let valid = status != TraceChannelStatus::NotSampled
+        && match (channel, version) {
+            (TraceChannel::SceneExit, 1) => matches!(
+                status,
+                TraceChannelStatus::Present | TraceChannelStatus::Absent
+            ),
+            (TraceChannel::SceneExit, 2) => matches!(
+                status,
+                TraceChannelStatus::Present
+                    | TraceChannelStatus::Absent
+                    | TraceChannelStatus::Unavailable
+            ),
+            (TraceChannel::PlayerBackgroundCollision, 1) => matches!(
+                status,
+                TraceChannelStatus::Present
+                    | TraceChannelStatus::Absent
+                    | TraceChannelStatus::Unavailable
+            ),
+            _ => true,
+        };
+    if !valid {
+        return Err(TraceError(format!(
+            "invalid gameplay trace channel status {status:?} for {} version {version}",
+            channel.name()
+        )));
+    }
+    Ok(())
+}
+
 fn decode_v2_channel(
     channel: TraceChannel,
+    version: u16,
     bytes: &[u8],
     record: &mut TraceRecord,
 ) -> Result<(), TraceError> {
@@ -901,18 +1062,11 @@ fn decode_v2_channel(
             record.event_name_hash = u32_at(bytes, 12);
             record.event_name_hash_present = flags & EVENT_NAME_HASH_PRESENT != 0;
         }
-        TraceChannel::SceneExit => {
-            if u16_at(bytes, 6) != 0 {
-                return Err(TraceError(
-                    "nonzero gameplay trace scene-exit reserved field".into(),
-                ));
-            }
-            record.nearest_scene_exit_session_process_id = Some(u32_at(bytes, 0));
-            record.nearest_scene_exit_actor_name = Some(i16_at(bytes, 4));
-            record.nearest_scene_exit_position =
-                [f32_at(bytes, 8), f32_at(bytes, 12), f32_at(bytes, 16)];
-            record.nearest_scene_exit_distance = Some(f32_at(bytes, 20));
-        }
+        TraceChannel::SceneExit => match version {
+            1 => decode_scene_exit_v1(bytes, record)?,
+            2 => decode_scene_exit_v2(bytes, record)?,
+            _ => unreachable!("channel version was validated"),
+        },
         TraceChannel::Rng => {
             let primary = decode_rng_stream(&bytes[8..36])?;
             let secondary = decode_rng_stream(&bytes[36..64])?;
@@ -979,6 +1133,456 @@ fn decode_v2_channel(
                 upper_animations: [lane(68), lane(80), lane(92)],
             });
         }
+        TraceChannel::PlayerBackgroundCollision => {
+            decode_player_background_collision_v1(bytes, record)?
+        }
+    }
+    Ok(())
+}
+
+fn decode_scene_exit_v1(bytes: &[u8], record: &mut TraceRecord) -> Result<(), TraceError> {
+    if u16_at(bytes, 6) != 0 {
+        return Err(TraceError(
+            "nonzero gameplay trace scene-exit v1 reserved field".into(),
+        ));
+    }
+    let values = [
+        f32_at(bytes, 8),
+        f32_at(bytes, 12),
+        f32_at(bytes, 16),
+        f32_at(bytes, 20),
+    ];
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(TraceError(
+            "nonfinite gameplay trace scene-exit v1 value".into(),
+        ));
+    }
+    record.nearest_scene_exit_session_process_id = Some(u32_at(bytes, 0));
+    record.nearest_scene_exit_actor_name = Some(i16_at(bytes, 4));
+    record.nearest_scene_exit_position = values[..3].try_into().expect("fixed slice");
+    record.nearest_scene_exit_distance = Some(values[3]);
+    Ok(())
+}
+
+fn decode_scene_exit_v2(bytes: &[u8], record: &mut TraceRecord) -> Result<(), TraceError> {
+    let flags = u32_at(bytes, 8);
+    if flags & !SCENE_EXIT_KNOWN_FLAGS != 0 || flags & SCENE_EXIT_VOLUME_VALID == 0 {
+        return Err(TraceError(
+            "invalid gameplay trace scene-exit v2 flags".into(),
+        ));
+    }
+    if bytes[33..36].iter().any(|value| *value != 0) || bytes[87] != 0 {
+        return Err(TraceError(
+            "nonzero gameplay trace scene-exit v2 reserved field".into(),
+        ));
+    }
+    let kind = match bytes[24] {
+        1 => TraceSceneExitKind::OrientedBox,
+        2 => TraceSceneExitKind::RadialXz,
+        value => {
+            return Err(TraceError(format!(
+                "invalid gameplay trace scene-exit kind {value}"
+            )));
+        }
+    };
+    let observed_count = bytes[25];
+    if observed_count == 0
+        || flags & SCENE_EXIT_OBSERVED_COUNT_SATURATED != 0 && observed_count != u8::MAX
+    {
+        return Err(TraceError(
+            "gameplay trace scene-exit has an invalid observed candidate count".into(),
+        ));
+    }
+    let latched = flags & SCENE_EXIT_PLAYER_LATCHED != 0;
+    let link_exit_direction = latched.then_some(bytes[27]);
+    let raw_link_exit_id = u16_at(bytes, 28);
+    let link_exit_id = (raw_link_exit_id != u16::MAX).then_some(raw_link_exit_id);
+    if link_exit_id.is_some() != latched || (!latched && bytes[27] != u8::MAX) {
+        return Err(TraceError(
+            "inconsistent gameplay trace scene-exit Link exit sentinels".into(),
+        ));
+    }
+    let raw_actor_action = bytes[32];
+    let actor_action = (raw_actor_action != u8::MAX).then_some(raw_actor_action);
+    if kind == TraceSceneExitKind::OrientedBox && actor_action.is_some() {
+        return Err(TraceError(
+            "box gameplay trace scene-exit has radial actor action".into(),
+        ));
+    }
+    if kind == TraceSceneExitKind::RadialXz && flags & SCENE_EXIT_CHANGE_OK != 0 {
+        return Err(TraceError(
+            "radial gameplay trace scene-exit has box-only change-ok state".into(),
+        ));
+    }
+    if kind == TraceSceneExitKind::RadialXz && latched {
+        return Err(TraceError(
+            "radial gameplay trace scene-exit cannot be Link's regular exit latch".into(),
+        ));
+    }
+    if flags & SCENE_EXIT_CHANGE_OK != 0 && !latched {
+        return Err(TraceError(
+            "gameplay trace scene-exit change-ok state lacks Link latch".into(),
+        ));
+    }
+    if kind == TraceSceneExitKind::RadialXz
+        && (bytes[21] != u8::MAX
+            || bytes[22] != u8::MAX
+            || bytes[23] != u8::MAX
+            || actor_action.is_none_or(|action| action > 3))
+    {
+        return Err(TraceError(
+            "invalid gameplay trace radial scene-exit parameters".into(),
+        ));
+    }
+    let raw_parameters = u32_at(bytes, 4);
+    if bytes[20] != raw_parameters as u8
+        || kind == TraceSceneExitKind::OrientedBox
+            && (bytes[22] != (raw_parameters >> 8) as u8
+                || bytes[21] != (raw_parameters >> 16) as u8
+                || bytes[23] != (raw_parameters >> 24) as u8)
+    {
+        return Err(TraceError(
+            "gameplay trace scene-exit fields disagree with raw parameters".into(),
+        ));
+    }
+    if flags & SCENE_EXIT_CHANGE_STARTED != 0 && flags & SCENE_EXIT_PLAYER_LATCHED == 0 {
+        return Err(TraceError(
+            "gameplay trace scene-change start lacks selected exit latch".into(),
+        ));
+    }
+    let player_local_position = [f32_at(bytes, 36), f32_at(bytes, 40), f32_at(bytes, 44)];
+    let volume_extent = [f32_at(bytes, 48), f32_at(bytes, 52), f32_at(bytes, 56)];
+    let home_position = [f32_at(bytes, 60), f32_at(bytes, 64), f32_at(bytes, 68)];
+    if std::iter::once(f32_at(bytes, 12))
+        .chain(player_local_position)
+        .chain(volume_extent)
+        .chain(home_position)
+        .any(|value| !value.is_finite())
+    {
+        return Err(TraceError(
+            "nonfinite gameplay trace scene-exit v2 geometry".into(),
+        ));
+    }
+    let canonical_extent = match kind {
+        TraceSceneExitKind::OrientedBox => volume_extent.iter().all(|value| *value >= 0.0),
+        TraceSceneExitKind::RadialXz => {
+            volume_extent[0] >= 0.0
+                && volume_extent[1] == 0.0
+                && volume_extent[2] == volume_extent[0]
+        }
+    };
+    if !canonical_extent {
+        return Err(TraceError(
+            "invalid gameplay trace scene-exit volume extent".into(),
+        ));
+    }
+    let geometrically_inside = match kind {
+        TraceSceneExitKind::OrientedBox => f32_at(bytes, 12) <= 0.0,
+        TraceSceneExitKind::RadialXz => f32_at(bytes, 12) < 0.0,
+    };
+    if geometrically_inside != (flags & SCENE_EXIT_PLAYER_INSIDE != 0) {
+        return Err(TraceError(
+            "gameplay trace scene-exit inside flag disagrees with signed distance".into(),
+        ));
+    }
+    let destination_present = flags & SCENE_EXIT_DESTINATION_VALID != 0;
+    let destination_name = decode_name(&bytes[72..80])?;
+    let destination_wipe = bytes[84];
+    let destination_wipe_time = bytes[85];
+    let destination_time_hour = bytes[86] as i8;
+    if destination_present {
+        if destination_name.is_empty()
+            || !(-1..=63).contains(&(bytes[80] as i8))
+            || destination_wipe_time > 7
+            || !(-1..=30).contains(&destination_time_hour)
+            || !(bytes[81] as i8 == -1 || (0..=14).contains(&(bytes[81] as i8)))
+            || i16_at(bytes, 82) < 0
+        {
+            return Err(TraceError(
+                "invalid gameplay trace scene-exit destination".into(),
+            ));
+        }
+    } else if !destination_name.is_empty()
+        || bytes[80] as i8 != -1
+        || bytes[81] as i8 != -1
+        || i16_at(bytes, 82) != -1
+        || destination_wipe != u8::MAX
+        || destination_wipe_time != u8::MAX
+        || destination_time_hour != -1
+    {
+        return Err(TraceError(
+            "gameplay trace scene-exit destination sentinels disagree with flags".into(),
+        ));
+    }
+    let destination = destination_present.then(|| TraceSceneExitDestination {
+        stage_name: destination_name,
+        room: bytes[80] as i8,
+        layer: bytes[81] as i8,
+        point: i16_at(bytes, 82),
+        wipe: destination_wipe,
+        wipe_time: destination_wipe_time,
+        time_hour: destination_time_hour,
+    });
+    let scene_exit = TraceSceneExit {
+        session_process_id: u32_at(bytes, 0),
+        raw_parameters,
+        flags,
+        signed_distance_to_volume: f32_at(bytes, 12),
+        actor_name: i16_at(bytes, 16),
+        set_id: u16_at(bytes, 18),
+        exit_id: bytes[20],
+        path_id: bytes[21],
+        argument_1: bytes[22],
+        switch_no: bytes[23],
+        kind,
+        observed_count,
+        observed_count_saturated: flags & SCENE_EXIT_OBSERVED_COUNT_SATURATED != 0,
+        home_room: bytes[26] as i8,
+        link_exit_direction,
+        link_exit_id,
+        shape_yaw: i16_at(bytes, 30),
+        actor_action,
+        player_local_position,
+        volume_extent,
+        home_position,
+        destination,
+    };
+    record.nearest_scene_exit_session_process_id = Some(scene_exit.session_process_id);
+    record.nearest_scene_exit_actor_name = Some(scene_exit.actor_name);
+    // Preserve the old actor-origin projection for callers that only display it.
+    // movement-state/v1 rejects SceneExit v2 before featurization because its
+    // old Euclidean-distance slot has no equivalent in this signed-volume wire.
+    record.nearest_scene_exit_position = scene_exit.home_position;
+    record.scene_exit = Some(scene_exit);
+    Ok(())
+}
+
+fn decode_player_background_collision_v1(
+    bytes: &[u8],
+    record: &mut TraceRecord,
+) -> Result<(), TraceError> {
+    let flags = u32_at(bytes, 0);
+    if flags & !COLLISION_KNOWN_FLAGS != 0 {
+        return Err(TraceError(
+            "unknown gameplay trace player-background-collision flags".into(),
+        ));
+    }
+    if flags & (COLLISION_GROUND_CONTACT | COLLISION_GROUND_LANDING) != 0
+        && flags & COLLISION_GROUND_PROBE_VALID == 0
+        || flags & COLLISION_ROOF_CONTACT != 0 && flags & COLLISION_ROOF_PROBE_VALID == 0
+        || flags & COLLISION_WALL_CONTACT != 0 && flags & COLLISION_WALL_PROBE_ENABLED == 0
+        || flags & COLLISION_WATER_SURFACE_FOUND != 0 && flags & COLLISION_WATER_PROBE_ENABLED == 0
+        || flags & COLLISION_WATER_IN != 0 && flags & COLLISION_WATER_SURFACE_FOUND == 0
+        || flags & COLLISION_WATER_OWNER_PRESENT != 0 && flags & COLLISION_WATER_SURFACE_FOUND == 0
+        || flags & COLLISION_GROUND_PLANE_VALID != 0
+            && flags & (COLLISION_GROUND_PROBE_VALID | COLLISION_GROUND_CONTACT)
+                != (COLLISION_GROUND_PROBE_VALID | COLLISION_GROUND_CONTACT)
+    {
+        return Err(TraceError(
+            "contradictory gameplay trace player-background-collision flags".into(),
+        ));
+    }
+
+    let ground_bg = u16_at(bytes, 16);
+    let ground_poly = u16_at(bytes, 18);
+    let ground_owner = u32_at(bytes, 20);
+    let ground_identity = flags & COLLISION_GROUND_IDENTITY_PRESENT != 0;
+    validate_identity_pair(ground_bg, ground_poly, ground_identity, "ground")?;
+    validate_owner(
+        ground_owner,
+        flags & COLLISION_GROUND_OWNER_PRESENT != 0,
+        "ground",
+    )?;
+    if ground_identity && flags & COLLISION_GROUND_PROBE_VALID == 0
+        || flags & COLLISION_GROUND_OWNER_PRESENT != 0 && !ground_identity
+    {
+        return Err(TraceError(
+            "gameplay trace collision ground identity disagrees with flags".into(),
+        ));
+    }
+    let ground_plane = [
+        f32_at(bytes, 24),
+        f32_at(bytes, 28),
+        f32_at(bytes, 32),
+        f32_at(bytes, 36),
+    ];
+    validate_plane(
+        ground_plane,
+        flags & COLLISION_GROUND_PLANE_VALID != 0,
+        "ground",
+    )?;
+
+    let roof_bg = u16_at(bytes, 40);
+    let roof_poly = u16_at(bytes, 42);
+    let roof_owner = u32_at(bytes, 44);
+    let roof_identity = flags & COLLISION_ROOF_IDENTITY_PRESENT != 0;
+    validate_identity_pair(roof_bg, roof_poly, roof_identity, "roof")?;
+    validate_owner(
+        roof_owner,
+        flags & COLLISION_ROOF_OWNER_PRESENT != 0,
+        "roof",
+    )?;
+    if roof_identity && flags & COLLISION_ROOF_PROBE_VALID == 0
+        || flags & COLLISION_ROOF_OWNER_PRESENT != 0 && !roof_identity
+    {
+        return Err(TraceError(
+            "gameplay trace collision roof identity disagrees with flags".into(),
+        ));
+    }
+    let water_bg = u16_at(bytes, 48);
+    let water_poly = u16_at(bytes, 50);
+    let water_owner = u32_at(bytes, 52);
+    let water_identity = flags & COLLISION_WATER_IDENTITY_PRESENT != 0;
+    validate_identity_pair(water_bg, water_poly, water_identity, "water")?;
+    validate_owner(
+        water_owner,
+        flags & COLLISION_WATER_OWNER_PRESENT != 0,
+        "water",
+    )?;
+    if water_identity && flags & COLLISION_WATER_SURFACE_FOUND == 0
+        || flags & COLLISION_WATER_OWNER_PRESENT != 0 && !water_identity
+    {
+        return Err(TraceError(
+            "gameplay trace collision water identity disagrees with flags".into(),
+        ));
+    }
+
+    let walls: [TraceCollisionWall; 3] = (0..3)
+        .map(|index| {
+            let offset = 56 + index * 12;
+            let wall_flags = u16_at(bytes, offset + 10);
+            if wall_flags & !COLLISION_WALL_KNOWN_FLAGS != 0 {
+                return Err(TraceError(format!(
+                    "unknown gameplay trace collision wall {index} flags"
+                )));
+            }
+            let bg = u16_at(bytes, offset);
+            let poly = u16_at(bytes, offset + 2);
+            let owner = u32_at(bytes, offset + 4);
+            let identity = wall_flags & COLLISION_WALL_IDENTITY_PRESENT != 0;
+            validate_identity_pair(bg, poly, identity, "wall")?;
+            validate_owner(
+                owner,
+                wall_flags & COLLISION_WALL_OWNER_PRESENT != 0,
+                "wall",
+            )?;
+            if identity && wall_flags & COLLISION_WALL_HIT == 0
+                || wall_flags & COLLISION_WALL_OWNER_PRESENT != 0 && !identity
+                || wall_flags & COLLISION_WALL_HIT == 0 && i16_at(bytes, offset + 8) != 0
+            {
+                return Err(TraceError(
+                    "gameplay trace collision wall identity or angle disagrees with flags".into(),
+                ));
+            }
+            Ok(TraceCollisionWall {
+                identity_present: identity,
+                bg_index: (bg != INVALID_U16_ID).then_some(bg),
+                poly_index: (poly != INVALID_U16_ID).then_some(poly),
+                owner_session_process_id: (owner != INVALID_U32_ID).then_some(owner),
+                angle_y: i16_at(bytes, offset + 8),
+                flags: wall_flags,
+            })
+        })
+        .collect::<Result<Vec<_>, TraceError>>()?
+        .try_into()
+        .expect("three collision wall slots");
+    let any_wall_hit = walls
+        .iter()
+        .any(|wall| wall.flags & COLLISION_WALL_HIT != 0);
+    if any_wall_hit != (flags & COLLISION_WALL_CONTACT != 0) {
+        return Err(TraceError(
+            "gameplay trace aggregate wall contact disagrees with wall hits".into(),
+        ));
+    }
+    let heights = [f32_at(bytes, 4), f32_at(bytes, 8), f32_at(bytes, 12)];
+    let old_position = [f32_at(bytes, 92), f32_at(bytes, 96), f32_at(bytes, 100)];
+    let resolved_frame_displacement = [f32_at(bytes, 104), f32_at(bytes, 108), f32_at(bytes, 112)];
+    let final_position = [f32_at(bytes, 116), f32_at(bytes, 120), f32_at(bytes, 124)];
+    if heights
+        .iter()
+        .chain(&old_position)
+        .chain(&resolved_frame_displacement)
+        .chain(&final_position)
+        .any(|value| !value.is_finite())
+        || (flags & COLLISION_GROUND_PROBE_VALID == 0 && heights[0] != -1.0e9)
+        || (flags & COLLISION_GROUND_PROBE_VALID != 0 && heights[0] == -1.0e9)
+        || (flags & COLLISION_ROOF_PROBE_VALID == 0 && heights[1] != 1.0e9)
+        || (flags & COLLISION_ROOF_PROBE_VALID != 0 && heights[1] == 1.0e9)
+        || (flags & COLLISION_WATER_SURFACE_FOUND == 0 && heights[2] != -1.0e9)
+        || (flags & COLLISION_WATER_SURFACE_FOUND != 0 && heights[2] == -1.0e9)
+        || (flags & COLLISION_TRAJECTORY_VALID == 0
+            && old_position
+                .iter()
+                .chain(&resolved_frame_displacement)
+                .chain(&final_position)
+                .any(|value| *value != 0.0))
+    {
+        return Err(TraceError(
+            "invalid gameplay trace player-background-collision height sentinel".into(),
+        ));
+    }
+    if flags & COLLISION_TRAJECTORY_VALID != 0
+        && (0..3).any(|axis| {
+            let reconstructed = old_position[axis] + resolved_frame_displacement[axis];
+            let tolerance = 1.0e-4 * final_position[axis].abs().max(1.0);
+            (reconstructed - final_position[axis]).abs() > tolerance
+        })
+    {
+        return Err(TraceError(
+            "gameplay trace collision trajectory does not reconstruct final position".into(),
+        ));
+    }
+    record.player_background_collision = Some(TracePlayerBackgroundCollision {
+        flags,
+        ground_height: heights[0],
+        roof_height: heights[1],
+        water_height: heights[2],
+        ground_bg_index: (ground_bg != INVALID_U16_ID).then_some(ground_bg),
+        ground_poly_index: (ground_poly != INVALID_U16_ID).then_some(ground_poly),
+        ground_owner_session_process_id: (ground_owner != INVALID_U32_ID).then_some(ground_owner),
+        ground_plane,
+        ground_identity_present: ground_identity,
+        roof_bg_index: (roof_bg != INVALID_U16_ID).then_some(roof_bg),
+        roof_poly_index: (roof_poly != INVALID_U16_ID).then_some(roof_poly),
+        roof_owner_session_process_id: (roof_owner != INVALID_U32_ID).then_some(roof_owner),
+        roof_identity_present: roof_identity,
+        water_bg_index: (water_bg != INVALID_U16_ID).then_some(water_bg),
+        water_poly_index: (water_poly != INVALID_U16_ID).then_some(water_poly),
+        water_owner_session_process_id: (water_owner != INVALID_U32_ID).then_some(water_owner),
+        water_identity_present: water_identity,
+        walls,
+        old_position,
+        resolved_frame_displacement,
+        final_position,
+    });
+    Ok(())
+}
+
+fn validate_identity_pair(bg: u16, poly: u16, present: bool, kind: &str) -> Result<(), TraceError> {
+    if (bg != INVALID_U16_ID) != present || (poly != INVALID_U16_ID) != present {
+        return Err(TraceError(format!(
+            "invalid gameplay trace collision {kind} identity sentinel"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_owner(owner: u32, present: bool, kind: &str) -> Result<(), TraceError> {
+    if (owner != INVALID_U32_ID) != present {
+        return Err(TraceError(format!(
+            "invalid gameplay trace collision {kind} owner sentinel"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_plane(plane: [f32; 4], present: bool, kind: &str) -> Result<(), TraceError> {
+    if plane.iter().any(|value| !value.is_finite())
+        || (!present && plane.iter().any(|value| *value != 0.0))
+    {
+        return Err(TraceError(format!(
+            "invalid gameplay trace collision {kind} plane"
+        )));
     }
     Ok(())
 }
@@ -1214,6 +1818,354 @@ mod tests {
             TracePhase::PostSimulation
         );
         assert_eq!(decoded.records[0].tape_frame, Some(9));
+        assert!(decoded.channel_formats.is_empty());
+    }
+
+    #[test]
+    fn v2_decodes_scene_exit_v1_and_retains_wire_format() {
+        let mut payload = vec![0; 24];
+        payload[0..4].copy_from_slice(&7_u32.to_le_bytes());
+        payload[4..6].copy_from_slice(&(-13_i16).to_le_bytes());
+        write_f32(&mut payload, 8, 10.0);
+        write_f32(&mut payload, 12, 20.0);
+        write_f32(&mut payload, 16, 30.0);
+        write_f32(&mut payload, 20, 40.0);
+        let decoded = build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            1,
+            TraceChannelStatus::Present,
+            payload,
+        )]);
+        let decoded = decode(&decoded).unwrap();
+        assert_eq!(
+            decoded.channel_formats[&TraceChannel::SceneExit],
+            TraceChannelWireFormat {
+                version: 1,
+                stride: 24
+            }
+        );
+        let record = &decoded.records[0];
+        assert_eq!(record.nearest_scene_exit_session_process_id, Some(7));
+        assert_eq!(record.nearest_scene_exit_actor_name, Some(-13));
+        assert_eq!(record.nearest_scene_exit_position, [10.0, 20.0, 30.0]);
+        assert_eq!(record.nearest_scene_exit_distance, Some(40.0));
+        assert!(record.scene_exit.is_none());
+    }
+
+    #[test]
+    fn v2_decodes_scene_exit_v2_destination_and_geometry() {
+        let payload = scene_exit_v2_payload();
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            payload,
+        )]))
+        .unwrap();
+        assert_eq!(
+            decoded.channel_formats[&TraceChannel::SceneExit],
+            TraceChannelWireFormat {
+                version: 2,
+                stride: 88
+            }
+        );
+        let exit = decoded.records[0].scene_exit.as_ref().unwrap();
+        assert_eq!(exit.session_process_id, 0x1234);
+        assert_eq!(exit.kind, TraceSceneExitKind::OrientedBox);
+        assert_eq!(exit.observed_count, 2);
+        assert!(!exit.observed_count_saturated);
+        assert_eq!(exit.signed_distance_to_volume, -0.25);
+        assert_eq!(exit.home_position, [100.0, 200.0, 300.0]);
+        let destination = exit.destination.as_ref().unwrap();
+        assert_eq!(destination.stage_name, "F_SP103");
+        assert_eq!(destination.room, 1);
+        assert_eq!(destination.layer, -1);
+        assert_eq!(destination.point, 4);
+        assert_eq!(destination.wipe, 17);
+        assert_eq!(destination.wipe_time, 3);
+        assert_eq!(destination.time_hour, -1);
+        assert_eq!(decoded.records[0].nearest_scene_exit_distance, None);
+    }
+
+    #[test]
+    fn v2_scene_exit_latch_preserves_raw_ff_direction() {
+        let mut payload = scene_exit_v2_payload();
+        let flags = u32_at(&payload, 8) | SCENE_EXIT_PLAYER_LATCHED;
+        payload[8..12].copy_from_slice(&flags.to_le_bytes());
+        payload[27] = u8::MAX;
+        payload[28..30].copy_from_slice(&7_u16.to_le_bytes());
+        payload[8..12].copy_from_slice(&(flags & !SCENE_EXIT_DESTINATION_VALID).to_le_bytes());
+        payload[72..80].fill(0);
+        payload[80] = u8::MAX;
+        payload[81] = u8::MAX;
+        payload[82..84].copy_from_slice(&(-1_i16).to_le_bytes());
+        payload[84..87].fill(u8::MAX);
+
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            payload,
+        )]))
+        .unwrap();
+        let exit = decoded.records[0].scene_exit.as_ref().unwrap();
+        assert_eq!(exit.link_exit_id, Some(7));
+        assert_eq!(exit.link_exit_direction, Some(u8::MAX));
+        assert!(exit.destination.is_none());
+    }
+
+    #[test]
+    fn v2_scene_exit_preserves_saturated_observed_count() {
+        let mut payload = scene_exit_v2_payload();
+        let flags = u32_at(&payload, 8) | SCENE_EXIT_OBSERVED_COUNT_SATURATED;
+        payload[8..12].copy_from_slice(&flags.to_le_bytes());
+        payload[25] = u8::MAX;
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            payload,
+        )]))
+        .unwrap();
+        let exit = decoded.records[0].scene_exit.as_ref().unwrap();
+        assert_eq!(exit.observed_count, u8::MAX);
+        assert!(exit.observed_count_saturated);
+    }
+
+    #[test]
+    fn v2_decodes_player_background_collision_v1() {
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            background_collision_v1_payload(),
+        )]))
+        .unwrap();
+        assert_eq!(
+            decoded.channel_formats[&TraceChannel::PlayerBackgroundCollision],
+            TraceChannelWireFormat {
+                version: 1,
+                stride: 128
+            }
+        );
+        let collision = decoded.records[0]
+            .player_background_collision
+            .as_ref()
+            .unwrap();
+        assert_eq!(collision.flags, COLLISION_TRAJECTORY_VALID);
+        assert_eq!(collision.ground_height, -1.0e9);
+        assert_eq!(collision.roof_height, 1.0e9);
+        assert_eq!(collision.old_position, [1.0, 2.0, 3.0]);
+        assert_eq!(collision.resolved_frame_displacement, [4.0, 5.0, 6.0]);
+        assert_eq!(collision.final_position, [5.0, 7.0, 9.0]);
+        assert!(collision.walls.iter().all(|wall| wall.bg_index.is_none()));
+    }
+
+    #[test]
+    fn v2_rejects_known_channel_version_stride_and_status_mismatches() {
+        let wrong_version = build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            3,
+            TraceChannelStatus::Present,
+            vec![0; 88],
+        )]);
+        assert!(
+            decode(&wrong_version)
+                .unwrap_err()
+                .to_string()
+                .contains("scene_exit version 3")
+        );
+
+        let wrong_stride = build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            vec![0; 72],
+        )]);
+        assert!(
+            decode(&wrong_stride)
+                .unwrap_err()
+                .to_string()
+                .contains("expected 88")
+        );
+
+        let truncated = build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Truncated,
+            scene_exit_v2_payload(),
+        )]);
+        assert!(
+            decode(&truncated)
+                .unwrap_err()
+                .to_string()
+                .contains("status Truncated")
+        );
+
+        let collision_truncated = build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Truncated,
+            background_collision_v1_payload(),
+        )]);
+        assert!(
+            decode(&collision_truncated)
+                .unwrap_err()
+                .to_string()
+                .contains("status Truncated")
+        );
+
+        let collision_not_sampled = build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::NotSampled,
+            background_collision_v1_payload(),
+        )]);
+        assert!(
+            decode(&collision_not_sampled)
+                .unwrap_err()
+                .to_string()
+                .contains("status NotSampled")
+        );
+    }
+
+    #[test]
+    fn v2_rejects_scene_exit_and_collision_corruption() {
+        let mut scene = scene_exit_v2_payload();
+        scene[87] = 1;
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            scene,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("reserved"));
+
+        let mut scene = scene_exit_v2_payload();
+        let flags = u32_at(&scene, 8) | SCENE_EXIT_OBSERVED_COUNT_SATURATED;
+        scene[8..12].copy_from_slice(&flags.to_le_bytes());
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            scene,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("candidate count"));
+
+        let mut scene = scene_exit_v2_payload();
+        scene[20] = 4;
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            scene,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("raw parameters"));
+
+        let mut scene = scene_exit_v2_payload();
+        let flags = u32_at(&scene, 8) | SCENE_EXIT_CHANGE_OK;
+        scene[8..12].copy_from_slice(&flags.to_le_bytes());
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            scene,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("change-ok"));
+
+        let mut scene = scene_exit_v2_payload();
+        let flags = u32_at(&scene, 8) | SCENE_EXIT_PLAYER_LATCHED;
+        scene[8..12].copy_from_slice(&flags.to_le_bytes());
+        scene[24] = 2;
+        scene[28..30].copy_from_slice(&7_u16.to_le_bytes());
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::SceneExit,
+            2,
+            TraceChannelStatus::Present,
+            scene,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("radial"));
+
+        let mut collision = background_collision_v1_payload();
+        collision[0..4].copy_from_slice(&(1_u32 << 31).to_le_bytes());
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown"));
+
+        let mut collision = background_collision_v1_payload();
+        collision[0..4].copy_from_slice(
+            &(COLLISION_TRAJECTORY_VALID | COLLISION_GROUND_IDENTITY_PRESENT).to_le_bytes(),
+        );
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("identity sentinel"));
+
+        let mut collision = background_collision_v1_payload();
+        write_f32(&mut collision, 116, 6.0);
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("trajectory"));
+
+        let mut collision = background_collision_v1_payload();
+        collision[0..4].copy_from_slice(
+            &(COLLISION_TRAJECTORY_VALID | COLLISION_WALL_PROBE_ENABLED | COLLISION_WALL_CONTACT)
+                .to_le_bytes(),
+        );
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("aggregate wall contact"));
+
+        let mut collision = background_collision_v1_payload();
+        collision[0..4].copy_from_slice(
+            &(COLLISION_TRAJECTORY_VALID | COLLISION_WATER_PROBE_ENABLED | COLLISION_WATER_IN)
+                .to_le_bytes(),
+        );
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("contradictory"));
+
+        let mut collision = background_collision_v1_payload();
+        collision[0..4].copy_from_slice(
+            &(COLLISION_TRAJECTORY_VALID | COLLISION_GROUND_PLANE_VALID).to_le_bytes(),
+        );
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerBackgroundCollision,
+            1,
+            TraceChannelStatus::Present,
+            collision,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("contradictory"));
     }
 
     #[test]
@@ -1257,5 +2209,121 @@ mod tests {
         bytes[44..52].copy_from_slice(&(data_offset as u64).to_le_bytes());
         bytes[52..60].copy_from_slice(&requested.to_le_bytes());
         bytes
+    }
+
+    fn build_v2_trace(
+        extra_channels: Vec<(TraceChannel, u16, TraceChannelStatus, Vec<u8>)>,
+    ) -> Vec<u8> {
+        let mut core = vec![0; 32];
+        core[0..8].copy_from_slice(&1_u64.to_le_bytes());
+        core[8..16].copy_from_slice(&0_u64.to_le_bytes());
+        core[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+        core[24..28].copy_from_slice(&CORE_SIMULATION_TICK_VALID.to_le_bytes());
+        core[28] = 2;
+        core[29] = 1;
+        let mut channels = vec![(TraceChannel::Core, 1, TraceChannelStatus::Present, core)];
+        channels.extend(extra_channels);
+        let requested = channels
+            .iter()
+            .fold(0_u64, |mask, (channel, _, _, _)| mask | channel.bit());
+        let mut bytes = minimal_v2_header(channels.len() as u16, requested);
+        bytes[20..28].copy_from_slice(&1_u64.to_le_bytes());
+        bytes.resize(V2_HEADER_SIZE + channels.len() * V2_DIRECTORY_ENTRY_SIZE, 0);
+        for (index, (channel, version, status, payload)) in channels.into_iter().enumerate() {
+            let descriptor = V2_HEADER_SIZE + index * V2_DIRECTORY_ENTRY_SIZE;
+            let status_offset = bytes.len();
+            bytes.push(match status {
+                TraceChannelStatus::NotSampled => 0,
+                TraceChannelStatus::Present => 1,
+                TraceChannelStatus::Absent => 2,
+                TraceChannelStatus::Unavailable => 3,
+                TraceChannelStatus::Truncated => 4,
+            });
+            let payload_offset = bytes.len();
+            bytes.extend_from_slice(&payload);
+            bytes[descriptor..descriptor + 2].copy_from_slice(&(channel as u16).to_le_bytes());
+            bytes[descriptor + 2..descriptor + 4].copy_from_slice(&version.to_le_bytes());
+            let flags = CHANNEL_DENSE
+                | if channel == TraceChannel::Core {
+                    CHANNEL_REQUIRED
+                } else {
+                    0
+                };
+            bytes[descriptor + 4..descriptor + 8].copy_from_slice(&flags.to_le_bytes());
+            bytes[descriptor + 8..descriptor + 12]
+                .copy_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes[descriptor + 12..descriptor + 16].copy_from_slice(&1_u32.to_le_bytes());
+            bytes[descriptor + 16..descriptor + 24]
+                .copy_from_slice(&(status_offset as u64).to_le_bytes());
+            bytes[descriptor + 24..descriptor + 32].copy_from_slice(&1_u64.to_le_bytes());
+            bytes[descriptor + 32..descriptor + 40]
+                .copy_from_slice(&(payload_offset as u64).to_le_bytes());
+            bytes[descriptor + 40..descriptor + 48]
+                .copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        }
+        bytes
+    }
+
+    fn scene_exit_v2_payload() -> Vec<u8> {
+        let mut payload = vec![0; 88];
+        payload[0..4].copy_from_slice(&0x1234_u32.to_le_bytes());
+        payload[4..8].copy_from_slice(&0x0604_0503_u32.to_le_bytes());
+        payload[8..12].copy_from_slice(
+            &(SCENE_EXIT_VOLUME_VALID | SCENE_EXIT_PLAYER_INSIDE | SCENE_EXIT_DESTINATION_VALID)
+                .to_le_bytes(),
+        );
+        write_f32(&mut payload, 12, -0.25);
+        payload[16..18].copy_from_slice(&(-42_i16).to_le_bytes());
+        payload[18..20].copy_from_slice(&9_u16.to_le_bytes());
+        payload[20] = 3;
+        payload[21] = 4;
+        payload[22] = 5;
+        payload[23] = 6;
+        payload[24] = 1;
+        payload[25] = 2;
+        payload[26] = 1;
+        payload[27] = u8::MAX;
+        payload[28..30].copy_from_slice(&u16::MAX.to_le_bytes());
+        payload[30..32].copy_from_slice(&0x123_i16.to_le_bytes());
+        payload[32] = u8::MAX;
+        for (offset, value) in [1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 100.0, 200.0, 300.0]
+            .into_iter()
+            .enumerate()
+        {
+            write_f32(&mut payload, 36 + offset * 4, value);
+        }
+        payload[72..79].copy_from_slice(b"F_SP103");
+        payload[80] = 1;
+        payload[81] = -1_i8 as u8;
+        payload[82..84].copy_from_slice(&4_i16.to_le_bytes());
+        payload[84] = 17;
+        payload[85] = 3;
+        payload[86] = u8::MAX;
+        payload
+    }
+
+    fn background_collision_v1_payload() -> Vec<u8> {
+        let mut payload = vec![0; 128];
+        payload[0..4].copy_from_slice(&COLLISION_TRAJECTORY_VALID.to_le_bytes());
+        write_f32(&mut payload, 4, -1.0e9);
+        write_f32(&mut payload, 8, 1.0e9);
+        write_f32(&mut payload, 12, -1.0e9);
+        for offset in [16, 18, 40, 42, 48, 50, 56, 58, 68, 70, 80, 82] {
+            payload[offset..offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        for offset in [20, 44, 52, 60, 72, 84] {
+            payload[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        }
+        for (index, value) in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 5.0, 7.0, 9.0]
+            .into_iter()
+            .enumerate()
+        {
+            write_f32(&mut payload, 92 + index * 4, value);
+        }
+        payload
+    }
+
+    fn write_f32(bytes: &mut [u8], offset: usize, value: f32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_bits().to_le_bytes());
     }
 }

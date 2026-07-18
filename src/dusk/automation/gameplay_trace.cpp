@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <system_error>
@@ -29,10 +30,11 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::AppliedPads, 1, 52, false},
     ChannelDefinition{GameplayTraceChannel::PlayerMotion, 1, 52, false},
     ChannelDefinition{GameplayTraceChannel::Event, 1, 16, false},
-    ChannelDefinition{GameplayTraceChannel::SceneExit, 1, 24, false},
+    ChannelDefinition{GameplayTraceChannel::SceneExit, 2, 88, false},
     ChannelDefinition{GameplayTraceChannel::Rng, 1, 64, false},
     ChannelDefinition{GameplayTraceChannel::Camera, 1, 48, false},
     ChannelDefinition{GameplayTraceChannel::PlayerAction, 1, 104, false},
+    ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
 };
 
 struct ChannelLayout {
@@ -124,10 +126,67 @@ void write_event(std::ostream& stream, const GameplayTraceEventSample& sample) {
 
 void write_scene_exit(std::ostream& stream, const GameplayTraceSceneExitSample& sample) {
     write_integer(stream, sample.sessionProcessId);
+    write_integer(stream, sample.rawParameters);
+    write_integer(stream, sample.flags);
+    write_float(stream, sample.signedDistanceToVolume);
     write_integer(stream, sample.actorName);
+    write_integer(stream, sample.setId);
+    write_integer(stream, sample.exitId);
+    write_integer(stream, sample.pathId);
+    write_integer(stream, sample.argument1);
+    write_integer(stream, sample.switchNo);
+    write_integer(stream, sample.kind);
+    write_integer(stream, sample.observedCount);
+    write_integer(stream, sample.homeRoom);
+    write_integer(stream, sample.linkExitDirection);
+    write_integer(stream, sample.linkExitId);
+    write_integer(stream, sample.shapeYaw);
+    write_integer(stream, sample.actorAction);
+    write_integer<std::uint8_t>(stream, 0);
     write_integer<std::uint16_t>(stream, 0);
-    write_vec3(stream, sample.position);
-    write_float(stream, sample.distance);
+    write_vec3(stream, sample.playerLocalPosition);
+    write_vec3(stream, sample.volumeExtent);
+    write_vec3(stream, sample.homePosition);
+    stream.write(sample.destinationStage.data(), sample.destinationStage.size());
+    write_integer(stream, sample.destinationRoom);
+    write_integer(stream, sample.destinationLayer);
+    write_integer(stream, sample.destinationPoint);
+    write_integer(stream, sample.destinationWipe);
+    write_integer(stream, sample.destinationWipeTime);
+    write_integer(stream, sample.destinationTimeHour);
+    write_integer<std::uint8_t>(stream, 0);
+}
+
+void write_collision_wall(std::ostream& stream, const GameplayTraceCollisionWallSample& sample) {
+    write_integer(stream, sample.bgIndex);
+    write_integer(stream, sample.polyIndex);
+    write_integer(stream, sample.ownerSessionProcessId);
+    write_integer(stream, sample.angleY);
+    write_integer(stream, sample.flags);
+}
+
+void write_player_background_collision(
+    std::ostream& stream, const GameplayTracePlayerBackgroundCollisionSample& sample) {
+    write_integer(stream, sample.flags);
+    write_float(stream, sample.groundHeight);
+    write_float(stream, sample.roofHeight);
+    write_float(stream, sample.waterHeight);
+    write_integer(stream, sample.groundBgIndex);
+    write_integer(stream, sample.groundPolyIndex);
+    write_integer(stream, sample.groundOwnerSessionProcessId);
+    for (const float component : sample.groundPlane)
+        write_float(stream, component);
+    write_integer(stream, sample.roofBgIndex);
+    write_integer(stream, sample.roofPolyIndex);
+    write_integer(stream, sample.roofOwnerSessionProcessId);
+    write_integer(stream, sample.waterBgIndex);
+    write_integer(stream, sample.waterPolyIndex);
+    write_integer(stream, sample.waterOwnerSessionProcessId);
+    for (const GameplayTraceCollisionWallSample& wall : sample.walls)
+        write_collision_wall(stream, wall);
+    write_vec3(stream, sample.oldPosition);
+    write_vec3(stream, sample.resolvedFrameDisplacement);
+    write_vec3(stream, sample.finalPosition);
 }
 
 void write_rng(std::ostream& stream, const GameRngSnapshot& sample) {
@@ -204,6 +263,8 @@ GameplayTraceChannelStatus status_for(
         return sample.cameraStatus;
     case GameplayTraceChannel::PlayerAction:
         return sample.playerActionStatus;
+    case GameplayTraceChannel::PlayerBackgroundCollision:
+        return sample.playerBackgroundCollisionStatus;
     }
     return GameplayTraceChannelStatus::Unavailable;
 }
@@ -237,6 +298,9 @@ void write_payload(
         break;
     case GameplayTraceChannel::PlayerAction:
         write_player_action(stream, sample.playerAction);
+        break;
+    case GameplayTraceChannel::PlayerBackgroundCollision:
+        write_player_background_collision(stream, sample.playerBackgroundCollision);
         break;
     }
 }
@@ -323,11 +387,233 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             (sample.playerMotion.flags & ~GameplayTracePlayerIsLink) != 0 ||
             (sample.event.flags &
                 ~(GameplayTraceEventRunning | GameplayTraceEventNameHashPresent)) != 0 ||
+            (sample.sceneExit.flags &
+                ~(GameplayTraceSceneExitVolumeValid | GameplayTraceSceneExitPlayerInside |
+                    GameplayTraceSceneExitPlayerLatched | GameplayTraceSceneExitChangeOk |
+                    GameplayTraceSceneExitChangeStarted | GameplayTraceSceneExitDestinationValid |
+                    GameplayTraceSceneExitObservedCountSaturated)) != 0 ||
+            (sample.playerBackgroundCollision.flags &
+                ~(GameplayTraceCollisionGroundProbeValid | GameplayTraceCollisionGroundContact |
+                    GameplayTraceCollisionLanding | GameplayTraceCollisionAway |
+                    GameplayTraceCollisionGroundPlaneValid |
+                    GameplayTraceCollisionGroundOwnerPresent | GameplayTraceCollisionWallContact |
+                    GameplayTraceCollisionRoofProbeValid | GameplayTraceCollisionRoofContact |
+                    GameplayTraceCollisionRoofOwnerPresent |
+                    GameplayTraceCollisionWaterProbeEnabled |
+                    GameplayTraceCollisionWaterSurfaceFound | GameplayTraceCollisionWaterIn |
+                    GameplayTraceCollisionWaterOwnerPresent |
+                    GameplayTraceCollisionWallProbeEnabled | GameplayTraceCollisionTrajectoryValid |
+                    GameplayTraceCollisionGroundIdentityPresent |
+                    GameplayTraceCollisionRoofIdentityPresent |
+                    GameplayTraceCollisionWaterIdentityPresent)) != 0 ||
             (sample.appliedPads.validPorts & ~0x0fu) != 0 ||
             (sample.appliedPads.ownedPorts & ~0x0fu) != 0)
         {
             error = "gameplay trace sample has unknown channel flags";
             return false;
+        }
+        if (sample.sceneExitStatus == GameplayTraceChannelStatus::Truncated ||
+            sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Truncated)
+        {
+            error = "gameplay trace scalar query channel cannot be truncated";
+            return false;
+        }
+        for (const GameplayTraceCollisionWallSample& wall : sample.playerBackgroundCollision.walls)
+        {
+            if ((wall.flags &
+                    ~(GameplayTraceCollisionWallHit | GameplayTraceCollisionWallOwnerPresent |
+                        GameplayTraceCollisionWallIdentityPresent)) != 0)
+            {
+                error = "gameplay trace sample has unknown collision wall flags";
+                return false;
+            }
+        }
+        const auto finiteFloats = [](const auto& values) {
+            return std::all_of(values.begin(), values.end(),
+                [](const float value) { return std::isfinite(value); });
+        };
+        const auto zeroFloats = [](const auto& values) {
+            return std::all_of(
+                values.begin(), values.end(), [](const float value) { return value == 0.0f; });
+        };
+        const auto identityCoherent = [](const std::uint16_t bg, const std::uint16_t polygon,
+                                          const std::uint32_t owner, const bool identityPresent,
+                                          const bool ownerPresent) {
+            const bool bgPresent = bg != 0xffff;
+            const bool polygonPresent = polygon != 0xffff;
+            const bool actualOwnerPresent = owner != 0xffffffffu;
+            return bgPresent == polygonPresent && bgPresent == identityPresent &&
+                   actualOwnerPresent == ownerPresent && (!actualOwnerPresent || identityPresent);
+        };
+        if (sample.sceneExitStatus == GameplayTraceChannelStatus::Present) {
+            const auto& exit = sample.sceneExit;
+            const bool volumeValid = (exit.flags & GameplayTraceSceneExitVolumeValid) != 0;
+            const bool inside = (exit.flags & GameplayTraceSceneExitPlayerInside) != 0;
+            const bool latched = (exit.flags & GameplayTraceSceneExitPlayerLatched) != 0;
+            const bool changeOk = (exit.flags & GameplayTraceSceneExitChangeOk) != 0;
+            const bool changeStarted = (exit.flags & GameplayTraceSceneExitChangeStarted) != 0;
+            const bool destinationValid =
+                (exit.flags & GameplayTraceSceneExitDestinationValid) != 0;
+            const bool observedCountSaturated =
+                (exit.flags & GameplayTraceSceneExitObservedCountSaturated) != 0;
+            const bool box = exit.kind == GameplayTraceSceneExitBox;
+            const bool radial = exit.kind == GameplayTraceSceneExitRadialXz;
+            const bool signedInside = exit.signedDistanceToVolume < 0.0f ||
+                                      (box && std::signbit(exit.signedDistanceToVolume));
+            if (!volumeValid || (!box && !radial) || exit.observedCount == 0 ||
+                (observedCountSaturated && exit.observedCount != 0xff) ||
+                !std::isfinite(exit.signedDistanceToVolume) ||
+                !finiteFloats(exit.playerLocalPosition) || !finiteFloats(exit.volumeExtent) ||
+                !finiteFloats(exit.homePosition) || exit.volumeExtent[0] < 0.0f ||
+                exit.volumeExtent[1] < 0.0f || exit.volumeExtent[2] < 0.0f ||
+                inside != signedInside || (latched && !box) || (changeOk && !latched) ||
+                (changeStarted && !latched) || (latched != (exit.linkExitId != 0xffff)) ||
+                (!latched && exit.linkExitDirection != 0xff) ||
+                exit.exitId != (exit.rawParameters & 0xff) ||
+                (box && (exit.actorAction != 0xff ||
+                            exit.argument1 != ((exit.rawParameters >> 8) & 0xff) ||
+                            exit.pathId != ((exit.rawParameters >> 16) & 0xff) ||
+                            exit.switchNo != ((exit.rawParameters >> 24) & 0xff))) ||
+                (radial && (exit.actorAction > 3 || exit.pathId != 0xff || exit.argument1 != 0xff ||
+                               exit.switchNo != 0xff || exit.volumeExtent[1] != 0.0f ||
+                               exit.volumeExtent[0] != exit.volumeExtent[2])))
+            {
+                error = "gameplay trace scene-exit payload is semantically inconsistent";
+                return false;
+            }
+            bool destinationNameValid = exit.destinationStage[0] != '\0';
+            bool nameTerminated = false;
+            for (const unsigned char character : exit.destinationStage) {
+                if (character == 0) {
+                    nameTerminated = true;
+                } else if (nameTerminated || character < 0x20 || character > 0x7e) {
+                    destinationNameValid = false;
+                }
+            }
+            const bool destinationFieldsValid =
+                destinationNameValid && exit.destinationRoom >= -1 && exit.destinationRoom < 64 &&
+                exit.destinationLayer >= -1 && exit.destinationLayer < 15 &&
+                exit.destinationPoint >= 0 && exit.destinationWipeTime <= 7 &&
+                exit.destinationTimeHour >= -1 && exit.destinationTimeHour < 31;
+            const bool destinationFieldsAbsent =
+                std::all_of(exit.destinationStage.begin(), exit.destinationStage.end(),
+                    [](const char value) { return value == '\0'; }) &&
+                exit.destinationRoom == -1 && exit.destinationLayer == -1 &&
+                exit.destinationPoint == -1 && exit.destinationWipe == 0xff &&
+                exit.destinationWipeTime == 0xff && exit.destinationTimeHour == -1;
+            if ((destinationValid && !destinationFieldsValid) ||
+                (!destinationValid && !destinationFieldsAbsent))
+            {
+                error = "gameplay trace scene-exit destination presence is inconsistent at tick " +
+                        std::to_string(sample.core.simulationTick) +
+                        " (room=" + std::to_string(exit.destinationRoom) +
+                        ", layer=" + std::to_string(exit.destinationLayer) +
+                        ", point=" + std::to_string(exit.destinationPoint) +
+                        ", wipe=" + std::to_string(exit.destinationWipe) +
+                        ", wipe-time=" + std::to_string(exit.destinationWipeTime) +
+                        ", hour=" + std::to_string(exit.destinationTimeHour) + ", stage-bytes=";
+                for (const unsigned char character : exit.destinationStage)
+                    error += std::to_string(character) + ',';
+                error += ')';
+                return false;
+            }
+        }
+        if (sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Present) {
+            const auto& collision = sample.playerBackgroundCollision;
+            const auto has = [&collision](const std::uint32_t flag) {
+                return (collision.flags & flag) != 0;
+            };
+            const bool groundValid = has(GameplayTraceCollisionGroundProbeValid);
+            const bool groundOwner = has(GameplayTraceCollisionGroundOwnerPresent);
+            const bool groundIdentity = has(GameplayTraceCollisionGroundIdentityPresent);
+            const bool roofValid = has(GameplayTraceCollisionRoofProbeValid);
+            const bool roofOwner = has(GameplayTraceCollisionRoofOwnerPresent);
+            const bool roofIdentity = has(GameplayTraceCollisionRoofIdentityPresent);
+            const bool waterEnabled = has(GameplayTraceCollisionWaterProbeEnabled);
+            const bool waterFound = has(GameplayTraceCollisionWaterSurfaceFound);
+            const bool waterOwner = has(GameplayTraceCollisionWaterOwnerPresent);
+            const bool waterIdentity = has(GameplayTraceCollisionWaterIdentityPresent);
+            if ((groundValid ? (!std::isfinite(collision.groundHeight) ||
+                                   collision.groundHeight == -1000000000.0f) :
+                               collision.groundHeight != -1000000000.0f) ||
+                (!groundValid && (has(GameplayTraceCollisionGroundContact) ||
+                                     has(GameplayTraceCollisionLanding))) ||
+                !identityCoherent(collision.groundBgIndex, collision.groundPolyIndex,
+                    collision.groundOwnerSessionProcessId, groundIdentity, groundOwner) ||
+                (!groundValid && collision.groundBgIndex != 0xffff) ||
+                (has(GameplayTraceCollisionGroundPlaneValid) ?
+                        (!groundValid || !has(GameplayTraceCollisionGroundContact) ||
+                            !finiteFloats(collision.groundPlane)) :
+                        !zeroFloats(collision.groundPlane)) ||
+                (roofValid ? (!std::isfinite(collision.roofHeight) ||
+                                 collision.roofHeight == 1000000000.0f) :
+                             collision.roofHeight != 1000000000.0f) ||
+                (has(GameplayTraceCollisionRoofContact) && !roofValid) ||
+                !identityCoherent(collision.roofBgIndex, collision.roofPolyIndex,
+                    collision.roofOwnerSessionProcessId, roofIdentity, roofOwner) ||
+                (!roofValid && collision.roofBgIndex != 0xffff) ||
+                (waterFound ? (!std::isfinite(collision.waterHeight) ||
+                                  collision.waterHeight == -1000000000.0f) :
+                              collision.waterHeight != -1000000000.0f) ||
+                (waterFound && !waterEnabled) ||
+                (has(GameplayTraceCollisionWaterIn) && !waterFound) ||
+                !identityCoherent(collision.waterBgIndex, collision.waterPolyIndex,
+                    collision.waterOwnerSessionProcessId, waterIdentity, waterOwner) ||
+                (!waterFound && collision.waterBgIndex != 0xffff))
+            {
+                error = "gameplay trace background-collision payload is semantically inconsistent";
+                return false;
+            }
+            bool anyWallHit = false;
+            for (const GameplayTraceCollisionWallSample& wall : collision.walls) {
+                const bool hit = (wall.flags & GameplayTraceCollisionWallHit) != 0;
+                const bool owner = (wall.flags & GameplayTraceCollisionWallOwnerPresent) != 0;
+                const bool identity = (wall.flags & GameplayTraceCollisionWallIdentityPresent) != 0;
+                anyWallHit |= hit;
+                if (!identityCoherent(wall.bgIndex, wall.polyIndex, wall.ownerSessionProcessId,
+                        identity, owner) ||
+                    (!hit && (wall.bgIndex != 0xffff || wall.polyIndex != 0xffff ||
+                                 wall.ownerSessionProcessId != 0xffffffffu || wall.angleY != 0 ||
+                                 wall.flags != 0)))
+                {
+                    error = "gameplay trace background-collision wall presence is inconsistent";
+                    return false;
+                }
+            }
+            if (anyWallHit != has(GameplayTraceCollisionWallContact) ||
+                (anyWallHit && !has(GameplayTraceCollisionWallProbeEnabled)))
+            {
+                error = "gameplay trace background-collision wall aggregate is inconsistent";
+                return false;
+            }
+            const bool trajectoryValid = has(GameplayTraceCollisionTrajectoryValid);
+            if (!trajectoryValid) {
+                if (!zeroFloats(collision.oldPosition) ||
+                    !zeroFloats(collision.resolvedFrameDisplacement) ||
+                    !zeroFloats(collision.finalPosition))
+                {
+                    error =
+                        "gameplay trace background-collision trajectory presence is inconsistent";
+                    return false;
+                }
+            } else if (!finiteFloats(collision.oldPosition) ||
+                       !finiteFloats(collision.resolvedFrameDisplacement) ||
+                       !finiteFloats(collision.finalPosition))
+            {
+                error = "gameplay trace background-collision trajectory is nonfinite";
+                return false;
+            } else {
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    const float reconstructed =
+                        collision.oldPosition[axis] + collision.resolvedFrameDisplacement[axis];
+                    const float tolerance =
+                        0.0001f * std::max(1.0f, std::fabs(collision.finalPosition[axis]));
+                    if (std::fabs(reconstructed - collision.finalPosition[axis]) > tolerance) {
+                        error = "gameplay trace background-collision trajectory is incoherent";
+                        return false;
+                    }
+                }
+            }
         }
         std::uint8_t connectedPorts = 0;
         for (std::size_t port = 0; port < sample.appliedPads.pads.size(); ++port) {
@@ -461,6 +747,8 @@ bool parse_gameplay_trace_channels(
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::Camera);
         else if (token == "player-action") {
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction);
+        } else if (token == "player-background-collision") {
+            bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision);
         } else if (token == "all")
             bit = GameplayTraceKnownChannels;
         else {

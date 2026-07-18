@@ -455,19 +455,10 @@ if (ENABLE_ASAN)
     target_sources(dusklight PRIVATE src/dusk/asan_options.c)
 endif ()
 
-target_compile_definitions(dusklight PRIVATE ${GAME_COMPILE_DEFS})
-set_source_files_properties(
-    src/dusk/automation/actor_catalog.cpp
-    src/dusk/automation/game_state_observer.cpp
-    src/dusk/automation/gameplay_trace_observer.cpp
-    src/d/d_file_select.cpp
-    src/d/d_name.cpp
-    src/m_Do/m_Do_main.cpp
-    PROPERTIES
-    COMPILE_DEFINITIONS
-        "DUSK_ENABLE_AUTOMATION_OBSERVERS=$<BOOL:${DUSK_ENABLE_AUTOMATION_OBSERVERS}>")
-set_property(SOURCE src/d/d_name.cpp src/m_Do/m_Do_main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-    "DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=$<BOOL:${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS}>")
+target_compile_definitions(dusklight PRIVATE
+    ${GAME_COMPILE_DEFS}
+    DUSK_ENABLE_AUTOMATION_OBSERVERS=$<BOOL:${DUSK_ENABLE_AUTOMATION_OBSERVERS}>
+    DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=$<BOOL:${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS}>)
 target_include_directories(dusklight PRIVATE ${miniz_SOURCE_DIR})
 target_link_libraries(dusklight PRIVATE aurora::main ${GAME_LIBS} ${JSYSTEM_LINK_LIBRARIES})
 target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/include/dusk_pch.hpp>")

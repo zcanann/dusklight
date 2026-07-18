@@ -5,6 +5,12 @@
 #include "SSystem/SComponent/c_xyz.h"
 #include "d/d_bg_s_chk.h"
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+struct GameplayTraceCollisionReadAdapter;
+}
+#endif
+
 class dBgS_SplGrpChk : public cBgS_PolyInfo, public cBgS_Chk, public dBgS_Chk {
 public:
     enum {
@@ -31,6 +37,9 @@ public:
     f32 GetRoof() { return m_roof; }
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+#endif
     /* 0x3C */ cXyz m_ground;
     /* 0x48 */ f32 m_roof;
     /* 0x4C */ f32 m_height;
