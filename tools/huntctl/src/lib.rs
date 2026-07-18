@@ -5,6 +5,7 @@ pub mod actor_identity;
 pub mod artifact;
 pub mod bayesian_search;
 pub mod behavior_archive;
+pub mod benchmark;
 pub mod client;
 pub mod comparison_oracle;
 pub mod compatibility;

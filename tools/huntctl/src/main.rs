@@ -1,3 +1,4 @@
+use huntctl::benchmark::skybook::SkybookManifest;
 use huntctl::calibration::calibrate_fitted_q;
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
@@ -109,6 +110,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "hello" => command_hello(&args[1..]),
         "ping" => command_ping(&args[1..]),
         "pool" => command_pool(&args[1..]),
+        "benchmark" => command_benchmark(&args[1..]),
         "corpus" => command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
         "milestone" => command_milestone(&args[1..]),
@@ -131,6 +133,97 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         _ => usage_error(),
     }
+}
+
+fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("import-skybook") => {
+            let import_args = &args[1..];
+            let source = required_path(import_args, "--source")?;
+            let output = required_path(import_args, "--output")?;
+            if output.exists() {
+                return Err(format!("Skybook manifest already exists: {}", output.display()).into());
+            }
+            let revision = clean_git_revision(&source, "_posts")?;
+            if let Some(expected) = option(import_args, "--revision")
+                && expected != revision
+            {
+                return Err(format!(
+                    "Skybook checkout revision {revision} does not match requested {expected}"
+                )
+                .into());
+            }
+            let repository = option(import_args, "--repository")
+                .unwrap_or_else(|| "https://github.com/qwertyquerty/skybook".into());
+            let manifest =
+                SkybookManifest::import_directory(&source, &repository, &revision)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, manifest.to_pretty_json()?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": manifest.schema,
+                    "source_revision": manifest.source.git_revision,
+                    "page_count": manifest.source.post_count,
+                    "categorized_glitch_count": manifest.source.categorized_glitch_count,
+                    "content_digest": manifest.content_sha256,
+                    "output": output,
+                }))?
+            );
+            Ok(())
+        }
+        _ => Err("benchmark command: import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]".into()),
+    }
+}
+
+fn clean_git_revision(checkout: &Path, imported_path: &str) -> Result<String, Box<dyn Error>> {
+    let revision_output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["rev-parse", "HEAD"])
+        .output()?;
+    if !revision_output.status.success() {
+        return Err(format!(
+            "cannot resolve Git revision for {}: {}",
+            checkout.display(),
+            String::from_utf8_lossy(&revision_output.stderr).trim()
+        )
+        .into());
+    }
+    let revision = String::from_utf8(revision_output.stdout)?.trim().to_owned();
+    let status_output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args([
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            imported_path,
+        ])
+        .output()?;
+    if !status_output.status.success() {
+        return Err(format!(
+            "cannot inspect Git state for {}: {}",
+            checkout.display(),
+            String::from_utf8_lossy(&status_output.stderr).trim()
+        )
+        .into());
+    }
+    let dirty = String::from_utf8(status_output.stdout)?;
+    if !dirty.trim().is_empty() {
+        return Err(format!(
+            "refusing to import dirty Skybook {imported_path} content at {revision}:\n{}",
+            dirty.trim_end()
+        )
+        .into());
+    }
+    Ok(revision)
 }
 
 fn command_oracle(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -4599,6 +4692,9 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 fn print_usage() {
     eprintln!(
         "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+    );
+    eprintln!(
+        "\nBenchmark import:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
