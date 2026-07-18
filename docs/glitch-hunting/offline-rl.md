@@ -89,6 +89,46 @@ or perturb the observed sample. The 49-field observed-state vector includes
 stage, room, player procedure, position, velocity, facing, prior applied input,
 event state, nearest-exit diagnostics, and finite-horizon time.
 
+### Authenticated movement-state/v2 view
+
+`movement-state/v2` is a canonical objective-specific observation artifact,
+not another undocumented fixed vector. Its serialized specification includes
+the F_SP103-to-F_SP104 objective and target tuple, post-simulation phase, exact
+Trace v2 channel versions and strides, per-channel status policy, and 98
+ordered features with stable field IDs, types, units, coordinate spaces,
+transforms, categorical flags, and missingness rules. Changing the objective,
+target, channel contract, or any feature metadata changes the SHA-256 feature
+schema stored by the transition corpus.
+
+The view consumes stage and pending-transition state, Link motion/procedure,
+applied input, event state, exact scene-exit geometry, collision correction,
+cached ground exit metadata, both global RNG streams, camera state, and Link
+action timers. Semantic absence has a separate mask and zero payload: no scene
+exit, no cached ground identity, and a genuinely unavailable event-name hash
+cannot alias a present zero-valued fact. `Unavailable`, `Truncated`, and
+`NotSampled` required channels remain extraction errors.
+
+Emit or inspect the exact specification with:
+
+```powershell
+huntctl observe spec movement-state/v2 --output build/movement-state-v2.json
+huntctl observe inspect build/movement-state-v2.json
+```
+
+Extracting this view writes the compact transition corpus plus a canonical
+`.observation.json` sidecar whose digest is the corpus feature-schema digest:
+
+```powershell
+huntctl learn extract-trace `
+  --trace build/run.gameplay.trace --tape build/run.tape `
+  --start-frame 440 --end-frame 827 --terminal `
+  --view movement-state/v2 --output build/run-v2.dtcz
+```
+
+The v1 bridge and digest remain unchanged for old corpora. Q search is not
+silently migrated: a v2 corpus is a distinct authenticated feature space, and
+the learner derives its categorical map from the matching specification.
+
 Anchored native farming retains a gameplay trace for the first proof repetition
 of every candidate. After milestone validation, the evaluator automatically
 extracts the source-to-terminal window into `transitions.dtcz`, pins its source
@@ -133,22 +173,21 @@ and exact descriptors.
 
 Trace v2 adds an explicit channel directory/status stream, four-port applied
 PAD, current/pending stage, both global RNG streams, realized camera state,
-full Link motion/procedure context, timers, and six animation lanes. It remains
-non-Markov: collision contacts and local geometry are absent, RNG coverage is
-incomplete, process/build identity is not yet embedded, and the current
-movement-v1 feature schema requires a legacy event-name hash which the strict
-observer intentionally does not obtain through the non-const game manager API.
-That missing fact is an extraction error, never numeric zero. A new
-`movement-state/v2` view must omit or explicitly represent it under a new
-schema digest.
+full Link motion/procedure context, timers, six animation lanes, cached
+background collision/correction, and resolved collision-exit surfaces. It
+remains non-Markov: actor/push/attack contacts and broad local geometry are
+absent, RNG coverage is incomplete, and process/build identity is not yet
+embedded. `movement-state/v1` intentionally retains its legacy event-name-hash
+requirement; `movement-state/v2` represents the hash's availability explicitly
+under a different authenticated schema.
 
 Explicit frame bounds are also weaker than native milestone proof. Extracted
 batches remain non-authoritative and cannot promote a learned route.
 
 The next promotion gates are:
 
-1. add resolved collision/local-geometry channels and a truthful
-   `movement-state/v2` feature view;
+1. add actor/push/attack contacts and broader local geometry to a successor
+   observation view without changing the v2 digest;
 2. collect whole-episode perturbed tapes across all supported actions;
 3. split train/validation by episode and boundary fingerprint, never by frame;
 4. add larger temporal options such as waypoint-seek and deterministic

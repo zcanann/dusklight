@@ -350,11 +350,14 @@ all be copied into every per-frame neural observation.
 - [ ] Compile declarative query specifications ahead of a run. Do not parse a
   general query language or allocate dynamically in the per-tick hot path.
 - [ ] Hash the exact query/observation specification into traces and models.
-- [ ] Provide offline re-featurization so new model views can be produced from
-  sufficiently rich raw traces without rerunning the game.
-- [ ] Define `movement-state/v2` around Trace v2 presence/status semantics so
+- [x] Provide offline re-featurization so new model views can be produced from
+  sufficiently rich raw traces without rerunning the game. The first compiled
+  view is the objective-authenticated `movement-state/v2` Ordon exit view.
+- [x] Define `movement-state/v2` around Trace v2 presence/status semantics so
   it never maps an unavailable legacy field (currently event-name hash) to
-  zero or merges it under the legacy movement-v1 schema digest.
+  zero or merges it under the legacy movement-v1 schema digest. Semantic
+  absence is represented by authenticated mask fields; unavailable and
+  truncated required channels are typed extraction failures.
 
 ### P0: player observation
 
@@ -645,8 +648,9 @@ judgment, with the exact supporting observations retained.
 - [x] Enforce byte-identical repeated real traces in the intro conformance
   runner; an initial camera-view leak was localized to tick 300 and fixed by
   marking unrealized view state `Unavailable` without copying its payload.
-- [ ] Replace the fixed 49-field movement assumption with an authenticated,
-  extensible observation-view schema and explicit missingness masks.
+- [x] Replace the fixed 49-field movement assumption with an authenticated,
+  extensible observation-view schema and explicit missingness masks while
+  retaining permanent movement-v1 compatibility for existing corpora.
 - [ ] Add per-tick RNG, camera, player procedure internals/action timers,
   contacts, correction vectors, local geometry, goal features, and selected
   dynamic actors.

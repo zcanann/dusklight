@@ -13,6 +13,9 @@
 //! otherwise poison a fitted-Q batch.
 
 use crate::artifact::Digest;
+use crate::observation_view::{
+    ChannelStatusPolicy, LocationSelector, ObservationSpec, movement_state_v2_spec,
+};
 use crate::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
 use crate::trace::{self, DecodedTrace, TraceChannel, TraceChannelStatus, TracePhase, TraceRecord};
 use crate::transition_corpus::{
@@ -111,6 +114,10 @@ pub enum OfflineRlError {
     Tape(crate::tape::TapeError),
     Corpus(TransitionCorpusError),
     TraceHeader(&'static str),
+    UnsupportedTraceVersion {
+        expected: u16,
+        actual: u16,
+    },
     TraceRate {
         numerator: u32,
         denominator: u32,
@@ -200,6 +207,10 @@ impl fmt::Display for OfflineRlError {
             Self::TraceHeader(message) => {
                 write!(formatter, "invalid gameplay trace header: {message}")
             }
+            Self::UnsupportedTraceVersion { expected, actual } => write!(
+                formatter,
+                "observation view requires gameplay trace version {expected}, got {actual}"
+            ),
             Self::TraceRate {
                 numerator,
                 denominator,
@@ -266,7 +277,7 @@ impl fmt::Display for OfflineRlError {
                 actual_stride,
             } => write!(
                 formatter,
-                "movement-state/v1 requires {channel} version {expected_version} stride {expected_stride}, got version {actual_version:?} stride {actual_stride:?}"
+                "observation view requires {channel} version {expected_version} stride {expected_stride}, got version {actual_version:?} stride {actual_stride:?}"
             ),
             Self::UnsupportedObservationChannel { channel } => write!(
                 formatter,
@@ -373,12 +384,51 @@ pub fn extract_exploratory_from_bytes(
     extract_exploratory(&decoded_trace, &decoded_tape.tape, config)
 }
 
+/// Extracts the objective-authenticated `movement-state/v2` view. Unlike v1,
+/// semantic absence is represented by explicit mask fields and unavailable or
+/// truncated required observations remain typed errors.
+pub fn extract_exploratory_v2_from_bytes(
+    trace_bytes: &[u8],
+    tape_bytes: &[u8],
+    config: ExploratoryExtractConfig,
+) -> Result<TransitionCorpus, OfflineRlError> {
+    validate_trace_rate(trace_bytes)?;
+    let decoded_trace = trace::decode(trace_bytes)?;
+    let decoded_tape = InputTape::decode(tape_bytes)?;
+    extract_exploratory_v2(&decoded_trace, &decoded_tape.tape, config)
+}
+
 /// Lower-level bridge for callers which already decoded and rate-validated a
 /// trace. Prefer `extract_exploratory_from_bytes` for untrusted artifacts.
 pub fn extract_exploratory(
     decoded_trace: &DecodedTrace,
     tape: &InputTape,
     config: ExploratoryExtractConfig,
+) -> Result<TransitionCorpus, OfflineRlError> {
+    extract_exploratory_with_view(decoded_trace, tape, config, MovementView::V1)
+}
+
+pub fn extract_exploratory_v2(
+    decoded_trace: &DecodedTrace,
+    tape: &InputTape,
+    config: ExploratoryExtractConfig,
+) -> Result<TransitionCorpus, OfflineRlError> {
+    let spec = movement_state_v2_spec();
+    debug_assert!(spec.validate().is_ok());
+    extract_exploratory_with_view(decoded_trace, tape, config, MovementView::V2(&spec))
+}
+
+#[derive(Clone, Copy)]
+enum MovementView<'a> {
+    V1,
+    V2(&'a ObservationSpec),
+}
+
+fn extract_exploratory_with_view(
+    decoded_trace: &DecodedTrace,
+    tape: &InputTape,
+    config: ExploratoryExtractConfig,
+    view: MovementView<'_>,
 ) -> Result<TransitionCorpus, OfflineRlError> {
     if decoded_trace.capacity_exhausted {
         return Err(OfflineRlError::CapacityExhausted);
@@ -404,12 +454,26 @@ pub fn extract_exploratory(
     if end_index >= tape.frames.len() {
         return Err(OfflineRlError::TapeFrameOutOfRange(config.end_tape_frame));
     }
-    validate_movement_trace_format(decoded_trace)?;
+    match view {
+        MovementView::V1 => validate_movement_trace_format(decoded_trace)?,
+        MovementView::V2(spec) => validate_movement_trace_format_v2(decoded_trace, spec)?,
+    }
+
+    let feature_schema = match view {
+        MovementView::V1 => movement_feature_schema_digest_v1(),
+        MovementView::V2(spec) => spec
+            .digest()
+            .expect("the built-in movement-state/v2 spec is valid"),
+    };
+    let feature_count = match view {
+        MovementView::V1 => MOVEMENT_FEATURE_COUNT_V1,
+        MovementView::V2(spec) => spec.feature_count(),
+    };
 
     let records = records_by_tape_frame(decoded_trace)?;
     let first_state_frame = config.start_tape_frame - 1;
     let mut prior = record_at(&records, first_state_frame)?;
-    validate_movement_observation(decoded_trace, prior, first_state_frame)?;
+    validate_movement_observation_for_view(decoded_trace, prior, first_state_frame, view)?;
     let mut transitions = Vec::with_capacity(
         usize::try_from(config.end_tape_frame - config.start_tape_frame + 1)
             .map_err(|_| OfflineRlError::FrameIndexOverflow)?,
@@ -417,7 +481,7 @@ pub fn extract_exploratory(
 
     for action_frame in config.start_tape_frame..=config.end_tape_frame {
         let next = record_at(&records, action_frame)?;
-        validate_movement_observation(decoded_trace, next, action_frame)?;
+        validate_movement_observation_for_view(decoded_trace, next, action_frame, view)?;
         if next.simulation_tick != prior.simulation_tick + 1 {
             return Err(OfflineRlError::DiscontinuousTrace {
                 prior_tape_frame: action_frame - 1,
@@ -431,12 +495,15 @@ pub fn extract_exploratory(
         let input_frame = &tape.frames[action_index];
         let action = classify_action(input_frame, action_frame)?;
         verify_applied_input(input_frame, next, action_frame)?;
-        let state = movement_features(prior, first_state_frame, config.end_tape_frame)?;
-        let next_state = movement_features(next, first_state_frame, config.end_tape_frame)?;
+        let state =
+            movement_features_for_view(prior, first_state_frame, config.end_tape_frame, view)?;
+        let next_state =
+            movement_features_for_view(next, first_state_frame, config.end_tape_frame, view)?;
         let source = if action_frame == config.start_tape_frame {
             config.start_reference.unwrap_or_else(|| {
                 derived_reference(
                     config.episode_digest,
+                    feature_schema,
                     first_state_frame,
                     prior.simulation_tick,
                     &state,
@@ -445,6 +512,7 @@ pub fn extract_exploratory(
         } else {
             derived_reference(
                 config.episode_digest,
+                feature_schema,
                 action_frame - 1,
                 prior.simulation_tick,
                 &state,
@@ -454,6 +522,7 @@ pub fn extract_exploratory(
             config.terminal_reference.unwrap_or_else(|| {
                 derived_reference(
                     config.episode_digest,
+                    feature_schema,
                     action_frame,
                     next.simulation_tick,
                     &next_state,
@@ -462,6 +531,7 @@ pub fn extract_exploratory(
         } else {
             derived_reference(
                 config.episode_digest,
+                feature_schema,
                 action_frame,
                 next.simulation_tick,
                 &next_state,
@@ -481,9 +551,9 @@ pub fn extract_exploratory(
     }
 
     Ok(TransitionCorpus::new(
-        movement_feature_schema_digest_v1(),
+        feature_schema,
         movement_action_schema_digest_v2(),
-        MOVEMENT_FEATURE_COUNT_V1,
+        feature_count,
         transitions,
     )?)
 }
@@ -508,6 +578,146 @@ fn validate_movement_trace_format(trace: &DecodedTrace) -> Result<(), OfflineRlE
             expected_stride: 24,
             actual_version: actual.map(|format| format.version),
             actual_stride: actual.map(|format| format.stride),
+        });
+    }
+    Ok(())
+}
+
+fn validate_movement_trace_format_v2(
+    trace: &DecodedTrace,
+    spec: &ObservationSpec,
+) -> Result<(), OfflineRlError> {
+    if trace.version != 2 {
+        return Err(OfflineRlError::UnsupportedTraceVersion {
+            expected: 2,
+            actual: trace.version,
+        });
+    }
+    for requirement in &spec.channels {
+        let channel = trace_channel_named(&requirement.channel)
+            .expect("built-in observation spec uses known trace channels");
+        let actual = trace.channel_formats.get(&channel);
+        if actual.is_none_or(|format| {
+            format.version != requirement.version || format.stride != requirement.stride as usize
+        }) {
+            return Err(OfflineRlError::UnsupportedObservationChannelFormat {
+                channel: channel.name(),
+                expected_version: requirement.version,
+                expected_stride: requirement.stride as usize,
+                actual_version: actual.map(|format| format.version),
+                actual_stride: actual.map(|format| format.stride),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn trace_channel_named(name: &str) -> Option<TraceChannel> {
+    TraceChannel::ALL
+        .into_iter()
+        .find(|channel| channel.name() == name)
+}
+
+fn validate_movement_observation_for_view(
+    trace: &DecodedTrace,
+    record: &TraceRecord,
+    frame: u64,
+    view: MovementView<'_>,
+) -> Result<(), OfflineRlError> {
+    match view {
+        MovementView::V1 => validate_movement_observation(trace, record, frame),
+        MovementView::V2(spec) => validate_movement_observation_v2(record, frame, spec),
+    }
+}
+
+fn validate_movement_observation_v2(
+    record: &TraceRecord,
+    frame: u64,
+    spec: &ObservationSpec,
+) -> Result<(), OfflineRlError> {
+    if record.observation_phase != TracePhase::PostSimulation {
+        return Err(OfflineRlError::InvalidObservationPhase {
+            frame,
+            phase: record.observation_phase,
+        });
+    }
+    if record.simulation_tick == u64::MAX || record.boundary_index != record.simulation_tick + 1 {
+        return Err(OfflineRlError::InvalidBoundary {
+            frame,
+            boundary_index: record.boundary_index,
+            simulation_tick: record.simulation_tick,
+        });
+    }
+    if !record.tape_input_applied() || record.controller_input_applied() {
+        return Err(OfflineRlError::InputProvenance {
+            frame,
+            input_source: record.input_source,
+        });
+    }
+    for requirement in &spec.channels {
+        let channel = trace_channel_named(&requirement.channel)
+            .expect("built-in observation spec uses known trace channels");
+        let status = record.channel_status.get(&channel).copied();
+        let accepted = match requirement.status {
+            ChannelStatusPolicy::Present => status == Some(TraceChannelStatus::Present),
+            ChannelStatusPolicy::PresentOrAbsent => matches!(
+                status,
+                Some(TraceChannelStatus::Present) | Some(TraceChannelStatus::Absent)
+            ),
+        };
+        if !accepted {
+            return Err(OfflineRlError::MissingObservationChannel {
+                frame,
+                channel: channel.name(),
+                status,
+            });
+        }
+    }
+    if !record.player_is_link() {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: "player_motion(link)",
+            status: record
+                .channel_status
+                .get(&TraceChannel::PlayerMotion)
+                .copied(),
+        });
+    }
+    let pads = record
+        .applied_pads
+        .as_ref()
+        .ok_or(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: TraceChannel::AppliedPads.name(),
+            status: record
+                .channel_status
+                .get(&TraceChannel::AppliedPads)
+                .copied(),
+        })?;
+    if pads.owned_ports & 1 == 0 || pads.valid_ports & 1 == 0 {
+        return Err(OfflineRlError::InputProvenance {
+            frame,
+            input_source: record.input_source,
+        });
+    }
+    if record.rng.is_none()
+        || record.camera.is_none()
+        || record.player_action.is_none()
+        || record.player_background_collision.is_none()
+        || record.player_collision_surfaces.is_none()
+    {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: "movement-state/v2 payload",
+            status: Some(TraceChannelStatus::Present),
+        });
+    }
+    let exit_status = record.channel_status.get(&TraceChannel::SceneExit).copied();
+    if (exit_status == Some(TraceChannelStatus::Present)) != record.scene_exit.is_some() {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: TraceChannel::SceneExit.name(),
+            status: exit_status,
         });
     }
     Ok(())
@@ -843,6 +1053,266 @@ fn nearest_heading(stick_x: i8, stick_y: i8) -> u32 {
         .expect("the fixed heading catalog is non-empty")
 }
 
+fn movement_features_for_view(
+    record: &TraceRecord,
+    first_state_frame: u64,
+    end_tape_frame: u64,
+    view: MovementView<'_>,
+) -> Result<Vec<f32>, OfflineRlError> {
+    match view {
+        MovementView::V1 => movement_features(record, first_state_frame, end_tape_frame),
+        MovementView::V2(spec) => {
+            movement_features_v2(record, first_state_frame, end_tape_frame, spec)
+        }
+    }
+}
+
+fn movement_features_v2(
+    record: &TraceRecord,
+    first_state_frame: u64,
+    end_tape_frame: u64,
+    spec: &ObservationSpec,
+) -> Result<Vec<f32>, OfflineRlError> {
+    const COLLISION_GROUND_CONTACT: u32 = 1 << 1;
+    const COLLISION_GROUND_PLANE_VALID: u32 = 1 << 4;
+    const COLLISION_TRAJECTORY_VALID: u32 = 1 << 15;
+
+    let frame = record
+        .tape_frame
+        .ok_or(OfflineRlError::MissingTraceFrame(first_state_frame))?;
+    let mut features = Vec::with_capacity(spec.feature_count() as usize);
+    let mut stage = [0_u8; 8];
+    for (destination, source) in stage.iter_mut().zip(record.stage_name.as_bytes()) {
+        *destination = *source;
+    }
+    features.extend(stage.map(|byte| f32::from(byte) / 255.0));
+    let target = &spec.objective.target;
+    features.extend([
+        f32::from(record.room),
+        f32::from(record.layer),
+        f32::from(record.point),
+        bool_feature(record.stage_name == target.stage),
+        bool_feature(location_matches(
+            &record.stage_name,
+            record.room,
+            record.layer,
+            record.point,
+            target,
+        )),
+        bool_feature(record.next_stage_enabled),
+        bool_feature(
+            record.next_stage_enabled
+                && location_matches(
+                    &record.next_stage_name,
+                    record.next_room,
+                    record.next_layer,
+                    record.next_point,
+                    target,
+                ),
+        ),
+        bool_feature(record.player_present()),
+        bool_feature(record.player_is_link()),
+        bool_feature(record.player_proc_id.is_some()),
+        record.player_proc_id.map_or(0.0, f32::from),
+    ]);
+    features.extend(record.position.map(|value| value / 8192.0));
+    features.extend(record.velocity.map(|value| value / 64.0));
+    features.push(record.forward_speed / 64.0);
+    let current = yaw_radians(record.current_angle_y);
+    let shape = yaw_radians(record.shape_angle_y);
+    let delta = yaw_radians(record.current_angle_y.wrapping_sub(record.shape_angle_y));
+    features.extend([
+        current.sin(),
+        current.cos(),
+        shape.sin(),
+        shape.cos(),
+        delta.sin(),
+        delta.cos(),
+        f32::from(record.buttons as u8) / 255.0,
+        f32::from((record.buttons >> 8) as u8) / 255.0,
+        f32::from(record.stick_x) / 127.0,
+        f32::from(record.stick_y) / 127.0,
+        f32::from(record.pad_error),
+        bool_feature(record.event_running()),
+        bool_feature(record.event_name_hash_present),
+        if record.event_name_hash_present {
+            f32::from(record.event_name_hash as u16) / 65535.0
+        } else {
+            0.0
+        },
+        if record.event_name_hash_present {
+            f32::from((record.event_name_hash >> 16) as u16) / 65535.0
+        } else {
+            0.0
+        },
+        f32::from(record.event_id),
+        f32::from(record.event_mode) / 255.0,
+        f32::from(record.event_status) / 255.0,
+        f32::from(record.event_map_tool_id) / 255.0,
+    ]);
+
+    if let Some(exit) = &record.scene_exit {
+        let destination_matches = exit.destination.as_ref().is_some_and(|destination| {
+            location_matches(
+                &destination.stage_name,
+                destination.room,
+                destination.layer,
+                destination.point,
+                target,
+            )
+        });
+        features.extend([
+            1.0,
+            bool_feature(destination_matches),
+            exit.signed_distance_to_volume / 8192.0,
+            exit.player_local_position[0] / 8192.0,
+            exit.player_local_position[1] / 8192.0,
+            exit.player_local_position[2] / 8192.0,
+            exit.volume_extent[0] / 8192.0,
+            exit.volume_extent[1] / 8192.0,
+            exit.volume_extent[2] / 8192.0,
+        ]);
+    } else {
+        features.extend([0.0; 9]);
+    }
+
+    let collision = record
+        .player_background_collision
+        .as_ref()
+        .expect("v2 validation requires background collision");
+    let ground_contact = collision.flags & COLLISION_GROUND_CONTACT != 0;
+    let ground_plane_valid = collision.flags & COLLISION_GROUND_PLANE_VALID != 0;
+    let trajectory_valid = collision.flags & COLLISION_TRAJECTORY_VALID != 0;
+    features.push(bool_feature(ground_contact));
+    features.push(if ground_contact {
+        collision.ground_height / 8192.0
+    } else {
+        0.0
+    });
+    features.push(bool_feature(ground_plane_valid));
+    if ground_plane_valid {
+        features.extend([
+            collision.ground_plane[0],
+            collision.ground_plane[1],
+            collision.ground_plane[2],
+            collision.ground_plane[3] / 8192.0,
+        ]);
+    } else {
+        features.extend([0.0; 4]);
+    }
+    features.push(bool_feature(trajectory_valid));
+    if trajectory_valid {
+        features.extend(
+            collision
+                .resolved_frame_displacement
+                .map(|value| value / 64.0),
+        );
+    } else {
+        features.extend([0.0; 3]);
+    }
+
+    let surfaces = record
+        .player_collision_surfaces
+        .as_ref()
+        .expect("v2 validation requires cached collision surfaces");
+    let ground = &surfaces.surfaces[0];
+    let identity = ground.bg_index.is_some() && ground.poly_index.is_some();
+    let backing = ground.backing_format.is_some();
+    let destination = ground.destination.as_ref();
+    let destination_matches = destination.is_some_and(|destination| {
+        location_matches(
+            &destination.stage_name,
+            destination.room,
+            destination.layer,
+            destination.point,
+            target,
+        )
+    });
+    let kcl_height = ground.kcl_prism_height;
+    let link_exit_present = surfaces.raw_link_exit != 0x003f;
+    features.extend([
+        bool_feature(identity),
+        bool_feature(backing),
+        bool_feature(destination.is_some()),
+        bool_feature(destination_matches),
+        ground.bg_index.map_or(0.0, f32::from),
+        ground.poly_index.map_or(0.0, f32::from),
+        ground.material_row.map_or(0.0, f32::from),
+        ground.raw_exit_id.map_or(0.0, f32::from),
+        bool_feature(kcl_height.is_some()),
+        kcl_height.map_or(0.0, |height| height / 8192.0),
+        bool_feature(link_exit_present),
+        if link_exit_present {
+            f32::from(surfaces.raw_link_exit)
+        } else {
+            0.0
+        },
+        bool_feature(surfaces.pending_match_mask != 0),
+    ]);
+
+    let rng = record.rng.as_ref().expect("v2 validation requires RNG");
+    features.push(rng.primary.call_count as f32 / 1_048_576.0);
+    features.extend(
+        rng.primary
+            .state
+            .map(|value| value as f32 / 2_147_483_648.0),
+    );
+    features.push(rng.secondary.call_count as f32 / 1_048_576.0);
+    features.extend(
+        rng.secondary
+            .state
+            .map(|value| value as f32 / 2_147_483_648.0),
+    );
+    let camera = record
+        .camera
+        .as_ref()
+        .expect("v2 validation requires camera");
+    let camera_yaw = yaw_radians(camera.view_yaw);
+    features.extend([
+        camera_yaw.sin(),
+        camera_yaw.cos(),
+        camera.eye[0] / 8192.0,
+        camera.eye[1] / 8192.0,
+        camera.eye[2] / 8192.0,
+    ]);
+    let action = record
+        .player_action
+        .as_ref()
+        .expect("v2 validation requires player action");
+    features.extend([
+        f32::from(action.procedure_id),
+        action.mode_flags as f32 / u32::MAX as f32,
+        f32::from(action.damage_wait_timer),
+        f32::from(action.sword_at_up_time),
+        f32::from(action.ice_damage_wait_timer),
+        (frame - first_state_frame) as f32 / 1024.0,
+        end_tape_frame.saturating_sub(frame) as f32 / 1024.0,
+    ]);
+
+    debug_assert_eq!(features.len(), spec.feature_count() as usize);
+    if let Some((index, _)) = features
+        .iter()
+        .enumerate()
+        .find(|(_, value)| !value.is_finite())
+    {
+        return Err(OfflineRlError::NonFiniteFeature { frame, index });
+    }
+    Ok(features)
+}
+
+fn location_matches(
+    stage: &str,
+    room: i8,
+    layer: i8,
+    point: i16,
+    selector: &LocationSelector,
+) -> bool {
+    stage == selector.stage
+        && room == selector.room
+        && layer == selector.layer
+        && point == selector.point
+}
+
 fn movement_features(
     record: &TraceRecord,
     first_state_frame: u64,
@@ -934,6 +1404,7 @@ fn bool_feature(value: bool) -> f32 {
 
 fn derived_reference(
     episode_digest: Digest,
+    feature_schema: Digest,
     tape_frame: u64,
     simulation_tick: u64,
     features: &[f32],
@@ -941,7 +1412,7 @@ fn derived_reference(
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight.offline-rl.observed-boundary/v1\0");
     hasher.update(episode_digest.as_bytes());
-    hasher.update(movement_feature_schema_digest_v1().as_bytes());
+    hasher.update(feature_schema.as_bytes());
     hasher.update(tape_frame.to_le_bytes());
     hasher.update(simulation_tick.to_le_bytes());
     for feature in features {
@@ -960,6 +1431,13 @@ fn digest(bytes: &[u8]) -> Digest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observation_view::movement_state_v2_spec;
+    use crate::trace::{
+        TraceAnimationLane, TraceAppliedPads, TraceCamera, TraceChannelWireFormat,
+        TraceCollisionSurface, TraceCollisionSurfaceKind, TracePlayerAction,
+        TracePlayerBackgroundCollision, TracePlayerCollisionSurfaces, TraceRngSnapshot,
+        TraceRngStream,
+    };
 
     fn record(frame: u64, x: f32) -> TraceRecord {
         let channel_status = [
@@ -1044,6 +1522,175 @@ mod tests {
         )
     }
 
+    fn empty_surface(kind: TraceCollisionSurfaceKind, wall_slot: u8) -> TraceCollisionSurface {
+        TraceCollisionSurface {
+            flags: 0,
+            kind,
+            wall_slot,
+            backing_format: None,
+            raw_code_word_mask: 0,
+            bg_index: None,
+            poly_index: None,
+            owner_session_process_id: None,
+            material_row: None,
+            group_row: None,
+            raw_code_words: [0; 5],
+            raw_exit_id: None,
+            source_room: None,
+            source_room_exact: false,
+            scls_source_room: None,
+            destination: None,
+            source_geometry_indices: Vec::new(),
+            kcl_prism_height: None,
+        }
+    }
+
+    fn fixture_v2() -> (DecodedTrace, InputTape) {
+        let (mut trace, tape) = fixture();
+        trace.version = 2;
+        trace.requested_channels = TraceChannel::ALL
+            .into_iter()
+            .fold(0, |mask, channel| mask | channel.bit());
+        trace.channel_formats = [
+            (TraceChannel::Core, 1, 32),
+            (TraceChannel::Stage, 1, 32),
+            (TraceChannel::AppliedPads, 1, 52),
+            (TraceChannel::PlayerMotion, 1, 52),
+            (TraceChannel::Event, 1, 16),
+            (TraceChannel::SceneExit, 2, 88),
+            (TraceChannel::Rng, 1, 64),
+            (TraceChannel::Camera, 1, 48),
+            (TraceChannel::PlayerAction, 1, 104),
+            (TraceChannel::PlayerBackgroundCollision, 1, 128),
+            (TraceChannel::PlayerCollisionSurfaces, 1, 496),
+        ]
+        .into_iter()
+        .map(|(channel, version, stride)| (channel, TraceChannelWireFormat { version, stride }))
+        .collect();
+        for record in &mut trace.records {
+            for channel in [
+                TraceChannel::Rng,
+                TraceChannel::Camera,
+                TraceChannel::PlayerAction,
+                TraceChannel::PlayerBackgroundCollision,
+                TraceChannel::PlayerCollisionSurfaces,
+            ] {
+                record
+                    .channel_status
+                    .insert(channel, TraceChannelStatus::Present);
+            }
+            record.event_name_hash = 0;
+            record.event_name_hash_present = false;
+            record.applied_pads = Some(TraceAppliedPads {
+                valid_ports: 1,
+                owned_ports: 1,
+                pads: [
+                    RawPadState {
+                        buttons: record.buttons,
+                        stick_x: record.stick_x,
+                        stick_y: record.stick_y,
+                        ..RawPadState::default()
+                    },
+                    RawPadState::default(),
+                    RawPadState::default(),
+                    RawPadState::default(),
+                ],
+            });
+            record.rng = Some(TraceRngSnapshot {
+                version: 1,
+                stream_count: 2,
+                primary: TraceRngStream {
+                    id: 1,
+                    algorithm_version: 1,
+                    state: [1, 2, 3],
+                    call_count: record.simulation_tick,
+                },
+                secondary: TraceRngStream {
+                    id: 2,
+                    algorithm_version: 1,
+                    state: [4, 5, 6],
+                    call_count: record.simulation_tick + 1,
+                },
+            });
+            record.camera = Some(TraceCamera {
+                view_yaw: 0,
+                controlled_yaw: 0,
+                bank: 0,
+                eye: [0.0, 1000.0, -2000.0],
+                center: [0.0; 3],
+                up: [0.0, 1.0, 0.0],
+                fovy: 45.0,
+            });
+            record.player_action = Some(TracePlayerAction {
+                procedure_id: record.player_proc_id.unwrap(),
+                mode_flags: 0,
+                procedure_context_raw: [0; 6],
+                damage_wait_timer: 0,
+                sword_at_up_time: 0,
+                ice_damage_wait_timer: 0,
+                sword_change_wait_timer: 0,
+                under_animations: std::array::from_fn(|_| TraceAnimationLane {
+                    resource_id: 0xffff,
+                    frame: 0.0,
+                    rate: 0.0,
+                }),
+                upper_animations: std::array::from_fn(|_| TraceAnimationLane {
+                    resource_id: 0xffff,
+                    frame: 0.0,
+                    rate: 0.0,
+                }),
+            });
+            record.player_background_collision = Some(TracePlayerBackgroundCollision {
+                flags: 1 << 15,
+                ground_height: -1.0e9,
+                roof_height: 1.0e9,
+                water_height: -1.0e9,
+                ground_bg_index: None,
+                ground_poly_index: None,
+                ground_owner_session_process_id: None,
+                ground_plane: [0.0; 4],
+                ground_identity_present: false,
+                roof_bg_index: None,
+                roof_poly_index: None,
+                roof_owner_session_process_id: None,
+                roof_identity_present: false,
+                water_bg_index: None,
+                water_poly_index: None,
+                water_owner_session_process_id: None,
+                water_identity_present: false,
+                walls: std::array::from_fn(|_| crate::trace::TraceCollisionWall {
+                    identity_present: false,
+                    bg_index: None,
+                    poly_index: None,
+                    owner_session_process_id: None,
+                    angle_y: 0,
+                    flags: 0,
+                }),
+                old_position: record.position,
+                resolved_frame_displacement: [1.0, 0.0, 0.0],
+                final_position: record.position,
+            });
+            record.player_collision_surfaces = Some(TracePlayerCollisionSurfaces {
+                flags: 1,
+                link_room: Some(1),
+                identity_count: 0,
+                backing_count: 0,
+                destination_count: 0,
+                raw_link_exit: 0x3f,
+                pending_match_mask: 0,
+                surfaces: [
+                    empty_surface(TraceCollisionSurfaceKind::Ground, 0),
+                    empty_surface(TraceCollisionSurfaceKind::Roof, 0),
+                    empty_surface(TraceCollisionSurfaceKind::Water, 0),
+                    empty_surface(TraceCollisionSurfaceKind::Wall, 0),
+                    empty_surface(TraceCollisionSurfaceKind::Wall, 1),
+                    empty_surface(TraceCollisionSurfaceKind::Wall, 2),
+                ],
+            });
+        }
+        (trace, tape)
+    }
+
     fn config(start_tape_frame: u64, end_tape_frame: u64) -> ExploratoryExtractConfig {
         ExploratoryExtractConfig {
             episode_digest: Digest([0x55; 32]),
@@ -1110,6 +1757,60 @@ mod tests {
             error,
             OfflineRlError::UnsupportedObservationChannel {
                 channel: "player_collision_surfaces"
+            }
+        ));
+    }
+
+    #[test]
+    fn movement_state_v2_authenticates_spec_and_masks_semantic_absence() {
+        let (trace, tape) = fixture_v2();
+        let corpus = extract_exploratory_v2(&trace, &tape, config(1, 2)).unwrap();
+        let spec = movement_state_v2_spec();
+        assert_eq!(corpus.feature_schema, spec.digest().unwrap());
+        assert_eq!(corpus.feature_count, spec.feature_count());
+        assert_eq!(corpus.transitions.len(), 2);
+        let state = &corpus.transitions[0].state;
+        assert_eq!(state[38], 0.0, "event hash presence mask");
+        assert_eq!(&state[39..41], &[0.0, 0.0]);
+        assert_eq!(state[45], 0.0, "scene-exit presence mask");
+        assert_eq!(&state[46..54], &[0.0; 8]);
+        assert!(state.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn movement_state_v2_distinguishes_absent_from_unavailable() {
+        let (mut trace, tape) = fixture_v2();
+        trace.records[0]
+            .channel_status
+            .insert(TraceChannel::SceneExit, TraceChannelStatus::Unavailable);
+        let error = extract_exploratory_v2(&trace, &tape, config(1, 1)).unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineRlError::MissingObservationChannel {
+                frame: 0,
+                channel: "scene_exit",
+                status: Some(TraceChannelStatus::Unavailable),
+            }
+        ));
+    }
+
+    #[test]
+    fn movement_state_v2_rejects_channel_format_drift() {
+        let (mut trace, tape) = fixture_v2();
+        trace
+            .channel_formats
+            .get_mut(&TraceChannel::PlayerCollisionSurfaces)
+            .unwrap()
+            .stride = 495;
+        let error = extract_exploratory_v2(&trace, &tape, config(1, 1)).unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineRlError::UnsupportedObservationChannelFormat {
+                channel: "player_collision_surfaces",
+                expected_version: 1,
+                expected_stride: 496,
+                actual_version: Some(1),
+                actual_stride: Some(495),
             }
         ));
     }

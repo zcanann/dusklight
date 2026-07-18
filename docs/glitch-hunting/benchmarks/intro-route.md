@@ -167,6 +167,17 @@ current three-run absolute tape reached control 439, trigger 827, and load 858
 with zero spread and byte-identical complete traces. Larger repeated matrices
 remain required as the observation and reset substrate evolves.
 
+The first authenticated `movement-state/v2` offline pass re-featurized frames
+440 through 827 of `run-001.gameplay.trace` from that exact matrix without
+rerunning the game. It produced 388 aligned transitions with 98 features,
+observation-spec/feature digest
+`9c9055d7fc8d92b91191799fe5ad11cd620ea3f3acc420d44a7575b341e504dd`,
+and corpus content digest
+`188679959a26d9d78fc023a25c09e2304be0bdc95f2156ab5efb656ce10348e5`.
+The matching canonical observation sidecar is independently inspectable, and
+the learner accepts its authenticated categorical map without a manual schema
+override.
+
 This result closes the measured title-side scheduling leak, not every possible
 PC-port side channel. New asynchronous loaders must either be made part of the
 logical timing model or fail exact replay tests. Route frame golf runs the

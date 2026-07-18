@@ -6,9 +6,10 @@ use huntctl::fqi::{
     MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::milestone_dsl;
+use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, ObservationSpec, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
-    movement_feature_schema_digest_v1,
+    extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
 };
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::route_store::{ObjectId, RouteStore};
@@ -72,12 +73,64 @@ fn run() -> Result<(), Box<dyn Error>> {
         "timeline" => command_timeline(&args[1..]),
         "search" => command_search(&args[1..]),
         "learn" => command_learn(&args[1..]),
+        "observe" => command_observe(&args[1..]),
         "world" => command_world(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "mock-search-worker" => mock_search_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
+            Ok(())
+        }
+        _ => usage_error(),
+    }
+}
+
+fn command_observe(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("spec") if args.get(1).map(String::as_str) == Some(MOVEMENT_STATE_V2_ID) => {
+            let spec = movement_state_v2_spec();
+            let bytes = spec.canonical_bytes()?;
+            if let Some(output) = option(&args[2..], "--output") {
+                let output = PathBuf::from(output);
+                if let Some(parent) = output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&output, &bytes)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "output": output,
+                        "id": spec.id,
+                        "digest": spec.digest()?,
+                        "feature_count": spec.feature_count(),
+                    }))?
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&spec)?);
+            }
+            Ok(())
+        }
+        Some("inspect") if args.len() == 2 => {
+            let spec: ObservationSpec = serde_json::from_slice(&fs::read(&args[1])?)?;
+            spec.validate()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "path": args[1],
+                    "id": spec.id,
+                    "objective": spec.objective,
+                    "phase": spec.phase,
+                    "digest": spec.digest()?,
+                    "feature_count": spec.feature_count(),
+                    "categorical_features": spec.categorical_features(),
+                    "channels": spec.channels,
+                    "features": spec.features,
+                }))?
+            );
             Ok(())
         }
         _ => usage_error(),
@@ -290,18 +343,30 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 Digest(hasher.finalize().into())
             };
             let end_is_terminal = learn_args.iter().any(|arg| arg == "--terminal");
-            let corpus = extract_exploratory_from_bytes(
-                &trace_bytes,
-                &tape_bytes,
-                ExploratoryExtractConfig {
-                    episode_digest,
-                    start_tape_frame,
-                    end_tape_frame,
-                    start_reference: None,
-                    terminal_reference: None,
-                    end_is_terminal,
-                },
-            )?;
+            let feature_view =
+                option(learn_args, "--view").unwrap_or_else(|| "movement-state/v1".into());
+            let extract_config = ExploratoryExtractConfig {
+                episode_digest,
+                start_tape_frame,
+                end_tape_frame,
+                start_reference: None,
+                terminal_reference: None,
+                end_is_terminal,
+            };
+            let corpus = match feature_view.as_str() {
+                "movement-state/v1" => {
+                    extract_exploratory_from_bytes(&trace_bytes, &tape_bytes, extract_config)?
+                }
+                MOVEMENT_STATE_V2_ID => {
+                    extract_exploratory_v2_from_bytes(&trace_bytes, &tape_bytes, extract_config)?
+                }
+                _ => {
+                    return Err(format!(
+                        "unknown --view {feature_view:?}; expected movement-state/v1 or {MOVEMENT_STATE_V2_ID}"
+                    )
+                    .into());
+                }
+            };
             let compression_level: i32 = option(learn_args, "--compression-level")
                 .map(|value| value.parse())
                 .transpose()?
@@ -313,19 +378,29 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::create_dir_all(parent)?;
             }
             let content_digest = corpus.write_zstd_file(&output, compression_level)?;
+            let observation_spec = if feature_view == MOVEMENT_STATE_V2_ID {
+                let spec = movement_state_v2_spec();
+                let path = PathBuf::from(format!("{}.observation.json", output.display()));
+                fs::write(&path, spec.canonical_bytes()?)?;
+                Some(path)
+            } else {
+                None
+            };
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "schema": "dusklight-exploratory-extraction/v1",
                     "authoritative": false,
                     "limitations": [
-                        "trace-v1 omits per-tick RNG and collision state",
                         "the batch contains observed behavior, not counterfactual actions",
-                        "explicit frame bounds are not native milestone proof"
+                        "explicit frame bounds are not native milestone proof",
+                        "the observation view is objective-specific and not a complete process state"
                     ],
                     "trace": trace_path,
                     "tape": tape_path,
                     "output": output,
+                    "feature_view": feature_view,
+                    "observation_spec": observation_spec,
                     "episode_digest": episode_digest,
                     "content_digest": content_digest,
                     "feature_schema": corpus.feature_schema,
@@ -473,6 +548,14 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     );
                 }
                 config.categorical_features = MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec();
+            } else if feature_schema == Some(movement_state_v2_spec().digest()?) {
+                if declared_all_continuous || !declared_categorical.is_empty() {
+                    return Err(
+                        "the authenticated movement schema owns its categorical feature map; do not override it"
+                            .into(),
+                    );
+                }
+                config.categorical_features = movement_state_v2_spec().categorical_features();
             } else if declared_all_continuous {
                 config.categorical_features.clear();
             } else if !declared_categorical.is_empty() {
@@ -1902,7 +1985,7 @@ fn print_usage() {
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
-        "\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
+        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
         "\nOffline world geometry:\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"

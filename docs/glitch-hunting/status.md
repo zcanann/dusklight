@@ -170,6 +170,16 @@ exposed varying uninitialized camera-view bytes at tick 300; the observer now
 marks unrealized camera state `Unavailable`, and the runner fails if complete
 trace SHA-256 values ever disagree again.
 
+The offline bridge now has an authenticated `movement-state/v2` observation
+artifact for the F_SP103-to-F_SP104 objective. It binds exact Trace channel
+formats and status policies to 98 stable typed fields spanning stage/target
+state, Link motion and action, applied PAD, event availability, scene-exit
+geometry, cached ground collision/exit, correction, RNG, and camera state.
+Semantic absence is mask-distinct from zero; unavailable or truncated required
+facts fail extraction. `huntctl observe` emits/inspects the canonical spec, and
+v2 extraction writes a matching spec sidecar while preserving movement-v1
+compatibility.
+
 ## Known gaps
 
 - `OSAlarm` dispatch, the separate SDK `__OSGetSystemTime`, and non-SDK host
