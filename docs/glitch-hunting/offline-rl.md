@@ -136,6 +136,31 @@ backup length. Focused tests cover cumulative multi-tick option discounting,
 terminal zeroing, truncated-model continuation, cross-episode isolation, and
 bounded CLI validation.
 
+### Held-out value and proposal calibration
+
+Training Bellman loss is not evaluation evidence. Fit the deterministic FQI
+proposer on the dataset's `train` split and measure it against one untouched
+split with:
+
+```text
+huntctl learn calibrate --dataset build/dataset.json --split test \
+  --output build/q-calibration.json --iterations 24 --trees 31
+```
+
+For an ad hoc content-disjoint check, repeat `--training TRAIN.dtcz` and
+`--held-out TEST.dtcz` instead. The command rejects overlapping paths or corpus
+digests, verifies dataset corpus content against its manifest, preserves
+terminal-delimited episode groups, and derives duration-discounted simulator
+return-to-go only from held-out rewards.
+
+The versioned report includes signed error, MAE, RMSE, equal-frequency
+prediction bins, and an exact-state proposal win rate. A proposal is comparable
+only when its selected action was actually observed at that exact held-out
+state; unsupported observed actions, unsupported proposals, and observed
+regret remain separate diagnostics instead of being silently counted as wins
+or losses. These numbers evaluate ranking quality but never replace a native
+predicate hit or cold-replay proof.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

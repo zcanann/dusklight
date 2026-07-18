@@ -159,6 +159,75 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
     assert_eq!(model["schema"], "dusklight-fitted-q-model/v2");
     assert_eq!(model["model"]["bootstrap_unit"], "episode");
 
+    let held_out_path = root.join("held-out.dtcz");
+    TransitionCorpus::new(
+        Digest([0x11; 32]),
+        Digest([0x22; 32]),
+        1,
+        vec![
+            transition(0.0, ADVANCE, 4.0, 1.0, true),
+            transition(0.0, WAIT, 0.0, 1.0, true),
+            // Action 77 is intentionally outside training support.
+            transition(2.0, 77, 9.0, 3.0, true),
+        ],
+    )
+    .unwrap()
+    .write_zstd_file(&held_out_path, 1)
+    .unwrap();
+    let calibration_path = root.join("calibration.json");
+    let calibration = Command::new(executable)
+        .args(["learn", "calibrate", "--training"])
+        .arg(&path)
+        .args(["--held-out"])
+        .arg(&held_out_path)
+        .args(["--output"])
+        .arg(&calibration_path)
+        .args([
+            "--all-continuous",
+            "--iterations",
+            "4",
+            "--trees",
+            "3",
+            "--seed",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        calibration.status.success(),
+        "{}",
+        String::from_utf8_lossy(&calibration.stderr)
+    );
+    let calibration: serde_json::Value = serde_json::from_slice(&calibration.stdout).unwrap();
+    assert_eq!(
+        calibration["schema"],
+        "dusklight-held-out-fqi-calibration/v1"
+    );
+    assert_eq!(calibration["calibration"]["held_out_samples"], 3);
+    assert_eq!(
+        calibration["calibration"]["unsupported_observed_action_samples"],
+        1
+    );
+    assert_eq!(calibration["calibration"]["proposal_comparable_states"], 1);
+    assert_eq!(calibration["calibration"]["proposal_wins"], 1);
+    assert_eq!(
+        fs::read(&calibration_path).unwrap(),
+        serde_json::to_vec_pretty(&calibration).unwrap()
+    );
+
+    let overlapping_calibration = Command::new(executable)
+        .args(["learn", "calibrate", "--training"])
+        .arg(&path)
+        .args(["--held-out"])
+        .arg(&path)
+        .args(["--output"])
+        .arg(root.join("overlap.json"))
+        .arg("--all-continuous")
+        .output()
+        .unwrap();
+    assert!(!overlapping_calibration.status.success());
+    assert!(String::from_utf8_lossy(&overlapping_calibration.stderr).contains("files overlap"));
+
     let n_step_fit = Command::new(executable)
         .args(["learn", "fit", "--input"])
         .arg(&path)

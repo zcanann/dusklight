@@ -819,7 +819,7 @@ simple random baseline.
   small objective-specific state spaces.
 - [x] Add n-step and option-duration targets with tests for terminal and truncated
   episodes.
-- [ ] Calibrate predictions against held-out simulator returns and proposal win
+- [x] Calibrate predictions against held-out simulator returns and proposal win
   rate rather than training Bellman loss alone.
 
 ### P1: offline conservative value learning

@@ -4,6 +4,7 @@ pub mod action_guidance;
 pub mod artifact;
 pub mod bayesian_search;
 pub mod behavior_archive;
+pub mod calibration;
 pub mod client;
 pub mod comparison_oracle;
 pub mod compatibility;

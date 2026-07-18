@@ -1,3 +1,4 @@
+use huntctl::calibration::calibrate_fitted_q;
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
 use huntctl::content_store::{ContentKind, ContentStore};
@@ -7,6 +8,7 @@ use huntctl::controller_program::ControllerProgram;
 use huntctl::corpus::Corpus;
 use huntctl::dataset::{
     DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
+    DatasetSplit,
 };
 use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
 use huntctl::fqi::{
@@ -677,6 +679,83 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
 }
 
+struct LoadedFqiBatch {
+    feature_schema: Digest,
+    action_schema: Digest,
+    feature_count: usize,
+    transitions: Vec<FqiTransition>,
+    episode_groups: Vec<u64>,
+    corpus_digests: Vec<Digest>,
+}
+
+fn load_fqi_batch(paths: &[String], label: &str) -> Result<LoadedFqiBatch, Box<dyn Error>> {
+    if paths.is_empty() || paths.len() > MAX_LEARN_INPUT_CORPORA {
+        return Err(
+            format!("{label} requires 1..={MAX_LEARN_INPUT_CORPORA} transition corpora").into(),
+        );
+    }
+    let mut feature_schema = None;
+    let mut action_schema = None;
+    let mut feature_count = None;
+    let mut transitions = Vec::new();
+    let mut episode_groups = Vec::new();
+    let mut corpus_digests = Vec::new();
+    let mut next_episode_group = 0_u64;
+    for path in paths {
+        let corpus = TransitionCorpus::read_zstd_file(path)?;
+        corpus_digests.push(corpus.content_digest()?);
+        if feature_schema.is_some_and(|value| value != corpus.feature_schema)
+            || action_schema.is_some_and(|value| value != corpus.action_schema)
+            || feature_count.is_some_and(|value| value != corpus.feature_count)
+        {
+            return Err(format!("{label} corpora use incompatible schemas").into());
+        }
+        feature_schema = Some(corpus.feature_schema);
+        action_schema = Some(corpus.action_schema);
+        feature_count = Some(corpus.feature_count);
+        if transitions
+            .len()
+            .checked_add(corpus.transitions.len())
+            .is_none_or(|count| count > MAX_FQI_TRANSITIONS)
+        {
+            return Err(format!("{label} exceeds {MAX_FQI_TRANSITIONS} merged transitions").into());
+        }
+        let mut ended_terminal = false;
+        for transition in corpus.transitions {
+            let terminal = transition.terminal;
+            transitions.push(FqiTransition {
+                state: transition.state,
+                action: transition.action.action_id,
+                duration: transition.duration_ticks,
+                reward: transition.reward,
+                next_state: transition.next_state,
+                terminal,
+            });
+            episode_groups.push(next_episode_group);
+            ended_terminal = terminal;
+            if terminal {
+                next_episode_group = next_episode_group
+                    .checked_add(1)
+                    .ok_or_else(|| format!("{label} episode-group count overflowed"))?;
+            }
+        }
+        if !ended_terminal {
+            next_episode_group = next_episode_group
+                .checked_add(1)
+                .ok_or_else(|| format!("{label} episode-group count overflowed"))?;
+        }
+    }
+    Ok(LoadedFqiBatch {
+        feature_schema: feature_schema.ok_or_else(|| format!("{label} has no feature schema"))?,
+        action_schema: action_schema.ok_or_else(|| format!("{label} has no action schema"))?,
+        feature_count: feature_count.ok_or_else(|| format!("{label} has no feature width"))?
+            as usize,
+        transitions,
+        episode_groups,
+        corpus_digests,
+    })
+}
+
 fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("diff-episodes") => {
@@ -1162,6 +1241,218 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     ]
                 }))?
             );
+            Ok(())
+        }
+        Some("calibrate") => {
+            let learn_args = &args[1..];
+            let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
+            let explicit_training = repeated_option(learn_args, "--training");
+            let explicit_held_out = repeated_option(learn_args, "--held-out");
+            if dataset_path.is_some()
+                == (!explicit_training.is_empty() || !explicit_held_out.is_empty())
+            {
+                return Err("learn calibrate requires either --dataset or both --training/--held-out corpora".into());
+            }
+            let mut dataset_identity = None;
+            let mut held_out_split = None;
+            let mut expected_dataset_corpus_digests = None;
+            let (training_paths, held_out_paths) = if let Some(path) = &dataset_path {
+                let manifest: DatasetManifest = serde_json::from_slice(&fs::read(path)?)?;
+                manifest.validate()?;
+                let split = match option(learn_args, "--split")
+                    .unwrap_or_else(|| "test".into())
+                    .as_str()
+                {
+                    "validation" => DatasetSplit::Validation,
+                    "test" => DatasetSplit::Test,
+                    "withheld" => DatasetSplit::Withheld,
+                    _ => return Err("--split must be validation, test, or withheld".into()),
+                };
+                let training = manifest
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.split == DatasetSplit::Train)
+                    .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                let held_out = manifest
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.split == split)
+                    .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                expected_dataset_corpus_digests = Some((
+                    manifest
+                        .entries
+                        .iter()
+                        .filter(|entry| entry.split == DatasetSplit::Train)
+                        .map(|entry| entry.corpus_sha256)
+                        .collect::<Vec<_>>(),
+                    manifest
+                        .entries
+                        .iter()
+                        .filter(|entry| entry.split == split)
+                        .map(|entry| entry.corpus_sha256)
+                        .collect::<Vec<_>>(),
+                ));
+                dataset_identity = Some(manifest.dataset_sha256);
+                held_out_split = Some(split);
+                (training, held_out)
+            } else {
+                if explicit_training.is_empty() || explicit_held_out.is_empty() {
+                    return Err(
+                        "explicit calibration requires both --training and --held-out".into(),
+                    );
+                }
+                (explicit_training, explicit_held_out)
+            };
+            let training_files = training_paths
+                .iter()
+                .map(fs::canonicalize)
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let held_out_files = held_out_paths
+                .iter()
+                .map(fs::canonicalize)
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            if !training_files.is_disjoint(&held_out_files) {
+                return Err("training and held-out calibration files overlap".into());
+            }
+            let training = load_fqi_batch(&training_paths, "calibration training")?;
+            let held_out = load_fqi_batch(&held_out_paths, "calibration held-out")?;
+            if expected_dataset_corpus_digests.as_ref().is_some_and(
+                |(expected_training, expected_held_out)| {
+                    expected_training != &training.corpus_digests
+                        || expected_held_out != &held_out.corpus_digests
+                },
+            ) {
+                return Err("calibration corpus content differs from dataset manifest".into());
+            }
+            if training.feature_schema != held_out.feature_schema
+                || training.action_schema != held_out.action_schema
+                || training.feature_count != held_out.feature_count
+                || !training
+                    .corpus_digests
+                    .iter()
+                    .all(|digest| !held_out.corpus_digests.contains(digest))
+            {
+                return Err(
+                    "calibration requires compatible schemas and content-disjoint held-out corpora"
+                        .into(),
+                );
+            }
+            let mut config = FqiConfig {
+                iterations: usize_option(learn_args, "--iterations", 24)?,
+                backup_steps: usize_option(learn_args, "--n-step", 1)?,
+                trees_per_action: usize_option(learn_args, "--trees", 31)?,
+                max_tree_depth: usize_option(learn_args, "--max-depth", 8)?,
+                seed: u64_option(learn_args, "--seed", FqiConfig::default().seed)?,
+                discount: option(learn_args, "--discount")
+                    .map(|value| value.parse::<f32>())
+                    .transpose()?
+                    .unwrap_or(FqiConfig::default().discount),
+                ..FqiConfig::default()
+            };
+            if config.iterations == 0
+                || config.iterations > MAX_FQI_ITERATIONS
+                || config.backup_steps == 0
+                || config.backup_steps > MAX_FQI_BACKUP_STEPS
+                || config.trees_per_action == 0
+                || config.trees_per_action > MAX_FQI_TREES_PER_ACTION
+                || config.max_tree_depth > MAX_FQI_TREE_DEPTH
+            {
+                return Err("invalid bounded calibration FQI configuration".into());
+            }
+            let declared_categorical = repeated_option(learn_args, "--categorical-feature")
+                .into_iter()
+                .map(|value| value.parse::<usize>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let declared_all_continuous = learn_args.iter().any(|arg| arg == "--all-continuous");
+            if declared_all_continuous && !declared_categorical.is_empty() {
+                return Err(
+                    "--all-continuous and --categorical-feature cannot be used together".into(),
+                );
+            }
+            if training.feature_schema == movement_feature_schema_digest_v1() {
+                if declared_all_continuous || !declared_categorical.is_empty() {
+                    return Err(
+                        "the authenticated movement schema owns its categorical feature map".into(),
+                    );
+                }
+                config.categorical_features = MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec();
+            } else if training.feature_schema == movement_state_v2_spec().digest()? {
+                if declared_all_continuous || !declared_categorical.is_empty() {
+                    return Err(
+                        "the authenticated movement schema owns its categorical feature map".into(),
+                    );
+                }
+                config.categorical_features = movement_state_v2_spec().categorical_features();
+            } else if declared_all_continuous {
+                config.categorical_features.clear();
+            } else if !declared_categorical.is_empty() {
+                config.categorical_features = declared_categorical;
+            } else {
+                return Err("unknown feature schema: declare --all-continuous or repeat --categorical-feature N".into());
+            }
+            let actions = training
+                .transitions
+                .iter()
+                .map(|transition| transition.action)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            if actions.is_empty() || actions.len() > MAX_FQI_ACTIONS {
+                return Err("calibration training action support is outside bounds".into());
+            }
+            let model = FittedQ::fit_with_episode_groups(
+                training.feature_count,
+                &actions,
+                &training.transitions,
+                &training.episode_groups,
+                &config,
+            )?;
+            let held_out_samples = empirical_return_samples(
+                &held_out.transitions,
+                &held_out.episode_groups,
+                config.discount,
+            )?;
+            let calibration = calibrate_fitted_q(&model, &held_out_samples)?;
+            let output_path = required_path(learn_args, "--output")?;
+            if output_path.exists() {
+                return Err(format!(
+                    "calibration output already exists: {}",
+                    output_path.display()
+                )
+                .into());
+            }
+            let report = json!({
+                "schema": "dusklight-held-out-fqi-calibration/v1",
+                "dataset": dataset_path,
+                "dataset_sha256": dataset_identity,
+                "held_out_split": held_out_split,
+                "training_corpora": training_paths,
+                "training_corpus_sha256": training.corpus_digests,
+                "held_out_corpora": held_out_paths,
+                "held_out_corpus_sha256": held_out.corpus_digests,
+                "feature_schema": training.feature_schema,
+                "action_schema": training.action_schema,
+                "training_episode_groups": training.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+                "held_out_episode_groups": held_out.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+                "config": config,
+                "calibration": calibration,
+                "promotion_authority": false,
+                "limitations": [
+                    "exact-state proposal win rate is measured only where held-out actions are comparable",
+                    "unsupported held-out actions and proposed actions remain explicit OOD diagnostics",
+                    "calibration is analysis evidence and cannot replace native predicate or cold replay proof"
+                ]
+            });
+            if let Some(parent) = output_path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output_path, serde_json::to_vec_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
         Some("fit") => {
@@ -4013,7 +4304,7 @@ fn print_usage() {
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
-        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
+        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn calibrate (--dataset DATASET.json [--split validation|test|withheld] | --training TRAIN.dtcz --held-out TEST.dtcz) --output REPORT.json [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--all-continuous | --categorical-feature N ...]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
