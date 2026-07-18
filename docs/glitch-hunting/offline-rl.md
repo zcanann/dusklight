@@ -656,16 +656,20 @@ actions.
 Anchored search now accumulates content-deduplicated episode corpora across
 generations. It fits Q on compatible batches, scores tape-aligned states from
 repeat-proved elites and diverse behavior-archive routes, and allocates the
-bounded non-elite budget across five named proposers: least-supported systematic
-alternates, ensemble-disagreement probes, deterministic random probes,
-Latin-hypercube probes, and guided mean-Q exploitation. Proposed one-, two-,
-and four-frame action windows become normal candidates and cannot bypass cold
+bounded non-elite budget across five named lanes: action-mask-guided mean-Q
+exploitation over observed actions, ensemble-disagreement probes, structured
+least-supported counterfactuals, rare behavior-context archive probes, and
+blind coverage that interleaves seeded random with Latin-hypercube probes.
+Equal shares are used when possible; remainder shares rotate by generation, so
+small budgets do not permanently starve the same lane. Proposed one-, two-, and
+four-frame action windows become normal candidates and cannot bypass cold
 replay, predicate proof, or determinism checks. Ensemble disagreement is
 recorded as a sampling heuristic, never a calibrated confidence estimate.
 
 The generation-local `q-proposals.json` reports requested, available, and
-generated counts per proposer plus coverage by stage/room, spatial cell, player
-procedure, option, parameter/action bin, duration, goal phase, terminal outcome,
+generated counts per proposer, the generation's cycle offset, plus coverage by
+stage/room, spatial cell, player procedure, option, parameter/action bin,
+duration, goal phase, terminal outcome,
 and observed action support. Its collapse audit reports unique parents and
 proposed actions. This makes failures and blind-spot probes first-class
 collection evidence rather than repeatedly perturbing only successful

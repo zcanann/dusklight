@@ -853,7 +853,7 @@ simple random baseline.
 
 ### P1: active online collection
 
-- [ ] Alternate conservative exploitation, ensemble-disagreement probes,
+- [x] Alternate conservative exploitation, ensemble-disagreement probes,
   structured counterfactuals, archive novelty, and blind coverage.
 - [ ] Cap update-to-data ratio and detect critic divergence or value explosion.
 - [ ] Use independent evaluation workers/corpora so online training cannot turn
