@@ -3402,6 +3402,7 @@ struct Trial {
     rng_seed: u64,
     attempt: u32,
     tape: PathBuf,
+    logical_tick_budget: u64,
     boot: TapeBoot,
     suffix_tape: Option<PathBuf>,
     root: PathBuf,
@@ -3496,6 +3497,7 @@ fn build_trials(
                 rng_seed: manifest.rng_seed,
                 attempt,
                 tape: tape.clone(),
+                logical_tick_budget: member.frame_count,
                 boot: decoded.tape.boot.clone(),
                 suffix_tape: None,
                 state: root.join("state"),
@@ -3566,6 +3568,12 @@ fn build_anchored_trials(
             ChainSegment::all(suffix),
         ])
         .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?;
+        let logical_tick_budget = u64::try_from(chained.tape.frames.len()).map_err(|_| {
+            EvaluateError::InvalidManifest(format!(
+                "candidate {} chained tape length does not fit u64",
+                member.candidate_id
+            ))
+        })?;
         for attempt in 1..=repetitions {
             let root = output_root
                 .join("candidates")
@@ -3580,6 +3588,7 @@ fn build_anchored_trials(
                 rng_seed: manifest.rng_seed,
                 attempt,
                 tape: full_tape,
+                logical_tick_budget,
                 boot: chained.tape.boot.clone(),
                 suffix_tape: Some(suffix_path.clone()),
                 state: root.join("state"),
@@ -3701,6 +3710,8 @@ fn run_trial(
             .arg(&trial.tape)
             .arg("--input-tape-end")
             .arg("hold")
+            .arg("--automation-tick-budget")
+            .arg(trial.logical_tick_budget.to_string())
             .arg("--automation-data-root")
             .arg(&trial.state)
             .arg("--milestones")
