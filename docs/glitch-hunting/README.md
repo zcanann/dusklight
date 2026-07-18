@@ -53,6 +53,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 
 ## Documents
 
+- [Serious framework backlog](../../TASKS.md) is the dependency-ordered task
+  queue for the game query toolbox, Trace v2, action options, search/RL,
+  Skybook replication, validation, and scale work.
 - [Implementation status](status.md) records working commands, tests, and
   current fidelity/validation limits.
 - [Testing and visual TAS playback](testing.md) documents the VS Code selector,
