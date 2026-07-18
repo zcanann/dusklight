@@ -439,14 +439,30 @@ mod tests {
 
     #[test]
     fn malformed_or_detached_artifacts_fail_closed() {
-        let model = model();
-        let mut bytes = model.to_bytes().unwrap();
+        let fixture = model();
+        let mut bytes = fixture.to_bytes().unwrap();
         bytes[8] = 2;
         assert!(FrozenInferenceModel::from_bytes(&bytes).is_err());
 
-        let mut invalid = model;
+        let bytes = fixture.to_bytes().unwrap();
+        assert!(FrozenInferenceModel::from_bytes(&bytes[..bytes.len() - 1]).is_err());
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(FrozenInferenceModel::from_bytes(&trailing).is_err());
+
+        // The declared parameter count is the fourth u32 after the three
+        // identity digests. Detaching it from the tensor payload must fail.
+        let mut detached_count = bytes;
+        detached_count[116..120].copy_from_slice(&0_u32.to_le_bytes());
+        assert!(FrozenInferenceModel::from_bytes(&detached_count).is_err());
+
+        let mut invalid = fixture;
         invalid.actions.reverse();
         assert!(invalid.to_bytes().is_err());
         assert!(invalid.infer_batch(&[vec![0.0, 0.0]]).is_err());
+
+        let mut non_finite = model();
+        non_finite.layers[0].weights[0] = f32::NAN;
+        assert!(non_finite.to_bytes().is_err());
     }
 }
