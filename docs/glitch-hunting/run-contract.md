@@ -56,6 +56,15 @@ authenticated partial artifacts, but cannot carry partial success proof or be
 reported as complete success. Artifact paths are resolved beneath the result's
 declared artifact root and their exact bytes are verified.
 
+The request's logical-tick budget is enforced inside the native simulation
+loop after each completed post-simulation tick. Stage-boot readiness does not
+consume it, and an objective reached on the final allowed tick takes precedence
+over exhaustion. The host-timeout watchdog remains independent: logical
+exhaustion exits as a valid `exhausted` attempt, while wall-clock expiry is
+`host_timeout`. Protocol failures and unexpected game exits retain any stdout,
+stderr, realized input, trace, or objective files that exist as individually
+hashed partial artifacts, but never set the complete-proof marker.
+
 ## Commands
 
 Drafts use an all-zero `content_sha256`. Sealing computes that identity,
@@ -88,6 +97,8 @@ records one absolute tape, launches an isolated native process, authenticates
 the milestone result, realized tape, gameplay trace and observation inventory,
 classifies the terminal, and seals `result.json` beneath the requested
 destination. Exact controller target loss is distinct from input exhaustion.
+It passes the request-owned logical budget to the native process rather than
+inferring exhaustion from elapsed host time or planned input length.
 Authenticated search treats the request as the sole execution authority: game,
 game data, working directory, host timeout, and game arguments cannot be
 overridden at the search command. Every attempt derives a new request binding

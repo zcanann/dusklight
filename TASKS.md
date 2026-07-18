@@ -64,7 +64,7 @@ judgment.
   learned proposals through that same request/result executor.
 - [x] Give a controller one versioned pre-input observation and require one
   bounded action response without game-state mutation authority.
-- [ ] Enforce the logical-tick budget independently of host timeout and retain
+- [x] Enforce the logical-tick budget independently of host timeout and retain
   a precise terminal reason plus authenticated partial artifacts on failure.
 - [ ] Define one immutable episode artifact aligning pre-input state, consumed
   action, post-simulation state, objective/reward evidence, terminal reason,

@@ -32,7 +32,12 @@ roadmap documents describe the larger target.
   `huntctl harness execute` now routes neutral, TAS-source, absolute-tape, and
   reactive-controller seeds through an isolated native process, retains the
   controller's absolute realized tape, and seals the typed result. Exact target
-  loss is not exhaustion. Controller steps use a versioned synchronous
+  loss is not exhaustion. The request-owned logical budget is enforced after
+  completed native simulation ticks, independently of the host-timeout
+  watchdog; final-tick success wins over exhaustion. Timeout, controller
+  protocol failure, and unexpected game exit remain distinct typed terminals
+  and seal any retained stdout/stderr or other partial artifacts by digest.
+  Controller steps use a versioned synchronous
   pre-input request/response with echoed logical/frame counters; the response
   can supply only a bounded PAD state or target-loss reason, and a missing or
   stale response is a protocol failure. Search evaluation v5 derives one
