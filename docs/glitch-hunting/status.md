@@ -95,6 +95,10 @@ roadmap documents describe the larger target.
   session process IDs. One native quality elite occupies each cell;
   farthest-first selection preserves novel cells while the normal evaluator
   remains promotion authority.
+- Semantic novelty catalog v1 detects exact first-seen state transitions and
+  low-support aligned state/event/contact/actor/flag combinations independently
+  of route distance. Support is counted once per episode, and assessments retain
+  the raw facts and prior episode counts used by the decision.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

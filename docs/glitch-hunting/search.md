@@ -456,6 +456,15 @@ descriptor is the canonical explanation surface for later discovery reports.
 Missing contact or actor channels remain unobserved rather than becoming an
 observed empty set, and process-local actor IDs never affect identity.
 
+`SemanticNoveltyCatalog` makes the corpus-wide decision separately from the
+spatial archive distance. It counts each exact semantic transition and each
+aligned state/event/contact/actor/flag combination at most once per episode.
+An assessment is computed against the pre-insertion catalog and records the raw
+first-seen transitions plus every low-support combination and its prior episode
+count. The configured rarity ceiling is bounded and included in the assessment;
+`spatial_distance_used=false` makes the decision basis explicit. A canonical
+sorted snapshot exposes the accumulated support counts for audit and replay.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots

@@ -927,7 +927,7 @@ improvements are independently proved absolute tapes.
 - [x] Define semantic novelty descriptors over procedures, events, contacts,
   transitions, actor relationships, flags, position/velocity extrema, and
   boundary fingerprints.
-- [ ] Detect first-seen state transitions and rare state combinations, not just
+- [x] Detect first-seen state transitions and rare state combinations, not just
   spatial distance from an incumbent.
 - [ ] Maintain separate archives by scenario/fidelity and allow several useful
   outcomes per behavior cell.
