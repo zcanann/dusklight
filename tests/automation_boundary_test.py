@@ -12,6 +12,7 @@ from pathlib import Path
 OBSERVER = "DUSK_ENABLE_AUTOMATION_OBSERVERS"
 FIDELITY = "DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS"
 INTERVENTIONS = "DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS"
+UNSAFE_LAB = "DUSK_ENABLE_UNSAFE_LAB_ADDRESS_WRITES"
 
 
 @dataclass
@@ -240,6 +241,32 @@ def main() -> int:
             expected = f"{option}=$<BOOL:${{{option}}}>"
             if expected not in body:
                 failures.append(f"dusklight target-wide compile gate omits {option}")
+
+    raw_address_markers = (
+        "InterventionOperation::WriteAddress",
+        "InterventionOperation::RawAddress",
+        "pub struct RawAddress",
+        "pub enum RawAddress",
+        "fn write_address(",
+        "fn raw_address(",
+    )
+    intervention_sources = tuple((root / "tools/huntctl/src/intervention").rglob("*.rs")) + tuple(
+        (root / "src/dusk/automation").glob("*intervention*.cpp")
+    ) + tuple((root / "include/dusk/automation").glob("*intervention*.hpp"))
+    unsafe_lab_sources = []
+    for path in intervention_sources:
+        source = path.read_text(encoding="utf-8")
+        if not any(marker in source for marker in raw_address_markers):
+            continue
+        if "unsafe_lab" not in path.as_posix():
+            failures.append(f"{path}: raw-address writes escape the separately named unsafe lab")
+        else:
+            unsafe_lab_sources.append(path)
+    if unsafe_lab_sources:
+        if not re.search(rf"option\({UNSAFE_LAB}\s+.*?\sOFF\)", cmake, re.DOTALL):
+            failures.append(f"CMake option {UNSAFE_LAB} must exist and default OFF")
+        if target_definitions is None or f"{UNSAFE_LAB}=$<BOOL:${{{UNSAFE_LAB}}}>" not in target_definitions.group("body"):
+            failures.append(f"dusklight target-wide compile gate omits {UNSAFE_LAB}")
 
     if failures:
         print("Automation boundary violations:", file=sys.stderr)

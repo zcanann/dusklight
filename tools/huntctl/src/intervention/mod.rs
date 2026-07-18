@@ -22,6 +22,7 @@ pub const MAX_INTERVENTIONS: usize = 1_024;
 pub const MAX_TIMELINE_TICKS: u32 = 1_000_000;
 pub const MAX_DSL_BYTES: usize = 1_048_576;
 pub const MAX_DSL_LINES: usize = 4_096;
+pub const RESERVED_UNSAFE_LAB_BUILD_NAME: &str = "dusklight-unsafe-intervention-lab";
 const EXPERIMENTAL_INTERVENTION_FLAG: u32 = 1;
 const MAX_ABSOLUTE_COMPONENT: f32 = 10_000_000.0;
 const MAX_HEALTH: i16 = 1_000;
@@ -582,6 +583,14 @@ fn parse_operation(
             value: parse_bool(tokens[3], line, "flag value")?,
         },
         "despawn" if tokens.len() == 1 => InterventionOperation::Despawn,
+        "write_address" | "set_address" | "poke_address" => {
+            return Err(dsl_error(
+                line,
+                &format!(
+                    "arbitrary address writes are forbidden in DUSKINTR; reserve them for the separately named {RESERVED_UNSAFE_LAB_BUILD_NAME} build"
+                ),
+            ));
+        }
         _ => return Err(dsl_error(line, "unknown operation or invalid operands")),
     })
 }
@@ -958,6 +967,13 @@ at 10 for 1 before_game_tick process 42 require actor_exists set_position 1 2 3
             .unwrap();
         encoded[HEADER_SIZE + 100] = 1;
         assert!(InterventionTape::decode(&encoded).is_err());
+
+        let mut encoded = InterventionTape::compile_dsl(DSL)
+            .unwrap()
+            .encode()
+            .unwrap();
+        encoded[HEADER_SIZE + 11] = 0xff;
+        assert!(InterventionTape::decode(&encoded).is_err());
     }
 
     #[test]
@@ -1097,5 +1113,20 @@ at 0 for 2 before_game_tick placed F_SP104 1 9 12 require actor_exists set_healt
 at 1 for 1 before_game_tick placed F_SP104 1 9 12 require actor_exists despawn
 "#;
         assert!(InterventionTape::compile_dsl(overlapping_lifecycle).is_err());
+    }
+
+    #[test]
+    fn typed_format_rejects_arbitrary_address_write_spellings() {
+        for operation in [
+            "write_address 0x80000000 1",
+            "set_address 0x80000000 1",
+            "poke_address 0x80000000 1",
+        ] {
+            let source = format!(
+                "timeline 2\nat 0 for 1 before_game_tick process 7 require actor_exists {operation}"
+            );
+            let error = InterventionTape::compile_dsl(&source).unwrap_err();
+            assert!(error.to_string().contains(RESERVED_UNSAFE_LAB_BUILD_NAME));
+        }
     }
 }
