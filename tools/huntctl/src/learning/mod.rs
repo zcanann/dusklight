@@ -11,4 +11,5 @@ pub mod low_data_baselines;
 pub mod offline_rl;
 pub mod prioritized_replay;
 pub mod q_search;
+pub mod rainbow;
 pub mod reward_shaping;
