@@ -2366,6 +2366,15 @@ pub fn run_anchored_search(
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let semantic_proposal_scores = candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.candidate_id.clone(),
+                    candidate.proposal_signal.proposal_ordering_score(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         write_json(
             &population_root.join("semantic-novelty.json"),
             &SemanticNoveltyGenerationReport {
@@ -2491,6 +2500,27 @@ pub fn run_anchored_search(
                     q_episodes.push(entry.episode.clone());
                 }
             }
+            q_episodes.sort_by(|left, right| {
+                let left_id = left
+                    .candidate
+                    .id()
+                    .expect("proposal source candidates were validated before archiving");
+                let right_id = right
+                    .candidate
+                    .id()
+                    .expect("proposal source candidates were validated before archiving");
+                semantic_proposal_scores
+                    .get(&right_id)
+                    .copied()
+                    .unwrap_or_default()
+                    .cmp(
+                        &semantic_proposal_scores
+                            .get(&left_id)
+                            .copied()
+                            .unwrap_or_default(),
+                    )
+                    .then_with(|| left_id.cmp(&right_id))
+            });
             let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
             let q_result = if q_budget == 0 || q_episodes.is_empty() || dataset_generation.is_none()
             {
