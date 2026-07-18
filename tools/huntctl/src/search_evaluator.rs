@@ -3993,19 +3993,129 @@ fn address_attempt_artifacts(
 }
 
 fn archive_behavior_context(evidence: &AttemptEvidence) -> Result<BehaviorContext, EvaluateError> {
+    let mut semantic_axes = (None, None, None, None, None);
     let contact_behavior_identity = if let Some(path) = evidence.gameplay_trace.as_ref() {
         let bytes = fs::read(path)?;
         let trace = crate::trace::decode(&bytes)
             .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        semantic_axes = trace_semantic_archive_axes(&trace);
         trace_contact_behavior_identity(&trace)?
     } else {
         None
     };
-    Ok(archive_behavior_context_from_evidence(
+    let mut context = archive_behavior_context_from_evidence(
         &evidence.boundary_fingerprints,
         &evidence.value_projections,
         contact_behavior_identity,
-    ))
+    );
+    context.event_sequence_identity = semantic_axes.0;
+    context.state_transition_identity = semantic_axes.1;
+    context.actor_relationship_identity = semantic_axes.2;
+    context.flag_state_identity = semantic_axes.3;
+    context.kinematic_extrema_identity = semantic_axes.4;
+    Ok(context)
+}
+
+fn trace_semantic_archive_axes(
+    trace: &crate::trace::DecodedTrace,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let mut events = Vec::new();
+    let mut transitions = Vec::new();
+    let mut actors = Vec::new();
+    let mut flags = Vec::new();
+    let mut extrema = [
+        [f32::INFINITY; 3],
+        [f32::NEG_INFINITY; 3],
+        [f32::INFINITY; 3],
+        [f32::NEG_INFINITY; 3],
+    ];
+    for record in &trace.records {
+        events.push(
+            serde_json::to_vec(&(
+                record.event_id,
+                record.event_mode,
+                record.event_status,
+                record.event_map_tool_id,
+                record
+                    .event_name_hash_present
+                    .then_some(record.event_name_hash),
+            ))
+            .unwrap(),
+        );
+        transitions.push(
+            serde_json::to_vec(&(
+                &record.stage_name,
+                record.room,
+                record.layer,
+                &record.next_stage_name,
+                record.next_room,
+                record.next_layer,
+                record.next_stage_enabled,
+                record.player_proc_id,
+            ))
+            .unwrap(),
+        );
+        flags.push(
+            serde_json::to_vec(&(
+                record.flags,
+                record
+                    .player_background_collision
+                    .as_ref()
+                    .map(|value| value.flags),
+                record
+                    .player_collision_surfaces
+                    .as_ref()
+                    .map(|value| value.flags),
+            ))
+            .unwrap(),
+        );
+        if let Some(selected) = &record.selected_actors {
+            let stable = selected
+                .actors
+                .iter()
+                .map(|actor| {
+                    (
+                        actor.actor_name,
+                        actor.set_id,
+                        actor.home_room,
+                        actor.current_room,
+                        actor.health,
+                        actor.status,
+                        [
+                            actor.position[0] - record.position[0],
+                            actor.position[1] - record.position[1],
+                            actor.position[2] - record.position[2],
+                        ],
+                    )
+                })
+                .collect::<Vec<_>>();
+            actors.push(
+                serde_json::to_vec(&(selected.observed_count, selected.truncated, stable)).unwrap(),
+            );
+        }
+        for axis in 0..3 {
+            extrema[0][axis] = extrema[0][axis].min(record.position[axis]);
+            extrema[1][axis] = extrema[1][axis].max(record.position[axis]);
+            extrema[2][axis] = extrema[2][axis].min(record.velocity[axis]);
+            extrema[3][axis] = extrema[3][axis].max(record.velocity[axis]);
+        }
+    }
+    let extrema_rows = (!trace.records.is_empty())
+        .then(|| vec![serde_json::to_vec(&extrema).unwrap()])
+        .unwrap_or_default();
+    (
+        archive_axis_identity(b"events/v1", &events),
+        archive_axis_identity(b"transitions/v1", &transitions),
+        archive_axis_identity(b"actor-relationships/v1", &actors),
+        archive_axis_identity(b"flags/v1", &flags),
+        archive_axis_identity(b"kinematic-extrema/v1", &extrema_rows),
+    )
 }
 
 fn archive_behavior_context_from_evidence(
@@ -4063,6 +4173,11 @@ fn archive_behavior_context_from_evidence(
         downstream.push(encoded);
     }
     BehaviorContext {
+        event_sequence_identity: None,
+        state_transition_identity: None,
+        actor_relationship_identity: None,
+        flag_state_identity: None,
+        kinematic_extrema_identity: None,
         objective_rng_identity: archive_axis_identity(b"rng/v1", &rng),
         actor_population_identity: archive_axis_identity(b"actors/v1", &actors),
         contact_behavior_identity,

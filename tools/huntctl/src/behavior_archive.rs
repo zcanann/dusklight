@@ -17,6 +17,11 @@ const POSITION_BIN_WORLD_UNITS: f32 = 256.0;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BehaviorContext {
+    pub event_sequence_identity: Option<String>,
+    pub state_transition_identity: Option<String>,
+    pub actor_relationship_identity: Option<String>,
+    pub flag_state_identity: Option<String>,
+    pub kinematic_extrema_identity: Option<String>,
     /// Digest of available named RNG projections, including their definitions.
     pub objective_rng_identity: Option<String>,
     /// Digest of available named actor-population projections.
@@ -31,6 +36,11 @@ pub struct BehaviorContext {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct BehaviorDescriptor {
+    pub event_sequence_identity: Option<String>,
+    pub state_transition_identity: Option<String>,
+    pub actor_relationship_identity: Option<String>,
+    pub flag_state_identity: Option<String>,
+    pub kinematic_extrema_identity: Option<String>,
     pub objective_rng_identity: Option<String>,
     pub actor_population_identity: Option<String>,
     pub contact_behavior_identity: Option<String>,
@@ -284,6 +294,11 @@ pub fn describe_behavior_with_context(
         }
     }
     Ok(BehaviorDescriptor {
+        event_sequence_identity: context.event_sequence_identity.clone(),
+        state_transition_identity: context.state_transition_identity.clone(),
+        actor_relationship_identity: context.actor_relationship_identity.clone(),
+        flag_state_identity: context.flag_state_identity.clone(),
+        kinematic_extrema_identity: context.kinematic_extrema_identity.clone(),
         objective_rng_identity: context.objective_rng_identity.clone(),
         actor_population_identity: context.actor_population_identity.clone(),
         contact_behavior_identity: context.contact_behavior_identity.clone(),
@@ -305,6 +320,11 @@ pub fn describe_behavior_with_context(
 
 fn validate_context(context: &BehaviorContext) -> Result<(), BehaviorArchiveError> {
     for (name, digest) in [
+        ("event sequence", &context.event_sequence_identity),
+        ("state transition", &context.state_transition_identity),
+        ("actor relationship", &context.actor_relationship_identity),
+        ("flag state", &context.flag_state_identity),
+        ("kinematic extrema", &context.kinematic_extrema_identity),
         ("objective RNG", &context.objective_rng_identity),
         ("actor population", &context.actor_population_identity),
         ("contact behavior", &context.contact_behavior_identity),
@@ -348,6 +368,29 @@ fn novelty(
 
 fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) -> u128 {
     let mut distance = 0_u128;
+    for (shift, differs) in [
+        (
+            126,
+            left.event_sequence_identity != right.event_sequence_identity,
+        ),
+        (
+            124,
+            left.state_transition_identity != right.state_transition_identity,
+        ),
+        (
+            122,
+            left.actor_relationship_identity != right.actor_relationship_identity,
+        ),
+        (120, left.flag_state_identity != right.flag_state_identity),
+        (
+            118,
+            left.kinematic_extrema_identity != right.kinematic_extrema_identity,
+        ),
+    ] {
+        if differs {
+            distance += 1_u128 << shift;
+        }
+    }
     if left.objective_rng_identity != right.objective_rng_identity {
         distance += 1_u128 << 116;
     }
@@ -487,6 +530,15 @@ mod tests {
         }
     }
 
+    fn contexts_base() -> BehaviorContext {
+        BehaviorContext {
+            objective_rng_identity: Some("01".repeat(32)),
+            actor_population_identity: Some("11".repeat(32)),
+            downstream_state_identity: Some("21".repeat(32)),
+            ..BehaviorContext::default()
+        }
+    }
+
     #[test]
     fn archive_keeps_distinct_paths_and_replaces_same_descriptor_with_faster_episode() {
         let mut archive = BehaviorArchive::default();
@@ -510,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn map_elites_cells_separate_rng_actors_contacts_and_boundaries() {
+    fn map_elites_cells_separate_all_semantic_novelty_axes() {
         let mut archive = BehaviorArchive::default();
         let contexts = [
             BehaviorContext {
@@ -551,18 +603,38 @@ mod tests {
                 downstream_state_identity: Some("21".repeat(32)),
                 ..BehaviorContext::default()
             },
+            BehaviorContext {
+                event_sequence_identity: Some("51".repeat(32)),
+                ..contexts_base()
+            },
+            BehaviorContext {
+                state_transition_identity: Some("52".repeat(32)),
+                ..contexts_base()
+            },
+            BehaviorContext {
+                actor_relationship_identity: Some("53".repeat(32)),
+                ..contexts_base()
+            },
+            BehaviorContext {
+                flag_state_identity: Some("54".repeat(32)),
+                ..contexts_base()
+            },
+            BehaviorContext {
+                kinematic_extrema_identity: Some("55".repeat(32)),
+                ..contexts_base()
+            },
         ];
         for (index, context) in contexts.iter().enumerate() {
             archive
                 .consider_with_context(episode(100.0, 4.0, 8), score(10), index as u32, context)
                 .unwrap();
         }
-        assert_eq!(archive.len(), 6);
+        assert_eq!(archive.len(), 11);
         let descriptors = archive.entries.keys().cloned().collect::<Vec<_>>();
         let selected = archive
-            .select_diverse(&HashSet::new(), &descriptors[..1], 5)
+            .select_diverse(&HashSet::new(), &descriptors[..1], 10)
             .unwrap();
-        assert_eq!(selected.len(), 5);
+        assert_eq!(selected.len(), 10);
         let summary = archive.summary(&selected).unwrap();
         assert_eq!(summary.schema, "dusklight-behavior-archive/v3");
         assert_eq!(
