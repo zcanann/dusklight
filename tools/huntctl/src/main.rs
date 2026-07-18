@@ -5133,6 +5133,13 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     if logical_tick_budget == 0 {
         return Err("mock worker received a zero automation tick budget".into());
     }
+    if mode == "protocol-failure" || mode == "game-crash" {
+        writeln!(io::stdout(), "mock native partial stdout before {mode}")?;
+        writeln!(io::stderr(), "mock native partial stderr before {mode}")?;
+        io::stdout().flush()?;
+        io::stderr().flush()?;
+        std::process::exit(if mode == "protocol-failure" { 3 } else { 86 });
+    }
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
     let input_tape = option(args, "--input-tape")
         .map(|path| -> Result<_, Box<dyn Error>> { Ok(InputTape::decode(&fs::read(path)?)?.tape) })

@@ -837,6 +837,35 @@ fn enforces_the_logical_tick_budget_independently_of_host_time() {
 
 #[cfg(unix)]
 #[test]
+fn failure_terminals_retain_authenticated_partial_artifacts() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    for (mode, terminal, destination) in [
+        (
+            "protocol-failure",
+            HarnessTerminalReason::ProtocolFailure,
+            "artifacts/mock-controller-protocol-failure",
+        ),
+        (
+            "game-crash",
+            HarnessTerminalReason::GameCrashed,
+            "artifacts/mock-controller-game-crash",
+        ),
+    ] {
+        let (root, request, result) = execute_mock_controller(executable, Some(mode), destination);
+        assert_eq!(result.terminal, terminal);
+        assert!(!result.objective.reached);
+        assert!(!result.artifacts.complete);
+        assert!(result.artifacts.stdout.is_some());
+        assert!(result.artifacts.stderr.is_some());
+        result
+            .validate_files(&request, &root.join(&request.artifact_destination))
+            .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn reports_an_exact_controller_target_loss_without_calling_it_exhaustion() {
     let executable = env!("CARGO_BIN_EXE_huntctl");
     let (root, request, result) = execute_mock_controller(
