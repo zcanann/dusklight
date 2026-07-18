@@ -11,7 +11,6 @@ pub mod clustering;
 pub mod headful_review;
 pub mod human_labels;
 pub mod minimization;
-pub mod open_questions;
 pub mod proposal_signal;
 
 use crate::trace::{

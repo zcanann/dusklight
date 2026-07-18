@@ -11,12 +11,14 @@ use std::fmt;
 pub const OPEN_QUESTION_CAMPAIGN_SCHEMA: &str = "dusklight-open-question-campaign/v1";
 pub const OPEN_QUESTION_ASSESSMENT_SCHEMA: &str = "dusklight-open-question-campaign-assessment/v1";
 pub const MAX_OPEN_QUESTION_EPISODES: u64 = 1_000_000;
+pub const MAX_OPEN_QUESTION_FACTS: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenQuestion {
     ProduceUnseenProcedureContactPair,
     CrossCollisionWithoutSceneTransition,
+    ContactChangeWithoutSemanticTransition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -35,10 +37,20 @@ pub struct ProcedureContactPair {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ContactChangeWithoutTransition {
+    pub unchanged_state: super::SemanticState,
+    pub before: Option<super::ContactState>,
+    pub after: Option<super::ContactState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OpenQuestionEvidence {
     UnseenProcedureContactPairs { pairs: Vec<ProcedureContactPair> },
     CollisionExitWithoutSceneTransition { contacts: Vec<ContactFact> },
+    ContactChangesWithoutSemanticTransition {
+        changes: Vec<ContactChangeWithoutTransition>,
+    },
     NoMatch,
 }
 
@@ -123,6 +135,28 @@ impl OpenQuestionCampaign {
                     OpenQuestionEvidence::CollisionExitWithoutSceneTransition { contacts }
                 }
             }
+            OpenQuestion::ContactChangeWithoutSemanticTransition => {
+                let changes = descriptor
+                    .state_combinations
+                    .windows(2)
+                    .filter_map(|pair| {
+                        let before = &pair[0];
+                        let after = &pair[1];
+                        (before.state == after.state && before.contact != after.contact).then(|| {
+                            ContactChangeWithoutTransition {
+                                unchanged_state: before.state.clone(),
+                                before: before.contact.clone(),
+                                after: after.contact.clone(),
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if changes.is_empty() {
+                    OpenQuestionEvidence::NoMatch
+                } else {
+                    OpenQuestionEvidence::ContactChangesWithoutSemanticTransition { changes }
+                }
+            }
         };
         Ok(OpenQuestionAssessment {
             schema: OPEN_QUESTION_ASSESSMENT_SCHEMA,
@@ -145,8 +179,17 @@ impl OpenQuestionCampaign {
                 "open-question campaign episode budget is exhausted".into(),
             ));
         }
-        self.observed_procedure_contact_pairs
-            .extend(procedure_contact_pairs(descriptor));
+        let pairs = procedure_contact_pairs(descriptor);
+        let new_pair_count = pairs
+            .iter()
+            .filter(|pair| !self.observed_procedure_contact_pairs.contains(*pair))
+            .count();
+        if self.observed_procedure_contact_pairs.len() + new_pair_count > MAX_OPEN_QUESTION_FACTS {
+            return Err(OpenQuestionCampaignError(format!(
+                "open-question campaign exceeds {MAX_OPEN_QUESTION_FACTS} semantic facts"
+            )));
+        }
+        self.observed_procedure_contact_pairs.extend(pairs);
         self.observed_episodes = self.observed_episodes.saturating_add(1);
         Ok(())
     }
@@ -372,5 +415,19 @@ mod tests {
             });
         let campaign = campaign(OpenQuestion::CrossCollisionWithoutSceneTransition);
         assert!(!campaign.assess(&descriptor).unwrap().matched);
+    }
+
+    #[test]
+    fn contact_change_with_identical_semantic_state_is_reported() {
+        let mut descriptor = descriptor(3, false);
+        let mut changed = descriptor.state_combinations[0].clone();
+        changed.contact.as_mut().unwrap().background_flags = Some(9);
+        descriptor.state_combinations.push(changed);
+        let campaign = campaign(OpenQuestion::ContactChangeWithoutSemanticTransition);
+        assert!(matches!(
+            campaign.assess(&descriptor).unwrap().evidence,
+            OpenQuestionEvidence::ContactChangesWithoutSemanticTransition { ref changes }
+                if changes.len() == 1
+        ));
     }
 }
