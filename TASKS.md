@@ -907,7 +907,7 @@ simple random baseline.
 
 - [x] At least 500 diverse episodes and 50,000 option decisions for the selected
   objective before treating a neural comparison as meaningful.
-- [ ] Broad action/option support in each relevant player procedure and spatial
+- [x] Broad action/option support in each relevant player procedure and spatial
   phase, with unsupported regions reported explicitly.
 - [ ] Held-out episodes and boundary families, stable repeated cold replay, and a
   stronger result than tree FQI plus structured specialists under equal budget.

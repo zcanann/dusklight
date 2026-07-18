@@ -279,6 +279,13 @@ option decisions; duplicate episode IDs cannot inflate the count, either
 threshold failing disables the comparison, and readiness has no promotion
 authority.
 
+`dusklight-rl-coverage-readiness/v1` then audits each declared player-
+procedure/spatial-phase region independently. Required action IDs are explicit,
+each needs at least 16 decisions by default, and broad support requires 90% of
+the region's required catalog. Every low-support region remains in the report
+with its exact insufficient action IDs even when a configured ratio would let
+the broader gate pass.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
