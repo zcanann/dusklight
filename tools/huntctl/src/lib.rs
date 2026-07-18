@@ -1,6 +1,7 @@
 //! Rust control plane primitives for persistent Dusklight simulation workers.
 
 pub mod action_guidance;
+pub mod actor_identity;
 pub mod artifact;
 pub mod bayesian_search;
 pub mod behavior_archive;

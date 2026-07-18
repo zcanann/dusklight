@@ -5,6 +5,8 @@
 //! state other than the evaluator-owned `stable` counter for each definition.
 
 use serde::{Deserialize, Serialize};
+
+pub use crate::actor_identity::PlacedActorSelector;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -150,14 +152,6 @@ pub enum QueryFact {
         point: [f32; 3],
         normal: [f32; 3],
     },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct PlacedActorSelector {
-    pub stage: String,
-    pub home_room: i8,
-    pub set_id: u16,
-    pub actor_name: i16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1622,21 +1616,7 @@ fn validate_comparison(field: Field, operator: Comparison, value: &Value) -> Res
 fn validate_query_fact(fact: &QueryFact) -> Result<(), String> {
     match fact {
         QueryFact::PlacedActor { selector, .. } => {
-            if !valid_stage_name(&selector.stage) {
-                return Err(
-                    "placed actor stage names must be 1..8 ASCII uppercase, digit, or underscore bytes"
-                        .into(),
-                );
-            }
-            if !(-1..=63).contains(&selector.home_room) {
-                return Err("placed actor home room must be -1..63".into());
-            }
-            if selector.set_id == u16::MAX {
-                return Err("placed actor set ID 65535 is reserved as unavailable".into());
-            }
-            if selector.actor_name < 0 {
-                return Err("placed actor name must be nonnegative".into());
-            }
+            selector.validate().map_err(str::to_owned)?;
         }
         QueryFact::Flag { selector } => {
             let maximum = match selector.domain {

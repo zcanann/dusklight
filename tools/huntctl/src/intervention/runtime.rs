@@ -231,6 +231,15 @@ impl InterventionWriteAudit {
                 "intervention audit is missing scheduled applications",
             ));
         }
+        if self
+            .entries
+            .iter()
+            .any(|entry| entry.outcome == InterventionAuditOutcome::TargetLost)
+        {
+            return Err(runtime_error(
+                "intervention run lost an exact target and cannot be accepted",
+            ));
+        }
         self.complete = true;
         Ok(self)
     }
@@ -427,6 +436,32 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn target_loss_invalidates_audit_completion() {
+        let tape = tape();
+        let admission = InterventionExecutionAdmission::admit(request(), &tape).unwrap();
+        let mut audit = InterventionWriteAudit::begin(admission, &tape).unwrap();
+        let intervention = &tape.interventions[0];
+        audit
+            .record(
+                &tape,
+                InterventionWriteAuditEntry {
+                    intervention_index: 0,
+                    tick: 1,
+                    phase: intervention.phase,
+                    selector: intervention.selector.clone(),
+                    resolved_process_id: None,
+                    precondition: intervention.precondition,
+                    before: None,
+                    written: None,
+                    after: None,
+                    outcome: InterventionAuditOutcome::TargetLost,
+                },
+            )
+            .unwrap();
+        assert!(audit.finish().is_err());
     }
 
     #[test]

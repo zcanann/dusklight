@@ -5,6 +5,7 @@
 #[cfg(feature = "experimental-interventions")]
 pub mod runtime;
 
+use crate::actor_identity::PlacedActorSelector;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
@@ -19,7 +20,6 @@ pub const MAX_TIMELINE_TICKS: u32 = 1_000_000;
 pub const MAX_DSL_BYTES: usize = 1_048_576;
 pub const MAX_DSL_LINES: usize = 4_096;
 const EXPERIMENTAL_INTERVENTION_FLAG: u32 = 1;
-const STAGE_NAME_CAPACITY: usize = 16;
 const MAX_ABSOLUTE_COMPONENT: f32 = 10_000_000.0;
 const MAX_HEALTH: i16 = 1_000;
 const MAX_TIMER_TICKS: u16 = 3_600;
@@ -49,15 +49,48 @@ pub enum InterventionPhase {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InterventionSelector {
-    Process {
-        process_id: u32,
-    },
-    Placed {
-        stage_name: String,
-        home_room: i8,
+    Process { process_id: u32 },
+    Placed { identity: PlacedActorSelector },
+}
+
+impl InterventionSelector {
+    /// Converts the exact selector forms used by reactive `seek actor`
+    /// controllers into the intervention identity. The controller keeps the
+    /// actor procedure beside its selector, so it is supplied separately here.
+    pub fn from_controller_selector(
         actor_name: i16,
-        set_id: u16,
-    },
+        selector: &crate::controller_program::ActorSelector,
+    ) -> Result<Self, InterventionTapeError> {
+        match selector {
+            crate::controller_program::ActorSelector::Nearest => Err(error(
+                "nearest actor selectors are not stable enough for interventions",
+            )),
+            crate::controller_program::ActorSelector::Process { process_id } => {
+                if *process_id == 0 || *process_id == u32::MAX {
+                    return Err(error("controller process selector is invalid"));
+                }
+                Ok(Self::Process {
+                    process_id: *process_id,
+                })
+            }
+            crate::controller_program::ActorSelector::Placed {
+                set_id,
+                room,
+                stage_name,
+            } => {
+                let identity = PlacedActorSelector {
+                    stage: stage_name.clone(),
+                    home_room: *room,
+                    actor_name,
+                    set_id: *set_id,
+                };
+                identity.validate().map_err(|message| {
+                    error(format!("controller placed selector is invalid: {message}"))
+                })?;
+                Ok(Self::Placed { identity })
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -125,6 +158,18 @@ pub enum InterventionOperation {
     Despawn,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InterventionWriteField {
+    Position,
+    Velocity,
+    Facing,
+    TargetIntent,
+    Health,
+    Timer(InterventionTimer),
+    Flag(InterventionFlagDomain, u16),
+    Lifecycle,
+}
+
 #[derive(Debug)]
 pub struct InterventionTapeError(String);
 
@@ -157,6 +202,21 @@ impl InterventionTape {
                 ));
             }
             previous_key = Some(key);
+        }
+        for (left_index, left) in self.interventions.iter().enumerate() {
+            for (right_index, right) in self.interventions.iter().enumerate().skip(left_index + 1) {
+                if left.selector == right.selector
+                    && intervention_ranges_overlap(left, right)
+                    && write_fields_conflict(
+                        intervention_write_field(&left.operation),
+                        intervention_write_field(&right.operation),
+                    )
+                {
+                    return Err(error(format!(
+                        "interventions {left_index} and {right_index} overlap writes to the same selector and field"
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -282,6 +342,38 @@ impl InterventionTape {
     }
 }
 
+fn intervention_ranges_overlap(left: &Intervention, right: &Intervention) -> bool {
+    left.start_tick < right.start_tick + right.duration_ticks
+        && right.start_tick < left.start_tick + left.duration_ticks
+}
+
+fn intervention_write_field(operation: &InterventionOperation) -> InterventionWriteField {
+    match operation {
+        InterventionOperation::SetPosition { .. }
+        | InterventionOperation::AddPosition { .. }
+        | InterventionOperation::MoveAlongCubicCurve { .. } => InterventionWriteField::Position,
+        InterventionOperation::SetVelocity { .. } | InterventionOperation::AddVelocity { .. } => {
+            InterventionWriteField::Velocity
+        }
+        InterventionOperation::SetFacingYaw { .. } => InterventionWriteField::Facing,
+        InterventionOperation::SetTargetPlayer { .. } => InterventionWriteField::TargetIntent,
+        InterventionOperation::SetHealth { .. } => InterventionWriteField::Health,
+        InterventionOperation::SetTimer { timer, .. } => InterventionWriteField::Timer(*timer),
+        InterventionOperation::SetFlag { domain, index, .. } => {
+            InterventionWriteField::Flag(*domain, *index)
+        }
+        InterventionOperation::SpawnAtPosition { .. } | InterventionOperation::Despawn => {
+            InterventionWriteField::Lifecycle
+        }
+    }
+}
+
+fn write_fields_conflict(left: InterventionWriteField, right: InterventionWriteField) -> bool {
+    left == InterventionWriteField::Lifecycle
+        || right == InterventionWriteField::Lifecycle
+        || left == right
+}
+
 impl Intervention {
     fn validate(&self, timeline_ticks: u32) -> Result<(), InterventionTapeError> {
         if self.duration_ticks == 0
@@ -293,14 +385,12 @@ impl Intervention {
             return Err(error("intervention tick range escapes the timeline"));
         }
         match &self.selector {
-            InterventionSelector::Process { process_id } if *process_id == 0 => {
-                return Err(error("intervention process selector is zero"));
+            InterventionSelector::Process { process_id }
+                if *process_id == 0 || *process_id == u32::MAX =>
+            {
+                return Err(error("intervention process selector is invalid"));
             }
-            InterventionSelector::Placed {
-                stage_name,
-                actor_name,
-                ..
-            } if !valid_stage(stage_name) || *actor_name == -1 => {
+            InterventionSelector::Placed { identity } if identity.validate().is_err() => {
                 return Err(error("intervention placed selector is invalid"));
             }
             _ => {}
@@ -389,10 +479,12 @@ fn parse_intervention(
         ),
         "placed" if tokens.len() >= 11 => (
             InterventionSelector::Placed {
-                stage_name: tokens[6].into(),
-                home_room: parse_i8(tokens[7], line_index, "home room")?,
-                actor_name: parse_i16(tokens[8], line_index, "actor name")?,
-                set_id: parse_u16(tokens[9], line_index, "set ID")?,
+                identity: PlacedActorSelector {
+                    stage: tokens[6].into(),
+                    home_room: parse_i8(tokens[7], line_index, "home room")?,
+                    actor_name: parse_i16(tokens[8], line_index, "actor name")?,
+                    set_id: parse_u16(tokens[9], line_index, "set ID")?,
+                },
             },
             10,
         ),
@@ -500,18 +592,13 @@ fn encode_record(intervention: &Intervention, output: &mut [u8]) {
             output[9] = 1;
             put_u32(output, 16, *process_id);
         }
-        InterventionSelector::Placed {
-            stage_name,
-            home_room,
-            actor_name,
-            set_id,
-        } => {
+        InterventionSelector::Placed { identity } => {
             output[9] = 2;
-            output[16] = stage_name.len() as u8;
-            output[17..17 + stage_name.len()].copy_from_slice(stage_name.as_bytes());
-            output[33] = *home_room as u8;
-            put_i16(output, 34, *actor_name);
-            put_u16(output, 36, *set_id);
+            output[16] = identity.stage.len() as u8;
+            output[17..17 + identity.stage.len()].copy_from_slice(identity.stage.as_bytes());
+            output[33] = identity.home_room as u8;
+            put_i16(output, 34, identity.actor_name);
+            put_u16(output, 36, identity.set_id);
         }
     }
     encode_operation(&intervention.operation, output);
@@ -592,16 +679,18 @@ fn decode_record(input: &[u8]) -> Result<Intervention, InterventionTapeError> {
         },
         2 => {
             let length = input[16] as usize;
-            if length == 0 || length > STAGE_NAME_CAPACITY {
+            if length == 0 || length > crate::actor_identity::STAGE_NAME_CAPACITY {
                 return Err(error("invalid placed-selector stage length"));
             }
             InterventionSelector::Placed {
-                stage_name: std::str::from_utf8(&input[17..17 + length])
-                    .map_err(|_| error("placed-selector stage is not UTF-8"))?
-                    .into(),
-                home_room: input[33] as i8,
-                actor_name: i16_at(input, 34),
-                set_id: u16_at(input, 36),
+                identity: PlacedActorSelector {
+                    stage: std::str::from_utf8(&input[17..17 + length])
+                        .map_err(|_| error("placed-selector stage is not UTF-8"))?
+                        .into(),
+                    home_room: input[33] as i8,
+                    actor_name: i16_at(input, 34),
+                    set_id: u16_at(input, 36),
+                },
             }
         }
         _ => return Err(error("unknown intervention selector")),
@@ -660,12 +749,6 @@ fn intervention_sort_key(intervention: &Intervention) -> Vec<u8> {
     let mut record = vec![0; RECORD_SIZE];
     encode_record(intervention, &mut record);
     record[4..].to_vec()
-}
-
-fn valid_stage(stage: &str) -> bool {
-    !stage.is_empty()
-        && stage.len() <= STAGE_NAME_CAPACITY
-        && stage.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 fn parse_bool(value: &str, line: usize, label: &str) -> Result<bool, InterventionTapeError> {
@@ -928,5 +1011,84 @@ at 12 for 1 before_game_tick placed F_SP104 1 9 12 require actor_exists despawn
             "timeline 4\nat 0 for 1 before_game_tick process 7 require actor_exists set_flag actor_status 32 true"
         )
         .is_err());
+    }
+
+    #[test]
+    fn controller_selector_bridge_reuses_only_exact_forms() {
+        use crate::controller_program::ActorSelector;
+
+        assert!(
+            InterventionSelector::from_controller_selector(12, &ActorSelector::Nearest).is_err()
+        );
+        assert!(
+            InterventionSelector::from_controller_selector(
+                12,
+                &ActorSelector::Process {
+                    process_id: u32::MAX,
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(
+            InterventionSelector::from_controller_selector(
+                12,
+                &ActorSelector::Process { process_id: 7 }
+            )
+            .unwrap(),
+            InterventionSelector::Process { process_id: 7 }
+        );
+        assert_eq!(
+            InterventionSelector::from_controller_selector(
+                12,
+                &ActorSelector::Placed {
+                    set_id: 9,
+                    room: 1,
+                    stage_name: "F_SP104".into(),
+                }
+            )
+            .unwrap(),
+            InterventionSelector::Placed {
+                identity: PlacedActorSelector {
+                    stage: "F_SP104".into(),
+                    home_room: 1,
+                    actor_name: 12,
+                    set_id: 9,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn overlapping_writes_to_one_semantic_field_are_rejected() {
+        let overlapping_position = r#"
+timeline 6
+at 0 for 3 before_game_tick process 7 require actor_exists set_position 0 0 0
+at 1 for 2 before_game_tick process 7 require actor_exists move_cubic 0 0 0 1 1 1 2 2 2 3 3 3
+"#;
+        assert!(InterventionTape::compile_dsl(overlapping_position).is_err());
+
+        let independent_fields = r#"
+timeline 4
+at 0 for 2 before_game_tick process 7 require actor_exists set_position 0 0 0
+at 0 for 2 before_game_tick process 7 require actor_exists set_velocity 1 0 0
+"#;
+        assert!(InterventionTape::compile_dsl(independent_fields).is_ok());
+
+        let independent_targets = r#"
+timeline 4
+at 0 for 2 before_game_tick process 7 require actor_exists set_health 1
+at 0 for 2 before_game_tick process 8 require actor_exists set_health 1
+"#;
+        assert!(InterventionTape::compile_dsl(independent_targets).is_ok());
+    }
+
+    #[test]
+    fn lifecycle_writes_conflict_with_every_field_on_the_same_actor() {
+        let overlapping_lifecycle = r#"
+timeline 4
+at 0 for 2 before_game_tick placed F_SP104 1 9 12 require actor_exists set_health 1
+at 1 for 1 before_game_tick placed F_SP104 1 9 12 require actor_exists despawn
+"#;
+        assert!(InterventionTape::compile_dsl(overlapping_lifecycle).is_err());
     }
 }
