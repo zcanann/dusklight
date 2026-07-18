@@ -19,6 +19,7 @@ pub mod double_q;
 pub mod episode;
 pub mod fqi;
 pub mod game_tactic;
+pub mod iql;
 pub mod low_data_baselines;
 pub mod milestone_dsl;
 pub mod motion_path;
