@@ -62,10 +62,10 @@ mid-run action, a filename convention, or visual-only judgment.
   an optional named save/loadout fixture and a readiness gate before tick zero.
 - [x] Compile bounded static and reactive controller programs while retaining
   an ordinary absolute tape as replay authority.
-- [ ] Define one run request that binds the executable, game data, scenario,
+- [x] Define one run request that binds the executable, game data, scenario,
   objective, observation view, action/controller schema, seed, logical-tick
   budget, fidelity mode, and artifact destination.
-- [ ] Define one run result with typed terminal reason, objective evidence,
+- [x] Define one run result with typed terminal reason, objective evidence,
   realized input, trace references, boundary fingerprint, timing counters, and
   complete identity.
 - [ ] Route tape playback, reactive control, search evaluation, and learned

@@ -17,6 +17,15 @@ roadmap documents describe the larger target.
   interaction/object cases remain open work. A second authored case binds a
   direct `F_SP104` boot and movement seed to a stable five-tick Ordon ranch AABB
   objective with a position-bearing observation view.
+- `dusklight-harness-run-request/v1` materializes one case against exact
+  executable, game-data, build/protocol, seed, budgets, fidelity, and artifact
+  destination identities. `dusklight-harness-run-result/v1` binds the attempt
+  to a typed terminal, worker identity, timing, objective evidence, boundary
+  fingerprint, realized tape, trace, and retained complete or partial
+  artifacts. `huntctl harness seal-run-request|seal-run-result` and their
+  validation counterparts authenticate the contracts and referenced bytes;
+  tape, controller, search, and learner executors have not yet been routed
+  through this common boundary.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific

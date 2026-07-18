@@ -92,6 +92,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Objective conformance suites](objective-suites.md) defines the
   content-addressed case contract and strict artifact validator for ordinary
   stage-ready, movement, interaction, and object-manipulation tests.
+- [Core harness run contract](run-contract.md) defines the content-bound request
+  and typed result shared by future tape, controller, search, and learner
+  execution paths.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.
