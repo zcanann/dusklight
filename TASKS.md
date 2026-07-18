@@ -66,7 +66,7 @@ judgment.
   bounded action response without game-state mutation authority.
 - [x] Enforce the logical-tick budget independently of host timeout and retain
   a precise terminal reason plus authenticated partial artifacts on failure.
-- [ ] Define one immutable episode artifact aligning pre-input state, consumed
+- [x] Define one immutable episode artifact aligning pre-input state, consumed
   action, post-simulation state, objective/reward evidence, terminal reason,
   realized tape, and lineage.
 
@@ -161,8 +161,8 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 ## Immediate implementation order
 
 1. [ ] Finish the talk-to-NPC and pick-up-object facts and fixtures.
-2. [ ] Route search and learned candidates through the authenticated executor.
-3. [ ] Seal the shared episode artifact and pre-input observation/action turn.
+2. [x] Route search and learned candidates through the authenticated executor.
+3. [x] Seal the shared episode artifact and pre-input observation/action turn.
 4. [ ] Run scripted, random, structured, and one simple learned proposer on one
    cheap objective under the same budget.
 5. [ ] Rank, minimize, and cold-replay the finalists.

@@ -62,6 +62,18 @@ availability, observed count, and truncation are validated. Boundary indices,
 simulation ticks, tape frames, reference kinds, and reference digests are
 checked together, so a one-tick phase shift or detached sidecar is rejected.
 
+Authenticated search additionally writes `immutable-episode.json` with schema
+`dusklight-immutable-episode/v1`. It resolves the compact feature vectors and
+sparse evidence indices into one ordered, content-sealed decision record. Each
+step carries the prior post-simulation boundary as its immutable pre-input
+state, the exact consumed PAD frame or option execution, realized duration,
+the resulting post-simulation state, objective and reward provenance, and any
+terminal evidence. The top level binds the exact harness terminal, realized
+tape, trace, corpus, transition evidence, objective, and candidate lineage.
+`huntctl learn inspect-episode --input immutable-episode.json` rejects a bad
+seal, malformed step, noncanonical feature, broken state chain, or one-tick
+action shift before printing its compact identity summary.
+
 Manual `--terminal` extraction records `declared_extraction_boundary`; it does
 not invent objective proof from frame bounds. Anchored search can record
 `objective_reached` because its terminal transition is already backed by the

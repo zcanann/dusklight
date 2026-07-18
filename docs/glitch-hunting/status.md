@@ -264,6 +264,14 @@ roadmap documents describe the larger target.
 - Episode manifests bind scenario/fixture boot, parent boundary, absolute tape,
   executable, query/action schemas, objective, producer, seed, worker, lineage,
   structured intervention, outcome, trace, corpus, and transition evidence.
+  `dusklight-immutable-episode/v1` resolves those identities and the sparse
+  evidence tables into one content-sealed ordered step list: the state observed
+  before input, exact consumed action, duration, post-simulation state,
+  predicate/reward evidence, and optional terminal evidence. The canonical
+  post-simulation boundary from one tick is explicitly the next tick's
+  pre-input state. Authenticated search writes this bundle from the harness's
+  realized tape and typed terminal, and `huntctl learn inspect-episode`
+  revalidates its content seal and alignment.
   Evaluation ledgers group identical inputs, count exact duplicate episodes,
   and retain independently hashed attempt proofs as repetition evidence.
 - A bounded SHA-256 content store covers gameplay traces, static world
