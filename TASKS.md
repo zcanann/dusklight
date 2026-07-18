@@ -895,7 +895,7 @@ simple random baseline.
   than requiring the policy to own the whole route.
 - [x] Learn short-horizon local dynamics only after measuring prediction error
   on contacts, procedures, RNG-sensitive branches, and actor interaction.
-- [ ] Investigate Dyna-style real/model rollout mixtures with strict uncertainty
+- [x] Investigate Dyna-style real/model rollout mixtures with strict uncertainty
   cutoffs.
 - [ ] Consider latent visual/world models only for observations unavailable from
   memory or for console-transfer fidelity; memory-backed state should remain the

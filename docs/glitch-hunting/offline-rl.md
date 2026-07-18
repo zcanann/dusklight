@@ -235,6 +235,19 @@ Even a passing report leaves model rollouts disabled: it is evidence for the
 next controlled comparison, not authority to add imagined transitions to a
 corpus or to promote a route.
 
+`learning/dyna_mixture.rs` defines that controlled comparison. Every synthetic
+candidate must match the passing local-dynamics model and name an existing real
+root transition; recursive model-on-model ancestry is forbidden. Defaults cap
+horizon at four ticks, epistemic standard deviation at 0.05, predicted typed-
+event mismatch at 1%, OOD distance at 0.1, model rows at 25% of real rows, and
+each model row's training weight at 0.1. Candidates are ordered by risk before
+the ratio cap, and rejection counts remain separated by horizon, uncertainty,
+event risk, OOD, and budget.
+
+The resulting `dusklight-dyna-mixture-report/v1` is research-only. Held-out
+evaluation remains real-only, recursive rollouts stay disabled, and neither
+selected model rows nor the report carry promotion authority.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
