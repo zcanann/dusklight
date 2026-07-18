@@ -133,6 +133,12 @@ roadmap documents describe the larger target.
   identity. Controller conversion admits exact process/placed selectors but
   rejects nearest selection; target loss invalidates acceptance, and semantic
   field/lifecycle conflicts cannot overlap on one actor.
+- Intervention experiment plans bind one build, scenario, boundary, absolute
+  input tape, observation schema, and oracle program to an identical
+  write-disabled control and write-enabled treatment. Validation retains both
+  run/trace/oracle artifacts and requires the treatment's write audit. The
+  paired executor orders the disabled control before the exact treatment and
+  validates both returned artifact sets against the shared plan.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.

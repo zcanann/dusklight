@@ -22,6 +22,21 @@ the intervention tape disabled. Comparing the two can establish that a declared
 mutation caused a result. It cannot establish that the mutated setup is
 naturally attainable.
 
+`intervention::experiment` makes that pairing machine-checkable. One versioned
+plan binds the build, scenario, parent boundary, absolute input tape,
+observation schema, oracle program, and intervention identities. Both run
+artifacts repeat the shared inputs, so validation rejects a control or treatment
+captured under any different identity. The control must have gameplay writes
+disabled and carry neither an intervention nor write audit. The treatment must
+enable exactly the planned intervention and retain its mandatory audit. Both
+roles retain their own run, gameplay trace, and oracle-report digests even when
+their observed results are identical.
+
+`execute_intervention_experiment` runs the write-disabled control first and the
+exactly planned treatment second. Returned artifacts still pass the full pair
+validation, so an executor cannot change a shared identity, role, write gate,
+or intervention while constructing the result.
+
 The intervention format should be a compact canonical binary such as
 `DUSKINTR`, compiled from a readable timeline DSL. It must not overload
 controller fields or emit a supposedly realized input tape that omits writes.
