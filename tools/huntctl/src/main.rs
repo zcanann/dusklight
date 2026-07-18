@@ -18,6 +18,7 @@ use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
+use huntctl::harness::execution::execute_request;
 use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
 use huntctl::learning::batch::load_fqi_batch;
@@ -243,7 +244,20 @@ fn command_harness(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("harness command: validate-suite|seal-suite|validate-run-request|seal-run-request|validate-run-result|seal-run-result (use --help for arguments)".into()),
+        Some("execute") => {
+            let command_args = &args[1..];
+            let request_path = required_path(command_args, "--request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let attempt = u32_option(command_args, "--attempt", 1)?;
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(&request_path)?)?;
+            let result = execute_request(&request, &repository_root, attempt)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        _ => Err("harness command: validate-suite|seal-suite|validate-run-request|seal-run-request|validate-run-result|seal-run-result|execute (use --help for arguments)".into()),
     }
 }
 
@@ -4902,7 +4916,7 @@ fn print_usage() {
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
-        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]"
+        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness execute --request REQUEST.json [--repository-root DIR] [--attempt N]"
     );
     eprintln!(
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
@@ -5025,9 +5039,17 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
     let tape_path = required_path(args, "--input-tape")?;
     let input_tape = InputTape::decode(&fs::read(tape_path)?)?.tape;
+    if let Some(path) = option(args, "--realized-input-tape") {
+        fs::write(path, input_tape.encode()?)?;
+    }
     if let Some(path) = option(args, "--gameplay-trace") {
         fs::write(path, mock_gameplay_trace(&input_tape.boot))?;
     }
+    let program_digest = option(args, "--milestone-program")
+        .map(|path| -> Result<_, Box<dyn Error>> {
+            Ok(Digest(milestone_dsl::decode(&fs::read(path)?)?.program_sha256).to_string())
+        })
+        .transpose()?;
     let second_attempt = state_root.contains("attempt-002");
     let unstable_miss = mode == "unstable-goal" && second_attempt;
     let coordinate_golf_tick = if mode == "coordinate-golf" {
@@ -5102,6 +5124,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             "boot_origin_established": true,
             "goal": goal,
             "goal_reached": hit_goal,
+            "program_digest": program_digest,
             "milestones": milestones
         }))?,
     )?;

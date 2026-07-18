@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-objective-suite/v1",
-  "content_sha256": "e14d1a200581abb54e64c02ce5439e5e45dec63ec3d163e995ae13093185f9ba",
+  "content_sha256": "83910200b708ae3b4d5796bf085061cf1abf6ec160c53d58089b88f8a942de4d",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
@@ -38,13 +38,26 @@
         "id": "movement-pad-frame/v2",
         "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
       },
-      "required_query_facts": [
-        "player.exists",
-        "player.in_aabb",
-        "player.is_link",
-        "stage.name",
-        "stage.room"
-      ],
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "player.exists",
+          "player.in_aabb",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
       "seed": {
         "kind": "tape_source",
         "artifact": {
@@ -91,15 +104,32 @@
         "id": "movement-pad-frame/v2",
         "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
       },
-      "required_query_facts": [
-        "event.id",
-        "event.running",
-        "player.exists",
-        "player.is_link",
-        "stage.name",
-        "stage.room",
-        "stage.spawn"
-      ],
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "event",
+            "minimum_version": 1
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "event.id",
+          "event.running",
+          "player.exists",
+          "player.is_link",
+          "stage.name",
+          "stage.room",
+          "stage.spawn"
+        ]
+      },
       "seed": {
         "kind": "tape_source",
         "artifact": {

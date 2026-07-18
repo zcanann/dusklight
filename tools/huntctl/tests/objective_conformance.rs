@@ -94,7 +94,7 @@ fn checked_in_reach_point_case_moves_to_a_stable_bounded_region() {
         movement_action_schema_digest_v2()
     );
     assert_eq!(
-        case.required_query_facts,
+        case.observation_requirements.facts,
         [
             "player.exists",
             "player.in_aabb",

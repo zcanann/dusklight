@@ -5,6 +5,10 @@ use huntctl::harness::objective_suite::{
     ObjectiveCaseRole, ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuite,
     ObjectiveSuiteCase, ObservationViewReference, SchemaIdentity,
 };
+use huntctl::harness::observation_contract::{
+    OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1, ObjectiveObservationRequirements,
+    ObservationFamilyRequirement,
+};
 use huntctl::harness::run_contract::{
     HarnessBoundaryFingerprint, HarnessFidelityMode, HarnessObjectiveResult,
     HarnessProtocolIdentity, HarnessRunArtifacts, HarnessRunRequest, HarnessRunResult,
@@ -117,7 +121,20 @@ fn write_suite(root: &Path) -> PathBuf {
                 id: "neutral/v1".into(),
                 sha256: Digest([7; 32]),
             },
-            required_query_facts: vec!["player.exists".into(), "stage.name".into()],
+            observation_requirements: ObjectiveObservationRequirements {
+                schema: OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1.into(),
+                families: vec![
+                    ObservationFamilyRequirement {
+                        id: "player_motion".into(),
+                        minimum_version: 1,
+                    },
+                    ObservationFamilyRequirement {
+                        id: "stage".into(),
+                        minimum_version: 1,
+                    },
+                ],
+                facts: vec!["player.exists".into(), "stage.name".into()],
+            },
             seed: ObjectiveSeed::Neutral,
             logical_tick_budget: 300,
             host_timeout_seconds: 30,
@@ -193,7 +210,7 @@ fn write_run_request_draft(root: &Path, suite_path: &Path) -> PathBuf {
         objective: case.objective,
         observation_view: case.observation_view,
         action_schema: case.action_schema,
-        required_query_facts: case.required_query_facts,
+        observation_requirements: case.observation_requirements,
         input: case.seed,
         rng_seed: 42,
         logical_tick_budget: case.logical_tick_budget,
@@ -233,6 +250,7 @@ fn write_run_result_draft(root: &Path, request: &HarnessRunRequest) -> (PathBuf,
             message: "objective reached".into(),
             missing_query_facts: Vec::new(),
             missing_capabilities: Vec::new(),
+            observation_issues: Vec::new(),
         },
         objective: HarnessObjectiveResult {
             reached: true,
@@ -262,6 +280,64 @@ fn write_run_result_draft(root: &Path, request: &HarnessRunRequest) -> (PathBuf,
     let path = root.join("run-result.draft.json");
     fs::write(path.as_path(), serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     (path, artifact_root)
+}
+
+#[cfg(unix)]
+fn write_mock_native_wrapper(root: &Path, huntctl_executable: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let wrapper = format!(
+        "#!/bin/sh\nexec \"{}\" mock-search-worker \"$@\"\n",
+        huntctl_executable
+    );
+    let wrapper_path = root.join("inputs/dusklight");
+    fs::write(&wrapper_path, wrapper.as_bytes()).unwrap();
+    let mut permissions = fs::metadata(&wrapper_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&wrapper_path, permissions).unwrap();
+    wrapper
+}
+
+#[cfg(unix)]
+fn rewrite_request_for_mock_native_execution(
+    root: &Path,
+    draft_path: &Path,
+    huntctl_executable: &str,
+) {
+    let wrapper = write_mock_native_wrapper(root, huntctl_executable);
+
+    let objective_bytes = b"milestones 1.0\n\nmilestone stage_ready {\n  phase post_sim\n  when boundary.reached\n}\n";
+    fs::write(
+        root.join("inputs/core-objective.milestones"),
+        objective_bytes,
+    )
+    .unwrap();
+    let compiled =
+        milestone_dsl::compile_source(std::str::from_utf8(objective_bytes).unwrap()).unwrap();
+
+    let mut request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(draft_path).unwrap()).unwrap();
+    request.executable = artifact("inputs/dusklight", wrapper.as_bytes());
+    request.boot = ObjectiveBoot::Process;
+    request.objective = ObjectiveProgramReference {
+        source: artifact("inputs/core-objective.milestones", objective_bytes),
+        program_sha256: Digest(compiled.program_sha256),
+        goal: "stage_ready".into(),
+    };
+    request.identity.predicate_program_digest = request.objective.program_sha256;
+    request.observation_requirements = ObjectiveObservationRequirements {
+        schema: OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1.into(),
+        families: vec![ObservationFamilyRequirement {
+            id: "core".into(),
+            minimum_version: 1,
+        }],
+        facts: vec!["boundary.reached".into()],
+    };
+    request.input = ObjectiveSeed::Neutral;
+    request.logical_tick_budget = 2;
+    request.artifact_destination = "artifacts/mock-native-run".into();
+    request.content_sha256 = Digest::ZERO;
+    fs::write(draft_path, serde_json::to_vec_pretty(&request).unwrap()).unwrap();
 }
 
 #[test]
@@ -419,5 +495,118 @@ fn seals_and_validates_a_complete_run_boundary() {
         .unwrap();
     assert!(!overwrite.status.success());
     assert!(String::from_utf8_lossy(&overwrite.stderr).contains("already exists"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn executes_a_tape_request_through_the_authenticated_boundary() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_native_execution(&root, &request_draft, executable);
+    let request_path = root.join("run-request.json");
+
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+
+    let executed = Command::new(executable)
+        .args(["harness", "execute", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let result: HarnessRunResult = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(result.terminal, HarnessTerminalReason::Reached);
+    assert!(result.artifacts.complete);
+    assert_eq!(result.timing.logical_ticks, 1);
+
+    let artifact_root = root.join("artifacts/mock-native-run");
+    assert!(artifact_root.join("result.json").is_file());
+    let request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    result.validate_files(&request, &artifact_root).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn execution_reports_missing_trace_families_as_unsupported() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    let wrapper = write_mock_native_wrapper(&root, executable);
+    let mut request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_draft).unwrap()).unwrap();
+    request.executable = artifact("inputs/dusklight", wrapper.as_bytes());
+    request.artifact_destination = "artifacts/unsupported-stage-run".into();
+    request.content_sha256 = Digest::ZERO;
+    fs::write(&request_draft, serde_json::to_vec_pretty(&request).unwrap()).unwrap();
+    let request_path = root.join("run-request.json");
+
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+
+    let executed = Command::new(executable)
+        .args(["harness", "execute", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let result: HarnessRunResult = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(result.terminal, HarnessTerminalReason::Unsupported);
+    assert!(!result.objective.reached);
+    assert!(!result.artifacts.complete);
+    assert_eq!(
+        result
+            .detail
+            .observation_issues
+            .iter()
+            .map(|issue| issue.family.as_str())
+            .collect::<Vec<_>>(),
+        ["player_motion", "stage"]
+    );
+    assert_eq!(
+        result.detail.missing_query_facts,
+        ["player.exists", "stage.name"]
+    );
     fs::remove_dir_all(root).unwrap();
 }

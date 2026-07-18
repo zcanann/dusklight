@@ -2666,6 +2666,41 @@ pub fn compile_source(source: &str) -> Result<CompiledMilestones, DslError> {
     })
 }
 
+/// Return the canonical fact paths whose truth is consulted by one objective.
+/// Reward features and proposer scores are intentionally outside this set.
+pub fn required_query_facts(
+    program: &MilestoneProgram,
+    goal: &str,
+) -> Result<Vec<String>, BinaryError> {
+    let definition = program
+        .definitions
+        .iter()
+        .find(|definition| definition.name == goal)
+        .ok_or_else(|| BinaryError(format!("unknown milestone goal {goal}")))?;
+    let mut facts = BTreeSet::new();
+    collect_expression_facts(&definition.when, &mut facts);
+    for expression in &definition.then {
+        collect_expression_facts(expression, &mut facts);
+    }
+    Ok(facts.into_iter().collect())
+}
+
+fn collect_expression_facts(expression: &Expression, facts: &mut BTreeSet<String>) {
+    match expression {
+        Expression::Compare { field, .. } => {
+            facts.insert(field.path().into());
+        }
+        Expression::Query { fact, .. } => {
+            facts.insert(fact.display_name().into());
+        }
+        Expression::Not(inner) => collect_expression_facts(inner, facts),
+        Expression::And(left, right) | Expression::Or(left, right) => {
+            collect_expression_facts(left, facts);
+            collect_expression_facts(right, facts);
+        }
+    }
+}
+
 fn definition_identity_bytes(
     name: &[u8],
     phase: EvaluationPhase,
@@ -3881,5 +3916,32 @@ milestone exact_interaction {
             .unwrap()
             .set_id = 9;
         assert!(evaluate_recorded_trace(&program, &wrong).unwrap()["exact_interaction"].is_none());
+    }
+
+    #[test]
+    fn required_facts_are_derived_only_from_objective_truth_expressions() {
+        let program = parse(
+            r#"milestones 1.3
+
+milestone target {
+  phase post_sim
+  when stage.name == "F_SP104" && player.exists &&
+       player.in_aabb(-1.0, -2.0, -3.0, 1.0, 2.0, 3.0)
+  then event.running
+  within 5
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            required_query_facts(&program, "target").unwrap(),
+            [
+                "event.running",
+                "player.exists",
+                "player.in_aabb",
+                "stage.name",
+            ]
+        );
+        assert!(required_query_facts(&program, "missing").is_err());
     }
 }

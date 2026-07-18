@@ -1,5 +1,6 @@
 //! Versioned, content-addressed conformance-objective suite manifests.
 
+use super::observation_contract::ObjectiveObservationRequirements;
 use crate::artifact::Digest;
 use crate::controller_program::ControllerProgram;
 use crate::milestone_dsl;
@@ -17,7 +18,6 @@ use std::path::{Component, Path, PathBuf};
 
 pub const OBJECTIVE_SUITE_SCHEMA_V1: &str = "dusklight-objective-suite/v1";
 const MAX_CASES: usize = 64;
-const MAX_FACTS: usize = 128;
 const MAX_TEXT_BYTES: usize = 2_048;
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
 const MAX_HOST_TIMEOUT_SECONDS: u32 = 86_400;
@@ -46,7 +46,7 @@ pub struct ObjectiveSuiteCase {
     pub objective: ObjectiveProgramReference,
     pub observation_view: ObservationViewReference,
     pub action_schema: SchemaIdentity,
-    pub required_query_facts: Vec<String>,
+    pub observation_requirements: ObjectiveObservationRequirements,
     pub seed: ObjectiveSeed,
     pub logical_tick_budget: u64,
     pub host_timeout_seconds: u32,
@@ -255,21 +255,9 @@ impl ObjectiveSuiteCase {
         self.objective.validate()?;
         self.observation_view.validate()?;
         self.action_schema.validate("action schema")?;
-        if self.required_query_facts.is_empty()
-            || self.required_query_facts.len() > MAX_FACTS
-            || !self
-                .required_query_facts
-                .windows(2)
-                .all(|pair| pair[0] < pair[1])
-        {
-            return Err(suite_error(format!(
-                "case {} query facts must be nonempty, bounded, unique, and sorted",
-                self.id
-            )));
-        }
-        for fact in &self.required_query_facts {
-            validate_fact(fact)?;
-        }
+        self.observation_requirements
+            .validate()
+            .map_err(|error| suite_error(format!("case {}: {error}", self.id)))?;
         self.seed.validate()?;
         if !(1..=MAX_LOGICAL_TICKS).contains(&self.logical_tick_budget)
             || !(1..=MAX_HOST_TIMEOUT_SECONDS).contains(&self.host_timeout_seconds)
@@ -453,6 +441,16 @@ fn validate_case_files(case: &ObjectiveSuiteCase, root: &Path) -> Result<(), Obj
             case.id
         )));
     }
+    let required_facts =
+        milestone_dsl::required_query_facts(&objective_program, &case.objective.goal).map_err(
+            |error| suite_error(format!("case {} objective is invalid: {error}", case.id)),
+        )?;
+    if required_facts != case.observation_requirements.facts {
+        return Err(suite_error(format!(
+            "case {} observation facts do not exactly match objective dependencies",
+            case.id
+        )));
+    }
 
     let observation_bytes = read_artifact(
         root,
@@ -633,24 +631,6 @@ fn validate_id(label: &str, value: &str) -> Result<(), ObjectiveSuiteError> {
     Ok(())
 }
 
-fn validate_fact(value: &str) -> Result<(), ObjectiveSuiteError> {
-    if value.is_empty()
-        || value.len() > 192
-        || value.starts_with('.')
-        || value.ends_with('.')
-        || value.bytes().any(|byte| {
-            !(byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'_' | b'.' | b'[' | b']' | b'-'))
-        })
-    {
-        return Err(suite_error(format!(
-            "required query fact {value:?} is not canonical"
-        )));
-    }
-    Ok(())
-}
-
 fn validate_text(label: &str, value: &str) -> Result<(), ObjectiveSuiteError> {
     if value.is_empty() || value.len() > MAX_TEXT_BYTES || value != value.trim() {
         return Err(suite_error(format!("{label} is empty or too large")));
@@ -777,7 +757,21 @@ mod tests {
                 id: "neutral/v1".into(),
                 sha256: Digest([9; 32]),
             },
-            required_query_facts: vec!["player.exists".into(), "stage.name".into()],
+            observation_requirements: ObjectiveObservationRequirements {
+                schema: crate::harness::observation_contract::OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1
+                    .into(),
+                families: vec![
+                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                        id: "player_motion".into(),
+                        minimum_version: 1,
+                    },
+                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                        id: "stage".into(),
+                        minimum_version: 1,
+                    },
+                ],
+                facts: vec!["player.exists".into(), "stage.name".into()],
+            },
             seed: ObjectiveSeed::Neutral,
             logical_tick_budget: 300,
             host_timeout_seconds: 30,
@@ -839,6 +833,20 @@ mod tests {
         positive.repetitions = 1;
         suite.refresh_content_sha256().unwrap();
         assert!(suite.validate().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_observation_facts_not_used_by_the_objective() {
+        let root = temp_root();
+        let mut suite = suite(&root);
+        suite.cases[0]
+            .observation_requirements
+            .facts
+            .insert(1, "player.position.x".into());
+        suite.refresh_content_sha256().unwrap();
+        assert!(suite.validate().is_ok());
+        assert!(suite.validate_files(&root).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

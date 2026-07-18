@@ -5,6 +5,10 @@ use super::objective_suite::{
     ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuiteCase, ObservationViewReference,
     SchemaIdentity,
 };
+use super::observation_contract::{
+    ObjectiveObservationRequirements, ObservationAdmission, ObservationAdmissionIssue,
+    ObservationInventory,
+};
 use crate::artifact::{ArtifactIdentity, BuildIdentity, Digest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -37,7 +41,7 @@ pub struct HarnessRunRequest {
     pub objective: ObjectiveProgramReference,
     pub observation_view: ObservationViewReference,
     pub action_schema: SchemaIdentity,
-    pub required_query_facts: Vec<String>,
+    pub observation_requirements: ObjectiveObservationRequirements,
     pub input: ObjectiveSeed,
     pub rng_seed: u64,
     pub logical_tick_budget: u64,
@@ -116,6 +120,8 @@ pub struct HarnessTerminalDetail {
     pub missing_query_facts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observation_issues: Vec<ObservationAdmissionIssue>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -273,6 +279,33 @@ impl HarnessRunRequest {
         pretty_json(self)
     }
 
+    pub fn assess_observations(
+        &self,
+        inventory: &ObservationInventory,
+    ) -> Result<ObservationAdmission, HarnessRunContractError> {
+        self.observation_requirements
+            .assess(inventory)
+            .map_err(|error| contract_error(error.to_string()))
+    }
+
+    pub fn unsupported_observation_detail(
+        &self,
+        inventory: &ObservationInventory,
+    ) -> Result<Option<HarnessTerminalDetail>, HarnessRunContractError> {
+        let admission = self.assess_observations(inventory)?;
+        if admission.supported {
+            return Ok(None);
+        }
+        Ok(Some(HarnessTerminalDetail {
+            message: "required observation families are unsupported".into(),
+            missing_query_facts: self
+                .observation_requirements
+                .facts_for_issues(&admission.issues),
+            missing_capabilities: Vec::new(),
+            observation_issues: admission.issues,
+        }))
+    }
+
     fn compute_content_sha256(&self) -> Result<Digest, HarnessRunContractError> {
         let mut identity = self.clone();
         identity.content_sha256 = Digest::ZERO;
@@ -290,7 +323,7 @@ impl HarnessRunRequest {
             objective: self.objective.clone(),
             observation_view: self.observation_view.clone(),
             action_schema: self.action_schema.clone(),
-            required_query_facts: self.required_query_facts.clone(),
+            observation_requirements: self.observation_requirements.clone(),
             seed: self.input.clone(),
             logical_tick_budget: self.logical_tick_budget,
             host_timeout_seconds: self.host_timeout_seconds,
@@ -369,7 +402,7 @@ impl HarnessRunResult {
                 ));
             }
         }
-        self.detail.validate(self.terminal)?;
+        self.detail.validate(self.terminal, request)?;
         self.objective.validate(self.terminal, request)?;
         self.artifacts.validate(self.terminal)?;
         if self.timing.logical_ticks > request.logical_tick_budget
@@ -462,7 +495,11 @@ impl HarnessWorkerIdentity {
 }
 
 impl HarnessTerminalDetail {
-    fn validate(&self, terminal: HarnessTerminalReason) -> Result<(), HarnessRunContractError> {
+    fn validate(
+        &self,
+        terminal: HarnessTerminalReason,
+        request: &HarnessRunRequest,
+    ) -> Result<(), HarnessRunContractError> {
         validate_text("terminal message", &self.message)?;
         validate_sorted_facts("missing query facts", &self.missing_query_facts, MAX_FACTS)?;
         validate_sorted_names(
@@ -470,7 +507,47 @@ impl HarnessTerminalDetail {
             &self.missing_capabilities,
             MAX_CAPABILITIES,
         )?;
-        if (terminal == HarnessTerminalReason::Unsupported) != !self.missing_query_facts.is_empty()
+        if self.missing_query_facts.iter().any(|fact| {
+            request
+                .observation_requirements
+                .facts
+                .binary_search(fact)
+                .is_err()
+        }) {
+            return Err(contract_error(
+                "run-result reports a missing fact not required by the objective",
+            ));
+        }
+        if !self
+            .observation_issues
+            .windows(2)
+            .all(|pair| pair[0].family < pair[1].family)
+        {
+            return Err(contract_error(
+                "observation issues must be unique and family-sorted",
+            ));
+        }
+        for issue in &self.observation_issues {
+            issue
+                .validate()
+                .map_err(|error| contract_error(error.to_string()))?;
+            let requirement = request
+                .observation_requirements
+                .families
+                .binary_search_by_key(&issue.family.as_str(), |family| family.id.as_str())
+                .ok()
+                .map(|index| &request.observation_requirements.families[index]);
+            if requirement
+                .is_none_or(|requirement| requirement.minimum_version != issue.minimum_version)
+            {
+                return Err(contract_error(
+                    "run-result observation issue is not a request requirement",
+                ));
+            }
+        }
+        let has_unsupported_observation =
+            !self.missing_query_facts.is_empty() || !self.observation_issues.is_empty();
+        if (terminal == HarnessTerminalReason::Unsupported) != has_unsupported_observation
             || (terminal == HarnessTerminalReason::CapabilityMismatch)
                 != !self.missing_capabilities.is_empty()
         {
@@ -901,7 +978,21 @@ mod tests {
             objective,
             observation_view,
             action_schema,
-            required_query_facts: vec!["player.exists".into(), "stage.name".into()],
+            observation_requirements: ObjectiveObservationRequirements {
+                schema: crate::harness::observation_contract::OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1
+                    .into(),
+                families: vec![
+                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                        id: "player_motion".into(),
+                        minimum_version: 1,
+                    },
+                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                        id: "stage".into(),
+                        minimum_version: 1,
+                    },
+                ],
+                facts: vec!["player.exists".into(), "stage.name".into()],
+            },
             input: ObjectiveSeed::Neutral,
             rng_seed: 42,
             logical_tick_budget: 300,
@@ -939,6 +1030,7 @@ mod tests {
                 message: "objective reached".into(),
                 missing_query_facts: Vec::new(),
                 missing_capabilities: Vec::new(),
+                observation_issues: Vec::new(),
             },
             objective: HarnessObjectiveResult {
                 reached: true,
@@ -988,7 +1080,7 @@ mod tests {
         detached.refresh_content_sha256().unwrap();
         assert!(detached.validate().is_err());
 
-        request.required_query_facts.reverse();
+        request.observation_requirements.facts.reverse();
         request.refresh_content_sha256().unwrap();
         assert!(request.validate().is_err());
         fs::remove_dir_all(root).unwrap();
@@ -1038,7 +1130,7 @@ mod tests {
         let mut result = reached_result(&request, &root.join("result"));
         result.terminal = HarnessTerminalReason::Unsupported;
         result.detail.message = "required observation is unavailable".into();
-        result.detail.missing_query_facts = vec!["player.interaction.do_status".into()];
+        result.detail.missing_query_facts = vec!["player.exists".into()];
         result.objective = HarnessObjectiveResult {
             reached: false,
             first_hit_tick: None,
@@ -1065,6 +1157,56 @@ mod tests {
         result.worker.protocol.name = "different-automation-protocol".into();
         result.refresh_content_sha256().unwrap();
         assert!(result.validate_against(&request).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unavailable_or_truncated_objective_families_admit_only_unsupported() {
+        use crate::harness::observation_contract::{
+            OBSERVATION_INVENTORY_SCHEMA_V1, ObservationFamilyAvailability, ObservationFamilyStatus,
+        };
+
+        let root = root();
+        let request = request(&root);
+        let inventory = ObservationInventory {
+            schema: OBSERVATION_INVENTORY_SCHEMA_V1.into(),
+            families: vec![
+                ObservationFamilyAvailability {
+                    id: "player_motion".into(),
+                    version: Some(1),
+                    status: ObservationFamilyStatus::Truncated,
+                },
+                ObservationFamilyAvailability {
+                    id: "stage".into(),
+                    version: Some(1),
+                    status: ObservationFamilyStatus::Present,
+                },
+            ],
+        };
+        let detail = request
+            .unsupported_observation_detail(&inventory)
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.missing_query_facts, ["player.exists"]);
+        assert_eq!(detail.observation_issues.len(), 1);
+        assert_eq!(detail.observation_issues[0].family, "player_motion");
+
+        let mut result = reached_result(&request, &root.join("result"));
+        result.terminal = HarnessTerminalReason::Unsupported;
+        result.detail = detail;
+        result.objective = HarnessObjectiveResult {
+            reached: false,
+            first_hit_tick: None,
+            evidence: None,
+            boundary_fingerprint: None,
+        };
+        result.artifacts.complete = false;
+        result.refresh_content_sha256().unwrap();
+        assert!(result.validate_against(&request).is_ok());
+
+        result.terminal = HarnessTerminalReason::Exhausted;
+        result.refresh_content_sha256().unwrap();
+        assert!(result.validate_against(&request).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
