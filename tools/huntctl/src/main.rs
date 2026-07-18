@@ -1,4 +1,5 @@
 use huntctl::benchmark::skybook::SkybookManifest;
+use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDisposition};
 use huntctl::calibration::calibrate_fitted_q;
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
@@ -76,7 +77,7 @@ use huntctl::world_spatial::{
     Aabb3, WorldAabbQueryRequest, WorldPointQueryRequest, WorldRayQueryRequest, WorldSpatialIndex,
     WorldSurfaceFilter,
 };
-use huntctl::{BuildIdentity, Digest};
+use huntctl::{ArtifactIdentity, BuildIdentity, CompatibilityMode, Digest, ensure_compatible};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -111,6 +112,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "ping" => command_ping(&args[1..]),
         "pool" => command_pool(&args[1..]),
         "benchmark" => command_benchmark(&args[1..]),
+        "identity" => command_identity(&args[1..]),
         "corpus" => command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
         "milestone" => command_milestone(&args[1..]),
@@ -132,6 +134,47 @@ fn run() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         _ => usage_error(),
+    }
+}
+
+fn command_identity(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("compare") => {
+            let compare_args = &args[1..];
+            let mode: CompatibilityMode = option(compare_args, "--mode")
+                .ok_or("identity compare requires --mode MODE")?
+                .parse()?;
+            let expected_path = required_path(compare_args, "--expected")?;
+            let actual_path = required_path(compare_args, "--actual")?;
+            let expected: ArtifactIdentity =
+                serde_json::from_slice(&fs::read(&expected_path)?)?;
+            let actual: ArtifactIdentity = serde_json::from_slice(&fs::read(&actual_path)?)?;
+            expected.validate().map_err(|error| {
+                format!(
+                    "invalid expected identity {}: {error}",
+                    expected_path.display()
+                )
+            })?;
+            actual.validate().map_err(|error| {
+                format!(
+                    "invalid actual identity {}: {error}",
+                    actual_path.display()
+                )
+            })?;
+            ensure_compatible(mode, &expected, &actual)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "huntctl-identity-comparison/v1",
+                    "mode": mode.as_str(),
+                    "compatible": true,
+                    "expected": expected_path,
+                    "actual": actual_path,
+                }))?
+            );
+            Ok(())
+        }
+        _ => Err("identity command: compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json".into()),
     }
 }
 
@@ -177,7 +220,35 @@ fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
-        _ => Err("benchmark command: import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]".into()),
+        Some("validate-skybook-selection") => {
+            let selection_args = &args[1..];
+            let manifest_path = required_path(selection_args, "--manifest")?;
+            let selection_path = required_path(selection_args, "--selection")?;
+            let manifest: SkybookManifest =
+                serde_json::from_slice(&fs::read(&manifest_path)?)?;
+            let selection: SkybookSelection =
+                serde_json::from_slice(&fs::read(&selection_path)?)?;
+            selection.validate_against(&manifest)?;
+            let selected = selection
+                .entries
+                .iter()
+                .filter(|entry| entry.disposition == SkybookSelectionDisposition::Selected)
+                .count();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": selection.schema,
+                    "content_digest": selection.content_sha256,
+                    "source_revision": selection.source_git_revision,
+                    "approved_by": selection.approved_by,
+                    "selected_page_count": selected,
+                    "entry_count": selection.entries.len(),
+                    "selection": selection_path,
+                }))?
+            );
+            Ok(())
+        }
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json".into()),
     }
 }
 
@@ -4694,7 +4765,7 @@ fn print_usage() {
         "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
-        "\nBenchmark import:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]"
+        "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
