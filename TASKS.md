@@ -848,7 +848,7 @@ simple random baseline.
   rather than a model hard-coded to one segment.
 - [x] Evaluate hindsight relabeling only for predicates whose semantics make the
   relabeled transition valid.
-- [ ] Support a high-level option policy with a deterministic low-level tactic
+- [x] Support a high-level option policy with a deterministic low-level tactic
   executor and realized-tape proof.
 
 ### P1: active online collection

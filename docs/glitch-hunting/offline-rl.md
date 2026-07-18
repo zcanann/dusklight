@@ -393,6 +393,17 @@ transitions, retains the original reward for audit, and writes a separately
 configured finite achievement reward while setting `reward_recomputed: true`.
 Relabeled samples always retain `promotion_authority: false`.
 
+`SelectedOption` closes the high-level/low-level hierarchy without giving the
+learner raw-frame authority. It takes the top typed descriptor from an
+`OptionValueModel`, executes the corresponding deterministic `GameTacticPlan`,
+and captures the realized range as an `OptionExecution`. A proved policy step
+exists only when the selected ID, option type, and complete parameter map equal
+the realized descriptor and that execution validates against the complete
+canonical tape. A different tactic, parameter set, emitted frame, or unrelated
+tape change invalidates the proof. The serialized step records each layer and
+still has no promotion authority until the surrounding native objective and
+cold-replay gates pass.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical
