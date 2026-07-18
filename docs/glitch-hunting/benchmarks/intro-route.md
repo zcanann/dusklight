@@ -37,12 +37,20 @@ baseline, one native milestone run observed exit activation at tape tick 571
 and fully entered `F_SP104` room 1 point 0 at tick 640. It is a functional
 seed, not a speed claim.
 
-Evaluate any compiled candidate with:
+Import any compiled candidate and evaluate it with the native search pipeline:
 
-```powershell
-.\tools\glitch-hunting\evaluate-candidate.ps1 `
-  -CandidateId cem-generation-3-member-17 `
-  -CandidateTape build\search\g003-m017.tape
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- search import-tape \
+  --segment fsp103_to_fsp104 --tape build/search/g003-m017.tape \
+  --output build/search/g003-m017.candidate.json
+cargo run --manifest-path tools/huntctl/Cargo.toml -- search seed \
+  --segment fsp103_to_fsp104 --candidate build/search/g003-m017.candidate.json \
+  --output build/search/g003-m017.population --size 1
+cargo run --release --manifest-path tools/huntctl/Cargo.toml -- search evaluate \
+  --population build/search/g003-m017.population/manifest.json \
+  --game build/macos-default-debug/dusklight \
+  --dvd orig/GZ2E01/GZ2E01.iso \
+  --output build/search/g003-m017.evaluation --workers 1 --repetitions 3
 ```
 
 The stable result document contains `candidate_id`, tape path/hash, the exact
@@ -209,30 +217,22 @@ source boundary before they can compete in the same population.
 
 ## Running and watching
 
-```powershell
-.\tools\glitch-hunting\run-intro-route.ps1 -Goal first-exit -Runs 10
-.\tools\glitch-hunting\run-intro-route.ps1 -Goal intro-cutscene -Runs 10
-```
-
 In VS Code, run the single **Glitch Hunt: Route Workbench** launch. It displays
 checked-in segments and pinned paths, plays a complete segment from its tree
-entry, and hands live controller input back when playback ends. The fixed test
-selector still exposes `intro-first-exit`, `intro-cutscene`, and
-`fsp103-next-map-seed` for semantic regression runs.
+entry, and hands live controller input back when playback ends. Use `huntctl
+tape run` for a headless semantic regression and `huntctl search run-route` for
+repeat-proved route search against a timeline segment.
 
-Each run writes its compact trace and JSON milestone summary beneath
-`build/test-results/<scenario>/<timestamp>`. The matrix also writes
-`matrix.summary.json`, finishes all requested runs before failing, and never
-reuses the temporary memory card or cache. A failed run also copies its isolated
-writable state beside the trace before cleanup so logs, card, and cache evidence
-are available for diagnosis.
+Give every direct replay a fresh state root and retain its milestone result and
+compact trace beside the search evaluation. Native search repetitions never
+reuse the temporary memory card or writable profile.
 
 ## Local search primitives
 
 The current trace/marker combination is enough for manual A/B work:
 
-```powershell
-cargo run --manifest-path tools/huntctl/Cargo.toml -- trace compare `
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- trace compare \
   build/a.gameplay.trace build/b.gameplay.trace
 ```
 

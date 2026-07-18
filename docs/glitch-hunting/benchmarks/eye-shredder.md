@@ -174,23 +174,34 @@ The current native implementation under audit is
 
 ## Acceptance criteria
 
-Run the checked integration test with:
+Compile and inspect the checked tape, then run the native oracle through the
+cross-platform tape runner:
 
-```powershell
-.\tools\glitch-hunting\run-eye-shredder.ps1
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
+  tests/fixtures/automation/eye_shredder.tas build/eye-shredder.tape
+cargo run --manifest-path tools/huntctl/Cargo.toml -- tape inspect \
+  build/eye-shredder.tape
+cargo run --manifest-path tools/huntctl/Cargo.toml -- tape run \
+  build/eye-shredder.tape \
+  --game build/macos-default-debug/dusklight \
+  --dvd orig/GZ2E01/GZ2E01.iso \
+  --state-root build/automation-state/eye-shredder \
+  --game-arg --cursor-breakout-shadow \
+  --game-arg --automation-oracle --game-arg eye-shredder \
+  --game-arg --automation-oracle-continue-on-pass \
+  --game-arg --automation-oracle-result \
+  --game-arg build/eye-shredder.oracle.json \
+  --game-arg --name-entry-trace \
+  --game-arg build/eye-shredder.name-entry.trace.json
 ```
 
-It performs three isolated, silent headless runs by default and requires
-identical trace hashes, memory signatures, renderer signatures, and completed
-gameplay handoff. It rejects compiled tapes containing reactive condition
-frames. Use `-Runs 100` for the full determinism gate or `-Visual` for paced
-headful playback. Visual mode plays the entire 650-frame tape, then releases
-the automated ports so a physical controller can continue from gameplay.
-Every run writes a versioned oracle result and a tick-stamped name-entry trace
-under `build/test-results/eye-shredder`, while its temporary config/card/cache
-state is deleted.
+Use the corresponding Windows executable on Windows and a fresh state root for
+each repetition. Add `--headful` for paced visual playback. The native oracle
+checks the corruption and renderer evidence and returns a failing process status
+when the benchmark does not pass.
 
-The test passes only when every requested run reports the fixed tick/frame
+The oracle passes only when the run reports the fixed tick/frame
 timeline, canonical two-write event history, cursor position, original offset,
 fresh-USA cached address, eight-byte write, and exact XF/BP mismatch draw.
 Pixel-accurate reproduction of the console's
