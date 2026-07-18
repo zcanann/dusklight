@@ -23,7 +23,6 @@ pub mod learning;
 pub mod milestone_dsl;
 pub mod motion_path;
 pub mod motion_path_golf;
-pub mod objective_conformance;
 pub mod observation_view;
 pub mod option_diagnostics;
 pub mod option_execution;

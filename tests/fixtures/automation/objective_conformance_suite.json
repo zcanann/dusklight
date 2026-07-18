@@ -1,8 +1,13 @@
 {
-  "schema": "dusklight-objective-conformance-suite/v1",
+  "schema": "dusklight-objective-suite/v1",
+  "content_sha256": "ad2d02ce93a54721aedfad6510cf79442c6d847e3c5bf9ef6dbcab95d59699f0",
+  "id": "core-conformance/v1",
+  "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
     {
       "id": "stage-ready-f-sp103",
+      "description": "A direct F_SP103 boot reaches stable player control without non-neutral input.",
+      "role": "positive",
       "boot": {
         "kind": "stage",
         "stage": "F_SP103",
@@ -10,34 +15,48 @@
         "point": 1,
         "layer": 3
       },
-      "scenario_fixture": {
+      "scenario": {
         "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
         "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
-      "objective_program": {
-        "path": "tests/fixtures/automation/stage_ready.milestones",
-        "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/stage_ready.milestones",
+          "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
+        },
+        "program_sha256": "64ce2d4774823c3ee8d562ff54cf7d251bd321c8a8dd453ece80f2106287cfed",
+        "goal": "stage_ready"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/stage_ready.observation.json",
+          "sha256": "cdee8bc6285d06273f2b97552354eb7452e2688d7184402376caa7564fbd999a"
+        },
+        "schema_sha256": "27e58a81c51a1d7b0ab8bb1557b12e1db923f3aaa5df146eb6d5a51f388c069f"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
       },
       "required_query_facts": [
-        "event.id/v1",
-        "event.running/v1",
-        "player.exists/v1",
-        "player.is_link/v1",
-        "stage.name/v1",
-        "stage.room/v1",
-        "stage.spawn/v1"
+        "event.id",
+        "event.running",
+        "player.exists",
+        "player.is_link",
+        "stage.name",
+        "stage.room",
+        "stage.spawn"
       ],
       "seed": {
-        "kind": "tape",
+        "kind": "tape_source",
         "artifact": {
           "path": "tests/fixtures/automation/stage_ready_neutral.tas",
           "sha256": "9ef2ff4f56a50208d133a6ff0ddeb61408100de2b75cc99cb599016bf0cca855"
         }
       },
-      "budget": {
-        "logical_ticks": 30,
-        "host_timeout_seconds": 30
-      },
+      "logical_tick_budget": 30,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
       "expected_terminal": "reached"
     }
   ]

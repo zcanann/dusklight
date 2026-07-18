@@ -6,6 +6,7 @@ use crate::milestone_dsl;
 use crate::observation_view::ObservationSpec;
 use crate::scenario_fixture::ScenarioFixture;
 use crate::tape::{InputTape, TapeBoot};
+use crate::{tape_dsl, tape_program::TapeProgram};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -108,6 +109,7 @@ pub struct SchemaIdentity {
 pub enum ObjectiveSeed {
     Neutral,
     Tape { artifact: ArtifactReference },
+    TapeSource { artifact: ArtifactReference },
     Controller { artifact: ArtifactReference },
 }
 
@@ -406,6 +408,7 @@ impl ObjectiveSeed {
         match self {
             Self::Neutral => Ok(()),
             Self::Tape { artifact } => artifact.validate("seed tape"),
+            Self::TapeSource { artifact } => artifact.validate("seed tape source"),
             Self::Controller { artifact } => artifact.validate("seed controller"),
         }
     }
@@ -486,23 +489,29 @@ fn validate_case_files(case: &ObjectiveSuiteCase, root: &Path) -> Result<(), Obj
             let decoded = InputTape::decode(&bytes).map_err(|error| {
                 suite_error(format!("case {} seed tape is invalid: {error}", case.id))
             })?;
-            if !case.boot.matches_tape(&decoded.tape.boot) {
-                return Err(suite_error(format!(
-                    "case {} seed tape boot does not match the declared boot",
+            validate_seed_tape(case, &decoded.tape, &scenario)?;
+        }
+        ObjectiveSeed::TapeSource { artifact } => {
+            let bytes = read_artifact(root, artifact, "seed tape source")?;
+            let source = std::str::from_utf8(&bytes).map_err(|error| {
+                suite_error(format!(
+                    "case {} seed tape source is not UTF-8: {error}",
                     case.id
-                )));
-            }
-            if let TapeBoot::Stage {
-                fixture: Some(embedded),
-                ..
-            } = &decoded.tape.boot
-                && embedded != &scenario
-            {
-                return Err(suite_error(format!(
-                    "case {} seed tape embeds a different scenario fixture",
+                ))
+            })?;
+            let program: TapeProgram = tape_dsl::parse(source).map_err(|error| {
+                suite_error(format!(
+                    "case {} seed tape source is invalid: {error}",
                     case.id
-                )));
-            }
+                ))
+            })?;
+            let compiled = program.compile().map_err(|error| {
+                suite_error(format!(
+                    "case {} seed tape source is invalid: {error}",
+                    case.id
+                ))
+            })?;
+            validate_seed_tape(case, &compiled.tape, &scenario)?;
         }
         ObjectiveSeed::Controller { artifact } => {
             let bytes = read_artifact(root, artifact, "seed controller")?;
@@ -513,6 +522,31 @@ fn validate_case_files(case: &ObjectiveSuiteCase, root: &Path) -> Result<(), Obj
                 ))
             })?;
         }
+    }
+    Ok(())
+}
+
+fn validate_seed_tape(
+    case: &ObjectiveSuiteCase,
+    tape: &InputTape,
+    scenario: &ScenarioFixture,
+) -> Result<(), ObjectiveSuiteError> {
+    if !case.boot.matches_tape(&tape.boot) {
+        return Err(suite_error(format!(
+            "case {} seed tape boot does not match the declared boot",
+            case.id
+        )));
+    }
+    if let TapeBoot::Stage {
+        fixture: Some(embedded),
+        ..
+    } = &tape.boot
+        && embedded != scenario
+    {
+        return Err(suite_error(format!(
+            "case {} seed tape embeds a different scenario fixture",
+            case.id
+        )));
     }
     Ok(())
 }

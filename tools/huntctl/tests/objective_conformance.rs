@@ -1,41 +1,35 @@
-use huntctl::artifact::Digest;
-use huntctl::milestone_dsl;
-use huntctl::objective_conformance::{
-    ConformanceBoot, ConformanceSeed, OBJECTIVE_CONFORMANCE_SUITE_SCHEMA_V1,
-    ObjectiveConformanceSuite,
+use huntctl::harness::objective_suite::{
+    ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V1, ObjectiveBoot, ObjectiveSeed, ObjectiveSuite,
 };
-use huntctl::scenario_fixture::ScenarioFixture;
+use huntctl::learning::offline_rl::movement_action_schema_digest_v2;
+use huntctl::milestone_dsl;
 use huntctl::tape::{RawPadState, TapeBoot};
 use huntctl::{tape_dsl, tape_program::TapeProgram};
-use sha2::{Digest as _, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
-
-fn repository() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn authenticated_bytes(repository: &Path, path: &Path, expected: Digest) -> Vec<u8> {
-    let bytes = fs::read(repository.join(path)).unwrap();
-    assert_eq!(Digest(Sha256::digest(&bytes).into()), expected);
-    bytes
-}
+use std::path::PathBuf;
 
 #[test]
-fn checked_in_stage_ready_case_is_content_authenticated_and_neutral() {
-    let repository = repository();
-    let suite: ObjectiveConformanceSuite = serde_json::from_slice(
+fn checked_in_stage_ready_case_is_bound_compilable_and_neutral() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let suite: ObjectiveSuite = serde_json::from_slice(
         &fs::read(repository.join("tests/fixtures/automation/objective_conformance_suite.json"))
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(suite.schema, OBJECTIVE_CONFORMANCE_SUITE_SCHEMA_V1);
-    suite.validate().unwrap();
-    assert_eq!(suite.cases.len(), 1);
+    assert_eq!(suite.schema, OBJECTIVE_SUITE_SCHEMA_V1);
+    let report = suite.validate_files(&repository).unwrap();
+    assert_eq!(report.case_count, 1);
+    assert_eq!(report.positive_count, 1);
 
     let case = &suite.cases[0];
     assert_eq!(case.id, "stage-ready-f-sp103");
-    let ConformanceBoot::Stage {
+    assert_eq!(case.expected_terminal, ExpectedTerminalClass::Reached);
+    assert_eq!(case.repetitions, 2);
+    assert_eq!(
+        case.action_schema.sha256,
+        movement_action_schema_digest_v2()
+    );
+    let ObjectiveBoot::Stage {
         stage,
         room,
         point,
@@ -45,41 +39,18 @@ fn checked_in_stage_ready_case_is_content_authenticated_and_neutral() {
     else {
         panic!("stage-ready case must use direct stage boot");
     };
-    assert_eq!(
-        (stage.as_str(), *room, *point, *layer, *save_slot),
-        ("F_SP103", 1, 1, 3, None)
-    );
 
-    let fixture = case.scenario_fixture.as_ref().unwrap();
-    let fixture: ScenarioFixture = serde_json::from_slice(&authenticated_bytes(
-        &repository,
-        &fixture.path,
-        fixture.sha256,
-    ))
-    .unwrap();
-    fixture.validate().unwrap();
-
-    let objective_source = String::from_utf8(authenticated_bytes(
-        &repository,
-        &case.objective_program.path,
-        case.objective_program.sha256,
-    ))
-    .unwrap();
+    let objective_source =
+        fs::read_to_string(repository.join(&case.objective.source.path)).unwrap();
     let objective = milestone_dsl::parse(&objective_source).unwrap();
     assert_eq!(objective.definitions.len(), 1);
     assert_eq!(objective.definitions[0].name, "stage_ready");
     assert_eq!(objective.definitions[0].stable_ticks, 3);
-    milestone_dsl::compile(&objective).unwrap();
 
-    let ConformanceSeed::Tape { artifact } = &case.seed else {
-        panic!("stage-ready case must retain an absolute tape seed");
+    let ObjectiveSeed::TapeSource { artifact } = &case.seed else {
+        panic!("stage-ready case must retain an authored tape seed");
     };
-    let tape_source = String::from_utf8(authenticated_bytes(
-        &repository,
-        &artifact.path,
-        artifact.sha256,
-    ))
-    .unwrap();
+    let tape_source = fs::read_to_string(repository.join(&artifact.path)).unwrap();
     let program: TapeProgram = tape_dsl::parse(&tape_source).unwrap();
     let tape = program.compile().unwrap().tape;
     assert_eq!(
@@ -93,7 +64,7 @@ fn checked_in_stage_ready_case_is_content_authenticated_and_neutral() {
             fixture: None,
         }
     );
-    assert_eq!(tape.frames.len(), case.budget.logical_ticks as usize);
+    assert_eq!(tape.frames.len(), case.logical_tick_budget as usize);
     assert!(
         tape.frames
             .iter()
