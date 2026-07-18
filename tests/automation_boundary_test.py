@@ -11,6 +11,7 @@ from pathlib import Path
 
 OBSERVER = "DUSK_ENABLE_AUTOMATION_OBSERVERS"
 FIDELITY = "DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS"
+INTERVENTIONS = "DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS"
 
 
 @dataclass
@@ -25,7 +26,7 @@ class Conditional:
 
 def positive_guards(expression: str) -> frozenset[str]:
     guards: set[str] = set()
-    for guard in (OBSERVER, FIDELITY):
+    for guard in (OBSERVER, FIDELITY, INTERVENTIONS):
         if re.search(rf"(?<![!A-Za-z0-9_]){guard}\b", expression):
             guards.add(guard)
     return frozenset(guards)
@@ -225,7 +226,7 @@ def main() -> int:
             failures.append(f"{path}: non-const event-name query is forbidden")
 
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    for option in (OBSERVER, FIDELITY):
+    for option in (OBSERVER, FIDELITY, INTERVENTIONS):
         if not re.search(rf"option\({option}\s+.*?\sOFF\)", cmake, re.DOTALL):
             failures.append(f"CMake option {option} must exist and default OFF")
     target_definitions = re.search(
@@ -235,7 +236,7 @@ def main() -> int:
         failures.append("dusklight target compile definitions are missing")
     else:
         body = target_definitions.group("body")
-        for option in (OBSERVER, FIDELITY):
+        for option in (OBSERVER, FIDELITY, INTERVENTIONS):
             expected = f"{option}=$<BOOL:${{{option}}}>"
             if expected not in body:
                 failures.append(f"dusklight target-wide compile gate omits {option}")

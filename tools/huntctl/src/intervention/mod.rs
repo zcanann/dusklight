@@ -2,6 +2,7 @@
 //!
 //! This artifact is deliberately unrelated to `DUSKTAPE` and `DUSKCTRL`.
 
+#[cfg(feature = "experimental-interventions")]
 pub mod runtime;
 
 use serde::Serialize;
@@ -10,7 +11,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 8] = b"DUSKINTR";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 0;
+pub const VERSION_MINOR: u16 = 1;
 pub const HEADER_SIZE: usize = 32;
 pub const RECORD_SIZE: usize = 128;
 pub const MAX_INTERVENTIONS: usize = 1_024;
@@ -20,6 +21,8 @@ pub const MAX_DSL_LINES: usize = 4_096;
 const EXPERIMENTAL_INTERVENTION_FLAG: u32 = 1;
 const STAGE_NAME_CAPACITY: usize = 16;
 const MAX_ABSOLUTE_COMPONENT: f32 = 10_000_000.0;
+const MAX_HEALTH: i16 = 1_000;
+const MAX_TIMER_TICKS: u16 = 3_600;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct InterventionTape {
@@ -61,13 +64,65 @@ pub enum InterventionSelector {
 #[serde(rename_all = "snake_case")]
 pub enum InterventionPrecondition {
     ActorExists,
+    ActorAbsent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterventionTimer {
+    DamageWait,
+    IceDamageWait,
+    SwordChangeWait,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterventionFlagDomain {
+    ActorStatus,
+    RoomSwitch,
+    EventBit,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InterventionOperation {
-    SetPosition { value: [f32; 3] },
-    AddVelocity { value: [f32; 3] },
+    SetPosition {
+        value: [f32; 3],
+    },
+    AddPosition {
+        value: [f32; 3],
+    },
+    SetVelocity {
+        value: [f32; 3],
+    },
+    AddVelocity {
+        value: [f32; 3],
+    },
+    SetFacingYaw {
+        value: i16,
+    },
+    MoveAlongCubicCurve {
+        control_points: [[f32; 3]; 4],
+    },
+    SetTargetPlayer {
+        enabled: bool,
+    },
+    SetHealth {
+        value: i16,
+    },
+    SetTimer {
+        timer: InterventionTimer,
+        ticks: u16,
+    },
+    SetFlag {
+        domain: InterventionFlagDomain,
+        index: u16,
+        value: bool,
+    },
+    SpawnAtPosition {
+        value: [f32; 3],
+    },
+    Despawn,
 }
 
 #[derive(Debug)]
@@ -138,8 +193,9 @@ impl InterventionTape {
         if input.len() < HEADER_SIZE || &input[..8] != MAGIC {
             return Err(error("not a DUSKINTR artifact"));
         }
+        let minor_version = u16_at(input, 10);
         if u16_at(input, 8) != VERSION_MAJOR
-            || u16_at(input, 10) != VERSION_MINOR
+            || minor_version > VERSION_MINOR
             || u16_at(input, 12) as usize != HEADER_SIZE
             || u16_at(input, 14) as usize != RECORD_SIZE
             || u32_at(input, 24) != EXPERIMENTAL_INTERVENTION_FLAG
@@ -169,7 +225,21 @@ impl InterventionTape {
             interventions,
         };
         tape.validate()?;
-        if tape.encode()?.as_slice() != input {
+        let mut canonical = tape.encode()?;
+        if minor_version == 0 {
+            if tape.interventions.iter().any(|intervention| {
+                intervention.precondition != InterventionPrecondition::ActorExists
+                    || !matches!(
+                        intervention.operation,
+                        InterventionOperation::SetPosition { .. }
+                            | InterventionOperation::AddVelocity { .. }
+                    )
+            }) {
+                return Err(error("DUSKINTR v1.0 contains a v1.1 operation"));
+            }
+            put_u16(&mut canonical, 10, 0);
+        }
+        if canonical.as_slice() != input {
             return Err(error("DUSKINTR artifact is not canonically encoded"));
         }
         Ok(tape)
@@ -235,15 +305,63 @@ impl Intervention {
             }
             _ => {}
         }
-        let vector = match &self.operation {
+        let vectors = match &self.operation {
             InterventionOperation::SetPosition { value }
-            | InterventionOperation::AddVelocity { value } => value,
+            | InterventionOperation::AddPosition { value }
+            | InterventionOperation::SetVelocity { value }
+            | InterventionOperation::AddVelocity { value }
+            | InterventionOperation::SpawnAtPosition { value } => vec![value.as_slice()],
+            InterventionOperation::MoveAlongCubicCurve { control_points } => control_points
+                .iter()
+                .map(|point| point.as_slice())
+                .collect(),
+            _ => Vec::new(),
         };
-        if vector
-            .iter()
+        if vectors
+            .into_iter()
+            .flatten()
             .any(|value| !value.is_finite() || value.abs() > MAX_ABSOLUTE_COMPONENT)
         {
             return Err(error("intervention vector is non-finite or out of bounds"));
+        }
+        match &self.operation {
+            InterventionOperation::SpawnAtPosition { .. } => {
+                if self.precondition != InterventionPrecondition::ActorAbsent
+                    || !matches!(self.selector, InterventionSelector::Placed { .. })
+                {
+                    return Err(error(
+                        "spawn requires an absent precondition and a placed selector",
+                    ));
+                }
+            }
+            _ if self.precondition != InterventionPrecondition::ActorExists => {
+                return Err(error("non-spawn interventions require actor_exists"));
+            }
+            _ => {}
+        }
+        match &self.operation {
+            InterventionOperation::SetHealth { value } if !(0..=MAX_HEALTH).contains(value) => {
+                return Err(error("health intervention is outside the typed bound"));
+            }
+            InterventionOperation::SetTimer { ticks, .. } if *ticks > MAX_TIMER_TICKS => {
+                return Err(error("timer intervention is outside the typed bound"));
+            }
+            InterventionOperation::SetFlag {
+                domain: InterventionFlagDomain::ActorStatus,
+                index,
+                ..
+            } if *index >= 32 => {
+                return Err(error("actor-status flag index is outside the typed bound"));
+            }
+            InterventionOperation::SetFlag { index, .. } if *index >= 4_096 => {
+                return Err(error("flag index is outside the typed bound"));
+            }
+            InterventionOperation::MoveAlongCubicCurve { .. } if self.duration_ticks < 2 => {
+                return Err(error(
+                    "cubic-curve intervention requires at least two ticks",
+                ));
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -253,7 +371,7 @@ fn parse_intervention(
     tokens: &[&str],
     line_index: usize,
 ) -> Result<Intervention, InterventionTapeError> {
-    if tokens.len() < 13
+    if tokens.len() < 10
         || tokens[0] != "at"
         || tokens[2] != "for"
         || tokens[4] != "before_game_tick"
@@ -280,39 +398,92 @@ fn parse_intervention(
         ),
         _ => return Err(dsl_error(line_index, "invalid intervention selector")),
     };
-    if tokens.get(cursor) != Some(&"require") || tokens.get(cursor + 1) != Some(&"actor_exists") {
-        return Err(dsl_error(
-            line_index,
-            "actor_exists precondition is required",
-        ));
+    if tokens.get(cursor) != Some(&"require") {
+        return Err(dsl_error(line_index, "explicit precondition is required"));
     }
-    cursor += 2;
-    let operation_name = tokens
-        .get(cursor)
-        .ok_or_else(|| dsl_error(line_index, "missing intervention operation"))?;
-    if tokens.len() != cursor + 4 {
-        return Err(dsl_error(
-            line_index,
-            "operation requires exactly three components",
-        ));
-    }
-    let value = [
-        parse_f32(tokens[cursor + 1], line_index, "x component")?,
-        parse_f32(tokens[cursor + 2], line_index, "y component")?,
-        parse_f32(tokens[cursor + 3], line_index, "z component")?,
-    ];
-    let operation = match *operation_name {
-        "set_position" => InterventionOperation::SetPosition { value },
-        "add_velocity" => InterventionOperation::AddVelocity { value },
-        _ => return Err(dsl_error(line_index, "unknown intervention operation")),
+    let precondition = match tokens.get(cursor + 1).copied() {
+        Some("actor_exists") => InterventionPrecondition::ActorExists,
+        Some("actor_absent") => InterventionPrecondition::ActorAbsent,
+        _ => return Err(dsl_error(line_index, "unknown intervention precondition")),
     };
+    cursor += 2;
+    let operation = parse_operation(&tokens[cursor..], line_index)?;
     Ok(Intervention {
         start_tick,
         duration_ticks,
         phase: InterventionPhase::BeforeGameTick,
         selector,
-        precondition: InterventionPrecondition::ActorExists,
+        precondition,
         operation,
+    })
+}
+
+fn parse_operation(
+    tokens: &[&str],
+    line: usize,
+) -> Result<InterventionOperation, InterventionTapeError> {
+    let name = tokens
+        .first()
+        .copied()
+        .ok_or_else(|| dsl_error(line, "missing intervention operation"))?;
+    let vector = |tokens: &[&str]| -> Result<[f32; 3], InterventionTapeError> {
+        if tokens.len() != 4 {
+            return Err(dsl_error(
+                line,
+                "vector operation requires three components",
+            ));
+        }
+        Ok([
+            parse_f32(tokens[1], line, "x component")?,
+            parse_f32(tokens[2], line, "y component")?,
+            parse_f32(tokens[3], line, "z component")?,
+        ])
+    };
+    Ok(match name {
+        "set_position" => InterventionOperation::SetPosition {
+            value: vector(tokens)?,
+        },
+        "add_position" => InterventionOperation::AddPosition {
+            value: vector(tokens)?,
+        },
+        "set_velocity" => InterventionOperation::SetVelocity {
+            value: vector(tokens)?,
+        },
+        "add_velocity" => InterventionOperation::AddVelocity {
+            value: vector(tokens)?,
+        },
+        "spawn_at" => InterventionOperation::SpawnAtPosition {
+            value: vector(tokens)?,
+        },
+        "set_facing_yaw" if tokens.len() == 2 => InterventionOperation::SetFacingYaw {
+            value: parse_i16(tokens[1], line, "facing yaw")?,
+        },
+        "move_cubic" if tokens.len() == 13 => {
+            let mut control_points = [[0.0; 3]; 4];
+            for (point, values) in control_points.iter_mut().enumerate() {
+                for (axis, value) in values.iter_mut().enumerate() {
+                    *value = parse_f32(tokens[1 + point * 3 + axis], line, "curve component")?;
+                }
+            }
+            InterventionOperation::MoveAlongCubicCurve { control_points }
+        }
+        "set_target_player" if tokens.len() == 2 => InterventionOperation::SetTargetPlayer {
+            enabled: parse_bool(tokens[1], line, "target intent")?,
+        },
+        "set_health" if tokens.len() == 2 => InterventionOperation::SetHealth {
+            value: parse_i16(tokens[1], line, "health")?,
+        },
+        "set_timer" if tokens.len() == 3 => InterventionOperation::SetTimer {
+            timer: parse_timer(tokens[1], line)?,
+            ticks: parse_u16(tokens[2], line, "timer ticks")?,
+        },
+        "set_flag" if tokens.len() == 4 => InterventionOperation::SetFlag {
+            domain: parse_flag_domain(tokens[1], line)?,
+            index: parse_u16(tokens[2], line, "flag index")?,
+            value: parse_bool(tokens[3], line, "flag value")?,
+        },
+        "despawn" if tokens.len() == 1 => InterventionOperation::Despawn,
+        _ => return Err(dsl_error(line, "unknown operation or invalid operands")),
     })
 }
 
@@ -320,7 +491,10 @@ fn encode_record(intervention: &Intervention, output: &mut [u8]) {
     put_u32(output, 0, intervention.start_tick);
     put_u32(output, 4, intervention.duration_ticks);
     output[8] = 1;
-    output[10] = 1;
+    output[10] = match intervention.precondition {
+        InterventionPrecondition::ActorExists => 1,
+        InterventionPrecondition::ActorAbsent => 2,
+    };
     match &intervention.selector {
         InterventionSelector::Process { process_id } => {
             output[9] = 1;
@@ -340,13 +514,70 @@ fn encode_record(intervention: &Intervention, output: &mut [u8]) {
             put_u16(output, 36, *set_id);
         }
     }
-    let (kind, value) = match &intervention.operation {
-        InterventionOperation::SetPosition { value } => (1, value),
-        InterventionOperation::AddVelocity { value } => (2, value),
+    encode_operation(&intervention.operation, output);
+}
+
+fn encode_operation(operation: &InterventionOperation, output: &mut [u8]) {
+    let write_vector = |output: &mut [u8], value: &[f32; 3]| {
+        for (index, value) in value.iter().enumerate() {
+            put_u32(output, 48 + index * 4, value.to_bits());
+        }
     };
-    output[11] = kind;
-    for (index, value) in value.iter().enumerate() {
-        put_u32(output, 48 + index * 4, value.to_bits());
+    match operation {
+        InterventionOperation::SetPosition { value } => {
+            output[11] = 1;
+            write_vector(output, value);
+        }
+        InterventionOperation::AddVelocity { value } => {
+            output[11] = 2;
+            write_vector(output, value);
+        }
+        InterventionOperation::AddPosition { value } => {
+            output[11] = 3;
+            write_vector(output, value);
+        }
+        InterventionOperation::SetVelocity { value } => {
+            output[11] = 4;
+            write_vector(output, value);
+        }
+        InterventionOperation::SetFacingYaw { value } => {
+            output[11] = 5;
+            put_i16(output, 48, *value);
+        }
+        InterventionOperation::MoveAlongCubicCurve { control_points } => {
+            output[11] = 6;
+            for (index, value) in control_points.iter().flatten().enumerate() {
+                put_u32(output, 48 + index * 4, value.to_bits());
+            }
+        }
+        InterventionOperation::SetTargetPlayer { enabled } => {
+            output[11] = 7;
+            output[48] = u8::from(*enabled);
+        }
+        InterventionOperation::SetHealth { value } => {
+            output[11] = 8;
+            put_i16(output, 48, *value);
+        }
+        InterventionOperation::SetTimer { timer, ticks } => {
+            output[11] = 9;
+            output[48] = encode_timer(*timer);
+            put_u16(output, 50, *ticks);
+        }
+        InterventionOperation::SetFlag {
+            domain,
+            index,
+            value,
+        } => {
+            output[11] = 10;
+            output[48] = encode_flag_domain(*domain);
+            put_u16(output, 50, *index);
+            output[52] = u8::from(*value);
+        }
+        InterventionOperation::SpawnAtPosition { value } => {
+            output[11] = 11;
+            write_vector(output, value);
+        }
+        InterventionOperation::Despawn => output[11] = 12,
     }
 }
 
@@ -375,13 +606,44 @@ fn decode_record(input: &[u8]) -> Result<Intervention, InterventionTapeError> {
         }
         _ => return Err(error("unknown intervention selector")),
     };
-    if input[10] != 1 {
-        return Err(error("unknown intervention precondition"));
-    }
+    let precondition = match input[10] {
+        1 => InterventionPrecondition::ActorExists,
+        2 => InterventionPrecondition::ActorAbsent,
+        _ => return Err(error("unknown intervention precondition")),
+    };
     let value = std::array::from_fn(|index| f32::from_bits(u32_at(input, 48 + index * 4)));
     let operation = match input[11] {
         1 => InterventionOperation::SetPosition { value },
         2 => InterventionOperation::AddVelocity { value },
+        3 => InterventionOperation::AddPosition { value },
+        4 => InterventionOperation::SetVelocity { value },
+        5 => InterventionOperation::SetFacingYaw {
+            value: i16_at(input, 48),
+        },
+        6 => InterventionOperation::MoveAlongCubicCurve {
+            control_points: std::array::from_fn(|point| {
+                std::array::from_fn(|axis| {
+                    f32::from_bits(u32_at(input, 48 + (point * 3 + axis) * 4))
+                })
+            }),
+        },
+        7 if input[48] <= 1 => InterventionOperation::SetTargetPlayer {
+            enabled: input[48] != 0,
+        },
+        8 => InterventionOperation::SetHealth {
+            value: i16_at(input, 48),
+        },
+        9 => InterventionOperation::SetTimer {
+            timer: decode_timer(input[48])?,
+            ticks: u16_at(input, 50),
+        },
+        10 if input[52] <= 1 => InterventionOperation::SetFlag {
+            domain: decode_flag_domain(input[48])?,
+            index: u16_at(input, 50),
+            value: input[52] != 0,
+        },
+        11 => InterventionOperation::SpawnAtPosition { value },
+        12 => InterventionOperation::Despawn,
         _ => return Err(error("unknown intervention operation")),
     };
     Ok(Intervention {
@@ -389,7 +651,7 @@ fn decode_record(input: &[u8]) -> Result<Intervention, InterventionTapeError> {
         duration_ticks: u32_at(input, 4),
         phase,
         selector,
-        precondition: InterventionPrecondition::ActorExists,
+        precondition,
         operation,
     })
 }
@@ -404,6 +666,69 @@ fn valid_stage(stage: &str) -> bool {
     !stage.is_empty()
         && stage.len() <= STAGE_NAME_CAPACITY
         && stage.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
+fn parse_bool(value: &str, line: usize, label: &str) -> Result<bool, InterventionTapeError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(dsl_error(line, &format!("invalid {label}"))),
+    }
+}
+
+fn parse_timer(value: &str, line: usize) -> Result<InterventionTimer, InterventionTapeError> {
+    match value {
+        "damage_wait" => Ok(InterventionTimer::DamageWait),
+        "ice_damage_wait" => Ok(InterventionTimer::IceDamageWait),
+        "sword_change_wait" => Ok(InterventionTimer::SwordChangeWait),
+        _ => Err(dsl_error(line, "unknown typed timer")),
+    }
+}
+
+fn encode_timer(timer: InterventionTimer) -> u8 {
+    match timer {
+        InterventionTimer::DamageWait => 1,
+        InterventionTimer::IceDamageWait => 2,
+        InterventionTimer::SwordChangeWait => 3,
+    }
+}
+
+fn decode_timer(value: u8) -> Result<InterventionTimer, InterventionTapeError> {
+    match value {
+        1 => Ok(InterventionTimer::DamageWait),
+        2 => Ok(InterventionTimer::IceDamageWait),
+        3 => Ok(InterventionTimer::SwordChangeWait),
+        _ => Err(error("unknown typed intervention timer")),
+    }
+}
+
+fn parse_flag_domain(
+    value: &str,
+    line: usize,
+) -> Result<InterventionFlagDomain, InterventionTapeError> {
+    match value {
+        "actor_status" => Ok(InterventionFlagDomain::ActorStatus),
+        "room_switch" => Ok(InterventionFlagDomain::RoomSwitch),
+        "event_bit" => Ok(InterventionFlagDomain::EventBit),
+        _ => Err(dsl_error(line, "unknown typed flag domain")),
+    }
+}
+
+fn encode_flag_domain(domain: InterventionFlagDomain) -> u8 {
+    match domain {
+        InterventionFlagDomain::ActorStatus => 1,
+        InterventionFlagDomain::RoomSwitch => 2,
+        InterventionFlagDomain::EventBit => 3,
+    }
+}
+
+fn decode_flag_domain(value: u8) -> Result<InterventionFlagDomain, InterventionTapeError> {
+    match value {
+        1 => Ok(InterventionFlagDomain::ActorStatus),
+        2 => Ok(InterventionFlagDomain::RoomSwitch),
+        3 => Ok(InterventionFlagDomain::EventBit),
+        _ => Err(error("unknown typed intervention flag domain")),
+    }
 }
 
 fn parse_u32(value: &str, line: usize, label: &str) -> Result<u32, InterventionTapeError> {
@@ -509,6 +834,26 @@ at 10 for 1 before_game_tick process 42 require actor_exists set_position 1 2 3
     }
 
     #[test]
+    fn version_1_0_artifacts_remain_canonical_and_decodable() {
+        let mut legacy = InterventionTape::compile_dsl(DSL)
+            .unwrap()
+            .encode()
+            .unwrap();
+        put_u16(&mut legacy, 10, 0);
+        let decoded = InterventionTape::decode(&legacy).unwrap();
+        assert_eq!(decoded.interventions.len(), 2);
+
+        let mut falsely_legacy = InterventionTape::compile_dsl(
+            "timeline 2\nat 0 for 1 before_game_tick process 7 require actor_exists set_health 3",
+        )
+        .unwrap()
+        .encode()
+        .unwrap();
+        put_u16(&mut falsely_legacy, 10, 0);
+        assert!(InterventionTape::decode(&falsely_legacy).is_err());
+    }
+
+    #[test]
     fn decoder_rejects_reserved_bytes_and_noncanonical_records() {
         let mut encoded = InterventionTape::compile_dsl(DSL)
             .unwrap()
@@ -537,6 +882,50 @@ at 10 for 1 before_game_tick process 42 require actor_exists set_position 1 2 3
         .is_err());
         assert!(InterventionTape::compile_dsl(
             "timeline 4\nat 0 for 1 before_game_tick process 7 require actor_exists set_position NaN 0 0"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn complete_typed_operation_catalog_round_trips() {
+        let source = r#"
+timeline 30
+at 1 for 1 before_game_tick process 7 require actor_exists add_position 1 2 3
+at 2 for 1 before_game_tick process 7 require actor_exists set_velocity 4 5 6
+at 3 for 1 before_game_tick process 7 require actor_exists add_velocity -1 0 1
+at 4 for 1 before_game_tick process 7 require actor_exists set_facing_yaw -16384
+at 5 for 2 before_game_tick process 7 require actor_exists move_cubic 0 0 0 1 2 3 4 5 6 7 8 9
+at 7 for 1 before_game_tick process 7 require actor_exists set_target_player true
+at 8 for 1 before_game_tick process 7 require actor_exists set_health 12
+at 9 for 1 before_game_tick process 7 require actor_exists set_timer damage_wait 30
+at 10 for 1 before_game_tick process 7 require actor_exists set_flag actor_status 3 true
+at 11 for 1 before_game_tick placed F_SP104 1 9 12 require actor_absent spawn_at 1 2 3
+at 12 for 1 before_game_tick placed F_SP104 1 9 12 require actor_exists despawn
+"#;
+        let tape = InterventionTape::compile_dsl(source).unwrap();
+        assert_eq!(tape.interventions.len(), 11);
+        assert_eq!(
+            InterventionTape::decode(&tape.encode().unwrap()).unwrap(),
+            tape
+        );
+    }
+
+    #[test]
+    fn typed_semantics_reject_wrong_preconditions_and_unbounded_fields() {
+        assert!(InterventionTape::compile_dsl(
+            "timeline 4\nat 0 for 1 before_game_tick placed F_SP104 1 9 12 require actor_exists spawn_at 0 0 0"
+        )
+        .is_err());
+        assert!(InterventionTape::compile_dsl(
+            "timeline 4\nat 0 for 1 before_game_tick process 7 require actor_absent set_health 10"
+        )
+        .is_err());
+        assert!(InterventionTape::compile_dsl(
+            "timeline 4\nat 0 for 1 before_game_tick process 7 require actor_exists set_timer damage_wait 3601"
+        )
+        .is_err());
+        assert!(InterventionTape::compile_dsl(
+            "timeline 4\nat 0 for 1 before_game_tick process 7 require actor_exists set_flag actor_status 32 true"
         )
         .is_err());
     }
