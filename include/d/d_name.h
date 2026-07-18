@@ -141,7 +141,11 @@ public:
 
     #if TARGET_PC
     void nameWide();
+    #endif
+    #if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS && DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
     bool automationCursorMove();
+    #endif
+    #if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     void automationObserve();
     #endif
 

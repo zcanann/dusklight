@@ -1,8 +1,8 @@
-#include "dusk/automation/milestones.hpp"
 #include "dusk/automation/input_recording.hpp"
+#include "dusk/automation/milestones.hpp"
 
-#include <bit>
 #include <array>
+#include <bit>
 #include <cstdlib>
 #include <iostream>
 
@@ -19,8 +19,23 @@ void require(const bool condition, const char* expression, const int line) {
 
 #define REQUIRE(expression) require((expression), #expression, __LINE__)
 
-constexpr std::array<std::uint8_t, 252> IntroProgram{
-0x44,0x4d,0x53,0x50,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0xc8,0x00,0x00,0x00,0x10,0xe0,0x59,0x2e,0xb0,0x01,0x14,0x5a,0xb8,0x60,0x27,0x1f,0x1d,0x66,0x77,0x89,0xaa,0xce,0x1e,0x1a,0xa1,0x44,0x2b,0xa7,0x50,0xb2,0x0b,0xd2,0x45,0x38,0x29,0xd2,0x4e,0x00,0x00,0x00,0x0c,0x00,0x70,0x72,0x6f,0x63,0x65,0x73,0x73,0x5f,0x62,0x6f,0x6f,0x74,0x00,0x00,0x01,0x00,0x07,0x00,0x16,0x00,0x00,0x00,0x45,0xdc,0x09,0x9d,0x98,0x3f,0xb5,0x8b,0x7a,0x85,0x6f,0x7e,0x83,0x10,0xe5,0xd2,0xec,0xba,0xc3,0xcd,0xb3,0xa4,0xd7,0xa4,0xc0,0xa2,0x9e,0x75,0x7d,0x3b,0xa5,0xca,0x01,0x01,0x15,0x04,0x62,0x6f,0x6f,0x74,0x20,0x01,0x02,0x12,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x20,0x31,0x72,0x00,0x00,0x00,0x0c,0x00,0x6c,0x69,0x6e,0x6b,0x5f,0x63,0x6f,0x6e,0x74,0x72,0x6f,0x6c,0x01,0x00,0x01,0x00,0x1c,0x00,0x3a,0x00,0x00,0x00,0x78,0x84,0x86,0x28,0x9a,0xa6,0x01,0x35,0x5d,0x3a,0x43,0x6b,0x58,0x25,0xd2,0xf2,0xbd,0xf3,0xe2,0xea,0x2d,0x77,0x04,0x8a,0xcf,0x5b,0x19,0xc0,0x1d,0x9d,0x56,0x15,0x01,0x04,0x15,0x07,0x46,0x5f,0x53,0x50,0x31,0x30,0x33,0x20,0x01,0x05,0x13,0x01,0x00,0x00,0x00,0x20,0x31,0x01,0x07,0x13,0x01,0x00,0x00,0x00,0x20,0x31,0x01,0x08,0x10,0x01,0x20,0x31,0x01,0x15,0x10,0x01,0x20,0x31,0x01,0x0e,0x10,0x01,0x20,0x30,0x31,0x01,0x0f,0x13,0xff,0xff,0xff,0xff,0x20,0x31};
+constexpr std::array<std::uint8_t, 252> IntroProgram{0x44, 0x4d, 0x53, 0x50, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xc8, 0x00, 0x00, 0x00, 0x10, 0xe0, 0x59, 0x2e,
+    0xb0, 0x01, 0x14, 0x5a, 0xb8, 0x60, 0x27, 0x1f, 0x1d, 0x66, 0x77, 0x89, 0xaa, 0xce, 0x1e, 0x1a,
+    0xa1, 0x44, 0x2b, 0xa7, 0x50, 0xb2, 0x0b, 0xd2, 0x45, 0x38, 0x29, 0xd2, 0x4e, 0x00, 0x00, 0x00,
+    0x0c, 0x00, 0x70, 0x72, 0x6f, 0x63, 0x65, 0x73, 0x73, 0x5f, 0x62, 0x6f, 0x6f, 0x74, 0x00, 0x00,
+    0x01, 0x00, 0x07, 0x00, 0x16, 0x00, 0x00, 0x00, 0x45, 0xdc, 0x09, 0x9d, 0x98, 0x3f, 0xb5, 0x8b,
+    0x7a, 0x85, 0x6f, 0x7e, 0x83, 0x10, 0xe5, 0xd2, 0xec, 0xba, 0xc3, 0xcd, 0xb3, 0xa4, 0xd7, 0xa4,
+    0xc0, 0xa2, 0x9e, 0x75, 0x7d, 0x3b, 0xa5, 0xca, 0x01, 0x01, 0x15, 0x04, 0x62, 0x6f, 0x6f, 0x74,
+    0x20, 0x01, 0x02, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x31, 0x72, 0x00,
+    0x00, 0x00, 0x0c, 0x00, 0x6c, 0x69, 0x6e, 0x6b, 0x5f, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c,
+    0x01, 0x00, 0x01, 0x00, 0x1c, 0x00, 0x3a, 0x00, 0x00, 0x00, 0x78, 0x84, 0x86, 0x28, 0x9a, 0xa6,
+    0x01, 0x35, 0x5d, 0x3a, 0x43, 0x6b, 0x58, 0x25, 0xd2, 0xf2, 0xbd, 0xf3, 0xe2, 0xea, 0x2d, 0x77,
+    0x04, 0x8a, 0xcf, 0x5b, 0x19, 0xc0, 0x1d, 0x9d, 0x56, 0x15, 0x01, 0x04, 0x15, 0x07, 0x46, 0x5f,
+    0x53, 0x50, 0x31, 0x30, 0x33, 0x20, 0x01, 0x05, 0x13, 0x01, 0x00, 0x00, 0x00, 0x20, 0x31, 0x01,
+    0x07, 0x13, 0x01, 0x00, 0x00, 0x00, 0x20, 0x31, 0x01, 0x08, 0x10, 0x01, 0x20, 0x31, 0x01, 0x15,
+    0x10, 0x01, 0x20, 0x31, 0x01, 0x0e, 0x10, 0x01, 0x20, 0x30, 0x31, 0x01, 0x0f, 0x13, 0xff, 0xff,
+    0xff, 0xff, 0x20, 0x31};
 
 bool noSymbols(dusk::automation::MilestoneProgramSymbolKind, std::string_view, std::uint32_t&) {
     return false;
@@ -182,7 +197,7 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
 
     const auto result = nlohmann::json::parse(serialize_milestone_result(tracker));
     REQUIRE(result["schema"]["name"] == "dusklight.automation.milestones");
-    REQUIRE(result["schema"]["version"] == 1);
+    REQUIRE(result["schema"]["version"] == 2);
     REQUIRE(result["goal"] == "exit-f-sp103-to-f-sp104");
     REQUIRE(result["goal_reached"] == true);
     REQUIRE(result["milestones"].size() == 3);
@@ -191,10 +206,12 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
     REQUIRE(result["milestones"][1]["evidence"]["player"]["process_id"] == 0x12345678);
     REQUIRE(result["milestones"][1]["evidence"]["player"]["position"][0] == 666.0f);
     REQUIRE(result["milestones"][1]["evidence"]["event"]["id"] == -1);
+    REQUIRE(result["milestones"][1]["evidence"]["event"]["name_fnv1a_present"] == false);
+    REQUIRE(result["milestones"][1]["evidence"]["event"]["name_fnv1a"] == nullptr);
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][0]["state"][0] == 11);
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][1]["call_count"] == 200);
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["schema"] ==
-            "dusklight.milestone-boundary/v1");
+            "dusklight.milestone-boundary/v2");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["algorithm"] == "xxh3-128");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["digest"]
                 .get<std::string>()
@@ -230,6 +247,10 @@ void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
     changed.eventStatus++;
     REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
     changed = baseline;
+    changed.eventNameHashPresent = true;
+    changed.eventNameHash = 0;
+    REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
+    changed = baseline;
     changed.nextStageEnabled = true;
     REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
 }
@@ -246,7 +267,8 @@ void testGoalMustBeRequested() {
 void testAuthoredBootStableAndExactFirstHit() {
     using namespace dusk::automation;
     MilestoneProgram program;
-    REQUIRE(decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(
+        decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
     REQUIRE(program.digest() == "10e0592eb001145ab860271f1d667789aace1e1aa1442ba750b20bd2453829d2");
     REQUIRE(program.find("process_boot")->definitionDigest ==
             "45dc099d983fb58b7a856f7e8310e5d2ecbac3cdb3a4d7a4c0a29e757d3ba5ca");
@@ -256,8 +278,8 @@ void testAuthoredBootStableAndExactFirstHit() {
     std::string error;
     REQUIRE(bootTracker.configureNames(bootNames, std::string("process_boot"), program, error));
     MilestoneObservation empty;
-    bootTracker.observeBoundary(empty, MilestoneProgramPhase::PreInput,
-        MilestoneBoundaryKind::Boot, 0, 0, MilestoneNoTapeFrame);
+    bootTracker.observeBoundary(empty, MilestoneProgramPhase::PreInput, MilestoneBoundaryKind::Boot,
+        0, 0, MilestoneNoTapeFrame);
     REQUIRE(bootTracker.goalReached());
     REQUIRE(bootTracker.authoredHits()[0].boundaryIndex == 0);
     REQUIRE(bootTracker.authoredHits()[0].tapeFrame == MilestoneNoTapeFrame);
@@ -269,17 +291,17 @@ void testAuthoredBootStableAndExactFirstHit() {
     const std::vector<std::string> names{"link_control"};
     REQUIRE(tracker.configureNames(names, std::string("link_control"), program, error));
     MilestoneObservation observation = f_sp103();
-    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
-        MilestoneBoundaryKind::Tick, 11, 10, 7);
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 11, 10, 7);
     REQUIRE(!tracker.goalReached());
     observation.eventRunning = true;
-    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
-        MilestoneBoundaryKind::Tick, 12, 11, 8);
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 12, 11, 8);
     observation.eventRunning = false;
-    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
-        MilestoneBoundaryKind::Tick, 13, 12, 9);
-    tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
-        MilestoneBoundaryKind::Tick, 14, 13, 10);
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 13, 12, 9);
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 14, 13, 10);
     REQUIRE(tracker.goalReached());
     REQUIRE(tracker.authoredHits()[0].boundaryIndex == 14);
     REQUIRE(tracker.authoredHits()[0].tapeFrame == 10);
@@ -327,9 +349,9 @@ void testBootRecordingGuardrailsAndBeginOrdering() {
     REQUIRE(validate_boot_recording_cli(request) == BootRecordingError::None);
 
     MilestoneProgram program;
-    REQUIRE(decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
-    REQUIRE(validate_authored_boot_definition(program, "process_boot") ==
-            BootRecordingError::None);
+    REQUIRE(
+        decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(validate_authored_boot_definition(program, "process_boot") == BootRecordingError::None);
     REQUIRE(validate_authored_boot_definition(program, "link_control") ==
             BootRecordingError::StartMilestoneNotPreInput);
 
@@ -339,32 +361,30 @@ void testBootRecordingGuardrailsAndBeginOrdering() {
     REQUIRE(tracker.configureNames(requested, std::nullopt, program, error));
     BootStartOrder order;
     BootRecordingBinding binding;
-    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", "",
-                beginBootRecorder, releaseBootInput, &order, binding) ==
-            BootRecordingError::StartMilestoneNotHit);
+    REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", "", beginBootRecorder,
+                releaseBootInput, &order, binding) == BootRecordingError::StartMilestoneNotHit);
     REQUIRE(order.events.empty());
 
-    tracker.observeBoundary({}, MilestoneProgramPhase::PreInput,
-        MilestoneBoundaryKind::Boot, 0, 0, MilestoneNoTapeFrame);
+    tracker.observeBoundary({}, MilestoneProgramPhase::PreInput, MilestoneBoundaryKind::Boot, 0, 0,
+        MilestoneNoTapeFrame);
     const std::string fingerprint = tracker.authoredHits()[0].evidence.boundaryFingerprint;
     REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot",
-                "00000000000000000000000000000000", beginBootRecorder, releaseBootInput,
-                &order, binding) == BootRecordingError::FingerprintMismatch);
+                "00000000000000000000000000000000", beginBootRecorder, releaseBootInput, &order,
+                binding) == BootRecordingError::FingerprintMismatch);
     REQUIRE(order.events.empty());
     auto& mutableHit = const_cast<AuthoredMilestoneHit&>(tracker.authoredHits()[0]);
     mutableHit.boundaryIndex = 1;
     REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
-                beginBootRecorder, releaseBootInput, &order, binding) ==
-            BootRecordingError::InvalidBootBoundary);
+                beginBootRecorder, releaseBootInput, &order,
+                binding) == BootRecordingError::InvalidBootBoundary);
     mutableHit.boundaryIndex = 0;
     mutableHit.programDigest[0] = mutableHit.programDigest[0] == '0' ? '1' : '0';
     REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
-                beginBootRecorder, releaseBootInput, &order, binding) ==
-            BootRecordingError::StaleProgram);
+                beginBootRecorder, releaseBootInput, &order,
+                binding) == BootRecordingError::StaleProgram);
     mutableHit.programDigest = std::string(program.digest());
     REQUIRE(begin_authored_boot_recording(tracker, program, "process_boot", fingerprint,
-                beginBootRecorder, releaseBootInput, &order, binding) ==
-            BootRecordingError::None);
+                beginBootRecorder, releaseBootInput, &order, binding) == BootRecordingError::None);
     // The actual first PAD read happens after this gate returns.
     REQUIRE(order.recording);
     order.events.push_back(3);
@@ -378,16 +398,14 @@ void testBootRecordingGuardrailsAndBeginOrdering() {
 
 void testAcceleratedParentRecordingBoundaryAndRevealOrdering() {
     using namespace dusk::automation;
-    REQUIRE(validate_fast_forward_boundary(9, 10, false, true) ==
-            FastForwardBoundaryError::None);
+    REQUIRE(validate_fast_forward_boundary(9, 10, false, true) == FastForwardBoundaryError::None);
     REQUIRE(validate_fast_forward_boundary(10, 10, false, true) ==
             FastForwardBoundaryError::TapeEndRequiresHandoff);
     REQUIRE(validate_fast_forward_boundary(10, 10, true, false) ==
             FastForwardBoundaryError::TapeEndRequiresRelease);
     REQUIRE(validate_fast_forward_boundary(11, 10, true, true) ==
             FastForwardBoundaryError::PastTapeEnd);
-    REQUIRE(validate_fast_forward_boundary(10, 10, true, true) ==
-            FastForwardBoundaryError::None);
+    REQUIRE(validate_fast_forward_boundary(10, 10, true, true) == FastForwardBoundaryError::None);
     const ParentRecordingBoundary boundary = exact_parent_recording_boundary(10);
     REQUIRE(boundary.boundaryIndex == 10);
     REQUIRE(boundary.tapeFrame == 9);

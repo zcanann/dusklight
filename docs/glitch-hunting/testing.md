@@ -8,6 +8,8 @@ Run **Tasks: Run Test Task** from the command palette and choose
 - `all`: native automation, Aurora card/time, Rust tests/lint, and a real
   two-worker smoke run;
 - `native`: every game-data-free C++ and Aurora test;
+- `automation-boundary`: statically reject ungated native queries, observer
+  leakage, or write-capable fidelity code in the read-only build;
 - `input-tape`, `gameplay-trace`, `game-clock`, `name-entry`,
   `name-entry-trace`, `rng`,
   `eye-shredder-oracle`, `aurora-card`, or `aurora-time`: one native suite;
@@ -38,10 +40,11 @@ must not be hidden with a reactive tape wait. See the
 [intro route benchmark](benchmarks/intro-route.md) for the current boundary.
 
 The runner configures `windows-clang-debug` with code mods disabled and the
-fork-only read-only observer boundary explicitly enabled. This keeps the
-automation tests usable from ordinary PowerShell rather than requiring a
-Visual Studio developer shell, without silently enabling observers in normal
-builds.
+fork-only observer boundary explicitly enabled. Native oracle/visual tests also
+compile the separate write-capable fidelity-model capability because Eye
+Shredder exercises it; search builds force that capability off. Both gates are
+off by default in normal builds. This keeps the automation tests usable from
+ordinary PowerShell rather than requiring a Visual Studio developer shell.
 
 ## Visual route playback
 

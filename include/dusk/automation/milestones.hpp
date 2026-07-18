@@ -8,13 +8,13 @@
 #include <string_view>
 #include <vector>
 
-#include "dusk/automation/rng.hpp"
 #include "dusk/automation/milestone_program.hpp"
+#include "dusk/automation/rng.hpp"
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t MilestoneResultSchemaVersion = 1;
-inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 1;
+inline constexpr std::uint32_t MilestoneResultSchemaVersion = 2;
+inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 2;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -52,6 +52,7 @@ struct MilestoneObservation {
     std::uint8_t eventMode = 0;
     std::uint8_t eventStatus = 0;
     std::uint8_t eventMapToolId = 0xff;
+    bool eventNameHashPresent = false;
     std::uint32_t eventNameHash = 0;
 
     bool nextStageEnabled = false;
@@ -99,6 +100,7 @@ struct MilestoneEvidence {
     std::uint8_t eventMode = 0;
     std::uint8_t eventStatus = 0;
     std::uint8_t eventMapToolId = 0xff;
+    bool eventNameHashPresent = false;
     std::uint32_t eventNameHash = 0;
 
     bool nextStageEnabled = false;

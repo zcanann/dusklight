@@ -1437,6 +1437,8 @@ set(DUSK_FILES
         src/dusk/automation/gameplay_trace.cpp
         include/dusk/automation/gameplay_trace_observer.hpp
         src/dusk/automation/gameplay_trace_observer.cpp
+        include/dusk/automation/game_state_observer.hpp
+        src/dusk/automation/game_state_observer.cpp
         include/dusk/automation/milestones.hpp
         src/dusk/automation/milestones.cpp
         include/dusk/automation/milestone_program.hpp

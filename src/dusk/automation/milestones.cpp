@@ -98,6 +98,7 @@ MilestoneEvidence capture_evidence(const MilestoneObservation& observation) {
         .eventMode = observation.eventMode,
         .eventStatus = observation.eventStatus,
         .eventMapToolId = observation.eventMapToolId,
+        .eventNameHashPresent = observation.eventNameHashPresent,
         .eventNameHash = observation.eventNameHash,
         .nextStageEnabled = observation.nextStageEnabled,
         .nextStageName = observation.nextStageName == nullptr ? "" : observation.nextStageName,
@@ -150,7 +151,9 @@ json evidence_json(const MilestoneEvidence& evidence) {
                 {"mode", evidence.eventMode},
                 {"status", evidence.eventStatus},
                 {"map_tool_id", evidence.eventMapToolId},
-                {"name_fnv1a", evidence.eventNameHash},
+                {"name_fnv1a_present", evidence.eventNameHashPresent},
+                {"name_fnv1a",
+                    evidence.eventNameHashPresent ? json(evidence.eventNameHash) : json(nullptr)},
             }},
         // Retained for additive compatibility with v1 consumers.
         {"event_running", evidence.eventRunning},
@@ -171,9 +174,9 @@ json evidence_json(const MilestoneEvidence& evidence) {
             }},
         {"boundary_fingerprint",
             {
-                {"schema", "dusklight.milestone-boundary/v1"},
+                {"schema", "dusklight.milestone-boundary/v2"},
                 {"algorithm", "xxh3-128"},
-                {"canonical_encoding", "little-endian-fixed-v1"},
+                {"canonical_encoding", "little-endian-fixed-v2"},
                 {"digest", evidence.boundaryFingerprint},
             }},
     };
@@ -231,7 +234,10 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
     append_integer(canonical, evidence.eventMode);
     append_integer(canonical, evidence.eventStatus);
     append_integer(canonical, evidence.eventMapToolId);
-    append_integer(canonical, evidence.eventNameHash);
+    append_integer<std::uint8_t>(canonical, evidence.eventNameHashPresent ? 1 : 0);
+    if (evidence.eventNameHashPresent) {
+        append_integer(canonical, evidence.eventNameHash);
+    }
     append_integer<std::uint8_t>(canonical, evidence.nextStageEnabled ? 1 : 0);
     append_fixed_string(canonical, evidence.nextStageName);
     append_integer(canonical, evidence.nextRoom);
@@ -301,15 +307,17 @@ bool parse_milestone_name_list(
     std::size_t begin = 0;
     while (begin <= text.size()) {
         const std::size_t end = text.find(',', begin);
-        const std::string_view name = text.substr(
-            begin, end == std::string_view::npos ? text.size() - begin : end - begin);
+        const std::string_view name =
+            text.substr(begin, end == std::string_view::npos ? text.size() - begin : end - begin);
         if (name.empty()) {
             error = "milestone names cannot be empty";
             output.clear();
             return false;
         }
-        if (std::ranges::find(output, name) == output.end()) output.emplace_back(name);
-        if (end == std::string_view::npos) break;
+        if (std::ranges::find(output, name) == output.end())
+            output.emplace_back(name);
+        if (end == std::string_view::npos)
+            break;
         begin = end + 1;
     }
     return true;
@@ -343,7 +351,8 @@ bool MilestoneTracker::configure(const std::span<const MilestoneId> requested,
         return false;
     }
     mGoal = goal;
-    if (goal.has_value()) mGoalName = std::string(milestone_name(*goal));
+    if (goal.has_value())
+        mGoalName = std::string(milestone_name(*goal));
     return true;
 }
 
@@ -363,7 +372,8 @@ bool MilestoneTracker::configureNames(const std::span<const std::string> request
         if (const MilestoneDefinition* builtin = find_milestone(name); builtin != nullptr) {
             mHits.push_back({.id = builtin->id});
         } else if (const MilestoneProgramDefinition* authored = program.find(name);
-                   authored != nullptr) {
+            authored != nullptr)
+        {
             mAuthoredHits.push_back({
                 .id = authored->id,
                 .phase = authored->phase,
@@ -420,39 +430,45 @@ void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
     const std::uint64_t boundaryIndex, const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame) {
     if (phase == MilestoneProgramPhase::PostSim) {
-    for (MilestoneHit& hit : mHits) {
-        if (hit.hit) {
-            continue;
-        }
-        const MilestoneDefinition* definition = find_milestone(hit.id);
-        if (definition != nullptr && definition->predicate(observation)) {
-            hit.hit = true;
-            hit.simulationTick = simulationTick;
-            hit.tapeFrame = tapeFrame;
-            hit.evidence = capture_evidence(observation);
-            hit.evidence.boundaryFingerprint = compute_milestone_boundary_fingerprint(hit.evidence);
+        for (MilestoneHit& hit : mHits) {
+            if (hit.hit) {
+                continue;
+            }
+            const MilestoneDefinition* definition = find_milestone(hit.id);
+            if (definition != nullptr && definition->predicate(observation)) {
+                hit.hit = true;
+                hit.simulationTick = simulationTick;
+                hit.tapeFrame = tapeFrame;
+                hit.evidence = capture_evidence(observation);
+                hit.evidence.boundaryFingerprint =
+                    compute_milestone_boundary_fingerprint(hit.evidence);
+            }
         }
     }
-    }
-    if (mProgram == nullptr) return;
+    if (mProgram == nullptr)
+        return;
     for (AuthoredMilestoneHit& hit : mAuthoredHits) {
-        if (hit.hit || hit.phase != phase) continue;
+        if (hit.hit || hit.phase != phase)
+            continue;
         const MilestoneProgramDefinition* definition = mProgram->find(hit.id);
-        const bool matches = definition != nullptr && definition->evaluate({
-            .observation = observation,
-            .phase = phase,
-            .boundaryKind = boundaryKind,
-            .boundaryIndex = boundaryIndex,
-            .tapeFrame = tapeFrame == MilestoneNoTapeFrame
-                             ? std::nullopt
-                             : std::optional<std::uint64_t>(tapeFrame),
-        });
+        const bool matches =
+            definition != nullptr && definition->evaluate({
+                                         .observation = observation,
+                                         .phase = phase,
+                                         .boundaryKind = boundaryKind,
+                                         .boundaryIndex = boundaryIndex,
+                                         .tapeFrame = tapeFrame == MilestoneNoTapeFrame ?
+                                                          std::nullopt :
+                                                          std::optional<std::uint64_t>(tapeFrame),
+                                     });
         if (!matches) {
             hit.consecutiveTicks = 0;
             continue;
         }
-        if (hit.consecutiveTicks < hit.stableTicks) ++hit.consecutiveTicks;
-        if (hit.consecutiveTicks != hit.stableTicks) continue;
+        if (hit.consecutiveTicks < hit.stableTicks)
+            ++hit.consecutiveTicks;
+        if (hit.consecutiveTicks != hit.stableTicks)
+            continue;
         hit.hit = true;
         hit.boundaryIndex = boundaryIndex;
         hit.simulationTick = simulationTick;
@@ -475,7 +491,8 @@ bool MilestoneTracker::goalReached() const {
 }
 
 std::optional<std::string_view> MilestoneTracker::goalName() const {
-    if (!mGoalName.has_value()) return std::nullopt;
+    if (!mGoalName.has_value())
+        return std::nullopt;
     return *mGoalName;
 }
 
@@ -515,9 +532,8 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
         if (hit.hit) {
             item["boundary_index"] = hit.boundaryIndex;
             item["sim_tick"] = hit.simulationTick;
-            item["tape_frame"] = hit.tapeFrame == MilestoneNoTapeFrame
-                                      ? json(nullptr)
-                                      : json(hit.tapeFrame);
+            item["tape_frame"] =
+                hit.tapeFrame == MilestoneNoTapeFrame ? json(nullptr) : json(hit.tapeFrame);
             item["evidence"] = evidence_json(hit.evidence);
         } else {
             item["boundary_index"] = nullptr;
@@ -536,8 +552,8 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
             }},
         {"goal", tracker.goalName().has_value() ? json(*tracker.goalName()) : json(nullptr)},
         {"goal_reached", tracker.goalReached()},
-        {"program_digest", tracker.programDigest().empty() ? json(nullptr)
-                                                            : json(tracker.programDigest())},
+        {"program_digest",
+            tracker.programDigest().empty() ? json(nullptr) : json(tracker.programDigest())},
         {"milestones", std::move(milestones)},
     }
         .dump(2);

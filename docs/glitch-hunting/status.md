@@ -73,9 +73,14 @@ roadmap documents describe the larger target.
 ## Useful commands
 
 ```console
-# Build the game without code mods when not running in a VS developer shell
-cmake --preset windows-clang-debug -DDUSK_ENABLE_CODE_MODS=OFF -DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON
+# Read-only observation build without code mods
+cmake --preset windows-clang-debug -DDUSK_ENABLE_CODE_MODS=OFF \
+  -DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON \
+  -DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=OFF
 cmake --build --preset windows-clang-debug --target dusklight
+
+# Static fork/native observation-boundary guardrail
+python tests/automation_boundary_test.py
 
 # Native, game-data-free tests
 cmake --build --preset windows-clang-debug --target dusk_input_tape_test

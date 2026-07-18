@@ -35,6 +35,13 @@ not become route history until explicitly promoted.
   implementations live out of line under the fork-only automation boundary,
   are conspicuously compile-time gated, and are absent from native/upstream
   builds that do not opt into that boundary.
+- Decompiled/gameplay translation units are not query implementation sites. If
+  no stable outer sampling boundary exists, the only permitted intrusion is a
+  minimal, unmistakably `#if DUSK_ENABLE_AUTOMATION_OBSERVERS`-guarded call to
+  a fork-owned read adapter; the surrounding native statements and control
+  flow must remain unchanged when the block is preprocessed away. Runtime
+  `if`, a generic PC-port pragma, or an `IF_DUSK` branch is not an observation
+  boundary.
 - Observation adapters may copy already-realized state only. They must not call
   mutating or non-`const` gameplay helpers, trigger lazy initialization, fill a
   cache, allocate from a game heap, advance RNG, issue a fresh collision query,
@@ -267,15 +274,19 @@ all be copied into every per-frame neural observation.
 
 ### P0: schema and query foundations
 
-- [ ] Migrate the legacy milestone, reactive-controller, actor-catalog, and
-  name-entry game reads out of `m_Do_main.cpp` and into the same compile-gated
-  observer boundary. In particular, remove or replace the legacy non-`const`
-  `getRunEventName()` observation. Version any resulting proof or fingerprint
-  change explicitly; do not preserve an unsafe query merely to preserve hashes.
-- [ ] Put every native observer and query adapter in the fork-owned
-  `dusk/automation` boundary behind one unmistakable compile-time feature gate;
-  keep gameplay/decomp translation units free of query implementations.
-- [ ] Add a build/CI check that fails when observer code, friend declarations,
+- [x] Migrate the legacy milestone, reactive-controller, and actor-catalog
+  reads out of `m_Do_main.cpp` and into the compile-gated observer boundary.
+  The legacy non-`const` `getRunEventName()` observation is gone; milestone
+  result and boundary-fingerprint v2 encode its absence explicitly.
+- [ ] Move the remaining name-entry and file-select private-state capture out of
+  their gameplay translation units. Prefer a narrow compile-gated friend/read
+  adapter implemented in `dusk/automation`; leave at most a side-effect-free
+  sampling call at the native phase boundary. Do not inject convenience query
+  methods into gameplay classes.
+- [x] Put the general milestone, controller, catalog, and Trace v2 native query
+  adapters in the fork-owned `dusk/automation` boundary behind the single
+  default-off `DUSK_ENABLE_AUTOMATION_OBSERVERS` compile-time gate.
+- [x] Add a build/CI check that fails when observer code, friend declarations,
   or query-only includes leak into an ungated upstream/native configuration.
 - [ ] Maintain an access manifest for every surfaced field: declaring type,
   read expression, phase, portability, access mechanism, and side-effect audit.
@@ -297,6 +308,10 @@ all be copied into every per-frame neural observation.
 - [ ] Run observer-on versus observer-off A/B conformance over identical tapes;
   require identical canonical state hashes, RNG snapshots/counters, events,
   terminal state, and replay proof. Treat any difference as a framework bug.
+- [x] Split write-capable original-console fidelity models from read-only
+  observation behind the separate default-off
+  `DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS` gate. Search builds force it off;
+  runtime opt-in remains mandatory when it is compiled in.
 - [ ] Return immutable snapshots; never expose a live pointer over IPC.
 - [ ] Support bounded selection, filtering, sorting, nearest-K, aggregation,
   spatial predicates, and explicit truncation metadata.
@@ -362,6 +377,11 @@ all be copied into every per-frame neural observation.
 
 ### P0: collision and local geometry
 
+- [ ] Replace Trace v2's provisional nearest-`SCENE_EXIT` actor-origin distance
+  before it is used by `movement-state/v2`. Decode the realized oriented exit
+  volume and destination, report inside/signed-distance/latch/commit state, and
+  assign a stable exit identity; an actor origin kilometers from the active
+  volume is not load-zone geometry.
 - [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
   subject IDs, polygon IDs, normals, penetration, relative velocity, material,
   and begin/persist/end phase.

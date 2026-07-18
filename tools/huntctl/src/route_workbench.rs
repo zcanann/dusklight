@@ -7839,7 +7839,7 @@ continue main with boot_link.tas after root@clean
         assert_eq!(prefix.tape.frames.len(), 440);
 
         let (segment_id, expected_output) =
-            ("to_ordon_spring_q129", "d6d1ef15e2d651046734f9c5c7d49687");
+            ("to_ordon_spring_q129", "c2ea0426f6c137394d5f1f372b8c8232");
         let segment = &route.segments[segment_id];
         assert_eq!(segment.end_fingerprint, expected_output);
         let card = graph

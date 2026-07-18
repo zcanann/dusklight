@@ -12,7 +12,9 @@
 #include "JSystem/JKernel/JKRSolidHeap.h"
 #include "d/d_file_sel_info.h"
 #include "d/d_file_select.h"
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
 #include "dusk/automation/file_select_observer.hpp"
+#endif
 #include "d/d_lib.h"
 #include "d/d_meter2_info.h"
 #include "d/d_msg_string.h"
@@ -147,19 +149,23 @@ void dFs_HIO_c::genMessage(JORMContext* mctx) {
 static dFs_HIO_c g_fsHIO;
 
 dFile_select_c::dFile_select_c(JKRArchive* i_archiveP) {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setNoSavePromptReady(false);
     dusk::automation::file_select_observer().setDataSelectReady(false);
     dusk::automation::file_select_observer().setKeyWaitReady(false);
     dusk::automation::file_select_observer().setYesNoSelectReady(false);
+#endif
     mpArchive = i_archiveP;
     mpFileSelect3d = JKR_NEW dFile_select3D_c();
 }
 
 dFile_select_c::~dFile_select_c() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setNoSavePromptReady(false);
     dusk::automation::file_select_observer().setDataSelectReady(false);
     dusk::automation::file_select_observer().setKeyWaitReady(false);
     dusk::automation::file_select_observer().setYesNoSelectReady(false);
+#endif
     int i;
 
     for (i = 0; i < 3; i++) {
@@ -393,8 +399,10 @@ void dFile_select_c::_move() {
     #endif
 
     (this->*DataSelProc[mDataSelProc])();
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setYesNoSelectReady(
         mDataSelProc == DATASELPROC_YES_NO_SELECT);
+#endif
 
     selFileWakuAnm();
     bookIconAnm();
@@ -916,7 +924,9 @@ bool dFile_select_c::pointerYesNoSelect(bool errorSelect) {
 
 // handles switching between quest logs
 void dFile_select_c::dataSelect() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setDataSelectReady(true);
+#endif
 #if TARGET_PC
     if (pointerDataSelect()) {
         return;
@@ -936,7 +946,9 @@ void dFile_select_c::dataSelect() {
             mSelectNum--;
             dataSelectAnmSet();  // run the quest log selection animation
             mDataSelProc = DATASELPROC_DATA_SELECT_MOVE_ANIME;
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
             dusk::automation::file_select_observer().setDataSelectReady(false);
+#endif
         }
     } else if (stick->checkDownTrigger()) {
         // if we're not on the bottom quest log
@@ -946,7 +958,9 @@ void dFile_select_c::dataSelect() {
             mSelectNum++;
             dataSelectAnmSet();  // run the quest log selection animation
             mDataSelProc = DATASELPROC_DATA_SELECT_MOVE_ANIME;
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
             dusk::automation::file_select_observer().setDataSelectReady(false);
+#endif
         }
     }
 }
@@ -968,7 +982,9 @@ static u16 msgTbl[3] = {
 };
 
 void dFile_select_c::dataSelectStart() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setDataSelectReady(false);
+#endif
 #if TARGET_PC
     dusk::menu_pointer::clear_deferred_activation(dusk::menu_pointer::Context::FileSelect);
 #endif
@@ -4964,10 +4980,14 @@ void dFile_select_c::loadNandFile() {
 #endif
 
 void dFile_select_c::MemCardErrMsgWaitKey() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     const bool ready = dMeter2Info_getMsgKeyWaitTimer() == 0;
     dusk::automation::file_select_observer().setKeyWaitReady(ready);
     if (cAPICPad_ANY_BUTTON(PAD_1) != 0 && ready) {
         dusk::automation::file_select_observer().setKeyWaitReady(false);
+#else
+    if (cAPICPad_ANY_BUTTON(PAD_1) != 0 && dMeter2Info_getMsgKeyWaitTimer() == 0) {
+#endif
         if (mKeyWaitMsgDispCb != NULL) {
             (this->*mKeyWaitMsgDispCb)();
         }
@@ -5062,7 +5082,9 @@ void dFile_select_c::noSaveSelDispInit() {
 }
 
 void dFile_select_c::MemCardNoSaveSelDisp() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setNoSavePromptReady(false);
+#endif
     bool iVar1 = errorTxtChangeAnm();
     bool iVar3 = true;
     bool iVar2 = true;
@@ -5080,16 +5102,22 @@ void dFile_select_c::MemCardNoSaveSelDisp() {
             yesnoCursorShow();
         }
         mCardCheckProc = MEMCARDCHECKPROC_ERRMSG_WAIT_NO_SAVE_SEL;
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
         dusk::automation::file_select_observer().setNoSavePromptReady(true);
+#endif
     }
 }
 
 void dFile_select_c::MemCardErrMsgWaitNoSaveSel() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setNoSavePromptReady(true);
+#endif
     if (!errYesNoSelect()) {
         return;
     }
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::file_select_observer().setNoSavePromptReady(false);
+#endif
 
     if (field_0x0268 != 0) {
         setInitSaveData();

@@ -2352,7 +2352,9 @@ fn parse_anchored_milestones(
                 path.display()
             ))
         })?)?;
-    if native.schema.name != "dusklight.automation.milestones" || native.schema.version != 1 {
+    if native.schema.name != "dusklight.automation.milestones"
+        || !matches!(native.schema.version, 1 | 2)
+    {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),
         ));
@@ -2547,7 +2549,9 @@ fn parse_native_milestones(
                 path.display()
             ))
         })?)?;
-    if native.schema.name != "dusklight.automation.milestones" || native.schema.version != 1 {
+    if native.schema.name != "dusklight.automation.milestones"
+        || !matches!(native.schema.version, 1 | 2)
+    {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),
         ));
@@ -2677,9 +2681,12 @@ fn parse_native_milestones(
 }
 
 fn validate_fingerprint(fingerprint: &BoundaryFingerprint) -> Result<(), EvaluateError> {
-    if fingerprint.schema != "dusklight.milestone-boundary/v1"
+    let supported_contract = (fingerprint.schema == "dusklight.milestone-boundary/v1"
+        && fingerprint.canonical_encoding == "little-endian-fixed-v1")
+        || (fingerprint.schema == "dusklight.milestone-boundary/v2"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v2");
+    if !supported_contract
         || fingerprint.algorithm != "xxh3-128"
-        || fingerprint.canonical_encoding != "little-endian-fixed-v1"
         || fingerprint.digest.len() != 32
         || !fingerprint
             .digest

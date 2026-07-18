@@ -3,6 +3,7 @@ param(
     [ValidateSet(
         "all",
         "native",
+        "automation-boundary",
         "input-tape",
         "gameplay-trace",
         "input-controller",
@@ -55,7 +56,8 @@ function Initialize-NativeBuild {
     Invoke-Checked "cmake" @(
         "--preset", $Preset,
         "-DDUSK_ENABLE_CODE_MODS=OFF",
-        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON",
+        "-DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=ON"
     )
 }
 
@@ -75,6 +77,10 @@ function Invoke-NativeExecutable {
         throw "Expected test executable was not built: $executable"
     }
     Invoke-Checked $executable
+}
+
+function Invoke-AutomationBoundaryTest {
+    Invoke-Checked "python" @("tests/automation_boundary_test.py")
 }
 
 $nativeTests = [ordered]@{
@@ -137,13 +143,18 @@ Push-Location $repoRoot
 try {
     switch ($Test) {
         "all" {
+            Invoke-AutomationBoundaryTest
             Invoke-NativeTests @($nativeTests.Keys)
             Invoke-RustTests
             Invoke-RustLint
             Invoke-WorkerSmoke -Pool
         }
         "native" {
+            Invoke-AutomationBoundaryTest
             Invoke-NativeTests @($nativeTests.Keys)
+        }
+        "automation-boundary" {
+            Invoke-AutomationBoundaryTest
         }
         "rust" {
             Invoke-RustTests

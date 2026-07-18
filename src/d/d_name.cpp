@@ -10,10 +10,14 @@
 #include <cstring>
 
 #include "JSystem/J2DGraph/J2DAnmLoader.h"
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS && DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
 #include "JSystem/J2DGraph/J2DMaterial.h"
 #include "JSystem/J2DGraph/J2DScreen.h"
 #include "dusk/automation/eye_shredder_oracle.hpp"
+#endif
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
 #include "dusk/automation/name_entry_observer.hpp"
+#endif
 #include "dusk/version.hpp"
 #include "f_op/f_op_msg_mng.h"
 
@@ -136,14 +140,14 @@ dNm_HIO_c::dNm_HIO_c() {
 dName_c::dName_c(J2DPane* pane) {
     nameIn.field_0xc = pane;
     _create();
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::name_entry_observer().beginSession();
 #endif
     init();
 }
 
 dName_c::~dName_c() {
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     dusk::automation::name_entry_observer().endSession();
 #endif
     JKR_DELETE(stick);
@@ -224,7 +228,7 @@ void dName_c::init() {
     mPrevSelMenu = MENU_END;
     #endif
     mojiListChange();
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     automationObserve();
 #endif
 }
@@ -300,7 +304,7 @@ void dName_c::_move() {
     #if TARGET_PC || REGION_JPN
     if (IF_DUSK(dusk::version::isRegionJpn() &&) mDoCPd_c::getTrigX(PAD_1)) {
         if (mCurPos != 0) {
-            #if TARGET_PC
+            #if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS && DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
             if (mCurPos > 8 && dusk::automation::name_entry_observer().cursorBreakoutShadowEnabled()) {
                 dusk::automation::name_entry_observer().noteCharacterReadBlocked(mCurPos - 1);
                 mDoAud_seStart(Z2SE_SYS_ERROR, 0, 0, 0);
@@ -314,7 +318,7 @@ void dName_c::_move() {
         }
     } else {
     #endif
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS && DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
     if (automationCursorMove()) {
     } else
 #endif
@@ -389,13 +393,13 @@ void dName_c::_move() {
     #endif
 
     cursorAnm();
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     automationObserve();
     dusk::automation::name_entry_observer().markInputProcessed();
 #endif
 }
 
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS && DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
 bool dName_c::automationCursorMove() {
     auto& observer = dusk::automation::name_entry_observer();
     if (!observer.cursorBreakoutShadowEnabled()) {
@@ -430,7 +434,9 @@ bool dName_c::automationCursorMove() {
     }
     return false;
 }
+#endif
 
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
 void dName_c::automationObserve() {
     std::array<dusk::automation::NameEntryCharacterObservation,
                dusk::automation::NameEntryOriginalLayout::CharacterCount> characters;
@@ -931,13 +937,21 @@ int dName_c::getMoji() {
 #endif
 
 void dName_c::setMoji(int moji) {
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
     auto& observer = dusk::automation::name_entry_observer();
+#if DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
     const bool shadowWrite = mCurPos > 8 && observer.cursorBreakoutShadowEnabled();
+#else
+    constexpr bool shadowWrite = false;
+#endif
     const bool modeledWrite = observer.noteCharacterWrite(
         mCurPos, mCharColumn, mCharRow, mMojiSet, CHAR_TRUNC(moji),
         mCurPos < 8 || shadowWrite, shadowWrite);
 
+#if DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
+    // Explicit write-capable fidelity model. This block does not exist in
+    // ordinary observer or upstream-like builds. It reproduces the original
+    // 32-bit retail heap-adjacency consequence without a native OOB write.
     // In the fresh NTSC-U retail allocation, this exact cursor-breakout write
     // lands on material 0's color-channel count. Reproduce that relationship
     // explicitly: native allocations and pointer sizes cannot safely mirror the
@@ -970,6 +984,9 @@ void dName_c::setMoji(int moji) {
         automationObserve();
         return;
     }
+#else
+    (void)modeledWrite;
+#endif
 #endif
     if (mCurPos == 8 || nameCheck() == 8) {
         mDoAud_seStart(Z2SE_SYS_ERROR, NULL, 0, 0);
@@ -1068,7 +1085,7 @@ void dName_c::nameCursorMove() {
         }
 
         mNameCursor[position]->show();
-#if TARGET_PC
+#if TARGET_PC && DUSK_ENABLE_AUTOMATION_OBSERVERS
         dusk::automation::name_entry_observer().updateVisualCursor(position);
 #endif
     }

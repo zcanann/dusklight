@@ -9,6 +9,7 @@
       "options": [
         "all",
         "native",
+        "automation-boundary",
         "input-tape",
         "gameplay-trace",
         "input-controller",
@@ -100,7 +101,8 @@
       "args": [
         "--preset", "windows-clang-debug",
         "-DDUSK_ENABLE_CODE_MODS=OFF",
-        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON",
+        "-DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=ON"
       ],
       "problemMatcher": "$msCompile",
       "presentation": {

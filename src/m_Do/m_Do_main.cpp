@@ -63,6 +63,7 @@
 #include "dusk/android_frame_rate.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
+#include "dusk/automation/game_state_observer.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/automation/input_controller.hpp"
@@ -717,75 +718,6 @@ static std::uint64_t automationPreparedInputFrame = dusk::automation::NameEntryN
 
 namespace {
 
-constexpr std::size_t kControllerActorCapacity = 256;
-
-struct ControllerActorCapture {
-    std::array<dusk::automation::ControllerActor, kControllerActorCapacity> actors{};
-    std::size_t count = 0;
-};
-
-int capture_controller_actor(void* candidate, void* context) {
-    // fopAcIt's legacy callback ABI is mutable, but this observer only copies
-    // identity and transform fields from the completed prior game tick.
-    const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
-    auto* capture = static_cast<ControllerActorCapture*>(context);
-    const std::uint64_t stableId = static_cast<std::uint32_t>(fopAcM_GetID(actor));
-    const dusk::automation::ControllerActor snapshot{
-        .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
-        .stableId = stableId,
-        .setId = actor->setID,
-        .homeRoom = actor->home.roomNo,
-        .x = actor->current.pos.x,
-        .y = actor->current.pos.y,
-        .z = actor->current.pos.z,
-    };
-
-    if (capture->count < capture->actors.size()) {
-        capture->actors[capture->count++] = snapshot;
-        return 1;
-    }
-
-    // Bound work and storage without making the retained set depend on actor
-    // iteration order: keep the 256 smallest stable process IDs.
-    auto largest = std::max_element(
-        capture->actors.begin(), capture->actors.end(),
-        [](const auto& lhs, const auto& rhs) { return lhs.stableId < rhs.stableId; });
-    if (stableId < largest->stableId) {
-        *largest = snapshot;
-    }
-    return 1;
-}
-
-dusk::automation::ControllerObservation capture_controller_observation(
-    ControllerActorCapture& capture) {
-    dusk::automation::ControllerObservation observation;
-    if (const char* stageName = dComIfGp_getStartStageName(); stageName != nullptr) {
-        const std::size_t length = std::min(
-            std::strlen(stageName), observation.stageName.size());
-        std::copy_n(stageName, length, observation.stageName.begin());
-    }
-    if (const fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
-        observation.playerPresent = true;
-        observation.playerX = player->current.pos.x;
-        observation.playerY = player->current.pos.y;
-        observation.playerZ = player->current.pos.z;
-    }
-    if (const camera_process_class* camera = dComIfGp_getCamera(0); camera != nullptr) {
-        observation.cameraPresent = true;
-        constexpr float kAngleToRadians = 3.14159265358979323846F / 32768.0F;
-        observation.cameraYawRadians =
-            static_cast<float>(static_cast<std::int16_t>(camera->mCamera.U2())) *
-            kAngleToRadians;
-    }
-
-    fopAcIt_Executor(capture_controller_actor, &capture);
-    std::sort(capture.actors.begin(), capture.actors.begin() + capture.count,
-              [](const auto& lhs, const auto& rhs) { return lhs.stableId < rhs.stableId; });
-    observation.actors = std::span<const dusk::automation::ControllerActor>(
-        capture.actors.data(), capture.count);
-    return observation;
-}
-
 void release_controller_input() {
     PADClearAutomationStatus(0);
 }
@@ -820,6 +752,12 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
         return;
     }
 
+#if !DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // Configuration rejects this combination before the game loop. Keep the
+    // observer-off simulation path mechanically free of game-state queries.
+    assert(false && "reactive controller requires automation observers");
+    return;
+#else
     inputControllerFrameApplied = false;
     inputTapeFrameApplied = false;
     automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
@@ -833,8 +771,9 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
         inputControllerStarted = true;
     }
 
-    ControllerActorCapture capture;
-    const auto observation = capture_controller_observation(capture);
+    dusk::automation::ControllerObservationStorage observationStorage;
+    const auto observation =
+        dusk::automation::capture_controller_observation(observationStorage);
     const dusk::automation::RawPadState raw =
         inputControllerProgram.evaluate(inputControllerNextFrame, observation);
     if (!realizedInputTapePath.empty()) {
@@ -851,6 +790,7 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
         static_cast<std::uint64_t>(inputControllerPrefixFrames) + inputControllerNextFrame;
     inputControllerFrameApplied = true;
     ++inputControllerNextFrame;
+#endif
 }
 
 static bool auxiliary_live_input_enabled() {
@@ -954,66 +894,6 @@ static void record_gameplay_trace_tick() {
 }
 #endif
 
-static dusk::automation::MilestoneObservation capture_milestone_observation() {
-    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
-    const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
-    const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
-    const dEvt_control_c* event = dComIfGp_getEvent();
-    const char* eventName = dComIfGp_getEventManager().getRunEventName();
-    std::uint32_t eventNameHash = 0;
-    if (eventName != nullptr) {
-        eventNameHash = 2166136261u;
-        for (const unsigned char* cursor = reinterpret_cast<const unsigned char*>(eventName);
-             *cursor != 0; ++cursor) {
-            eventNameHash = (eventNameHash ^ *cursor) * 16777619u;
-        }
-    }
-    return {
-            .stageName = dComIfGp_getStartStageName(),
-            .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
-            .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
-            .point = dComIfGp_getStartStagePoint(),
-            .playerPresent = player != nullptr,
-            .playerIsLink = playerIsLink,
-            .playerProcessId = player == nullptr ? fpcM_ERROR_PROCESS_ID_e : fopAcM_GetID(player),
-            .playerActorName = static_cast<std::int16_t>(
-                player == nullptr ? -1 : fopAcM_GetName(player)),
-            .playerProcId =
-                static_cast<std::uint16_t>(link == nullptr ? 0xffff : link->mProcID),
-            .playerPositionX = player == nullptr ? 0.0f : player->current.pos.x,
-            .playerPositionY = player == nullptr ? 0.0f : player->current.pos.y,
-            .playerPositionZ = player == nullptr ? 0.0f : player->current.pos.z,
-            .playerVelocityX = player == nullptr ? 0.0f : player->speed.x,
-            .playerVelocityY = player == nullptr ? 0.0f : player->speed.y,
-            .playerVelocityZ = player == nullptr ? 0.0f : player->speed.z,
-            .playerForwardSpeed = player == nullptr ? 0.0f : player->speedF,
-            .playerCurrentAngleX =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.x),
-            .playerCurrentAngleY =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.y),
-            .playerCurrentAngleZ =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->current.angle.z),
-            .playerShapeAngleX =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.x),
-            .playerShapeAngleY =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.y),
-            .playerShapeAngleZ =
-                static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.z),
-            .eventRunning = dComIfGp_event_runCheck() != 0,
-            .eventId = event->mEventId,
-            .eventMode = event->getMode(),
-            .eventStatus = event->mEventStatus,
-            .eventMapToolId = event->getMapToolId(),
-            .eventNameHash = eventNameHash,
-            .nextStageEnabled = dComIfGp_isEnableNextStage() != 0,
-            .nextStageName = dComIfGp_getNextStageName(),
-            .nextRoom = static_cast<std::int8_t>(dComIfGp_getNextStageRoomNo()),
-            .nextLayer = static_cast<std::int8_t>(dComIfGp_getNextStageLayer()),
-            .nextPoint = dComIfGp_getNextStagePoint(),
-            .rng = dusk::automation::capture_game_rng_snapshot(),
-    };
-}
-
 static bool record_milestone_boundary(const dusk::automation::MilestoneProgramPhase phase,
     const dusk::automation::MilestoneBoundaryKind kind, const std::uint64_t boundaryIndex,
     const std::uint64_t tapeFrame) {
@@ -1025,7 +905,7 @@ static bool record_milestone_boundary(const dusk::automation::MilestoneProgramPh
     // game observation.
     const auto observation = kind == dusk::automation::MilestoneBoundaryKind::Boot
                                  ? dusk::automation::MilestoneObservation{}
-                                 : capture_milestone_observation();
+                                 : dusk::automation::capture_milestone_observation();
     tracker.observeBoundary(observation, phase, kind, boundaryIndex, automationSimulationTick,
         tapeFrame);
     if (!goalReachedBefore && tracker.goalReached()) {
@@ -1121,18 +1001,8 @@ static bool finish_automation_oracle_tick() {
 
     eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
                                automationSimulationTick, automationTapeFrame);
-    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
     eyeShredderOracle.observeGameplayTelemetry(
-        {
-            .stageName = dComIfGp_getStartStageName(),
-            .room = dComIfGp_getStartStageRoomNo(),
-            .point = dComIfGp_getStartStagePoint(),
-            .layer = dComIfGp_getStartStageLayer(),
-            .playerActorName = player == nullptr ? -1 : fopAcM_GetName(player),
-            .playerActorPresent = player != nullptr,
-            .playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e,
-            .eventRunning = dComIfGp_event_runCheck() != 0,
-        },
+        dusk::automation::capture_eye_shredder_gameplay_telemetry(),
         automationSimulationTick, automationTapeFrame);
     ++automationSimulationTick;
     if (milestoneGoalReached) {
@@ -2052,6 +1922,18 @@ int game_main(int argc, char* argv[]) {
 
     const bool cursorBreakoutShadow = parsed_arg_options["cursor-breakout-shadow"].as<bool>();
     const bool hasNameEntryTrace = parsed_arg_options.count("name-entry-trace") != 0;
+    if (hasNameEntryTrace && !dusk::automation::game_state_observers_enabled()) {
+        fprintf(stderr,
+                "Name Entry Error: this build has fork-only game-state observers disabled\n");
+        return 1;
+    }
+#if !DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
+    if (cursorBreakoutShadow) {
+        fprintf(stderr,
+                "Name Entry Error: this build has write-capable automation fidelity models disabled\n");
+        return 1;
+    }
+#endif
     if (cursorBreakoutShadow && !hasNameEntryTrace) {
         fprintf(stderr,
                 "Name Entry Error: --cursor-breakout-shadow requires --name-entry-trace PATH\n");
@@ -2117,6 +1999,15 @@ int game_main(int argc, char* argv[]) {
     const bool hasRecordStartFingerprint =
         parsed_arg_options.count("record-input-start-fingerprint") != 0;
     const bool hasActorCatalog = parsed_arg_options.count("actor-catalog") != 0;
+    const bool hasMilestoneObservation =
+        parsed_arg_options.count("milestones") != 0 ||
+        parsed_arg_options.count("milestone-program") != 0;
+    if (!dusk::automation::game_state_observers_enabled() &&
+        (hasInputController || hasActorCatalog || hasMilestoneObservation)) {
+        fprintf(stderr,
+                "Automation Observer Error: this build has fork-only game-state observers disabled\n");
+        return 1;
+    }
     exitAfterInputTape = parsed_arg_options["exit-after-tape"].as<bool>();
     exitAfterInputController =
         parsed_arg_options["exit-after-controller"].as<bool>();
@@ -2648,6 +2539,11 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     if (hasAutomationOracle) {
+        if (!dusk::automation::game_state_observers_enabled()) {
+            fprintf(stderr,
+                    "Automation Oracle Error: this build has fork-only game-state observers disabled\n");
+            return 1;
+        }
         if (hasRecordInputTape) {
             fprintf(stderr,
                     "Input Recording Error: --record-input-tape cannot be combined with an automation oracle\n");

@@ -67,7 +67,7 @@ function Read-NativeMilestones([string]$Path) {
     }
     $result = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
     if ($result.schema.name -ne "dusklight.automation.milestones" -or
-        [int]$result.schema.version -ne 1) {
+        [int]$result.schema.version -notin @(1, 2)) {
         throw "unsupported native milestone schema"
     }
     $hits = @{}

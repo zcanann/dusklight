@@ -1,5 +1,7 @@
 #include "dusk/automation/actor_catalog.hpp"
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+
 #include "dusk/automation/build_identity.hpp"
 
 #include "d/d_com_inf_game.h"
@@ -169,3 +171,16 @@ bool write_actor_catalog(
 }
 
 }  // namespace dusk::automation
+
+#else
+
+namespace dusk::automation {
+
+bool write_actor_catalog(const std::filesystem::path&, const std::uint64_t, std::string& error) {
+    error = "fork-only automation observers are disabled in this build";
+    return false;
+}
+
+}  // namespace dusk::automation
+
+#endif

@@ -142,7 +142,7 @@ if (Test-Path -LiteralPath $milestonePath -PathType Leaf) {
     try {
         $milestoneResult = Get-Content -Raw -LiteralPath $milestonePath | ConvertFrom-Json
         if ($milestoneResult.schema.name -ne "dusklight.automation.milestones" -or
-            [int]$milestoneResult.schema.version -ne 1) {
+            [int]$milestoneResult.schema.version -notin @(1, 2)) {
             throw "Unsupported native milestone result schema."
         }
     } catch {

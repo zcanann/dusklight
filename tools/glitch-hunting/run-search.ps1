@@ -91,7 +91,8 @@ try {
         Invoke-Checked "cmake" @(
             "--preset", $Preset,
             "-DDUSK_ENABLE_CODE_MODS=OFF",
-            "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
+            "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON",
+            "-DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=OFF"
         )
         Invoke-Checked "cmake" @(
             "--build", "--preset", $Preset,
