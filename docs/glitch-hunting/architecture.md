@@ -55,6 +55,16 @@ promote a model, and it is never a per-frame dependency. Returned bytes are
 sealed as a candidate-only result bound to the exact request and producer;
 native evaluation and replay remain Rust-owned promotion gates.
 
+Accepted dense candidates can use `dusklight-frozen-inference/v1`, a bounded
+little-endian Rust/C++ interchange format. Its fixed header carries the format
+version plus feature, action, and objective digests; the body carries sorted
+action IDs and row-major dense layers with only linear or ReLU activation.
+Readers reject unknown versions, nonzero reserved bytes, trailing data,
+non-finite parameters, detached parameter counts, malformed output width, and
+models above 16 layers, 4,096 values per tensor, or 16 million parameters. Rust
+exposes batch-only inference (at most 8,192 rows); process placement remains a
+separate measured decision rather than becoming part of the game tick.
+
 ### C++ worker
 
 - owns the game process and calls the game loop directly;

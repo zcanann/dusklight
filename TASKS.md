@@ -880,7 +880,7 @@ simple random baseline.
 - [x] Keep worker orchestration, corpora, scheduling, and promotion in Rust.
 - [x] Permit Python/PyTorch as an offline trainer between generations; it is not
   a per-frame or process-orchestration dependency.
-- [ ] Export inference artifacts through ONNX or another frozen, versioned format
+- [x] Export inference artifacts through ONNX or another frozen, versioned format
   for Rust/C++ batch inference.
 - [ ] Compare inference in Rust versus native worker only after measuring IPC and
   batching costs; do not put a network in the game tick by default.
