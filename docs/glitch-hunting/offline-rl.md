@@ -703,7 +703,17 @@ When a fitted model is available, `online-model-lineage.json` binds its
 serialized bytes to the dataset-generation digest, exact FQI configuration,
 model schema, and previous model/lineage digests. The same immutable inputs must
 reproduce the same model lineage; a changed dataset, config, or model fails the
-resume check. `q-proposals.json` uses schema v6 and embeds both identities.
+resume check. `q-proposals.json` embeds both identities.
+
+Learned lanes additionally require `dusklight-online-coverage-gate/v1` to pass.
+The default gate requires at least four effective decisions spanning four
+semantic state bins, with at least two actions supported by two or more
+decisions each. If action support, state coverage, or both are inadequate, no Q
+model is fitted and exploit/disagreement receive zero budget. Their budget is
+rotated across structured counterfactual, archive-novelty, and blind-coverage
+fallbacks instead. The v7 proposal report records the measured counts, limits,
+fallback reason and policy, so sparse data cannot silently produce a learned
+proposal claim.
 
 The generation-local `q-proposals.json` reports requested, available, and
 generated counts per proposer, the generation's cycle offset and actual lane
