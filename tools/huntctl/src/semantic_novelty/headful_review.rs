@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 pub const HEADFUL_REPLAY_REQUEST_SCHEMA: &str = "dusklight-headful-replay-request/v1";
 pub const HUMAN_CLASSIFICATION_REQUEST_SCHEMA: &str = "dusklight-human-classification-request/v1";
+pub const MAX_PENDING_HEADFUL_REVIEWS: usize = 1_024;
+pub const MAX_REVIEWED_ARTIFACTS: usize = 65_536;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadfulReviewPolicy {
@@ -34,6 +36,7 @@ pub struct PromisingHeadlessDiscovery {
     pub artifact_identity: String,
     pub tape_identity: String,
     pub tape_path: PathBuf,
+    pub replay_boundary_identity: String,
     pub outcome: DiscoveryOutcomeKind,
     pub quality: DiscoveryRetentionQuality,
     pub proposal_signal: SemanticNoveltyProposalSignal,
@@ -55,6 +58,7 @@ pub struct HeadfulReplayRequest {
     pub artifact_identity: String,
     pub tape_identity: String,
     pub tape_path: PathBuf,
+    pub replay_boundary_identity: String,
     pub outcome: DiscoveryOutcomeKind,
     pub capture: TerminalCapturePlan,
 }
@@ -120,6 +124,7 @@ pub enum HeadfulEnqueueDecision {
     BelowSignalThreshold,
     UnsupportedEvidence,
     AlreadyQueued,
+    QueueAtCapacity,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -149,6 +154,10 @@ impl HeadfulReviewQueue {
         validate_sha256("artifact identity", &discovery.artifact_identity)?;
         validate_sha256("tape identity", &discovery.tape_identity)?;
         validate_sha256(
+            "source replay boundary identity",
+            &discovery.replay_boundary_identity,
+        )?;
+        validate_sha256(
             "target headful fidelity identity",
             &target_headful_fidelity_identity,
         )?;
@@ -166,6 +175,11 @@ impl HeadfulReviewQueue {
         if self.queued_artifacts.contains(&discovery.artifact_identity) {
             return Ok(HeadfulEnqueueDecision::AlreadyQueued);
         }
+        if self.pending.len() >= MAX_PENDING_HEADFUL_REVIEWS
+            || self.queued_artifacts.len() >= MAX_REVIEWED_ARTIFACTS
+        {
+            return Ok(HeadfulEnqueueDecision::QueueAtCapacity);
+        }
         let target_partition = DiscoveryArchivePartitionKey {
             scenario_name: discovery.partition.scenario_name.clone(),
             scenario_identity: discovery.partition.scenario_identity.clone(),
@@ -176,6 +190,7 @@ impl HeadfulReviewQueue {
         let request_identity = replay_request_identity(
             &discovery.artifact_identity,
             &discovery.tape_identity,
+            &discovery.replay_boundary_identity,
             &target_partition,
             &capture,
         );
@@ -187,6 +202,7 @@ impl HeadfulReviewQueue {
             artifact_identity: discovery.artifact_identity.clone(),
             tape_identity: discovery.tape_identity,
             tape_path: discovery.tape_path,
+            replay_boundary_identity: discovery.replay_boundary_identity,
             outcome: discovery.outcome,
             capture,
         };
@@ -209,8 +225,19 @@ impl HeadfulReviewQueue {
             "headful replay boundary identity",
             &evidence.replay_boundary_identity,
         )?;
+        if evidence.replay_boundary_identity != request.replay_boundary_identity {
+            return Err(HeadfulReviewError(
+                "headful replay changed the source replay boundary".into(),
+            ));
+        }
+        let mut attachment_kinds = BTreeSet::new();
         for attachment in &evidence.attachments {
             validate_attachment(attachment)?;
+            if !attachment_kinds.insert(attachment.kind) {
+                return Err(HeadfulReviewError(
+                    "headful replay contains a duplicate attachment kind".into(),
+                ));
+            }
         }
         evidence
             .attachments
@@ -277,10 +304,11 @@ fn capture_plan(outcome: &DiscoveryOutcomeKind) -> TerminalCapturePlan {
 fn replay_request_identity(
     artifact: &str,
     tape: &str,
+    replay_boundary: &str,
     target: &DiscoveryArchivePartitionKey,
     capture: &TerminalCapturePlan,
 ) -> String {
-    let encoded = serde_json::to_vec(&(artifact, tape, target, capture))
+    let encoded = serde_json::to_vec(&(artifact, tape, replay_boundary, target, capture))
         .expect("headful replay request identity is serializable");
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight-headful-replay-request/v1\0");
@@ -291,8 +319,12 @@ fn replay_request_identity(
 
 fn validate_attachment(attachment: &ReviewAttachment) -> Result<(), HeadfulReviewError> {
     validate_sha256("review attachment", &attachment.sha256)?;
+    let expected_media_type = match attachment.kind {
+        ReviewAttachmentKind::TerminalThumbnailPng => "image/png",
+        ReviewAttachmentKind::ShortVideo => "video/mp4",
+    };
     if attachment.size == 0
-        || attachment.media_type.trim().is_empty()
+        || attachment.media_type != expected_media_type
         || attachment.relative_path.as_os_str().is_empty()
         || attachment.relative_path.is_absolute()
         || attachment
@@ -351,6 +383,7 @@ mod tests {
             artifact_identity: "33".repeat(32),
             tape_identity: "44".repeat(32),
             tape_path: PathBuf::from("artifacts/candidate.tape"),
+            replay_boundary_identity: "77".repeat(32),
             outcome,
             quality: DiscoveryRetentionQuality {
                 evidence_rank: 2,
