@@ -276,7 +276,7 @@ prove the public harness boundary before any deferred research is reactivated.
 
 ## Immediate implementation order
 
-1. [ ] Write the objective-suite schema and stage-ready/reach-point fixtures.
+1. [x] Write the objective-suite schema and stage-ready/reach-point fixtures.
 2. [ ] Close the minimum interaction and carried-object query facts.
 3. [ ] Add talk-to-NPC and pick-up-object fixtures with negative controls.
 4. [ ] Unify their execution under the run request/result and episode artifact.
