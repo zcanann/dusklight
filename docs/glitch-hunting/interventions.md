@@ -26,15 +26,16 @@ The intervention format should be a compact canonical binary such as
 `DUSKINTR`, compiled from a readable timeline DSL. It must not overload
 controller fields or emit a supposedly realized input tape that omits writes.
 
-`intervention` implements `DUSKINTR` v1.0 as a 32-byte header followed by
+`intervention` implements `DUSKINTR` v1.1 as a 32-byte header followed by
 canonical fixed-size records. The decoder re-encodes and rejects any reserved,
 trailing, out-of-order, or otherwise noncanonical bytes. It is capped at 1,024
 writes and one million ticks and has magic distinct from both `DUSKTAPE` and
-`DUSKCTRL`. The initial readable DSL is line-oriented and requires an explicit
-timeline, tick range, `before_game_tick` phase, exact process or placed actor
-selector, `actor_exists` precondition, and typed operation. Comments and source
-line order do not affect canonical bytes; source size and line count are
-bounded before parsing.
+`DUSKCTRL`. The readable DSL is line-oriented and requires an explicit timeline,
+tick range, `before_game_tick` phase, exact process or placed actor selector,
+typed existence precondition, and typed operation. Comments and source line
+order do not affect canonical bytes; source size and line count are bounded
+before parsing. The decoder retains v1.0 support and rejects v1.1 operations in
+artifacts that claim the older version.
 
 ## Gating
 
@@ -61,19 +62,29 @@ completion. A normal build cannot admit the same request.
 
 ## Typed operations before raw memory
 
-Start with operations whose semantics and simulation phase can be stated:
+The initial catalog contains only operations whose semantics and simulation
+phase can be stated:
 
-- set or add actor position at a pre-simulation boundary;
-- set or add linear velocity;
-- set facing toward a coordinate or actor;
-- move an actor along a bounded curve; and
-- establish supported actor-specific intent, such as targeting Link, only when
-  the actor implementation provides a typed field or method.
+- set or add actor position and linear velocity;
+- set the signed facing yaw;
+- move an actor along a four-control-point cubic curve;
+- enable or disable the typed target-player intent;
+- set bounded health or one of the named damage, ice-damage, and sword-change
+  timers;
+- set a bounded actor-status, room-switch, or event-bit flag; and
+- spawn a placed actor at a bounded position or despawn an existing actor.
 
-Every operation uses the same actor selectors as reactive controllers: exact
-runtime process, placed identity, or an explicit query. It records the resolved
-process ID and the value before the write. Target loss is a terminal or declared
-no-op result, never an implicit switch to the nearest actor.
+Position, velocity, curve, and spawn components must be finite and within the
+declared ±10,000,000 game-unit component bound. Health is limited to 0 through
+1,000, timers to 3,600 ticks, actor-status flags to 32 bits, and room/event
+indices to 4,096. Curves require at least two ticks. Spawn alone requires
+`actor_absent` and a placed selector; every other operation requires
+`actor_exists`.
+
+Every operation uses the exact runtime-process or placed-identity selector
+forms shared with reactive controllers. It records the resolved process ID and
+the value before the write. Target loss is a terminal or declared no-op result,
+never an implicit switch to the nearest actor.
 
 Arbitrary address writes should remain a later, separately named unsafe lab
 capability. They are difficult to replay across builds and make causal claims

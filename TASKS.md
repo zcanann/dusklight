@@ -954,7 +954,7 @@ uninspectable random tapes.
   from controller tapes.
 - [x] Require compile-time feature, runtime opt-in, fidelity flag, exact phase,
   preconditions, and an always-on before/write/after audit.
-- [ ] Begin with typed position, velocity, facing, bounded curve, target/intent,
+- [x] Begin with typed position, velocity, facing, bounded curve, target/intent,
   health, timer, flag, and spawn/despawn experiments only where semantics are
   understood.
 - [ ] Reuse exact stable selectors; reject target loss and overlapping writes.

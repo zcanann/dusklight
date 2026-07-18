@@ -122,9 +122,13 @@ roadmap documents describe the larger target.
 - Open-question campaigns v1 ask bounded, partitioned questions about unseen
   procedure/contact pairs and collision/contact changes without semantic scene
   transitions, retaining raw findings as proposal-only evidence.
-- Canonical `DUSKINTR` v1.0 is a separately magic-numbered, fixed-record
+- Canonical `DUSKINTR` v1.1 is a separately magic-numbered, fixed-record
   experimental timeline with a bounded readable DSL. It cannot be decoded or
   represented as controller/input tape data, and noncanonical bytes are rejected.
+- Its typed catalog covers bounded position/velocity changes, signed facing,
+  cubic motion, target-player intent, health, named timers, typed flag domains,
+  and placed-actor spawn or existing-actor despawn. Each operation validates
+  its semantic bounds and required actor-existence precondition.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.
