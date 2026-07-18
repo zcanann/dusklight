@@ -882,7 +882,7 @@ simple random baseline.
   a per-frame or process-orchestration dependency.
 - [x] Export inference artifacts through ONNX or another frozen, versioned format
   for Rust/C++ batch inference.
-- [ ] Compare inference in Rust versus native worker only after measuring IPC and
+- [x] Compare inference in Rust versus native worker only after measuring IPC and
   batching costs; do not put a network in the game tick by default.
 - [ ] Hash feature schema, action schema, objective, normalization, code/data
   build, corpus manifest, seed, optimizer, and model bytes.

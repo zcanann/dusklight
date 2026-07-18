@@ -65,6 +65,14 @@ models above 16 layers, 4,096 values per tensor, or 16 million parameters. Rust
 exposes batch-only inference (at most 8,192 rows); process placement remains a
 separate measured decision rather than becoming part of the game tick.
 
+`dusklight-inference-placement-report/v1` makes that decision fail closed. It
+requires the same frozen model and benchmark corpus to be timed in the Rust
+control plane and native worker at three or more batch sizes, with equal
+repetition counts. Native timings must include serialization and IPC round-trip
+cost, and placement uses end-to-end p95 nanoseconds per row rather than kernel
+time alone. Even a native win produces only a batch-placement candidate: the
+report always denies per-tick inference and carries no promotion authority.
+
 ### C++ worker
 
 - owns the game process and calls the game loop directly;
