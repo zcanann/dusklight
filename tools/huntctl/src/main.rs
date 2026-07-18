@@ -16,6 +16,7 @@ use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
+use huntctl::learning::batch::load_fqi_batch;
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
@@ -680,83 +681,6 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
 }
 
-struct LoadedFqiBatch {
-    feature_schema: Digest,
-    action_schema: Digest,
-    feature_count: usize,
-    transitions: Vec<FqiTransition>,
-    episode_groups: Vec<u64>,
-    corpus_digests: Vec<Digest>,
-}
-
-fn load_fqi_batch(paths: &[String], label: &str) -> Result<LoadedFqiBatch, Box<dyn Error>> {
-    if paths.is_empty() || paths.len() > MAX_LEARN_INPUT_CORPORA {
-        return Err(
-            format!("{label} requires 1..={MAX_LEARN_INPUT_CORPORA} transition corpora").into(),
-        );
-    }
-    let mut feature_schema = None;
-    let mut action_schema = None;
-    let mut feature_count = None;
-    let mut transitions = Vec::new();
-    let mut episode_groups = Vec::new();
-    let mut corpus_digests = Vec::new();
-    let mut next_episode_group = 0_u64;
-    for path in paths {
-        let corpus = TransitionCorpus::read_zstd_file(path)?;
-        corpus_digests.push(corpus.content_digest()?);
-        if feature_schema.is_some_and(|value| value != corpus.feature_schema)
-            || action_schema.is_some_and(|value| value != corpus.action_schema)
-            || feature_count.is_some_and(|value| value != corpus.feature_count)
-        {
-            return Err(format!("{label} corpora use incompatible schemas").into());
-        }
-        feature_schema = Some(corpus.feature_schema);
-        action_schema = Some(corpus.action_schema);
-        feature_count = Some(corpus.feature_count);
-        if transitions
-            .len()
-            .checked_add(corpus.transitions.len())
-            .is_none_or(|count| count > MAX_FQI_TRANSITIONS)
-        {
-            return Err(format!("{label} exceeds {MAX_FQI_TRANSITIONS} merged transitions").into());
-        }
-        let mut ended_terminal = false;
-        for transition in corpus.transitions {
-            let terminal = transition.terminal;
-            transitions.push(FqiTransition {
-                state: transition.state,
-                action: transition.action.action_id,
-                duration: transition.duration_ticks,
-                reward: transition.reward,
-                next_state: transition.next_state,
-                terminal,
-            });
-            episode_groups.push(next_episode_group);
-            ended_terminal = terminal;
-            if terminal {
-                next_episode_group = next_episode_group
-                    .checked_add(1)
-                    .ok_or_else(|| format!("{label} episode-group count overflowed"))?;
-            }
-        }
-        if !ended_terminal {
-            next_episode_group = next_episode_group
-                .checked_add(1)
-                .ok_or_else(|| format!("{label} episode-group count overflowed"))?;
-        }
-    }
-    Ok(LoadedFqiBatch {
-        feature_schema: feature_schema.ok_or_else(|| format!("{label} has no feature schema"))?,
-        action_schema: action_schema.ok_or_else(|| format!("{label} has no action schema"))?,
-        feature_count: feature_count.ok_or_else(|| format!("{label} has no feature width"))?
-            as usize,
-        transitions,
-        episode_groups,
-        corpus_digests,
-    })
-}
-
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");
     let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
@@ -781,7 +705,7 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     } else {
         direct_inputs
     };
-    let training = load_fqi_batch(&inputs, "CQL training")?;
+    let training = load_fqi_batch(&inputs, "CQL training", MAX_LEARN_INPUT_CORPORA)?;
     let expected_corpus_digests = dataset_manifest.as_ref().map(|manifest| {
         manifest
             .entries
@@ -1506,8 +1430,16 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             if !training_files.is_disjoint(&held_out_files) {
                 return Err("training and held-out calibration files overlap".into());
             }
-            let training = load_fqi_batch(&training_paths, "calibration training")?;
-            let held_out = load_fqi_batch(&held_out_paths, "calibration held-out")?;
+            let training = load_fqi_batch(
+                &training_paths,
+                "calibration training",
+                MAX_LEARN_INPUT_CORPORA,
+            )?;
+            let held_out = load_fqi_batch(
+                &held_out_paths,
+                "calibration held-out",
+                MAX_LEARN_INPUT_CORPORA,
+            )?;
             if expected_dataset_corpus_digests.as_ref().is_some_and(
                 |(expected_training, expected_held_out)| {
                     expected_training != &training.corpus_digests
@@ -1670,7 +1602,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             } else {
                 direct_inputs
             };
-            let training = load_fqi_batch(&inputs, "Double-Q training")?;
+            let training = load_fqi_batch(&inputs, "Double-Q training", MAX_LEARN_INPUT_CORPORA)?;
             let expected_corpus_digests = dataset_manifest.as_ref().map(|manifest| {
                 manifest
                     .entries

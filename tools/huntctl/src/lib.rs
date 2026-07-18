@@ -4,7 +4,6 @@ pub mod action_guidance;
 pub mod artifact;
 pub mod bayesian_search;
 pub mod behavior_archive;
-pub mod calibration;
 pub mod client;
 pub mod comparison_oracle;
 pub mod compatibility;
@@ -14,26 +13,19 @@ pub mod controller_compilation;
 pub mod controller_program;
 pub mod corpus;
 pub mod corpus_ops;
-pub mod dataset;
-pub mod double_q;
 pub mod episode;
-pub mod fqi;
 pub mod game_tactic;
-pub mod iql;
-pub mod low_data_baselines;
+pub mod learning;
 pub mod milestone_dsl;
 pub mod motion_path;
 pub mod motion_path_golf;
 pub mod observation_view;
-pub mod offline_rl;
 pub mod option_diagnostics;
 pub mod option_execution;
 pub mod option_golf;
 pub mod oracle_pipeline;
 pub mod pool;
 pub mod protocol;
-pub mod q_search;
-pub mod reward_shaping;
 pub mod roll_option;
 pub mod route_store;
 pub mod route_workbench;
@@ -56,6 +48,13 @@ pub mod transport;
 pub mod world_geometry;
 pub mod world_inventory;
 pub mod world_spatial;
+
+// Compatibility re-exports keep existing callers stable while the physical
+// source tree migrates to domain folders.
+pub use learning::{
+    calibration, dataset, double_q, fqi, iql, low_data_baselines, offline_rl, q_search,
+    reward_shaping,
+};
 
 pub use artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};
 pub use client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, ClientError, WorkerClient};
