@@ -13,6 +13,7 @@ pub mod controller_compilation;
 pub mod controller_program;
 pub mod corpus;
 pub mod corpus_ops;
+pub mod discovery_archive;
 pub mod episode;
 pub mod game_tactic;
 pub mod learning;
