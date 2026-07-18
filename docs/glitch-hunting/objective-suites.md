@@ -77,7 +77,13 @@ whose compiled frames are all neutral, a stable three-tick `stage_ready`
 objective, and a minimal authenticated observation view. The suite validator
 authenticates and compiles all of those inputs.
 
-The reach-point, talk-to-NPC, negative-control, and pick-up-object cases do not
-exist yet, and `huntctl` does not yet execute an entire suite. Those are
-separate active tasks so authored-contract validation is not mistaken for
-native conformance evidence.
+The second case starts from an `F_SP104` point-0 fixture and binds a 799-tick
+authored movement seed to the documented Ordon ranch region near
+`(-1600, 200, -9050)`. Its semantic objective requires Link to remain inside a
+bounded AABB for five post-simulation ticks, and its observation view retains
+the stage, player identity, and exact position features used by that contract.
+
+The talk-to-NPC, negative-control, and pick-up-object cases do not exist yet,
+and `huntctl` does not yet execute an entire suite. Those are separate active
+tasks so authored-contract validation is not mistaken for native conformance
+evidence.

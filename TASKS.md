@@ -34,7 +34,7 @@ tests. Ambitious research and exhaustive coverage live in
   controller/tape seed, time budget, and expected terminal class.
 - [x] Check in a **stage-ready** case that boots directly into a map and proves
   the declared player/location readiness condition without controller input.
-- [ ] Check in a **reach-point** case that moves Link into a bounded region and
+- [x] Check in a **reach-point** case that moves Link into a bounded region and
   proves position plus stability for several logical ticks.
 - [ ] Check in a **talk-to-NPC** case that selects one placed NPC, approaches it,
   presses the interaction input, and proves the expected event/dialogue edge.

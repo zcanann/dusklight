@@ -14,7 +14,9 @@ roadmap documents describe the larger target.
   authored TAS, tape, or controller formats. The first checked case binds a
   direct `F_SP103` stage boot to a 30-tick neutral TAS program, stable readiness
   objective, scenario, and minimal observation view. Suite execution and the
-  other cheap objective cases remain open work.
+  interaction/object cases remain open work. A second authored case binds a
+  direct `F_SP104` boot and movement seed to a stable five-tick Ordon ranch AABB
+  objective with a position-bearing observation view.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific
