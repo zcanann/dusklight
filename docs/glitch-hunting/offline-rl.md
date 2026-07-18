@@ -161,6 +161,26 @@ regret remain separate diagnostics instead of being silently counted as wins
 or losses. These numbers evaluate ranking quality but never replace a native
 predicate hit or cold-replay proof.
 
+### Fixed masked representation baseline
+
+`learning/model_representation.rs` defines the first bounded input layout for
+larger value and policy models. It is fitted only from the exact training-state
+set described by `dusklight-normalization/v1`; continuous fields use those
+training-only means and standard deviations, while categorical fields use
+bounded deterministic embedding tables with an explicit unknown category.
+Every output value has a parallel missingness bit derived from the authenticated
+`movement-state/v2` mask policy.
+
+The same fixed-width tensor appends the 64-value compiled objective vector, four
+nearest semantic actor slots, and four nearest local geometry probes. Actor and
+surface ordering is distance-first with stable identity tie-breaks, positions
+are player-local and normalized, absent slots are zero-masked, and channel/query
+availability remains explicit. Geometry probes are derived from authenticated
+world point-query results rather than copying an inventory or BVH into each
+sample. The complete normalization, category tables, widths, and ordering rules
+produce one representation digest; reordered source actors/surfaces encode to
+the same tensor.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
@@ -601,18 +621,6 @@ huntctl learn extract-trace `
 The v1 bridge and digest remain unchanged for old corpora. Q search is not
 silently migrated: a v2 corpus is a distinct authenticated feature space, and
 the learner derives its categorical map from the matching specification.
-
-`learning::model_representation` defines the first fixed neural-model baseline
-without expanding the observation boundary. It fits continuous normalization
-from the exact training-state count, maps schema-declared categories to bounded
-deterministic embedding initializers with an unknown bucket, and emits a
-parallel presence mask for every value. The fixed vector then appends the
-authenticated compiled-objective vector, four nearest selected actors in
-player-local coordinates, and four nearest local-geometry probes supplied by
-the spatial service. Actor and surface ordering is distance/stable-ID
-deterministic; missing slots are zeroed and masked. The representation digest
-binds the observation schema, normalization, category vocabulary, embedding
-layout, and all fixed widths.
 
 Anchored native farming retains a gameplay trace for the first proof repetition
 of every candidate. After milestone validation, the evaluator automatically
