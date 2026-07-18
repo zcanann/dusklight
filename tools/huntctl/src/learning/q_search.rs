@@ -22,6 +22,7 @@ use std::error::Error;
 use std::fmt;
 
 const MAX_PROPOSAL_STATES: usize = 4096;
+const MAX_TRAINING_HEALTH_STATES: usize = 4096;
 const EXPLORATION_WEIGHT: f64 = 1.5;
 const UNMASKED_Q_PROBE_INTERVAL: usize = 4;
 
@@ -251,18 +252,28 @@ pub fn propose_q_candidates(
     let training_health = model
         .as_ref()
         .map(|model| {
+            let health_stride = transitions
+                .len()
+                .div_ceil(MAX_TRAINING_HEALTH_STATES)
+                .max(1);
             let snapshots = transitions
                 .iter()
+                .step_by(health_stride)
                 .map(|transition| {
-                    let estimate = model
-                        .estimate(&transition.state, transition.action)
-                        .map_err(|error| QSearchError::new(error.to_string()))?;
-                    Ok(CriticSnapshot {
-                        primary: estimate.mean,
-                        secondary: estimate.mean + estimate.variance.max(0.0).sqrt(),
-                    })
+                    model
+                        .rank_actions(&transition.state)
+                        .map_err(|error| QSearchError::new(error.to_string()))
+                        .map(|estimates| {
+                            estimates.into_iter().map(|estimate| CriticSnapshot {
+                                primary: estimate.mean,
+                                secondary: estimate.mean + estimate.variance.max(0.0).sqrt(),
+                            })
+                        })
                 })
-                .collect::<Result<Vec<_>, QSearchError>>()?;
+                .collect::<Result<Vec<_>, QSearchError>>()?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
             let updates = u64::try_from(transitions.len())
                 .ok()
                 .and_then(|rows| rows.checked_mul(config.iterations as u64))
