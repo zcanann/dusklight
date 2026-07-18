@@ -6,6 +6,7 @@
 
 pub mod archive;
 pub mod catalog;
+pub mod clustering;
 pub mod proposal_signal;
 
 use crate::trace::{
