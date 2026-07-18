@@ -286,6 +286,13 @@ the region's required catalog. Every low-support region remains in the report
 with its exact insufficient action IDs even when a configured ratio would let
 the broader gate pass.
 
+`dusklight-rl-comparison-readiness/v1` hashes the exact held-out episode and
+boundary-family sets. Defaults require at least 100 episodes, five boundary
+families, three stable cold-replay repetitions, identical sample budgets for
+the neural candidate, tree FQI, and structured specialists, and native success
+at least two percentage points above the stronger baseline. Any one missing
+condition keeps the comparison unready; the report is not promotion evidence.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
