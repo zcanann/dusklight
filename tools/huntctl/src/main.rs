@@ -2887,43 +2887,79 @@ fn timeline_selections(args: &[String]) -> Result<BTreeMap<String, String>, Box<
     Ok(output)
 }
 
+struct SearchExecutionConfig {
+    game: PathBuf,
+    dvd: PathBuf,
+    working_directory: PathBuf,
+    game_args_prefix: Vec<String>,
+    timeout: Duration,
+    harness: Option<HarnessEvaluateConfig>,
+}
+
+fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box<dyn Error>> {
+    if let Some(path) = option(args, "--run-request") {
+        if option(args, "--game").is_some()
+            || option(args, "--dvd").is_some()
+            || option(args, "--working-directory").is_some()
+            || option(args, "--timeout-ms").is_some()
+            || option(args, "--timeout-seconds").is_some()
+            || !repeated_option(args, "--game-arg").is_empty()
+        {
+            return Err("--run-request is the sole execution authority; do not combine it with --game, --dvd, --working-directory, --game-arg, or timeout options".into());
+        }
+        let repository_root = fs::canonicalize(
+            option(args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?),
+        )?;
+        let request_template: HarnessRunRequest = serde_json::from_slice(&fs::read(path)?)?;
+        request_template.validate_files(&repository_root)?;
+        return Ok(SearchExecutionConfig {
+            game: repository_root.join(&request_template.executable.path),
+            dvd: repository_root.join(&request_template.game_data.path),
+            working_directory: repository_root.clone(),
+            game_args_prefix: Vec::new(),
+            timeout: Duration::from_secs(u64::from(request_template.host_timeout_seconds)),
+            harness: Some(HarnessEvaluateConfig {
+                repository_root,
+                request_template,
+            }),
+        });
+    }
+    Ok(SearchExecutionConfig {
+        game: required_path(args, "--game")?,
+        dvd: required_path(args, "--dvd")?,
+        working_directory: option(args, "--working-directory")
+            .map(PathBuf::from)
+            .unwrap_or(std::env::current_dir()?),
+        game_args_prefix: repeated_option(args, "--game-arg"),
+        timeout: timeout_option(args)?,
+        harness: None,
+    })
+}
+
 fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("evaluate") => {
             let search_args = &args[1..];
             let population = required_path(search_args, "--population")?;
-            let game = required_path(search_args, "--game")?;
-            let dvd = required_path(search_args, "--dvd")?;
             let output = required_path(search_args, "--output")?;
             let results = option(search_args, "--results")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| output.join("results.json"));
-            let working_directory = option(search_args, "--working-directory")
-                .map(PathBuf::from)
-                .unwrap_or(std::env::current_dir()?);
-            let harness = option(search_args, "--run-request")
-                .map(|path| -> Result<_, Box<dyn Error>> {
-                    let repository_root = option(search_args, "--repository-root")
-                        .map(PathBuf::from)
-                        .unwrap_or(std::env::current_dir()?);
-                    Ok(HarnessEvaluateConfig {
-                        repository_root,
-                        request_template: serde_json::from_slice(&fs::read(path)?)?,
-                    })
-                })
-                .transpose()?;
+            let execution = search_execution_config(search_args)?;
             let report = evaluate_population(&EvaluateConfig {
                 population_path: population,
-                game,
-                dvd,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: output,
                 results_path: results,
-                working_directory,
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
-                harness,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
@@ -3007,11 +3043,10 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             };
 
             let output = required_path(search_args, "--output")?;
-            let game = required_path(search_args, "--game")?;
-            let dvd = required_path(search_args, "--dvd")?;
-            let working_directory = option(search_args, "--working-directory")
-                .map(PathBuf::from)
-                .unwrap_or(std::env::current_dir()?);
+            let execution = search_execution_config(search_args)?;
+            let game = execution.game;
+            let dvd = execution.dvd;
+            let working_directory = execution.working_directory;
             if !game.is_file() || !dvd.is_file() || !working_directory.is_dir() {
                 return Err(
                     "route search requires existing game/DVD files and working directory".into(),
@@ -3022,9 +3057,9 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let elite_count = usize_option(search_args, "--elites", (size / 4).max(1))?;
             let workers = usize_option(search_args, "--workers", 4)?;
             let repetitions = u32_option(search_args, "--repetitions", 3)?;
-            let timeout = timeout_option(search_args)?;
+            let timeout = execution.timeout;
             let rng_seed = u64_option(search_args, "--rng-seed", 1)?;
-            if !repeated_option(search_args, "--game-arg").is_empty() {
+            if !execution.game_args_prefix.is_empty() {
                 return Err(
                     "route search does not accept --game-arg; its execution contract is fixed"
                         .into(),
@@ -3127,6 +3162,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     repetitions,
                     timeout,
                     rng_seed,
+                    harness: execution.harness,
                 },
                 objective: AnchoredObjectiveConfig {
                     segment: segment.profile,
@@ -3159,23 +3195,23 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             };
             let output = required_path(search_args, "--output")?;
             let size = usize_option(search_args, "--size", 16)?;
+            let execution = search_execution_config(search_args)?;
             let summary = run_search(&SearchRunConfig {
                 segment,
                 seed_candidate,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: output,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 generations: u32_option(search_args, "--generations", 2)?,
                 population_size: size,
                 elite_count: usize_option(search_args, "--elites", (size / 4).max(1))?,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
                 rng_seed: u64_option(search_args, "--rng-seed", 1)?,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())

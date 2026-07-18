@@ -29,7 +29,7 @@ use crate::search::{
     Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LexicographicScore,
     MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
     SegmentProfile, evolve_population, evolve_population_with_retained_and_proposals,
-    rank_population, write_explicit_population, write_seed_population,
+    rank_population, tape_input_complexity, write_explicit_population, write_seed_population,
 };
 use crate::semantic_novelty::catalog::{
     SemanticNoveltyAssessment, SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
@@ -224,6 +224,7 @@ pub struct SearchRunConfig {
     pub repetitions: u32,
     pub timeout: Duration,
     pub rng_seed: u64,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -487,6 +488,7 @@ pub struct SemanticNoveltyGenerationReport {
 pub struct AttemptEvidence {
     pub schema: &'static str,
     pub candidate_id: String,
+    pub ancestry: Ancestry,
     pub attempt: u32,
     pub worker_id: String,
     pub segment: SegmentProfile,
@@ -498,7 +500,11 @@ pub struct AttemptEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness_request: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_request_sha256: Option<ArtifactDigest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub harness_result: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_result_sha256: Option<ArtifactDigest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harness_terminal: Option<HarnessTerminalReason>,
     pub state_root: PathBuf,
@@ -925,7 +931,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     write_json(
         &config.output_root.join("plan.json"),
         &serde_json::json!({
-            "schema": "dusklight-search-evaluation-plan/v3",
+            "schema": "dusklight-search-evaluation-plan/v4",
             "segment": manifest.segment,
             "boot": manifest.boot,
             "population": config.population_path,
@@ -935,6 +941,14 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
             "repetitions": config.repetitions,
             "timeout_millis": config.timeout.as_millis(),
             "attempts": trials.len(),
+            "run_request_template_sha256": config
+                .harness
+                .as_ref()
+                .map(|harness| harness.request_template.content_sha256),
+            "execution_boundary": config
+                .harness
+                .as_ref()
+                .map(|_| "dusklight-harness-run-request/v2"),
         }),
     )?;
 
@@ -1303,7 +1317,7 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
-            harness: None,
+            harness: config.harness.clone(),
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -2368,7 +2382,7 @@ pub fn run_anchored_search(
                     workers: search.workers,
                     repetitions: search.repetitions,
                     timeout: search.timeout,
-                    harness: None,
+                    harness: search.harness.clone(),
                 },
                 objective: config.objective.clone(),
             },
@@ -3424,7 +3438,31 @@ fn build_trials(
                 member.candidate_id
             )));
         }
-        let decoded = InputTape::decode(&fs::read(&tape)?)?;
+        let candidate_path = fs::canonicalize(population_root.join(&member.candidate_file))?;
+        if !candidate_path.starts_with(population_root) {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} source escapes the population directory",
+                member.candidate_id
+            )));
+        }
+        let candidate: Candidate = serde_json::from_slice(&fs::read(&candidate_path)?)?;
+        candidate.validate()?;
+        let tape_bytes = fs::read(&tape)?;
+        let decoded = InputTape::decode(&tape_bytes)?;
+        let compiled = candidate.compile()?;
+        if candidate.segment != manifest.segment
+            || candidate.boot != manifest.boot
+            || candidate.id()? != member.candidate_id
+            || candidate.ancestry != member.ancestry
+            || compiled.frames.len() as u64 != member.frame_count
+            || member.input_complexity != Some(tape_input_complexity(&compiled))
+            || compiled.encode()? != tape_bytes
+        {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} ID, ancestry, frame count, complexity, source, and tape are not one content identity",
+                member.candidate_id
+            )));
+        }
         let expected_boot = match manifest.segment {
             SegmentProfile::BootToFsp103 => TapeBoot::Process,
             SegmentProfile::Fsp103ToFsp104 => TapeBoot::Stage {
@@ -3454,7 +3492,7 @@ fn build_trials(
                 .join(format!("attempt-{attempt:03}"));
             trials.push(Trial {
                 candidate_id: member.candidate_id.clone(),
-                ancestry: member.ancestry.clone(),
+                ancestry: candidate.ancestry.clone(),
                 rng_seed: manifest.rng_seed,
                 attempt,
                 tape: tape.clone(),
@@ -3568,6 +3606,7 @@ fn run_trial(
     let mut evidence = AttemptEvidence {
         schema: ATTEMPT_SCHEMA,
         candidate_id: trial.candidate_id.clone(),
+        ancestry: trial.ancestry.clone(),
         attempt: trial.attempt,
         worker_id: worker_id.into(),
         segment,
@@ -3576,7 +3615,9 @@ fn run_trial(
         suffix_tape: trial.suffix_tape.clone(),
         artifact_root: trial.root.clone(),
         harness_request: None,
+        harness_request_sha256: None,
         harness_result: None,
+        harness_result_sha256: None,
         harness_terminal: None,
         state_root: trial.state.clone(),
         milestone_result: trial.milestones.clone(),
@@ -3827,7 +3868,9 @@ fn run_harness_trial(
     let result_path = artifact_root.join("result.json");
     evidence.artifact_root = artifact_root.clone();
     evidence.harness_request = Some(request_path);
+    evidence.harness_request_sha256 = Some(request.content_sha256);
     evidence.harness_result = Some(result_path);
+    evidence.harness_result_sha256 = Some(result.content_sha256);
     evidence.harness_terminal = Some(result.terminal);
     evidence.state_root = artifact_root.join("state");
     evidence.milestone_result =
@@ -5284,25 +5327,43 @@ fn validate_evaluate_config(config: &EvaluateConfig) -> Result<(), EvaluateError
         )));
     }
     if let Some(harness) = &config.harness {
-        let repository_root = fs::canonicalize(&harness.repository_root)?;
         harness
             .request_template
-            .validate_files(&repository_root)
+            .validate_files(&harness.repository_root)
             .map_err(|error| {
-                EvaluateError::InvalidConfig(format!("invalid harness request template: {error}"))
+                EvaluateError::InvalidConfig(format!(
+                    "invalid authenticated run-request template: {error}"
+                ))
             })?;
-        if fs::canonicalize(repository_root.join(&harness.request_template.executable.path))?
-            != config.game
-            || fs::canonicalize(repository_root.join(&harness.request_template.game_data.path))?
-                != config.dvd
+        let expected_game = fs::canonicalize(
+            harness
+                .repository_root
+                .join(&harness.request_template.executable.path),
+        )?;
+        let expected_dvd = fs::canonicalize(
+            harness
+                .repository_root
+                .join(&harness.request_template.game_data.path),
+        )?;
+        let expected_timeout =
+            Duration::from_secs(u64::from(harness.request_template.host_timeout_seconds));
+        if config.game != expected_game
+            || config.dvd != expected_dvd
+            || config.working_directory != harness.repository_root
+            || config.timeout != expected_timeout
+            || !config.game_args_prefix.is_empty()
         {
             return Err(EvaluateError::InvalidConfig(
-                "--game/--dvd do not match the authenticated run request".into(),
+                "authenticated evaluation must derive executable, game data, working directory, host timeout, and game arguments exclusively from its run request"
+                    .into(),
             ));
         }
-        if !config.game_args_prefix.is_empty() {
+        if !config.population_path.starts_with(&harness.repository_root)
+            || !config.output_root.starts_with(&harness.repository_root)
+        {
             return Err(EvaluateError::InvalidConfig(
-                "authenticated search evaluation rejects unauthenticated --game-arg values".into(),
+                "authenticated evaluation population and output must be beneath the repository root"
+                    .into(),
             ));
         }
     }
@@ -5323,18 +5384,42 @@ fn normalize_evaluate_config(config: &EvaluateConfig) -> Result<EvaluateConfig, 
             Ok(std::env::current_dir()?.join(path))
         }
     };
+    let harness = config
+        .harness
+        .as_ref()
+        .map(|harness| -> Result<HarnessEvaluateConfig, EvaluateError> {
+            Ok(HarnessEvaluateConfig {
+                repository_root: fs::canonicalize(&harness.repository_root)?,
+                request_template: harness.request_template.clone(),
+            })
+        })
+        .transpose()?;
+    let output_root = absolute(&config.output_root)?;
+    let output_root = if harness.is_some() && !output_root.exists() {
+        let parent = output_root.parent().ok_or_else(|| {
+            EvaluateError::InvalidConfig("search output has no parent directory".into())
+        })?;
+        let name = output_root.file_name().ok_or_else(|| {
+            EvaluateError::InvalidConfig("search output has no final component".into())
+        })?;
+        fs::canonicalize(parent)?.join(name)
+    } else if harness.is_some() {
+        fs::canonicalize(&output_root)?
+    } else {
+        output_root
+    };
     Ok(EvaluateConfig {
         population_path: fs::canonicalize(&config.population_path)?,
         game: fs::canonicalize(&config.game)?,
         dvd: fs::canonicalize(&config.dvd)?,
-        output_root: absolute(&config.output_root)?,
+        output_root,
         results_path: absolute(&config.results_path)?,
         working_directory: fs::canonicalize(&config.working_directory)?,
         game_args_prefix: config.game_args_prefix.clone(),
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
-        harness: config.harness.clone(),
+        harness,
     })
 }
 

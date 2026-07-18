@@ -19,6 +19,9 @@ use huntctl::harness::run_contract::{
 use huntctl::milestone_dsl;
 use huntctl::observation_view::movement_state_v2_spec;
 use huntctl::scenario_fixture::{SCENARIO_FIXTURE_SCHEMA, ScenarioFixture};
+use huntctl::search::{
+    Ancestry, CANDIDATE_SCHEMA, Candidate, MacroAction, SegmentProfile, write_explicit_population,
+};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::fs;
@@ -831,7 +834,7 @@ fn reports_an_exact_controller_target_loss_without_calling_it_exhaustion() {
 
 #[cfg(unix)]
 #[test]
-fn search_evaluation_emits_one_authenticated_request_and_result_per_attempt() {
+fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     let executable = env!("CARGO_BIN_EXE_huntctl");
     let root = unique_root();
     let suite_path = write_suite(&root);
@@ -859,26 +862,37 @@ fn search_evaluation_emits_one_authenticated_request_and_result_per_attempt() {
     );
 
     let population = root.join("population");
-    let seeded = Command::new(executable)
-        .args(["search", "seed", "--segment", "boot_to_fsp103", "--output"])
-        .arg(&population)
-        .args(["--size", "1", "--rng-seed", "42"])
-        .output()
-        .unwrap();
-    assert!(
-        seeded.status.success(),
-        "{}",
-        String::from_utf8_lossy(&seeded.stderr)
-    );
+    let seed = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
+        actions: vec![MacroAction::Neutral { frames: 1 }],
+        ancestry: Ancestry::default(),
+    };
+    let seed_id = seed.id().unwrap();
+    let learned = Candidate {
+        actions: vec![MacroAction::Neutral { frames: 2 }],
+        ancestry: Ancestry {
+            generation: 1,
+            parent_id: Some(seed_id.clone()),
+            mutation: Some("q_fitted_proposal:test-model".into()),
+            intervention: None,
+        },
+        ..seed.clone()
+    };
+    let learned_id = learned.id().unwrap();
+    write_explicit_population(
+        &population,
+        SegmentProfile::BootToFsp103,
+        1,
+        vec![seed, learned],
+    )
+    .unwrap();
 
     let output = root.join("search-evaluation");
     let evaluated = Command::new(executable)
         .args(["search", "evaluate", "--population"])
         .arg(population.join("manifest.json"))
-        .arg("--game")
-        .arg(root.join("inputs/dusklight"))
-        .arg("--dvd")
-        .arg(root.join("inputs/game.iso"))
         .arg("--output")
         .arg(&output)
         .args(["--workers", "1", "--repetitions", "1", "--run-request"])
@@ -894,17 +908,115 @@ fn search_evaluation_emits_one_authenticated_request_and_result_per_attempt() {
     );
     let report: Value = serde_json::from_slice(&evaluated.stdout).unwrap();
     assert_eq!(report["schema"], "dusklight-search-evaluation/v5");
-    assert_eq!(report["attempts"][0]["harness_terminal"], "reached");
-    let request = PathBuf::from(report["attempts"][0]["harness_request"].as_str().unwrap());
-    let result = PathBuf::from(report["attempts"][0]["harness_result"].as_str().unwrap());
-    assert!(request.is_file());
-    assert!(result.is_file());
-    let run_request: HarnessRunRequest =
-        serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
-    let run_result: HarnessRunResult = serde_json::from_slice(&fs::read(&result).unwrap()).unwrap();
-    assert_eq!(run_result.request_sha256, run_request.content_sha256);
-    run_result
-        .validate_files(&run_request, result.parent().unwrap())
+    assert_eq!(report["attempts"].as_array().unwrap().len(), 2);
+    let mut tape_digests = Vec::new();
+    let mut candidate_ids = Vec::new();
+    for attempt in report["attempts"].as_array().unwrap() {
+        assert_eq!(attempt["harness_terminal"], "reached");
+        assert!(attempt["harness_request_sha256"].is_string());
+        assert!(attempt["harness_result_sha256"].is_string());
+        let request = PathBuf::from(attempt["harness_request"].as_str().unwrap());
+        let result = PathBuf::from(attempt["harness_result"].as_str().unwrap());
+        assert!(request.is_file());
+        assert!(result.is_file());
+        let run_request: HarnessRunRequest =
+            serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
+        let run_result: HarnessRunResult =
+            serde_json::from_slice(&fs::read(&result).unwrap()).unwrap();
+        assert_eq!(
+            attempt["harness_request_sha256"],
+            run_request.content_sha256.to_string()
+        );
+        assert_eq!(
+            attempt["harness_result_sha256"],
+            run_result.content_sha256.to_string()
+        );
+        assert_eq!(run_result.request_sha256, run_request.content_sha256);
+        run_result
+            .validate_files(&run_request, result.parent().unwrap())
+            .unwrap();
+        let ObjectiveSeed::Tape { artifact } = run_request.input else {
+            panic!("search candidate did not become an authenticated tape request");
+        };
+        tape_digests.push(artifact.sha256);
+        candidate_ids.push(attempt["candidate_id"].as_str().unwrap().to_owned());
+    }
+    let mut expected_ids = vec![seed_id.clone(), learned_id.clone()];
+    expected_ids.sort();
+    assert_eq!(candidate_ids, expected_ids);
+    assert_ne!(tape_digests[0], tape_digests[1]);
+    let learned_attempt = report["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|attempt| attempt["candidate_id"] == learned_id)
         .unwrap();
+    assert_eq!(learned_attempt["ancestry"]["parent_id"], seed_id);
+    assert_eq!(
+        learned_attempt["ancestry"]["mutation"],
+        "q_fitted_proposal:test-model"
+    );
+
+    let conflicting = Command::new(executable)
+        .args(["search", "evaluate", "--population"])
+        .arg(population.join("manifest.json"))
+        .arg("--output")
+        .arg(root.join("conflicting-evaluation"))
+        .arg("--run-request")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .arg("--game")
+        .arg(root.join("inputs/dusklight"))
+        .output()
+        .unwrap();
+    assert!(!conflicting.status.success());
+    assert!(String::from_utf8_lossy(&conflicting.stderr).contains("sole execution authority"));
+
+    let search_run = root.join("search-run");
+    let searched = Command::new(executable)
+        .args(["search", "run", "--segment", "boot_to_fsp103", "--output"])
+        .arg(&search_run)
+        .args([
+            "--size",
+            "2",
+            "--elites",
+            "1",
+            "--generations",
+            "2",
+            "--workers",
+            "1",
+            "--repetitions",
+            "1",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        searched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&searched.stderr)
+    );
+    for generation in ["g000", "g001"] {
+        let evaluation: Value = serde_json::from_slice(
+            &fs::read(
+                search_run
+                    .join(generation)
+                    .join("evaluations/evaluation.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            evaluation["attempts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|attempt| attempt["harness_terminal"] == "reached")
+        );
+    }
     fs::remove_dir_all(root).unwrap();
 }
