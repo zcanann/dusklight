@@ -9,10 +9,12 @@ use std::error::Error;
 use std::fmt;
 
 pub const SYMPTOM_CLUSTER_INDEX_SCHEMA: &str = "dusklight-symptom-cluster-index/v1";
+pub const MAX_SYMPTOM_CLUSTER_PARTITIONS: usize = 64;
 pub const MAX_SYMPTOM_CLUSTERS: usize = 4_096;
 pub const MAX_RETAINED_CLUSTER_EXAMPLES: usize = 8;
 pub const MAX_CRASH_FRAMES: usize = 16;
 pub const MAX_EVENT_TAIL: usize = 32;
+pub const MAX_SYMPTOM_LABEL_BYTES: usize = 256;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct StableCrashFrame {
@@ -150,6 +152,13 @@ impl SymptomClusterIndex {
         validate_sha256("artifact identity", &observation.artifact_identity)?;
         validate_kind(&observation.symptom.kind)?;
         let cluster_identity = observation.symptom.identity();
+        if !self.partitions.contains_key(&partition)
+            && self.partitions.len() >= MAX_SYMPTOM_CLUSTER_PARTITIONS
+        {
+            return Err(SymptomClusterError(format!(
+                "symptom index exceeds {MAX_SYMPTOM_CLUSTER_PARTITIONS} partitions"
+            )));
+        }
         let clusters = self.partitions.entry(partition).or_default();
         if let Some(cluster) = clusters.get_mut(&cluster_identity) {
             cluster.occurrences = cluster.occurrences.saturating_add(1);
@@ -206,16 +215,16 @@ impl SymptomClusterIndex {
 fn validate_kind(kind: &DiscoverySymptomKind) -> Result<(), SymptomClusterError> {
     let invalid = match kind {
         DiscoverySymptomKind::Crash { category, frames } => {
-            category.trim().is_empty()
+            invalid_label(category)
                 || frames.is_empty()
                 || frames.len() > MAX_CRASH_FRAMES
                 || frames
                     .iter()
-                    .any(|frame| frame.module.trim().is_empty() || frame.symbol.trim().is_empty())
+                    .any(|frame| invalid_label(&frame.module) || invalid_label(&frame.symbol))
         }
         DiscoverySymptomKind::Hang { watchdog }
         | DiscoverySymptomKind::OutOfBoundsRoute { oracle: watchdog }
-        | DiscoverySymptomKind::Corruption { oracle: watchdog } => watchdog.trim().is_empty(),
+        | DiscoverySymptomKind::Corruption { oracle: watchdog } => invalid_label(watchdog),
         DiscoverySymptomKind::EventSequence => false,
     };
     if invalid {
@@ -224,6 +233,10 @@ fn validate_kind(kind: &DiscoverySymptomKind) -> Result<(), SymptomClusterError>
         ));
     }
     Ok(())
+}
+
+fn invalid_label(value: &str) -> bool {
+    value.trim().is_empty() || value.len() > MAX_SYMPTOM_LABEL_BYTES
 }
 
 fn validate_partition(partition: &DiscoveryArchivePartitionKey) -> Result<(), SymptomClusterError> {
@@ -387,5 +400,19 @@ mod tests {
             })
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(identities.len(), 4);
+    }
+
+    #[test]
+    fn unbounded_crash_frames_are_rejected() {
+        let invalid = DiscoverySymptomKind::Crash {
+            category: "segmentation_fault".into(),
+            frames: vec![StableCrashFrame {
+                module: "m".repeat(MAX_SYMPTOM_LABEL_BYTES + 1),
+                symbol: "0x7ffee123".into(),
+            }],
+        };
+        assert!(
+            DiscoverySymptomDescriptor::from_semantic_descriptor(invalid, &descriptor(1)).is_err()
+        );
     }
 }
