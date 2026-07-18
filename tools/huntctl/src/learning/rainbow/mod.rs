@@ -31,6 +31,12 @@ pub enum RainbowComponent {
 pub struct RainbowAblationConfig {
     pub critic: DoubleQConfig,
     pub n_step: usize,
+    pub distribution_atoms: usize,
+    pub distribution_value_minimum: f64,
+    pub distribution_value_maximum: f64,
+    pub distribution_atoms: usize,
+    pub distribution_value_minimum: f64,
+    pub distribution_value_maximum: f64,
 }
 
 impl Default for RainbowAblationConfig {
@@ -38,6 +44,12 @@ impl Default for RainbowAblationConfig {
         Self {
             critic: DoubleQConfig::default(),
             n_step: 3,
+            distribution_atoms: 51,
+            distribution_value_minimum: -100.0,
+            distribution_value_maximum: 100.0,
+            distribution_atoms: 51,
+            distribution_value_minimum: -100.0,
+            distribution_value_maximum: 100.0,
         }
     }
 }
@@ -73,6 +85,45 @@ pub struct RainbowAblationReport {
 }
 
 impl RainbowAblationReport {
+    /// Evaluate categorical value distributions as the sole learning change.
+    pub fn evaluate_distributional_values(
+        feature_width: usize,
+        actions: &[u32],
+        training: &[Transition],
+        training_episode_groups: &[u64],
+        held_out: &[Transition],
+        config: &RainbowAblationConfig,
+    ) -> Result<Self, RainbowAblationError> {
+        validate_common(training, held_out, config)?;
+        if training_episode_groups.len() != training.len() {
+            return Err(RainbowAblationError::Invalid(
+                "training episode groups must match training transitions",
+            ));
+        }
+        let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
+        let treatment = QComponentModel::fit(
+            feature_width,
+            actions,
+            training,
+            training_episode_groups,
+            &QComponentConfig {
+                critic: config.critic.clone(),
+                component: QComponent::DistributionalValues,
+                distribution_atoms: config.distribution_atoms,
+                distribution_value_minimum: config.distribution_value_minimum,
+                distribution_value_maximum: config.distribution_value_maximum,
+            },
+        )?;
+        Ok(Self::single_component(
+            training.len(),
+            held_out.len(),
+            RainbowComponent::DistributionalValues,
+            vec!["critic_value_representation", "training_loss"],
+            evaluate_model(&baseline, held_out, config.critic.discount)?,
+            evaluate_model(&treatment, held_out, config.critic.discount)?,
+        ))
+    }
+
     /// Evaluate a dueling value/advantage head as the sole architecture change.
     pub fn evaluate_dueling_heads(
         feature_width: usize,
@@ -107,6 +158,47 @@ impl RainbowAblationReport {
             held_out.len(),
             RainbowComponent::DuelingHeads,
             vec!["critic_output_head"],
+            baseline_metrics,
+            treatment_metrics,
+        ))
+    }
+
+    /// Evaluate categorical value distributions as the sole architecture change.
+    pub fn evaluate_distributional_values(
+        feature_width: usize,
+        actions: &[u32],
+        training: &[Transition],
+        training_episode_groups: &[u64],
+        held_out: &[Transition],
+        config: &RainbowAblationConfig,
+    ) -> Result<Self, RainbowAblationError> {
+        validate_common(training, held_out, config)?;
+        if training_episode_groups.len() != training.len() {
+            return Err(RainbowAblationError::Invalid(
+                "training episode groups must match training transitions",
+            ));
+        }
+        let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
+        let treatment = QComponentModel::fit(
+            feature_width,
+            actions,
+            training,
+            training_episode_groups,
+            &QComponentConfig {
+                critic: config.critic.clone(),
+                component: QComponent::DistributionalValues,
+                distribution_atoms: config.distribution_atoms,
+                distribution_value_minimum: config.distribution_value_minimum,
+                distribution_value_maximum: config.distribution_value_maximum,
+            },
+        )?;
+        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
+        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        Ok(Self::single_component(
+            training.len(),
+            held_out.len(),
+            RainbowComponent::DistributionalValues,
+            vec!["critic_output_distribution", "categorical_value_support"],
             baseline_metrics,
             treatment_metrics,
         ))
@@ -344,6 +436,7 @@ mod tests {
                 ..DoubleQConfig::default()
             },
             n_step: 2,
+            ..RainbowAblationConfig::default()..RainbowAblationConfig::default()
         };
         let first = RainbowAblationReport::evaluate_n_step(
             1,
@@ -392,6 +485,7 @@ mod tests {
                 ..DoubleQConfig::default()
             },
             n_step: 3,
+            ..RainbowAblationConfig::default()..RainbowAblationConfig::default()
         };
         let report = RainbowAblationReport::evaluate_dueling_heads(
             1,
@@ -408,5 +502,97 @@ mod tests {
         assert_eq!(report.evaluation.treatment.transitions, training.len());
         assert!(!report.evaluation.adopted);
         assert!(!report.combined_rainbow_configuration);
+    }
+
+    #[test]
+    fn distributional_values_are_reported_as_the_only_changed_component() {
+        let training = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 5.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, true),
+        ];
+        let config = RainbowAblationConfig {
+            critic: DoubleQConfig {
+                epochs: 12,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 4,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+            distribution_atoms: 21,
+            distribution_value_minimum: -10.0,
+            distribution_value_maximum: 10.0,
+            ..RainbowAblationConfig::default()
+        };
+        let report = RainbowAblationReport::evaluate_distributional_values(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(
+            report.evaluation.component,
+            RainbowComponent::DistributionalValues
+        );
+        assert_eq!(
+            report.evaluation.changed_parameters,
+            ["critic_output_distribution", "categorical_value_support"]
+        );
+        assert!(!report.evaluation.adopted);
+        assert!(!report.combined_rainbow_configuration);
+    }
+
+    #[test]
+    fn categorical_values_are_reported_without_other_rainbow_components() {
+        let training = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 5.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, true),
+        ];
+        let config = RainbowAblationConfig {
+            critic: DoubleQConfig {
+                epochs: 24,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 4,
+                seed: 13,
+                ..DoubleQConfig::default()
+            },
+            distribution_atoms: 11,
+            distribution_value_minimum: -2.0,
+            distribution_value_maximum: 8.0,
+            ..RainbowAblationConfig::default()
+        };
+        let first = RainbowAblationReport::evaluate_distributional_values(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        let second = RainbowAblationReport::evaluate_distributional_values(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(
+            first.evaluation.component,
+            RainbowComponent::DistributionalValues
+        );
+        assert!(!first.evaluation.adopted);
+        assert!(!first.combined_rainbow_configuration);
     }
 }
