@@ -372,23 +372,26 @@ fn extract_evidence(
     Vec<SkybookImageEvidence>,
     Vec<SkybookVideoEvidence>,
 ) {
+    let prose = markdown_prose(body);
     let mut internal_links = BTreeSet::new();
     let mut external_links = BTreeSet::new();
     let mut images = BTreeSet::new();
     let mut videos = BTreeSet::new();
-    for (is_image, label, target) in markdown_links(body) {
+    for (is_image, label, target) in markdown_links(&prose) {
         let target = target.trim().to_string();
-        if is_image || is_image_target(&target) {
+        let image_target = is_image || is_image_target(&target);
+        if image_target {
             images.insert(SkybookImageEvidence {
                 alt: label.clone(),
                 source: target.clone(),
             });
         }
-        if let Some(video) = youtube_evidence(&target) {
+        if let Some(video) = video_evidence(&target) {
             videos.insert(video);
-        } else if target.starts_with("http://") || target.starts_with("https://") {
+        } else if !image_target && (target.starts_with("http://") || target.starts_with("https://"))
+        {
             external_links.insert(target.clone());
-        } else if !is_image {
+        } else if !image_target {
             internal_links.insert(SkybookInternalLink {
                 label,
                 target: target.clone(),
@@ -396,14 +399,14 @@ fn extract_evidence(
             });
         }
     }
-    for url in bare_urls(body) {
-        if let Some(video) = youtube_evidence(&url) {
+    for url in bare_urls(&prose) {
+        if let Some(video) = video_evidence(&url) {
             videos.insert(video);
         } else {
             external_links.insert(url);
         }
     }
-    for video_id in liquid_youtube_ids(body) {
+    for video_id in liquid_youtube_ids(&prose) {
         videos.insert(SkybookVideoEvidence {
             provider: "youtube".into(),
             source: format!("{{% youtube {video_id} %}}"),
@@ -418,33 +421,45 @@ fn extract_evidence(
     )
 }
 
+fn markdown_prose(body: &str) -> String {
+    let mut output = String::with_capacity(body.len());
+    let mut fenced = false;
+    for line in body.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    output
+}
+
 fn markdown_links(body: &str) -> Vec<(bool, String, String)> {
-    let bytes = body.as_bytes();
     let mut output = Vec::new();
-    let mut cursor = 0;
-    while cursor < bytes.len() {
-        let Some(relative) = body[cursor..].find('[') else {
-            break;
-        };
-        let open = cursor + relative;
-        let is_image = open > 0 && bytes[open - 1] == b'!';
-        let Some(label_end_relative) = body[open + 1..].find("](") else {
-            cursor = open + 1;
-            continue;
-        };
-        let label_end = open + 1 + label_end_relative;
-        let target_start = label_end + 2;
-        let Some(target_end_relative) = body[target_start..].find(')') else {
-            cursor = target_start;
-            continue;
-        };
-        let target_end = target_start + target_end_relative;
-        output.push((
-            is_image,
-            body[open + 1..label_end].to_string(),
-            body[target_start..target_end].to_string(),
-        ));
-        cursor = target_end + 1;
+    for line in body.lines() {
+        let mut cursor = 0;
+        while let Some(marker_relative) = line[cursor..].find("](") {
+            let marker = cursor + marker_relative;
+            let Some(open) = line[..marker].rfind('[') else {
+                cursor = marker + 2;
+                continue;
+            };
+            let target_start = marker + 2;
+            let Some(target_end_relative) = line[target_start..].find(')') else {
+                break;
+            };
+            let target_end = target_start + target_end_relative;
+            let is_image = open > 0 && line.as_bytes()[open - 1] == b'!';
+            output.push((
+                is_image,
+                line[open + 1..marker].to_string(),
+                line[target_start..target_end].to_string(),
+            ));
+            cursor = target_end + 1;
+        }
     }
     output
 }
@@ -486,6 +501,31 @@ fn liquid_youtube_ids(body: &str) -> Vec<String> {
         cursor = start + end_relative + 3;
     }
     output.into_iter().collect()
+}
+
+fn video_evidence(url: &str) -> Option<SkybookVideoEvidence> {
+    if let Some(youtube) = youtube_evidence(url) {
+        return Some(youtube);
+    }
+    for (needle, provider) in [
+        ("clips.twitch.tv/", "twitch"),
+        ("twitch.tv/videos/", "twitch"),
+        ("streamable.com/", "streamable"),
+        ("vimeo.com/", "vimeo"),
+    ] {
+        let Some((_, tail)) = url.split_once(needle) else {
+            continue;
+        };
+        let video_id = tail.split(['?', '#', '/', '&']).next().unwrap_or_default();
+        if valid_video_id(video_id) {
+            return Some(SkybookVideoEvidence {
+                provider: provider.into(),
+                video_id: video_id.into(),
+                source: url.into(),
+            });
+        }
+    }
+    None
 }
 
 fn youtube_evidence(url: &str) -> Option<SkybookVideoEvidence> {
@@ -607,16 +647,20 @@ fn import_error(message: impl Into<String>) -> SkybookImportError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn root() -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "dusklight-skybook-import-{}-{}",
+            "dusklight-skybook-import-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("_posts")).unwrap();
         root
@@ -637,7 +681,9 @@ mod tests {
             "---\r\n\r\n",
             "See [Step Clip](/posts/step-clip) and [notes](https://example.com/source).\r\n",
             "![cue](/assets/cue.png)\r\n",
-            "{% youtube abc_DEF-123 %}\r\n"
+            "{% youtube abc_DEF-123 %}\r\n",
+            "```c++\r\nif (values[0] != 0) { fake(); }\r\n```\r\n",
+            "https://clips.twitch.tv/Clip_123\r\n"
         );
         fs::write(root.join("_posts/example-clip.md"), post).unwrap();
         let manifest = SkybookManifest::import_directory(
@@ -659,7 +705,18 @@ mod tests {
         );
         assert_eq!(page.source_links, ["https://example.com/source"]);
         assert_eq!(page.images[0].source, "/assets/cue.png");
-        assert_eq!(page.videos[0].video_id, "abc_DEF-123");
+        assert_eq!(page.videos.len(), 2);
+        assert!(
+            page.videos
+                .iter()
+                .any(|video| video.video_id == "abc_DEF-123")
+        );
+        assert!(page.videos.iter().any(|video| video.video_id == "Clip_123"));
+        assert!(
+            page.internal_links
+                .iter()
+                .all(|link| !link.label.contains("fake"))
+        );
         manifest.validate().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
