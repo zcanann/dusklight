@@ -49,6 +49,16 @@ The implementation should require all of the following:
 Normal builds should compile the executor out. Reactive controllers and actor
 catalogs remain read-only regardless of this capability.
 
+The native CMake option `DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS` defaults off,
+is included in build identity, and cannot be enabled without both automation
+observers and explicit fidelity models. Rust admission likewise requires the
+non-default `experimental-interventions` feature, runtime write opt-in, the
+`experimental_typed_gameplay_writes` fidelity, a canonical artifact digest, the
+single supported phase and precondition, and a nonempty audit destination.
+Every scheduled application consumes an audit entry. Applied writes require a
+resolved target and before/written/after values; missing entries prevent audit
+completion. A normal build cannot admit the same request.
+
 ## Typed operations before raw memory
 
 Start with operations whose semantics and simulation phase can be stated:

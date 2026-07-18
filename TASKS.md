@@ -952,7 +952,7 @@ uninspectable random tapes.
 
 - [x] Implement canonical `DUSKINTR` plus a readable bounded DSL, separately
   from controller tapes.
-- [ ] Require compile-time feature, runtime opt-in, fidelity flag, exact phase,
+- [x] Require compile-time feature, runtime opt-in, fidelity flag, exact phase,
   preconditions, and an always-on before/write/after audit.
 - [ ] Begin with typed position, velocity, facing, bounded curve, target/intent,
   health, timer, flag, and spawn/despawn experiments only where semantics are

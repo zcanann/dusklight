@@ -125,6 +125,9 @@ roadmap documents describe the larger target.
 - Canonical `DUSKINTR` v1.0 is a separately magic-numbered, fixed-record
   experimental timeline with a bounded readable DSL. It cannot be decoded or
   represented as controller/input tape data, and noncanonical bytes are rejected.
+- Intervention execution requires compile-time capability, explicit runtime
+  write opt-in, experimental fidelity, exact phase/preconditions, and a
+  mandatory complete before/write/after audit. Normal builds reject admission.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable
