@@ -30,6 +30,7 @@ pub struct CompiledObjectiveVector {
     pub definition_sha256: Digest,
     pub definition_name: String,
     pub values: Vec<f32>,
+    pub vector_sha256: Digest,
 }
 
 impl CompiledObjectiveVector {
@@ -55,12 +56,19 @@ impl CompiledObjectiveVector {
             .definitions
             .get(definition_index)
             .ok_or(GoalConditioningError::UnknownDefinition(definition_index))?;
+        let values = encode_definition(identity.sha256, definition);
         let vector = Self {
             schema: COMPILED_OBJECTIVE_VECTOR_SCHEMA_V1.into(),
             program_sha256: Digest(decoded.program_sha256),
             definition_sha256: Digest(identity.sha256),
             definition_name: identity.name.clone(),
-            values: encode_definition(identity.sha256, definition),
+            vector_sha256: vector_digest(
+                Digest(decoded.program_sha256),
+                Digest(identity.sha256),
+                &identity.name,
+                &values,
+            ),
+            values,
         };
         vector.validate()?;
         Ok(vector)
@@ -73,11 +81,31 @@ impl CompiledObjectiveVector {
             || self.definition_name.is_empty()
             || self.values.len() != COMPILED_OBJECTIVE_VECTOR_WIDTH
             || self.values.iter().any(|value| !value.is_finite())
+            || self.vector_sha256
+                != vector_digest(
+                    self.program_sha256,
+                    self.definition_sha256,
+                    &self.definition_name,
+                    &self.values,
+                )
         {
             return Err(GoalConditioningError::InvalidVector);
         }
         Ok(())
     }
+}
+
+fn vector_digest(program: Digest, definition: Digest, name: &str, values: &[f32]) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.compiled-objective-vector.identity/v1\0");
+    hasher.update(program.0);
+    hasher.update(definition.0);
+    hasher.update((name.len() as u64).to_le_bytes());
+    hasher.update(name.as_bytes());
+    for value in values {
+        hasher.update(value.to_bits().to_le_bytes());
+    }
+    Digest(hasher.finalize().into())
 }
 
 /// Authenticated input layout shared by option value and behavior-policy models.
@@ -372,6 +400,7 @@ milestone fast_player {
         assert_ne!(room.values, speed.values);
         assert_eq!(room.program_sha256, speed.program_sha256);
         assert_eq!(room.definition_name, "room_one");
+        assert_ne!(room.vector_sha256, Digest::ZERO);
     }
 
     #[test]
@@ -388,6 +417,13 @@ milestone fast_player {
         let mut tampered = compiled;
         tampered.bytes[20] ^= 1;
         assert!(CompiledObjectiveVector::from_compiled(&tampered, 0).is_err());
+
+        let mut tampered_vector = first;
+        tampered_vector.values[40] += 1.0;
+        assert_eq!(
+            tampered_vector.validate(),
+            Err(GoalConditioningError::InvalidVector)
+        );
     }
 
     #[test]
