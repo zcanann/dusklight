@@ -17,6 +17,7 @@ pub mod corpus;
 pub mod corpus_ops;
 pub mod episode;
 pub mod game_tactic;
+pub mod harness;
 pub mod intervention;
 pub mod learning;
 pub mod milestone_dsl;

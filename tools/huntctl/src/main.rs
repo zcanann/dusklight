@@ -18,6 +18,7 @@ use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
+use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::planning_priors::QBeamPriorTable;
 use huntctl::low_data_baselines::{
@@ -112,6 +113,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "ping" => command_ping(&args[1..]),
         "pool" => command_pool(&args[1..]),
         "benchmark" => command_benchmark(&args[1..]),
+        "harness" => command_harness(&args[1..]),
         "identity" => command_identity(&args[1..]),
         "corpus" => command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
@@ -134,6 +136,25 @@ fn run() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         _ => usage_error(),
+    }
+}
+
+fn command_harness(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("validate-suite") => {
+            let command_args = &args[1..];
+            let suite_path = required_path(command_args, "--suite")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let suite: ObjectiveSuite = serde_json::from_slice(&fs::read(&suite_path)?)?;
+            let report = suite.validate_files(&repository_root)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        _ => {
+            Err("harness command: validate-suite --suite SUITE.json [--repository-root DIR]".into())
+        }
     }
 }
 
@@ -4767,6 +4788,9 @@ fn print_usage() {
     );
     eprintln!(
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
+    );
+    eprintln!(
+        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]"
     );
     eprintln!(
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
