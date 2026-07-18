@@ -16,6 +16,7 @@ pub enum QComponent {
     Baseline,
     DuelingHead,
     DistributionalValues,
+    NoisyExploration,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -25,6 +26,7 @@ pub struct QComponentConfig {
     pub distribution_atoms: usize,
     pub distribution_value_minimum: f64,
     pub distribution_value_maximum: f64,
+    pub noisy_initial_stddev: f64,
 }
 
 impl Default for QComponentConfig {
@@ -35,6 +37,7 @@ impl Default for QComponentConfig {
             distribution_atoms: 51,
             distribution_value_minimum: -100.0,
             distribution_value_maximum: 100.0,
+            noisy_initial_stddev: 0.5,
         }
     }
 }
@@ -51,6 +54,7 @@ pub struct QComponentModel {
     gradient_updates: u64,
     target_synchronizations: u64,
     parameters_per_critic: usize,
+    noise_resamples: u64,
 }
 
 impl QComponentModel {
@@ -76,6 +80,15 @@ impl QComponentModel {
         {
             return Err(DoubleQError::InvalidConfig(
                 "distributional support requires 3..=201 atoms and finite increasing bounds",
+            ));
+        }
+        if config.component == QComponent::NoisyExploration
+            && (!config.noisy_initial_stddev.is_finite()
+                || config.noisy_initial_stddev <= 0.0
+                || config.noisy_initial_stddev > 2.0)
+        {
+            return Err(DoubleQError::InvalidConfig(
+                "noisy initial standard deviation must be finite and within (0, 2]",
             ));
         }
         let mut actions = actions.to_vec();
@@ -118,10 +131,18 @@ impl QComponentModel {
         let mut order = (0..transitions.len()).collect::<Vec<_>>();
         let mut gradient_updates = 0_u64;
         let mut target_synchronizations = 0_u64;
+        let mut noise_resamples = 0_u64;
 
         for epoch in 0..config.critic.epochs {
             rng.shuffle(&mut order);
             for (position, row) in order.iter().copied().enumerate() {
+                if config.component == QComponent::NoisyExploration {
+                    critic_a.resample_noise(&mut rng);
+                    critic_b.resample_noise(&mut rng);
+                    target_a.resample_noise(&mut rng);
+                    target_b.resample_noise(&mut rng);
+                    noise_resamples += 4;
+                }
                 let transition = &transitions[row];
                 let action = actions
                     .binary_search(&transition.action)
@@ -129,8 +150,8 @@ impl QComponentModel {
                 let update_a = (epoch + position) % 2 == 0;
                 let selector = if update_a { &critic_a } else { &critic_b };
                 let evaluator = if update_a { &target_b } else { &target_a };
-                let next_action =
-                    (!transition.terminal).then(|| selector.best_action(&next_states[row]));
+                let next_action = (!transition.terminal)
+                    .then(|| selector.training_best_action(&next_states[row]));
                 let critic = if update_a {
                     &mut critic_a
                 } else {
@@ -154,7 +175,7 @@ impl QComponentModel {
                     let target = if let Some(next_action) = next_action {
                         f64::from(transition.reward)
                             + config.critic.discount.powf(f64::from(transition.duration))
-                                * evaluator.value(&next_states[row], next_action)
+                                * evaluator.training_value(&next_states[row], next_action)
                     } else {
                         f64::from(transition.reward)
                     };
@@ -189,6 +210,7 @@ impl QComponentModel {
             gradient_updates,
             target_synchronizations,
             parameters_per_critic,
+            noise_resamples,
         })
     }
 
@@ -206,6 +228,10 @@ impl QComponentModel {
 
     pub fn parameters_per_critic(&self) -> usize {
         self.parameters_per_critic
+    }
+
+    pub fn noise_resamples(&self) -> u64 {
+        self.noise_resamples
     }
 
     pub fn estimate(&self, state: &[f32], action: u32) -> Result<DoubleQEstimate, DoubleQError> {
@@ -287,6 +313,7 @@ enum ComponentCritic {
     Standard(Critic),
     Dueling(DuelingCritic),
     Distributional(DistributionalCritic),
+    Noisy(NoisyCritic),
 }
 
 impl ComponentCritic {
@@ -322,6 +349,13 @@ impl ComponentCritic {
                     rng,
                 ))
             }
+            QComponent::NoisyExploration => Self::Noisy(NoisyCritic::initialized(
+                feature_width,
+                hidden_width,
+                action_count,
+                config.noisy_initial_stddev,
+                rng,
+            )),
         }
     }
 
@@ -330,6 +364,7 @@ impl ComponentCritic {
             Self::Standard(critic) => critic.value(state, action),
             Self::Dueling(critic) => critic.value(state, action),
             Self::Distributional(critic) => critic.value(state, action),
+            Self::Noisy(critic) => critic.value(state, action),
         }
     }
 
@@ -338,6 +373,27 @@ impl ComponentCritic {
             Self::Standard(critic) => critic.best_action(state),
             Self::Dueling(critic) => critic.best_action(state),
             Self::Distributional(critic) => critic.best_action(state),
+            Self::Noisy(critic) => critic.best_action(state, false),
+        }
+    }
+
+    fn training_value(&self, state: &[f64], action: usize) -> f64 {
+        match self {
+            Self::Noisy(critic) => critic.value_with_noise(state, action),
+            _ => self.value(state, action),
+        }
+    }
+
+    fn training_best_action(&self, state: &[f64]) -> usize {
+        match self {
+            Self::Noisy(critic) => critic.best_action(state, true),
+            _ => self.best_action(state),
+        }
+    }
+
+    fn resample_noise(&mut self, rng: &mut DeterministicRng) {
+        if let Self::Noisy(critic) = self {
+            critic.resample_noise(rng);
         }
     }
 
@@ -365,6 +421,9 @@ impl ComponentCritic {
             Self::Distributional(_) => Err(DoubleQError::InvalidConfig(
                 "distributional critic requires a categorical target",
             )),
+            Self::Noisy(critic) => {
+                critic.update(state, action, target, learning_rate, gradient_clip)
+            }
         }
     }
 
@@ -418,8 +477,217 @@ impl ComponentCritic {
             }
             Self::Dueling(critic) => critic.parameter_count(),
             Self::Distributional(critic) => critic.parameter_count(),
+            Self::Noisy(critic) => critic.parameter_count(),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct NoisyCritic {
+    feature_width: usize,
+    hidden_width: usize,
+    action_count: usize,
+    input_weights: Vec<f64>,
+    hidden_bias: Vec<f64>,
+    output_weight_mean: Vec<f64>,
+    output_weight_stddev: Vec<f64>,
+    output_bias_mean: Vec<f64>,
+    output_bias_stddev: Vec<f64>,
+    #[serde(skip)]
+    output_weight_noise: Vec<f64>,
+    #[serde(skip)]
+    output_bias_noise: Vec<f64>,
+}
+
+impl NoisyCritic {
+    fn initialized(
+        feature_width: usize,
+        hidden_width: usize,
+        action_count: usize,
+        initial_stddev: f64,
+        rng: &mut DeterministicRng,
+    ) -> Self {
+        let input_scale = (6.0 / (feature_width + hidden_width) as f64).sqrt();
+        let output_scale = (6.0 / (hidden_width + action_count) as f64).sqrt();
+        Self {
+            feature_width,
+            hidden_width,
+            action_count,
+            input_weights: (0..feature_width * hidden_width)
+                .map(|_| rng.symmetric(input_scale))
+                .collect(),
+            hidden_bias: vec![0.0; hidden_width],
+            output_weight_mean: (0..hidden_width * action_count)
+                .map(|_| rng.symmetric(output_scale))
+                .collect(),
+            output_weight_stddev: vec![
+                initial_stddev / (hidden_width as f64).sqrt();
+                hidden_width * action_count
+            ],
+            output_bias_mean: vec![0.0; action_count],
+            output_bias_stddev: vec![initial_stddev / (action_count as f64).sqrt(); action_count],
+            output_weight_noise: vec![0.0; hidden_width * action_count],
+            output_bias_noise: vec![0.0; action_count],
+        }
+    }
+
+    fn resample_noise(&mut self, rng: &mut DeterministicRng) {
+        let input_noise = (0..self.hidden_width)
+            .map(|_| factorized_noise(rng))
+            .collect::<Vec<_>>();
+        let output_noise = (0..self.action_count)
+            .map(|_| factorized_noise(rng))
+            .collect::<Vec<_>>();
+        for (action, output_noise) in output_noise.iter().copied().enumerate() {
+            self.output_bias_noise[action] = output_noise;
+            let offset = action * self.hidden_width;
+            for hidden in 0..self.hidden_width {
+                self.output_weight_noise[offset + hidden] = output_noise * input_noise[hidden];
+            }
+        }
+    }
+
+    fn hidden(&self, state: &[f64]) -> (Vec<f64>, Vec<bool>) {
+        let mut hidden = vec![0.0; self.hidden_width];
+        let mut active = vec![false; self.hidden_width];
+        for hidden_index in 0..self.hidden_width {
+            let offset = hidden_index * self.feature_width;
+            let mut value = self.hidden_bias[hidden_index];
+            for feature in 0..self.feature_width {
+                value += self.input_weights[offset + feature] * state[feature];
+            }
+            if value > 0.0 {
+                hidden[hidden_index] = value;
+                active[hidden_index] = true;
+            }
+        }
+        (hidden, active)
+    }
+
+    fn value_from_hidden(&self, hidden: &[f64], action: usize, noisy: bool) -> f64 {
+        let offset = action * self.hidden_width;
+        let bias = self.output_bias_mean[action]
+            + if noisy {
+                self.output_bias_stddev[action] * self.output_bias_noise[action]
+            } else {
+                0.0
+            };
+        bias + hidden
+            .iter()
+            .enumerate()
+            .map(|(hidden, value)| {
+                let index = offset + hidden;
+                let weight = self.output_weight_mean[index]
+                    + if noisy {
+                        self.output_weight_stddev[index] * self.output_weight_noise[index]
+                    } else {
+                        0.0
+                    };
+                weight * value
+            })
+            .sum::<f64>()
+    }
+
+    fn value(&self, state: &[f64], action: usize) -> f64 {
+        let (hidden, _) = self.hidden(state);
+        self.value_from_hidden(&hidden, action, false)
+    }
+
+    fn value_with_noise(&self, state: &[f64], action: usize) -> f64 {
+        let (hidden, _) = self.hidden(state);
+        self.value_from_hidden(&hidden, action, true)
+    }
+
+    fn best_action(&self, state: &[f64], noisy: bool) -> usize {
+        let (hidden, _) = self.hidden(state);
+        (0..self.action_count)
+            .map(|action| (action, self.value_from_hidden(&hidden, action, noisy)))
+            .max_by(|(left_index, left), (right_index, right)| {
+                left.total_cmp(right)
+                    .then_with(|| right_index.cmp(left_index))
+            })
+            .map(|(action, _)| action)
+            .expect("action count is validated as nonzero")
+    }
+
+    fn update(
+        &mut self,
+        state: &[f64],
+        action: usize,
+        target: f64,
+        learning_rate: f64,
+        gradient_clip: f64,
+    ) -> Result<(), DoubleQError> {
+        let (hidden, active) = self.hidden(state);
+        let error = (self.value_from_hidden(&hidden, action, true) - target)
+            .clamp(-gradient_clip, gradient_clip);
+        let offset = action * self.hidden_width;
+        let effective_weights = (0..self.hidden_width)
+            .map(|hidden| {
+                let index = offset + hidden;
+                self.output_weight_mean[index]
+                    + self.output_weight_stddev[index] * self.output_weight_noise[index]
+            })
+            .collect::<Vec<_>>();
+
+        self.output_bias_mean[action] -= learning_rate * error;
+        self.output_bias_stddev[action] -= learning_rate
+            * (error * self.output_bias_noise[action]).clamp(-gradient_clip, gradient_clip);
+        for hidden_index in 0..self.hidden_width {
+            let index = offset + hidden_index;
+            let mean_gradient = (error * hidden[hidden_index]).clamp(-gradient_clip, gradient_clip);
+            self.output_weight_mean[index] -= learning_rate * mean_gradient;
+            self.output_weight_stddev[index] -= learning_rate
+                * (mean_gradient * self.output_weight_noise[index])
+                    .clamp(-gradient_clip, gradient_clip);
+        }
+        for hidden_index in 0..self.hidden_width {
+            if active[hidden_index] {
+                let hidden_gradient =
+                    (error * effective_weights[hidden_index]).clamp(-gradient_clip, gradient_clip);
+                self.hidden_bias[hidden_index] -= learning_rate * hidden_gradient;
+                let input_offset = hidden_index * self.feature_width;
+                for feature in 0..self.feature_width {
+                    self.input_weights[input_offset + feature] -= learning_rate
+                        * (hidden_gradient * state[feature]).clamp(-gradient_clip, gradient_clip);
+                }
+            }
+        }
+        if self.input_weights.iter().any(|value| !value.is_finite())
+            || self.hidden_bias.iter().any(|value| !value.is_finite())
+            || self
+                .output_weight_mean
+                .iter()
+                .any(|value| !value.is_finite())
+            || self
+                .output_weight_stddev
+                .iter()
+                .any(|value| !value.is_finite())
+            || self.output_bias_mean.iter().any(|value| !value.is_finite())
+            || self
+                .output_bias_stddev
+                .iter()
+                .any(|value| !value.is_finite())
+        {
+            return Err(DoubleQError::Diverged);
+        }
+        Ok(())
+    }
+
+    fn parameter_count(&self) -> usize {
+        self.input_weights.len()
+            + self.hidden_bias.len()
+            + self.output_weight_mean.len()
+            + self.output_weight_stddev.len()
+            + self.output_bias_mean.len()
+            + self.output_bias_stddev.len()
+    }
+}
+
+fn factorized_noise(rng: &mut DeterministicRng) -> f64 {
+    let radius = (-2.0 * rng.unit().max(f64::MIN_POSITIVE).ln()).sqrt();
+    let normal = radius * (std::f64::consts::TAU * rng.unit()).cos();
+    normal.signum() * normal.abs().sqrt()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -938,6 +1206,7 @@ mod tests {
             distribution_atoms: 21,
             distribution_value_minimum: -5.0,
             distribution_value_maximum: 5.0,
+            noisy_initial_stddev: QComponentConfig::default().noisy_initial_stddev,
         };
         let first = QComponentModel::fit(1, &[WAIT, ADVANCE], &transitions, &[0, 0, 1, 1], &config)
             .unwrap();
@@ -953,5 +1222,35 @@ mod tests {
         assert!((distribution.iter().sum::<f64>() - 1.0).abs() < 1e-12);
         assert_eq!(first.rank_actions(&[0.5]).unwrap()[0].action, ADVANCE);
         assert_eq!(first.gradient_updates(), 1024);
+    }
+
+    #[test]
+    fn noisy_exploration_is_seeded_resampled_and_disabled_for_ranking() {
+        let transitions = fixture();
+        let config = QComponentConfig {
+            component: QComponent::NoisyExploration,
+            critic: DoubleQConfig {
+                epochs: 256,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 3,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+            noisy_initial_stddev: 0.25,
+            ..QComponentConfig::default()
+        };
+        let first = QComponentModel::fit(1, &[WAIT, ADVANCE], &transitions, &[0, 0, 1, 1], &config)
+            .unwrap();
+        let second =
+            QComponentModel::fit(1, &[WAIT, ADVANCE], &transitions, &[0, 0, 1, 1], &config)
+                .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        assert_eq!(first.noise_resamples(), first.gradient_updates() * 4);
+        assert_eq!(first.rank_actions(&[0.5]).unwrap()[0].action, ADVANCE);
+        assert!(first.value_distribution(&[0.0], ADVANCE).unwrap().is_none());
     }
 }

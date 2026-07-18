@@ -145,6 +145,7 @@ impl RainbowAblationReport {
                 distribution_atoms: config.distribution_atoms,
                 distribution_value_minimum: config.distribution_value_minimum,
                 distribution_value_maximum: config.distribution_value_maximum,
+                noisy_initial_stddev: QComponentConfig::default().noisy_initial_stddev,
             },
         )?;
         let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
