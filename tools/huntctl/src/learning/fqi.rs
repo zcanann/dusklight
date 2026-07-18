@@ -289,6 +289,35 @@ impl FittedQ {
         Ok(ranked)
     }
 
+    /// Ranks only a caller-declared subset of the trained action support.
+    /// Unknown actions fail closed; an empty subset produces an empty ranking.
+    pub fn rank_action_subset(
+        &self,
+        state: &[f32],
+        allowed_actions: &[u32],
+    ) -> Result<Vec<QEstimate>, FqiError> {
+        self.validate_state(state)?;
+        let mut allowed = allowed_actions.to_vec();
+        allowed.sort_unstable();
+        allowed.dedup();
+        let mut ranked = Vec::with_capacity(allowed.len());
+        for action in allowed {
+            let index = self
+                .actions
+                .binary_search(&action)
+                .map_err(|_| FqiError::UnknownAction(action))?;
+            ranked.push(self.forests[index].estimate(state, action));
+        }
+        ranked.sort_by(|left, right| {
+            right
+                .mean
+                .total_cmp(&left.mean)
+                .then_with(|| left.variance.total_cmp(&right.variance))
+                .then_with(|| left.action.cmp(&right.action))
+        });
+        Ok(ranked)
+    }
+
     pub fn best_action(&self, state: &[f32]) -> Result<QEstimate, FqiError> {
         self.rank_actions(state).map(|ranked| ranked[0])
     }
@@ -1039,6 +1068,35 @@ mod tests {
         let second_rank = second.rank_actions(&[0.0]).unwrap();
         assert_eq!(first_rank, second_rank);
         assert!(first_rank.iter().any(|estimate| estimate.variance > 0.0));
+    }
+
+    #[test]
+    fn action_subset_ranking_scores_only_declared_supported_actions() {
+        let batch = vec![
+            transition(0.0, ADVANCE, 4.0, 1.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, true),
+        ];
+        let model = FittedQ::fit(
+            1,
+            &[WAIT, ADVANCE],
+            &batch,
+            &FqiConfig {
+                iterations: 1,
+                trees_per_action: 1,
+                bootstrap: false,
+                ..FqiConfig::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            model.rank_action_subset(&[0.0], &[WAIT, WAIT]).unwrap(),
+            [model.estimate(&[0.0], WAIT).unwrap()]
+        );
+        assert!(model.rank_action_subset(&[0.0], &[]).unwrap().is_empty());
+        assert_eq!(
+            model.rank_action_subset(&[0.0], &[99]).unwrap_err(),
+            FqiError::UnknownAction(99)
+        );
     }
 
     #[test]
