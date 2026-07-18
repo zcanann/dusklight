@@ -465,6 +465,16 @@ count. The configured rarity ceiling is bounded and included in the assessment;
 `spatial_distance_used=false` makes the decision basis explicit. A canonical
 sorted snapshot exposes the accumulated support counts for audit and replay.
 
+Autonomous campaigns retain those assessments in
+`dusklight-discovery-archive/v1`. Scenario SHA-256 and an exact fidelity SHA-256
+are hard partition keys, with headless and headful represented explicitly, so
+results from different execution contracts never share cells. Within a
+partition, the full semantic descriptor identity selects the cell. A cell keeps
+several distinct useful outcome classes (four by default, bounded at eight),
+while native-evidence strength, cold-replay count, milestone depth, minimized
+length, and artifact identity deterministically select the representative for
+one outcome class. Unsupported evidence and weaker replacements are rejected.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots

@@ -99,6 +99,10 @@ roadmap documents describe the larger target.
   low-support aligned state/event/contact/actor/flag combinations independently
   of route distance. Support is counted once per episode, and assessments retain
   the raw facts and prior episode counts used by the decision.
+- Discovery archive v1 partitions cells by exact scenario and headless/headful
+  fidelity identities. Each semantic cell retains several distinct useful
+  outcome classes, with bounded deterministic same-class replacement instead of
+  a single winner silently erasing crashes, OOB routes, or other outcomes.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

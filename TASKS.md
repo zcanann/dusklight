@@ -929,7 +929,7 @@ improvements are independently proved absolute tapes.
   boundary fingerprints.
 - [x] Detect first-seen state transitions and rare state combinations, not just
   spatial distance from an incumbent.
-- [ ] Maintain separate archives by scenario/fidelity and allow several useful
+- [x] Maintain separate archives by scenario/fidelity and allow several useful
   outcomes per behavior cell.
 - [ ] Add curiosity/novelty rewards only as proposal signals; retain the raw
   semantic reason a run was considered novel.
