@@ -941,7 +941,7 @@ improvements are independently proved absolute tapes.
   terminal thumbnail/video when useful, and request human classification.
 - [x] Feed human labels back as corpus metadata, never as a silent rewrite of
   prior objective definitions.
-- [ ] Support campaigns that ask open questions such as “produce an unseen
+- [x] Support campaigns that ask open questions such as “produce an unseen
   procedure/contact pair” or “cross collision without a transition.”
 
 **Acceptance:** a discovery run produces a ranked, deduplicated set of exact

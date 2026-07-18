@@ -119,6 +119,9 @@ roadmap documents describe the larger target.
 - Human discovery labels v1 are append-only, support explicit supersession, and
   export as non-authoritative corpus metadata bound to the original objective
   definition. Labels cannot silently rewrite objectives or replay evidence.
+- Open-question campaigns v1 ask bounded, partitioned questions about unseen
+  procedure/contact pairs and collision/contact changes without semantic scene
+  transitions, retaining raw findings as proposal-only evidence.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

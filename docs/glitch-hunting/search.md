@@ -521,6 +521,14 @@ corpus artifacts with `replay_authority=false` and
 `objective_rewrite_authority=false`. Objective disagreement is rejected rather
 than being reconciled by changing the earlier definition.
 
+`dusklight-open-question-campaign/v1` scopes bounded semantic questions to one
+scenario/fidelity partition and an authenticated campaign definition. Current
+questions report unseen procedure/contact pairs, collision destinations without
+a scene transition, and contact-state changes while the semantic state remains
+unchanged. Assessment always precedes catalog insertion, retains the raw pairs
+or changes, and is proposal-only with no promotion authority. Episode and fact
+caps prevent an unattended campaign from growing without bound.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots
