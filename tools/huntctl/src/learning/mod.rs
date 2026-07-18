@@ -9,6 +9,7 @@ pub mod ensemble_q;
 pub mod evaluation_isolation;
 pub mod factorized_actions;
 pub mod fqi;
+pub mod frozen_inference;
 pub mod goal_conditioning;
 pub mod graph_representation;
 pub mod hindsight;
