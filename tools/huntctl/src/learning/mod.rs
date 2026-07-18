@@ -5,6 +5,7 @@ pub mod calibration;
 pub mod dataset;
 pub mod double_q;
 pub mod ensemble_q;
+pub mod factorized_actions;
 pub mod fqi;
 pub mod iql;
 pub mod low_data_baselines;
