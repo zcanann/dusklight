@@ -460,20 +460,23 @@ The versioned `dusklight-action-guidance/movement-v1` mask is an advisory prior
 over the 68 movement-v2 action classes. Normal gameplay recommends all actions;
 an event prefers unbuttoned movement and neutral-stick button states; an absent
 player prefers neutral-stick button states; and a pad error prefers neutral.
-These recommendations exist only in Q proposal ordering. The alternating
-unmasked lane can still select any observed action class, including one the
+These recommendations exist only in Q proposal ordering. Guided exploitation
+scores only the intersection of recommended and learned actions instead of
+evaluating every output and filtering afterward. The periodic unmasked
+uncertainty lane can still select any observed action class, including one the
 mask does not recommend. If a state has no recommended learned alternative,
 the guided lane emits no proposal rather than falling back through the mask;
-the systematic, uncertainty, random, and Latin-hypercube lanes remain explicitly
-unmasked. Tape compilation, candidate validation, corpus
+the systematic, uncertainty, random, and Latin-hypercube lanes remain
+explicitly unmasked. Tape compilation, candidate validation, corpus
 ingestion, native evaluation, milestone scoring, minimization, replay, and
 proof acceptance do not import or consult the mask. Consequently a
 glitch-producing input that looks invalid to the prior remains an ordinary
 executable and promotable proof candidate.
 
-Each generation writes `q-proposals.json` v2 with its training size, action
-coverage, guidance schema, masked-state count, guided/unmasked intervention
-counts, and proposal count (or an explicit unavailable reason). Candidate
+Each generation writes `q-proposals.json` v4 with its training size, action
+coverage, guidance schema, masked-state count, guided and unmasked action
+evaluation counts, unmasked probe-state count, intervention counts, and
+proposal count (or an explicit unavailable reason). Candidate
 ancestry marks `q_GuidedExploit` and `q_UnmaskedExplore` proposals, making
 equal-budget attribution auditable. In the first
 closed-loop route smoke, both Q proposals replayed and reached the 138-frame

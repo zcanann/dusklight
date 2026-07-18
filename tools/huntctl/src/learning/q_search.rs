@@ -22,6 +22,7 @@ use std::fmt;
 
 const MAX_PROPOSAL_STATES: usize = 4096;
 const EXPLORATION_WEIGHT: f64 = 1.5;
+const UNMASKED_Q_PROBE_INTERVAL: usize = 4;
 
 #[derive(Clone, Debug)]
 pub struct QEpisode {
@@ -47,6 +48,9 @@ pub struct QProposalSummary {
     pub proposal_states: usize,
     pub action_guidance_schema: &'static str,
     pub state_masked_proposal_states: usize,
+    pub guided_action_evaluations: usize,
+    pub unmasked_action_evaluations: usize,
+    pub unmasked_q_probe_states: usize,
     pub guided_exploit_interventions: usize,
     pub unmasked_exploratory_interventions: usize,
     pub proposals: usize,
@@ -242,8 +246,11 @@ pub fn propose_q_candidates(
     let mut systematic = Vec::new();
     let mut random = Vec::new();
     let mut latin_hypercube = Vec::new();
-    let mut considered = 0;
+    let mut considered = 0_usize;
     let mut state_masked = 0;
+    let mut guided_action_evaluations = 0_usize;
+    let mut unmasked_action_evaluations = 0_usize;
+    let mut unmasked_q_probe_states = 0_usize;
     let mut ordinal = 0;
     let action_support = collection_action_support(training_corpora);
     let mut balanced_actions: Vec<u32> = (0..MOVEMENT_ACTION_COUNT_V2).collect();
@@ -266,13 +273,21 @@ pub fn propose_q_candidates(
                 let current = model
                     .estimate(&transition.state, transition.action.action_id)
                     .map_err(|error| QSearchError::new(error.to_string()))?;
-                let alternatives: Vec<_> = model
-                    .rank_actions(&transition.state)
+                let guided_actions = model
+                    .actions()
+                    .iter()
+                    .copied()
+                    .filter(|action| {
+                        *action != transition.action.action_id && guidance.recommends(*action)
+                    })
+                    .collect::<Vec<_>>();
+                guided_action_evaluations += guided_actions.len();
+                let guided_alternatives = model
+                    .rank_action_subset(&transition.state, &guided_actions)
                     .map_err(|error| QSearchError::new(error.to_string()))?
                     .into_iter()
-                    .filter(|estimate| estimate.action != transition.action.action_id)
-                    .collect();
-                if let Some(best) = guided_exploit(&alternatives, &guidance) {
+                    .collect::<Vec<_>>();
+                if let Some(best) = guided_exploit(&guided_alternatives, &guidance) {
                     exploit.push(Intervention {
                         episode: episode_index,
                         frame,
@@ -282,15 +297,25 @@ pub fn propose_q_candidates(
                         width: [1, 2, 4][ordinal % 3],
                     });
                 }
-                if let Some(best) = unmasked_explore(&alternatives, current.mean) {
-                    explore.push(Intervention {
-                        episode: episode_index,
-                        frame,
-                        action: best.action,
-                        score: exploration_score(best, current.mean),
-                        kind: ProposalKind::EnsembleDisagreement,
-                        width: [1, 2, 4][(ordinal + 1) % 3],
-                    });
+                if (considered - 1).is_multiple_of(UNMASKED_Q_PROBE_INTERVAL) {
+                    unmasked_q_probe_states += 1;
+                    let alternatives = model
+                        .rank_actions(&transition.state)
+                        .map_err(|error| QSearchError::new(error.to_string()))?
+                        .into_iter()
+                        .filter(|estimate| estimate.action != transition.action.action_id)
+                        .collect::<Vec<_>>();
+                    unmasked_action_evaluations += alternatives.len();
+                    if let Some(best) = unmasked_explore(&alternatives, current.mean) {
+                        explore.push(Intervention {
+                            episode: episode_index,
+                            frame,
+                            action: best.action,
+                            score: exploration_score(best, current.mean),
+                            kind: ProposalKind::EnsembleDisagreement,
+                            width: [1, 2, 4][(ordinal + 1) % 3],
+                        });
+                    }
                 }
             }
             let systematic_action = balanced_actions
@@ -385,12 +410,15 @@ pub fn propose_q_candidates(
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v3",
+            schema: "dusklight-q-proposals/v4",
             training_transitions: transitions.len(),
             training_actions: actions.len(),
             proposal_states: considered,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V1,
             state_masked_proposal_states: state_masked,
+            guided_action_evaluations,
+            unmasked_action_evaluations,
+            unmasked_q_probe_states,
             guided_exploit_interventions: exploit.len(),
             unmasked_exploratory_interventions: explore.len(),
             proposals: candidates.len(),
@@ -778,6 +806,10 @@ mod tests {
             ACTION_GUIDANCE_SCHEMA_V1
         );
         assert!(first.summary.state_masked_proposal_states > 0);
+        assert_eq!(first.summary.proposal_states, 8);
+        assert_eq!(first.summary.guided_action_evaluations, 4);
+        assert_eq!(first.summary.unmasked_q_probe_states, 2);
+        assert_eq!(first.summary.unmasked_action_evaluations, 2);
         assert!(first.summary.guided_exploit_interventions > 0);
         assert!(first.summary.unmasked_exploratory_interventions > 0);
         assert_eq!(
