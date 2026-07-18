@@ -298,6 +298,15 @@ impl ObjectiveSuiteCase {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_bound_files(&self, root: &Path) -> Result<(), ObjectiveSuiteError> {
+        validate_case_files(self, root)
+    }
+
+    pub(crate) fn validate_bound_structure(&self) -> Result<(), ObjectiveSuiteError> {
+        let roles = BTreeMap::from([(self.id.as_str(), ObjectiveCaseRole::Positive)]);
+        self.validate(&roles)
+    }
 }
 
 impl ObjectiveBoot {

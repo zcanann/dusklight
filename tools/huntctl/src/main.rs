@@ -19,6 +19,7 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::harness::objective_suite::ObjectiveSuite;
+use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::planning_priors::QBeamPriorTable;
 use huntctl::low_data_baselines::{
@@ -179,8 +180,94 @@ fn command_harness(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("harness command: validate-suite --suite SUITE.json [--repository-root DIR] | seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]".into()),
+        Some("validate-run-request") => {
+            let command_args = &args[1..];
+            let request_path = required_path(command_args, "--request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(&request_path)?)?;
+            let report = request.validate_files(&repository_root)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("seal-run-request") => {
+            let command_args = &args[1..];
+            let input = required_path(command_args, "--input")?;
+            let output = required_path(command_args, "--output")?;
+            refuse_existing_output(&output, "run-request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let mut request: HarnessRunRequest = serde_json::from_slice(&fs::read(&input)?)?;
+            request.refresh_content_sha256()?;
+            let report = request.validate_files(&repository_root)?;
+            write_new_file(&output, request.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("validate-run-result") => {
+            let command_args = &args[1..];
+            let result_path = required_path(command_args, "--result")?;
+            let request_path = required_path(command_args, "--request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let artifact_root = required_path(command_args, "--artifact-root")?;
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(&request_path)?)?;
+            request.validate_files(&repository_root)?;
+            let result: HarnessRunResult = serde_json::from_slice(&fs::read(&result_path)?)?;
+            let report = result.validate_files(&request, &artifact_root)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("seal-run-result") => {
+            let command_args = &args[1..];
+            let input = required_path(command_args, "--input")?;
+            let output = required_path(command_args, "--output")?;
+            refuse_existing_output(&output, "run-result")?;
+            let request_path = required_path(command_args, "--request")?;
+            let repository_root = option(command_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let artifact_root = required_path(command_args, "--artifact-root")?;
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(&request_path)?)?;
+            request.validate_files(&repository_root)?;
+            let mut result: HarnessRunResult = serde_json::from_slice(&fs::read(&input)?)?;
+            result.refresh_content_sha256()?;
+            let report = result.validate_files(&request, &artifact_root)?;
+            write_new_file(&output, result.to_pretty_json()?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        _ => Err("harness command: validate-suite|seal-suite|validate-run-request|seal-run-request|validate-run-result|seal-run-result (use --help for arguments)".into()),
     }
+}
+
+fn refuse_existing_output(path: &Path, label: &str) -> Result<(), Box<dyn Error>> {
+    if path.exists() {
+        return Err(format!("harness {label} output already exists: {}", path.display()).into());
+    }
+    Ok(())
+}
+
+fn write_new_file(path: &Path, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(&bytes)?;
+    file.flush()?;
+    Ok(())
 }
 
 fn command_identity(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -4815,7 +4902,7 @@ fn print_usage() {
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
-        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]"
+        "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]"
     );
     eprintln!(
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
