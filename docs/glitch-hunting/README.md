@@ -85,6 +85,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   mutation-tape boundary for causal glitch-hunting experiments.
 - [Skybook benchmark import](skybook.md) documents the revision-pinned,
   content-addressed requirements manifest and its read-only import boundary.
+- [Project scope and benchmark selection](scope.md) defines the small
+  human-selected pilot, reach goals, and current won't-do boundaries.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.

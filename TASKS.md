@@ -1,10 +1,9 @@
 # Serious glitch-hunting framework backlog
 
-This is the implementation backlog for turning Dusklight into a serious,
-deterministic Twilight Princess glitch-reproduction and glitch-discovery
-platform. It intentionally covers more than reinforcement learning. DDQN, CQL,
-or any future learner still needs the same trustworthy simulator, observations,
-actions, corpus, objectives, and replay proof.
+This is the implementation backlog for a trustworthy, deliberately scoped
+Twilight Princess glitch-reproduction toolkit. The near-term goal is to prove a
+small human-selected benchmark set, not to replicate Skybook wholesale or build
+an autonomous research lab for every known glitch.
 
 The checked-in route tree remains structurally simple: segments have segments
 as children, and alternative attempts are siblings. Goals, model scores,
@@ -15,10 +14,14 @@ not become route history until explicitly promoted.
 
 - `[x]` means the foundation exists, not necessarily that it has reached its
   final performance or fidelity target.
-- `[ ]` is implementable work. Each workstream lists an acceptance gate so a
-  partially implemented feature cannot be mistaken for a reliable capability.
-- **P0** work blocks trustworthy search. **P1** makes the framework broadly
-  useful. **P2** is scale, specialized fidelity, or research work.
+- `[ ]` under **Core** is implementable work in the active queue.
+- **Selected-benchmark** work begins only after a human chooses the page and
+  agrees that its proof is worth the implementation cost.
+- **Reach** records optional research directions, not active obligations.
+- **Won't-do (current scope)** requires an explicit scope decision and a
+  demonstrated need before implementation.
+- P0/P1/P2 labels elsewhere are historical priority hints, subordinate to these
+  scope tiers.
 - Every serialized schema, query, model, scenario, tape, trace, and proof must
   carry enough identity to reject incompatible reuse.
 - `docs/glitch-hunting/` explains the current architecture. This file owns the
@@ -146,8 +149,9 @@ determinism + identity
 ```
 
 The query toolbox, option actions, and corpus are not throwaway RL scaffolding.
-They remain useful for manual TAS work, exhaustive search, causal experiments,
-debugging, and future algorithms.
+They remain useful for manual TAS work, bounded search, debugging, and future
+algorithms. They should grow vertically from selected benchmarks rather than
+horizontally toward imagined whole-game completeness.
 
 ## 1. Run identity, determinism, and fidelity
 
@@ -184,40 +188,50 @@ debugging, and future algorithms.
   reactive waits, or a different candidate as substitutes for fixing identical
   absolute-tape replay.
 
-### P0: deterministic time and asynchronous systems
+### Core: deterministic time for selected benchmarks
 
-- [ ] Inventory every game-visible clock: SDK time, alarms, host time calls,
-  audio clocks, movie clocks, loader timeouts, and third-party library clocks.
+- [ ] Inventory the game-visible clocks exercised by clean boot, stage boot,
+  transitions, and the selected benchmark set.
 - [ ] Drive `OSAlarm`, `__OSGetSystemTime`, and all simulation-visible timers
-  from the logical tick model.
+  encountered there from the logical tick model.
 - [ ] Make shader compilation and nondeterministic host I/O pause simulation
   without consuming PAD reads, RNG draws, events, or score ticks.
 - [ ] Capture and control resource-loader completion ordering where it affects
-  gameplay.
-- [ ] Audit audio, movie, job, and streaming threads for game-visible ordering.
-- [ ] Record unavoidable external completion events as explicit replay inputs
-  until they can be made deterministic.
+  a selected proof.
 
-### P0: RNG coverage
+### Reach: exhaustive asynchronous-system audit
 
-- [ ] Inventory all random streams: global `cM`, actor-local `cM_rnd_c`, JMath,
-  Z2, particle, manager-owned, and subsystem-specific generators.
+- [ ] Audit every audio, movie, job, streaming, renderer, and host-I/O path for
+  game-visible ordering across the entire game.
+- [ ] Record external completion events as replay inputs only where a selected
+  benchmark demonstrates that they matter.
+
+### Core: objective-relevant RNG coverage
+
+- [ ] Inventory random streams exercised by the selected benchmark and its
+  clean/stage-boot proof path.
 - [ ] Add versioned, read-only per-tick snapshots or call counters for relevant
   streams without advancing them.
-- [ ] Attribute RNG draws to stream and, where practical, call site or subsystem.
 - [ ] Include objective-relevant RNG in boundary/archive identity without
   pretending it is the complete process state.
 - [ ] Add tests proving capture is allocation-free and observationally inert.
 
-### P1: fidelity matrix
+### Reach: whole-game RNG attribution
+
+- [ ] Inventory actor-local `cM_rnd_c`, JMath, Z2, particle/effect, static
+  manager, and subsystem-specific RNGs as benchmarks require them.
+- [ ] Attribute relevant RNG draws to stream and, where practical, call site or
+  subsystem.
+
+### Selected-benchmark: fidelity declarations
 
 - [ ] Build a machine-readable matrix for native safety fixes, `AVOID_UB`, GC
   layout emulation, relative/absolute MEM1 address behavior, floating-point
   behavior, GX traversal, cache behavior, and console-only quirks.
 - [ ] Let each benchmark declare required fidelity capabilities.
 - [ ] Classify failures as unsupported fidelity rather than ordinary goal misses.
-- [ ] Maintain a small emulator/console transfer suite for effects the native
-  port cannot faithfully render or execute.
+- [ ] Maintain an emulator/console transfer case only for a selected benchmark
+  the native port cannot faithfully render or execute.
 
 **Acceptance:** the same conformance tapes agree tick-for-tick across supported
 execution modes, or terminate with a typed, localized capability/divergence
@@ -227,7 +241,10 @@ determinism evidence is contradictory.
 
 ## 2. Persistent execution, reset, and checkpoint acceleration
 
-### P0: engine-session worker
+### Reach: engine-session worker and batch throughput
+
+Process-per-run execution is acceptable for the small pilot. Resume this only
+if startup/reset cost is measured as the limiting factor.
 
 - [ ] Extend the persistent worker beyond `hello`/`ping`/`shutdown` to own a
   loaded engine session.
@@ -278,20 +295,23 @@ transition—without first extending a fragile title/menu/route prefix.
   results, evaluation plans/reports, and leaderboard rows carry one exact boot
   origin; population construction and ranking reject mixed origins.
 
-### P1: checkpoint tiers
+### Reach: checkpoint acceleration
 
 - [ ] Keep exact prefix replay as the portable baseline and report its cost.
 - [ ] Add explicitly serialized game-state checkpoints one subsystem at a time,
   including pointer fixups and reconstruction rules.
-- [ ] Investigate Windows process snapshots or a platform forkserver only after
-  the engine-session path is stable.
 - [ ] Bind each checkpoint to build, scenario, parent tape, tick, full supported
   state hash, thread/resource state, and a validation window.
 - [ ] Quarantine a checkpoint permanently after any validation mismatch.
 - [ ] Support `play from parent`, `run suffix from parent`, and `replay visually`
   through the fastest validated tier while retaining the absolute tape.
 
-### P1: rendering and throughput
+### Won't-do (current scope): OS process snapshots and forkservers
+
+- Reconsider process snapshots or a platform forkserver only after a selected
+  benchmark proves serialized checkpoints and prefix replay insufficient.
+
+### Reach: rendering and throughput optimization
 
 - [ ] Measure cost by simulation, GX traversal, backend rendering, shader work,
   resource I/O, tracing, hashing, IPC, and process reset.
@@ -310,8 +330,9 @@ window and the final candidate still passes a clean-process absolute replay.
 
 ## 3. The read-only game query toolbox
 
-The toolbox must be broader than the current model features. We eventually want
-to ask questions nobody anticipated when the trace schema was designed.
+The toolbox grows from selected benchmark needs. The lists below are a
+capability catalog, not a mandate to expose every field or subsystem. A
+human-selected benchmark promotes only the minimum facts it needs into Core.
 
 Use three layers:
 
@@ -393,7 +414,7 @@ all be copied into every per-frame neural observation.
   absence is represented by authenticated mask fields; unavailable and
   truncated required channels are typed extraction failures.
 
-### P0: player observation
+### Selected-benchmark catalog: player observation
 
 - [ ] Position, previous position, velocity, acceleration, forward speed,
   facing, shape angle, movement angle, and camera-relative angle.
@@ -410,7 +431,7 @@ all be copied into every per-frame neural observation.
 - [ ] Normalized PAD consumed by the game plus a short configurable input
   history window.
 
-### P0: actor and object observation
+### Selected-benchmark catalog: actor and object observation
 
 - [ ] Enumerate all live process groups with stable runtime generation handles.
 - [ ] Preserve placed identity using game-data digest, stage, room, actor type,
@@ -428,7 +449,7 @@ all be copied into every per-frame neural observation.
 - [ ] Replace the current fixed lowest-process-ID sampling behavior with explicit
   deterministic query budgets and truncation semantics.
 
-### P0: static world inventory
+### Selected-benchmark catalog: static world inventory
 
 - [ ] Parse or capture stage/room metadata, actor placements, paths, rails,
   spawn points, exits, doors, triggers, switches, cameras, event placements,
@@ -457,7 +478,7 @@ all be copied into every per-frame neural observation.
   query point|aabb|ray`, returning stable source identity, raw PLC facts,
   geometry, distances/intersections, and optional SCLS trigger metadata.
 
-### P0: collision and local geometry
+### Selected-benchmark catalog: collision and local geometry
 
 - [x] Replace Trace v2's provisional nearest-`SCENE_EXIT` actor-origin distance
   before it is used by `movement-state/v2`. Decode the realized oriented exit
@@ -502,7 +523,7 @@ all be copied into every per-frame neural observation.
 - [ ] Detect collision crossing, tunneling, NaN, excessive displacement, and
   contradictory contact flags as events/oracles.
 
-### P0: stage, event, transition, and save state
+### Selected-benchmark catalog: stage, event, transition, and save state
 
 - [ ] Current stage/room/layer/point, requested next stage, transition phase,
   fade/loading state, spawn resolution, and relevant trigger identity.
@@ -515,7 +536,7 @@ all be copied into every per-frame neural observation.
 - [ ] Emit flag, event, dialogue, cutscene, transition-request, load-start, and
   load-complete deltas.
 
-### P1: UI and menu state
+### Reach: UI and menu observation beyond selected benchmarks
 
 - [ ] Typed screen stack and modal ownership for title, file select, name entry,
   pause, map, item wheel, collection, save, continue, and game-over flows.
@@ -525,7 +546,7 @@ all be copied into every per-frame neural observation.
 - [ ] UI events suitable for exact boot/menu tape minimization without reactive
   timing in the final proof.
 
-### P1: resource, heap, and process state
+### Reach: resource, heap, and process observation
 
 - [ ] Resource/archive requests, ownership, queue state, completion events, and
   game-visible load dependencies.
@@ -542,7 +563,7 @@ all be copied into every per-frame neural observation.
 - [ ] Crash, assertion, hang, deadlock suspicion, invalid handle, and memory
   corruption artifacts with last-known events and inputs.
 
-### P1: camera, rendering, audio, and effects
+### Reach: camera, rendering, audio, and effects observation
 
 - [ ] Camera transform, target, mode, owner, lock-on, clipping, and transition
   state where it affects control or a glitch predicate.
@@ -552,7 +573,7 @@ all be copied into every per-frame neural observation.
 - [ ] Particle/effect RNG and actor linkage where effects influence gameplay or
   fidelity diagnosis.
 
-### P1: toolbox UX and APIs
+### Reach: general-purpose toolbox UX and APIs
 
 - [ ] `huntctl inspect scene`, `inspect actor`, `inspect collision`, `inspect
   flags`, `inspect rng`, and `query` commands against a paused/live worker or
@@ -791,7 +812,8 @@ mutator.
 - [x] Bayesian optimization for very expensive, smooth-enough bounded tactics.
 - [x] Novelty search and quality-diversity/MAP-Elites across route, behavior,
   RNG, actor, contact, and boundary descriptors.
-- [ ] MCTS over checkpointed option boundaries where restore is validated.
+- [ ] **Reach:** MCTS over checkpointed option boundaries where restore is
+  validated and a selected benchmark justifies it.
 
 ### P0: fair proposer tournament
 
@@ -809,7 +831,10 @@ mutator.
 exact deletion/golf, structured tactic optimization, archive exploration, and a
 simple random baseline.
 
-## 8. Serious RL and planning program
+## 8. Reach: RL and model-based planning
+
+No neural or model-based learner is required for the initial selected set; new
+work here needs a measured failure of simpler exact or structured search.
 
 ### P0: keep the low-data baseline honest
 
@@ -922,7 +947,7 @@ decisions, not raw consecutive frame count.
 proposer interface; their models and datasets are reproducible; and promoted
 improvements are independently proved absolute tapes.
 
-## 9. Novelty and autonomous glitch discovery
+## 9. Reach: novelty and autonomous glitch discovery
 
 - [x] Define semantic novelty descriptors over procedures, events, contacts,
   transitions, actor relationships, flags, position/velocity extrema, and
@@ -948,7 +973,7 @@ improvements are independently proved absolute tapes.
 artifacts with machine-readable novelty reasons, rather than a directory of
 uninspectable random tapes.
 
-## 10. Experimental causal interventions
+## 10. Reach: experimental causal interventions
 
 - [x] Implement canonical `DUSKINTR` plus a readable bounded DSL, separately
   from controller tapes.
@@ -969,13 +994,13 @@ uninspectable random tapes.
 possibility with complete provenance, while a normal build cannot execute or
 mislabel the intervention.
 
-## 11. Skybook replication and capability discovery
+## 11. Human-selected Skybook benchmark pilot
 
 The current `..\skybook` checkout contains roughly 483 posts, including
-about 452 categorized glitch pages. Its tags already span movement, collision,
-cutscenes, OOB, warps, memory, storage, softlocks, combat, crashes, actor
-corruption, RNG, platforms, and dozens of maps. This is a requirements corpus,
-not merely a list of tapes to transcribe.
+about 452 categorized glitch pages. It is a read-only reference corpus, not a
+commitment to reproduce, triage, or model every page. The active set should
+stay small (initially 3–5 easy or high-value pages), be chosen by a human, and
+expand one page at a time only when the capability payoff is worth the work.
 
 ### P0: import a read-only benchmark manifest
 
@@ -985,13 +1010,14 @@ not merely a list of tapes to transcribe.
 - [x] Generate a content-addressed manifest without editing or depending on
   Skybook at runtime.
 - [x] Normalize aliases while retaining original names and source paths.
-- [x] Map each page to required scenarios, actions, observations, oracles,
-  fidelity, and known/unknown setup steps.
-- [ ] Track `untriaged`, `unsupported`, `scenario-ready`, `observable`,
-  `reproduced`, `minimized`, and `discovery-withheld` independently.
-- [ ] Link benchmark definitions back to the exact Skybook source revision.
+- [ ] Add a human-maintained selection file containing 3–5 approved pages,
+  selection rationale, and `selected`/`deferred`/`won't-do` status.
+- [ ] Link only selected benchmark definitions to the exact Skybook revision
+  and page digest.
+- [ ] Keep unselected pages out of the task queue. Do not auto-generate
+  per-page requirements, readiness state, or reproduction work.
 
-### P0: benchmark specification
+### Selected-benchmark: specification
 
 For every selected glitch, retain:
 
@@ -1005,32 +1031,27 @@ For every selected glitch, retain:
 - [ ] Headful evidence where the effect is visual.
 - [ ] Open hypotheses and missing toolbox capabilities.
 
-### P0: representative capability ladder
+### Core: pilot execution
 
-- [ ] Menu/name-entry corruption: Eye Shredder / file-name cursor breakout.
-- [ ] Frame-perfect basic movement: roll timing, Epona slide, item/button timing.
-- [ ] Collision/OOB: step/ledge/floor clips, displacement clipping, seam clips,
-  crawlspaces, doors, ceilings, water, and load-zone boundaries.
-- [ ] Actor interaction: enemy pushes, carried pots, boomerang, clawshot,
-  mounts, spawned/destroyed actors, target/aggro manipulation.
-- [ ] Combat/damage/death: knockback, invulnerability, simultaneous death/load,
-  boss state, dropped items, and revival.
-- [ ] Cutscene/event/UI storage: dialogue, map/item delay, camera ownership,
-  queued events, control lock, and retained state.
-- [ ] Transition/warp: wrong warps, double loads, entrance resolution, void/load
-  races, save warps, Ooccoo, and room unload behavior.
-- [ ] Memory/heap/process: actor corruption, slot exhaustion, allocation failure,
-  stale flags, backing-layout effects, crashes, and console reset interactions.
-- [ ] RNG-sensitive: enemy behavior, drops, cycles, particles, and encounter
-  manipulation.
-- [ ] Visual/audio/platform-specific: renderer corruption, camera, missing
-  effects, music manager, GC/Wii/HD differences, and native-port limitations.
+- [ ] With a human, choose 3–5 pages with short known setups, simple controller
+  inputs, a semantic success condition, and native-port fidelity.
+- [ ] Prove the easiest selected page end to end before adding toolbox work for
+  another page.
+- [ ] Reassess scope after each reproduction; expansion requires a human
+  decision, not automatic manifest traversal.
 
-### P1: mechanism graph
+Basic movement timing, a simple stage-boot collision/OOB setup, and an already
+instrumented menu case are reasonable candidates. Complex memory corruption,
+wrong warps, platform-only rendering, and multi-map setup chains default to
+deferred or won't-do unless explicitly selected.
 
-- [ ] Build a many-to-many graph from glitches to mechanics, prerequisites,
-  actors, items, maps, flags, actions, oracles, and fidelity capabilities.
-- [ ] Use the graph to prioritize toolbox features that unlock the most pages.
+### Reach: mechanism graph after a useful pilot
+
+- [ ] If the selected set grows beyond roughly ten benchmarks, graph only those
+  selected glitches to mechanics, prerequisites, actors, items, maps, flags,
+  actions, oracles, and fidelity capabilities.
+- [ ] Use that small graph to prioritize toolbox features; do not graph all 483
+  pages speculatively.
 - [ ] Reuse shared benchmark modules for common mechanisms rather than coding one
   custom observer per page.
 - [ ] Select withheld known glitches for rediscovery campaigns after their
@@ -1038,7 +1059,7 @@ For every selected glitch, retain:
 - [ ] Record negative results and fidelity blockers so unsupported pages do not
   consume repeated search campaigns.
 
-### P1: unknown and unseen state
+### Selected-benchmark: unknown and unseen state
 
 - [ ] Preserve rich raw actor, flag, contact, event, resource, and map references
   around every surprising run so later analysis can ask new questions.
@@ -1051,12 +1072,14 @@ For every selected glitch, retain:
 - [ ] Provide bounded address/layout diagnostics for reverse engineering while
   keeping portable proof based on semantic facts.
 
-**Acceptance:** the framework can report, for every Skybook page, whether it has
-the required fixture, actions, observations, oracle, and fidelity. Adding a new
-page usually means composing existing toolbox pieces; genuinely missing facts
-become explicit adapter tasks rather than hidden folklore.
+**Acceptance:** 3–5 human-selected pages have revision-bound specifications and
+at least one easy page has a cold-replayable semantic proof. Unselected pages
+remain inert reference data and create no implementation obligation.
 
-## 12. Workbench, inspection, and human workflow
+## 12. Reach: full graphical workbench and inspection workflow
+
+The CLI, VS Code tasks, artifacts, and current route workbench are sufficient
+for the pilot. Expand this UI only in response to repeated review friction.
 
 - [ ] Keep one graphical segment hierarchy with ordinary sibling alternatives;
   avoid separate model, sample, milestone, and generated-result trees.
@@ -1089,26 +1112,26 @@ become explicit adapter tasks rather than hidden folklore.
 candidate was interesting, replay it, record a continuation, and promote or
 discard it without using a separate algorithm-specific workflow.
 
-## 13. Multi-client and distributed execution
+## 13. Won't-do (current scope): multi-client and distributed execution
 
-- [ ] Treat each client as an isolated worker with its own scenario, inputs,
+- Treat each client as an isolated worker with its own scenario, inputs,
   state, artifacts, and crash boundary.
-- [ ] Add deterministic logical barriers and an explicit cross-client message,
+- Add deterministic logical barriers and an explicit cross-client message,
   delay, loss, and delivery schedule.
-- [ ] Record sender, receiver, logical tick, ordering, payload digest, and network
+- Record sender, receiver, logical tick, ordering, payload digest, and network
   schedule as replay inputs.
-- [ ] Compose multi-port and multi-client goals/oracles.
-- [ ] Schedule CPU affinity, memory budgets, worker capabilities, NUMA locality,
+- Compose multi-port and multi-client goals/oracles.
+- Schedule CPU affinity, memory budgets, worker capabilities, NUMA locality,
   and thermal/throughput telemetry based on measurements.
-- [ ] Add a single-host coordinator before distributed execution.
-- [ ] Add distributed immutable artifact transport, deduplication, leases, and
+- Add a single-host coordinator before distributed execution.
+- Add distributed immutable artifact transport, deduplication, leases, and
   failure recovery only after one host saturates usefully.
-- [ ] Never let different build/game-data/fidelity workers share a training or
+- Never let different build/game-data/fidelity workers share a training or
   proof pool without explicit compatibility rules.
 
-**Acceptance:** a coordinated artifact replays the same ordered cross-client
-event stream, and increasing worker count changes wall-clock throughput rather
-than logical outcome.
+These are design notes, not tasks. Reopen only if one host is measurably
+saturated by a successful Core workload and the coordinator can preserve
+logical outcomes.
 
 ## 14. Testing, safety, and operational quality
 
@@ -1126,11 +1149,10 @@ than logical outcome.
 
 ### P0: end-to-end conformance
 
-- [ ] Clean-boot repetition suites for menu, movement, transition, actor,
-  collision, RNG, crash, and recording/handoff paths.
-- [ ] Stage-boot conformance suites spanning representative overworld, dungeon,
-  boss, interior, grotto, and cutscene maps, with small goal-specific tapes
-  proving fixture readiness, input alignment, and isolated save/loadout state.
+- [ ] Clean-boot repetition suites for common tape, transition, recording, and
+  selected-benchmark paths.
+- [ ] Stage-boot conformance for the selected set, with goal-specific tapes
+  proving readiness, input alignment, and isolated save/loadout state.
 - [ ] For representative stage-boot tests, promote the local result into a
   clean-process absolute replay when claiming end-to-end route capability;
   report local fixture validation and full boot proof as distinct evidence.
@@ -1149,8 +1171,8 @@ than logical outcome.
   full diagnostic capture.
 - [ ] Fail CI on substantial deterministic throughput or artifact-size
   regressions only after stable machine-normalized baselines exist.
-- [ ] Stress long tapes, large maps, actor churn, event storms, many workers,
-  crashes, and disk exhaustion.
+- [ ] **Reach:** stress long tapes, large maps, actor churn, event storms, many
+  workers, crashes, and disk exhaustion after ordinary workloads justify it.
 
 ### P1: security and failure containment
 
@@ -1184,6 +1206,11 @@ query, model, or browser request can create unbounded native work.
   promoted segments; rebuildable content-addressed stores own experiments.
 - Do not add distributed orchestration or exotic shared-memory transport until
   warm local workers are measured and saturated.
+- Do not turn every imported Skybook page into a task, generated requirement
+  record, readiness state, or reproduction campaign. Human selection is the
+  gate; unselected pages are inert reference data.
+- Do not add an observer, learner, intervention, or infrastructure layer for a
+  hypothetical benchmark. Tie it to a selected page and its smallest proof.
 - Do not let experimental interventions contaminate ordinary playback, model
   evaluation, or promotion evidence.
 - Do not claim global TAS optimality. State the exact operator neighborhood,
@@ -1210,7 +1237,7 @@ query, model, or browser request can create unbounded native work.
 - [ ] Extend predicates and oracles over the new facts/events.
 - [ ] Compile options to realized tapes and prove them through cold replay.
 
-### Phase C: high-information data collection
+### Reach phase C: high-information data collection
 
 - [ ] Land engine-session batch runs and validated prefix/checkpoint reuse.
 - [ ] Add systematic counterfactual collection and coverage reports.
@@ -1218,7 +1245,7 @@ query, model, or browser request can create unbounded native work.
   evaluation routes.
 - [ ] Run equal-budget FQI, structured, exact, novelty, and random baselines.
 
-### Phase D: conservative neural learning
+### Reach phase D: conservative neural learning
 
 - [ ] Add small discrete Double-Q, CQL, IQL, ensemble uncertainty, prioritized
   replay, and option-level goal conditioning.
@@ -1227,42 +1254,41 @@ query, model, or browser request can create unbounded native work.
 - [ ] Introduce recurrent or object-set models only in response to measured
   partial observability or representation failure.
 
-### Phase E: Skybook-scale campaigns
+### Selected-benchmark phase E: small Skybook pilot
 
-- [ ] Generate the Skybook capability/benchmark manifest and mechanism graph.
-- [ ] Build the representative capability ladder before attempting every page.
-- [ ] Run withheld rediscovery, minimization, fidelity classification, and
-  headful review campaigns.
-- [ ] Use recurring missing capabilities to drive new toolbox adapters rather
-  than one-off benchmark hacks.
+- [x] Generate the revision-pinned read-only Skybook reference manifest.
+- [ ] Have a human select 3–5 easy/high-value pages; do not generate tasks for
+  the rest of the corpus.
+- [ ] Specify and reproduce the easiest page with stage/clean-boot proof,
+  minimization, and headful review where useful.
+- [ ] Add toolbox adapters only for the next approved page, then reassess scope.
 
-### Phase F: open-ended discovery and scale
+### Reach phase F: open-ended discovery
 
 - [ ] Add semantic novelty archives, causal interventions, model-assisted
-  planning, and human classification.
-- [ ] Expand checkpoint tiers, multi-client determinism, and distributed workers
-  only after their preceding correctness gates pass.
+  planning, and human classification only after the pilot is useful.
+
+### Won't-do (current scope): scale infrastructure
+
+- Distributed workers, multi-client determinism, NUMA scheduling, and portable
+  process snapshots remain out of scope until a successful one-host workload
+  proves they are necessary.
 
 ## Immediate next milestone
 
-The active implementation milestone is **completing Trace v2 plus the query
-contract**, not “DDQN exists.” The channel-directory wire contract and initial
-const-only Link/RNG/camera/action slice now exist; the remaining vertical slice
-is:
+The active milestone is **a human-selected 3–5 page benchmark pilot**, not
+whole-Skybook replication, exhaustive query coverage, or a new learner.
 
-1. [x] A versioned objective-specific observation specification.
-2. [ ] Extend exact `SCENE_EXIT` actor volumes and the initial cached Link
-   background-collision channel with polygon exit metadata, actor contacts,
-   per-pass correction, local geometry, and selected actor slots.
-3. [x] A static `F_SP103`/Ordon world inventory with stable collision, placement,
-   exit, and trigger IDs.
-4. [x] Whole-episode trace extraction with explicit missingness and exact action
-   phase alignment.
-5. [ ] Systematic counterfactual probes around the current `ToOrdonSprings`
-   incumbent, including misses.
-6. [ ] Episode/boundary dataset splits and an action/option coverage report.
-7. [ ] Equal-budget comparison of forest FQI, structured roll/waypoint optimization,
-   and a small conservative Double-Q/CQL prototype.
+1. [ ] Human-select the pilot pages, preferring short known setups, stage-boot
+   feasibility, controller-only execution, semantic success predicates, and
+   native-port fidelity.
+2. [ ] Add revision-bound benchmark definitions for those pages only.
+3. [ ] Reproduce the easiest page end to end with a realized absolute tape,
+   cold replay, semantic oracle, and headful evidence where useful.
+4. [ ] Add only observations/actions required by that proof; record missing
+   capabilities rather than expanding the toolbox speculatively.
+5. [ ] Review with a human and choose whether to attempt the next page, defer
+   it, or stop the pilot.
 
 That slice immediately improves inspection, predicates, manual TAS work,
 search, and future Skybook reproduction. It also creates the first dataset on

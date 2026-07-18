@@ -74,28 +74,8 @@ the checked catalog and rejects altered rules or resolutions.
 
 ## Current boundary
 
-The importer remains a source-extraction boundary. A separate deterministic
-derivation writes `benchmarks/skybook/requirements.json` using schema
-`dusklight-skybook-requirements/v1`:
-
-```sh
-cargo run --manifest-path tools/huntctl/Cargo.toml -- \
-  benchmark derive-skybook-requirements \
-  --manifest benchmarks/skybook/manifest.json \
-  --output build/skybook-requirements.json
-```
-
-Every one of the 483 source pages maps to nonempty scenario, action,
-observation, semantic-oracle, and fidelity requirements. Source tag provenance
-is retained on inferred requirements. Structured list items under requirement,
-setup, method, instruction, procedure, step, and execution headings become
-known setup steps; missing fixture, timing, predicate, version, or setup facts
-remain explicit unknowns rather than guesses.
-
-The derived artifact is bound to the exact source revision and manifest content
-digest. Its canonical content digest is
-`e671f0c96feeefc4675bbd23b01333dd27ca2737495a92d82e6bbccba9621a9b`,
-and independently generated files were byte-identical with file SHA-256
-`27e28e76335242b4c0fe339971298de4b728d904ca91ae416571fb6cf86f1f44`.
-Readiness states and executable per-glitch benchmark specifications remain
-separate roadmap steps; a requirement projection is not a reproduction claim.
+The importer intentionally does not infer requirements, assign readiness, or
+create tasks for every page. A human selects a small pilot set; only those pages
+receive benchmark specifications. Unselected pages remain inert reference data
+so extraction cannot masquerade as triage or a promise of whole-corpus
+reproduction. See [project scope and benchmark selection](scope.md).

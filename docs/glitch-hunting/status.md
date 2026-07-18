@@ -456,13 +456,9 @@ external sources, images, and video evidence. The manifest content identity is
 `bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6`;
 an independent import produced byte-identical JSON. Seven explicit alias rules
 normalize 31 tag occurrences on 29 pages while retaining the original tags,
-titles, and paths. A separately derived, revision-bound requirements artifact
-maps all 483 pages to nonempty scenario, action, observation, semantic-oracle,
-and fidelity requirements while preserving source-tag provenance and explicit
-setup unknowns. Its content identity is
-`e671f0c96feeefc4675bbd23b01333dd27ca2737495a92d82e6bbccba9621a9b`;
-an independent derivation produced byte-identical JSON. Independent readiness
-states and executable benchmark definitions remain roadmap work.
+titles, and paths. The manifest is inert reference data: a human must select a
+small pilot set before any page receives requirements, readiness state, or
+reproduction work.
 
 ## Known gaps
 
