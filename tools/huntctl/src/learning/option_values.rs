@@ -26,7 +26,8 @@ pub struct OptionActionDescriptor {
     pub parameters: BTreeMap<String, OptionParameter>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct OptionValueSample {
     pub action: OptionActionDescriptor,
     pub state: Vec<f32>,
@@ -36,6 +37,60 @@ pub struct OptionValueSample {
     pub terminal: bool,
     /// Digest of the exact raw tape emitted by this realized option.
     pub realized_tape_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionValueBatch {
+    pub schema: String,
+    pub feature_schema: Digest,
+    pub objective_sha256: Digest,
+    pub option_action_schema: Digest,
+    pub feature_width: usize,
+    pub samples: Vec<OptionValueSample>,
+    pub episode_groups: Vec<u64>,
+}
+
+impl OptionValueBatch {
+    pub fn new(
+        feature_schema: Digest,
+        objective_sha256: Digest,
+        feature_width: usize,
+        samples: Vec<OptionValueSample>,
+        episode_groups: Vec<u64>,
+    ) -> Result<Self, OptionValueError> {
+        let option_action_schema = option_action_schema(&samples)?;
+        let batch = Self {
+            schema: OPTION_VALUE_BATCH_SCHEMA_V1.into(),
+            feature_schema,
+            objective_sha256,
+            option_action_schema,
+            feature_width,
+            samples,
+            episode_groups,
+        };
+        batch.validate()?;
+        Ok(batch)
+    }
+
+    pub fn validate(&self) -> Result<(), OptionValueError> {
+        if self.schema != OPTION_VALUE_BATCH_SCHEMA_V1
+            || self.feature_schema == Digest::ZERO
+            || self.objective_sha256 == Digest::ZERO
+            || self.feature_width == 0
+            || self.samples.is_empty()
+            || self.samples.len() != self.episode_groups.len()
+            || option_action_schema(&self.samples)? != self.option_action_schema
+        {
+            return Err(OptionValueError::Invalid(
+                "option-value batch identity or shape is invalid",
+            ));
+        }
+        for sample in &self.samples {
+            validate_sample(self.feature_width, sample)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -75,6 +130,19 @@ pub struct OptionValueModel {
 }
 
 impl OptionValueModel {
+    pub fn fit_batch(
+        batch: &OptionValueBatch,
+        config: &OptionValueConfig,
+    ) -> Result<Self, OptionValueError> {
+        batch.validate()?;
+        Self::fit(
+            batch.feature_width,
+            &batch.samples,
+            &batch.episode_groups,
+            config,
+        )
+    }
+
     pub fn fit(
         feature_width: usize,
         samples: &[OptionValueSample],
@@ -178,6 +246,21 @@ impl OptionValueModel {
         self.feature_width
     }
 
+    pub fn artifact_bytes(
+        &self,
+        batch: &OptionValueBatch,
+        config: &OptionValueConfig,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema": OPTION_VALUE_MODEL_SCHEMA_V1,
+            "feature_schema": batch.feature_schema,
+            "objective_sha256": batch.objective_sha256,
+            "option_action_schema": batch.option_action_schema,
+            "config": config,
+            "model": self,
+        }))
+    }
+
     fn rank(&self, estimate: QEstimate) -> RankedOption {
         RankedOption {
             action_id: estimate.action,
@@ -220,6 +303,23 @@ fn sha256(bytes: &[u8]) -> Digest {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Digest(hasher.finalize().into())
+}
+
+fn option_action_schema(samples: &[OptionValueSample]) -> Result<Digest, OptionValueError> {
+    let mut descriptors = samples
+        .iter()
+        .map(|sample| serde_json::to_vec(&sample.action))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| OptionValueError::Serialization(error.to_string()))?;
+    descriptors.sort();
+    descriptors.dedup();
+    let mut hasher = Sha256::new();
+    hasher.update(OPTION_VALUE_BATCH_SCHEMA_V1.as_bytes());
+    for descriptor in descriptors {
+        hasher.update((descriptor.len() as u64).to_le_bytes());
+        hasher.update(descriptor);
+    }
+    Ok(Digest(hasher.finalize().into()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -326,5 +426,30 @@ mod tests {
         let mut config = OptionValueConfig::default();
         config.fitted_q.backup_steps = 2;
         assert!(OptionValueModel::fit(1, &[valid], &[1], &config).is_err());
+    }
+
+    #[test]
+    fn batch_authenticates_feature_objective_and_option_catalog() {
+        let samples = vec![sample(
+            0.0,
+            action("roll", OptionType::Roll),
+            2,
+            1.0,
+            true,
+            1,
+        )];
+        let batch =
+            OptionValueBatch::new(Digest([7; 32]), Digest([8; 32]), 1, samples, vec![1]).unwrap();
+        let model = OptionValueModel::fit_batch(&batch, &OptionValueConfig::default()).unwrap();
+        let artifact: serde_json::Value = serde_json::from_slice(
+            &model
+                .artifact_bytes(&batch, &OptionValueConfig::default())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(artifact["schema"], OPTION_VALUE_MODEL_SCHEMA_V1);
+        let mut tampered = batch;
+        tampered.samples[0].action.option_id = "different".into();
+        assert!(tampered.validate().is_err());
     }
 }
