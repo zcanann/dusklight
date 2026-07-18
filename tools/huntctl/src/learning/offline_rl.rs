@@ -1642,6 +1642,9 @@ mod tests {
                     frame: 0.0,
                     rate: 0.0,
                 }),
+                do_status: 0,
+                talk_partner: None,
+                grabbed_actor: None,
             });
             record.player_background_collision = Some(TracePlayerBackgroundCollision {
                 flags: 1 << 15,

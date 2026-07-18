@@ -90,6 +90,9 @@ const GOAL_AUTHORED: u32 = 1 << 2;
 const GOAL_FIRST_HIT_TICK_PRESENT: u32 = 1 << 3;
 const GOAL_KNOWN_FLAGS: u32 = 0x0f;
 const SELECTED_ACTORS_TRUNCATED: u32 = 1 << 0;
+const TALK_PARTNER_PRESENT: u32 = 1 << 0;
+const GRABBED_ACTOR_PRESENT: u32 = 1 << 1;
+const PLAYER_ACTION_KNOWN_FLAGS: u32 = TALK_PARTNER_PRESENT | GRABBED_ACTOR_PRESENT;
 const SELECTED_ACTOR_CAPACITY: usize = 16;
 const INVALID_U16_ID: u16 = u16::MAX;
 const INVALID_U32_ID: u32 = u32::MAX;
@@ -248,6 +251,15 @@ pub struct TraceAnimationLane {
     pub rate: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TraceActorIdentity {
+    pub session_process_id: u32,
+    pub actor_name: i16,
+    pub set_id: u16,
+    pub home_room: i8,
+    pub current_room: i8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TracePlayerAction {
     pub procedure_id: u16,
@@ -259,6 +271,9 @@ pub struct TracePlayerAction {
     pub sword_change_wait_timer: u8,
     pub under_animations: [TraceAnimationLane; 3],
     pub upper_animations: [TraceAnimationLane; 3],
+    pub do_status: u8,
+    pub talk_partner: Option<TraceActorIdentity>,
+    pub grabbed_actor: Option<TraceActorIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -688,6 +703,7 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
         (TraceChannel::Rng, 1) => 64,
         (TraceChannel::Camera, 1) => 48,
         (TraceChannel::PlayerAction, 1) => 104,
+        (TraceChannel::PlayerAction, 2) => 136,
         (TraceChannel::PlayerBackgroundCollision, 1) => 128,
         (TraceChannel::PlayerCollisionSurfaces, 1) => 496,
         (TraceChannel::GoalProgress, 1) => 32,
@@ -1505,6 +1521,53 @@ fn decode_v2_channel(
                     return Err(TraceError("nonzero animation-lane reserved field".into()));
                 }
             }
+            let decode_identity = |offset: usize| -> Result<TraceActorIdentity, TraceError> {
+                if u16_at(bytes, offset + 10) != 0 {
+                    return Err(TraceError(
+                        "nonzero gameplay trace actor-identity reserved field".into(),
+                    ));
+                }
+                Ok(TraceActorIdentity {
+                    session_process_id: u32_at(bytes, offset),
+                    actor_name: i16_at(bytes, offset + 4),
+                    set_id: u16_at(bytes, offset + 6),
+                    home_room: bytes[offset + 8] as i8,
+                    current_room: bytes[offset + 9] as i8,
+                })
+            };
+            let (do_status, talk_partner, grabbed_actor) = if version == 2 {
+                let flags = u32_at(bytes, 104);
+                if flags & !PLAYER_ACTION_KNOWN_FLAGS != 0
+                    || bytes[109..112].iter().any(|value| *value != 0)
+                {
+                    return Err(TraceError(
+                        "invalid gameplay trace player-action interaction metadata".into(),
+                    ));
+                }
+                let talk = decode_identity(112)?;
+                let grabbed = decode_identity(124)?;
+                let absent_is_canonical = |identity: &TraceActorIdentity| {
+                    identity.session_process_id == u32::MAX
+                        && identity.actor_name == -1
+                        && identity.set_id == u16::MAX
+                        && identity.home_room == -1
+                        && identity.current_room == -1
+                };
+                if flags & TALK_PARTNER_PRESENT == 0 && !absent_is_canonical(&talk)
+                    || flags & GRABBED_ACTOR_PRESENT == 0 && !absent_is_canonical(&grabbed)
+                {
+                    return Err(TraceError(
+                        "noncanonical absent gameplay trace actor identity".into(),
+                    ));
+                }
+                (
+                    bytes[108],
+                    (flags & TALK_PARTNER_PRESENT != 0).then_some(talk),
+                    (flags & GRABBED_ACTOR_PRESENT != 0).then_some(grabbed),
+                )
+            } else {
+                (0, None, None)
+            };
             record.player_action = Some(TracePlayerAction {
                 procedure_id: u16_at(bytes, 0),
                 mode_flags: u32_at(bytes, 4),
@@ -1515,6 +1578,9 @@ fn decode_v2_channel(
                 sword_change_wait_timer: bytes[26],
                 under_animations: [lane(32), lane(44), lane(56)],
                 upper_animations: [lane(68), lane(80), lane(92)],
+                do_status,
+                talk_partner,
+                grabbed_actor,
             });
         }
         TraceChannel::PlayerBackgroundCollision => {
@@ -3373,6 +3439,55 @@ mod tests {
             .to_string()
             .contains("unused")
         );
+    }
+
+    #[test]
+    fn v2_decodes_portable_player_interaction_identities() {
+        let mut action = vec![0; 136];
+        action[104..108]
+            .copy_from_slice(&(TALK_PARTNER_PRESENT | GRABBED_ACTOR_PRESENT).to_le_bytes());
+        action[108] = 0x15;
+        action[112..116].copy_from_slice(&11_u32.to_le_bytes());
+        action[116..118].copy_from_slice(&42_i16.to_le_bytes());
+        action[118..120].copy_from_slice(&7_u16.to_le_bytes());
+        action[120] = 1;
+        action[121] = 2;
+        action[124..128].copy_from_slice(&12_u32.to_le_bytes());
+        action[128..130].copy_from_slice(&43_i16.to_le_bytes());
+        action[130..132].copy_from_slice(&8_u16.to_le_bytes());
+        action[132] = 3;
+        action[133] = 4;
+
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerAction,
+            2,
+            TraceChannelStatus::Present,
+            action.clone(),
+        )]))
+        .unwrap();
+        assert_eq!(
+            decoded.channel_formats[&TraceChannel::PlayerAction],
+            TraceChannelWireFormat {
+                version: 2,
+                stride: 136,
+            }
+        );
+        let player_action = decoded.records[0].player_action.as_ref().unwrap();
+        assert_eq!(player_action.do_status, 0x15);
+        assert_eq!(player_action.talk_partner.as_ref().unwrap().actor_name, 42);
+        assert_eq!(player_action.talk_partner.as_ref().unwrap().set_id, 7);
+        assert_eq!(player_action.grabbed_actor.as_ref().unwrap().actor_name, 43);
+        assert_eq!(player_action.grabbed_actor.as_ref().unwrap().home_room, 3);
+
+        action[104..108].copy_from_slice(&GRABBED_ACTOR_PRESENT.to_le_bytes());
+        let error = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerAction,
+            2,
+            TraceChannelStatus::Present,
+            action,
+        )]))
+        .unwrap_err();
+        assert!(error.to_string().contains("noncanonical absent"));
     }
 
     #[test]

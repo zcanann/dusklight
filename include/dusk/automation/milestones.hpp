@@ -25,6 +25,15 @@ enum class MilestoneId : std::uint8_t {
 };
 
 struct MilestoneObservation {
+    struct ActorIdentity {
+        bool present = false;
+        std::uint32_t runtimeGeneration = 0xffffffff;
+        std::int16_t actorName = -1;
+        std::uint16_t setId = 0xffff;
+        std::int8_t homeRoom = -1;
+        std::int8_t currentRoom = -1;
+    };
+
     const char* stageName = nullptr;
     std::int8_t room = -1;
     std::int8_t layer = -1;
@@ -51,6 +60,9 @@ struct MilestoneObservation {
     std::int16_t playerDamageWaitTimer = 0;
     std::int16_t playerIceDamageWaitTimer = 0;
     std::uint8_t playerSwordChangeWaitTimer = 0;
+    std::uint8_t playerDoStatus = 0;
+    ActorIdentity talkPartner;
+    ActorIdentity grabbedActor;
     bool playerGroundContact = false;
     bool playerWallContact = false;
     bool playerRoofContact = false;

@@ -15,9 +15,9 @@ struct MilestoneObservation;
 
 inline constexpr std::array<std::uint8_t, 4> kMilestoneProgramMagic{'D', 'M', 'S', 'P'};
 inline constexpr std::uint16_t kMilestoneProgramWireMajor = 1;
-inline constexpr std::uint16_t kMilestoneProgramWireMinor = 4;
+inline constexpr std::uint16_t kMilestoneProgramWireMinor = 5;
 inline constexpr std::uint16_t kMilestoneProgramLanguageMajor = 1;
-inline constexpr std::uint16_t kMilestoneProgramLanguageMinor = 4;
+inline constexpr std::uint16_t kMilestoneProgramLanguageMinor = 5;
 inline constexpr std::size_t kMilestoneProgramMaximumBytes = 1024 * 1024;
 inline constexpr std::size_t kMilestoneProgramMaximumDefinitions = 256;
 inline constexpr std::size_t kMilestoneProgramMaximumNameBytes = 96;

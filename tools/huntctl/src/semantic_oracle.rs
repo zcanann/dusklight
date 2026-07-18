@@ -2205,6 +2205,9 @@ mod tests {
                     frame: 0.0,
                     rate: 1.0,
                 }),
+                do_status: 0,
+                talk_partner: None,
+                grabbed_actor: None,
             });
             records.push(record);
         }

@@ -13,8 +13,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 4] = *b"DMSP";
-pub const WIRE_VERSION: (u16, u16) = (1, 4);
-pub const LANGUAGE_VERSION: (u16, u16) = (1, 4);
+pub const WIRE_VERSION: (u16, u16) = (1, 5);
+pub const LANGUAGE_VERSION: (u16, u16) = (1, 5);
 pub const MAX_DEFINITIONS: usize = 256;
 pub const MAX_NAME_BYTES: usize = 96;
 pub const MAX_SYMBOL_BYTES: usize = 64;
@@ -274,6 +274,17 @@ pub enum Field {
     CollisionGroundHeight = 56,
     CollisionRoofHeight = 57,
     CollisionGroundClearance = 58,
+    PlayerDoStatus = 59,
+    TalkPartnerExists = 60,
+    TalkPartnerActorName = 61,
+    TalkPartnerSetId = 62,
+    TalkPartnerHomeRoom = 63,
+    TalkPartnerCurrentRoom = 64,
+    GrabbedActorExists = 65,
+    GrabbedActorActorName = 66,
+    GrabbedActorSetId = 67,
+    GrabbedActorHomeRoom = 68,
+    GrabbedActorCurrentRoom = 69,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -454,6 +465,17 @@ impl Field {
             Self::CollisionGroundHeight => "collision.ground.height",
             Self::CollisionRoofHeight => "collision.roof.height",
             Self::CollisionGroundClearance => "collision.ground.clearance",
+            Self::PlayerDoStatus => "player.interaction.do_status",
+            Self::TalkPartnerExists => "player.interaction.talk_partner.exists",
+            Self::TalkPartnerActorName => "player.interaction.talk_partner.actor_name",
+            Self::TalkPartnerSetId => "player.interaction.talk_partner.set_id",
+            Self::TalkPartnerHomeRoom => "player.interaction.talk_partner.home_room",
+            Self::TalkPartnerCurrentRoom => "player.interaction.talk_partner.current_room",
+            Self::GrabbedActorExists => "player.interaction.grabbed_actor.exists",
+            Self::GrabbedActorActorName => "player.interaction.grabbed_actor.actor_name",
+            Self::GrabbedActorSetId => "player.interaction.grabbed_actor.set_id",
+            Self::GrabbedActorHomeRoom => "player.interaction.grabbed_actor.home_room",
+            Self::GrabbedActorCurrentRoom => "player.interaction.grabbed_actor.current_room",
         }
     }
 
@@ -471,6 +493,9 @@ impl Field {
             | Self::EventStatus
             | Self::EventMapToolId
             | Self::EventNameHash => FieldType::U32,
+            Self::PlayerDoStatus | Self::TalkPartnerSetId | Self::GrabbedActorSetId => {
+                FieldType::U32
+            }
             Self::StageName | Self::NextStageName => FieldType::Symbol,
             Self::StageRoom
             | Self::StageLayer
@@ -493,11 +518,18 @@ impl Field {
             | Self::RngSecondaryState0
             | Self::RngSecondaryState1
             | Self::RngSecondaryState2 => FieldType::I32,
+            Self::TalkPartnerActorName
+            | Self::TalkPartnerHomeRoom
+            | Self::TalkPartnerCurrentRoom
+            | Self::GrabbedActorActorName
+            | Self::GrabbedActorHomeRoom
+            | Self::GrabbedActorCurrentRoom => FieldType::I32,
             Self::PlayerExists
             | Self::EventRunning
             | Self::BoundaryReached
             | Self::PlayerIsLink
             | Self::NextStageEnabled => FieldType::Bool,
+            Self::TalkPartnerExists | Self::GrabbedActorExists => FieldType::Bool,
             Self::EventNameHashPresent
             | Self::CollisionGroundContact
             | Self::CollisionWallContact
@@ -520,7 +552,7 @@ impl Field {
     }
 
     fn parse(path: &str) -> Option<Self> {
-        (1..=58).find_map(|id| {
+        (1..=69).find_map(|id| {
             let field = Self::from_id(id)?;
             (field.path() == path).then_some(field)
         })
@@ -586,6 +618,17 @@ impl Field {
             56 => Self::CollisionGroundHeight,
             57 => Self::CollisionRoofHeight,
             58 => Self::CollisionGroundClearance,
+            59 => Self::PlayerDoStatus,
+            60 => Self::TalkPartnerExists,
+            61 => Self::TalkPartnerActorName,
+            62 => Self::TalkPartnerSetId,
+            63 => Self::TalkPartnerHomeRoom,
+            64 => Self::TalkPartnerCurrentRoom,
+            65 => Self::GrabbedActorExists,
+            66 => Self::GrabbedActorActorName,
+            67 => Self::GrabbedActorSetId,
+            68 => Self::GrabbedActorHomeRoom,
+            69 => Self::GrabbedActorCurrentRoom,
             _ => return None,
         })
     }
@@ -874,10 +917,11 @@ impl Parser {
             TokenKind::Number(value) if value == "1.2" => LanguageVersion { major: 1, minor: 2 },
             TokenKind::Number(value) if value == "1.3" => LanguageVersion { major: 1, minor: 3 },
             TokenKind::Number(value) if value == "1.4" => LanguageVersion { major: 1, minor: 4 },
+            TokenKind::Number(value) if value == "1.5" => LanguageVersion { major: 1, minor: 5 },
             _ => {
                 return Err(self.at_error(
                     &version_token,
-                    "unsupported or missing language version; expected 1.0 through 1.4",
+                    "unsupported or missing language version; expected 1.0 through 1.5",
                 ));
             }
         };
@@ -1902,6 +1946,12 @@ fn validate_expression(
                     field.path()
                 ));
             }
+            if language_minor < 5 && (*field as u8) >= Field::PlayerDoStatus as u8 {
+                return Err(format!(
+                    "field {} requires milestone language 1.5",
+                    field.path()
+                ));
+            }
             validate_comparison(*field, *operator, value)?;
             *operations += 3;
         }
@@ -2517,6 +2567,23 @@ fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value
         Field::CollisionRoofHeight => Value::F32(collision?.roof_height),
         Field::CollisionGroundClearance if player => {
             Value::F32(record.position[1] - collision?.ground_height)
+        }
+        Field::PlayerDoStatus => Value::U32(action?.do_status.into()),
+        Field::TalkPartnerExists => Value::Bool(action?.talk_partner.is_some()),
+        Field::TalkPartnerActorName => Value::I32(action?.talk_partner.as_ref()?.actor_name.into()),
+        Field::TalkPartnerSetId => Value::U32(action?.talk_partner.as_ref()?.set_id.into()),
+        Field::TalkPartnerHomeRoom => Value::I32(action?.talk_partner.as_ref()?.home_room.into()),
+        Field::TalkPartnerCurrentRoom => {
+            Value::I32(action?.talk_partner.as_ref()?.current_room.into())
+        }
+        Field::GrabbedActorExists => Value::Bool(action?.grabbed_actor.is_some()),
+        Field::GrabbedActorActorName => {
+            Value::I32(action?.grabbed_actor.as_ref()?.actor_name.into())
+        }
+        Field::GrabbedActorSetId => Value::U32(action?.grabbed_actor.as_ref()?.set_id.into()),
+        Field::GrabbedActorHomeRoom => Value::I32(action?.grabbed_actor.as_ref()?.home_room.into()),
+        Field::GrabbedActorCurrentRoom => {
+            Value::I32(action?.grabbed_actor.as_ref()?.current_room.into())
         }
         _ => return None,
     })
@@ -3719,5 +3786,100 @@ milestone exact_next_tick_transition {
                 "accepted invalid source: {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn language_1_5_interaction_identity_facts_round_trip_and_evaluate_offline() {
+        let source = r#"milestones 1.5
+
+milestone exact_interaction {
+  phase post_sim
+  when player.interaction.do_status == 21 &&
+       player.interaction.talk_partner.exists &&
+       player.interaction.talk_partner.actor_name == 42 &&
+       player.interaction.talk_partner.set_id == 7 &&
+       player.interaction.talk_partner.home_room == 1 &&
+       player.interaction.talk_partner.current_room == 2 &&
+       player.interaction.grabbed_actor.exists &&
+       player.interaction.grabbed_actor.actor_name == 43 &&
+       player.interaction.grabbed_actor.set_id == 8 &&
+       player.interaction.grabbed_actor.home_room == 3 &&
+       player.interaction.grabbed_actor.current_room == 4
+}
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(parse(&format(&program).unwrap()).unwrap(), program);
+        let compiled = compile(&program).unwrap();
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 5, 0, 1, 0, 5, 0]);
+        assert_eq!(decode(&compiled.bytes).unwrap().program, program);
+        assert!(parse(&source.replace("milestones 1.5", "milestones 1.4")).is_err());
+
+        let mut record = crate::trace::TraceRecord {
+            boundary_index: 1,
+            simulation_tick: 0,
+            observation_phase: crate::trace::TracePhase::PostSimulation,
+            ..crate::trace::TraceRecord::default()
+        };
+        record.channel_status.insert(
+            crate::trace::TraceChannel::PlayerAction,
+            crate::trace::TraceChannelStatus::Present,
+        );
+        record.player_action = Some(crate::trace::TracePlayerAction {
+            procedure_id: 0,
+            mode_flags: 0,
+            procedure_context_raw: [0; 6],
+            damage_wait_timer: 0,
+            sword_at_up_time: 0,
+            ice_damage_wait_timer: 0,
+            sword_change_wait_timer: 0,
+            under_animations: std::array::from_fn(|_| crate::trace::TraceAnimationLane {
+                resource_id: 0,
+                frame: 0.0,
+                rate: 0.0,
+            }),
+            upper_animations: std::array::from_fn(|_| crate::trace::TraceAnimationLane {
+                resource_id: 0,
+                frame: 0.0,
+                rate: 0.0,
+            }),
+            do_status: 21,
+            talk_partner: Some(crate::trace::TraceActorIdentity {
+                session_process_id: 100,
+                actor_name: 42,
+                set_id: 7,
+                home_room: 1,
+                current_room: 2,
+            }),
+            grabbed_actor: Some(crate::trace::TraceActorIdentity {
+                session_process_id: 101,
+                actor_name: 43,
+                set_id: 8,
+                home_room: 3,
+                current_room: 4,
+            }),
+        });
+        let trace = crate::trace::DecodedTrace {
+            version: 5,
+            boot: crate::tape::TapeBoot::Process,
+            tick_rate_numerator: 30,
+            tick_rate_denominator: 1,
+            requested_channels: crate::trace::TraceChannel::PlayerAction.bit(),
+            capacity_exhausted: false,
+            retention: None,
+            channel_formats: BTreeMap::new(),
+            records: vec![record],
+        };
+        assert!(evaluate_recorded_trace(&program, &trace).unwrap()["exact_interaction"].is_some());
+
+        let mut wrong = trace;
+        wrong.records[0]
+            .player_action
+            .as_mut()
+            .unwrap()
+            .talk_partner
+            .as_mut()
+            .unwrap()
+            .set_id = 9;
+        assert!(evaluate_recorded_trace(&program, &wrong).unwrap()["exact_interaction"].is_none());
     }
 }

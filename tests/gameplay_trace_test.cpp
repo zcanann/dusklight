@@ -156,6 +156,54 @@ void testGoalAndSelectedActorLayout(const std::filesystem::path& path) {
     REQUIRE(readLittle<std::uint32_t>(bytes, actors + 56) == 0xffffffffu);
 }
 
+void testPlayerInteractionLayout(const std::filesystem::path& path) {
+    using namespace dusk::automation;
+    constexpr std::uint64_t channels = gameplay_trace_channel_bit(GameplayTraceChannel::Core) |
+                                       gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction);
+    GameplayTraceRecorder recorder;
+    recorder.start(1, channels);
+    GameplayTraceSample value = sample(5);
+    value.stageStatus = GameplayTraceChannelStatus::NotSampled;
+    value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+    value.playerActionStatus = GameplayTraceChannelStatus::Present;
+    value.playerAction.flags =
+        GameplayTraceTalkPartnerPresent | GameplayTraceGrabbedActorPresent;
+    value.playerAction.doStatus = 0x15;
+    value.playerAction.talkPartner = {
+        .sessionProcessId = 11,
+        .actorName = 42,
+        .setId = 7,
+        .homeRoom = 1,
+        .currentRoom = 2,
+    };
+    value.playerAction.grabbedActor = {
+        .sessionProcessId = 12,
+        .actorName = 43,
+        .setId = 8,
+        .homeRoom = 3,
+        .currentRoom = 4,
+    };
+    recorder.record(value);
+    recorder.stop();
+
+    std::string error;
+    REQUIRE(write_gameplay_trace(path, recorder, error));
+    const auto bytes = readFile(path);
+    REQUIRE(bytes.size() == 426);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 8);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 2);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 136);
+    constexpr std::size_t payload = 290;
+    REQUIRE(readLittle<std::uint32_t>(bytes, payload + 104) == value.playerAction.flags);
+    REQUIRE(bytes[payload + 108] == 0x15);
+    REQUIRE(readLittle<std::uint32_t>(bytes, payload + 112) == 11);
+    REQUIRE(readLittle<std::int16_t>(bytes, payload + 116) == 42);
+    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 118) == 7);
+    REQUIRE(readLittle<std::int8_t>(bytes, payload + 120) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, payload + 124) == 12);
+    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 130) == 8);
+}
+
 void testCollisionSurfaceLayout(const std::filesystem::path& path) {
     using namespace dusk::automation;
     constexpr std::uint64_t channels =
@@ -681,12 +729,14 @@ int main() {
     const auto collisionSurfacesPath = directory / "collision-surfaces.trace";
     const auto fixturePath = directory / "fixture.trace";
     const auto goalActorsPath = directory / "goal-actors.trace";
+    const auto playerInteractionPath = directory / "player-interaction.trace";
     const auto retentionPath = directory / "retention.trace";
     testExactV2Layout(exactPath);
     testScenarioFixtureIsAuthenticatedInV4(fixturePath);
     testSceneExitAndBackgroundCollisionLayout(observerChannelsPath);
     testCollisionSurfaceLayout(collisionSurfacesPath);
     testGoalAndSelectedActorLayout(goalActorsPath);
+    testPlayerInteractionLayout(playerInteractionPath);
     testValidationAndCapacity(invalidPath, exhaustedPath);
     testTriggeredRetention(retentionPath);
     testNewChannelValidation(directory);
@@ -696,6 +746,7 @@ int main() {
     REQUIRE(std::filesystem::remove(collisionSurfacesPath));
     REQUIRE(std::filesystem::remove(fixturePath));
     REQUIRE(std::filesystem::remove(goalActorsPath));
+    REQUIRE(std::filesystem::remove(playerInteractionPath));
     REQUIRE(std::filesystem::remove(retentionPath));
     REQUIRE(std::filesystem::remove(directory));
     std::cout << "Gameplay trace tests passed\n";

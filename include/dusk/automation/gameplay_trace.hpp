@@ -194,6 +194,11 @@ enum GameplayTraceSelectedActorFlags : std::uint32_t {
     GameplayTraceSelectedActorsTruncated = 1u << 0,
 };
 
+enum GameplayTracePlayerActionFlags : std::uint32_t {
+    GameplayTraceTalkPartnerPresent = 1u << 0,
+    GameplayTraceGrabbedActorPresent = 1u << 1,
+};
+
 enum GameplayTraceRetentionTrigger : std::uint32_t {
     GameplayTraceTriggerCrash = 1u << 0,
     GameplayTraceTriggerNovelContact = 1u << 1,
@@ -388,6 +393,17 @@ struct GameplayTraceAnimationLane {
     float rate = 0.0f;
 };
 
+// Portable placement identity plus a diagnostic session-local process ID. The
+// process ID is never sufficient evidence by itself; actorName/setId/homeRoom
+// are the stable selector used by objectives and offline comparison.
+struct GameplayTraceActorIdentitySample {
+    std::uint32_t sessionProcessId = 0xffffffffu;
+    std::int16_t actorName = -1;
+    std::uint16_t setId = 0xffff;
+    std::int8_t homeRoom = -1;
+    std::int8_t currentRoom = -1;
+};
+
 struct GameplayTracePlayerActionSample {
     std::uint16_t procedureId = 0xffff;
     std::uint32_t modeFlags = 0;
@@ -398,6 +414,10 @@ struct GameplayTracePlayerActionSample {
     std::uint8_t swordChangeWaitTimer = 0;
     std::array<GameplayTraceAnimationLane, 3> underAnimations{};
     std::array<GameplayTraceAnimationLane, 3> upperAnimations{};
+    std::uint32_t flags = 0;
+    std::uint8_t doStatus = 0;
+    GameplayTraceActorIdentitySample talkPartner{};
+    GameplayTraceActorIdentitySample grabbedActor{};
 };
 
 struct GameplayTraceGoalProgressSample {

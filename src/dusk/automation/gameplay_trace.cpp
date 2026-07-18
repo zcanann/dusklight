@@ -35,7 +35,7 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::SceneExit, 2, 88, false},
     ChannelDefinition{GameplayTraceChannel::Rng, 1, 64, false},
     ChannelDefinition{GameplayTraceChannel::Camera, 1, 48, false},
-    ChannelDefinition{GameplayTraceChannel::PlayerAction, 1, 104, false},
+    ChannelDefinition{GameplayTraceChannel::PlayerAction, 2, 136, false},
     ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
     ChannelDefinition{GameplayTraceChannel::PlayerCollisionSurfaces, 1, 496, false},
     ChannelDefinition{GameplayTraceChannel::GoalProgress, 1, 32, false},
@@ -274,6 +274,16 @@ void write_animation_lane(std::ostream& stream, const GameplayTraceAnimationLane
     write_float(stream, sample.rate);
 }
 
+void write_actor_identity(
+    std::ostream& stream, const GameplayTraceActorIdentitySample& sample) {
+    write_integer(stream, sample.sessionProcessId);
+    write_integer(stream, sample.actorName);
+    write_integer(stream, sample.setId);
+    write_integer(stream, sample.homeRoom);
+    write_integer(stream, sample.currentRoom);
+    write_integer<std::uint16_t>(stream, 0);
+}
+
 void write_player_action(std::ostream& stream, const GameplayTracePlayerActionSample& sample) {
     write_integer(stream, sample.procedureId);
     write_integer<std::uint16_t>(stream, 0);
@@ -292,6 +302,12 @@ void write_player_action(std::ostream& stream, const GameplayTracePlayerActionSa
     for (const GameplayTraceAnimationLane& lane : sample.upperAnimations) {
         write_animation_lane(stream, lane);
     }
+    write_integer(stream, sample.flags);
+    write_integer(stream, sample.doStatus);
+    write_integer<std::uint8_t>(stream, 0);
+    write_integer<std::uint16_t>(stream, 0);
+    write_actor_identity(stream, sample.talkPartner);
+    write_actor_identity(stream, sample.grabbedActor);
 }
 
 void write_goal_progress(std::ostream& stream, const GameplayTraceGoalProgressSample& sample) {
@@ -504,6 +520,20 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             error = "gameplay trace sample has noncanonical input or tape-frame metadata";
             return false;
         }
+        const auto absentActorIdentity = [](const GameplayTraceActorIdentitySample& actor) {
+            return actor.sessionProcessId == 0xffffffffu && actor.actorName == -1 &&
+                   actor.setId == 0xffff && actor.homeRoom == -1 && actor.currentRoom == -1;
+        };
+        const bool talkPartnerPresent =
+            (sample.playerAction.flags & GameplayTraceTalkPartnerPresent) != 0;
+        const bool grabbedActorPresent =
+            (sample.playerAction.flags & GameplayTraceGrabbedActorPresent) != 0;
+        if (talkPartnerPresent == absentActorIdentity(sample.playerAction.talkPartner) ||
+            grabbedActorPresent == absentActorIdentity(sample.playerAction.grabbedActor))
+        {
+            error = "gameplay trace player-action actor identity is noncanonical";
+            return false;
+        }
         for (const ChannelDefinition& definition : kChannels) {
             const std::uint64_t bit = gameplay_trace_channel_bit(definition.id);
             const GameplayTraceChannelStatus status = status_for(sample, definition.id);
@@ -553,6 +583,8 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             (sample.goalProgress.flags &
                 ~(GameplayTraceGoalConfigured | GameplayTraceGoalReached |
                     GameplayTraceGoalAuthored | GameplayTraceGoalFirstHitTickPresent)) != 0 ||
+            (sample.playerAction.flags &
+                ~(GameplayTraceTalkPartnerPresent | GameplayTraceGrabbedActorPresent)) != 0 ||
             (sample.selectedActors.flags & ~GameplayTraceSelectedActorsTruncated) != 0 ||
             (sample.appliedPads.validPorts & ~0x0fu) != 0 ||
             (sample.appliedPads.ownedPorts & ~0x0fu) != 0)

@@ -253,11 +253,14 @@ std::optional<ValueType> field_type(const std::uint8_t field) {
     case 8: case 14: case 20: case 21: case 22: return ValueType::Bool;
     case 9: case 10: case 11: case 12: return ValueType::F32;
     case 13: return ValueType::Procedure;
-    case 23: case 34: case 37: case 38: case 39: case 40: case 42: return ValueType::U32;
+    case 23: case 34: case 37: case 38: case 39: case 40: case 42: case 59: case 62:
+    case 67: return ValueType::U32;
     case 24: case 28: case 29: case 30: case 31: case 32: case 33: case 35: case 36:
-    case 43: case 44: case 45: case 47: case 48: case 49: return ValueType::I32;
+    case 43: case 44: case 45: case 47: case 48: case 49: case 61: case 63: case 64:
+    case 66: case 68: case 69: return ValueType::I32;
     case 25: case 26: case 27: case 56: case 57: case 58: return ValueType::F32;
-    case 41: case 51: case 52: case 53: case 54: case 55: return ValueType::Bool;
+    case 41: case 51: case 52: case 53: case 54: case 55: case 60: case 65:
+        return ValueType::Bool;
     case 46: case 50: return ValueType::U64;
     default: return std::nullopt;
     }
@@ -391,6 +394,17 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
     case 56: value.available = observation.playerGroundHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerGroundHeight); break;
     case 57: value.available = observation.playerRoofHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerRoofHeight); break;
     case 58: value.available = observation.playerPresent && observation.playerGroundHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerPositionY - observation.playerGroundHeight); break;
+    case 59: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.playerDoStatus; break;
+    case 60: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.talkPartner.present ? 1 : 0; break;
+    case 61: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.actorName)); break;
+    case 62: value.available = observation.talkPartner.present; value.bits = observation.talkPartner.setId; break;
+    case 63: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.homeRoom)); break;
+    case 64: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.currentRoom)); break;
+    case 65: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.grabbedActor.present ? 1 : 0; break;
+    case 66: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.actorName)); break;
+    case 67: value.available = observation.grabbedActor.present; value.bits = observation.grabbedActor.setId; break;
+    case 68: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.homeRoom)); break;
+    case 69: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.currentRoom)); break;
     default: value.available = false; break;
     }
     return value;
@@ -844,6 +858,8 @@ MilestoneProgramError decode_milestone_program(const std::span<const std::uint8_
                 if (cursor >= bytecodeEnd) return MilestoneProgramError::Truncated;
                 instruction.field = bytes[cursor++];
                 if (languageMinor == 0 && instruction.field > 22)
+                    return MilestoneProgramError::InvalidField;
+                if (languageMinor < 5 && instruction.field >= 59)
                     return MilestoneProgramError::InvalidField;
                 const auto type = field_type(instruction.field);
                 if (!type.has_value()) return MilestoneProgramError::InvalidField;

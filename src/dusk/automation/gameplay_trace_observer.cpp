@@ -299,6 +299,18 @@ struct SelectedActorCapture {
     const fopAc_ac_c* player = nullptr;
 };
 
+GameplayTraceActorIdentitySample capture_actor_identity(const fopAc_ac_c* actor) {
+    if (actor == nullptr)
+        return {};
+    return {
+        .sessionProcessId = static_cast<std::uint32_t>(fopAcM_GetID(actor)),
+        .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
+        .setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor)),
+        .homeRoom = actor->home.roomNo,
+        .currentRoom = actor->current.roomNo,
+    };
+}
+
 int capture_selected_actor(void* candidate, void* context) {
     const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto* capture = static_cast<SelectedActorCapture*>(context);
@@ -554,6 +566,20 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                     .frame = link->mUpperFrameCtrl[index].getFrame(),
                     .rate = link->mUpperFrameCtrl[index].getRate(),
                 };
+            }
+            action.doStatus = dComIfGp_getDoStatus();
+            if (const fopAc_ac_c* partner = fopAcM_getTalkEventPartner(link);
+                partner != nullptr)
+            {
+                action.flags |= GameplayTraceTalkPartnerPresent;
+                action.talkPartner = capture_actor_identity(partner);
+            }
+            const fpc_ProcID grabbedId = link->getGrabActorID();
+            if (grabbedId != fpcM_ERROR_PROCESS_ID_e) {
+                if (const fopAc_ac_c* grabbed = fopAcM_SearchByID(grabbedId); grabbed != nullptr) {
+                    action.flags |= GameplayTraceGrabbedActorPresent;
+                    action.grabbedActor = capture_actor_identity(grabbed);
+                }
             }
         }
     }

@@ -136,6 +136,24 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
     const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
     const dEvt_control_c* event = dComIfGp_getEvent();
+    const auto actorIdentity = [](const fopAc_ac_c* actor) {
+        MilestoneObservation::ActorIdentity identity;
+        if (actor != nullptr) {
+            identity.present = true;
+            identity.runtimeGeneration = static_cast<std::uint32_t>(fopAcM_GetID(actor));
+            identity.actorName = static_cast<std::int16_t>(fopAcM_GetName(actor));
+            identity.setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor));
+            identity.homeRoom = actor->home.roomNo;
+            identity.currentRoom = actor->current.roomNo;
+        }
+        return identity;
+    };
+    const MilestoneObservation::ActorIdentity talkPartner = actorIdentity(
+        link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link));
+    const fpc_ProcID grabbedId =
+        link == nullptr ? fpcM_ERROR_PROCESS_ID_e : link->getGrabActorID();
+    const MilestoneObservation::ActorIdentity grabbedActor = actorIdentity(
+        grabbedId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(grabbedId));
     MilestoneObservation observation{
         .stageName = dComIfGp_getStartStageName(),
         .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
@@ -173,6 +191,10 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
             link == nullptr ? 0 : link->getIceDamageWaitTimer()),
         .playerSwordChangeWaitTimer = static_cast<std::uint8_t>(
             link == nullptr ? 0 : link->getSwordChangeWaitTimer()),
+        .playerDoStatus = static_cast<std::uint8_t>(
+            link == nullptr ? 0 : dComIfGp_getDoStatus()),
+        .talkPartner = talkPartner,
+        .grabbedActor = grabbedActor,
         .playerGroundContact = link != nullptr && link->mLinkAcch.ChkGroundHit(),
         .playerWallContact = link != nullptr && link->mLinkAcch.ChkWallHit() != 0,
         .playerRoofContact = link != nullptr && link->mLinkAcch.ChkRoofHit(),
