@@ -10,6 +10,7 @@ use std::fmt;
 pub const RL_SCALE_READINESS_SCHEMA_V1: &str = "dusklight-rl-scale-readiness/v1";
 pub const RL_COVERAGE_READINESS_SCHEMA_V1: &str = "dusklight-rl-coverage-readiness/v1";
 pub const RL_COMPARISON_READINESS_SCHEMA_V1: &str = "dusklight-rl-comparison-readiness/v1";
+pub const RL_PROPOSAL_READINESS_SCHEMA_V1: &str = "dusklight-rl-proposal-readiness/v1";
 const MAX_COVERAGE_REGIONS: usize = 100_000;
 const MAX_REQUIRED_ACTIONS: usize = 4096;
 
@@ -347,6 +348,133 @@ impl RlComparisonReadinessReport {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct RlProposalReadinessConfig {
+    pub maximum_expected_calibration_error: f64,
+    pub maximum_unsupported_simulator_fraction: f64,
+    pub minimum_known_ood_rejection_recall: f64,
+}
+
+impl Default for RlProposalReadinessConfig {
+    fn default() -> Self {
+        Self {
+            maximum_expected_calibration_error: 0.1,
+            maximum_unsupported_simulator_fraction: 0.2,
+            minimum_known_ood_rejection_recall: 0.8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct ProposalQualityEvidence {
+    pub calibration_report_sha256: Digest,
+    pub ood_report_sha256: Digest,
+    pub expected_calibration_error: f64,
+    pub simulator_proposals: usize,
+    pub unsupported_simulator_proposals: usize,
+    pub known_ood_candidates: usize,
+    pub known_ood_rejected_before_rollout: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RlProposalReadinessReport {
+    pub schema: &'static str,
+    pub objective_sha256: Digest,
+    pub model_sha256: Digest,
+    pub config: RlProposalReadinessConfig,
+    pub evidence: ProposalQualityEvidence,
+    pub unsupported_simulator_fraction: f64,
+    pub known_ood_rejection_recall: f64,
+    pub calibration_ready: bool,
+    pub ood_diagnostics_ready: bool,
+    pub simulator_budget_ready: bool,
+    pub proposal_quality_ready: bool,
+    pub promotion_authority: bool,
+    pub report_sha256: Digest,
+}
+
+impl RlProposalReadinessReport {
+    pub fn assess(
+        objective_sha256: Digest,
+        model_sha256: Digest,
+        evidence: ProposalQualityEvidence,
+        config: RlProposalReadinessConfig,
+    ) -> Result<Self, RlReadinessError> {
+        validate_proposal_inputs(objective_sha256, model_sha256, evidence, config)?;
+        let unsupported_simulator_fraction =
+            evidence.unsupported_simulator_proposals as f64 / evidence.simulator_proposals as f64;
+        let known_ood_rejection_recall = evidence.known_ood_rejected_before_rollout as f64
+            / evidence.known_ood_candidates as f64;
+        let calibration_ready =
+            evidence.expected_calibration_error <= config.maximum_expected_calibration_error;
+        let ood_diagnostics_ready =
+            known_ood_rejection_recall >= config.minimum_known_ood_rejection_recall;
+        let simulator_budget_ready =
+            unsupported_simulator_fraction <= config.maximum_unsupported_simulator_fraction;
+        let proposal_quality_ready =
+            calibration_ready && ood_diagnostics_ready && simulator_budget_ready;
+        let mut report = Self {
+            schema: RL_PROPOSAL_READINESS_SCHEMA_V1,
+            objective_sha256,
+            model_sha256,
+            config,
+            evidence,
+            unsupported_simulator_fraction,
+            known_ood_rejection_recall,
+            calibration_ready,
+            ood_diagnostics_ready,
+            simulator_budget_ready,
+            proposal_quality_ready,
+            promotion_authority: false,
+            report_sha256: Digest::ZERO,
+        };
+        report.report_sha256 = canonical_digest(
+            b"dusklight.rl-proposal-readiness/v1\0",
+            &(
+                report.schema,
+                report.objective_sha256,
+                report.model_sha256,
+                report.config,
+                report.evidence,
+                report.unsupported_simulator_fraction,
+                report.known_ood_rejection_recall,
+                report.calibration_ready,
+                report.ood_diagnostics_ready,
+                report.simulator_budget_ready,
+                report.proposal_quality_ready,
+                report.promotion_authority,
+            ),
+        )?;
+        Ok(report)
+    }
+}
+
+fn validate_proposal_inputs(
+    objective_sha256: Digest,
+    model_sha256: Digest,
+    evidence: ProposalQualityEvidence,
+    config: RlProposalReadinessConfig,
+) -> Result<(), RlReadinessError> {
+    if objective_sha256 == Digest::ZERO
+        || model_sha256 == Digest::ZERO
+        || evidence.calibration_report_sha256 == Digest::ZERO
+        || evidence.ood_report_sha256 == Digest::ZERO
+        || !valid_unit(evidence.expected_calibration_error)
+        || evidence.simulator_proposals == 0
+        || evidence.unsupported_simulator_proposals > evidence.simulator_proposals
+        || evidence.known_ood_candidates == 0
+        || evidence.known_ood_rejected_before_rollout > evidence.known_ood_candidates
+        || !valid_unit(config.maximum_expected_calibration_error)
+        || !valid_unit(config.maximum_unsupported_simulator_fraction)
+        || !valid_unit(config.minimum_known_ood_rejection_recall)
+    {
+        return Err(RlReadinessError::new(
+            "RL proposal readiness input is invalid",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_comparison_inputs(
     objective_sha256: Digest,
     model_sha256: Digest,
@@ -637,5 +765,48 @@ mod tests {
         assert!(!blocked.stable_cold_replay_ready);
         assert!(!blocked.held_out_comparison_ready);
         assert!(!blocked.promotion_authority);
+    }
+
+    #[test]
+    fn calibrated_ood_filter_must_avoid_unsupported_simulator_spend() {
+        let evidence = ProposalQualityEvidence {
+            calibration_report_sha256: Digest([3; 32]),
+            ood_report_sha256: Digest([4; 32]),
+            expected_calibration_error: 0.05,
+            simulator_proposals: 100,
+            unsupported_simulator_proposals: 10,
+            known_ood_candidates: 100,
+            known_ood_rejected_before_rollout: 90,
+        };
+        let ready = RlProposalReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            evidence,
+            RlProposalReadinessConfig::default(),
+        )
+        .unwrap();
+        assert!(ready.calibration_ready);
+        assert!(ready.ood_diagnostics_ready);
+        assert!(ready.simulator_budget_ready);
+        assert!(ready.proposal_quality_ready);
+        assert!(!ready.promotion_authority);
+
+        let weak = RlProposalReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            ProposalQualityEvidence {
+                expected_calibration_error: 0.2,
+                unsupported_simulator_proposals: 60,
+                known_ood_rejected_before_rollout: 20,
+                ..evidence
+            },
+            RlProposalReadinessConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(weak.unsupported_simulator_fraction, 0.6);
+        assert!(!weak.calibration_ready);
+        assert!(!weak.ood_diagnostics_ready);
+        assert!(!weak.simulator_budget_ready);
+        assert!(!weak.proposal_quality_ready);
     }
 }
