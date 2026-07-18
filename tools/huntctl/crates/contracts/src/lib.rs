@@ -7,6 +7,7 @@
 pub mod actor_identity;
 pub mod artifact;
 pub mod compatibility;
+pub mod controller_program;
 pub mod observation_view;
 pub mod scenario_fixture;
 pub mod tape;

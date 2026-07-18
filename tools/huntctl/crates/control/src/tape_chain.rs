@@ -120,8 +120,8 @@ pub enum ChainError {
     },
     BootMismatch {
         segment_index: usize,
-        expected: TapeBoot,
-        actual: TapeBoot,
+        expected: Box<TapeBoot>,
+        actual: Box<TapeBoot>,
     },
     PortMismatch {
         segment_index: usize,
@@ -277,8 +277,8 @@ pub fn concatenate_with_options(
         {
             return Err(ChainError::BootMismatch {
                 segment_index,
-                expected: output_boot.clone(),
-                actual: segment.tape.boot.clone(),
+                expected: Box::new(output_boot.clone()),
+                actual: Box::new(segment.tape.boot.clone()),
             });
         }
         for (tape_frame, frame) in segment.tape.frames.iter().enumerate() {

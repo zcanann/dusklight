@@ -11,6 +11,7 @@ experimental-interventions = []
 
 [dependencies]
 dusklight-automation-contracts = { path = "crates/contracts" }
+dusklight-control = { path = "crates/control" }
 dusklight-evidence = { path = "crates/evidence" }
 dusklight-worker-protocol = { path = "crates/worker" }
 dusklight-world = { path = "crates/world" }
@@ -38,6 +39,7 @@ codegen-units = 1
 members = [
     ".",
     "crates/contracts",
+    "crates/control",
     "crates/evidence",
     "crates/worker",
     "crates/world",
@@ -45,6 +47,7 @@ members = [
 default-members = [
     ".",
     "crates/contracts",
+    "crates/control",
     "crates/evidence",
     "crates/worker",
     "crates/world",

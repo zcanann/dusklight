@@ -13,6 +13,7 @@ ROOT_MANIFEST = WORKSPACE / "Cargo.toml"
 EXPECTED_MEMBERS = {
     ".",
     "crates/contracts",
+    "crates/control",
     "crates/evidence",
     "crates/worker",
     "crates/world",
@@ -20,11 +21,13 @@ EXPECTED_MEMBERS = {
 
 ALLOWED_INTERNAL_DEPENDENCIES = {
     "dusklight-automation-contracts": set(),
+    "dusklight-control": {"dusklight-automation-contracts"},
     "dusklight-evidence": {"dusklight-automation-contracts"},
     "dusklight-worker-protocol": {"dusklight-automation-contracts"},
     "dusklight-world": {"dusklight-automation-contracts"},
     "dusklight-huntctl": {
         "dusklight-automation-contracts",
+        "dusklight-control",
         "dusklight-evidence",
         "dusklight-worker-protocol",
         "dusklight-world",

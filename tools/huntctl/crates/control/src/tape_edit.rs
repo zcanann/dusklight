@@ -13,12 +13,22 @@ pub const CANONICAL_TICK_RATE_DENOMINATOR: u32 = 1;
 pub enum EditError {
     InvalidBase(TapeError),
     InvalidOverlay(TapeError),
-    ReactiveBase { frame: usize },
-    ReactiveOverlay { frame: usize },
+    ReactiveBase {
+        frame: usize,
+    },
+    ReactiveOverlay {
+        frame: usize,
+    },
     TickRateMismatch,
-    BootMismatch { base: TapeBoot, overlay: TapeBoot },
+    BootMismatch {
+        base: Box<TapeBoot>,
+        overlay: Box<TapeBoot>,
+    },
     RangeOverflow,
-    RangeOutOfBounds { end: usize, base_frames: usize },
+    RangeOutOfBounds {
+        end: usize,
+        base_frames: usize,
+    },
     TooManyFrames,
 }
 
@@ -87,8 +97,8 @@ pub fn layer_at(
     }
     if !matches!(&overlay.boot, TapeBoot::Process) && overlay.boot != base.boot {
         return Err(EditError::BootMismatch {
-            base: base.boot,
-            overlay: overlay.boot,
+            base: Box::new(base.boot),
+            overlay: Box::new(overlay.boot),
         });
     }
     let end = start

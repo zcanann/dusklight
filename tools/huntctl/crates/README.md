@@ -5,6 +5,7 @@ not an architectural boundary if any sibling module can import through it.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)
+├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-worker-protocol ────────┤
 ├── dusklight-world ──────────────────┤
@@ -25,6 +26,13 @@ corpora, transition corpora, episode manifests, and repetition ledgers. It may
 depend on contracts. It cannot depend on proposers, learners, search ranking,
 route mutation, worker processes, or the CLI. This prevents evidence truth from
 acquiring algorithm-specific authority.
+
+## `dusklight-control`
+
+Owns tape authoring/editing/composition, static controller compilation, typed
+option evidence, and bounded roll/path/tactic realization. It may depend on
+contracts. It cannot depend on objective truth, evidence, search, learning,
+routes, workers, native process execution, or CLI parsing.
 
 ## `dusklight-worker-protocol`
 

@@ -232,6 +232,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dusklight-control"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "dusklight-evidence"
 version = "0.1.0"
 dependencies = [
@@ -250,6 +260,7 @@ dependencies = [
  "arrow-ipc",
  "arrow-schema",
  "dusklight-automation-contracts",
+ "dusklight-control",
  "dusklight-evidence",
  "dusklight-worker-protocol",
  "dusklight-world",
