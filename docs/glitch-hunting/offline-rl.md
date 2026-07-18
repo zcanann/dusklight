@@ -161,6 +161,31 @@ regret remain separate diagnostics instead of being silently counted as wins
 or losses. These numbers evaluate ranking quality but never replace a native
 predicate hit or cold-replay proof.
 
+### Deterministic discrete Double-Q baseline
+
+Train the bounded twin-critic baseline on the same immutable training split:
+
+```text
+huntctl learn double-q --dataset build/dataset.json \
+  --model-output build/double-q-model.json --epochs 64 \
+  --hidden-width 32 --target-sync-steps 256 --seed 1
+```
+
+The learner uses two independently initialized one-hidden-layer critics. On
+alternating updates, the online critic selects the next discrete action and the
+opposite critic's frozen target copy evaluates it. Target copies synchronize
+only after the declared number of gradient updates. Semi-Markov transitions
+use exact `discount^duration`; terminal transitions never bootstrap. Training
+order, initialization, target synchronization, and artifacts are deterministic
+under the recorded seed and corpus identities.
+
+Training-only numeric mean/variance normalization and bounded gradients keep
+this intentionally small baseline inspectable. The ranking artifact reports
+both critics, their disagreement, observed action support, update count, and
+target synchronization count. It also records that categorical embeddings,
+calibrated uncertainty, and conservative OOD penalties are not yet provided;
+Double-Q rankings remain native-rollout proposals, never promotion evidence.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

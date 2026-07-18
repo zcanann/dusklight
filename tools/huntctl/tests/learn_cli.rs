@@ -159,6 +159,55 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
     assert_eq!(model["schema"], "dusklight-fitted-q-model/v2");
     assert_eq!(model["model"]["bootstrap_unit"], "episode");
 
+    let double_q_path = root.join("double-q-model.json");
+    let double_q = Command::new(executable)
+        .args(["learn", "double-q", "--input"])
+        .arg(&path)
+        .arg("--model-output")
+        .arg(&double_q_path)
+        .args([
+            "--query-transition",
+            "0",
+            "--epochs",
+            "256",
+            "--hidden-width",
+            "8",
+            "--learning-rate",
+            "0.01",
+            "--target-sync-steps",
+            "3",
+            "--seed",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        double_q.status.success(),
+        "{}",
+        String::from_utf8_lossy(&double_q.stderr)
+    );
+    let double_q: serde_json::Value = serde_json::from_slice(&double_q.stdout).unwrap();
+    assert_eq!(double_q["schema"], "dusklight-double-q-ranking/v1");
+    assert_eq!(double_q["ranking"][0]["action"], ADVANCE);
+    assert_eq!(double_q["ranking"][0]["support"], 2);
+    assert_eq!(double_q["gradient_updates"], 1024);
+    assert_eq!(double_q["target_synchronizations"], 341);
+    assert_eq!(double_q["promotion_authority"], false);
+    let double_q_model: serde_json::Value =
+        serde_json::from_slice(&fs::read(&double_q_path).unwrap()).unwrap();
+    assert_eq!(double_q_model["schema"], "dusklight-double-q-model/v1");
+    assert_eq!(double_q_model["config"]["target_sync_steps"], 3);
+    let double_q_blob = &double_q["model_content_blob"];
+    assert_eq!(double_q_blob["kind"], "model");
+    assert_eq!(
+        fs::read(&double_q_path).unwrap(),
+        fs::read(
+            root.join("content")
+                .join(double_q_blob["relative_path"].as_str().unwrap())
+        )
+        .unwrap()
+    );
+
     let held_out_path = root.join("held-out.dtcz");
     TransitionCorpus::new(
         Digest([0x11; 32]),

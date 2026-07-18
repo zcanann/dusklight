@@ -824,7 +824,7 @@ simple random baseline.
 
 ### P1: offline conservative value learning
 
-- [ ] Implement a small discrete Double-Q learner with target networks and
+- [x] Implement a small discrete Double-Q learner with target networks and
   deterministic seeded training.
 - [ ] Add discrete Conservative Q-Learning to penalize unsupported actions.
 - [ ] Add Implicit Q-Learning plus advantage-weighted behavior cloning as a

@@ -13,8 +13,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const DOUBLE_Q_MODEL_SCHEMA_V1: &str = "dusklight-double-q-model/v1";
-pub const MAX_DOUBLE_Q_EPOCHS: usize = 4_096;
-pub const MAX_DOUBLE_Q_HIDDEN_WIDTH: usize = 256;
+pub const MAX_DOUBLE_Q_EPOCHS: usize = 256;
+pub const MAX_DOUBLE_Q_HIDDEN_WIDTH: usize = 128;
 pub const MAX_DOUBLE_Q_TARGET_SYNC_STEPS: usize = 1_000_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -373,14 +373,15 @@ impl Critic {
         self.output_bias[action] -= learning_rate * error;
         for hidden_index in 0..self.hidden_width {
             self.output_weights[output_offset + hidden_index] -=
-                learning_rate * error * hidden[hidden_index];
+                learning_rate * (error * hidden[hidden_index]).clamp(-gradient_clip, gradient_clip);
             if active[hidden_index] {
-                let hidden_gradient = error * prior_output_weights[hidden_index];
+                let hidden_gradient = (error * prior_output_weights[hidden_index])
+                    .clamp(-gradient_clip, gradient_clip);
                 self.hidden_bias[hidden_index] -= learning_rate * hidden_gradient;
                 let input_offset = hidden_index * self.feature_width;
                 for feature in 0..self.feature_width {
-                    self.input_weights[input_offset + feature] -=
-                        learning_rate * hidden_gradient * state[feature];
+                    self.input_weights[input_offset + feature] -= learning_rate
+                        * (hidden_gradient * state[feature]).clamp(-gradient_clip, gradient_clip);
                 }
             }
         }
@@ -407,6 +408,9 @@ fn validate(
     if actions.is_empty() {
         return Err(DoubleQError::EmptyActions);
     }
+    if actions.len() > crate::fqi::MAX_FQI_ACTIONS {
+        return Err(DoubleQError::InvalidConfig("action count exceeds 128"));
+    }
     let mut sorted_actions = actions.to_vec();
     sorted_actions.sort_unstable();
     if let Some(action) = sorted_actions
@@ -418,6 +422,11 @@ fn validate(
     }
     if transitions.is_empty() {
         return Err(DoubleQError::EmptyTransitions);
+    }
+    if transitions.len() > crate::fqi::MAX_FQI_TRANSITIONS {
+        return Err(DoubleQError::InvalidConfig(
+            "transition count exceeds 250000",
+        ));
     }
     if config.epochs == 0 || config.epochs > MAX_DOUBLE_Q_EPOCHS {
         return Err(DoubleQError::InvalidConfig("epochs are outside bounds"));
@@ -433,6 +442,9 @@ fn validate(
         ));
     }
     if !config.learning_rate.is_finite() || !(0.0..=1.0).contains(&config.learning_rate) {
+        return Err(DoubleQError::InvalidConfig("invalid learning rate"));
+    }
+    if config.learning_rate == 0.0 {
         return Err(DoubleQError::InvalidConfig("invalid learning rate"));
     }
     if !config.discount.is_finite() || !(0.0..=1.0).contains(&config.discount) {
