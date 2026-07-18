@@ -1,5 +1,6 @@
 //! Offline-learning domain: immutable datasets, learners, calibration, and proposals.
 
+pub mod actor_set_representation;
 pub mod batch;
 pub mod calibration;
 pub mod dataset;
