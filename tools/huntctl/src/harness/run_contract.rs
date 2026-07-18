@@ -347,16 +347,22 @@ impl HarnessRunResult {
         }
         self.worker.validate()?;
         let build_matches = self.worker.build == request.build;
-        let protocol_matches = self.worker.protocol == request.protocol;
+        let protocol_family_matches = self.worker.protocol.name == request.protocol.name
+            && self.worker.protocol.version == request.protocol.version;
+        let capabilities_match = self.worker.protocol.capabilities_sha256
+            == request.protocol.capabilities_sha256
+            && self.worker.protocol.capabilities == request.protocol.capabilities;
         match self.terminal {
-            HarnessTerminalReason::IdentityMismatch if !build_matches => {}
-            HarnessTerminalReason::CapabilityMismatch if build_matches && !protocol_matches => {}
+            HarnessTerminalReason::IdentityMismatch
+                if !build_matches || !protocol_family_matches => {}
+            HarnessTerminalReason::CapabilityMismatch
+                if build_matches && protocol_family_matches && !capabilities_match => {}
             HarnessTerminalReason::IdentityMismatch | HarnessTerminalReason::CapabilityMismatch => {
                 return Err(contract_error(
                     "run-result mismatch terminal contradicts worker identity",
                 ));
             }
-            _ if build_matches && protocol_matches => {}
+            _ if build_matches && protocol_family_matches && capabilities_match => {}
             _ => {
                 return Err(contract_error(
                     "run-result worker identity differs without a mismatch terminal",
@@ -547,12 +553,15 @@ impl HarnessRunArtifacts {
                 validate_artifact(label, reference)?;
             }
         }
-        if terminal == HarnessTerminalReason::Reached
-            && (!self.complete
-                || self.realized_input.is_none()
-                || self.gameplay_trace.is_none()
-                || self.objective_result.is_none())
-        {
+        let complete_artifacts = self.realized_input.is_some()
+            && self.gameplay_trace.is_some()
+            && self.objective_result.is_some();
+        if self.complete && !complete_artifacts {
+            return Err(contract_error(
+                "complete run result is missing replay or objective artifacts",
+            ));
+        }
+        if terminal == HarnessTerminalReason::Reached && !self.complete {
             return Err(contract_error(
                 "reached run result requires complete replay and proof artifacts",
             ));
@@ -1050,6 +1059,12 @@ mod tests {
         result.worker.protocol = request.protocol.clone();
         result.refresh_content_sha256().unwrap();
         assert!(result.validate_against(&request).is_err());
+
+        result.terminal = HarnessTerminalReason::IdentityMismatch;
+        result.detail.missing_capabilities.clear();
+        result.worker.protocol.name = "different-automation-protocol".into();
+        result.refresh_content_sha256().unwrap();
+        assert!(result.validate_against(&request).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
