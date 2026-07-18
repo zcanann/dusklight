@@ -868,7 +868,7 @@ simple random baseline.
   geometry probes.
 - [x] Test short history stacking and recurrent critics when state remains
   partially observable after Trace v2.
-- [ ] Add DeepSets/attention over variable actor sets only when fixed slots fail
+- [x] Add DeepSets/attention over variable actor sets only when fixed slots fail
   and the corpus is large enough.
 - [ ] Evaluate graph encoders for actor relationships and local collision graphs
   only against simpler representations under equal sample budgets.

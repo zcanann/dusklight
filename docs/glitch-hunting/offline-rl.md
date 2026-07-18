@@ -192,6 +192,17 @@ forms beating the current-state critic, while a fully observed fixture retains
 the simpler baseline. No route adopts history or recurrence until an actual
 held-out Trace-v2 corpus produces the same evidence.
 
+Variable actor-set encoders are separately gated by
+`dusklight-actor-set-readiness/v1`. The default gate requires content-disjoint
+evaluation, at least 128 episodes and 4,096 effective decisions, at least 256
+decisions that overflow the fixed slots, fixed-slot held-out MSE above its
+declared ceiling, and overflow-conditioned error at least 1.25 times the global
+error. Until all conditions hold, `ActorSetEncoder` cannot be constructed.
+Qualified comparisons expose deterministic DeepSets summary features and
+objective-query attention, both canonicalized so actor enumeration order cannot
+change bytes or digests. The readiness artifact is non-promotional; native
+held-out comparison still decides whether either encoder replaces fixed slots.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
