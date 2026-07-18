@@ -1,7 +1,7 @@
 //! Scenario/fidelity-partitioned, multi-outcome autonomous discovery archive.
 
-use crate::semantic_novelty::SemanticNoveltyDescriptor;
-use crate::semantic_novelty::catalog::SemanticNoveltyAssessment;
+use super::SemanticNoveltyDescriptor;
+use super::catalog::SemanticNoveltyAssessment;
 use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -11,6 +11,8 @@ use std::fmt;
 pub const DISCOVERY_ARCHIVE_SCHEMA: &str = "dusklight-discovery-archive/v1";
 pub const DEFAULT_OUTCOMES_PER_BEHAVIOR_CELL: usize = 4;
 pub const MAX_OUTCOMES_PER_BEHAVIOR_CELL: usize = 8;
+pub const MAX_DISCOVERY_ARCHIVE_PARTITIONS: usize = 64;
+pub const MAX_DISCOVERY_CELLS_PER_PARTITION: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -150,8 +152,16 @@ impl DiscoveryArchive {
             return Ok(DiscoveryArchiveDecision::RejectedUnsupported);
         }
         let descriptor_identity = entry.descriptor.identity();
+        if !self.partitions.contains_key(&partition)
+            && self.partitions.len() >= MAX_DISCOVERY_ARCHIVE_PARTITIONS
+        {
+            return Ok(DiscoveryArchiveDecision::RejectedAtCapacity);
+        }
         let partition_cells = self.partitions.entry(partition).or_default();
         let new_cell = !partition_cells.contains_key(&descriptor_identity);
+        if new_cell && partition_cells.len() >= MAX_DISCOVERY_CELLS_PER_PARTITION {
+            return Ok(DiscoveryArchiveDecision::RejectedAtCapacity);
+        }
         let cell = partition_cells.entry(descriptor_identity).or_default();
         if cell
             .iter()

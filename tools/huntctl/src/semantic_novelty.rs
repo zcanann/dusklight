@@ -4,7 +4,9 @@
 //! Search code may index the per-axis identities, while discovery artifacts can
 //! retain this value to explain exactly why an episode occupied a new cell.
 
+pub mod archive;
 pub mod catalog;
+pub mod proposal_signal;
 
 use crate::trace::{
     DecodedTrace, TraceCollisionBackingFormat, TraceCollisionSurfaceKind, TraceRecord,
