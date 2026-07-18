@@ -56,6 +56,9 @@ pub struct QProposalSummary {
     pub structured_counterfactual_interventions: usize,
     pub archive_novelty_interventions: usize,
     pub blind_coverage_interventions: usize,
+    pub collection_cycle_offset: usize,
+    pub collection_schedule: Vec<&'static str>,
+    pub schedule_policy: &'static str,
     pub proposals: usize,
     pub coverage: CollectionCoverage,
     pub proposer_attribution: Vec<ProposerAttribution>,
@@ -421,38 +424,66 @@ pub fn propose_q_candidates(
                 .map_err(|error| QSearchError::new(error.to_string()))
         })
         .collect::<Result<HashSet<_>, _>>()?;
-    let budgets = split_proposer_budget(config.max_proposals);
+    let collection_cycle_offset = config.generation as usize % 5;
+    let budgets = split_proposer_budget(config.max_proposals, collection_cycle_offset);
     let pools = [
+        (ProposalKind::GuidedExploit, &exploit, budgets[0]),
+        (ProposalKind::EnsembleDisagreement, &explore, budgets[1]),
         (
             ProposalKind::StructuredCounterfactual,
             &systematic,
-            budgets[0],
+            budgets[2],
         ),
-        (ProposalKind::EnsembleDisagreement, &explore, budgets[1]),
-        (ProposalKind::ArchiveNovelty, &archive_novelty, budgets[2]),
-        (ProposalKind::RandomProbe, &blind_coverage, budgets[3]),
-        (ProposalKind::GuidedExploit, &exploit, budgets[4]),
+        (ProposalKind::ArchiveNovelty, &archive_novelty, budgets[3]),
+        (ProposalKind::RandomProbe, &blind_coverage, budgets[4]),
     ];
-    let mut proposer_attribution = Vec::new();
-    for (kind, pool, budget) in pools {
-        let before = candidates.len();
-        append_interventions(
-            pool,
-            budget,
-            &aligned,
-            episodes,
-            config.generation,
-            &mut ids,
-            &mut candidates,
-        )?;
-        proposer_attribution.push(ProposerAttribution {
-            proposer: kind.name(),
-            requested_budget: budget,
-            available_interventions: pool.len(),
-            generated_candidates: candidates.len() - before,
-            uncertainty_is_heuristic: kind == ProposalKind::EnsembleDisagreement,
-        });
+    let mut cursors = [0_usize; 5];
+    let mut generated = [0_usize; 5];
+    let mut collection_schedule = Vec::new();
+    while candidates.len() < config.max_proposals {
+        let mut progressed = false;
+        for offset in 0..pools.len() {
+            let lane = (collection_cycle_offset + offset) % pools.len();
+            let (kind, pool, budget) = &pools[lane];
+            if generated[lane] >= *budget {
+                continue;
+            }
+            while cursors[lane] < pool.len() {
+                let cursor = cursors[lane];
+                cursors[lane] += 1;
+                let before = candidates.len();
+                append_interventions(
+                    &pool[cursor..cursor + 1],
+                    1,
+                    &aligned,
+                    episodes,
+                    config.generation,
+                    &mut ids,
+                    &mut candidates,
+                )?;
+                if candidates.len() > before {
+                    generated[lane] += 1;
+                    collection_schedule.push(kind.name());
+                    progressed = true;
+                    break;
+                }
+            }
+        }
+        if !progressed {
+            break;
+        }
     }
+    let proposer_attribution = pools
+        .iter()
+        .enumerate()
+        .map(|(lane, (kind, pool, budget))| ProposerAttribution {
+            proposer: kind.name(),
+            requested_budget: *budget,
+            available_interventions: pool.len(),
+            generated_candidates: generated[lane],
+            uncertainty_is_heuristic: *kind == ProposalKind::EnsembleDisagreement,
+        })
+        .collect();
 
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
     Ok(QProposalBatch {
@@ -471,6 +502,9 @@ pub fn propose_q_candidates(
             structured_counterfactual_interventions: systematic.len(),
             archive_novelty_interventions: archive_novelty.len(),
             blind_coverage_interventions: blind_coverage.len(),
+            collection_cycle_offset,
+            collection_schedule,
+            schedule_policy: "generation_rotated_budget_then_round_robin_available_lanes",
             proposals: candidates.len(),
             coverage: collection_coverage(episodes),
             proposer_attribution,
@@ -522,10 +556,10 @@ fn validate_episode_alignment(episode: &QEpisode) -> Result<AlignedEpisode<'_>, 
     })
 }
 
-fn split_proposer_budget(total: usize) -> [usize; 5] {
+fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
     let mut budgets = [total / 5; 5];
-    for budget in budgets.iter_mut().take(total % 5) {
-        *budget += 1;
+    for offset in 0..total % 5 {
+        budgets[(cycle_offset + offset) % budgets.len()] += 1;
     }
     budgets
 }
@@ -881,6 +915,7 @@ mod tests {
         assert!(first.summary.state_masked_proposal_states > 0);
         assert_eq!(first.summary.proposal_states, 8);
         assert_eq!(first.summary.schema, "dusklight-q-proposals/v5");
+        assert_eq!(first.summary.collection_cycle_offset, 1);
         assert_eq!(first.summary.guided_action_evaluations, 4);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
         assert_eq!(first.summary.unmasked_action_evaluations, 2);
@@ -914,6 +949,21 @@ mod tests {
             episodes[0].corpus.transitions.len()
         );
         assert_eq!(first.summary.proposer_attribution.len(), 5);
+        assert_eq!(
+            first.summary.collection_schedule.len(),
+            first.summary.proposals
+        );
+        assert!(
+            first
+                .summary
+                .collection_schedule
+                .windows(2)
+                .all(|pair| pair[0] != pair[1])
+        );
+        assert_eq!(
+            first.summary.schedule_policy,
+            "generation_rotated_budget_then_round_robin_available_lanes"
+        );
         for proposer in [
             "structured_counterfactual",
             "ensemble_disagreement",
@@ -947,6 +997,20 @@ mod tests {
                 .sum::<usize>(),
             config.max_proposals
         );
+    }
+
+    #[test]
+    fn remainder_budget_rotates_across_all_collection_lanes() {
+        assert_eq!(split_proposer_budget(3, 0), [1, 1, 1, 0, 0]);
+        assert_eq!(split_proposer_budget(3, 1), [0, 1, 1, 1, 0]);
+        assert_eq!(split_proposer_budget(3, 4), [1, 1, 0, 0, 1]);
+        let mut totals = [0; 5];
+        for generation in 0..5 {
+            for (total, budget) in totals.iter_mut().zip(split_proposer_budget(3, generation)) {
+                *total += budget;
+            }
+        }
+        assert_eq!(totals, [3; 5]);
     }
 
     #[test]
