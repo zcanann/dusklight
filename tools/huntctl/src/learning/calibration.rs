@@ -1,5 +1,6 @@
 //! Held-out calibration for discrete fitted-Q proposal models.
 
+use crate::double_q::{DoubleQ, DoubleQError};
 use crate::fqi::{FittedQ, FqiError};
 use crate::low_data_baselines::ReturnSample;
 use serde::Serialize;
@@ -21,7 +22,7 @@ pub struct CalibrationBin {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct FqiCalibrationReport {
+pub struct DiscreteQCalibrationReport {
     pub schema: &'static str,
     pub held_out_samples: usize,
     pub supported_observed_action_samples: usize,
@@ -36,6 +37,47 @@ pub struct FqiCalibrationReport {
     pub proposal_win_rate: Option<f64>,
     pub unsupported_proposals: usize,
     pub mean_observed_regret: Option<f64>,
+}
+
+pub type FqiCalibrationReport = DiscreteQCalibrationReport;
+
+pub trait DiscreteQEstimator {
+    fn calibration_estimate(&self, state: &[f32], action: u32) -> Result<Option<f64>, String>;
+    fn calibration_best_action(&self, state: &[f32]) -> Result<u32, String>;
+}
+
+impl DiscreteQEstimator for FittedQ {
+    fn calibration_estimate(&self, state: &[f32], action: u32) -> Result<Option<f64>, String> {
+        match self.estimate(state, action) {
+            Ok(estimate) => Ok(Some(estimate.mean)),
+            Err(FqiError::UnknownAction(_)) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn calibration_best_action(&self, state: &[f32]) -> Result<u32, String> {
+        self.best_action(state)
+            .map(|estimate| estimate.action)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl DiscreteQEstimator for DoubleQ {
+    fn calibration_estimate(&self, state: &[f32], action: u32) -> Result<Option<f64>, String> {
+        match self.estimate(state, action) {
+            Ok(estimate) => Ok(Some(estimate.mean)),
+            Err(DoubleQError::UnknownAction(_)) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn calibration_best_action(&self, state: &[f32]) -> Result<u32, String> {
+        self.rank_actions(state)
+            .map_err(|error| error.to_string())?
+            .first()
+            .map(|estimate| estimate.action)
+            .ok_or_else(|| "discrete Q model returned an empty ranking".into())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +101,14 @@ pub fn calibrate_fitted_q(
     model: &FittedQ,
     samples: &[ReturnSample],
 ) -> Result<FqiCalibrationReport, CalibrationError> {
+    calibrate_discrete_q(model, samples, "dusklight-fitted-q-calibration/v1")
+}
+
+pub fn calibrate_discrete_q<M: DiscreteQEstimator>(
+    model: &M,
+    samples: &[ReturnSample],
+    schema: &'static str,
+) -> Result<DiscreteQCalibrationReport, CalibrationError> {
     if samples.is_empty() || samples.len() > MAX_CALIBRATION_SAMPLES {
         return Err(CalibrationError::new(
             "invalid held-out calibration sample count",
@@ -68,19 +118,21 @@ pub fn calibrate_fitted_q(
     let mut unsupported_observed_action_samples = 0_usize;
     let mut state_actions = BTreeMap::<Vec<u32>, BTreeMap<u32, (f64, usize)>>::new();
     for sample in samples {
-        let estimate = match model.estimate(&sample.state, sample.action) {
-            Ok(estimate) => Some(estimate),
-            Err(FqiError::UnknownAction(_)) => {
+        let estimate = match model
+            .calibration_estimate(&sample.state, sample.action)
+            .map_err(CalibrationError::new)?
+        {
+            Some(estimate) => Some(estimate),
+            None => {
                 unsupported_observed_action_samples += 1;
                 None
             }
-            Err(error) => return Err(CalibrationError::new(error.to_string())),
         };
         if let Some(estimate) = estimate {
-            if !sample.return_to_go.is_finite() || !estimate.mean.is_finite() {
+            if !sample.return_to_go.is_finite() || !estimate.is_finite() {
                 return Err(CalibrationError::new("non-finite calibration value"));
             }
-            predictions.push((estimate.mean, sample.return_to_go));
+            predictions.push((estimate, sample.return_to_go));
         }
         let key = sample
             .state
@@ -151,9 +203,8 @@ pub fn calibrate_fitted_q(
             .map(|bits| f32::from_bits(*bits))
             .collect::<Vec<_>>();
         let proposed = model
-            .best_action(&state)
-            .map_err(|error| CalibrationError::new(error.to_string()))?
-            .action;
+            .calibration_best_action(&state)
+            .map_err(CalibrationError::new)?;
         let means = action_returns
             .iter()
             .map(|(action, (sum, support))| (*action, *sum / *support as f64))
@@ -167,8 +218,8 @@ pub fn calibrate_fitted_q(
             unsupported_proposals += 1;
         }
     }
-    Ok(FqiCalibrationReport {
-        schema: "dusklight-fitted-q-calibration/v1",
+    Ok(DiscreteQCalibrationReport {
+        schema,
         held_out_samples: samples.len(),
         supported_observed_action_samples: predictions.len(),
         unsupported_observed_action_samples,
@@ -190,6 +241,7 @@ pub fn calibrate_fitted_q(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::double_q::DoubleQConfig;
     use crate::fqi::{FqiConfig, Transition};
 
     #[test]
@@ -245,5 +297,30 @@ mod tests {
         assert_eq!(report.proposal_win_rate, Some(1.0));
         assert_eq!(report.mean_absolute_error, 1.0);
         assert_eq!(report.bins.iter().map(|bin| bin.samples).sum::<usize>(), 2);
+
+        let double_q = DoubleQ::fit(
+            1,
+            &[1, 2],
+            &training,
+            &DoubleQConfig {
+                epochs: 64,
+                hidden_width: 4,
+                learning_rate: 0.01,
+                target_sync_steps: 8,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+        )
+        .unwrap();
+        let neural =
+            calibrate_discrete_q(&double_q, &samples, "dusklight-double-q-calibration/v1").unwrap();
+        assert_eq!(neural.schema, "dusklight-double-q-calibration/v1");
+        assert_eq!(neural.held_out_samples, report.held_out_samples);
+        assert_eq!(
+            neural.supported_observed_action_samples,
+            report.supported_observed_action_samples
+        );
+        assert_eq!(neural.proposal_comparable_states, 1);
+        assert_eq!(neural.proposal_wins, 1);
     }
 }
