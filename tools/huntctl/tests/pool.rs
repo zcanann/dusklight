@@ -48,6 +48,8 @@ fn mixed_build_policy_is_explicit() {
         strict.failures[0].kind,
         StartupFailureKind::IncompatibleBuild
     );
+    assert!(strict.failures[0].message.contains("build.revision"));
+    assert!(strict.failures[0].message.contains("build.describe"));
 
     let mut mixed = WorkerPool::spawn(
         vec![launch("a", "one"), launch("b", "two")],

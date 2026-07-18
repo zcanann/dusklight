@@ -85,6 +85,41 @@
     .delete { border:1px solid rgba(241,120,140,.5); background:rgba(241,120,140,.07); color:var(--red); }
     .play:disabled,.record:disabled,.rename:disabled,.delete:disabled,.capture:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
     .detail-thumbnail { display:block; width:min(320px,100%); aspect-ratio:4/3; margin-top:14px; object-fit:cover; border:1px solid var(--line); border-radius:7px; background:#080b10; }
+    .gameplay-overlay { position:relative; width:min(320px,100%); aspect-ratio:4/3; margin-top:14px; overflow:hidden; border:1px solid var(--line); border-radius:7px; background:#080b10; }
+    .gameplay-overlay .detail-thumbnail { width:100%; height:100%; margin:0; border:0; border-radius:0; }
+    .overlay-marker { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border:2px solid #fff; border-radius:50%; box-shadow:0 0 0 2px rgba(0,0,0,.65); pointer-events:none; }
+    .overlay-marker.target { border-radius:0; border-color:var(--amber); transform:rotate(45deg); }
+    .overlay-marker.contact { border-color:var(--cyan); }
+    .overlay-legend { position:absolute; left:7px; bottom:6px; display:flex; gap:7px; padding:4px 6px; border-radius:4px; background:rgba(4,7,11,.75); color:#d9e1ed; font-size:8px; text-transform:uppercase; }
+    .option-panel { grid-column:1/-1; }
+    .option-timeline { position:relative; height:32px; margin:7px 0 14px; border:1px solid var(--line); border-radius:5px; overflow:hidden; background:linear-gradient(90deg,transparent 24%,rgba(255,255,255,.035) 25%,transparent 26%,transparent 49%,rgba(255,255,255,.035) 50%,transparent 51%,transparent 74%,rgba(255,255,255,.035) 75%,transparent 76%),#0d1219; }
+    .option-interval { position:absolute; top:5px; height:20px; min-width:2px; padding:3px 6px; overflow:hidden; border:1px solid rgba(134,174,251,.55); border-radius:4px; background:rgba(134,174,251,.18); color:#dce7ff; font-size:9px; white-space:nowrap; text-overflow:ellipsis; }
+    .option-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px; }
+    .option-card { min-width:0; padding:10px; border:1px solid var(--line); border-radius:6px; background:#0e131b; }
+    .option-card-head { display:flex; align-items:baseline; gap:7px; margin-bottom:4px; }
+    .option-card-head strong { font-size:11px; }
+    .option-card-head span { color:var(--muted); font-size:9px; }
+    .option-target { min-height:18px; color:var(--amber); font-size:9px; overflow-wrap:anywhere; }
+    .option-curve { display:block; width:100%; height:76px; margin:5px 0; border:1px solid #202938; border-radius:4px; background:#090d13; }
+    .curve-axis { stroke:#293241; stroke-width:1; }
+    .curve-main-x { fill:none; stroke:var(--blue); stroke-width:1.5; }
+    .curve-main-y { fill:none; stroke:var(--cyan); stroke-width:1.5; }
+    .curve-camera-x { fill:none; stroke:var(--amber); stroke-width:1; stroke-dasharray:3 2; }
+    .curve-camera-y { fill:none; stroke:var(--red); stroke-width:1; stroke-dasharray:3 2; }
+    .curve-clamp { fill:var(--red); }
+    .option-evidence { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+    .goal-track { margin-top:6px; }
+    .goal-track-label { color:var(--muted); font-size:8px; }
+    .goal-track svg { display:block; width:100%; height:24px; margin-top:2px; border-radius:3px; background:#090d13; }
+    .goal-progress-line { fill:none; stroke:var(--amber); stroke-width:1.2; }
+    .goal-progress-sample { fill:var(--amber); }
+    .goal-progress-sample.hit { fill:var(--cyan); }
+    .evidence-chip { padding:2px 5px; border-radius:3px; background:#1a2230; color:var(--muted); font-size:8px; }
+    .evidence-chip.contact { color:var(--cyan); }
+    .evidence-chip.goal-ok { color:var(--cyan); }
+    .evidence-chip.goal-open { color:var(--amber); }
+    .curve-legend { display:flex; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:8px; }
+    .curve-legend i { display:inline-block; width:9px; height:2px; margin-right:3px; vertical-align:middle; background:currentColor; }
     .empty { padding:20px; color:var(--muted); font-size:11px; }
     .toast { position:fixed; right:16px; bottom:16px; max-width:440px; padding:11px 13px; border:1px solid var(--line); border-radius:7px; background:#171e29; box-shadow:0 18px 50px rgba(0,0,0,.5); font-size:12px; opacity:0; transform:translateY(6px); pointer-events:none; transition:.15s ease; }
     .toast.show { opacity:1; transform:none; }
@@ -324,9 +359,10 @@
       const outgoing=childSegments(segment.id);
       const drafts=draftsUnder('segment',segment.id);
       const score=segment.first_hit_tick??segment.ticks;
-      const state=segment.error?'bad':segment.playable?'ok':'warn';
+      const state=(segment.error||segment.option_diagnostic_error)?'bad':segment.playable?'ok':'warn';
       const children=isExpanded(occurrence)?[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean):[];
-      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
+      const optionCount=(segment.option_visualization||[]).length;
+      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}${optionCount?`<span>${optionCount} opt</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
     }
     function structuralChildren(kind,id) {
       return kind==='segment'?[...childSegments(id).map(item=>['segment',item.id]),...draftsUnder('segment',id).map(item=>['draft',item.id])]:draftsUnder('draft',id).map(item=>['draft',item.id]);
@@ -426,6 +462,68 @@
       if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">This segment has no parity metadata.</div></div>`;
       return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
+    function taggedName(value) {
+      if(typeof value==='string')return label(value);
+      if(value&&typeof value==='object'){const entry=Object.entries(value)[0];return entry?`${label(entry[0])} ${typeof entry[1]==='string'?entry[1]:''}`.trim():'custom';}
+      return 'unknown';
+    }
+    function f32FromBits(bits) {
+      const view=new DataView(new ArrayBuffer(4));view.setUint32(0,Number(bits),true);return view.getFloat32(0,true);
+    }
+    function vec3(bits) { return (bits||[]).map(value=>f32FromBits(value).toFixed(2)).join(', '); }
+    function targetDescription(target) {
+      if(!target||target.kind==='none')return 'No intended target';
+      if(target.kind==='coordinate')return `coordinate (${vec3(target.value_f32_bits)})`;
+      if(target.kind==='heading')return `heading ${f32FromBits(target.radians_f32_bits).toFixed(3)} rad`;
+      if(target.kind==='actor')return `actor ${target.selector}${target.runtime_process_id?` · pid ${target.runtime_process_id}`:''}`;
+      if(target.kind==='semantic')return `${target.name} · ${Object.keys(target.parameters||{}).length} parameters`;
+      return taggedName(target.kind);
+    }
+    function curvePolyline(points,key,totalFrames) {
+      const denominator=Math.max(1,totalFrames-1);
+      return points.map(point=>`${(Number(point.frame)/denominator*320).toFixed(2)},${(38-Number(point[key])/127*31).toFixed(2)}`).join(' ');
+    }
+    function goalValue(progress) {
+      return progress.value_f32_bits==null?'':` · ${f32FromBits(progress.value_f32_bits).toFixed(3)}`;
+    }
+    function goalProgressTracks(option,totalFrames) {
+      const groups=new Map();(option.goal_progress||[]).forEach(sample=>{if(!groups.has(sample.goal))groups.set(sample.goal,[]);groups.get(sample.goal).push(sample);});
+      return [...groups.entries()].map(([goal,samples])=>{
+        const numeric=samples.filter(sample=>sample.value_f32_bits!=null).map(sample=>({...sample,value:f32FromBits(sample.value_f32_bits)}));
+        const values=numeric.map(sample=>sample.value);const minimum=values.length?Math.min(...values):0;const maximum=values.length?Math.max(...values):1;const span=Math.max(.000001,maximum-minimum);const x=frame=>Number(frame)/Math.max(1,totalFrames-1)*320;const y=value=>20-(value-minimum)/span*16;
+        const line=numeric.length>1?`<polyline class="goal-progress-line" points="${numeric.map(sample=>`${x(sample.frame).toFixed(2)},${y(sample.value).toFixed(2)}`).join(' ')}"/>`:'';
+        const dots=samples.map(sample=>`<circle class="goal-progress-sample${sample.satisfied?' hit':''}" cx="${x(sample.frame).toFixed(2)}" cy="${sample.value_f32_bits==null?12:y(f32FromBits(sample.value_f32_bits)).toFixed(2)}" r="2"/>`).join('');
+        return `<div class="goal-track"><div class="goal-track-label">${escapeHtml(goal)} · progress over frames</div><svg viewBox="0 0 320 24" role="img" aria-label="${escapeHtml(goal)} goal progress">${line}${dots}</svg></div>`;
+      }).join('');
+    }
+    function optionVisualization(segment) {
+      const options=segment.option_visualization||[];
+      if(!options.length)return segment.option_diagnostic_error?`<div class="detail-section option-panel error-note">${escapeHtml(segment.option_diagnostic_error)}</div>`:'';
+      const total=Math.max(1,Number(segment.frame_count)||Math.max(...options.map(option=>Number(option.end_frame_exclusive))));
+      const intervals=options.map(option=>{const left=Number(option.start_frame)/total*100;const width=(Number(option.end_frame_exclusive)-Number(option.start_frame))/total*100;return `<div class="option-interval" style="left:${left}%;width:${width}%" title="${escapeHtml(option.option_id)} · frames ${option.start_frame}–${option.end_frame_exclusive}">${escapeHtml(option.option_id)}</div>`;}).join('');
+      const cards=options.map(option=>{
+        const points=option.curve||[];
+        const clamps=points.filter(point=>point.clamped).map(point=>`<circle class="curve-clamp" cx="${(Number(point.frame)/Math.max(1,total-1)*320).toFixed(2)}" cy="38" r="2"/>`).join('');
+        const curve=points.length?`<svg class="option-curve" viewBox="0 0 320 76" role="img" aria-label="Consumed main-stick and camera curves"><path class="curve-axis" d="M0 38H320"/><polyline class="curve-main-x" points="${curvePolyline(points,'main_x',total)}"/><polyline class="curve-main-y" points="${curvePolyline(points,'main_y',total)}"/><polyline class="curve-camera-x" points="${curvePolyline(points,'camera_x',total)}"/><polyline class="curve-camera-y" points="${curvePolyline(points,'camera_y',total)}"/>${clamps}</svg>`:'';
+        const contacts=(option.contacts||[]).map(sample=>sample.stable_surface_id||sample.kind).filter((value,index,all)=>all.indexOf(value)===index).map(value=>`<span class="evidence-chip contact">contact · ${escapeHtml(value)}</span>`).join('');
+        const latestGoals=new Map();(option.goal_progress||[]).forEach(sample=>latestGoals.set(sample.goal,sample));
+        const goals=[...latestGoals.values()].map(sample=>`<span class="evidence-chip ${sample.satisfied?'goal-ok':'goal-open'}">goal · ${escapeHtml(sample.goal)}${escapeHtml(goalValue(sample))}${sample.satisfied?' · hit':''}</span>`).join('');
+        return `<article class="option-card"><div class="option-card-head"><strong>${escapeHtml(option.option_id)}</strong><span>${escapeHtml(taggedName(option.type))} · ${option.start_frame}–${option.end_frame_exclusive} · ${escapeHtml(taggedName(option.end_reason))}</span></div><div class="option-target">Target · ${escapeHtml(targetDescription(option.intended_target))}</div>${curve}<div class="curve-legend"><span style="color:var(--blue)"><i></i>main x</span><span style="color:var(--cyan)"><i></i>main y</span><span style="color:var(--amber)"><i></i>camera x</span><span style="color:var(--red)"><i></i>camera y</span></div>${goalProgressTracks(option,total)}<div class="option-evidence">${contacts}${goals||'<span class="evidence-chip">no goal samples</span>'}</div></article>`;
+      }).join('');
+      return `<div class="detail-section option-panel"><h3>Option execution overlay</h3><div class="option-timeline" aria-label="Option intervals">${intervals}</div><div class="option-cards">${cards}</div>${segment.option_diagnostic_error?`<div class="error-note">${escapeHtml(segment.option_diagnostic_error)}</div>`:''}</div>`;
+    }
+    function gameplayThumbnail(segment) {
+      if(!segment.thumbnail)return '';
+      const options=segment.option_visualization||[];
+      const targets=[];const contacts=new Map();
+      options.forEach(option=>{
+        const target=[...(option.curve||[])].reverse().find(point=>point.target_viewport)?.target_viewport;
+        if(target)targets.push(target);
+        (option.contacts||[]).filter(sample=>sample.viewport).forEach(sample=>contacts.set(sample.stable_surface_id||`${sample.kind}:${sample.viewport.x_u16}:${sample.viewport.y_u16}`,sample));
+      });
+      const markers=targets.map(point=>`<span class="overlay-marker target" style="left:${point.x_u16/65535*100}%;top:${point.y_u16/65535*100}%" title="Intended target"></span>`).join('')+[...contacts.values()].map(sample=>`<span class="overlay-marker contact" style="left:${sample.viewport.x_u16/65535*100}%;top:${sample.viewport.y_u16/65535*100}%" title="${escapeHtml(sample.kind)} contact"></span>`).join('');
+      return `<div class="gameplay-overlay"><img class="detail-thumbnail" src="${escapeHtml(segment.thumbnail)}" alt="Terminal gameplay frame with option evidence overlay">${markers}${markers?'<div class="overlay-legend"><span>◇ target</span><span>○ contact</span></div>':''}</div>`;
+    }
     function segmentActions(segment) {
       const parentPlays=segment.parent?`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-id="${escapeHtml(segment.id)}">Play from parent</button>${segment.generated?'':`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-play-fast="true" data-id="${escapeHtml(segment.id)}">Play from parent (fast)</button>`}`:'';
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play from boot</button>${parentPlays}`:'';
@@ -443,7 +541,7 @@
         html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}</section>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${segment.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(segment.thumbnail)}" alt="Terminal frame">`:''}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
+        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
         if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}

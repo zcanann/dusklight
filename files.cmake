@@ -1430,6 +1430,10 @@ set(DUSK_FILES
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_pad.cpp
         src/dusk/automation/input_tape.cpp
+        include/dusk/automation/scenario_fixture.hpp
+        src/dusk/automation/scenario_fixture.cpp
+        include/dusk/automation/scenario_fixture_runtime.hpp
+        src/dusk/automation/scenario_fixture_runtime.cpp
         include/dusk/automation/input_recording.hpp
         src/dusk/automation/input_recording.cpp
         src/dusk/automation/input_controller.cpp

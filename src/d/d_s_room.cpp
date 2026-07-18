@@ -12,6 +12,8 @@
 #include "d/d_bg_parts.h"
 #include "m_Do/m_Do_Reset.h"
 #include "f_ap/f_ap_game.h"
+#include "dusk/automation/scenario_fixture_runtime.hpp"
+#include "dusk/logging.h"
 
 #include <cstdio>
 #include <cstring>
@@ -436,6 +438,11 @@ static int phase_2(room_of_scene_class* i_this) {
 
     if (dComIfGp_roomControl_getZoneNo(roomNo) < 0) {
         dComIfGp_roomControl_setZoneNo(roomNo, dComIfGs_createZone(roomNo));
+    }
+    if (!dusk::automation::apply_scenario_fixture_room_flags(roomNo)) {
+        DuskLog.error("Scenario fixture room-flag application failed: {}",
+            dusk::automation::scenario_fixture_runtime_error());
+        return cPhs_ERROR_e;
     }
 
     i_this->roomDt = dComIfGp_roomControl_getStatusRoomDt(roomNo);

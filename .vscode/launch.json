@@ -27,6 +27,32 @@
             "symbolSearchPath": "${command:cmake.launchTargetPath}",
             "console": "integratedTerminal",
             "cwd":"${workspaceRoot}"
+        },
+        {
+            "name": "Glitch Hunt: Route Workbench (macOS)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/huntctl/target/debug/huntctl",
+            "args": [
+                "timeline", "workbench",
+                "--timeline", "${workspaceFolder}/routes/intro.timeline",
+                "--game", "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
+                "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso",
+                "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
+            ],
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            "preLaunchTask": "Glitch Hunt: Prepare Route Workbench (macOS)"
+        },
+        {
+            "name": "Launch Dusklight (macOS)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
+            "args": ["-l", "1", "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso", "--console"],
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            "preLaunchTask": "Glitch Hunt: Build Dusklight (macOS)"
         }
     ]
 }

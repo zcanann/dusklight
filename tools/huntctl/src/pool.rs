@@ -113,7 +113,7 @@ impl WorkerPool {
             policy,
         };
         let mut failures = Vec::new();
-        let mut reference_build: Option<WorkerBuildIdentity> = None;
+        let mut reference_identity: Option<HelloResponse> = None;
 
         for (index, launch) in launches.into_iter().enumerate() {
             let transport = match ProcessTransport::spawn(&launch.program, &launch.args) {
@@ -142,30 +142,28 @@ impl WorkerPool {
                     continue;
                 }
             };
-            if policy == MixedBuildPolicy::RequireIdentical
-                && reference_build
-                    .as_ref()
-                    .is_some_and(|build| build != &hello.build)
-            {
-                let expected = reference_build.as_ref().expect("checked above");
+            let differences = reference_identity
+                .as_ref()
+                .map(|expected| expected.identity_differences(&hello))
+                .unwrap_or_default();
+            if policy == MixedBuildPolicy::RequireIdentical && !differences.is_empty() {
                 let _ = client.shutdown();
                 failures.push(StartupFailure {
                     index,
                     label: launch.label,
                     kind: StartupFailureKind::IncompatibleBuild,
                     message: format!(
-                        "expected revision {} ({}, dirty={}), received {} ({}, dirty={})",
-                        expected.revision,
-                        expected.describe,
-                        expected.dirty,
-                        hello.build.revision,
-                        hello.build.describe,
-                        hello.build.dirty
+                        "worker identity mismatch:\n- {}",
+                        differences
+                            .iter()
+                            .map(|difference| difference.message())
+                            .collect::<Vec<_>>()
+                            .join("\n- ")
                     ),
                 });
                 continue;
             }
-            reference_build.get_or_insert_with(|| hello.build.clone());
+            reference_identity.get_or_insert_with(|| hello.clone());
             pool.workers
                 .push(start_worker(index, launch.label, process_id, hello, client));
         }

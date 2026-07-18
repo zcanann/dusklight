@@ -89,6 +89,7 @@ pub const MOVEMENT_ACTION_SCHEMA_V2: &str = concat!(
     "heading_y=round(cos(k*pi/8)*127);",
     "parameters=raw_stick_x_i16,raw_stick_y_i16,buttons_i16"
 );
+pub const MOVEMENT_ACTION_COUNT_V2: u32 = 68;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExploratoryExtractConfig {
@@ -1508,10 +1509,12 @@ mod tests {
         (
             DecodedTrace {
                 version: 1,
+                boot: crate::tape::TapeBoot::Process,
                 tick_rate_numerator: 30,
                 tick_rate_denominator: 1,
                 requested_channels: 0,
                 capacity_exhausted: false,
+                retention: None,
                 channel_formats: BTreeMap::new(),
                 records: vec![record(0, 10.0), first_applied, second_applied],
             },

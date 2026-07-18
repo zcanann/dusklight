@@ -17,6 +17,7 @@ macro(detect_version)
         set(DUSK_WC_REVISION "")
         set(DUSK_WC_BRANCH "")
         set(DUSK_WC_DATE "")
+        set(DUSK_DIRTY_DIGEST "")
         message(STATUS "Dusklight version overridden to ${DUSK_WC_DESCRIBE}")
     else ()
         # obtain revision info from git
@@ -46,7 +47,8 @@ macro(detect_version)
             # defines DUSK_WC_DESCRIBE
             execute_process(WORKING_DIRECTORY ${_DUSK_VERSION_ROOT} COMMAND ${GIT_EXECUTABLE} describe --tags --long --dirty --match "v*"
                     OUTPUT_VARIABLE DUSK_WC_DESCRIBE
-                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
 
             # remove the git hash, then collapse a clean "-0" suffix only
             string(REGEX REPLACE "-[^-]+(-dirty|)$" "\\1" DUSK_WC_DESCRIBE "${DUSK_WC_DESCRIBE}")
@@ -60,6 +62,53 @@ macro(detect_version)
             execute_process(WORKING_DIRECTORY ${_DUSK_VERSION_ROOT} COMMAND ${GIT_EXECUTABLE} log -1 --format=%ad
                     OUTPUT_VARIABLE DUSK_WC_DATE
                     OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+            # Authenticate the exact dirty source state, not merely the fact
+            # that some tracked file differs from HEAD. The tracked patch and
+            # the path/content digest of every untracked file form a stable
+            # configure-time identity without embedding host paths.
+            execute_process(WORKING_DIRECTORY ${_DUSK_VERSION_ROOT}
+                    COMMAND ${GIT_EXECUTABLE} diff --binary --no-ext-diff HEAD --
+                    OUTPUT_VARIABLE _dusk_tracked_patch)
+            execute_process(WORKING_DIRECTORY ${_DUSK_VERSION_ROOT}
+                    COMMAND ${GIT_EXECUTABLE} ls-files --others --exclude-standard
+                    OUTPUT_VARIABLE _dusk_untracked_files
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+            # A normal source rebuild must not retain the digest from an older
+            # configure. Ask CMake to regenerate when any currently known
+            # tracked or untracked repository file changes.
+            execute_process(WORKING_DIRECTORY ${_DUSK_VERSION_ROOT}
+                    COMMAND ${GIT_EXECUTABLE} ls-files --cached
+                    OUTPUT_VARIABLE _dusk_tracked_files
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+            set(_dusk_identity_files "${_dusk_tracked_files}\n${_dusk_untracked_files}")
+            string(REPLACE "\n" ";" _dusk_identity_file_list "${_dusk_identity_files}")
+            foreach (_dusk_identity_file IN LISTS _dusk_identity_file_list)
+                if (_dusk_identity_file AND
+                        NOT IS_DIRECTORY "${_DUSK_VERSION_ROOT}/${_dusk_identity_file}")
+                    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                            "${_DUSK_VERSION_ROOT}/${_dusk_identity_file}")
+                endif ()
+            endforeach ()
+            set(_dusk_dirty_material "tracked\n${_dusk_tracked_patch}")
+            if (_dusk_untracked_files)
+                string(REPLACE "\n" ";" _dusk_untracked_list "${_dusk_untracked_files}")
+                list(SORT _dusk_untracked_list)
+                foreach (_dusk_untracked_file IN LISTS _dusk_untracked_list)
+                    if (NOT IS_DIRECTORY "${_DUSK_VERSION_ROOT}/${_dusk_untracked_file}")
+                        file(SHA256 "${_DUSK_VERSION_ROOT}/${_dusk_untracked_file}"
+                                _dusk_untracked_digest)
+                        string(APPEND _dusk_dirty_material
+                                "\nuntracked\n${_dusk_untracked_file}\n${_dusk_untracked_digest}")
+                    endif ()
+                endforeach ()
+            endif ()
+            if (_dusk_tracked_patch OR _dusk_untracked_files)
+                string(SHA256 DUSK_DIRTY_DIGEST "${_dusk_dirty_material}")
+            else ()
+                set(DUSK_DIRTY_DIGEST "")
+            endif ()
         else ()
             message(STATUS "Unable to find git, commit information will not be available")
         endif ()
@@ -116,6 +165,33 @@ macro(configure_version_header)
     else ()
         string(TOLOWER CMAKE_SYSTEM_NAME PLATFORM_NAME)
     endif ()
+
+    if (NOT GIT_FOUND)
+        find_package(Git QUIET)
+    endif ()
+    if (GIT_FOUND)
+        execute_process(WORKING_DIRECTORY "${_DUSK_VERSION_ROOT}/extern/aurora"
+                COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+                OUTPUT_VARIABLE DUSK_AURORA_REVISION
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+    endif ()
+    if (NOT DUSK_AURORA_REVISION)
+        set(DUSK_AURORA_REVISION "unknown")
+    endif ()
+
+    set(DUSK_COMPILER_ID "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}")
+    if (CMAKE_CXX_COMPILER_FRONTEND_VARIANT)
+        string(APPEND DUSK_COMPILER_ID "-${CMAKE_CXX_COMPILER_FRONTEND_VARIANT}")
+    endif ()
+    set(DUSK_COMPILER_TARGET "${CMAKE_CXX_COMPILER_TARGET}")
+    if (NOT DUSK_COMPILER_TARGET)
+        set(DUSK_COMPILER_TARGET "${CMAKE_SYSTEM_PROCESSOR}-${PLATFORM_NAME}")
+    endif ()
+
+    set(DUSK_FEATURE_SWITCHES
+            "asan=${ENABLE_ASAN};selected_opt=${DUSK_SELECTED_OPT};movie=${DUSK_MOVIE_SUPPORT};update_checker=${DUSK_ENABLE_UPDATE_CHECKER};sentry=${DUSK_ENABLE_SENTRY_NATIVE};gfx_debug_groups=${DUSK_GFX_DEBUG_GROUPS};code_mods=${DUSK_ENABLE_CODE_MODS};automation_observers=${DUSK_ENABLE_AUTOMATION_OBSERVERS};automation_fidelity_models=${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS};discord=${DUSK_ENABLE_DISCORD}")
+    string(SHA256 DUSK_FEATURE_DIGEST "${DUSK_FEATURE_SWITCHES}")
 
     configure_file(${_DUSK_VERSION_ROOT}/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.h)
 endmacro()

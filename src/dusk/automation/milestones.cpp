@@ -6,7 +6,9 @@
 #include <cstring>
 #include <fstream>
 #include <system_error>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -35,6 +37,25 @@ void append_fixed_string(std::vector<std::uint8_t>& output, const std::string_vi
     for (std::size_t index = 0; index < Width; ++index) {
         output.push_back(index < value.size() ? static_cast<std::uint8_t>(value[index]) : 0);
     }
+}
+
+std::string xxh3_128_hex(const std::span<const std::uint8_t> bytes) {
+    const XXH128_hash_t hash = XXH3_128bits(bytes.data(), bytes.size());
+    XXH128_canonical_t digest;
+    XXH128_canonicalFromHash(&digest, hash);
+    constexpr char Hex[] = "0123456789abcdef";
+    std::string output;
+    output.reserve(sizeof(digest.digest) * 2);
+    for (const unsigned char byte : digest.digest) {
+        output.push_back(Hex[byte >> 4]);
+        output.push_back(Hex[byte & 0x0f]);
+    }
+    return output;
+}
+
+std::string fixed_stage_string(const std::array<char, 8>& stage) {
+    const auto end = std::ranges::find(stage, '\0');
+    return std::string(stage.begin(), end);
 }
 
 bool stage_is(const char* actual, const char* expected) {
@@ -69,8 +90,10 @@ constexpr std::array<MilestoneDefinition, 3> Definitions{{
         entered_f_sp104},
 }};
 
-MilestoneEvidence capture_evidence(const MilestoneObservation& observation) {
+MilestoneEvidence capture_evidence(
+    const MilestoneObservation& observation, const TapeBoot& boot) {
     return {
+        .boot = boot,
         .stageName = observation.stageName == nullptr ? "" : observation.stageName,
         .room = observation.room,
         .layer = observation.layer,
@@ -118,8 +141,272 @@ json rng_stream_json(const GameRngStreamSnapshot& stream) {
     };
 }
 
+json scenario_fixture_json(const ScenarioFixture& fixture) {
+    json document{
+        {"schema", kScenarioFixtureSchema},
+        {"name", fixture.name},
+    };
+    if (fixture.form) {
+        document["form"] = *fixture.form == PlayerFixtureForm::Human ? "human" : "wolf";
+    }
+    if (fixture.health) {
+        document["health"] = {
+            {"current", fixture.health->current}, {"maximum", fixture.health->maximum}};
+    }
+    if (!fixture.rng.empty()) {
+        document["rng"] = json::array();
+        for (const RngFixture& rng : fixture.rng) {
+            document["rng"].push_back({
+                {"stream", rng.stream == FixtureRngStream::Primary ? "primary" : "secondary"},
+                {"state0", rng.state0},
+                {"state1", rng.state1},
+                {"state2", rng.state2},
+                {"call_count", rng.callCount},
+            });
+        }
+    }
+    if (fixture.videoMode) {
+        constexpr std::array<const char*, 5> Names{
+            "automatic", "ntsc_interlaced", "ntsc_progressive", "pal50", "pal60"};
+        document["video_mode"] = Names[static_cast<std::size_t>(*fixture.videoMode)];
+    }
+    if (!fixture.inventory.empty()) {
+        document["inventory"] = json::array();
+        for (const InventoryFixture& item : fixture.inventory) {
+            document["inventory"].push_back(
+                {{"slot", item.slot}, {"item", item.item}, {"quantity", item.quantity}});
+        }
+    }
+    if (!fixture.equipment.empty()) {
+        document["equipment"] = json::array();
+        for (const EquipmentFixture& item : fixture.equipment) {
+            document["equipment"].push_back({{"slot", item.slot}, {"item", item.item}});
+        }
+    }
+    if (!fixture.flags.empty()) {
+        constexpr std::array<const char*, 4> Domains{"event", "temporary", "dungeon", "switch"};
+        document["flags"] = json::array();
+        for (const FlagFixture& flag : fixture.flags) {
+            document["flags"].push_back({
+                {"domain", Domains[static_cast<std::size_t>(flag.domain)]},
+                {"room", flag.room},
+                {"index", flag.index},
+                {"value", flag.value},
+            });
+        }
+    }
+    if (!fixture.settings.empty()) {
+        document["settings"] = json::array();
+        for (const SettingFixture& setting : fixture.settings) {
+            json value;
+            if (const auto* boolean = std::get_if<bool>(&setting.value)) {
+                value = {{"type", "boolean"}, {"value", *boolean}};
+            } else if (const auto* integer = std::get_if<std::int64_t>(&setting.value)) {
+                value = {{"type", "integer"}, {"value", *integer}};
+            } else if (const auto* floating = std::get_if<FixtureFloat>(&setting.value)) {
+                value = {{"type", "float_bits"}, {"bits", floating->bits}};
+            } else {
+                value = {{"type", "string"}, {"value", std::get<std::string>(setting.value)}};
+            }
+            document["settings"].push_back({{"key", setting.key}, {"value", std::move(value)}});
+        }
+    }
+    return document;
+}
+
+json boot_json(const TapeBoot& boot) {
+    if (boot.kind == TapeBootKind::Process) {
+        return {{"kind", "process"}};
+    }
+    json document{
+        {"kind", "stage"},
+        {"stage", boot.stage},
+        {"room", boot.room},
+        {"point", boot.point},
+        {"layer", boot.layer},
+        {"save_slot", boot.saveSlot == 0 ? json(nullptr) : json(boot.saveSlot)},
+    };
+    if (boot.fixture) {
+        document["fixture"] = scenario_fixture_json(*boot.fixture);
+    }
+    return document;
+}
+
+std::vector<AuthoredMilestoneHit::Projection> capture_value_projections(
+    const MilestoneProgramDefinition& definition, const MilestoneObservation& observation) {
+    std::vector<AuthoredMilestoneHit::Projection> output;
+    output.reserve(definition.valueProjections().size());
+    for (const MilestoneValueProjection& spec : definition.valueProjections()) {
+        AuthoredMilestoneHit::Projection projection{
+            .name = spec.name,
+            .identity = spec.identity,
+            .available = true,
+        };
+        projection.items.reserve(spec.items.size());
+        for (const MilestoneValueProjectionItem& specItem : spec.items) {
+            AuthoredMilestoneHit::ProjectionItem item{
+                .kind = specItem.kind,
+                .selector = specItem.selector,
+                .stage = fixed_stage_string(specItem.stage),
+                .room = specItem.room,
+                .index = specItem.index,
+                .available = true,
+            };
+            if (specItem.kind == MilestoneValueProjectionKind::Rng) {
+                item.available = observation.rng.version == kGameRngSnapshotVersion &&
+                                 observation.rng.streamCount == kGameRngStreamCount;
+                if (item.available) {
+                    const GameRngStreamId id = static_cast<GameRngStreamId>(specItem.selector);
+                    const auto found = std::ranges::find(observation.rng.streams, id,
+                        &GameRngStreamSnapshot::id);
+                    item.available = found != observation.rng.streams.end();
+                    if (item.available) item.rng = *found;
+                }
+            } else if (specItem.kind == MilestoneValueProjectionKind::ActorPopulation) {
+                item.available = !observation.actorsTruncated && observation.stageName != nullptr &&
+                                 item.stage == observation.stageName;
+                if (item.available) {
+                    for (const MilestoneObservation::Actor& actor : observation.actors) {
+                        if (actor.homeRoom != item.room) continue;
+                        item.actors.push_back({
+                            .actorName = actor.actorName,
+                            .setId = actor.setId,
+                            .homeRoom = actor.homeRoom,
+                            .currentRoom = actor.currentRoom,
+                            .positionXBits = std::bit_cast<std::uint32_t>(actor.positionX),
+                            .positionYBits = std::bit_cast<std::uint32_t>(actor.positionY),
+                            .positionZBits = std::bit_cast<std::uint32_t>(actor.positionZ),
+                            .health = actor.health,
+                            .status = actor.status,
+                        });
+                    }
+                    std::ranges::sort(item.actors, {}, [](const auto& actor) {
+                        return std::tuple{actor.actorName, actor.setId, actor.homeRoom,
+                            actor.currentRoom, actor.positionXBits, actor.positionYBits,
+                            actor.positionZBits, actor.health, actor.status};
+                    });
+                }
+            } else {
+                const std::span<const std::uint8_t>* flags = nullptr;
+                if (observation.flagsPresent) {
+                    switch (specItem.selector) {
+                    case 0: flags = &observation.eventFlags; break;
+                    case 1: flags = &observation.temporaryFlags; break;
+                    case 2: flags = &observation.dungeonFlags; break;
+                    case 3:
+                        if (observation.switchFlagRoom == specItem.room)
+                            flags = &observation.switchFlags;
+                        break;
+                    }
+                }
+                item.available = flags != nullptr && specItem.index < flags->size();
+                if (item.available) item.flagValue = (*flags)[specItem.index] != 0;
+            }
+            projection.available = projection.available && item.available;
+            projection.items.push_back(std::move(item));
+        }
+        if (projection.available) {
+            std::vector<std::uint8_t> canonical;
+            constexpr std::string_view Domain = "dusklight.value-projection.value/v1\0";
+            canonical.insert(canonical.end(), Domain.begin(), Domain.end());
+            append_integer<std::uint16_t>(canonical,
+                static_cast<std::uint16_t>(projection.identity.size()));
+            canonical.insert(canonical.end(), projection.identity.begin(), projection.identity.end());
+            append_integer<std::uint8_t>(canonical,
+                static_cast<std::uint8_t>(projection.items.size()));
+            for (const auto& item : projection.items) {
+                append_integer(canonical, static_cast<std::uint8_t>(item.kind));
+                append_integer(canonical, item.selector);
+                append_fixed_string(canonical, item.stage);
+                append_integer(canonical, item.room);
+                append_integer(canonical, item.index);
+                if (item.kind == MilestoneValueProjectionKind::Rng) {
+                    append_integer(canonical, item.rng.algorithmVersion);
+                    append_integer(canonical, item.rng.state0);
+                    append_integer(canonical, item.rng.state1);
+                    append_integer(canonical, item.rng.state2);
+                    append_integer(canonical, item.rng.callCount);
+                } else if (item.kind == MilestoneValueProjectionKind::ActorPopulation) {
+                    append_integer<std::uint16_t>(canonical,
+                        static_cast<std::uint16_t>(item.actors.size()));
+                    for (const auto& actor : item.actors) {
+                        append_integer(canonical, actor.actorName);
+                        append_integer(canonical, actor.setId);
+                        append_integer(canonical, actor.homeRoom);
+                        append_integer(canonical, actor.currentRoom);
+                        append_integer(canonical, actor.positionXBits);
+                        append_integer(canonical, actor.positionYBits);
+                        append_integer(canonical, actor.positionZBits);
+                        append_integer(canonical, actor.health);
+                        append_integer(canonical, actor.status);
+                    }
+                } else {
+                    append_integer<std::uint8_t>(canonical, item.flagValue ? 1 : 0);
+                }
+            }
+            projection.valueDigest = xxh3_128_hex(canonical);
+        }
+        output.push_back(std::move(projection));
+    }
+    return output;
+}
+
+json value_projections_json(
+    const std::vector<AuthoredMilestoneHit::Projection>& projections) {
+    constexpr std::array<const char*, 4> FlagDomains{"event", "temporary", "dungeon", "switch"};
+    json output = json::array();
+    for (const auto& projection : projections) {
+        json values = json::array();
+        for (const auto& item : projection.items) {
+            json value{{"available", item.available}};
+            if (item.kind == MilestoneValueProjectionKind::Rng) {
+                value["kind"] = "rng";
+                value["stream"] = item.selector == 0 ? "primary" : "secondary";
+                value["value"] = item.available ? json(rng_stream_json(item.rng)) : json(nullptr);
+            } else if (item.kind == MilestoneValueProjectionKind::ActorPopulation) {
+                value["kind"] = "actor_population";
+                value["stage"] = item.stage;
+                value["room"] = item.room;
+                value["value"] = item.available ? json::array() : json(nullptr);
+                if (item.available) {
+                    for (const auto& actor : item.actors) {
+                        value["value"].push_back({
+                            {"actor_name", actor.actorName}, {"set_id", actor.setId},
+                            {"home_room", actor.homeRoom}, {"current_room", actor.currentRoom},
+                            {"position_bits", {actor.positionXBits, actor.positionYBits,
+                                                  actor.positionZBits}},
+                            {"health", actor.health}, {"status", actor.status},
+                        });
+                    }
+                }
+            } else {
+                value["kind"] = "flag";
+                value["domain"] = FlagDomains[item.selector];
+                value["room"] = item.room;
+                value["index"] = item.index;
+                value["value"] = item.available ? json(item.flagValue) : json(nullptr);
+            }
+            values.push_back(std::move(value));
+        }
+        output.push_back({
+            {"name", projection.name},
+            {"identity", projection.identity},
+            {"available", projection.available},
+            {"value_fingerprint", projection.available
+                    ? json{{"schema", "dusklight.value-projection/v1"},
+                          {"algorithm", "xxh3-128"},
+                          {"canonical_encoding", "little-endian-exact-v1"},
+                          {"digest", projection.valueDigest}}
+                    : json(nullptr)},
+            {"values", std::move(values)},
+        });
+    }
+    return output;
+}
+
 json evidence_json(const MilestoneEvidence& evidence) {
     return {
+        {"boot", boot_json(evidence.boot)},
         {"stage",
             {
                 {"name", evidence.stageName},
@@ -174,9 +461,9 @@ json evidence_json(const MilestoneEvidence& evidence) {
             }},
         {"boundary_fingerprint",
             {
-                {"schema", "dusklight.milestone-boundary/v2"},
+                {"schema", "dusklight.milestone-boundary/v4"},
                 {"algorithm", "xxh3-128"},
-                {"canonical_encoding", "little-endian-fixed-v2"},
+                {"canonical_encoding", "little-endian-fixed-v4"},
                 {"digest", evidence.boundaryFingerprint},
             }},
     };
@@ -205,8 +492,24 @@ std::string_view milestone_name(const MilestoneId id) {
 
 std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evidence) {
     std::vector<std::uint8_t> canonical;
-    canonical.reserve(160);
+    canonical.reserve(256);
     append_integer(canonical, MilestoneBoundaryFingerprintVersion);
+    append_integer(canonical, static_cast<std::uint8_t>(evidence.boot.kind));
+    append_fixed_string(canonical, evidence.boot.stage);
+    append_integer(canonical, evidence.boot.room);
+    append_integer(canonical, evidence.boot.layer);
+    append_integer(canonical, evidence.boot.point);
+    append_integer(canonical, evidence.boot.saveSlot);
+    std::vector<std::uint8_t> fixtureBytes;
+    if (evidence.boot.fixture) {
+        const ScenarioFixtureError error =
+            encode_scenario_fixture(*evidence.boot.fixture, fixtureBytes);
+        if (error != ScenarioFixtureError::None) {
+            return {};
+        }
+    }
+    append_integer<std::uint32_t>(canonical, static_cast<std::uint32_t>(fixtureBytes.size()));
+    canonical.insert(canonical.end(), fixtureBytes.begin(), fixtureBytes.end());
     append_fixed_string(canonical, evidence.stageName);
     append_integer(canonical, evidence.room);
     append_integer(canonical, evidence.layer);
@@ -378,6 +681,8 @@ bool MilestoneTracker::configureNames(const std::span<const std::string> request
                 .id = authored->id,
                 .phase = authored->phase,
                 .stableTicks = authored->stableTicks,
+                .sequenceSteps = static_cast<std::uint8_t>(authored->sequenceStepCount()),
+                .sequenceWithinTicks = authored->sequenceWithinTicks(),
                 .definitionDigest = authored->definitionDigest,
                 .programDigest = std::string(program.digest()),
             });
@@ -411,12 +716,20 @@ void MilestoneTracker::reset() {
     }
     for (AuthoredMilestoneHit& hit : mAuthoredHits) {
         hit.consecutiveTicks = 0;
+        hit.sequenceNextStep = 0;
+        hit.sequenceElapsedTicks = 0;
         hit.hit = false;
         hit.boundaryIndex = 0;
         hit.simulationTick = 0;
         hit.tapeFrame = MilestoneNoTapeFrame;
         hit.evidence = {};
+        hit.projections.clear();
     }
+}
+
+void MilestoneTracker::setBootOrigin(TapeBoot boot) {
+    mBootOrigin = std::move(boot);
+    mBootOriginEstablished = mBootOrigin.kind == TapeBootKind::Process;
 }
 
 void MilestoneTracker::observe(const MilestoneObservation& observation,
@@ -439,7 +752,7 @@ void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
                 hit.hit = true;
                 hit.simulationTick = simulationTick;
                 hit.tapeFrame = tapeFrame;
-                hit.evidence = capture_evidence(observation);
+                hit.evidence = capture_evidence(observation, mBootOrigin);
                 hit.evidence.boundaryFingerprint =
                     compute_milestone_boundary_fingerprint(hit.evidence);
             }
@@ -451,16 +764,55 @@ void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
         if (hit.hit || hit.phase != phase)
             continue;
         const MilestoneProgramDefinition* definition = mProgram->find(hit.id);
-        const bool matches =
-            definition != nullptr && definition->evaluate({
-                                         .observation = observation,
-                                         .phase = phase,
-                                         .boundaryKind = boundaryKind,
-                                         .boundaryIndex = boundaryIndex,
-                                         .tapeFrame = tapeFrame == MilestoneNoTapeFrame ?
-                                                          std::nullopt :
-                                                          std::optional<std::uint64_t>(tapeFrame),
-                                     });
+        if (definition == nullptr) continue;
+        const MilestoneProgramContext context{
+            .observation = observation,
+            .phase = phase,
+            .boundaryKind = boundaryKind,
+            .boundaryIndex = boundaryIndex,
+            .tapeFrame = tapeFrame == MilestoneNoTapeFrame ?
+                             std::nullopt :
+                             std::optional<std::uint64_t>(tapeFrame),
+        };
+        if (hit.sequenceSteps != 0) {
+            if (hit.sequenceNextStep == 0) {
+                if (definition->evaluateSequenceStep(0, context)) {
+                    hit.sequenceNextStep = 1;
+                    hit.sequenceElapsedTicks = 0;
+                }
+                continue;
+            }
+            const std::uint32_t nextElapsed =
+                static_cast<std::uint32_t>(hit.sequenceElapsedTicks) + 1;
+            if (nextElapsed > hit.sequenceWithinTicks) {
+                hit.sequenceNextStep = 0;
+                hit.sequenceElapsedTicks = 0;
+                if (definition->evaluateSequenceStep(0, context)) {
+                    hit.sequenceNextStep = 1;
+                }
+                continue;
+            }
+            hit.sequenceElapsedTicks = static_cast<std::uint16_t>(nextElapsed);
+            if (definition->evaluateSequenceStep(hit.sequenceNextStep, context)) {
+                ++hit.sequenceNextStep;
+            } else if (definition->evaluateSequenceStep(0, context)) {
+                // Deterministic overlap: a fresh first step restarts the window
+                // only when the currently expected step did not match.
+                hit.sequenceNextStep = 1;
+                hit.sequenceElapsedTicks = 0;
+            }
+            if (hit.sequenceNextStep != hit.sequenceSteps) continue;
+            hit.hit = true;
+            hit.boundaryIndex = boundaryIndex;
+            hit.simulationTick = simulationTick;
+            hit.tapeFrame = tapeFrame;
+            hit.evidence = capture_evidence(observation, mBootOrigin);
+            hit.evidence.boundaryFingerprint =
+                compute_milestone_boundary_fingerprint(hit.evidence);
+            hit.projections = capture_value_projections(*definition, observation);
+            continue;
+        }
+        const bool matches = definition->evaluate(context);
         if (!matches) {
             hit.consecutiveTicks = 0;
             continue;
@@ -473,8 +825,9 @@ void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
         hit.boundaryIndex = boundaryIndex;
         hit.simulationTick = simulationTick;
         hit.tapeFrame = tapeFrame;
-        hit.evidence = capture_evidence(observation);
+        hit.evidence = capture_evidence(observation, mBootOrigin);
         hit.evidence.boundaryFingerprint = compute_milestone_boundary_fingerprint(hit.evidence);
+        hit.projections = capture_value_projections(*definition, observation);
     }
 }
 
@@ -535,11 +888,13 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
             item["tape_frame"] =
                 hit.tapeFrame == MilestoneNoTapeFrame ? json(nullptr) : json(hit.tapeFrame);
             item["evidence"] = evidence_json(hit.evidence);
+            item["projections"] = value_projections_json(hit.projections);
         } else {
             item["boundary_index"] = nullptr;
             item["sim_tick"] = nullptr;
             item["tape_frame"] = nullptr;
             item["evidence"] = nullptr;
+            item["projections"] = nullptr;
         }
         milestones.push_back(std::move(item));
     }
@@ -552,6 +907,8 @@ std::string serialize_milestone_result(const MilestoneTracker& tracker) {
             }},
         {"goal", tracker.goalName().has_value() ? json(*tracker.goalName()) : json(nullptr)},
         {"goal_reached", tracker.goalReached()},
+        {"boot", boot_json(tracker.bootOrigin())},
+        {"boot_origin_established", tracker.bootOriginEstablished()},
         {"program_digest",
             tracker.programDigest().empty() ? json(nullptr) : json(tracker.programDigest())},
         {"milestones", std::move(milestones)},

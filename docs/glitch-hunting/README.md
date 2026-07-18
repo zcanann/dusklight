@@ -79,6 +79,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   tape promotion path.
 - [Authored milestones](milestones.md) documents typed milestone predicates,
   exact tick-boundary semantics, stability, and proof identities.
+- [Semantic oracle library](oracles.md) documents reached/avoided trace
+  classification, typed supporting facts, and completeness requirements.
 - [Experimental interventions](interventions.md) defines the separately gated
   mutation-tape boundary for causal glitch-hunting experiments.
 - [Route segment trees and Git](timelines.md) documents the visual route
@@ -86,6 +88,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   Git-owned lineages.
 - [Primitives](primitives.md) defines scenarios, ticks, tapes, controller
   programs, observations, events, oracles, checkpoints, and run artifacts.
+- [Semi-Markov option executions](options.md) defines typed bounded options,
+  termination/cancellation, and exact realized tape authentication.
 - [Determinism and memory fidelity](determinism-and-memory.md) records what
   Aurora's MEM1 model does and does not preserve, plus the sources of
   nondeterminism that need to be controlled.

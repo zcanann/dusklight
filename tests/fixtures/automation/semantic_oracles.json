@@ -1,0 +1,36 @@
+{
+  "schema": "dusklight-semantic-oracles/v1",
+  "oracles": [
+    {
+      "name": "entered-tunnel",
+      "polarity": "reached",
+      "target": {
+        "kind": "region",
+        "stage": "F_SP104",
+        "room": 1,
+        "min": [600.0, -50.0, -200.0],
+        "max": [750.0, 200.0, 100.0]
+      }
+    },
+    {
+      "name": "avoid-wrong-room",
+      "polarity": "avoided",
+      "target": {
+        "kind": "room",
+        "stage": "F_SP104",
+        "room": 2
+      }
+    },
+    {
+      "name": "crawl-animation",
+      "polarity": "reached",
+      "target": {
+        "kind": "animation",
+        "bank": "under",
+        "resource_id": 42,
+        "frame_min": 0.0,
+        "frame_max": 20.0
+      }
+    }
+  ]
+}

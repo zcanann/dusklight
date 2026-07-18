@@ -1,6 +1,6 @@
 //! Content-addressed authority for immutable route artifacts and named heads.
 
-use crate::search::Candidate;
+use crate::search::{CANDIDATE_SCHEMA, Candidate};
 use crate::tape::InputTape;
 use crate::tape_dsl;
 use crate::timeline::{ArtifactSource, ResolvedLineage, Timeline, TimelineError};
@@ -12,6 +12,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const ROUTE_OBJECT_SCHEMA: &str = "dusklight-route-object/v3";
 
@@ -141,9 +142,13 @@ pub struct ImportResult {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct GcReport {
+    pub schema: &'static str,
+    pub dry_run: bool,
     pub reachable: usize,
     pub unreachable: Vec<ObjectId>,
-    pub removed: usize,
+    pub moved: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash_transaction: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -491,23 +496,48 @@ impl RouteStore {
                 continue;
             }
             let id = ObjectId::parse(entry.file_name().to_string_lossy())?;
+            self.read(&id)?;
             if !reachable.contains(&id) {
                 unreachable.push(id);
             }
         }
         unreachable.sort();
-        let removed = if apply {
+        let trash_transaction = if apply && !unreachable.is_empty() {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| StoreError::InvalidObject(error.to_string()))?
+                .as_nanos();
+            let transaction = self
+                .root
+                .join("trash")
+                .join("objects")
+                .join(format!("gc-{}-{nonce}", std::process::id()));
+            fs::create_dir_all(&transaction)?;
+            let mut moved: Vec<ObjectId> = Vec::new();
             for id in &unreachable {
-                fs::remove_file(self.object_path(id))?;
+                let source = self.object_path(id);
+                let destination = transaction.join(&id.0);
+                if let Err(error) = fs::rename(&source, &destination) {
+                    for prior in moved.iter().rev() {
+                        let _ = fs::rename(transaction.join(&prior.0), self.object_path(prior));
+                    }
+                    let _ = fs::remove_dir(&transaction);
+                    return Err(error.into());
+                }
+                moved.push(id.clone());
             }
-            unreachable.len()
+            Some(transaction)
         } else {
-            0
+            None
         };
+        let moved = trash_transaction.as_ref().map_or(0, |_| unreachable.len());
         Ok(GcReport {
+            schema: "dusklight-route-store-gc/v2",
+            dry_run: !apply,
             reachable: reachable.len(),
             unreachable,
-            removed,
+            moved,
+            trash_transaction,
         })
     }
 
@@ -566,7 +596,7 @@ impl RouteStore {
                     self.put(RouteObject::Program {
                         format: match &segment.artifact {
                             ArtifactSource::Tas(_) => "dusktape-dsl/v1",
-                            _ => "dusklight-search-candidate/v1",
+                            _ => CANDIDATE_SCHEMA,
                         }
                         .into(),
                         source,
@@ -1226,10 +1256,13 @@ continue main with exit after boot_link@control-v1
             .unwrap();
         let report = store.gc(false).unwrap();
         assert!(report.unreachable.contains(&unreachable));
-        assert_eq!(report.removed, 0);
+        assert_eq!(report.moved, 0);
+        assert!(store.object_path(&unreachable).exists());
         let report = store.gc(true).unwrap();
-        assert!(report.removed >= 1);
+        assert!(report.moved >= 1);
         assert!(!store.object_path(&unreachable).exists());
+        let transaction = report.trash_transaction.unwrap();
+        assert!(transaction.join(&unreachable.0).exists());
         fs::remove_dir_all(root).unwrap();
     }
 

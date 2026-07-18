@@ -90,6 +90,27 @@ void testInitializationAndHelperCallCounts() {
     REQUIRE(state.callCount == 0);
 }
 
+void testExactStateRestore() {
+    const cM_RndState requested{
+        .version = cM_RndStateVersion,
+        .state0 = 101,
+        .state1 = -202,
+        .state2 = 303,
+        .callCount = 0x1'0000'0007ULL,
+    };
+    REQUIRE(cM_setRndState(cM_RndStream::Primary, requested));
+
+    cM_RndState observed;
+    REQUIRE(cM_getRndState(cM_RndStream::Primary, observed));
+    REQUIRE(observed == requested);
+
+    auto unsupported = requested;
+    unsupported.version = cM_RndStateVersion + 1;
+    REQUIRE(!cM_setRndState(cM_RndStream::Primary, unsupported));
+    REQUIRE(cM_getRndState(cM_RndStream::Primary, observed));
+    REQUIRE(observed == requested);
+}
+
 void testSnapshotCaptureDoesNotAdvanceEitherStream() {
     using namespace dusk::automation;
 
@@ -127,6 +148,7 @@ int main() {
     testKnownPrimarySequence();
     testKnownSecondarySequenceAndIndependence();
     testInitializationAndHelperCallCounts();
+    testExactStateRestore();
     testSnapshotCaptureDoesNotAdvanceEitherStream();
     std::cout << "RNG tests passed\n";
     return 0;

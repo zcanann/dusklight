@@ -1,4 +1,4 @@
-use crate::tape::{InputFrame, InputTape, PORT_COUNT, RawPadState, WaitCondition};
+use crate::tape::{InputFrame, InputTape, PORT_COUNT, RawPadState, TapeBoot, WaitCondition};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
@@ -11,6 +11,8 @@ pub const MAX_EXPANDED_FRAMES: usize = 10_000_000;
 #[serde(deny_unknown_fields)]
 pub struct TapeProgram {
     pub schema: String,
+    #[serde(default)]
+    pub boot: TapeBoot,
     #[serde(default)]
     pub tick_rate: TickRate,
     #[serde(default = "default_owned_ports")]
@@ -50,6 +52,16 @@ pub enum Step {
     },
     Hold {
         count: u64,
+    },
+    Press {
+        port: u8,
+        #[serde(deserialize_with = "deserialize_buttons")]
+        buttons: u16,
+    },
+    Release {
+        port: u8,
+        #[serde(deserialize_with = "deserialize_buttons")]
+        buttons: u16,
     },
     WaitUntil {
         condition: ProgramWaitCondition,
@@ -174,6 +186,9 @@ pub enum ProgramError {
     ZeroCount,
     EmptyCycle,
     HoldBeforeFrame,
+    EmptyButtonEdge,
+    ButtonAlreadyPressed { port: u8, buttons: u16 },
+    ButtonAlreadyReleased { port: u8, buttons: u16 },
     ZeroWaitTimeout,
     EmptyMarker,
     DuplicateMarker(String),
@@ -197,6 +212,15 @@ impl fmt::Display for ProgramError {
             Self::ZeroCount => f.write_str("repeat, cycle, and hold counts must be nonzero"),
             Self::EmptyCycle => f.write_str("cycle frames must not be empty"),
             Self::HoldBeforeFrame => f.write_str("hold requires a previously emitted frame"),
+            Self::EmptyButtonEdge => f.write_str("press and release require at least one button"),
+            Self::ButtonAlreadyPressed { port, buttons } => write!(
+                f,
+                "press on port {port} repeats already-held button bits 0x{buttons:04x}"
+            ),
+            Self::ButtonAlreadyReleased { port, buttons } => write!(
+                f,
+                "release on port {port} names button bits that are not held: 0x{buttons:04x}"
+            ),
             Self::ZeroWaitTimeout => {
                 f.write_str("wait_until and pulse_until timeout_ticks must be nonzero")
             }
@@ -265,6 +289,12 @@ impl TapeProgram {
                         .ok_or(ProgramError::HoldBeforeFrame)?;
                     push_repeated(&mut frames, frame, count)?;
                 }
+                Step::Press { port, buttons } => {
+                    push_button_edge(&mut frames, self.default_owned_ports, port, buttons, true)?
+                }
+                Step::Release { port, buttons } => {
+                    push_button_edge(&mut frames, self.default_owned_ports, port, buttons, false)?
+                }
                 Step::WaitUntil {
                     condition,
                     timeout_ticks,
@@ -312,6 +342,7 @@ impl TapeProgram {
         }
         Ok(CompiledProgram {
             tape: InputTape {
+                boot: self.boot,
                 tick_rate_numerator: self.tick_rate.numerator,
                 tick_rate_denominator: self.tick_rate.denominator,
                 frames,
@@ -389,6 +420,49 @@ fn push_repeated(
     frames.reserve(count);
     frames.extend(std::iter::repeat_n(frame, count));
     Ok(())
+}
+
+fn push_button_edge(
+    frames: &mut Vec<InputFrame>,
+    default_owned_ports: u8,
+    port: u8,
+    buttons: u16,
+    pressed: bool,
+) -> Result<(), ProgramError> {
+    if usize::from(port) >= PORT_COUNT {
+        return Err(ProgramError::InvalidPort(port.to_string()));
+    }
+    if buttons == 0 {
+        return Err(ProgramError::EmptyButtonEdge);
+    }
+    let mut frame = frames.last().cloned().unwrap_or(InputFrame {
+        owned_ports: default_owned_ports,
+        ..InputFrame::default()
+    });
+    frame.wait_condition = WaitCondition::None;
+    frame.wait_timeout_ticks = 0;
+    frame.owned_ports |= 1 << port;
+    let current = frame.pads[usize::from(port)].buttons;
+    if pressed {
+        let repeated = current & buttons;
+        if repeated != 0 {
+            return Err(ProgramError::ButtonAlreadyPressed {
+                port,
+                buttons: repeated,
+            });
+        }
+        frame.pads[usize::from(port)].buttons = current | buttons;
+    } else {
+        let absent = buttons & !current;
+        if absent != 0 {
+            return Err(ProgramError::ButtonAlreadyReleased {
+                port,
+                buttons: absent,
+            });
+        }
+        frame.pads[usize::from(port)].buttons = current & !buttons;
+    }
+    push_repeated(frames, frame, 1)
 }
 
 fn validate_owned_ports(mask: u8) -> Result<(), ProgramError> {
@@ -508,6 +582,62 @@ mod tests {
                 tick: 2
             }]
         );
+    }
+
+    #[test]
+    fn compiles_explicit_button_edges_and_rejects_non_edges() {
+        let program = TapeProgram::from_json(
+            r#"{
+              "schema":"dusktape-program/v1",
+              "steps":[
+                {"op":"press","port":0,"buttons":["LEFT","RIGHT"]},
+                {"op":"hold","count":2},
+                {"op":"release","port":0,"buttons":["LEFT"]},
+                {"op":"release","port":0,"buttons":["RIGHT"]}
+              ]
+            }"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+        assert_eq!(program.tape.frames.len(), 5);
+        assert_eq!(program.tape.frames[0].pads[0].buttons, 0x0003);
+        assert_eq!(program.tape.frames[2].pads[0].buttons, 0x0003);
+        assert_eq!(program.tape.frames[3].pads[0].buttons, 0x0002);
+        assert_eq!(program.tape.frames[4].pads[0].buttons, 0);
+
+        let repeated = TapeProgram::from_json(
+            r#"{"schema":"dusktape-program/v1","steps":[
+              {"op":"press","port":0,"buttons":["A"]},
+              {"op":"press","port":0,"buttons":["A"]}
+            ]}"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap_err();
+        assert!(matches!(
+            repeated,
+            ProgramError::ButtonAlreadyPressed {
+                port: 0,
+                buttons: 0x0100
+            }
+        ));
+
+        let absent = TapeProgram::from_json(
+            r#"{"schema":"dusktape-program/v1","steps":[
+              {"op":"release","port":3,"buttons":["B"]}
+            ]}"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap_err();
+        assert!(matches!(
+            absent,
+            ProgramError::ButtonAlreadyReleased {
+                port: 3,
+                buttons: 0x0200
+            }
+        ));
     }
 
     #[test]

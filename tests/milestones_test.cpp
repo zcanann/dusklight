@@ -37,6 +37,93 @@ constexpr std::array<std::uint8_t, 252> IntroProgram{0x44, 0x4d, 0x53, 0x50, 0x0
     0x10, 0x01, 0x20, 0x31, 0x01, 0x0e, 0x10, 0x01, 0x20, 0x30, 0x31, 0x01, 0x0f, 0x13, 0xff, 0xff,
     0xff, 0xff, 0x20, 0x31};
 
+constexpr std::array<std::uint8_t, 233> RichProgram{0x44, 0x4d, 0x53, 0x50, 0x01, 0x00, 0x01,
+    0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0xb5, 0x00, 0x00, 0x00, 0xc8,
+    0x1b, 0x27, 0x33, 0x87, 0x4f, 0x1b, 0xef, 0x98, 0xd7, 0xec, 0x6e, 0xbc, 0x2c, 0x7d,
+    0xcc, 0xfc, 0x1e, 0xe8, 0x29, 0x38, 0xf5, 0x53, 0x20, 0x8e, 0xb4, 0xa2, 0x2a, 0xee,
+    0x05, 0xfe, 0xfd, 0xb1, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x72, 0x69, 0x63, 0x68, 0x5f,
+    0x73, 0x74, 0x61, 0x74, 0x65, 0x01, 0x00, 0x03, 0x00, 0x37, 0x00, 0x7b, 0x00, 0x00,
+    0x00, 0xbe, 0xd9, 0xc9, 0xb0, 0x20, 0xca, 0x84, 0x69, 0x6b, 0x68, 0x3b, 0xc0, 0xb1,
+    0x66, 0xae, 0xc8, 0x2b, 0xd4, 0x41, 0xd1, 0x0e, 0x20, 0xff, 0x3b, 0x4c, 0x3d, 0xb9,
+    0x84, 0x16, 0xdc, 0xd7, 0xb4, 0x01, 0x18, 0x13, 0xfd, 0x00, 0x00, 0x00, 0x20, 0x01,
+    0x1a, 0x14, 0x00, 0x00, 0x00, 0x00, 0x23, 0x31, 0x01, 0x22, 0x11, 0x00, 0x04, 0x00,
+    0x00, 0x26, 0x31, 0x01, 0x22, 0x11, 0x04, 0x04, 0x00, 0x00, 0x27, 0x31, 0x01, 0x23,
+    0x13, 0x00, 0x00, 0x00, 0x00, 0x20, 0x31, 0x01, 0x25, 0x11, 0x04, 0x00, 0x00, 0x00,
+    0x23, 0x31, 0x01, 0x26, 0x11, 0x02, 0x00, 0x00, 0x00, 0x20, 0x31, 0x01, 0x27, 0x11,
+    0x01, 0x00, 0x00, 0x00, 0x25, 0x31, 0x01, 0x29, 0x10, 0x01, 0x20, 0x31, 0x01, 0x2a,
+    0x11, 0x78, 0x56, 0x34, 0x12, 0x20, 0x31, 0x01, 0x2b, 0x13, 0x0b, 0x00, 0x00, 0x00,
+    0x20, 0x31, 0x01, 0x32, 0x12, 0xc8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+    0x31, 0x01, 0x33, 0x10, 0x01, 0x20, 0x31, 0x01, 0x3a, 0x14, 0x00, 0x00, 0x00, 0x3f,
+    0x23, 0x31};
+
+// Compiled by huntctl from selector_predicate.milestones. Keeping these bytes
+// in the native test makes Rust/native wire compatibility an executable check.
+constexpr std::array<std::uint8_t, 298> SelectorProgram{
+    0x44, 0x4d, 0x53, 0x50, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0xf6, 0x00, 0x00, 0x00, 0xa1, 0x73, 0xa8, 0xae,
+    0x64, 0xd9, 0xda, 0x76, 0x9c, 0xbf, 0xbc, 0x0f, 0x21, 0x5e, 0x6b, 0xe3,
+    0x51, 0x35, 0xa3, 0x37, 0x9a, 0x3e, 0x78, 0x28, 0xe8, 0xa9, 0xaa, 0xb6,
+    0x33, 0xd8, 0x43, 0xc5, 0xf2, 0x00, 0x00, 0x00, 0x18, 0x00, 0x73, 0x65,
+    0x6c, 0x65, 0x63, 0x74, 0x65, 0x64, 0x5f, 0x61, 0x63, 0x74, 0x6f, 0x72,
+    0x5f, 0x61, 0x6e, 0x64, 0x5f, 0x66, 0x6c, 0x61, 0x67, 0x73, 0x01, 0x00,
+    0x02, 0x00, 0x27, 0x00, 0xae, 0x00, 0x00, 0x00, 0x99, 0xca, 0x32, 0xaf,
+    0xed, 0xb2, 0x89, 0x4b, 0x18, 0x76, 0x76, 0x6e, 0xcd, 0x4f, 0x89, 0x3b,
+    0x91, 0xa1, 0x7f, 0x72, 0xe1, 0x74, 0x4e, 0x2f, 0x1f, 0x6c, 0xf9, 0x1f,
+    0xca, 0xf1, 0x70, 0x5a, 0x02, 0x01, 0x01, 0x46, 0x5f, 0x53, 0x50, 0x31,
+    0x30, 0x33, 0x00, 0x00, 0x07, 0x00, 0x2a, 0x00, 0x10, 0x01, 0x20, 0x02,
+    0x01, 0x03, 0x46, 0x5f, 0x53, 0x50, 0x31, 0x30, 0x33, 0x00, 0x00, 0x07,
+    0x00, 0x2a, 0x00, 0x14, 0x00, 0x00, 0xa0, 0xc1, 0x25, 0x31, 0x02, 0x01,
+    0x05, 0x46, 0x5f, 0x53, 0x50, 0x31, 0x30, 0x33, 0x00, 0x00, 0x07, 0x00,
+    0x2a, 0x00, 0x14, 0x00, 0x00, 0xa0, 0x40, 0x23, 0x31, 0x02, 0x01, 0x06,
+    0x46, 0x5f, 0x53, 0x50, 0x31, 0x30, 0x33, 0x00, 0x00, 0x07, 0x00, 0x2a,
+    0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x20, 0x31, 0x02, 0x01, 0x07, 0x46,
+    0x5f, 0x53, 0x50, 0x31, 0x30, 0x33, 0x00, 0x00, 0x07, 0x00, 0x2a, 0x00,
+    0x13, 0x00, 0x00, 0x00, 0x00, 0x24, 0x31, 0x02, 0x01, 0x08, 0x46, 0x5f,
+    0x53, 0x50, 0x31, 0x30, 0x33, 0x00, 0x00, 0x07, 0x00, 0x2a, 0x00, 0x11,
+    0x04, 0x00, 0x00, 0x00, 0x26, 0x31, 0x02, 0x02, 0x00, 0xff, 0x35, 0x03,
+    0x10, 0x01, 0x20, 0x31, 0x02, 0x02, 0x01, 0xff, 0xb8, 0x00, 0x10, 0x00,
+    0x20, 0x31, 0x02, 0x02, 0x02, 0xff, 0x3f, 0x00, 0x10, 0x01, 0x20, 0x31,
+    0x02, 0x02, 0x03, 0x00, 0xef, 0x00, 0x10, 0x01, 0x20, 0x31};
+
+constexpr std::array<std::uint8_t, 227> SpatialSequenceProgram{
+    0x44, 0x4d, 0x53, 0x50, 0x01, 0x00, 0x03, 0x00, 0x01, 0x00, 0x03, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0xaf, 0x00, 0x00, 0x00, 0x3d, 0x38, 0xe1, 0x66,
+    0xac, 0xa5, 0x7d, 0xba, 0xfc, 0x50, 0x06, 0x09, 0x75, 0xec, 0xff, 0x9a,
+    0xb7, 0x98, 0x1d, 0x59, 0xc6, 0x7b, 0x6f, 0x74, 0x11, 0xde, 0xd8, 0xc5,
+    0x9c, 0xc6, 0x19, 0x22, 0xab, 0x00, 0x00, 0x00, 0x1b, 0x00, 0x67, 0x72,
+    0x6f, 0x75, 0x6e, 0x64, 0x65, 0x64, 0x5f, 0x72, 0x65, 0x67, 0x69, 0x6f,
+    0x6e, 0x5f, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x5f, 0x70, 0x6c, 0x61, 0x6e,
+    0x65, 0x01, 0x00, 0x01, 0x00, 0x19, 0x00, 0x64, 0x00, 0x00, 0x00, 0x55,
+    0x63, 0xfb, 0x62, 0x58, 0xf1, 0x60, 0xcc, 0xf5, 0x94, 0x2e, 0xca, 0xc4,
+    0xe4, 0x6a, 0x9a, 0xa9, 0x09, 0x9c, 0xb1, 0x54, 0xe5, 0xde, 0x65, 0xa5,
+    0xd3, 0xad, 0xa8, 0x58, 0x69, 0x78, 0xc2, 0x40, 0x03, 0x00, 0x04, 0x01,
+    0x33, 0x10, 0x01, 0x20, 0x01, 0x09, 0x14, 0x00, 0x00, 0x25, 0x44, 0x25,
+    0x01, 0x09, 0x14, 0x00, 0x80, 0x27, 0x44, 0x23, 0x31, 0x31, 0x41, 0x02,
+    0x03, 0x00, 0x00, 0x25, 0x44, 0x00, 0x80, 0x45, 0x44, 0x00, 0x80, 0x18,
+    0xc5, 0x00, 0x80, 0x27, 0x44, 0x00, 0x80, 0x4a, 0x44, 0x00, 0x40, 0x17,
+    0xc5, 0x10, 0x01, 0x20, 0x41, 0x01, 0x0f, 0x13, 0x11, 0x00, 0x00, 0x00,
+    0x20, 0x41, 0x02, 0x04, 0x00, 0x80, 0x26, 0x44, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x25, 0x41};
+
+constexpr std::array<std::uint8_t, 181> ValueProjectionProgram{
+    0x44, 0x4d, 0x53, 0x50, 0x01, 0x00, 0x04, 0x00, 0x01, 0x00, 0x04, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x81, 0x00, 0x00, 0x00, 0xad, 0x68, 0x93, 0xe0,
+    0xff, 0x3a, 0x6f, 0xd7, 0xc3, 0x9f, 0x9a, 0xd2, 0x1b, 0x6e, 0xcc, 0xe5,
+    0x08, 0x99, 0x42, 0x79, 0xcb, 0x41, 0xfe, 0x33, 0x94, 0x4c, 0xca, 0x6b,
+    0xb6, 0x1a, 0x15, 0xc8, 0x7d, 0x00, 0x00, 0x00, 0x14, 0x00, 0x76, 0x61,
+    0x6c, 0x75, 0x65, 0x2d, 0x70, 0x61, 0x72, 0x69, 0x74, 0x79, 0x2d, 0x66,
+    0x69, 0x78, 0x74, 0x75, 0x72, 0x65, 0x01, 0x00, 0x01, 0x00, 0x0d, 0x00,
+    0x3d, 0x00, 0x00, 0x00, 0xce, 0x2d, 0xd0, 0x22, 0x9c, 0x88, 0x94, 0x7f,
+    0xd2, 0xa2, 0x80, 0x71, 0x8e, 0x6b, 0x49, 0xdc, 0x8f, 0xff, 0x0c, 0xf5,
+    0x3b, 0xe8, 0x65, 0x0e, 0xda, 0x40, 0x18, 0xf5, 0x0b, 0xa3, 0xbe, 0x9c,
+    0x01, 0x04, 0x15, 0x07, 0x46, 0x5f, 0x53, 0x50, 0x31, 0x30, 0x33, 0x20,
+    0x01, 0x05, 0x13, 0x01, 0x00, 0x00, 0x00, 0x20, 0x31, 0x50, 0x0d, 0x68,
+    0x61, 0x6e, 0x64, 0x6f, 0x66, 0x66, 0x2d, 0x73, 0x74, 0x61, 0x74, 0x65,
+    0x05, 0x51, 0x00, 0x51, 0x01, 0x52, 0x46, 0x5f, 0x53, 0x50, 0x31, 0x30,
+    0x33, 0x00, 0x01, 0x53, 0x00, 0xff, 0x35, 0x03, 0x53, 0x03, 0x01, 0xef,
+    0x00};
+
 bool noSymbols(dusk::automation::MilestoneProgramSymbolKind, std::string_view, std::uint32_t&) {
     return false;
 }
@@ -197,7 +284,9 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
 
     const auto result = nlohmann::json::parse(serialize_milestone_result(tracker));
     REQUIRE(result["schema"]["name"] == "dusklight.automation.milestones");
-    REQUIRE(result["schema"]["version"] == 2);
+    REQUIRE(result["schema"]["version"] == 5);
+    REQUIRE(result["boot"]["kind"] == "process");
+    REQUIRE(result["boot_origin_established"] == true);
     REQUIRE(result["goal"] == "exit-f-sp103-to-f-sp104");
     REQUIRE(result["goal_reached"] == true);
     REQUIRE(result["milestones"].size() == 3);
@@ -211,7 +300,7 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][0]["state"][0] == 11);
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][1]["call_count"] == 200);
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["schema"] ==
-            "dusklight.milestone-boundary/v2");
+            "dusklight.milestone-boundary/v4");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["algorithm"] == "xxh3-128");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["digest"]
                 .get<std::string>()
@@ -253,6 +342,86 @@ void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
     changed = baseline;
     changed.nextStageEnabled = true;
     REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
+    changed = baseline;
+    changed.boot = {
+        .kind = TapeBootKind::Stage,
+        .stage = "F_SP103",
+        .room = 1,
+        .point = 1,
+        .layer = 3,
+        .saveSlot = 2,
+    };
+    REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
+    const std::string stageDigest = compute_milestone_boundary_fingerprint(changed);
+    ScenarioFixture fixture;
+    fixture.name = "low-health wolf";
+    fixture.form = PlayerFixtureForm::Wolf;
+    fixture.health = HealthFixture{4, 20};
+    changed.boot.fixture = fixture;
+    REQUIRE(compute_milestone_boundary_fingerprint(changed) != stageDigest);
+
+    MilestoneTracker fixtureTracker;
+    constexpr MilestoneId fixtureRequested[]{MilestoneId::GameplayReadyFSp103};
+    error.clear();
+    REQUIRE(fixtureTracker.configure(fixtureRequested, std::nullopt, error));
+    fixtureTracker.setBootOrigin(changed.boot);
+    fixtureTracker.markBootOriginEstablished();
+    fixtureTracker.observe(f_sp103(), 10, 10);
+    const auto result = nlohmann::json::parse(serialize_milestone_result(fixtureTracker));
+    REQUIRE(result["boot"]["fixture"]["schema"] == kScenarioFixtureSchema);
+    REQUIRE(result["boot"]["fixture"]["name"] == "low-health wolf");
+    REQUIRE(result["boot"]["fixture"]["form"] == "wolf");
+    REQUIRE(result["boot"]["fixture"]["health"]["current"] == 4);
+    REQUIRE(result["milestones"][0]["evidence"]["boot"]["fixture"] ==
+            result["boot"]["fixture"]);
+}
+
+void testCheckedStageSmokeFingerprintV4() {
+    using namespace dusk::automation;
+    MilestoneEvidence evidence{
+        .boot = {
+            .kind = TapeBootKind::Stage,
+            .stage = "F_SP103",
+            .room = 1,
+            .point = 1,
+            .layer = 3,
+        },
+        .stageName = "F_SP103",
+        .room = 1,
+        .layer = 3,
+        .point = 1,
+        .playerPresent = true,
+        .playerIsLink = true,
+        .playerProcessId = 19,
+        .playerActorName = 253,
+        .playerProcId = 3,
+        .playerPositionX = 666.04052734375f,
+        .playerPositionY = 800.0f,
+        .playerPositionZ = -2306.737548828125f,
+        .playerCurrentAngleZ = 1,
+        .eventId = -1,
+        .eventMapToolId = 255,
+        .nextStageName = "F_SP103",
+        .nextRoom = 1,
+        .nextLayer = 3,
+        .nextPoint = 1,
+    };
+    evidence.rng.streams[0] = {
+        .id = GameRngStreamId::Primary,
+        .state0 = 1110,
+        .state1 = 24028,
+        .state2 = 26313,
+        .callCount = 1560,
+    };
+    evidence.rng.streams[1] = {
+        .id = GameRngStreamId::Secondary,
+        .state0 = 0,
+        .state1 = 0,
+        .state2 = 0,
+        .callCount = 0,
+    };
+    REQUIRE(compute_milestone_boundary_fingerprint(evidence) ==
+            "33e867ceb2d908460bd6871f54aef658");
 }
 
 void testGoalMustBeRequested() {
@@ -319,6 +488,244 @@ void testMalformedAuthoredProgramIsRejected() {
     REQUIRE(decode_milestone_program(corrupt, noSymbols, program) ==
             MilestoneProgramError::InvalidProgramDigest);
     REQUIRE(program.empty());
+}
+
+void testRichV11FactsAndBitMasksEvaluateNatively() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(
+        decode_milestone_program(RichProgram, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(program.digest() == "c81b2733874f1bef98d7ec6ebc2c7dccfc1ee82938f553208eb4a22aee05fefd");
+    const MilestoneProgramDefinition* rich = program.find("rich_state");
+    REQUIRE(rich != nullptr);
+    REQUIRE(rich->stableTicks == 3);
+
+    MilestoneObservation observation = f_sp103();
+    observation.playerActorName = 253;
+    observation.playerVelocityY = 0.0f;
+    observation.playerModeFlags = 0x400;
+    observation.playerDamageWaitTimer = 0;
+    observation.playerSwordChangeWaitTimer = 4;
+    observation.eventMode = 2;
+    observation.eventStatus = 1;
+    observation.eventNameHashPresent = true;
+    observation.eventNameHash = 0x12345678;
+    observation.playerGroundContact = true;
+    observation.playerGroundHeightPresent = true;
+    observation.playerGroundHeight = 799.75f;
+    REQUIRE(rich->evaluate(MilestoneProgramContext{.observation = observation}));
+
+    observation.playerModeFlags = 0;
+    REQUIRE(!rich->evaluate(MilestoneProgramContext{.observation = observation}));
+    observation.playerModeFlags = 0x400;
+    observation.eventNameHashPresent = false;
+    REQUIRE(!rich->evaluate(MilestoneProgramContext{.observation = observation}));
+    observation.eventNameHashPresent = true;
+    observation.playerGroundHeight = 799.0f;
+    REQUIRE(!rich->evaluate(MilestoneProgramContext{.observation = observation}));
+}
+
+void testV12PlacedActorGeometryAndIndexedFlagsEvaluateNatively() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(SelectorProgram, noSymbols, program) ==
+            MilestoneProgramError::None);
+    REQUIRE(program.digest() ==
+            "a173a8ae64d9da769cbfbc0f215e6be35135a3379a3e7828e8a9aab633d843c5");
+    const MilestoneProgramDefinition* predicate =
+        program.find("selected_actor_and_flags");
+    REQUIRE(predicate != nullptr);
+    REQUIRE(predicate->stableTicks == 2);
+
+    std::array<MilestoneObservation::Actor, 2> actors{{
+        {
+            .runtimeGeneration = 10,
+            .actorName = 42,
+            .setId = 7,
+            .homeRoom = 0,
+            .currentRoom = 0,
+            .positionX = 667.0f,
+            .positionY = 800.0f,
+            .positionZ = -2431.0f,
+            .health = 3,
+            .status = 4,
+        },
+        {
+            .runtimeGeneration = 11,
+            .actorName = 99,
+            .setId = 8,
+            .homeRoom = 0,
+        },
+    }};
+    std::array<std::uint8_t, 822> eventFlags{};
+    std::array<std::uint8_t, 185> temporaryFlags{};
+    std::array<std::uint8_t, 64> dungeonFlags{};
+    std::array<std::uint8_t, 240> switchFlags{};
+    eventFlags[821] = 1;
+    dungeonFlags[63] = 1;
+    switchFlags[239] = 1;
+
+    MilestoneObservation observation = f_sp103();
+    observation.actors = actors;
+    observation.flagsPresent = true;
+    observation.eventFlags = eventFlags;
+    observation.temporaryFlags = temporaryFlags;
+    observation.dungeonFlags = dungeonFlags;
+    observation.switchFlags = switchFlags;
+    observation.switchFlagRoom = 0;
+    REQUIRE(predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+
+    observation.actorsTruncated = true;
+    REQUIRE(!predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+    observation.actorsTruncated = false;
+    actors[1] = actors[0];
+    observation.actors = actors;
+    REQUIRE(!predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+    actors[1].actorName = 99;
+    observation.actors = actors;
+    eventFlags[821] = 0;
+    REQUIRE(!predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+    eventFlags[821] = 1;
+    observation.switchFlagRoom = 1;
+    REQUIRE(!predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+    observation.switchFlagRoom = 0;
+    actors[0].positionX = 700.0f;
+    REQUIRE(!predicate->evaluate(MilestoneProgramContext{.observation = observation}));
+}
+
+void testV13SpatialRelationsAndBoundedSequencesEvaluateNatively() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(SpatialSequenceProgram, noSymbols, program) ==
+            MilestoneProgramError::None);
+    REQUIRE(program.digest() ==
+            "3d38e166aca57dbafc50060975ecff9ab7981d59c67b6f7411ded8c59cc61922");
+    const auto* definition = program.find("grounded_region_event_plane");
+    REQUIRE(definition != nullptr);
+    REQUIRE(definition->sequenceStepCount() == 4);
+    REQUIRE(definition->sequenceWithinTicks() == 3);
+
+    MilestoneObservation observation = f_sp103();
+    observation.playerGroundContact = true;
+    REQUIRE(!definition->evaluate(MilestoneProgramContext{.observation = observation}));
+    REQUIRE(definition->evaluateSequenceStep(
+        0, MilestoneProgramContext{.observation = observation}));
+    REQUIRE(definition->evaluateSequenceStep(
+        1, MilestoneProgramContext{.observation = observation}));
+    observation.eventId = 17;
+    REQUIRE(definition->evaluateSequenceStep(
+        2, MilestoneProgramContext{.observation = observation}));
+    REQUIRE(definition->evaluateSequenceStep(
+        3, MilestoneProgramContext{.observation = observation}));
+
+    MilestoneTracker tracker;
+    std::string error;
+    const std::vector<std::string> requested{"grounded_region_event_plane"};
+    REQUIRE(tracker.configureNames(requested, requested[0], program, error));
+    observation = f_sp103();
+    observation.playerGroundContact = true;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 1, 0, 0);
+    REQUIRE(!tracker.goalReached());
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 2, 1, 1);
+    observation.eventId = 17;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 3, 2, 2);
+    REQUIRE(!tracker.goalReached());
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 4, 3, 3);
+    REQUIRE(tracker.goalReached());
+    REQUIRE(tracker.authoredHits()[0].boundaryIndex == 4);
+
+    tracker.reset();
+    observation = f_sp103();
+    observation.playerGroundContact = true;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 10, 9, 9);
+    observation.playerPositionX = 700.0f;
+    for (std::uint64_t boundary = 11; boundary <= 13; ++boundary) {
+        tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+            MilestoneBoundaryKind::Tick, boundary, boundary - 1, boundary - 1);
+    }
+    observation.playerPositionX = 666.0f;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 14, 13, 13);
+    observation.eventId = 17;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 15, 14, 14);
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 16, 15, 15);
+    REQUIRE(!tracker.goalReached());
+}
+
+void testV14NamedValueProjectionsCaptureExactNativeState() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(ValueProjectionProgram, noSymbols, program) ==
+            MilestoneProgramError::None);
+    REQUIRE(program.digest() ==
+            "ad6893e0ff3a6fd7c39f9ad21b6ecce508994279cb41fe33944cca6bb61a15c8");
+    const auto* definition = program.find("value-parity-fixture");
+    REQUIRE(definition != nullptr);
+    REQUIRE(definition->valueProjections().size() == 1);
+    REQUIRE(definition->valueProjections()[0].name == "handoff-state");
+    REQUIRE(definition->valueProjections()[0].identity ==
+            "acb5c9cd5570ebe610e321a3f5a33856a6af7cfaaf808b5b394f471170fcf5f3");
+    REQUIRE(definition->valueProjections()[0].items.size() == 5);
+
+    std::array<MilestoneObservation::Actor, 2> actors{{
+        {.runtimeGeneration = 200, .actorName = 90, .setId = 8, .homeRoom = 1,
+            .currentRoom = 1, .positionX = 2.0f, .health = 4, .status = 5},
+        {.runtimeGeneration = 100, .actorName = 42, .setId = 7, .homeRoom = 1,
+            .currentRoom = 0, .positionX = 1.0f, .health = 3, .status = 4},
+    }};
+    std::array<std::uint8_t, 822> eventFlags{};
+    std::array<std::uint8_t, 185> temporaryFlags{};
+    std::array<std::uint8_t, 64> dungeonFlags{};
+    std::array<std::uint8_t, 240> switchFlags{};
+    eventFlags[821] = 1;
+    switchFlags[239] = 1;
+    MilestoneObservation observation = f_sp103();
+    observation.actors = actors;
+    observation.flagsPresent = true;
+    observation.eventFlags = eventFlags;
+    observation.temporaryFlags = temporaryFlags;
+    observation.dungeonFlags = dungeonFlags;
+    observation.switchFlags = switchFlags;
+    observation.switchFlagRoom = 1;
+
+    MilestoneTracker tracker;
+    std::string error;
+    const std::vector<std::string> requested{"value-parity-fixture"};
+    REQUIRE(tracker.configureNames(requested, requested[0], program, error));
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 1, 0, 0);
+    REQUIRE(tracker.goalReached());
+    const auto& projection = tracker.authoredHits()[0].projections[0];
+    REQUIRE(projection.available);
+    REQUIRE(projection.valueDigest.size() == 32);
+    REQUIRE(projection.items[2].actors.size() == 2);
+    REQUIRE(projection.items[2].actors[0].actorName == 42);
+    REQUIRE(projection.items[3].flagValue);
+    REQUIRE(projection.items[4].flagValue);
+
+    const auto result = nlohmann::json::parse(serialize_milestone_result(tracker));
+    const auto& jsonProjection = result["milestones"][0]["projections"][0];
+    REQUIRE(jsonProjection["name"] == "handoff-state");
+    REQUIRE(jsonProjection["available"] == true);
+    REQUIRE(jsonProjection["value_fingerprint"]["schema"] ==
+            "dusklight.value-projection/v1");
+    REQUIRE(jsonProjection["values"][2]["value"][0]["actor_name"] == 42);
+
+    tracker.reset();
+    observation.actorsTruncated = true;
+    tracker.observeBoundary(
+        observation, MilestoneProgramPhase::PostSim, MilestoneBoundaryKind::Tick, 1, 0, 0);
+    REQUIRE(tracker.authoredHits()[0].hit);
+    REQUIRE(!tracker.authoredHits()[0].projections[0].available);
+    const auto unavailable = nlohmann::json::parse(serialize_milestone_result(tracker));
+    REQUIRE(unavailable["milestones"][0]["projections"][0]["value_fingerprint"] == nullptr);
 }
 
 void testBootRecordingGuardrailsAndBeginOrdering() {
@@ -473,8 +880,13 @@ int main() {
     testExitRequiresCommittedExactDestination();
     testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence();
     testBoundaryFingerprintIsStableAndSensitiveToExplicitState();
+    testCheckedStageSmokeFingerprintV4();
     testGoalMustBeRequested();
     testAuthoredBootStableAndExactFirstHit();
+    testRichV11FactsAndBitMasksEvaluateNatively();
+    testV12PlacedActorGeometryAndIndexedFlagsEvaluateNatively();
+    testV13SpatialRelationsAndBoundedSequencesEvaluateNatively();
+    testV14NamedValueProjectionsCaptureExactNativeState();
     testMalformedAuthoredProgramIsRejected();
     testBootRecordingGuardrailsAndBeginOrdering();
     testAcceleratedParentRecordingBoundaryAndRevealOrdering();

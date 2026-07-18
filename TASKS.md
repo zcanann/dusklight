@@ -107,6 +107,9 @@ not become route history until explicitly promoted.
 - [x] Fixed-step logical clock, unpaced execution, hidden windowed fast-forward,
   null-renderer execution, and retained-frame live handoff.
 - [x] Versioned native bootstrap worker and Rust worker pool supervision.
+- [x] Direct `--stage STAGE,ROOM,POINT,LAYER` process launch, optionally
+  combined with `--load-save SLOT`, plus first-class process/stage boot origins
+  in `DUSKTAPE` v3.
 - [x] Content-addressed corpus and route artifacts with SHA-256 verification.
 - [x] Authored read-only predicates, milestone evidence, boundary fingerprints,
   and segment-attached goals/proofs.
@@ -155,7 +158,7 @@ debugging, and future algorithms.
   capabilities, and fidelity profile in every run artifact.
 - [ ] Hash the DVD/game-data inputs, region, language assets, scenario fixture,
   predicate program, action schema, observation schema, and relevant settings.
-- [ ] Define compatibility rules separately for replay, trace merging, model
+- [x] Define compatibility rules separately for replay, trace merging, model
   training, checkpoint restore, and cross-build comparison.
 - [ ] Make every CLI and workbench action reject mismatched identity instead of
   implicitly using whatever binary, disc, or configured path is available.
@@ -239,14 +242,41 @@ determinism evidence is contradictory.
 
 ### P0: scenario fixtures
 
-- [ ] Define fixtures for save data, stage, room, layer, entrance, form,
+The checked-in process-boot tapes are not yet robust or broad enough to serve
+as the validation harness for every map-local capability in this backlog.
+Direct stage boot is therefore a first-class test origin: it should make it
+cheap to author a short tape for an arbitrary map and goal—walk toward a
+target, exercise an actor, cross a trigger, test collision, or inspect a
+transition—without first extending a fragile title/menu/route prefix.
+
+- [x] Give authored tapes/programs an explicit, versioned boot origin:
+  `process` for normal executable boot or `stage` for a targeted fixture start.
+  Do not silently change the meaning of existing raw `DUSKTAPE` files; use a
+  versioned tape launch envelope/manifest if the input codec itself should
+  remain pure controller data.
+- [x] Define the initial `stage` boot descriptor as stage ID, room, spawn/point,
+  and layer, with optional save-slot or named loadout/fixture identity. Map the
+  first implementation onto Dusklight's existing `--stage` and `--load-save`
+  launch options rather than inventing a second stage loader.
+- [x] Bind boot origin and every stage/loadout field into scenario identity,
+  boundary fingerprints, corpus entries, traces, results, and proofs. Reject a
+  tape when its declared boot origin was not actually established.
+- [x] Start tape tick zero only after the declared stage fixture reaches its
+  explicit readiness predicate. Loading, shader work, and host-only waits must
+  not consume tape input or become timing slack in the authored program.
+- [x] Let `huntctl` compile, run, record, minimize, and inspect stage-boot tapes
+  directly so a test author can pair any targeted map start with an arbitrary
+  predicate/goal and promote the realized tape like any other test artifact.
+- [x] Define canonical, versioned fixtures for save data, stage, room, layer, entrance, form,
   inventory, equipment, flags, health, RNG, video mode, and settings.
-- [ ] Separate readiness from replay: fixture loading may wait before tick zero;
+- [x] Separate readiness from replay: fixture loading may wait before tick zero;
   tape playback may only assert readiness and fail.
-- [ ] Build a stage/room smoke catalog with expected initial fingerprints.
+- [x] Build a stage/room smoke catalog with expected initial fingerprints.
 - [ ] Detect durable leakage across runs: save data, memory card, globals,
   managers, caches, particles, audio, loader queues, and temporary files.
-- [ ] Keep clean-boot and fixture-start leaderboards distinct.
+- [x] Keep clean-boot and fixture-start leaderboards distinct. Population,
+  results, evaluation plans/reports, and leaderboard rows carry one exact boot
+  origin; population construction and ranking reject mixed origins.
 
 ### P1: checkpoint tiers
 
@@ -551,53 +581,53 @@ semantic features plus stable references back to the inventory.
 
 ### P0: exact controller action space
 
-- [ ] Preserve the full PAD surface: all buttons, main/sub sticks, triggers,
+- [x] Preserve the full PAD surface: all buttons, main/sub sticks, triggers,
   analog A/B, connection/error state, and all four ports.
-- [ ] Support lossless splice, trim, layer, resample-for-authoring, diff, and
+- [x] Support lossless splice, trim, layer, resample-for-authoring, diff, and
   delta minimization while retaining canonical 30 Hz output.
-- [ ] Represent button edge, hold, release, and illegal/conflicting combinations
+- [x] Represent button edge, hold, release, and illegal/conflicting combinations
   explicitly in the authoring layer.
-- [ ] Define state-dependent action masks as search guidance, never as proof
+- [x] Define state-dependent action masks as search guidance, never as proof
   restrictions that could hide a glitch-producing “invalid” input.
 
 ### P0: temporally extended options
 
-- [ ] Define a versioned semi-Markov option schema: type, parameters, duration,
+- [x] Define a versioned semi-Markov option schema: type, parameters, duration,
   cancellation/termination condition, emitted raw actions, and realized tape
   range.
-- [ ] Add move in world/player/camera coordinates toward a coordinate, plane,
+- [x] Add move in world/player/camera coordinates toward a coordinate, plane,
   path point, placed actor, runtime actor, or inferred opening.
-- [ ] Add turn, brake, neutral, align, maintain heading, and maintain distance.
-- [ ] Add roll with direction, button frame, recovery, cancellation, and
+- [x] Add turn, brake, neutral, align, maintain heading, and maintain distance.
+- [x] Add roll with direction, button frame, recovery, cancellation, and
   deterministic roll-spacing phase.
-- [ ] Add jump attack, normal attack/combo, shield, target, interact, item use,
+- [x] Add jump attack, normal attack/combo, shield, target, interact, item use,
   transform, crawl, climb, swim, Epona, boomerang, clawshot, spinner, and other
   typed game-specific tactics as benchmarks require them.
-- [ ] Add waypoint, rail, spline, and Bézier movement with exact duration and
+- [x] Add waypoint, rail, spline, and Bézier movement with exact duration and
   sample phase.
-- [ ] Allow bounded observation feedback such as seek actor or maintain offset;
+- [x] Allow bounded observation feedback such as seek actor or maintain offset;
   record every realized raw frame for proof.
-- [ ] Provide option-relative local golf that adjusts heading, magnitude,
+- [x] Provide option-relative local golf that adjusts heading, magnitude,
   duration, phase, button timing, and cancellation around a successful result.
 
 ### P0: composition semantics
 
-- [ ] Define deterministic priority and composition for base motion, additive
+- [x] Define deterministic priority and composition for base motion, additive
   correction, button overlays, camera/sub-stick layers, and safety clamps.
-- [ ] Reject ambiguous overlapping writers rather than depending on file order.
-- [ ] Bound every loop, wait, branch, feedback controller, and target-loss path.
-- [ ] Make loss of an exact target a typed terminal/option result; never switch
+- [x] Reject ambiguous overlapping writers rather than depending on file order.
+- [x] Bound every loop, wait, branch, feedback controller, and target-loss path.
+- [x] Make loss of an exact target a typed terminal/option result; never switch
   silently to nearest.
-- [ ] Compile static programs to canonical tapes where possible and label
+- [x] Compile static programs to canonical tapes where possible and label
   reactive executions with the exact observation provenance used.
 
 ### P1: tactic diagnostics
 
-- [ ] Record option start/end/reason, intended target, error vector, action mask,
+- [x] Record option start/end/reason, intended target, error vector, action mask,
   raw output, clamps, and game-consumed input.
-- [ ] Visualize option intervals, curves, targets, contacts, and goal progress on
+- [x] Visualize option intervals, curves, targets, contacts, and goal progress on
   the route graph and gameplay overlay.
-- [ ] Maintain reusable tactic tests per player procedure and game mode.
+- [x] Maintain reusable tactic tests per player procedure and game mode.
 
 **Acceptance:** a search policy can choose a compact option and parameter tuple,
 the native worker executes it without per-tick IPC, and the result materializes
@@ -608,42 +638,42 @@ algorithmic exploration.
 
 ### P0: extensible predicate DSL
 
-- [ ] Compile predicates over typed facts, events, stable actor selectors,
+- [x] Compile predicates over typed facts, events, stable actor selectors,
   geometry relations, flags, timers, hashes, and bounded temporal conditions.
-- [ ] Support exact equality, ranges, regions, planes, contact relationships,
+- [x] Support exact equality, ranges, regions, planes, contact relationships,
   state transitions, persistence for N ticks, and ordered event sequences.
-- [ ] Add named value-parity projections such as RNG, actor population, or flag
+- [x] Add named value-parity projections such as RNG, actor population, or flag
   subsets; do not approximate parity using topology.
-- [ ] Expose predicate sampling phase and first-hit boundary unambiguously.
-- [ ] Provide predicate unit tests against recorded traces and native fixtures.
-- [ ] Keep goals as optional metadata on segments/runs, never structural parents.
+- [x] Expose predicate sampling phase and first-hit boundary unambiguously.
+- [x] Provide predicate unit tests against recorded traces and native fixtures.
+- [x] Keep goals as optional metadata on segments/runs, never structural parents.
 
 ### P0: objective semantics
 
-- [ ] Separate feasibility from optimization: satisfy the exact predicate first,
+- [x] Separate feasibility from optimization: satisfy the exact predicate first,
   then minimize simulation ticks or another declared cost.
-- [ ] Define lexicographic objectives for goal depth, first-hit tick, tape size,
+- [x] Define lexicographic objectives for goal depth, first-hit tick, tape size,
   input complexity, risk, and boundary compatibility.
-- [ ] Support potential-based shaping from distance, corridor progress, phase, or
+- [x] Support potential-based shaping from distance, corridor progress, phase, or
   event progress without changing the terminal objective.
-- [ ] Record every reward component and its source fact so reward bugs are
+- [x] Record every reward component and its source fact so reward bugs are
   inspectable.
-- [ ] Preserve multiple archive cells for materially different RNG, actors,
+- [x] Preserve multiple archive cells for materially different RNG, actors,
   routes, procedures, novelty, or downstream state.
 
 ### P0: oracle library
 
-- [ ] Reached/avoided stage, room, region, action, animation, flag, actor state,
+- [x] Reached/avoided stage, room, region, action, animation, flag, actor state,
   or event.
-- [ ] Collision crossing, OOB, void survival, unexpected load, wrong warp,
+- [x] Collision crossing, OOB, void survival, unexpected load, wrong warp,
   excessive displacement/speed, NaN, and impossible coordinates.
-- [ ] Actor corruption, slot exhaustion, watched-field corruption, heap failure,
+- [x] Actor corruption, slot exhaustion, watched-field corruption, heap failure,
   crash, hang, softlock, and control loss.
-- [ ] Duplicate item/reward, preserved storage state, cutscene/event queueing,
+- [x] Duplicate item/reward, preserved storage state, cutscene/event queueing,
   sequence break, and save-state anomalies.
-- [ ] Headful/headless divergence, control/treatment difference, and novel
+- [x] Headful/headless divergence, control/treatment difference, and novel
   semantic event signature.
-- [ ] Compose cheap per-tick native oracles with expensive Rust-side corpus and
+- [x] Compose cheap per-tick native oracles with expensive Rust-side corpus and
   novelty analysis.
 
 **Acceptance:** representative movement, collision, actor, cutscene, memory,
@@ -669,74 +699,74 @@ judgment, with the exact supporting observations retained.
 - [x] Replace the fixed 49-field movement assumption with an authenticated,
   extensible observation-view schema and explicit missingness masks while
   retaining permanent movement-v1 compatibility for existing corpora.
-- [ ] Add per-tick RNG, camera, player procedure internals/action timers,
+- [x] Add per-tick RNG, camera, player procedure internals/action timers,
   contacts, correction vectors, local geometry, goal features, and selected
   dynamic actors.
-- [ ] Record pre-action observation, exact chosen action/option, duration,
+- [x] Record pre-action observation, exact chosen action/option, duration,
   post-action observation, events, reward components, predicate state, and
   terminal reason with exact phase alignment.
-- [ ] Support dense state views plus sparse entity/event side tables to avoid
+- [x] Support dense state views plus sparse entity/event side tables to avoid
   repeating unchanged world data.
-- [ ] Add bounded ring buffers and trigger-based retention so a crash, novel
+- [x] Add bounded ring buffers and trigger-based retention so a crash, novel
   contact, flag change, or predicate hit can preserve dense evidence from the
   preceding and following ticks without paying full diagnostic trace cost for
   every candidate.
-- [ ] Preserve raw high-value observations and stable world references so later
+- [x] Preserve raw high-value observations and stable world references so later
   featurizers can be rerun offline.
-- [ ] Bound record size, actor slots, event counts, and output; report every
+- [x] Bound record size, actor slots, event counts, and output; report every
   truncation explicitly.
 
 ### P0: transition and episode identity
 
-- [ ] Give every episode a scenario, parent boundary, absolute tape, run build,
+- [x] Give every episode a scenario, parent boundary, absolute tape, run build,
   query view, action schema, objective, learner/proposer, seed, and worker ID.
-- [ ] Store candidate lineage and intervention location without treating frames
+- [x] Store candidate lineage and intervention location without treating frames
   from one episode as independent provenance.
-- [ ] Separate successful, failed, crashed, timed-out, desynced, unsupported,
+- [x] Separate successful, failed, crashed, timed-out, desynced, unsupported,
   and truncated runs.
-- [ ] Deduplicate exact episodes while retaining independent repetition evidence.
-- [ ] Content-address large traces, static inventories, screenshots, models, and
+- [x] Deduplicate exact episodes while retaining independent repetition evidence.
+- [x] Content-address large traces, static inventories, screenshots, models, and
   crash artifacts.
 
 ### P0: counterfactual collection
 
-- [ ] At incumbent and archive routes, choose decision boundaries and evaluate
+- [x] At incumbent and archive routes, choose decision boundaries and evaluate
   systematic alternate actions/options, including failures.
-- [ ] Track coverage by stage/room, spatial cell, player procedure, option,
+- [x] Track coverage by stage/room, spatial cell, player procedure, option,
   parameter bin, duration, goal phase, and outcome.
-- [ ] Balance collection across underrepresented supported actions instead of
+- [x] Balance collection across underrepresented supported actions instead of
   repeatedly perturbing only successful headings.
-- [ ] Let ensemble disagreement request bounded probes, but record that it is a
+- [x] Let ensemble disagreement request bounded probes, but record that it is a
   heuristic rather than calibrated uncertainty.
-- [ ] Retain random/Latin-hypercube probes for blind spots and audit for policy
+- [x] Retain random/Latin-hypercube probes for blind spots and audit for policy
   collapse.
-- [ ] Make the evaluator budget and attribution per proposer visible.
+- [x] Make the evaluator budget and attribution per proposer visible.
 
 ### P0: train/validation/test discipline
 
-- [ ] Split by whole episode, scenario, parent boundary fingerprint, and route
+- [x] Split by whole episode, scenario, parent boundary fingerprint, and route
   family; never randomly split correlated frames.
-- [ ] Keep a frozen withheld benchmark suite that model selection cannot farm.
-- [ ] Report unique episodes, effective decision count, action support, state
+- [x] Keep a frozen withheld benchmark suite that model selection cannot farm.
+- [x] Report unique episodes, effective decision count, action support, state
   coverage, missingness, class imbalance, and boundary diversity—not only rows.
-- [ ] Detect train/evaluation leakage through duplicated tapes, prefixes,
+- [x] Detect train/evaluation leakage through duplicated tapes, prefixes,
   checkpoints, screenshots, or continuation ancestry.
-- [ ] Provide success/failure sibling trace diffing by phase, event, actor,
+- [x] Provide success/failure sibling trace diffing by phase, event, actor,
   contact, flag, RNG draw, allocation, and objective component to expose facts
   a model or predicate is currently missing.
-- [ ] Version normalization statistics and compute them from training data only.
-- [ ] Store dataset manifests and exact model-training configuration in Git or
+- [x] Version normalization statistics and compute them from training data only.
+- [x] Store dataset manifests and exact model-training configuration in Git or
   content-addressed immutable artifacts.
 
 ### P1: corpus operations
 
-- [ ] Query, compare, merge, shard, compact, re-feature, validate, quarantine,
+- [x] Query, compare, merge, shard, compact, re-feature, validate, quarantine,
   and garbage-collect corpora by schema and identity.
-- [ ] Delta-debug a successful tape while retaining its oracle and boundary
+- [x] Delta-debug a successful tape while retaining its oracle and boundary
   class.
-- [ ] Prune unreachable generated artifacts and orphaned thumbnails safely;
+- [x] Prune unreachable generated artifacts and orphaned thumbnails safely;
   provide dry-run and recoverable trash for user-owned route data.
-- [ ] Export analysis-friendly Arrow/Parquet or equivalent outside the hot path
+- [x] Export analysis-friendly Arrow/Parquet or equivalent outside the hot path
   without making it replay authority.
 
 **Acceptance:** a training manifest can be reproduced from immutable episodes,
@@ -750,29 +780,29 @@ mutator.
 
 ### P0: exact and structured methods
 
-- [ ] Exhaustive menu-pulse timing search, coordinate descent, chunk deletion,
+- [x] Exhaustive menu-pulse timing search, coordinate descent, chunk deletion,
   delta debugging, and tape truncation.
-- [ ] Deterministic roll-spacing, heading, magnitude, waypoint, spline, button
+- [x] Deterministic roll-spacing, heading, magnitude, waypoint, spline, button
   timing, and option-duration optimizers.
-- [ ] Beam search and branch-and-bound over discrete options with exact simulator
+- [x] Beam search and branch-and-bound over discrete options with exact simulator
   rollouts.
-- [ ] Cross-entropy method and CMA-ES for low-dimensional continuous option
+- [x] Cross-entropy method and CMA-ES for low-dimensional continuous option
   parameters.
-- [ ] Bayesian optimization for very expensive, smooth-enough bounded tactics.
-- [ ] Novelty search and quality-diversity/MAP-Elites across route, behavior,
+- [x] Bayesian optimization for very expensive, smooth-enough bounded tactics.
+- [x] Novelty search and quality-diversity/MAP-Elites across route, behavior,
   RNG, actor, contact, and boundary descriptors.
 - [ ] MCTS over checkpointed option boundaries where restore is validated.
 
 ### P0: fair proposer tournament
 
-- [ ] Give each proposer a declared candidate-tick or episode budget.
-- [ ] Deduplicate proposals before spending simulator time.
-- [ ] Attribute every improvement, miss, crash, and duplicate to its proposer.
-- [ ] Compare wall time, simulator ticks, episodes, predicate-hit rate, frame
+- [x] Give each proposer a declared candidate-tick or episode budget.
+- [x] Deduplicate proposals before spending simulator time.
+- [x] Attribute every improvement, miss, crash, and duplicate to its proposer.
+- [x] Compare wall time, simulator ticks, episodes, predicate-hit rate, frame
   wins, boundary diversity, and cold-replay pass rate.
-- [ ] Retain incumbent mutation and blind exploration budgets even when a learned
+- [x] Retain incumbent mutation and blind exploration budgets even when a learned
   proposer appears strong.
-- [ ] Do not allow any proposer to bypass the same native predicate and replay
+- [x] Do not allow any proposer to bypass the same native predicate and replay
   gates.
 
 **Acceptance:** every learned-method claim includes equal-budget comparisons to
@@ -783,9 +813,9 @@ simple random baseline.
 
 ### P0: keep the low-data baseline honest
 
-- [ ] Retain deterministic tree FQI and document its supported observation/action
+- [x] Retain deterministic tree FQI and document its supported observation/action
   schemas, uncertainty limitations, and episode bootstrap behavior.
-- [ ] Add nearest-neighbor/local return and tabular discretization baselines for
+- [x] Add nearest-neighbor/local return and tabular discretization baselines for
   small objective-specific state spaces.
 - [ ] Add n-step and option-duration targets with tests for terminal and truncated
   episodes.
@@ -939,7 +969,7 @@ mislabel the intervention.
 
 ## 11. Skybook replication and capability discovery
 
-The current `C:\Projects\skybook` checkout contains roughly 483 posts, including
+The current `..\skybook` checkout contains roughly 483 posts, including
 about 452 categorized glitch pages. Its tags already span movement, collision,
 cutscenes, OOB, warps, memory, storage, softlocks, combat, crashes, actor
 corruption, RNG, platforms, and dozens of maps. This is a requirements corpus,
@@ -1032,10 +1062,13 @@ become explicit adapter tasks rather than hidden folklore.
   with proposer, score, proof, boundary, and model/corpus identity in details.
 - [ ] Promote, rename, delete subtree, keep/delete siblings, and recover trash
   with previews and Git-visible changes.
-- [ ] Record child from Boot or any exact parent boundary using the fastest
-  validated prefix/checkpoint tier and configurable host-only countdown.
-- [ ] Play from Boot, parent, or parent-fast; capture a thumbnail automatically
-  only when the selected boundary has no reachable image.
+- [ ] Record a child from an explicitly selected clean process boot, stage boot,
+  or exact parent boundary using the fastest validated prefix/checkpoint tier
+  and configurable host-only countdown. Display the selected boot origin and
+  fixture identity before recording begins.
+- [ ] Play from process boot, stage boot, parent, or parent-fast; capture a
+  thumbnail automatically only when the selected boundary has no reachable
+  image.
 - [ ] Add objective editor/query builder with syntax validation, schema
   discovery, trace preview, and proof invalidation explanation.
 - [ ] Add run dashboard for worker health, throughput, budget, proposer
@@ -1093,6 +1126,12 @@ than logical outcome.
 
 - [ ] Clean-boot repetition suites for menu, movement, transition, actor,
   collision, RNG, crash, and recording/handoff paths.
+- [ ] Stage-boot conformance suites spanning representative overworld, dungeon,
+  boss, interior, grotto, and cutscene maps, with small goal-specific tapes
+  proving fixture readiness, input alignment, and isolated save/loadout state.
+- [ ] For representative stage-boot tests, promote the local result into a
+  clean-process absolute replay when claiming end-to-end route capability;
+  report local fixture validation and full boot proof as distinct evidence.
 - [ ] Headful/hidden/headless parity and first-divergence reports.
 - [ ] Memory-card/save isolation and persistent-worker leak tests.
 - [ ] Worker crash/timeout/restart and partial-pool failure tests.

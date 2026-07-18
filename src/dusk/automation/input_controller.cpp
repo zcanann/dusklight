@@ -24,6 +24,11 @@ std::uint32_t read_u32(const std::uint8_t* input) {
            (static_cast<std::uint32_t>(input[3]) << 24);
 }
 
+std::uint64_t read_u64(const std::uint8_t* input) {
+    return static_cast<std::uint64_t>(read_u32(input)) |
+           (static_cast<std::uint64_t>(read_u32(input + 4)) << 32);
+}
+
 float read_f32(const std::uint8_t* input) {
     return std::bit_cast<float>(read_u32(input));
 }
@@ -58,6 +63,21 @@ bool valid_seek(const InputControllerLayer& layer) {
     return finite(layer.offsetX) && finite(layer.offsetY) && finite(layer.offsetZ) &&
            finite(layer.stopRadius) && layer.stopRadius >= 0.0F && layer.magnitude >= 1 &&
            layer.magnitude <= 127;
+}
+
+InputControllerError validate_seek(const InputControllerLayer& layer) {
+    if (!finite(layer.offsetX) || !finite(layer.offsetY) || !finite(layer.offsetZ) ||
+        !finite(layer.stopRadius))
+    {
+        return InputControllerError::InvalidFloat;
+    }
+    if (layer.stopRadius < 0.0F) {
+        return InputControllerError::InvalidStopRadius;
+    }
+    if (layer.magnitude < 1 || layer.magnitude > 127) {
+        return InputControllerError::InvalidMagnitude;
+    }
+    return InputControllerError::None;
 }
 
 bool ranges_overlap(const InputControllerLayer& left, const InputControllerLayer& right) {
@@ -208,8 +228,124 @@ StickValue seek(const InputControllerLayer& layer, const ControllerObservation& 
     };
 }
 
+StickValue world_heading_stick(const InputControllerLayer& layer,
+    const ControllerObservation& observation, const double worldHeading) {
+    if (!observation.cameraPresent || !finite(observation.cameraYawRadians) ||
+        !std::isfinite(worldHeading))
+    {
+        return {};
+    }
+    const double relativeAngle = worldHeading - observation.cameraYawRadians;
+    return {
+        .x = rounded_stick_component(std::sin(relativeAngle), layer.magnitude),
+        .y = rounded_stick_component(std::cos(relativeAngle), layer.magnitude),
+    };
+}
+
+double wrap_angle(double value) {
+    constexpr double Pi = 3.14159265358979323846;
+    constexpr double Tau = 2.0 * Pi;
+    value = std::fmod(value + Pi, Tau);
+    if (value < 0.0) {
+        value += Tau;
+    }
+    return value - Pi;
+}
+
+bool resolve_heading(const InputControllerLayer& layer, const ControllerObservation& observation,
+    double& output) {
+    switch (layer.coordinateFrame) {
+    case InputControllerCoordinateFrame::World:
+        output = layer.headingRadians;
+        return true;
+    case InputControllerCoordinateFrame::Player:
+        if (!observation.playerYawPresent || !finite(observation.playerYawRadians)) {
+            return false;
+        }
+        output = static_cast<double>(observation.playerYawRadians) + layer.headingRadians;
+        return std::isfinite(output);
+    case InputControllerCoordinateFrame::Camera:
+        if (!observation.cameraPresent || !finite(observation.cameraYawRadians)) {
+            return false;
+        }
+        output = static_cast<double>(observation.cameraYawRadians) + layer.headingRadians;
+        return std::isfinite(output);
+    }
+    return false;
+}
+
+struct WorldPoint {
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+};
+
+bool frame_yaw(const InputControllerCoordinateFrame frame, const ControllerObservation& observation,
+    float& yaw) {
+    switch (frame) {
+    case InputControllerCoordinateFrame::World:
+        yaw = 0.0F;
+        return true;
+    case InputControllerCoordinateFrame::Player:
+        yaw = observation.playerYawRadians;
+        return observation.playerYawPresent && finite(yaw);
+    case InputControllerCoordinateFrame::Camera:
+        yaw = observation.cameraYawRadians;
+        return observation.cameraPresent && finite(yaw);
+    }
+    return false;
+}
+
+bool resolve_point(const InputControllerCoordinateFrame frame,
+    const ControllerObservation& observation, const float x, const float y, const float z,
+    WorldPoint& output) {
+    if (!observation.playerPresent || !finite(observation.playerX) ||
+        !finite(observation.playerY) || !finite(observation.playerZ) || !finite(x) || !finite(y) ||
+        !finite(z))
+    {
+        return false;
+    }
+    if (frame == InputControllerCoordinateFrame::World) {
+        output = {.x = x, .y = y, .z = z};
+        return true;
+    }
+    float yaw = 0.0F;
+    if (!frame_yaw(frame, observation, yaw)) {
+        return false;
+    }
+    const double sine = std::sin(static_cast<double>(yaw));
+    const double cosine = std::cos(static_cast<double>(yaw));
+    output = {
+        .x = static_cast<float>(observation.playerX + cosine * x + sine * z),
+        .y = observation.playerY + y,
+        .z = static_cast<float>(observation.playerZ - sine * x + cosine * z),
+    };
+    return finite(output.x) && finite(output.y) && finite(output.z);
+}
+
+bool resolve_vector(const InputControllerCoordinateFrame frame,
+    const ControllerObservation& observation, const float x, const float y, const float z,
+    WorldPoint& output) {
+    if (!finite(x) || !finite(y) || !finite(z)) {
+        return false;
+    }
+    float yaw = 0.0F;
+    if (!frame_yaw(frame, observation, yaw)) {
+        return false;
+    }
+    const double sine = std::sin(static_cast<double>(yaw));
+    const double cosine = std::cos(static_cast<double>(yaw));
+    output = {
+        .x = static_cast<float>(cosine * x + sine * z),
+        .y = y,
+        .z = static_cast<float>(-sine * x + cosine * z),
+    };
+    return finite(output.x) && finite(output.y) && finite(output.z);
+}
+
 StickValue evaluate_stick_layer(const InputControllerLayer& layer, const std::uint32_t localFrame,
-    const ControllerObservation& observation) {
+    const ControllerObservation& observation, bool& exactTargetLost) {
+    exactTargetLost = false;
     switch (layer.kind) {
     case InputControllerLayerKind::Bezier:
         return {
@@ -263,10 +399,112 @@ StickValue evaluate_stick_layer(const InputControllerLayer& layer, const std::ui
             }
         }
         if (selected == nullptr) {
+            exactTargetLost = layer.actorSelector != InputControllerActorSelector::Nearest &&
+                              !observation.actorsTruncated;
             return {};
         }
         return seek(layer, observation, selected->x + layer.offsetX, selected->z + layer.offsetZ);
     }
+    case InputControllerLayerKind::SeekCoordinate: {
+        WorldPoint target;
+        WorldPoint offset;
+        if (!resolve_point(layer.coordinateFrame, observation, layer.targetX, layer.targetY,
+                layer.targetZ, target) ||
+            !resolve_vector(layer.coordinateFrame, observation, layer.offsetX, layer.offsetY,
+                layer.offsetZ, offset))
+        {
+            return {};
+        }
+        return seek(layer, observation, target.x + offset.x, target.z + offset.z);
+    }
+    case InputControllerLayerKind::SeekPlane: {
+        WorldPoint point;
+        WorldPoint normal;
+        if (!resolve_point(layer.coordinateFrame, observation, layer.targetX, layer.targetY,
+                layer.targetZ, point) ||
+            !resolve_vector(layer.coordinateFrame, observation, layer.offsetX, layer.offsetY,
+                layer.offsetZ, normal))
+        {
+            return {};
+        }
+        const double normalSquared = static_cast<double>(normal.x) * normal.x +
+                                     static_cast<double>(normal.z) * normal.z;
+        if (!(normalSquared > 0.0) || !std::isfinite(normalSquared)) {
+            return {};
+        }
+        const double signedScale =
+            ((static_cast<double>(observation.playerX) - point.x) * normal.x +
+                (static_cast<double>(observation.playerZ) - point.z) * normal.z) /
+            normalSquared;
+        const float targetX =
+            static_cast<float>(observation.playerX - signedScale * normal.x);
+        const float targetZ =
+            static_cast<float>(observation.playerZ - signedScale * normal.z);
+        return seek(layer, observation, targetX, targetZ);
+    }
+    case InputControllerLayerKind::SeekResolved:
+        return seek(
+            layer, observation, layer.targetX + layer.offsetX, layer.targetZ + layer.offsetZ);
+    case InputControllerLayerKind::Neutral:
+        return {};
+    case InputControllerLayerKind::Turn:
+        return {
+            .x = layer.turnDirection == InputControllerTurnDirection::Left ? -layer.magnitude :
+                                                                                layer.magnitude,
+            .y = 0,
+        };
+    case InputControllerLayerKind::Brake: {
+        if (!observation.playerVelocityPresent || !finite(observation.playerVelocityX) ||
+            !finite(observation.playerVelocityZ))
+        {
+            return {};
+        }
+        const double speed = std::hypot(
+            static_cast<double>(observation.playerVelocityX), observation.playerVelocityZ);
+        if (speed <= layer.stopRadius) {
+            return {};
+        }
+        const double oppositeHeading =
+            std::atan2(-observation.playerVelocityX, -observation.playerVelocityZ);
+        return world_heading_stick(layer, observation, oppositeHeading);
+    }
+    case InputControllerLayerKind::Heading: {
+        double heading = 0.0;
+        if (!resolve_heading(layer, observation, heading)) {
+            return {};
+        }
+        if (layer.headingMode == InputControllerHeadingMode::Align) {
+            if (!observation.playerYawPresent || !finite(observation.playerYawRadians) ||
+                std::fabs(wrap_angle(heading - observation.playerYawRadians)) <= layer.tolerance)
+            {
+                return {};
+            }
+        }
+        return world_heading_stick(layer, observation, heading);
+    }
+    case InputControllerLayerKind::MaintainDistance: {
+        WorldPoint target;
+        if (!resolve_point(layer.coordinateFrame, observation, layer.targetX, layer.targetY,
+                layer.targetZ, target) || !observation.playerPresent)
+        {
+            return {};
+        }
+        const double deltaX = static_cast<double>(target.x) - observation.playerX;
+        const double deltaZ = static_cast<double>(target.z) - observation.playerZ;
+        const double actualDistance = std::hypot(deltaX, deltaZ);
+        if (actualDistance > static_cast<double>(layer.distance + layer.tolerance)) {
+            return seek(layer, observation, target.x, target.z);
+        }
+        if (actualDistance < static_cast<double>(layer.distance - layer.tolerance) &&
+            actualDistance > 0.0)
+        {
+            const double awayHeading = std::atan2(-deltaX, -deltaZ);
+            return world_heading_stick(layer, observation, awayHeading);
+        }
+        return {};
+    }
+    case InputControllerLayerKind::Camera:
+    case InputControllerLayerKind::SafetyClamp:
     case InputControllerLayerKind::Buttons:
         break;
     }
@@ -335,7 +573,13 @@ InputControllerError decode_input_controller(
         InputControllerLayer& layer = candidate.mLayers[index];
 
         if (record[0] < static_cast<std::uint8_t>(InputControllerLayerKind::Bezier) ||
-            record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::Buttons))
+            record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::SafetyClamp) ||
+            (minorVersion < 2 &&
+                record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::Buttons)) ||
+            (minorVersion < 3 &&
+                record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::SeekResolved)) ||
+            (minorVersion < 4 &&
+                record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::MaintainDistance)))
         {
             return InputControllerError::InvalidLayerKind;
         }
@@ -375,6 +619,35 @@ InputControllerError decode_input_controller(
             return InputControllerError::InvalidLayerBlend;
         }
 
+        if (layer.kind == InputControllerLayerKind::Camera) {
+            layer.cameraX = read_i16(record + 12);
+            layer.cameraY = read_i16(record + 14);
+            if (layer.cameraX < -128 || layer.cameraX > 127 || layer.cameraY < -128 ||
+                layer.cameraY > 127)
+            {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 16, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::SafetyClamp) {
+            if (layer.blend != InputControllerBlend::Replace) {
+                return InputControllerError::InvalidLayerBlend;
+            }
+            layer.mainLimit = record[12];
+            layer.substickLimit = record[13];
+            if (layer.mainLimit > 127 || layer.substickLimit > 127) {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 14, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
         if (layer.kind == InputControllerLayerKind::Bezier) {
             for (std::size_t point = 0; point < layer.bezier.size(); ++point) {
                 layer.bezier[point] = read_i16(record + 12 + point * 2);
@@ -406,6 +679,194 @@ InputControllerError decode_input_controller(
                                                  InputControllerError::InvalidMagnitude;
             }
             if (!all_zero(record + 41, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::SeekCoordinate ||
+            layer.kind == InputControllerLayerKind::SeekPlane)
+        {
+            if (record[12] > static_cast<std::uint8_t>(InputControllerCoordinateFrame::Camera)) {
+                return InputControllerError::InvalidCoordinateFrame;
+            }
+            if (!all_zero(record + 13, record + 16)) {
+                return InputControllerError::InvalidReservedData;
+            }
+            layer.coordinateFrame = static_cast<InputControllerCoordinateFrame>(record[12]);
+            layer.targetX = read_f32(record + 16);
+            layer.targetY = read_f32(record + 20);
+            layer.targetZ = read_f32(record + 24);
+            layer.offsetX = read_f32(record + 28);
+            layer.offsetY = read_f32(record + 32);
+            layer.offsetZ = read_f32(record + 36);
+            layer.stopRadius = read_f32(record + 40);
+            layer.magnitude = record[44];
+            if (!finite(layer.targetX) || !finite(layer.targetY) || !finite(layer.targetZ)) {
+                return InputControllerError::InvalidFloat;
+            }
+            if (const InputControllerError error = validate_seek(layer);
+                error != InputControllerError::None)
+            {
+                return error;
+            }
+            if (layer.kind == InputControllerLayerKind::SeekPlane) {
+                const double horizontalNormalSquared =
+                    static_cast<double>(layer.offsetX) * layer.offsetX +
+                    static_cast<double>(layer.offsetZ) * layer.offsetZ;
+                if (!(horizontalNormalSquared > std::numeric_limits<double>::epsilon())) {
+                    return InputControllerError::InvalidPlaneNormal;
+                }
+            }
+            if (!all_zero(record + 45, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::SeekResolved) {
+            if (record[12] > static_cast<std::uint8_t>(InputControllerResolvedTarget::Opening) ||
+                !all_zero(record + 13, record + 16))
+            {
+                return InputControllerError::InvalidResolvedTarget;
+            }
+            layer.resolvedTarget = static_cast<InputControllerResolvedTarget>(record[12]);
+            layer.targetIdentity = read_u64(record + 16);
+            layer.targetSubIndex = read_u32(record + 24);
+            layer.targetX = read_f32(record + 28);
+            layer.targetY = read_f32(record + 32);
+            layer.targetZ = read_f32(record + 36);
+            layer.offsetX = read_f32(record + 40);
+            layer.offsetY = read_f32(record + 44);
+            layer.offsetZ = read_f32(record + 48);
+            layer.stopRadius = read_f32(record + 52);
+            layer.magnitude = record[56];
+            if (layer.targetIdentity == 0 ||
+                (layer.resolvedTarget == InputControllerResolvedTarget::Opening &&
+                    layer.targetSubIndex != 0))
+            {
+                return InputControllerError::InvalidResolvedTarget;
+            }
+            if (!finite(layer.targetX) || !finite(layer.targetY) || !finite(layer.targetZ)) {
+                return InputControllerError::InvalidFloat;
+            }
+            if (const InputControllerError error = validate_seek(layer);
+                error != InputControllerError::None)
+            {
+                return error;
+            }
+            if (!all_zero(record + 57, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::Neutral) {
+            if (layer.blend != InputControllerBlend::Replace) {
+                return InputControllerError::InvalidLayerBlend;
+            }
+            if (!all_zero(record + 12, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::Turn) {
+            if (record[12] > static_cast<std::uint8_t>(InputControllerTurnDirection::Right)) {
+                return InputControllerError::InvalidMotionControl;
+            }
+            layer.turnDirection = static_cast<InputControllerTurnDirection>(record[12]);
+            layer.magnitude = record[13];
+            if (layer.magnitude < 1 || layer.magnitude > 127) {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 14, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::Brake) {
+            layer.magnitude = record[12];
+            layer.stopRadius = read_f32(record + 16);
+            if (!all_zero(record + 13, record + 16)) {
+                return InputControllerError::InvalidReservedData;
+            }
+            if (!finite(layer.stopRadius)) {
+                return InputControllerError::InvalidFloat;
+            }
+            if (layer.stopRadius < 0.0F) {
+                return InputControllerError::InvalidMotionControl;
+            }
+            if (layer.magnitude < 1 || layer.magnitude > 127) {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 20, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::Heading) {
+            if (record[12] > static_cast<std::uint8_t>(InputControllerHeadingMode::Maintain) ||
+                record[13] > static_cast<std::uint8_t>(InputControllerCoordinateFrame::Camera) ||
+                record[15] != 0)
+            {
+                return InputControllerError::InvalidMotionControl;
+            }
+            layer.headingMode = static_cast<InputControllerHeadingMode>(record[12]);
+            layer.coordinateFrame = static_cast<InputControllerCoordinateFrame>(record[13]);
+            layer.magnitude = record[14];
+            layer.headingRadians = read_f32(record + 16);
+            layer.tolerance = read_f32(record + 20);
+            constexpr float Pi = 3.14159265358979323846F;
+            if (!finite(layer.headingRadians) || layer.headingRadians < -Pi ||
+                layer.headingRadians > Pi || !finite(layer.tolerance) || layer.tolerance < 0.0F ||
+                layer.tolerance > Pi)
+            {
+                return InputControllerError::InvalidHeading;
+            }
+            if (layer.headingMode == InputControllerHeadingMode::Maintain &&
+                std::bit_cast<std::uint32_t>(layer.tolerance) != 0)
+            {
+                return InputControllerError::InvalidHeading;
+            }
+            if (layer.magnitude < 1 || layer.magnitude > 127) {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 24, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::MaintainDistance) {
+            if (record[12] > static_cast<std::uint8_t>(InputControllerCoordinateFrame::Camera) ||
+                record[14] != 0 || record[15] != 0)
+            {
+                return InputControllerError::InvalidMotionControl;
+            }
+            layer.coordinateFrame = static_cast<InputControllerCoordinateFrame>(record[12]);
+            layer.magnitude = record[13];
+            layer.targetX = read_f32(record + 16);
+            layer.targetY = read_f32(record + 20);
+            layer.targetZ = read_f32(record + 24);
+            layer.distance = read_f32(record + 28);
+            layer.tolerance = read_f32(record + 32);
+            if (!finite(layer.targetX) || !finite(layer.targetY) || !finite(layer.targetZ) ||
+                !finite(layer.distance) || !finite(layer.tolerance))
+            {
+                return InputControllerError::InvalidFloat;
+            }
+            if (layer.distance < 0.0F || layer.tolerance < 0.0F ||
+                layer.tolerance > layer.distance)
+            {
+                return InputControllerError::InvalidDistance;
+            }
+            if (layer.magnitude < 1 || layer.magnitude > 127) {
+                return InputControllerError::InvalidMagnitude;
+            }
+            if (!all_zero(record + 36, record + kInputControllerRecordSize)) {
                 return InputControllerError::InvalidUnusedData;
             }
             continue;
@@ -470,9 +931,20 @@ InputControllerError decode_input_controller(
         }
     }
 
+    const auto sameReplacementSurface = [](const InputControllerLayer& left,
+                                            const InputControllerLayer& right) {
+        const bool leftCamera = left.kind == InputControllerLayerKind::Camera;
+        const bool rightCamera = right.kind == InputControllerLayerKind::Camera;
+        const bool leftMain = left.kind != InputControllerLayerKind::Buttons && !leftCamera &&
+                              left.kind != InputControllerLayerKind::SafetyClamp;
+        const bool rightMain = right.kind != InputControllerLayerKind::Buttons && !rightCamera &&
+                               right.kind != InputControllerLayerKind::SafetyClamp;
+        return (leftCamera && rightCamera) || (leftMain && rightMain);
+    };
     for (std::size_t left = 0; left < layerCount; ++left) {
         const InputControllerLayer& leftLayer = candidate.mLayers[left];
         if (leftLayer.kind == InputControllerLayerKind::Buttons ||
+            leftLayer.kind == InputControllerLayerKind::SafetyClamp ||
             leftLayer.blend != InputControllerBlend::Replace)
         {
             continue;
@@ -480,10 +952,26 @@ InputControllerError decode_input_controller(
         for (std::size_t right = left + 1; right < layerCount; ++right) {
             const InputControllerLayer& rightLayer = candidate.mLayers[right];
             if (rightLayer.kind != InputControllerLayerKind::Buttons &&
+                rightLayer.kind != InputControllerLayerKind::SafetyClamp &&
                 rightLayer.blend == InputControllerBlend::Replace &&
+                sameReplacementSurface(leftLayer, rightLayer) &&
                 ranges_overlap(leftLayer, rightLayer))
             {
                 return InputControllerError::OverlappingReplaceLayers;
+            }
+        }
+    }
+    for (std::size_t left = 0; left < layerCount; ++left) {
+        const InputControllerLayer& leftLayer = candidate.mLayers[left];
+        if (leftLayer.kind != InputControllerLayerKind::SafetyClamp) {
+            continue;
+        }
+        for (std::size_t right = left + 1; right < layerCount; ++right) {
+            const InputControllerLayer& rightLayer = candidate.mLayers[right];
+            if (rightLayer.kind == InputControllerLayerKind::SafetyClamp &&
+                ranges_overlap(leftLayer, rightLayer))
+            {
+                return InputControllerError::OverlappingSafetyClamps;
             }
         }
     }
@@ -494,14 +982,25 @@ InputControllerError decode_input_controller(
 
 RawPadState InputControllerProgram::evaluate(
     const std::uint32_t frame, const ControllerObservation& observation) const {
-    RawPadState output;
+    return evaluateDetailed(frame, observation).input;
+}
+
+InputControllerEvaluation InputControllerProgram::evaluateDetailed(
+    const std::uint32_t frame, const ControllerObservation& observation) const {
+    InputControllerEvaluation result;
+    RawPadState& output = result.input;
     if (finished(frame)) {
-        return output;
+        return result;
     }
 
     StickValue replacement;
     StickValue additions;
-    for (const InputControllerLayer& layer : layers()) {
+    StickValue cameraReplacement;
+    StickValue cameraAdditions;
+    const InputControllerLayer* safetyClamp = nullptr;
+    const std::span activeLayers = layers();
+    for (std::size_t layerIndex = 0; layerIndex < activeLayers.size(); ++layerIndex) {
+        const InputControllerLayer& layer = activeLayers[layerIndex];
         if (frame < layer.start || frame - layer.start >= layer.duration) {
             continue;
         }
@@ -509,8 +1008,28 @@ RawPadState InputControllerProgram::evaluate(
             output.buttons = static_cast<std::uint16_t>(output.buttons | layer.buttons);
             continue;
         }
+        if (layer.kind == InputControllerLayerKind::SafetyClamp) {
+            safetyClamp = &layer;
+            continue;
+        }
+        if (layer.kind == InputControllerLayerKind::Camera) {
+            StickValue& target = layer.blend == InputControllerBlend::Replace ?
+                                     cameraReplacement :
+                                     cameraAdditions;
+            target.x += layer.cameraX;
+            target.y += layer.cameraY;
+            continue;
+        }
 
-        const StickValue value = evaluate_stick_layer(layer, frame - layer.start, observation);
+        bool exactTargetLost = false;
+        const StickValue value =
+            evaluate_stick_layer(layer, frame - layer.start, observation, exactTargetLost);
+        if (exactTargetLost) {
+            result = {};
+            result.terminalReason = InputControllerTerminalReason::TargetLost;
+            result.terminalLayer = static_cast<std::uint16_t>(layerIndex);
+            return result;
+        }
         if (layer.blend == InputControllerBlend::Replace) {
             replacement = value;
         } else {
@@ -520,7 +1039,19 @@ RawPadState InputControllerProgram::evaluate(
     }
     output.stickX = clamp_stick(replacement.x + additions.x);
     output.stickY = clamp_stick(replacement.y + additions.y);
-    return output;
+    output.substickX = clamp_stick(cameraReplacement.x + cameraAdditions.x);
+    output.substickY = clamp_stick(cameraReplacement.y + cameraAdditions.y);
+    if (safetyClamp != nullptr) {
+        const auto clampLimit = [](const std::int8_t value, const std::uint8_t limit) {
+            return static_cast<std::int8_t>(std::clamp<int>(value, -static_cast<int>(limit),
+                static_cast<int>(limit)));
+        };
+        output.stickX = clampLimit(output.stickX, safetyClamp->mainLimit);
+        output.stickY = clampLimit(output.stickY, safetyClamp->mainLimit);
+        output.substickX = clampLimit(output.substickX, safetyClamp->substickLimit);
+        output.substickY = clampLimit(output.substickY, safetyClamp->substickLimit);
+    }
+    return result;
 }
 
 const char* input_controller_error_message(const InputControllerError error) {
@@ -571,10 +1102,24 @@ const char* input_controller_error_message(const InputControllerError error) {
         return "controller actor set ID is invalid";
     case InputControllerError::InvalidStageName:
         return "controller placed-actor stage name is invalid";
+    case InputControllerError::InvalidCoordinateFrame:
+        return "controller coordinate frame is invalid";
+    case InputControllerError::InvalidPlaneNormal:
+        return "controller plane normal has no horizontal component";
+    case InputControllerError::InvalidResolvedTarget:
+        return "controller resolved target identity is invalid";
+    case InputControllerError::InvalidMotionControl:
+        return "controller motion control is invalid";
+    case InputControllerError::InvalidHeading:
+        return "controller heading or angular tolerance is invalid";
+    case InputControllerError::InvalidDistance:
+        return "controller distance or distance tolerance is invalid";
     case InputControllerError::InvalidUnusedData:
         return "controller layer unused data is nonzero";
     case InputControllerError::OverlappingReplaceLayers:
         return "controller replace layers overlap";
+    case InputControllerError::OverlappingSafetyClamps:
+        return "controller safety-clamp layers overlap";
     }
     return "unknown controller error";
 }

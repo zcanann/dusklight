@@ -16,9 +16,15 @@ struct BuildIdentity {
     std::string_view version;
     std::string_view describe;
     std::string_view revision;
+    std::string_view dirtyDigest;
     std::string_view branch;
     std::string_view sourceDate;
+    std::string_view auroraRevision;
+    std::string_view compiler;
+    std::string_view compilerTarget;
     std::string_view buildType;
+    std::string_view featureSwitches;
+    std::string_view featureDigest;
     std::string_view platform;
     std::string_view architecture;
     std::uint32_t pointerBits;

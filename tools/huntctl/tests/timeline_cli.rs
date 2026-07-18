@@ -148,6 +148,67 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     ]);
     assert!(gc.status.success());
     let gc: serde_json::Value = serde_json::from_slice(&gc.stdout).unwrap();
-    assert_eq!(gc["removed"], 0);
+    assert_eq!(gc["schema"], "dusklight-route-store-gc/v2");
+    assert_eq!(gc["dry_run"], true);
+    assert_eq!(gc["moved"], 0);
     fs::remove_dir_all(store).unwrap();
+}
+
+#[test]
+fn thumbnail_pruning_previews_then_moves_orphans_to_recoverable_trash() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let state = std::env::temp_dir().join(format!("huntctl-thumbnail-prune-{unique}"));
+    let thumbnails = state.join("thumbnails");
+    fs::create_dir_all(&thumbnails).unwrap();
+    let orphan_key = "f".repeat(64);
+    let orphan = thumbnails.join(format!("{orphan_key}.png"));
+    fs::write(&orphan, b"\x89PNG\r\n\x1a\ncache").unwrap();
+    let route = repo_root().join("routes/intro.timeline");
+
+    let preview = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["timeline", "prune-thumbnails", "--timeline"])
+        .arg(&route)
+        .args(["--repository-root"])
+        .arg(repo_root())
+        .args(["--state-root"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(preview["orphaned"].as_array().unwrap().len(), 1);
+    assert!(orphan.exists());
+
+    let applied = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["timeline", "prune-thumbnails", "--timeline"])
+        .arg(&route)
+        .args(["--repository-root"])
+        .arg(repo_root())
+        .args(["--state-root"])
+        .arg(&state)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let applied: serde_json::Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(applied["moved"], 1);
+    assert!(!orphan.exists());
+    assert!(
+        PathBuf::from(applied["trash_transaction"].as_str().unwrap())
+            .join(format!("{orphan_key}.png"))
+            .exists()
+    );
+    fs::remove_dir_all(state).unwrap();
 }

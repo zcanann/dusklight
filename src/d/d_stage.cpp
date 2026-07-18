@@ -23,6 +23,7 @@
 #include <cstring>
 
 #include "dusk/logging.h"
+#include "dusk/automation/scenario_fixture_runtime.hpp"
 #include "dusk/string.hpp"
 #if TARGET_PC
 #include <format>
@@ -1939,6 +1940,11 @@ static int dStage_stagInfoInit(dStage_dt_c* i_stage, void* i_data, int entryNum,
     }
 #endif
     dComIfGs_initDan(stageNo);
+    if (!dusk::automation::apply_scenario_fixture_stage_flags()) {
+        DuskLog.error("Scenario fixture dungeon-flag application failed: {}",
+            dusk::automation::scenario_fixture_runtime_error());
+        return 0;
+    }
 #if DEBUG
     dComIfGs_getSaveInfo()->unk_0x0 = 0;
 #endif

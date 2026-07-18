@@ -1,0 +1,23 @@
+{
+  "schema": "dusklight-comparison-oracles/v1",
+  "oracles": [
+    {
+      "name": "renderer-diverged",
+      "polarity": "reached",
+      "target": { "kind": "headful_headless_divergence" }
+    },
+    {
+      "name": "treatment-differed",
+      "polarity": "reached",
+      "target": { "kind": "control_treatment_difference" }
+    },
+    {
+      "name": "novel-treatment-event",
+      "polarity": "reached",
+      "target": {
+        "kind": "novel_semantic_event_signature",
+        "roles": ["treatment"]
+      }
+    }
+  ]
+}

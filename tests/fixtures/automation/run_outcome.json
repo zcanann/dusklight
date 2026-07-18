@@ -1,0 +1,43 @@
+{
+  "schema": "dusklight-run-outcome/v1",
+  "monitored": [
+    "actor_integrity",
+    "actor_slots",
+    "watched_fields",
+    "heap",
+    "progress",
+    "control"
+  ],
+  "termination": {
+    "kind": "timed_out",
+    "wall_time_millis": 30000,
+    "stalled_millis": 5000,
+    "last_simulation_tick": 812
+  },
+  "anomalies": [
+    {
+      "kind": "watched_field_corruption",
+      "simulation_tick": 700,
+      "tape_frame": 699,
+      "field": "player.inventory.wallet",
+      "expected": "0..=999",
+      "actual": "65535"
+    },
+    {
+      "kind": "softlock",
+      "start_tick": 701,
+      "end_tick": 812,
+      "tape_frame": 700,
+      "last_progress": "event 4 phase 2",
+      "reason": "simulation advanced without semantic progress"
+    },
+    {
+      "kind": "control_loss",
+      "start_tick": 701,
+      "end_tick": 812,
+      "tape_frame": 700,
+      "procedure_id": 7,
+      "reason": "input ownership stayed disabled"
+    }
+  ]
+}

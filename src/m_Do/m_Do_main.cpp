@@ -70,6 +70,7 @@
 #include "dusk/automation/input_recording.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
+#include "dusk/automation/scenario_fixture_runtime.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/milestone_program.hpp"
 #include "dusk/automation/rng.hpp"
@@ -649,6 +650,12 @@ static bool mainCalled = false;
 
 static bool exitAfterInputTape;
 static bool inputTapePlaybackFailed;
+static bool stageBootPending;
+static dusk::automation::TapeBoot stageBootDescriptor;
+static std::uint32_t stageBootReadinessTicks;
+static constexpr std::uint32_t kStageBootReadinessTickLimit = 30u * 60u;
+static dusk::automation::TapeEndBehavior inputTapeEndBehavior =
+    dusk::automation::TapeEndBehavior::Release;
 static bool frameCaptureEnabled;
 static bool playbackThumbnailCaptureEnabled;
 static bool frameCaptureRequested;
@@ -666,6 +673,9 @@ static bool exitAfterInputController;
 static bool inputControllerConfigured;
 static bool inputControllerStarted;
 static bool inputControllerCompleted;
+static bool inputControllerTargetLost;
+static std::uint16_t inputControllerTerminalLayer = 0xffff;
+static std::uint32_t inputControllerTerminalFrame;
 static bool inputControllerFrameApplied;
 static bool inputTapeFrameApplied;
 static std::uint32_t inputControllerNextFrame;
@@ -678,6 +688,8 @@ static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
 static std::uint64_t gameplayTraceChannels = dusk::automation::GameplayTraceDefaultChannels;
+static dusk::automation::GameplayTraceRetentionConfig gameplayTraceRetention;
+static std::size_t gameplayTraceRetentionCapacity = 4096;
 static bool gameplayTraceWriteFailed;
 static std::filesystem::path realizedInputTapePath;
 static dusk::automation::InputTape realizedInputTape;
@@ -733,6 +745,22 @@ static void release_active_controller_on_exit() {
 
 void mDoAutomationInputTick(const bool tapeWasPlaying) {
     auto& tapePlayer = dusk::automation::input_tape_player();
+    if (stageBootPending) {
+        const PADStatus neutral = dusk::automation::raw_pad_state_to_pad_status({});
+        std::uint8_t ownedPorts = 0;
+        for (const auto& frame : tapePlayer.tape().frames) {
+            ownedPorts |= frame.ownedPorts;
+        }
+        for (std::uint32_t port = 0; port < dusk::automation::kInputPortCount; ++port) {
+            if ((ownedPorts & (1u << port)) != 0) {
+                PADSetAutomationStatus(port, &neutral);
+            }
+        }
+        inputControllerFrameApplied = false;
+        inputTapeFrameApplied = false;
+        automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
+        return;
+    }
     if (tapeWasPlaying) {
         inputControllerFrameApplied = false;
         inputTapeFrameApplied = true;
@@ -774,8 +802,20 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
     dusk::automation::ControllerObservationStorage observationStorage;
     const auto observation =
         dusk::automation::capture_controller_observation(observationStorage);
-    const dusk::automation::RawPadState raw =
-        inputControllerProgram.evaluate(inputControllerNextFrame, observation);
+    const dusk::automation::InputControllerEvaluation evaluation =
+        inputControllerProgram.evaluateDetailed(inputControllerNextFrame, observation);
+    if (evaluation.terminalReason ==
+        dusk::automation::InputControllerTerminalReason::TargetLost)
+    {
+        inputControllerTargetLost = true;
+        inputControllerTerminalLayer = evaluation.terminalLayer;
+        inputControllerTerminalFrame = inputControllerNextFrame;
+        inputControllerNextFrame = inputControllerProgram.duration();
+        DuskLog.warn("Input controller exact target lost at layer {} before input frame {}",
+                     inputControllerTerminalLayer, inputControllerTerminalFrame);
+        return;
+    }
+    const dusk::automation::RawPadState raw = evaluation.input;
     if (!realizedInputTapePath.empty()) {
         dusk::automation::InputFrame realizedFrame;
         realizedFrame.ownedPorts = 1;
@@ -903,9 +943,11 @@ static bool record_milestone_boundary(const dusk::automation::MilestoneProgramPh
     // Boundary zero precedes the first PAD read and therefore also precedes any completed game
     // tick. Keep non-boundary fields unavailable/default instead of manufacturing a frame-zero
     // game observation.
+    dusk::automation::MilestoneObservationStorage observationStorage;
     const auto observation = kind == dusk::automation::MilestoneBoundaryKind::Boot
                                  ? dusk::automation::MilestoneObservation{}
-                                 : dusk::automation::capture_milestone_observation();
+                                 : dusk::automation::capture_milestone_observation(
+                                       observationStorage);
     tracker.observeBoundary(observation, phase, kind, boundaryIndex, automationSimulationTick,
         tapeFrame);
     if (!goalReachedBefore && tracker.goalReached()) {
@@ -951,7 +993,100 @@ static void complete_recording_handoff_countdown() {
         dusk::automation::input_tape_recorder().frameCount());
 }
 
+static bool stage_boot_origin_matches(
+    const dusk::automation::StageBootReadinessObservation& observed) {
+    const bool layerReady =
+        stageBootDescriptor.layer < 0 || observed.layer == stageBootDescriptor.layer;
+    return observed.stagePresent && observed.stage.data() == stageBootDescriptor.stage &&
+           observed.room == stageBootDescriptor.room && layerReady &&
+           observed.point == stageBootDescriptor.point && observed.playerReady;
+}
+
+enum class StageFixtureLoadStatus {
+    Waiting,
+    Ready,
+    Failed,
+};
+
+static StageFixtureLoadStatus advance_stage_fixture_loading() {
+    const auto observed = dusk::automation::capture_stage_boot_readiness();
+    if (stage_boot_origin_matches(observed)) {
+        return StageFixtureLoadStatus::Ready;
+    }
+    ++stageBootReadinessTicks;
+    if (stageBootReadinessTicks < kStageBootReadinessTickLimit) {
+        return StageFixtureLoadStatus::Waiting;
+    }
+    inputTapePlaybackFailed = true;
+    DuskLog.error(
+        "Stage fixture loading timed out after {} ticks: requested stage={}, room={}, "
+        "point={}, layer={}; observed stage={}, room={}, point={}, layer={}, player={}",
+        stageBootReadinessTicks, stageBootDescriptor.stage, stageBootDescriptor.room,
+        stageBootDescriptor.point, stageBootDescriptor.layer,
+        observed.stagePresent ? observed.stage.data() : "<none>", observed.room, observed.point,
+        observed.layer, observed.playerReady);
+    return StageFixtureLoadStatus::Failed;
+}
+
+static bool start_stage_boot_replay() {
+    // Fixture loading is allowed to wait. Replay startup is not: it reasserts the exact origin at
+    // the tick-zero boundary and fails if the established fixture changed in between.
+    const auto observed = dusk::automation::capture_stage_boot_readiness();
+    if (!stage_boot_origin_matches(observed)) {
+        inputTapePlaybackFailed = true;
+        DuskLog.error(
+            "Stage-boot replay origin assertion failed: requested stage={}, room={}, point={}, "
+            "layer={}; observed stage={}, room={}, point={}, layer={}, player={}",
+            stageBootDescriptor.stage, stageBootDescriptor.room, stageBootDescriptor.point,
+            stageBootDescriptor.layer, observed.stagePresent ? observed.stage.data() : "<none>",
+            observed.room, observed.point, observed.layer, observed.playerReady);
+        return false;
+    }
+    if (!dusk::automation::establish_scenario_fixture_tick_zero()) {
+        inputTapePlaybackFailed = true;
+        DuskLog.error("Scenario fixture tick-zero establishment failed: {}",
+            dusk::automation::scenario_fixture_runtime_error());
+        return false;
+    }
+    std::uint8_t ownedPorts = 0;
+    for (const auto& frame : dusk::automation::input_tape_player().tape().frames) {
+        ownedPorts |= frame.ownedPorts;
+    }
+    for (std::uint32_t port = 0; port < dusk::automation::kInputPortCount; ++port) {
+        if ((ownedPorts & (1u << port)) != 0) {
+            PADClearAutomationStatus(port);
+        }
+    }
+    if (!dusk::automation::input_tape_player().start(inputTapeEndBehavior)) {
+        inputTapePlaybackFailed = true;
+        DuskLog.error("Stage-boot input tape could not start after fixture readiness");
+        return false;
+    }
+    return true;
+}
+
 static bool prepare_automation_pre_input_boundary() {
+    if (stageBootPending) {
+        const StageFixtureLoadStatus fixture = advance_stage_fixture_loading();
+        if (fixture == StageFixtureLoadStatus::Waiting) {
+            return false;
+        }
+        if (fixture == StageFixtureLoadStatus::Failed) {
+            return true;
+        }
+        const auto readinessTicks = stageBootReadinessTicks;
+        if (!start_stage_boot_replay()) {
+            return true;
+        }
+        stageBootReadinessTicks = 0;
+        stageBootPending = false;
+        dusk::automation::milestone_tracker().markBootOriginEstablished();
+        DuskLog.info("Stage-boot input tape tick zero armed after {} readiness ticks at {}, "
+                     "room {}, point {}, layer {}, save slot {}",
+                     readinessTicks, stageBootDescriptor.stage, stageBootDescriptor.room,
+                     stageBootDescriptor.point, stageBootDescriptor.layer,
+                     stageBootDescriptor.saveSlot);
+    }
     if (record_milestone_pre_input_boundary()) return true;
     if (!recordInputFromBoot || recordInputHandoffReached) return false;
 
@@ -987,10 +1122,15 @@ static bool record_milestone_tick() {
 }
 
 static bool finish_automation_oracle_tick() {
+    if (stageBootPending) {
+        return false;
+    }
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
-    record_gameplay_trace_tick();
-#endif
     const bool milestoneGoalReached = record_milestone_tick();
+    record_gameplay_trace_tick();
+#else
+    const bool milestoneGoalReached = record_milestone_tick();
+#endif
     if (!eyeShredderOracleEnabled) {
         ++automationSimulationTick;
         if (milestoneGoalReached) {
@@ -1127,6 +1267,9 @@ static void capture_terminal_recording_thumbnail() {
 }
 
 static bool finish_input_tape_tick() {
+    if (stageBootPending) {
+        return false;
+    }
     auto& player = dusk::automation::input_tape_player();
     auto& inputRecorder = dusk::automation::input_tape_recorder();
     if (!recordInputTapePath.empty() && inputRecorder.capacityExhausted() &&
@@ -1174,9 +1317,14 @@ static bool finish_input_tape_tick() {
         inputControllerCompleted = true;
         dusk::automation::gameplay_trace_recorder().stop();
         write_actor_catalog_on_exit();
-        DuskLog.info("Input controller complete after {} frames (combined frame {})",
-                     inputControllerNextFrame,
-                     inputControllerPrefixFrames + inputControllerNextFrame - 1);
+        if (inputControllerTargetLost) {
+            DuskLog.warn("Input controller terminated: target_lost at layer {} after {} realized frames",
+                         inputControllerTerminalLayer, inputControllerTerminalFrame);
+        } else {
+            DuskLog.info("Input controller complete after {} frames (combined frame {})",
+                         inputControllerNextFrame,
+                         inputControllerPrefixFrames + inputControllerNextFrame - 1);
+        }
 
         if (exitAfterInputController || headlessMainLoop) {
             dusk::IsRunning = false;
@@ -1734,9 +1882,6 @@ int game_main(int argc, char* argv[]) {
     std::size_t inputTapeFrameCount = 0;
     std::size_t inputTapeMaximumTicks = 0;
     bool inputTapeHasConditions = false;
-    dusk::automation::TapeEndBehavior inputTapeEndBehavior =
-        dusk::automation::TapeEndBehavior::Release;
-
     try {
         cxxopts::Options arg_options("Dusklight", "PC Port of a classic adventure game");
 
@@ -1783,7 +1928,10 @@ int game_main(int argc, char* argv[]) {
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
-            ("gameplay-trace-channels", "Comma-separated trace-v2 channels: core,stage,applied-pads,player-motion,event,scene-exit,rng,camera,player-action (default all)", cxxopts::value<std::string>())
+            ("gameplay-trace-channels", "Comma-separated trace channels (default diagnostic set; use all for every channel)", cxxopts::value<std::string>())
+            ("gameplay-trace-retention", "Retain trigger windows as PRE,POST ticks instead of the full trace", cxxopts::value<std::string>())
+            ("gameplay-trace-retention-capacity", "Maximum retained trigger-window samples (default 4096)", cxxopts::value<std::size_t>()->default_value("4096"))
+            ("gameplay-trace-triggers", "Retention triggers: crash,contact,flag,predicate,all (default all)", cxxopts::value<std::string>())
             ("milestones", "Evaluate comma-separated memory-backed milestone IDs", cxxopts::value<std::string>())
             ("milestone-program", "Load a compiled read-only DMSP milestone predicate program", cxxopts::value<std::string>())
             ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
@@ -2265,9 +2413,58 @@ int game_main(int argc, char* argv[]) {
                 return 1;
             }
         }
-    } else if (parsed_arg_options.count("gameplay-trace-channels") != 0) {
+        if (parsed_arg_options.count("gameplay-trace-retention") != 0) {
+            const std::string value =
+                parsed_arg_options["gameplay-trace-retention"].as<std::string>();
+            std::istringstream parser(value);
+            char comma = 0;
+            std::size_t pre = 0;
+            std::size_t post = 0;
+            if (!(parser >> pre >> comma >> post) || comma != ',' || parser.peek() != EOF ||
+                pre > std::numeric_limits<std::uint32_t>::max() ||
+                post > std::numeric_limits<std::uint32_t>::max())
+            {
+                fprintf(stderr,
+                    "Gameplay Trace Error: --gameplay-trace-retention must be PRE,POST unsigned ticks\n");
+                return 1;
+            }
+            gameplayTraceRetention.preTriggerTicks = pre;
+            gameplayTraceRetention.postTriggerTicks = post;
+            gameplayTraceRetentionCapacity =
+                parsed_arg_options["gameplay-trace-retention-capacity"].as<std::size_t>();
+            std::string triggerError;
+            const std::string triggers =
+                parsed_arg_options.count("gameplay-trace-triggers") != 0 ?
+                    parsed_arg_options["gameplay-trace-triggers"].as<std::string>() :
+                    "all";
+            if (!dusk::automation::parse_gameplay_trace_retention_triggers(
+                    triggers, gameplayTraceRetention.triggers, triggerError))
+            {
+                fprintf(stderr, "Gameplay Trace Error: %s\n", triggerError.c_str());
+                return 1;
+            }
+            if (post == std::numeric_limits<std::size_t>::max() ||
+                pre > std::numeric_limits<std::size_t>::max() - post - 1 ||
+                gameplayTraceRetentionCapacity < pre + post + 1)
+            {
+                fprintf(stderr,
+                    "Gameplay Trace Error: retention capacity must fit PRE + trigger + POST\n");
+                return 1;
+            }
+        } else if (parsed_arg_options.count("gameplay-trace-triggers") != 0 ||
+                   parsed_arg_options.count("gameplay-trace-retention-capacity") != 0)
+        {
+            fprintf(stderr,
+                "Gameplay Trace Error: retention triggers/capacity require --gameplay-trace-retention PRE,POST\n");
+            return 1;
+        }
+    } else if (parsed_arg_options.count("gameplay-trace-channels") != 0 ||
+               parsed_arg_options.count("gameplay-trace-retention") != 0 ||
+               parsed_arg_options.count("gameplay-trace-triggers") != 0 ||
+               parsed_arg_options.count("gameplay-trace-retention-capacity") != 0)
+    {
         fprintf(stderr,
-                "Gameplay Trace Error: --gameplay-trace-channels requires --gameplay-trace PATH\n");
+                "Gameplay Trace Error: gameplay trace options require --gameplay-trace PATH\n");
         return 1;
     }
 
@@ -2609,6 +2806,34 @@ int game_main(int argc, char* argv[]) {
                     dusk::automation::input_tape_error_message(tapeError));
             return 1;
         }
+        if (inputTape.boot.kind == dusk::automation::TapeBootKind::Stage) {
+            if (parsed_arg_options.count("stage")) {
+                fprintf(stderr,
+                    "Input Tape Error: a stage-boot tape cannot be combined with --stage; the tape origin is authoritative\n");
+                return 1;
+            }
+            const auto commandLineSave = parsed_arg_options["load-save"].as<std::uint8_t>();
+            if (commandLineSave != 0) {
+                fprintf(stderr,
+                    "Input Tape Error: a stage-boot tape cannot be combined with --load-save; encode the save slot in the tape origin\n");
+                return 1;
+            }
+            dusk::StageRequested = {inputTape.boot.stage, true, inputTape.boot.room,
+                inputTape.boot.point, inputTape.boot.layer};
+            dusk::SaveRequested = inputTape.boot.saveSlot;
+            stageBootDescriptor = inputTape.boot;
+            stageBootPending = true;
+            if (!dusk::automation::install_scenario_fixture_runtime(
+                    inputTape.boot.fixture, inputTape.boot.room)) {
+                fprintf(stderr, "Input Tape Error: unsupported scenario fixture: %.*s\n",
+                    static_cast<int>(dusk::automation::scenario_fixture_runtime_error().size()),
+                    dusk::automation::scenario_fixture_runtime_error().data());
+                return 1;
+            }
+        } else {
+            dusk::automation::clear_scenario_fixture_runtime();
+        }
+        dusk::automation::milestone_tracker().setBootOrigin(inputTape.boot);
         if (inputTape.frames.empty()) {
             fprintf(stderr, "Input Tape Error: '%s' contains no input frames\n", inputTapePath.c_str());
             return 1;
@@ -2666,7 +2891,7 @@ int game_main(int argc, char* argv[]) {
         }
         auto& inputTapePlayer = dusk::automation::input_tape_player();
         inputTapePlayer.install(std::move(inputTape));
-        if (!inputTapePlayer.start(inputTapeEndBehavior)) {
+        if (!stageBootPending && !inputTapePlayer.start(inputTapeEndBehavior)) {
             fprintf(stderr, "Input Tape Error: failed to start '%s'\n", inputTapePath.c_str());
             return 1;
         }
@@ -2702,6 +2927,9 @@ int game_main(int argc, char* argv[]) {
         inputControllerNextFrame = 0;
         inputControllerStarted = false;
         inputControllerCompleted = false;
+        inputControllerTargetLost = false;
+        inputControllerTerminalLayer = 0xffff;
+        inputControllerTerminalFrame = 0;
     }
 
     if (hasRealizedInputTape) {
@@ -2744,8 +2972,19 @@ int game_main(int argc, char* argv[]) {
             fprintf(stderr, "Gameplay Trace Error: automation frame count overflows capacity\n");
             return 1;
         }
+        const auto traceBoot = hasInputTape ? dusk::automation::input_tape_player().tape().boot :
+                                              dusk::automation::TapeBoot{};
+        const std::size_t traceCapacity = gameplayTraceRetention.enabled() ?
+                                              gameplayTraceRetentionCapacity :
+                                              inputTapeMaximumTicks + controllerFrames + 1;
+        if (traceCapacity > dusk::automation::GameplayTraceMaximumSamples) {
+            fprintf(stderr,
+                "Gameplay Trace Error: requested %zu samples exceeds the %zu-sample bound; use --gameplay-trace-retention PRE,POST\n",
+                traceCapacity, dusk::automation::GameplayTraceMaximumSamples);
+            return 1;
+        }
         dusk::automation::gameplay_trace_recorder().start(
-            inputTapeMaximumTicks + controllerFrames + 1, gameplayTraceChannels);
+            traceCapacity, gameplayTraceChannels, traceBoot, gameplayTraceRetention);
     }
 
     const bool deterministicAutomationIo =
@@ -2828,6 +3067,14 @@ int game_main(int argc, char* argv[]) {
 
     dusk::config::load_from_user_preferences();
     ApplyCVarOverrides(parsed_arg_options["cvar"]);
+    if (!dusk::automation::apply_scenario_fixture_startup()) {
+        fprintf(stderr, "Input Tape Error: cannot apply scenario fixture startup state: %.*s\n",
+            static_cast<int>(dusk::automation::scenario_fixture_runtime_error().size()),
+            dusk::automation::scenario_fixture_runtime_error().data());
+        dusk::ShutdownFileLogging();
+        dusk::config::shutdown();
+        return 1;
+    }
     dusk::android::update_surface_frame_rate();
     dusk::crash_reporting::initialize();
     dusk::crash_handler::install();
@@ -3319,7 +3566,7 @@ int game_main(int argc, char* argv[]) {
     // A valid, exhausted search tape that misses its configured goal is a
     // sample, not an infrastructure failure. Give orchestration an unambiguous
     // status so it never has to infer that distinction from logs.
-    return milestoneGoalFailed ? 2 : 0;
+    return milestoneGoalFailed || inputControllerTargetLost ? 2 : 0;
 }
 
 

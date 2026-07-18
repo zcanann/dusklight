@@ -82,6 +82,78 @@ void testChannelParser() {
     REQUIRE(channels == GameplayTraceKnownChannels);
     REQUIRE((GameplayTraceDefaultChannels &
                 gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) == 0);
+    REQUIRE((GameplayTraceDefaultChannels &
+                gameplay_trace_channel_bit(GameplayTraceChannel::GoalProgress)) != 0);
+    REQUIRE((GameplayTraceDefaultChannels &
+                gameplay_trace_channel_bit(GameplayTraceChannel::SelectedActors)) == 0);
+    std::uint32_t triggers = 0;
+    REQUIRE(parse_gameplay_trace_retention_triggers(
+        "crash, contact, flag, predicate", triggers, error));
+    REQUIRE(triggers == GameplayTraceKnownRetentionTriggers);
+    REQUIRE(!parse_gameplay_trace_retention_triggers("contact,contact", triggers, error));
+    REQUIRE(!parse_gameplay_trace_retention_triggers("visual", triggers, error));
+}
+
+void testGoalAndSelectedActorLayout(const std::filesystem::path& path) {
+    using namespace dusk::automation;
+    constexpr std::uint64_t channels = gameplay_trace_channel_bit(GameplayTraceChannel::Core) |
+                                       gameplay_trace_channel_bit(GameplayTraceChannel::GoalProgress) |
+                                       gameplay_trace_channel_bit(GameplayTraceChannel::SelectedActors);
+    GameplayTraceRecorder recorder;
+    recorder.start(1, channels);
+    GameplayTraceSample value = sample(12);
+    value.stageStatus = GameplayTraceChannelStatus::NotSampled;
+    value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+    value.goalProgressStatus = GameplayTraceChannelStatus::Present;
+    value.goalProgress.flags = GameplayTraceGoalConfigured | GameplayTraceGoalReached |
+                               GameplayTraceGoalAuthored |
+                               GameplayTraceGoalFirstHitTickPresent;
+    value.goalProgress.goalNameHash = 0x12345678;
+    value.goalProgress.requestedCount = 3;
+    value.goalProgress.hitCount = 2;
+    value.goalProgress.stableTicks = 3;
+    value.goalProgress.consecutiveTicks = 3;
+    value.goalProgress.sequenceSteps = 2;
+    value.goalProgress.sequenceNextStep = 2;
+    value.goalProgress.sequenceWithinTicks = 30;
+    value.goalProgress.sequenceElapsedTicks = 7;
+    value.goalProgress.firstHitTick = 12;
+    value.selectedActorsStatus = GameplayTraceChannelStatus::Present;
+    value.selectedActors.count = 1;
+    value.selectedActors.observedCount = 2;
+    value.selectedActors.flags = GameplayTraceSelectedActorsTruncated;
+    value.selectedActors.actors[0] = {
+        .sessionProcessId = 10,
+        .actorName = 77,
+        .setId = 4,
+        .homeRoom = 1,
+        .currentRoom = 2,
+        .health = 9,
+        .status = 0x1234,
+        .position = {1.0f, 2.0f, 3.0f},
+        .currentAngle = {4, 5, 6},
+        .shapeAngle = {7, 8, 9},
+    };
+    recorder.record(value);
+    recorder.stop();
+
+    std::string error;
+    REQUIRE(write_gameplay_trace(path, recorder, error));
+    const auto bytes = readFile(path);
+    REQUIRE(bytes.size() == 1043);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 11);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 32);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 256) == 12);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 264) == 656);
+    constexpr std::size_t goal = 354;
+    constexpr std::size_t actors = 387;
+    REQUIRE(readLittle<std::uint32_t>(bytes, goal) == value.goalProgress.flags);
+    REQUIRE(readLittle<std::uint64_t>(bytes, goal + 24) == 12);
+    REQUIRE(readLittle<std::uint16_t>(bytes, actors) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, actors + 8) == 2);
+    REQUIRE(readLittle<std::uint32_t>(bytes, actors + 16) == 10);
+    REQUIRE(readFloat(bytes, actors + 32) == 1.0f);
+    REQUIRE(readLittle<std::uint32_t>(bytes, actors + 56) == 0xffffffffu);
 }
 
 void testCollisionSurfaceLayout(const std::filesystem::path& path) {
@@ -101,14 +173,14 @@ void testCollisionSurfaceLayout(const std::filesystem::path& path) {
     std::string error;
     REQUIRE(write_gameplay_trace(path, recorder, error));
     const auto bytes = readFile(path);
-    REQUIRE(bytes.size() == 819);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 10);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 1);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 496);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 322);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 323);
-    REQUIRE(bytes[322] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
-    constexpr std::size_t payload = 323;
+    REQUIRE(bytes.size() == 883);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 256) == 10);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 258) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 264) == 496);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 272) == 386);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 288) == 387);
+    REQUIRE(bytes[386] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
+    constexpr std::size_t payload = 387;
     REQUIRE(readLittle<std::uint32_t>(bytes, payload) == 0);
     REQUIRE(readLittle<std::int8_t>(bytes, payload + 4) == -128);
     REQUIRE(readLittle<std::uint16_t>(bytes, payload + 8) == 0x003f);
@@ -197,15 +269,15 @@ void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path
     std::string error;
     REQUIRE(write_gameplay_trace(path, recorder, error));
     const auto bytes = readFile(path);
-    REQUIRE(bytes.size() == 507);
+    REQUIRE(bytes.size() == 571);
 
-    REQUIRE(readLittle<std::uint16_t>(bytes, 128) == 5);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 130) == 2);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 136) == 88);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 144) == 289);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 160) == 290);
-    REQUIRE(bytes[289] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
-    constexpr std::size_t scene = 290;
+    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 5);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 2);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 88);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 353);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 354);
+    REQUIRE(bytes[353] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
+    constexpr std::size_t scene = 354;
     REQUIRE(readLittle<std::uint32_t>(bytes, scene) == 0x10203040);
     REQUIRE(readLittle<std::uint32_t>(bytes, scene + 4) == 0xa1b2c3d4);
     REQUIRE(readLittle<std::uint32_t>(bytes, scene + 8) == 0x3f);
@@ -219,13 +291,13 @@ void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path
     REQUIRE(readLittle<std::int16_t>(bytes, scene + 82) == 26);
     REQUIRE(bytes[scene + 87] == 0);
 
-    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 9);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 1);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 128);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 378);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 379);
-    REQUIRE(bytes[378] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
-    constexpr std::size_t collisionOffset = 379;
+    REQUIRE(readLittle<std::uint16_t>(bytes, 256) == 9);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 258) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 264) == 128);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 272) == 442);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 288) == 443);
+    REQUIRE(bytes[442] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
+    constexpr std::size_t collisionOffset = 443;
     REQUIRE(readLittle<std::uint32_t>(bytes, collisionOffset) == 0x7ffff);
     REQUIRE(readFloat(bytes, collisionOffset + 4) == 10.0f);
     REQUIRE(readLittle<std::uint16_t>(bytes, collisionOffset + 16) == 1);
@@ -247,7 +319,13 @@ void testExactV2Layout(const std::filesystem::path& path) {
                                        gameplay_trace_channel_bit(GameplayTraceChannel::Camera);
 
     GameplayTraceRecorder recorder;
-    recorder.start(2, channels);
+    recorder.start(2, channels,
+        TapeBoot{.kind = TapeBootKind::Stage,
+            .stage = "F_SP103",
+            .room = 1,
+            .point = 1,
+            .layer = 3,
+            .saveSlot = 2});
     recorder.record(sample(0));
     GameplayTraceSample second = sample(1);
     second.core.tapeFrame = GameplayTraceNoTapeFrame;
@@ -272,7 +350,7 @@ void testExactV2Layout(const std::filesystem::path& path) {
     std::string error;
     REQUIRE(write_gameplay_trace(path, recorder, error));
     const auto bytes = readFile(path);
-    REQUIRE(bytes.size() == 486);
+    REQUIRE(bytes.size() == 550);
     REQUIRE(std::string(bytes.begin(), bytes.begin() + 8) == "DUSKTRCE");
     REQUIRE(readLittle<std::uint16_t>(bytes, 8) == GameplayTraceVersion);
     REQUIRE(readLittle<std::uint16_t>(bytes, 10) == GameplayTraceHeaderSize);
@@ -281,43 +359,92 @@ void testExactV2Layout(const std::filesystem::path& path) {
     REQUIRE(readLittle<std::uint64_t>(bytes, 20) == 2);
     REQUIRE(readLittle<std::uint32_t>(bytes, 28) == 1);
     REQUIRE(readLittle<std::uint16_t>(bytes, 32) == 3);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 44) == 256);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 36) == GameplayTraceHeaderSize);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 44) == 320);
     REQUIRE(readLittle<std::uint64_t>(bytes, 52) == channels);
+    REQUIRE(bytes[64] == static_cast<std::uint8_t>(TapeBootKind::Stage));
+    REQUIRE(bytes[65] == 2);
+    REQUIRE(readLittle<std::int8_t>(bytes, 66) == 1);
+    REQUIRE(readLittle<std::int8_t>(bytes, 67) == 3);
+    REQUIRE(readLittle<std::int16_t>(bytes, 68) == 1);
+    REQUIRE(bytes[70] == 7);
+    REQUIRE(std::string(bytes.begin() + 72, bytes.begin() + 79) == "F_SP103");
+    REQUIRE(std::all_of(bytes.begin() + 79, bytes.begin() + 120,
+        [](const std::uint8_t byte) { return byte == 0; }));
+    REQUIRE(readLittle<std::uint64_t>(bytes, 120) == 2);
 
     // Core descriptor and columns.
-    REQUIRE(readLittle<std::uint16_t>(bytes, 64) == 0);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 68) == 3);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 72) == 32);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 80) == 256);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 96) == 258);
-    REQUIRE(bytes[256] == 1 && bytes[257] == 1);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 258) == 1);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 290) == 2);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 298) == 1);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 306) == GameplayTraceNoTapeFrame);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 128) == 0);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 132) == 3);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 136) == 32);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 144) == 320);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 160) == 322);
+    REQUIRE(bytes[320] == 1 && bytes[321] == 1);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 322) == 1);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 354) == 2);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 362) == 1);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 370) == GameplayTraceNoTapeFrame);
 
     // Stage descriptor and its explicit transition state.
-    REQUIRE(readLittle<std::uint16_t>(bytes, 128) == 1);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 144) == 322);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 160) == 324);
-    REQUIRE(bytes[322] == 1 && bytes[323] == 1);
-    REQUIRE(std::string(bytes.begin() + 368, bytes.begin() + 375) == "F_SP104");
-    REQUIRE(readLittle<std::int16_t>(bytes, 378) == 26);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 380) == GameplayTraceNextStageEnabled);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 1);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 386);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 388);
+    REQUIRE(bytes[386] == 1 && bytes[387] == 1);
+    REQUIRE(std::string(bytes.begin() + 432, bytes.begin() + 439) == "F_SP104");
+    REQUIRE(readLittle<std::int16_t>(bytes, 442) == 26);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 444) == GameplayTraceNextStageEnabled);
 
     // Camera is explicitly absent at boundary one and present with exact bits at two.
-    REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 7);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 208) == 388);
-    REQUIRE(readLittle<std::uint64_t>(bytes, 224) == 390);
-    REQUIRE(bytes[388] == 2 && bytes[389] == 1);
-    REQUIRE(readLittle<std::int16_t>(bytes, 438) == -123);
-    REQUIRE(readLittle<std::int16_t>(bytes, 440) == 456);
-    REQUIRE(readLittle<std::int16_t>(bytes, 442) == -7);
-    REQUIRE(readFloat(bytes, 446) == 1.0f);
-    REQUIRE(readFloat(bytes, 482) == 45.0f);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 256) == 7);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 272) == 452);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 288) == 454);
+    REQUIRE(bytes[452] == 2 && bytes[453] == 1);
+    REQUIRE(readLittle<std::int16_t>(bytes, 502) == -123);
+    REQUIRE(readLittle<std::int16_t>(bytes, 504) == 456);
+    REQUIRE(readLittle<std::int16_t>(bytes, 506) == -7);
+    REQUIRE(readFloat(bytes, 510) == 1.0f);
+    REQUIRE(readFloat(bytes, 546) == 45.0f);
 
     REQUIRE(!write_gameplay_trace(path, recorder, error));
     REQUIRE(error == "gameplay trace output already exists");
+}
+
+void testScenarioFixtureIsAuthenticatedInV4(const std::filesystem::path& path) {
+    using namespace dusk::automation;
+    ScenarioFixture fixture;
+    fixture.name = "low-health wolf";
+    fixture.form = PlayerFixtureForm::Wolf;
+    fixture.health = HealthFixture{4, 20};
+    TapeBoot boot;
+    boot.kind = TapeBootKind::Stage;
+    boot.stage = "F_SP103";
+    boot.room = 1;
+    boot.point = 1;
+    boot.layer = 3;
+    boot.fixture = fixture;
+
+    GameplayTraceRecorder recorder;
+    recorder.start(1, gameplay_trace_channel_bit(GameplayTraceChannel::Core), boot);
+    GameplayTraceSample value = sample(0);
+    value.stageStatus = GameplayTraceChannelStatus::NotSampled;
+    value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+    recorder.record(value);
+    recorder.stop();
+    std::string error;
+    const bool wrote = write_gameplay_trace(path, recorder, error);
+    if (!wrote) std::cerr << "fixture trace error: " << error << '\n';
+    REQUIRE(wrote);
+    const auto bytes = readFile(path);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 8) == GameplayTraceVersion);
+    const std::size_t fixtureOffset = readLittle<std::uint64_t>(bytes, 88);
+    const std::size_t fixtureSize = readLittle<std::uint32_t>(bytes, 96);
+    REQUIRE(fixtureOffset == 225);
+    REQUIRE(fixtureOffset + fixtureSize == bytes.size());
+    ScenarioFixture decoded;
+    REQUIRE(decode_scenario_fixture(
+                std::span<const std::uint8_t>(bytes.data() + fixtureOffset, fixtureSize), decoded) ==
+            ScenarioFixtureError::None);
+    REQUIRE(decoded == fixture);
 }
 
 void testValidationAndCapacity(
@@ -343,6 +470,95 @@ void testValidationAndCapacity(
     REQUIRE(exhausted.capacityExhausted());
     REQUIRE(write_gameplay_trace(exhaustedPath, exhausted, error));
     REQUIRE((readLittle<std::uint32_t>(readFile(exhaustedPath), 28) & 2) != 0);
+}
+
+void testTriggeredRetention(const std::filesystem::path& path) {
+    using namespace dusk::automation;
+    constexpr std::uint64_t channels = gameplay_trace_channel_bit(GameplayTraceChannel::Core) |
+                                       gameplay_trace_channel_bit(GameplayTraceChannel::GoalProgress);
+    GameplayTraceRecorder recorder;
+    recorder.start(8, channels, {},
+        {.preTriggerTicks = 2,
+            .postTriggerTicks = 1,
+            .triggers = GameplayTraceTriggerPredicateHit});
+    for (std::uint64_t tick = 0; tick < 6; ++tick) {
+        auto value = sample(tick);
+        value.stageStatus = GameplayTraceChannelStatus::NotSampled;
+        value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+        value.goalProgressStatus = GameplayTraceChannelStatus::Present;
+        value.goalProgress.flags = GameplayTraceGoalConfigured | GameplayTraceGoalAuthored;
+        value.goalProgress.goalNameHash = 0x12345678;
+        value.goalProgress.requestedCount = 1;
+        if (tick >= 3) {
+            value.goalProgress.flags |=
+                GameplayTraceGoalReached | GameplayTraceGoalFirstHitTickPresent;
+            value.goalProgress.hitCount = 1;
+            value.goalProgress.firstHitTick = 3;
+        }
+        recorder.record(value);
+    }
+    recorder.stop();
+    REQUIRE(recorder.samples().size() == 4);
+    REQUIRE(recorder.samples()[0].core.simulationTick == 1);
+    REQUIRE(recorder.samples()[1].core.simulationTick == 2);
+    REQUIRE(recorder.samples()[2].core.simulationTick == 3);
+    REQUIRE(recorder.samples()[3].core.simulationTick == 4);
+    REQUIRE(recorder.observedTriggers() == GameplayTraceTriggerPredicateHit);
+    REQUIRE(recorder.triggerCount() == 1);
+    REQUIRE(recorder.observedSampleCount() == 6);
+    std::string error;
+    REQUIRE(write_gameplay_trace(path, recorder, error));
+    const auto bytes = readFile(path);
+    REQUIRE((readLittle<std::uint32_t>(bytes, 28) & 4) != 0);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 100) == GameplayTraceTriggerPredicateHit);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 104) == GameplayTraceTriggerPredicateHit);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 108) == 2);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 112) == 1);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 116) == 1);
+    REQUIRE(readLittle<std::uint64_t>(bytes, 120) == 6);
+
+    GameplayTraceRecorder crash;
+    crash.start(4, gameplay_trace_channel_bit(GameplayTraceChannel::Core), {},
+        {.preTriggerTicks = 2, .postTriggerTicks = 0, .triggers = GameplayTraceTriggerCrash});
+    for (std::uint64_t tick = 0; tick < 3; ++tick) {
+        auto value = sample(tick);
+        value.stageStatus = GameplayTraceChannelStatus::NotSampled;
+        value.cameraStatus = GameplayTraceChannelStatus::NotSampled;
+        crash.record(value);
+    }
+    crash.trigger(GameplayTraceTriggerCrash);
+    crash.stop();
+    REQUIRE(crash.samples().size() == 2);
+    REQUIRE(crash.samples()[0].core.simulationTick == 1);
+    REQUIRE(crash.samples()[1].core.simulationTick == 2);
+    REQUIRE(crash.observedTriggers() == GameplayTraceTriggerCrash);
+
+    GameplayTraceRecorder contact;
+    contact.start(3, gameplay_trace_channel_bit(GameplayTraceChannel::Core), {},
+        {.preTriggerTicks = 1,
+            .postTriggerTicks = 0,
+            .triggers = GameplayTraceTriggerNovelContact});
+    auto beforeContact = sample(0);
+    beforeContact.playerBackgroundCollisionStatus = GameplayTraceChannelStatus::Present;
+    contact.record(beforeContact);
+    auto firstContact = sample(1);
+    firstContact.playerBackgroundCollisionStatus = GameplayTraceChannelStatus::Present;
+    firstContact.playerBackgroundCollision.flags = GameplayTraceCollisionWallContact;
+    contact.record(firstContact);
+    REQUIRE(contact.samples().size() == 2);
+    REQUIRE(contact.observedTriggers() == GameplayTraceTriggerNovelContact);
+
+    GameplayTraceRecorder flag;
+    flag.start(3, gameplay_trace_channel_bit(GameplayTraceChannel::Core), {},
+        {.preTriggerTicks = 1,
+            .postTriggerTicks = 0,
+            .triggers = GameplayTraceTriggerFlagChange});
+    flag.record(sample(0));
+    auto changed = sample(1);
+    changed.event.flags = GameplayTraceEventRunning;
+    flag.record(changed);
+    REQUIRE(flag.samples().size() == 2);
+    REQUIRE(flag.observedTriggers() == GameplayTraceTriggerFlagChange);
 }
 
 void testNewChannelValidation(const std::filesystem::path& directory) {
@@ -463,15 +679,24 @@ int main() {
     const auto exhaustedPath = directory / "exhausted.trace";
     const auto observerChannelsPath = directory / "observer-channels.trace";
     const auto collisionSurfacesPath = directory / "collision-surfaces.trace";
+    const auto fixturePath = directory / "fixture.trace";
+    const auto goalActorsPath = directory / "goal-actors.trace";
+    const auto retentionPath = directory / "retention.trace";
     testExactV2Layout(exactPath);
+    testScenarioFixtureIsAuthenticatedInV4(fixturePath);
     testSceneExitAndBackgroundCollisionLayout(observerChannelsPath);
     testCollisionSurfaceLayout(collisionSurfacesPath);
+    testGoalAndSelectedActorLayout(goalActorsPath);
     testValidationAndCapacity(invalidPath, exhaustedPath);
+    testTriggeredRetention(retentionPath);
     testNewChannelValidation(directory);
     REQUIRE(std::filesystem::remove(exactPath));
     REQUIRE(std::filesystem::remove(exhaustedPath));
     REQUIRE(std::filesystem::remove(observerChannelsPath));
     REQUIRE(std::filesystem::remove(collisionSurfacesPath));
+    REQUIRE(std::filesystem::remove(fixturePath));
+    REQUIRE(std::filesystem::remove(goalActorsPath));
+    REQUIRE(std::filesystem::remove(retentionPath));
     REQUIRE(std::filesystem::remove(directory));
     std::cout << "Gameplay trace tests passed\n";
     return 0;

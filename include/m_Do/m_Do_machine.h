@@ -20,6 +20,7 @@ void mDoMch_Destroy();
 #endif
 
 extern GXRenderModeObj g_ntscZeldaProg;
+extern GXRenderModeObj g_ntscZeldaIntDf;
 
 class mDoMch_render_c {
 public:

@@ -469,6 +469,7 @@ add_executable(dusk_input_tape_test EXCLUDE_FROM_ALL
     tests/input_tape_test.cpp
     src/dusk/automation/input_pad.cpp
     src/dusk/automation/input_tape.cpp
+    src/dusk/automation/scenario_fixture.cpp
     src/dusk/automation/name_entry_observer.cpp
 )
 target_include_directories(dusk_input_tape_test PRIVATE
@@ -484,6 +485,9 @@ add_executable(dusk_input_controller_test EXCLUDE_FROM_ALL
     src/dusk/automation/input_controller.cpp
 )
 target_include_directories(dusk_input_controller_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(dusk_input_controller_test PRIVATE
+    DUSK_INPUT_CONTROLLER_GOLDEN_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/move_targets.dctl.hex"
+)
 set_target_properties(dusk_input_controller_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
@@ -520,6 +524,7 @@ add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
     src/dusk/automation/milestones.cpp
     src/dusk/automation/milestone_program.cpp
     src/dusk/automation/input_recording.cpp
+    src/dusk/automation/scenario_fixture.cpp
 )
 target_include_directories(dusk_milestones_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json xxHash::xxhash)
@@ -537,6 +542,7 @@ add_executable(dusk_gameplay_trace_test EXCLUDE_FROM_ALL
     tests/gameplay_trace_test.cpp
     src/dusk/automation/gameplay_trace.cpp
     src/dusk/automation/input_pad.cpp
+    src/dusk/automation/scenario_fixture.cpp
 )
 target_include_directories(dusk_gameplay_trace_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include

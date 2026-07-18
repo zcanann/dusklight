@@ -8,12 +8,14 @@
 #include <limits>
 #include <system_error>
 #include <type_traits>
+#include <utility>
 
 namespace dusk::automation {
 namespace {
 
 constexpr std::uint32_t kFileComplete = 1u << 0;
 constexpr std::uint32_t kFileCapacityExhausted = 1u << 1;
+constexpr std::uint32_t kFileTriggerRetention = 1u << 2;
 constexpr std::uint32_t kChannelRequired = 1u << 0;
 constexpr std::uint32_t kChannelDense = 1u << 1;
 
@@ -36,6 +38,8 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::PlayerAction, 1, 104, false},
     ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
     ChannelDefinition{GameplayTraceChannel::PlayerCollisionSurfaces, 1, 496, false},
+    ChannelDefinition{GameplayTraceChannel::GoalProgress, 1, 32, false},
+    ChannelDefinition{GameplayTraceChannel::SelectedActors, 1, 656, false},
 };
 
 struct ChannelLayout {
@@ -290,6 +294,47 @@ void write_player_action(std::ostream& stream, const GameplayTracePlayerActionSa
     }
 }
 
+void write_goal_progress(std::ostream& stream, const GameplayTraceGoalProgressSample& sample) {
+    write_integer(stream, sample.flags);
+    write_integer(stream, sample.goalNameHash);
+    write_integer(stream, sample.requestedCount);
+    write_integer(stream, sample.hitCount);
+    write_integer(stream, sample.stableTicks);
+    write_integer(stream, sample.consecutiveTicks);
+    write_integer(stream, sample.sequenceSteps);
+    write_integer(stream, sample.sequenceNextStep);
+    write_integer(stream, sample.sequenceWithinTicks);
+    write_integer(stream, sample.sequenceElapsedTicks);
+    write_integer<std::uint16_t>(stream, 0);
+    write_integer(stream, sample.firstHitTick);
+}
+
+void write_selected_actor(std::ostream& stream, const GameplayTraceSelectedActorSample& sample) {
+    write_integer(stream, sample.sessionProcessId);
+    write_integer(stream, sample.actorName);
+    write_integer(stream, sample.setId);
+    write_integer(stream, sample.homeRoom);
+    write_integer(stream, sample.currentRoom);
+    write_integer(stream, sample.health);
+    write_integer(stream, sample.status);
+    write_vec3(stream, sample.position);
+    for (const std::int16_t angle : sample.currentAngle)
+        write_integer(stream, angle);
+    for (const std::int16_t angle : sample.shapeAngle)
+        write_integer(stream, angle);
+}
+
+void write_selected_actors(
+    std::ostream& stream, const GameplayTraceSelectedActorsSample& sample) {
+    write_integer(stream, sample.count);
+    write_integer(stream, sample.capacity);
+    write_integer(stream, sample.flags);
+    write_integer(stream, sample.observedCount);
+    write_integer<std::uint32_t>(stream, 0);
+    for (const GameplayTraceSelectedActorSample& actor : sample.actors)
+        write_selected_actor(stream, actor);
+}
+
 GameplayTraceChannelStatus status_for(
     const GameplayTraceSample& sample, const GameplayTraceChannel channel) {
     switch (channel) {
@@ -315,6 +360,10 @@ GameplayTraceChannelStatus status_for(
         return sample.playerBackgroundCollisionStatus;
     case GameplayTraceChannel::PlayerCollisionSurfaces:
         return sample.playerCollisionSurfacesStatus;
+    case GameplayTraceChannel::GoalProgress:
+        return sample.goalProgressStatus;
+    case GameplayTraceChannel::SelectedActors:
+        return sample.selectedActorsStatus;
     }
     return GameplayTraceChannelStatus::Unavailable;
 }
@@ -355,6 +404,12 @@ void write_payload(
     case GameplayTraceChannel::PlayerCollisionSurfaces:
         write_player_collision_surfaces(stream, sample.playerCollisionSurfaces);
         break;
+    case GameplayTraceChannel::GoalProgress:
+        write_goal_progress(stream, sample.goalProgress);
+        break;
+    case GameplayTraceChannel::SelectedActors:
+        write_selected_actors(stream, sample.selectedActors);
+        break;
     }
 }
 
@@ -383,6 +438,17 @@ bool checked_multiply(const std::uint64_t left, const std::uint64_t right, std::
 }
 
 bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
+    const TapeBoot& boot = recorder.bootOrigin();
+    const bool validProcess = boot.kind == TapeBootKind::Process && boot.stage.empty() &&
+                              boot.saveSlot == 0 && !boot.fixture;
+    const bool validStage = boot.kind == TapeBootKind::Stage && !boot.stage.empty() &&
+                            boot.stage.size() <= 16 && boot.saveSlot <= 3 &&
+                            (!boot.fixture || validate_scenario_fixture(*boot.fixture) ==
+                                                      ScenarioFixtureError::None);
+    if (!validProcess && !validStage) {
+        error = "gameplay trace has an invalid boot origin";
+        return false;
+    }
     const std::uint64_t requested = recorder.requestedChannels();
     if ((requested & gameplay_trace_channel_bit(GameplayTraceChannel::Core)) == 0) {
         error = "gameplay trace v2 requires the core channel";
@@ -390,6 +456,20 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
     }
     if ((requested & ~GameplayTraceKnownChannels) != 0) {
         error = "gameplay trace requests unknown channels";
+        return false;
+    }
+    const auto& retention = recorder.retention();
+    if (retention.preTriggerTicks > std::numeric_limits<std::uint32_t>::max() ||
+        retention.postTriggerTicks > std::numeric_limits<std::uint32_t>::max() ||
+        recorder.observedSampleCount() < recorder.samples().size() ||
+        (retention.triggers & ~GameplayTraceKnownRetentionTriggers) != 0 ||
+        (!retention.enabled() &&
+            (retention.preTriggerTicks != 0 || retention.postTriggerTicks != 0 ||
+                recorder.observedTriggers() != 0 || recorder.triggerCount() != 0)) ||
+        (recorder.observedTriggers() & ~retention.triggers) != 0 ||
+        ((recorder.triggerCount() == 0) != (recorder.observedTriggers() == 0)))
+    {
+        error = "gameplay trace retention metadata is inconsistent";
         return false;
     }
     if ((requested & gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces)) !=
@@ -470,6 +550,10 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                 ~(GameplayTraceCollisionSurfaceCurrentRoomValid |
                     GameplayTraceCollisionSurfaceExplicitLinkExitPresent |
                     GameplayTraceCollisionSurfaceNextStagePending)) != 0 ||
+            (sample.goalProgress.flags &
+                ~(GameplayTraceGoalConfigured | GameplayTraceGoalReached |
+                    GameplayTraceGoalAuthored | GameplayTraceGoalFirstHitTickPresent)) != 0 ||
+            (sample.selectedActors.flags & ~GameplayTraceSelectedActorsTruncated) != 0 ||
             (sample.appliedPads.validPorts & ~0x0fu) != 0 ||
             (sample.appliedPads.ownedPorts & ~0x0fu) != 0)
         {
@@ -478,7 +562,9 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
         }
         if (sample.sceneExitStatus == GameplayTraceChannelStatus::Truncated ||
             sample.playerBackgroundCollisionStatus == GameplayTraceChannelStatus::Truncated ||
-            sample.playerCollisionSurfacesStatus == GameplayTraceChannelStatus::Truncated)
+            sample.playerCollisionSurfacesStatus == GameplayTraceChannelStatus::Truncated ||
+            sample.goalProgressStatus == GameplayTraceChannelStatus::Truncated ||
+            sample.selectedActorsStatus == GameplayTraceChannelStatus::Truncated)
         {
             error = "gameplay trace scalar query channel cannot be truncated";
             return false;
@@ -929,6 +1015,66 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             error = "gameplay trace sample contains an incompatible RNG snapshot";
             return false;
         }
+        if (sample.goalProgressStatus == GameplayTraceChannelStatus::Present) {
+            const auto& goal = sample.goalProgress;
+            const bool configured = (goal.flags & GameplayTraceGoalConfigured) != 0;
+            const bool reached = (goal.flags & GameplayTraceGoalReached) != 0;
+            const bool authored = (goal.flags & GameplayTraceGoalAuthored) != 0;
+            const bool firstHit = (goal.flags & GameplayTraceGoalFirstHitTickPresent) != 0;
+            if (reached != firstHit || reached && !configured || authored && !configured ||
+                (firstHit == (goal.firstHitTick == GameplayTraceNoTick)) ||
+                goal.hitCount > goal.requestedCount ||
+                goal.consecutiveTicks > goal.stableTicks ||
+                goal.sequenceNextStep > goal.sequenceSteps ||
+                (!configured && (goal.goalNameHash != 0 || goal.stableTicks != 0 ||
+                                    goal.consecutiveTicks != 0 || goal.sequenceSteps != 0 ||
+                                    goal.sequenceNextStep != 0 || goal.sequenceWithinTicks != 0 ||
+                                    goal.sequenceElapsedTicks != 0)))
+            {
+                error = "gameplay trace goal-progress payload is inconsistent";
+                return false;
+            }
+        }
+        if (sample.selectedActorsStatus == GameplayTraceChannelStatus::Present) {
+            const auto& actors = sample.selectedActors;
+            const bool truncated =
+                (actors.flags & GameplayTraceSelectedActorsTruncated) != 0;
+            if (actors.capacity != GameplayTraceSelectedActorCapacity ||
+                actors.count > actors.capacity || actors.observedCount < actors.count ||
+                truncated != (actors.observedCount > actors.count))
+            {
+                error = "gameplay trace selected-actor header is inconsistent";
+                return false;
+            }
+            std::uint32_t previousProcess = 0;
+            for (std::size_t index = 0; index < actors.actors.size(); ++index) {
+                const auto& actor = actors.actors[index];
+                const bool retained = index < actors.count;
+                if (retained) {
+                    if (actor.sessionProcessId == 0xffffffffu ||
+                        (index != 0 && actor.sessionProcessId <= previousProcess) ||
+                        !finiteFloats(actor.position))
+                    {
+                        error = "gameplay trace retained actor is invalid or unordered";
+                        return false;
+                    }
+                    previousProcess = actor.sessionProcessId;
+                } else if (actor.sessionProcessId != 0xffffffffu || actor.actorName != -1 ||
+                           actor.setId != 0xffff || actor.homeRoom != -1 ||
+                           actor.currentRoom != -1 || actor.health != 0 || actor.status != 0 ||
+                           !zeroFloats(actor.position) ||
+                           std::ranges::any_of(actor.currentAngle, [](const auto value) {
+                               return value != 0;
+                           }) ||
+                           std::ranges::any_of(actor.shapeAngle, [](const auto value) {
+                               return value != 0;
+                           }))
+                {
+                    error = "gameplay trace unused selected-actor slot is noncanonical";
+                    return false;
+                }
+            }
+        }
     }
     return true;
 }
@@ -973,10 +1119,22 @@ bool build_layouts(const GameplayTraceRecorder& recorder,
 }  // namespace
 
 void GameplayTraceRecorder::start(
-    const std::size_t capacity, const std::uint64_t requestedChannels) {
+    const std::size_t capacity, const std::uint64_t requestedChannels, TapeBoot boot,
+    const GameplayTraceRetentionConfig retention) {
+    const std::size_t boundedCapacity = std::min(capacity, GameplayTraceMaximumSamples);
     mSamples.clear();
-    mSamples.reserve(capacity);
+    mSamples.reserve(boundedCapacity);
+    mPreTrigger.clear();
+    mPreTrigger.reserve(std::min(boundedCapacity, retention.preTriggerTicks));
     mRequestedChannels = requestedChannels;
+    mBootOrigin = std::move(boot);
+    mRetention = retention;
+    mPreTriggerHead = 0;
+    mPostTriggerRemaining = 0;
+    mObservedTriggers = 0;
+    mTriggerCount = 0;
+    mObservedSampleCount = 0;
+    mPreviousSampleValid = false;
     mActive = true;
     mCapacityExhausted = false;
 }
@@ -984,12 +1142,129 @@ void GameplayTraceRecorder::start(
 void GameplayTraceRecorder::record(const GameplayTraceSample& sample) {
     if (!mActive)
         return;
+    ++mObservedSampleCount;
+    if (mRetention.enabled()) {
+        const std::uint32_t detected = detectTriggers(sample) & mRetention.triggers;
+        if (detected != 0) {
+            mObservedTriggers |= detected;
+            ++mTriggerCount;
+            flushPreTrigger();
+            mPostTriggerRemaining = std::max(mPostTriggerRemaining, mRetention.postTriggerTicks);
+            retain(sample);
+        } else if (mPostTriggerRemaining != 0) {
+            retain(sample);
+            --mPostTriggerRemaining;
+        } else if (mRetention.preTriggerTicks != 0) {
+            const std::size_t preCapacity =
+                std::min(mSamples.capacity(), mRetention.preTriggerTicks);
+            if (mPreTrigger.size() < preCapacity) {
+                mPreTrigger.push_back(sample);
+            } else if (preCapacity != 0) {
+                mPreTrigger[mPreTriggerHead] = sample;
+                mPreTriggerHead = (mPreTriggerHead + 1) % preCapacity;
+            }
+        }
+        mPreviousSample = sample;
+        mPreviousSampleValid = true;
+        return;
+    }
+    retain(sample);
+}
+
+void GameplayTraceRecorder::retain(const GameplayTraceSample& sample) {
     if (mSamples.size() == mSamples.capacity()) {
         mActive = false;
         mCapacityExhausted = true;
         return;
     }
     mSamples.push_back(sample);
+}
+
+void GameplayTraceRecorder::flushPreTrigger() {
+    if (mPreTrigger.empty())
+        return;
+    const std::size_t logicalCapacity =
+        std::min(mSamples.capacity(), mRetention.preTriggerTicks);
+    const bool wrapped = logicalCapacity != 0 && mPreTrigger.size() == logicalCapacity;
+    const std::size_t first = wrapped ? mPreTriggerHead : 0;
+    for (std::size_t index = 0; index < mPreTrigger.size() && mActive; ++index) {
+        retain(mPreTrigger[(first + index) % mPreTrigger.size()]);
+    }
+    mPreTrigger.clear();
+    mPreTriggerHead = 0;
+}
+
+void GameplayTraceRecorder::trigger(const GameplayTraceRetentionTrigger trigger) {
+    const std::uint32_t bit = static_cast<std::uint32_t>(trigger);
+    if (!mActive || !mRetention.enabled() || (mRetention.triggers & bit) == 0)
+        return;
+    mObservedTriggers |= bit;
+    ++mTriggerCount;
+    flushPreTrigger();
+    mPostTriggerRemaining = std::max(mPostTriggerRemaining, mRetention.postTriggerTicks);
+}
+
+std::uint32_t GameplayTraceRecorder::detectTriggers(const GameplayTraceSample& sample) const {
+    if (!mPreviousSampleValid)
+        return 0;
+    std::uint32_t result = 0;
+    const auto reached = [](const GameplayTraceSample& value) {
+        return value.goalProgressStatus == GameplayTraceChannelStatus::Present &&
+               (value.goalProgress.flags & GameplayTraceGoalReached) != 0;
+    };
+    if (reached(sample) && !reached(mPreviousSample))
+        result |= GameplayTraceTriggerPredicateHit;
+
+    const auto contacts = [](const GameplayTraceSample& value) {
+        if (value.playerBackgroundCollisionStatus != GameplayTraceChannelStatus::Present)
+            return std::uint64_t{0};
+        constexpr std::uint32_t mask = GameplayTraceCollisionGroundContact |
+                                       GameplayTraceCollisionLanding |
+                                       GameplayTraceCollisionWallContact |
+                                       GameplayTraceCollisionRoofContact |
+                                       GameplayTraceCollisionWaterIn;
+        const auto& collision = value.playerBackgroundCollision;
+        const std::uint32_t contactFlags = collision.flags & mask;
+        if (contactFlags == 0)
+            return std::uint64_t{0};
+        std::uint64_t signature = 14695981039346656037ull;
+        const auto mix = [&signature](const std::uint64_t fact) {
+            signature ^= fact;
+            signature *= 1099511628211ull;
+        };
+        mix(contactFlags);
+        for (const auto fact : {collision.groundBgIndex, collision.groundPolyIndex,
+                 collision.roofBgIndex, collision.roofPolyIndex, collision.waterBgIndex,
+                 collision.waterPolyIndex})
+            mix(fact);
+        for (const auto fact : {collision.groundOwnerSessionProcessId,
+                 collision.roofOwnerSessionProcessId, collision.waterOwnerSessionProcessId})
+            mix(fact);
+        for (const auto& wall : collision.walls) {
+            mix(wall.flags);
+            mix(wall.bgIndex);
+            mix(wall.polyIndex);
+            mix(wall.ownerSessionProcessId);
+        }
+        return signature;
+    };
+    const std::uint64_t currentContacts = contacts(sample);
+    if (currentContacts != 0 && currentContacts != contacts(mPreviousSample))
+        result |= GameplayTraceTriggerNovelContact;
+
+    const auto flagsChanged = [](const GameplayTraceSample& left,
+                                  const GameplayTraceSample& right) {
+        return left.stage.flags != right.stage.flags ||
+               left.playerMotion.flags != right.playerMotion.flags ||
+               left.event.flags != right.event.flags || left.event.eventId != right.event.eventId ||
+               left.event.mode != right.event.mode || left.event.status != right.event.status ||
+               left.playerAction.modeFlags != right.playerAction.modeFlags ||
+               left.goalProgress.flags != right.goalProgress.flags ||
+               left.selectedActors.flags != right.selectedActors.flags;
+    };
+    if (flagsChanged(sample, mPreviousSample))
+        result |= GameplayTraceTriggerFlagChange;
+    return result;
 }
 
 void GameplayTraceRecorder::stop() {
@@ -1037,6 +1312,10 @@ bool parse_gameplay_trace_channels(
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision);
         } else if (token == "player-collision-surfaces") {
             bit = gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+        } else if (token == "goal-progress") {
+            bit = gameplay_trace_channel_bit(GameplayTraceChannel::GoalProgress);
+        } else if (token == "selected-actors") {
+            bit = gameplay_trace_channel_bit(GameplayTraceChannel::SelectedActors);
         } else if (token == "all")
             bit = GameplayTraceKnownChannels;
         else {
@@ -1066,6 +1345,42 @@ bool parse_gameplay_trace_channels(
     return true;
 }
 
+bool parse_gameplay_trace_retention_triggers(
+    const std::string_view text, std::uint32_t& triggers, std::string& error) {
+    triggers = 0;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t comma = text.find(',', start);
+        const std::string_view token = trim(text.substr(
+            start, comma == std::string_view::npos ? text.size() - start : comma - start));
+        std::uint32_t bit = 0;
+        if (token == "crash")
+            bit = GameplayTraceTriggerCrash;
+        else if (token == "contact")
+            bit = GameplayTraceTriggerNovelContact;
+        else if (token == "flag")
+            bit = GameplayTraceTriggerFlagChange;
+        else if (token == "predicate")
+            bit = GameplayTraceTriggerPredicateHit;
+        else if (token == "all")
+            bit = GameplayTraceKnownRetentionTriggers;
+        else {
+            error = token.empty() ? "gameplay trace trigger list contains an empty name" :
+                                    "unknown gameplay trace trigger '" + std::string(token) + "'";
+            return false;
+        }
+        if ((triggers & bit) != 0) {
+            error = "duplicate gameplay trace trigger '" + std::string(token) + "'";
+            return false;
+        }
+        triggers |= bit;
+        if (comma == std::string_view::npos)
+            break;
+        start = comma + 1;
+    }
+    return triggers != 0;
+}
+
 bool write_gameplay_trace(
     const std::filesystem::path& path, const GameplayTraceRecorder& recorder, std::string& error) {
     if (!validate_trace(recorder, error))
@@ -1075,6 +1390,17 @@ bool write_gameplay_trace(
     std::size_t layoutCount = 0;
     if (!build_layouts(recorder, layouts, layoutCount, error))
         return false;
+
+    std::vector<std::uint8_t> fixtureBytes;
+    const TapeBoot& boot = recorder.bootOrigin();
+    if (boot.fixture &&
+        encode_scenario_fixture(*boot.fixture, fixtureBytes) != ScenarioFixtureError::None)
+    {
+        error = "gameplay trace could not encode its scenario fixture";
+        return false;
+    }
+    const std::uint64_t fixtureOffset = fixtureBytes.empty() ? 0 :
+        layouts[layoutCount - 1].payloadOffset + layouts[layoutCount - 1].payloadLength;
 
     std::error_code filesystemError;
     if (const auto parent = path.parent_path(); !parent.empty()) {
@@ -1110,8 +1436,9 @@ bool write_gameplay_trace(
     write_integer<std::uint32_t>(stream, 30);
     write_integer<std::uint32_t>(stream, 1);
     write_integer(stream, static_cast<std::uint64_t>(recorder.samples().size()));
-    write_integer<std::uint32_t>(
-        stream, kFileComplete | (recorder.capacityExhausted() ? kFileCapacityExhausted : 0));
+    write_integer<std::uint32_t>(stream,
+        kFileComplete | (recorder.capacityExhausted() ? kFileCapacityExhausted : 0) |
+            (recorder.retention().enabled() ? kFileTriggerRetention : 0));
     write_integer(stream, static_cast<std::uint16_t>(layoutCount));
     write_integer(stream, GameplayTraceDirectoryEntrySize);
     write_integer<std::uint64_t>(stream, GameplayTraceHeaderSize);
@@ -1119,6 +1446,27 @@ bool write_gameplay_trace(
         stream, GameplayTraceHeaderSize + layoutCount * GameplayTraceDirectoryEntrySize);
     write_integer(stream, recorder.requestedChannels());
     write_integer<std::uint32_t>(stream, 0);
+    write_integer(stream, static_cast<std::uint8_t>(boot.kind));
+    const bool stageBoot = boot.kind == TapeBootKind::Stage;
+    write_integer(stream, stageBoot ? boot.saveSlot : std::uint8_t{0});
+    write_integer(stream, stageBoot ? boot.room : std::int8_t{0});
+    write_integer(stream, stageBoot ? boot.layer : std::int8_t{0});
+    write_integer(stream, stageBoot ? boot.point : std::int16_t{0});
+    write_integer(stream, stageBoot ? static_cast<std::uint8_t>(boot.stage.size()) :
+                                     std::uint8_t{0});
+    write_integer<std::uint8_t>(stream, 0);
+    std::array<char, 16> stage{};
+    if (stageBoot)
+        std::ranges::copy(boot.stage, stage.begin());
+    stream.write(stage.data(), stage.size());
+    write_integer(stream, fixtureOffset);
+    write_integer(stream, static_cast<std::uint32_t>(fixtureBytes.size()));
+    write_integer(stream, recorder.retention().triggers);
+    write_integer(stream, recorder.observedTriggers());
+    write_integer(stream, static_cast<std::uint32_t>(recorder.retention().preTriggerTicks));
+    write_integer(stream, static_cast<std::uint32_t>(recorder.retention().postTriggerTicks));
+    write_integer(stream, recorder.triggerCount());
+    write_integer(stream, recorder.observedSampleCount());
 
     for (std::size_t index = 0; index < layoutCount; ++index) {
         const ChannelLayout& layout = layouts[index];
@@ -1135,7 +1483,6 @@ bool write_gameplay_trace(
         write_integer<std::uint64_t>(stream, 0);
         write_integer<std::uint64_t>(stream, 0);
     }
-
     for (std::size_t index = 0; index < layoutCount; ++index) {
         const GameplayTraceChannel channel = layouts[index].definition.id;
         for (const GameplayTraceSample& sample : recorder.samples()) {
@@ -1144,6 +1491,9 @@ bool write_gameplay_trace(
         for (const GameplayTraceSample& sample : recorder.samples()) {
             write_payload(stream, sample, channel);
         }
+    }
+    if (!fixtureBytes.empty()) {
+        stream.write(reinterpret_cast<const char*>(fixtureBytes.data()), fixtureBytes.size());
     }
 
     stream.flush();

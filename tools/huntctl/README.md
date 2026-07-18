@@ -85,9 +85,10 @@ added after profiling without changing the coarse scheduling interface.
 
 ## DUSKTAPE authoring
 
-The tape codec emits compact DUSKTAPE v2 files and decodes legacy v1.0-v1.2
-tapes. V2 wraps the canonical 52-byte frame stream in one zstd frame, preserving
-exact controller semantics while avoiding flat per-tick storage. Inspect a tape
+The tape codec emits compact DUSKTAPE v3.2 files and decodes legacy v1 and v2
+tapes. V2 introduced the zstd-wrapped canonical 52-byte frame stream; v3 adds
+an authenticated boot origin and optional canonical scenario descriptor while preserving
+exact controller semantics. Inspect a tape
 or expand its exact frames as JSON with:
 
 ```console
@@ -134,6 +135,95 @@ while preserving source markers at exact tick offsets. Unknown commands or
 states, invalid ports, zero counts, duplicate/empty markers, and expansions
 beyond ten million frames are rejected. Leading-`{` legacy JSON programs remain
 accepted for migration only.
+
+`DUSKTAPE` v3 carries an explicit boot origin. Authored programs may use
+`boot process` for normal executable startup or
+`boot stage STAGE ROOM POINT LAYER` for a targeted map fixture. Add
+`save SLOT` to load memory-card slot 1-3 before establishing that stage:
+
+```text
+dusktape 1
+boot stage F_SP103 1 1 3 save 2
+frame { p0 stick 0 127 }
+```
+
+Dusklight maps the descriptor onto its existing `--stage`/`--load-save`
+startup path, holds the
+declared controller ports neutral while loading, and starts tape frame zero only
+after the stage, room, point, layer, and player readiness check succeeds. The
+readiness wait is bounded to 60 seconds of logical startup ticks and reports
+both the requested and observed fixture on failure. The decoder remains
+compatible with v1, v2, and v3.0 tapes. Older tapes retain process-boot or
+stage-without-save semantics as originally encoded.
+
+V3.2 can embed one canonical, self-contained scenario descriptor in a stage-boot tape. Compile
+the checked JSON descriptor alongside the TAS source:
+
+```console
+huntctl tape compile tests/fixtures/automation/fsp103_next_map_seed.tas \
+  build/fsp103-practice.tape \
+  --fixture tests/fixtures/automation/fsp103_practice.fixture.json
+```
+
+The `dusklight-scenario-fixture/v1` JSON schema supports form, current/maximum health, both exact
+native RNG streams, video mode, inventory quantities, equipment, event/temporary/dungeon/switch
+flags, and typed setting overrides. Dusklight validates native ranges up front and applies the
+descriptor in engine order: settings/video before subsystem initialization, save-backed state
+before the play scene, dungeon and room switches before actors, and RNG at tick zero. Unknown or
+unsupported values fail the run; fields are never silently ignored. The descriptor is included in
+tape identity, traces, milestone fingerprints, search partitions, and corpus metadata.
+
+The descriptor wire form can also be compiled or inspected independently:
+
+```console
+huntctl fixture compile practice.fixture.json practice.fixture
+huntctl fixture inspect practice.fixture
+```
+
+Run a compiled map-local tape without translating its origin back into launch
+arguments:
+
+```console
+huntctl tape run build/fsp103.tape \
+  --game build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight \
+  --dvd orig/GZ2E01/GZ2E01.iso \
+  --state-root build/automation-state/fsp103-test \
+  --milestone-program build/map-test.dmsp \
+  --milestone-goal reached_target
+```
+
+`--milestone-goal` also requests that milestone when `--milestones` is omitted.
+The command runs fixed-step and headless by default, writes structured milestone
+evidence below the state root, enforces a host timeout, and reports the tape's
+decoded boot origin in its JSON summary. Use `--headful` for visual practice or
+manual inspection.
+
+Add `--gameplay-trace build/run.trace` to retain per-tick evidence. The default
+channels include goal progress; request the heavier bounded actor population
+explicitly when needed:
+
+```console
+--gameplay-trace-channels core,stage,player-motion,player-action,rng,camera,goal-progress,selected-actors
+```
+
+`selected-actors` keeps at most 16 non-player actors and reports the full
+observed count plus truncation. `huntctl trace inspect build/run.trace` exposes
+both new typed channels.
+
+To extend a stage fixture with human input, record after any seed tape (often a
+single neutral frame):
+
+```console
+huntctl tape record build/fsp103-seed.tape build/fsp103-walk.tape \
+  --game build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight \
+  --dvd orig/GZ2E01/GZ2E01.iso \
+  --state-root build/automation-state/fsp103-recording
+```
+
+Close Dusklight to finish. `huntctl` retains the native process-boot
+continuation for audit, composes it after the exact seed, and writes a standalone
+tape carrying the seed's stage/save origin. Existing output files and stale
+continuations are refused rather than overwritten.
 
 ## Content-addressed corpus
 

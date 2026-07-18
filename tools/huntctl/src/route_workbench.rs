@@ -5,9 +5,11 @@
 //! continuations, and offers revision-checked edits for labels, segment subtrees, and the
 //! timeline-configured milestone program. Segment input artifacts remain independent Git objects.
 
+use crate::content_store::{ContentKind, ContentStore};
+use crate::option_diagnostics::{OptionDiagnosticBundle, OptionVisualization};
 use crate::search::{Candidate, SearchResults};
 use crate::search_evaluator::{AnchoredObjectiveIdentity, BoundaryFingerprint};
-use crate::tape::InputTape;
+use crate::tape::{InputTape, TapeBoot};
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
 use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline, tokenize};
 use crate::{milestone_dsl, milestone_dsl::MilestoneProgram};
@@ -25,7 +27,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v7";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v8";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -46,6 +48,7 @@ const SEGMENT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-de
 const SIBLING_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.sibling-delete-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const THUMBNAIL_CAPTURE_SCHEMA: &str = "dusklight.route-workbench.thumbnail-capture.v1";
+const THUMBNAIL_PRUNE_SCHEMA: &str = "dusklight.route-workbench.thumbnail-prune.v1";
 const THUMBNAIL_DIRECTORY: &str = "thumbnails";
 const MAX_THUMBNAIL_BYTES: u64 = 2 * 1024 * 1024;
 const THUMBNAIL_WIDTH: u32 = 320;
@@ -53,6 +56,7 @@ const THUMBNAIL_HEIGHT: u32 = 240;
 const MAX_DRAFTS: usize = 10_000;
 const MAX_SEARCH_RUNS: usize = 1_000;
 const MAX_SEARCH_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_OPTION_DIAGNOSTIC_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_GENERATED_SEGMENTS: usize = 16;
 const GENERATED_SEGMENTS_PER_RUN: usize = 4;
 const MAX_HTTP_HEADER: usize = 64 * 1024;
@@ -103,6 +107,8 @@ pub struct GraphPredicate {
     pub phase: milestone_dsl::EvaluationPhase,
     pub stable_ticks: u16,
     pub expression: milestone_dsl::Expression,
+    pub then: Vec<milestone_dsl::Expression>,
+    pub within_ticks: Option<u16>,
     pub definition_sha256: String,
 }
 
@@ -261,6 +267,9 @@ pub struct GraphSegment {
     pub playable: bool,
     pub recordable: bool,
     pub record_anchors: Vec<GraphRecordAnchor>,
+    pub option_visualization: Vec<OptionVisualization>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub option_diagnostic_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generated: Option<GraphGeneratedSegment>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -755,6 +764,14 @@ struct MaterializedPlayback {
     seed_stage: Option<&'static str>,
 }
 
+fn legacy_seed_stage(
+    tape: &InputTape,
+    profile: crate::search::SegmentProfile,
+) -> Option<&'static str> {
+    (tape.boot == TapeBoot::Process && profile == crate::search::SegmentProfile::Fsp103ToFsp104)
+        .then_some("F_SP103,1,1,3")
+}
+
 #[derive(Clone, Debug)]
 struct PlaybackThumbnailCapture {
     path: PathBuf,
@@ -958,6 +975,8 @@ fn milestone_program_projection(
                 phase: definition.phase,
                 stable_ticks: definition.stable_ticks,
                 expression: definition.when,
+                then: definition.then,
+                within_ticks: definition.within_ticks,
             })
             .collect(),
     }))
@@ -980,11 +999,15 @@ fn is_exact_boot_boundary_predicate(definition: &GraphPredicate) -> bool {
                 leaves.push((*field, *operator, value));
                 true
             }
-            Expression::Not(_) | Expression::Or(_, _) => false,
+            Expression::Not(_) | Expression::Or(_, _) | Expression::Query { .. } => false,
         }
     }
 
-    if definition.phase != EvaluationPhase::PreInput || definition.stable_ticks != 1 {
+    if definition.phase != EvaluationPhase::PreInput
+        || definition.stable_ticks != 1
+        || !definition.then.is_empty()
+        || definition.within_ticks.is_some()
+    {
         return false;
     }
     let mut leaves = Vec::new();
@@ -1322,6 +1345,13 @@ pub fn graph_from_timeline(
                 && artifact_is_canonical_payload(&segment.artifact)
                 && fingerprints_are_exact(segment)
                 && materialize_segment_chain(timeline, repository_root, &segment.id).is_ok();
+            let (option_visualization, option_diagnostic_error) = loaded
+                .as_ref()
+                .ok()
+                .map(|tape| load_option_visualization(segment, repository_root, tape))
+                .unwrap_or_else(|| Ok(Vec::new()))
+                .map(|visualization| (visualization, None))
+                .unwrap_or_else(|error| (Vec::new(), Some(error.to_string())));
             GraphSegment {
                 id: segment.id.clone(),
                 name: segment.name.clone(),
@@ -1343,6 +1373,8 @@ pub fn graph_from_timeline(
                 playable,
                 recordable: loaded.is_ok() && !record_anchors.is_empty(),
                 record_anchors,
+                option_visualization,
+                option_diagnostic_error,
                 generated: None,
                 thumbnail: None,
                 error: loaded.err().map(|error| error.to_string()),
@@ -1640,6 +1672,8 @@ fn generated_search_projections(
                     playable: true,
                     recordable: false,
                     record_anchors: Vec::new(),
+                    option_visualization: Vec::new(),
+                    option_diagnostic_error: None,
                     generated: Some(GraphGeneratedSegment {
                         kind: "search_candidate".into(),
                         status: "proved".into(),
@@ -1823,14 +1857,42 @@ fn reachable_thumbnail_keys(graph: &WorkbenchGraph) -> BTreeSet<String> {
     keys
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct ThumbnailPruneEntry {
+    pub key: String,
+    pub source: PathBuf,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ThumbnailPruneReport {
+    pub schema: &'static str,
+    pub dry_run: bool,
+    pub reachable: usize,
+    pub orphaned: Vec<ThumbnailPruneEntry>,
+    pub moved: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash_transaction: Option<PathBuf>,
+}
+
 fn prune_orphaned_thumbnails(
     graph: &WorkbenchGraph,
     state_root: &Path,
-) -> Result<usize, WorkbenchError> {
+    apply: bool,
+) -> Result<ThumbnailPruneReport, WorkbenchError> {
     let thumbnail_root = state_root.join(THUMBNAIL_DIRECTORY);
     let entries = match fs::read_dir(&thumbnail_root) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ThumbnailPruneReport {
+                schema: THUMBNAIL_PRUNE_SCHEMA,
+                dry_run: !apply,
+                reachable: 0,
+                orphaned: Vec::new(),
+                moved: 0,
+                trash_transaction: None,
+            });
+        }
         Err(error) => {
             return Err(WorkbenchError::new(format!(
                 "cannot inspect thumbnail cache {}: {error}",
@@ -1839,7 +1901,7 @@ fn prune_orphaned_thumbnails(
         }
     };
     let reachable = reachable_thumbnail_keys(graph);
-    let mut removed = 0;
+    let mut orphaned = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             WorkbenchError::new(format!(
@@ -1865,24 +1927,119 @@ fn prune_orphaned_thumbnails(
         if !valid_sha256(key) || reachable.contains(key) {
             continue;
         }
-        match fs::remove_file(entry.path()) {
-            Ok(()) => removed += 1,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
+        orphaned.push(ThumbnailPruneEntry {
+            key: key.into(),
+            source: entry.path(),
+            size: entry
+                .metadata()
+                .map_err(|error| {
+                    WorkbenchError::new(format!(
+                        "cannot inspect orphaned thumbnail {}: {error}",
+                        entry.path().display()
+                    ))
+                })?
+                .len(),
+        });
+    }
+    orphaned.sort_by(|left, right| left.key.cmp(&right.key));
+    let trash_transaction = if apply && !orphaned.is_empty() {
+        let state_root = fs::canonicalize(state_root).map_err(|error| {
+            WorkbenchError::new(format!("cannot resolve workbench state root: {error}"))
+        })?;
+        let trash_root = state_root.join(DRAFT_TRASH_DIRECTORY).join("thumbnails");
+        fs::create_dir_all(&trash_root).map_err(|error| {
+            WorkbenchError::new(format!("cannot create thumbnail trash: {error}"))
+        })?;
+        let trash_root = fs::canonicalize(&trash_root).map_err(|error| {
+            WorkbenchError::new(format!("cannot resolve thumbnail trash: {error}"))
+        })?;
+        if !trash_root.starts_with(&state_root) || trash_root == state_root {
+            return Err(WorkbenchError::new(
+                "thumbnail trash escapes the workbench state root",
+            ));
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| WorkbenchError::new(error.to_string()))?
+            .as_nanos();
+        let transaction = trash_root.join(format!("prune-{}-{nonce}", std::process::id()));
+        fs::create_dir(&transaction).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create thumbnail trash transaction: {error}"
+            ))
+        })?;
+        let mut moved: Vec<&ThumbnailPruneEntry> = Vec::new();
+        for entry in &orphaned {
+            let destination = transaction.join(format!("{}.png", entry.key));
+            if let Err(error) = fs::rename(&entry.source, &destination) {
+                for prior in moved.iter().rev() {
+                    let _ = fs::rename(
+                        transaction.join(format!("{}.png", prior.key)),
+                        &prior.source,
+                    );
+                }
+                let _ = fs::remove_dir(&transaction);
                 return Err(WorkbenchError::new(format!(
-                    "cannot prune orphaned thumbnail {}: {error}",
-                    entry.path().display()
+                    "cannot move orphaned thumbnail {} to recoverable trash: {error}",
+                    entry.source.display()
                 )));
             }
+            moved.push(entry);
         }
-    }
-    Ok(removed)
+        Some(transaction)
+    } else {
+        None
+    };
+    Ok(ThumbnailPruneReport {
+        schema: THUMBNAIL_PRUNE_SCHEMA,
+        dry_run: !apply,
+        reachable: reachable.len(),
+        moved: trash_transaction.as_ref().map_or(0, |_| orphaned.len()),
+        orphaned,
+        trash_transaction,
+    })
 }
 
-fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfig) {
+/// Preview or apply cache pruning against the same graph projection used by
+/// Route Workbench. Applying moves files into recoverable state-root trash.
+pub fn prune_thumbnails(
+    timeline: &Timeline,
+    timeline_path: &Path,
+    repository_root: &Path,
+    state_root: &Path,
+    apply: bool,
+) -> Result<ThumbnailPruneReport, WorkbenchError> {
+    let repository_root = fs::canonicalize(repository_root)
+        .map_err(|error| WorkbenchError::new(format!("cannot resolve repository root: {error}")))?;
+    let timeline_path = fs::canonicalize(timeline_path)
+        .map_err(|error| WorkbenchError::new(format!("cannot resolve timeline: {error}")))?;
+    if !timeline_path.starts_with(&repository_root) {
+        return Err(WorkbenchError::new(
+            "timeline is outside the repository root",
+        ));
+    }
+    let artifact_root = timeline_path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("timeline has no artifact root"))?;
+    let mut graph = graph_with_drafts(timeline, artifact_root, state_root)?;
+    append_generated_search_segments(
+        &mut graph,
+        timeline,
+        &repository_root.join("build/search"),
+        state_root,
+    )?;
+    prune_orphaned_thumbnails(&graph, state_root, apply)
+}
+
+fn decorate_graph_thumbnails(
+    graph: &mut WorkbenchGraph,
+    config: &WorkbenchConfig,
+) -> Result<(), WorkbenchError> {
     for segment in &mut graph.segments {
         let key = thumbnail_key("segment", &segment.boundary_fingerprint);
-        if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
+        let path = thumbnail_cache_path(&config.state_root, &key);
+        if thumbnail_file_is_valid(&path) {
+            content_address_thumbnail(config, &path)?;
             segment.thumbnail = Some(thumbnail_url(&key));
         }
     }
@@ -1891,10 +2048,20 @@ fn decorate_graph_thumbnails(graph: &mut WorkbenchGraph, config: &WorkbenchConfi
             continue;
         };
         let key = thumbnail_key("draft", identity);
-        if thumbnail_file_is_valid(&thumbnail_cache_path(&config.state_root, &key)) {
+        let path = thumbnail_cache_path(&config.state_root, &key);
+        if thumbnail_file_is_valid(&path) {
+            content_address_thumbnail(config, &path)?;
             draft.thumbnail = Some(thumbnail_url(&key));
         }
     }
+    Ok(())
+}
+
+fn content_address_thumbnail(config: &WorkbenchConfig, path: &Path) -> Result<(), WorkbenchError> {
+    ContentStore::initialize(config.state_root.join("content"))
+        .and_then(|store| store.put_file(path, ContentKind::Screenshot))
+        .map(|_| ())
+        .map_err(|error| WorkbenchError::new(format!("cannot content-address thumbnail: {error}")))
 }
 
 fn prepare_missing_playback_thumbnail(
@@ -1958,6 +2125,7 @@ fn install_recording_thumbnail(
     })?;
     let destination = thumbnail_cache_path(&config.state_root, &key);
     if thumbnail_file_is_valid(&destination) {
+        content_address_thumbnail(config, &destination)?;
         fs::remove_file(&source).map_err(|error| {
             WorkbenchError::new(format!(
                 "cannot remove duplicate recording thumbnail {}: {error}",
@@ -1979,7 +2147,8 @@ fn install_recording_thumbnail(
             "cannot install recording thumbnail {}: {error}",
             destination.display()
         ))
-    })
+    })?;
+    content_address_thumbnail(config, &destination)
 }
 
 fn drafts_root(state_root: &Path) -> Result<PathBuf, WorkbenchError> {
@@ -4117,7 +4286,21 @@ fn process_is_alive(pid: u32) -> bool {
     Path::new("/proc").join(pid.to_string()).exists()
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal zero does not deliver a signal; it only asks the kernel
+    // whether this process exists and is visible to the caller.
+    let visible = unsafe { kill(pid, 0) == 0 };
+    visible || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+}
+
+#[cfg(not(any(windows, unix)))]
 fn process_is_alive(_pid: u32) -> bool {
     false
 }
@@ -4992,11 +5175,10 @@ fn record_continuation(
             }
             let segment_chain = materialize_segment_chain(timeline, &artifact_root, &id)?;
             let seed_stage = segment_chain.steps.first().and_then(|step| {
-                match timeline.segments[&step.segment].profile {
-                    crate::search::SegmentProfile::BootToFsp103 => None,
-                    crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
-                    crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
-                }
+                legacy_seed_stage(
+                    &segment_chain.tape,
+                    timeline.segments[&step.segment].profile,
+                )
             });
             let materialized = MaterializedPlayback {
                 lineage: None,
@@ -5597,6 +5779,57 @@ fn logical_last_frame(segment: &Segment, tape: &InputTape) -> Result<u64, Workbe
     Ok(tape.frames.len() as u64 - 1)
 }
 
+fn option_diagnostic_relative_path(source: &ArtifactSource) -> Option<PathBuf> {
+    let artifact = match source {
+        ArtifactSource::Candidate(path)
+        | ArtifactSource::Tas(path)
+        | ArtifactSource::Tape(path) => path,
+        ArtifactSource::Baseline(_) => return None,
+        #[allow(unreachable_patterns)]
+        _ => return None,
+    };
+    let mut sidecar = artifact.as_os_str().to_os_string();
+    sidecar.push(".options.json");
+    Some(PathBuf::from(sidecar))
+}
+
+fn load_option_visualization(
+    segment: &Segment,
+    repository_root: &Path,
+    tape: &InputTape,
+) -> Result<Vec<OptionVisualization>, WorkbenchError> {
+    let Some(relative) = option_diagnostic_relative_path(&segment.artifact) else {
+        return Ok(Vec::new());
+    };
+    let unresolved = repository_root.join(&relative);
+    let Ok(metadata) = fs::symlink_metadata(&unresolved) else {
+        return Ok(Vec::new());
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_OPTION_DIAGNOSTIC_BYTES
+    {
+        return Err(WorkbenchError::new(format!(
+            "option diagnostic sidecar {} must be a regular file no larger than {} bytes",
+            relative.display(),
+            MAX_OPTION_DIAGNOSTIC_BYTES
+        )));
+    }
+    let path = checked_artifact_path(repository_root, &relative)?;
+    let bytes = fs::read(&path)
+        .map_err(|error| WorkbenchError::new(format!("cannot read {}: {error}", path.display())))?;
+    let bundle: OptionDiagnosticBundle = serde_json::from_slice(&bytes).map_err(|error| {
+        WorkbenchError::new(format!("cannot decode {}: {error}", path.display()))
+    })?;
+    bundle.validate_against_tape(tape).map_err(|error| {
+        WorkbenchError::new(format!(
+            "invalid option diagnostics {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(bundle.visualization())
+}
+
 fn load_segment_tape(
     segment: &Segment,
     repository_root: &Path,
@@ -5770,11 +6003,7 @@ fn materialize_play_request(
     let materialized =
         materialize_lineage(timeline, repository_root, lineage, play_target(request)?)?;
     let seed_stage = materialized.steps.first().and_then(|step| {
-        match timeline.segments[&step.segment].profile {
-            crate::search::SegmentProfile::BootToFsp103 => None,
-            crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
-            crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
-        }
+        legacy_seed_stage(&materialized.tape, timeline.segments[&step.segment].profile)
     });
     Ok(MaterializedPlayback {
         lineage: Some(lineage.into()),
@@ -5815,11 +6044,7 @@ fn materialize_segment_playback(
         .first()
         .map(|step| timeline.segments[&step.segment].profile)
         .unwrap_or(segment.profile);
-    let seed_stage = match seed_profile {
-        crate::search::SegmentProfile::BootToFsp103 => None,
-        crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
-        crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
-    };
+    let seed_stage = legacy_seed_stage(&chain.tape, seed_profile);
     Ok(MaterializedPlayback {
         lineage: None,
         segment: Some(segment_id.into()),
@@ -6063,11 +6288,7 @@ fn materialize_draft(
         DraftBase::Segment { id: base_segment } => {
             let base_tape = materialize_segment_chain(timeline, repository_root, &base_segment)?;
             let seed_stage = base_tape.steps.first().and_then(|step| {
-                match timeline.segments[&step.segment].profile {
-                    crate::search::SegmentProfile::BootToFsp103 => None,
-                    crate::search::SegmentProfile::Fsp103ToFsp104 => Some("F_SP103,1,1,3"),
-                    crate::search::SegmentProfile::LinkControlToTunnelCrawlStart => None,
-                }
+                legacy_seed_stage(&base_tape.tape, timeline.segments[&step.segment].profile)
             });
             (base_tape.tape, seed_stage, base_segment)
         }
@@ -6218,10 +6439,7 @@ fn handle_http(
                             &config.repository_root.join("build/search"),
                             &config.state_root,
                         )?;
-                        if let Err(error) = prune_orphaned_thumbnails(&graph, &config.state_root) {
-                            eprintln!("thumbnail cache pruning warning: {error}");
-                        }
-                        decorate_graph_thumbnails(&mut graph, config);
+                        decorate_graph_thumbnails(&mut graph, config)?;
                         Ok(graph)
                     })
                     .and_then(|graph| json_response(&graph))
@@ -6693,7 +6911,35 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::option_diagnostics::{
+        ClampDisposition, IntendedTarget, OptionContact, OptionDiagnostic, OptionDiagnosticBundle,
+        OptionGoalProgress, OptionTickDiagnostic, ViewportPoint,
+    };
+    use crate::option_execution::{
+        OptionCondition, OptionEndReason, OptionExecution, OptionType, TapeRange,
+    };
     use crate::tape::{InputFrame, RawPadState};
+
+    #[test]
+    fn explicit_stage_boot_supersedes_the_legacy_workbench_stage_argument() {
+        let mut tape = InputTape::default();
+        assert_eq!(
+            legacy_seed_stage(&tape, crate::search::SegmentProfile::Fsp103ToFsp104),
+            Some("F_SP103,1,1,3")
+        );
+        tape.boot = TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: None,
+            fixture: None,
+        };
+        assert_eq!(
+            legacy_seed_stage(&tape, crate::search::SegmentProfile::Fsp103ToFsp104),
+            None
+        );
+    }
 
     fn temporary_root(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -7076,7 +7322,7 @@ continue main with incumbent after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         write_tape(&root, "first.tape", &[1, 2, 3, 4]);
         write_tape(&root, "second.tape", &[5, 6, 7]);
         let graph = graph_from_timeline(&timeline(), &root).unwrap();
-        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v7");
+        assert_eq!(graph.schema, "dusklight.route-workbench.graph.v8");
         assert!(graph.origin.is_none());
         assert_eq!(graph.segments.len(), 2);
         assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -7087,6 +7333,91 @@ continue main with incumbent after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         let playback = materialize_segment_chain(&timeline(), &root, "link_exit.one").unwrap();
         assert_eq!(playback.tape.frames.len(), 7);
         assert_eq!(playback.steps[1].chain_start_frame, 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn graph_projects_authenticated_option_sidecars() {
+        let root = temporary_root("graph-option-sidecar");
+        write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+        write_tape(&root, "second.tape", &[5, 6, 7]);
+        let bytes = fs::read(root.join("first.tape")).unwrap();
+        let tape = InputTape::decode(&bytes).unwrap().tape;
+        let execution = OptionExecution::capture(
+            "walk-to-door".into(),
+            OptionType::Move,
+            BTreeMap::new(),
+            1,
+            4,
+            OptionCondition::TargetReached {
+                target: "door".into(),
+            },
+            Vec::new(),
+            OptionEndReason::Completed,
+            &tape,
+            TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: 4,
+            },
+        )
+        .unwrap();
+        let ticks = execution
+            .emitted_raw_actions
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, raw_output)| OptionTickDiagnostic {
+                local_tick: index as u32,
+                error_vector_f32_bits: None,
+                action_mask: None,
+                raw_output: raw_output.clone(),
+                clamps: ClampDisposition::default(),
+                game_consumed_input: raw_output,
+                contacts: vec![OptionContact {
+                    kind: "floor".into(),
+                    position_f32_bits: [0, 0, 0],
+                    normal_f32_bits: Some([0, 1.0_f32.to_bits(), 0]),
+                    stable_surface_id: Some("room0-floor".into()),
+                    viewport: Some(ViewportPoint {
+                        x_u16: 12_000,
+                        y_u16: 48_000,
+                    }),
+                }],
+                goal_progress: vec![OptionGoalProgress {
+                    goal: "door".into(),
+                    value_f32_bits: Some((index as f32 / 3.0).to_bits()),
+                    satisfied: index == 3,
+                }],
+                target_viewport: Some(ViewportPoint {
+                    x_u16: 50_000,
+                    y_u16: 22_000,
+                }),
+            })
+            .collect();
+        let diagnostic = OptionDiagnostic::capture(
+            execution,
+            IntendedTarget::Actor {
+                selector: "placed:door".into(),
+                runtime_process_id: Some(42),
+            },
+            ticks,
+        )
+        .unwrap();
+        let bundle = OptionDiagnosticBundle::capture(&tape, vec![diagnostic]).unwrap();
+        fs::write(
+            root.join("first.tape.options.json"),
+            serde_json::to_vec_pretty(&bundle).unwrap(),
+        )
+        .unwrap();
+
+        let graph = graph_from_timeline(&timeline(), &root).unwrap();
+        let visualization = &graph.segments[0].option_visualization;
+        assert_eq!(visualization.len(), 1);
+        assert_eq!(visualization[0].option_id, "walk-to-door");
+        assert_eq!(visualization[0].curve.len(), 4);
+        assert_eq!(visualization[0].contacts.len(), 4);
+        assert!(visualization[0].goal_progress[3].progress.satisfied);
+        assert!(graph.segments[0].option_diagnostic_error.is_none());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -7492,6 +7823,16 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
             "segment.goal_proofs",
+            "segment.option_visualization",
+            "optionVisualization(segment)",
+            "gameplayThumbnail(segment)",
+            "Option execution overlay",
+            "aria-label=\"Option intervals\"",
+            "Consumed main-stick and camera curves",
+            "overlay-marker target",
+            "overlay-marker contact",
+            "target_viewport",
+            "goal_progress",
             "id=\"recordCountdown\"",
             "Child handoff",
             "id=\"recordingSpeed\"",
@@ -7619,9 +7960,21 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         fs::write(&orphan_path, &png).unwrap();
         let unrelated_path = state_root.join(THUMBNAIL_DIRECTORY).join("README.txt");
         fs::write(&unrelated_path, b"not managed by the PNG cache").unwrap();
-        assert_eq!(prune_orphaned_thumbnails(&graph, &state_root).unwrap(), 2);
+        let preview = prune_orphaned_thumbnails(&graph, &state_root, false).unwrap();
+        assert_eq!(preview.orphaned.len(), 2);
+        assert_eq!(preview.moved, 0);
+        assert!(orphan_path.exists());
+        let applied = prune_orphaned_thumbnails(&graph, &state_root, true).unwrap();
+        assert_eq!(applied.moved, 2);
         assert!(reachable_path.exists());
         assert!(!orphan_path.exists());
+        assert!(
+            applied
+                .trash_transaction
+                .unwrap()
+                .join(format!("{orphan_key}.png"))
+                .exists()
+        );
         assert!(unrelated_path.exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -8130,9 +8483,16 @@ continue main with boot_link.tas after root@clean
         assert!(!directory.join(DRAFT_TERMINAL_THUMBNAIL).exists());
         let key = thumbnail_key("draft", manifest.result_tape_sha256.as_deref().unwrap());
         assert_eq!(fs::read(thumbnail_cache_path(&state, &key)).unwrap(), png);
+        let digest = crate::artifact::Digest(Sha256::digest(png).into());
+        assert!(
+            ContentStore::initialize(state.join("content"))
+                .unwrap()
+                .blob_path(digest)
+                .is_file()
+        );
 
         let mut graph = graph_with_drafts(&timeline(), &root, &state).unwrap();
-        decorate_graph_thumbnails(&mut graph, &config);
+        decorate_graph_thumbnails(&mut graph, &config).unwrap();
         assert_eq!(
             graph.drafts[0].thumbnail.as_deref(),
             Some(thumbnail_url(&key).as_str())

@@ -1,3 +1,6 @@
+use huntctl::continuous_search::{
+    CONTINUOUS_AXES_SCHEMA_V1, ContinuousAxes, ContinuousAxis, ContinuousParameter,
+};
 use huntctl::search::{
     Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, SearchResults,
     SegmentProfile,
@@ -102,8 +105,18 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
                 let learning_trace_is_correct = if attempt["attempt"] == 1 {
                     attempt["gameplay_trace_error"].is_null()
                         && Path::new(attempt["gameplay_trace"].as_str().unwrap()).is_file()
+                        && route_artifacts
+                            .join("content")
+                            .join(
+                                attempt["gameplay_trace_blob"]["relative_path"]
+                                    .as_str()
+                                    .unwrap(),
+                            )
+                            .is_file()
                 } else {
-                    attempt["gameplay_trace"].is_null() && attempt["gameplay_trace_error"].is_null()
+                    attempt["gameplay_trace"].is_null()
+                        && attempt["gameplay_trace_blob"].is_null()
+                        && attempt["gameplay_trace_error"].is_null()
                 };
                 learning_trace_is_correct
                     && attempt["boundary_fingerprints"]["entered-f-sp104"].is_object()
@@ -367,6 +380,7 @@ fn boot_minimizer_ddmins_a_dense_contiguous_mash_and_proves_trim() {
     let dense = Candidate {
         schema: CANDIDATE_SCHEMA.into(),
         segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
         actions: (0..120)
             .map(|index| MacroAction::Press {
                 buttons: vec![if index % 2 == 0 {
@@ -458,6 +472,7 @@ fn boot_timing_golfer_keeps_same_tick_move_that_unlocks_faster_pair() {
     let source = Candidate {
         schema: CANDIDATE_SCHEMA.into(),
         segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
         actions: vec![
             MacroAction::Neutral { frames: 10 },
             MacroAction::Press {
@@ -546,5 +561,465 @@ fn boot_timing_golfer_keeps_same_tick_move_that_unlocks_faster_pair() {
         .unwrap()
         .tape;
     assert_eq!(golfed.compile().unwrap(), tape);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn beam_search_spends_a_bounded_budget_on_native_rollouts() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-beam-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let seed = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
+        actions: vec![MacroAction::Neutral { frames: 1 }],
+        ancestry: Ancestry::default(),
+    };
+    let candidate_path = root.join("seed.json");
+    fs::write(&candidate_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let options_path = root.join("options.json");
+    fs::write(
+        &options_path,
+        serde_json::to_vec_pretty(&vec![
+            MacroAction::Neutral { frames: 1 },
+            MacroAction::Press {
+                buttons: vec![ControllerButton::A],
+                hold_frames: 1,
+                neutral_frames: 0,
+            },
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    let output_root = root.join("beam");
+    let output = run(&[
+        "search",
+        "beam",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--options",
+        options_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--game-arg",
+        "mock-search-worker",
+        "--game-arg",
+        "--mock-mode",
+        "--game-arg",
+        "miss",
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        output_root.to_str().unwrap(),
+        "--beam-width",
+        "2",
+        "--maximum-depth",
+        "2",
+        "--candidate-budget",
+        "5",
+        "--workers",
+        "2",
+        "--repetitions",
+        "2",
+        "--timeout-ms",
+        "2000",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-beam-search/v1");
+    assert_eq!(summary["evaluated_candidates"], 5);
+    assert_eq!(summary["simulator_episodes"], 10);
+    assert_eq!(summary["depths_evaluated"], 3);
+    assert!(
+        output_root
+            .join("d000/evaluations/evaluation.json")
+            .exists()
+    );
+    assert!(
+        output_root
+            .join("d001/evaluations/evaluation.json")
+            .exists()
+    );
+    assert!(
+        output_root
+            .join("d002/evaluations/evaluation.json")
+            .exists()
+    );
+    assert!(output_root.join("champion.candidate.json").exists());
+    assert!(output_root.join("champion.tape").exists());
+    assert!(output_root.join("beam.summary.json").exists());
+
+    let bounded_root = root.join("beam-terminal-bound");
+    let bounded = run(&[
+        "search",
+        "beam",
+        "--candidate",
+        candidate_path.to_str().unwrap(),
+        "--options",
+        options_path.to_str().unwrap(),
+        "--game",
+        env!("CARGO_BIN_EXE_huntctl"),
+        "--game-arg",
+        "mock-search-worker",
+        "--dvd",
+        dvd.to_str().unwrap(),
+        "--output",
+        bounded_root.to_str().unwrap(),
+        "--beam-width",
+        "2",
+        "--maximum-depth",
+        "2",
+        "--candidate-budget",
+        "5",
+        "--repetitions",
+        "2",
+        "--timeout-ms",
+        "2000",
+    ]);
+    assert!(
+        bounded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bounded.stderr)
+    );
+    let bounded: serde_json::Value = serde_json::from_slice(&bounded.stdout).unwrap();
+    assert_eq!(bounded["evaluated_candidates"], 1);
+    assert_eq!(bounded["terminal_bound_pruned_children"], 2);
+    assert_eq!(bounded["champion_score"]["goal_feasible"], true);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cem_and_cma_es_rank_typed_samples_only_after_native_rollout() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-continuous-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let seed = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
+        actions: vec![MacroAction::Move {
+            angle_degrees: 0,
+            magnitude: 64,
+            frames: 1,
+        }],
+        ancestry: Ancestry::default(),
+    };
+    let candidate_path = root.join("seed.json");
+    fs::write(&candidate_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let axes_path = root.join("axes.json");
+    fs::write(
+        &axes_path,
+        serde_json::to_vec_pretty(&ContinuousAxes {
+            schema: CONTINUOUS_AXES_SCHEMA_V1.into(),
+            axes: vec![
+                ContinuousAxis {
+                    name: "heading".into(),
+                    action_index: 0,
+                    parameter: ContinuousParameter::MoveHeadingDegrees,
+                    minimum: -90.0,
+                    maximum: 90.0,
+                },
+                ContinuousAxis {
+                    name: "magnitude".into(),
+                    action_index: 0,
+                    parameter: ContinuousParameter::MoveMagnitude,
+                    minimum: 1.0,
+                    maximum: 127.0,
+                },
+            ],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    for method in ["cem", "cma-es"] {
+        let output_root = root.join(method);
+        let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+            .args(["search", "continuous", "--method", method, "--candidate"])
+            .arg(&candidate_path)
+            .args(["--axes"])
+            .arg(&axes_path)
+            .args(["--game", env!("CARGO_BIN_EXE_huntctl")])
+            .args(["--game-arg", "mock-search-worker"])
+            .args(["--game-arg", "--mock-mode"])
+            .args(["--game-arg", "miss"])
+            .args(["--dvd"])
+            .arg(&dvd)
+            .args(["--output"])
+            .arg(&output_root)
+            .args([
+                "--generations",
+                "1",
+                "--population",
+                "12",
+                "--elites",
+                "3",
+                "--candidate-budget",
+                "12",
+                "--rng-seed",
+                "7",
+                "--workers",
+                "2",
+                "--repetitions",
+                "2",
+                "--timeout-ms",
+                "2000",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{method}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(summary["schema"], "dusklight-continuous-search/v1");
+        assert_eq!(summary["generations_completed"], 1);
+        let evaluated = summary["evaluated_candidates"].as_u64().unwrap();
+        assert!(evaluated >= 3);
+        assert_eq!(
+            summary["simulator_episodes"].as_u64().unwrap(),
+            evaluated * 2
+        );
+        assert!(
+            output_root
+                .join("g000/evaluations/evaluation.json")
+                .exists()
+        );
+        assert!(output_root.join("g000/optimizer.json").exists());
+        assert!(output_root.join("champion.candidate.json").exists());
+        assert!(output_root.join("continuous.summary.json").exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bayesian_search_uses_native_rank_observations_and_persists_acquisition_state() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-bayesian-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let seed = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
+        actions: vec![MacroAction::Move {
+            angle_degrees: 0,
+            magnitude: 64,
+            frames: 1,
+        }],
+        ancestry: Ancestry::default(),
+    };
+    let candidate_path = root.join("seed.json");
+    fs::write(&candidate_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let axes_path = root.join("axes.json");
+    fs::write(
+        &axes_path,
+        serde_json::to_vec_pretty(&ContinuousAxes {
+            schema: CONTINUOUS_AXES_SCHEMA_V1.into(),
+            axes: vec![
+                ContinuousAxis {
+                    name: "heading".into(),
+                    action_index: 0,
+                    parameter: ContinuousParameter::MoveHeadingDegrees,
+                    minimum: -90.0,
+                    maximum: 90.0,
+                },
+                ContinuousAxis {
+                    name: "magnitude".into(),
+                    action_index: 0,
+                    parameter: ContinuousParameter::MoveMagnitude,
+                    minimum: 1.0,
+                    maximum: 127.0,
+                },
+            ],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output_root = root.join("search");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["search", "bayesian", "--candidate"])
+        .arg(&candidate_path)
+        .args(["--axes"])
+        .arg(&axes_path)
+        .args(["--game", env!("CARGO_BIN_EXE_huntctl")])
+        .args(["--game-arg", "mock-search-worker"])
+        .args(["--game-arg", "--mock-mode"])
+        .args(["--game-arg", "miss"])
+        .args(["--dvd"])
+        .arg(&dvd)
+        .args(["--output"])
+        .arg(&output_root)
+        .args([
+            "--generations",
+            "2",
+            "--batch-size",
+            "4",
+            "--initial-samples",
+            "4",
+            "--acquisition-pool",
+            "64",
+            "--candidate-budget",
+            "8",
+            "--rng-seed",
+            "7",
+            "--workers",
+            "2",
+            "--repetitions",
+            "2",
+            "--timeout-ms",
+            "2000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-bayesian-search/v1");
+    assert_eq!(summary["generations_completed"], 2);
+    let evaluated = summary["evaluated_candidates"].as_u64().unwrap();
+    assert!(evaluated > 0);
+    assert_eq!(
+        summary["simulator_episodes"].as_u64().unwrap(),
+        evaluated * 2
+    );
+    assert_eq!(summary["final_optimizer"]["observations"], evaluated);
+    for generation in ["g000", "g001"] {
+        assert!(
+            output_root
+                .join(generation)
+                .join("evaluations/evaluation.json")
+                .exists()
+        );
+        assert!(output_root.join(generation).join("optimizer.json").exists());
+    }
+    assert!(output_root.join("champion.candidate.json").exists());
+    assert!(output_root.join("champion.tape").exists());
+    assert!(output_root.join("bayesian.summary.json").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rollout() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-tournament-{unique}"));
+    fs::create_dir_all(&root).unwrap();
+    let dvd = root.join("disc.iso");
+    fs::write(&dvd, b"mock disc").unwrap();
+    let incumbent = root.join("incumbent");
+    let blind = root.join("blind");
+    seed(&incumbent, "boot_to_fsp103", "3");
+    let blind_output = run(&[
+        "search",
+        "seed",
+        "--segment",
+        "boot_to_fsp103",
+        "--output",
+        blind.to_str().unwrap(),
+        "--size",
+        "3",
+        "--rng-seed",
+        "11",
+    ]);
+    assert!(
+        blind_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&blind_output.stderr)
+    );
+    let definition = root.join("tournament.json");
+    fs::write(
+        &definition,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "dusklight-proposer-tournament-definition/v1",
+            "budget_unit": "episodes",
+            "budget_per_proposer": 4,
+            "proposers": [
+                {
+                    "name": "incumbent",
+                    "kind": "incumbent_mutation",
+                    "population": "incumbent/manifest.json"
+                },
+                {
+                    "name": "blind",
+                    "kind": "blind_exploration",
+                    "population": "blind/manifest.json"
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output_root = root.join("results");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["search", "tournament", "--definition"])
+        .arg(&definition)
+        .args(["--game", env!("CARGO_BIN_EXE_huntctl")])
+        .args(["--game-arg", "mock-search-worker"])
+        .args(["--game-arg", "--mock-mode"])
+        .args(["--game-arg", "miss"])
+        .args(["--dvd"])
+        .arg(&dvd)
+        .args(["--output"])
+        .arg(&output_root)
+        .args([
+            "--workers",
+            "2",
+            "--repetitions",
+            "2",
+            "--timeout-ms",
+            "2000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-proposer-tournament/v1");
+    assert_eq!(summary["rows"].as_array().unwrap().len(), 2);
+    for row in summary["rows"].as_array().unwrap() {
+        assert_eq!(row["selected_candidates"], 2);
+        assert_eq!(row["charged_episodes"], 4);
+        assert_eq!(row["predicate_hits"], 0);
+        assert_eq!(row["misses"], 2);
+    }
+    let physical_candidates = summary["physical_candidates"].as_u64().unwrap();
+    assert!(physical_candidates <= 4);
+    assert_eq!(
+        summary["physical_episodes"].as_u64().unwrap(),
+        physical_candidates * 2
+    );
+    assert!(output_root.join("evaluations/evaluation.json").exists());
+    assert!(output_root.join("leaderboard.json").exists());
+    assert!(output_root.join("tournament.summary.json").exists());
     fs::remove_dir_all(root).unwrap();
 }

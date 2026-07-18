@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const CONTROL_PROTOCOL_NAME: &str = "dusklight-automation";
-pub const CONTROL_PROTOCOL_VERSION: u64 = 1;
+pub const CONTROL_PROTOCOL_VERSION: u64 = 2;
 pub const MAX_CONTROL_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -13,9 +13,15 @@ pub struct WorkerBuildIdentity {
     pub version: String,
     pub describe: String,
     pub revision: String,
+    pub dirty_digest: String,
     pub branch: String,
     pub source_date: String,
+    pub aurora_revision: String,
+    pub compiler: String,
+    pub compiler_target: String,
     pub build_type: String,
+    pub feature_switches: String,
+    pub feature_digest: String,
     pub platform: String,
     pub architecture: String,
     pub pointer_bits: u32,
@@ -37,6 +43,131 @@ pub struct WorkerCapabilities {
 pub struct HelloResponse {
     pub build: WorkerBuildIdentity,
     pub capabilities: WorkerCapabilities,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentityDifference {
+    pub field: &'static str,
+    pub expected: String,
+    pub actual: String,
+}
+
+impl IdentityDifference {
+    pub fn message(&self) -> String {
+        format!(
+            "{}: expected {}, received {}",
+            self.field, self.expected, self.actual
+        )
+    }
+}
+
+impl HelloResponse {
+    /// Returns every build or protocol-capability mismatch. Keeping this as a
+    /// typed field list makes CLI rejection useful without weakening the exact
+    /// comparison used to form deterministic worker pools.
+    pub fn identity_differences(&self, actual: &Self) -> Vec<IdentityDifference> {
+        let mut differences = Vec::new();
+        macro_rules! compare {
+            ($field:literal, $expected:expr, $actual:expr) => {
+                if $expected != $actual {
+                    differences.push(IdentityDifference {
+                        field: $field,
+                        expected: format!("{:?}", $expected),
+                        actual: format!("{:?}", $actual),
+                    });
+                }
+            };
+        }
+
+        compare!("build.version", self.build.version, actual.build.version);
+        compare!("build.describe", self.build.describe, actual.build.describe);
+        compare!("build.revision", self.build.revision, actual.build.revision);
+        compare!(
+            "build.dirty_digest",
+            self.build.dirty_digest,
+            actual.build.dirty_digest
+        );
+        compare!("build.branch", self.build.branch, actual.build.branch);
+        compare!(
+            "build.source_date",
+            self.build.source_date,
+            actual.build.source_date
+        );
+        compare!(
+            "build.aurora_revision",
+            self.build.aurora_revision,
+            actual.build.aurora_revision
+        );
+        compare!("build.compiler", self.build.compiler, actual.build.compiler);
+        compare!(
+            "build.compiler_target",
+            self.build.compiler_target,
+            actual.build.compiler_target
+        );
+        compare!(
+            "build.build_type",
+            self.build.build_type,
+            actual.build.build_type
+        );
+        compare!(
+            "build.feature_switches",
+            self.build.feature_switches,
+            actual.build.feature_switches
+        );
+        compare!(
+            "build.feature_digest",
+            self.build.feature_digest,
+            actual.build.feature_digest
+        );
+        compare!("build.platform", self.build.platform, actual.build.platform);
+        compare!(
+            "build.architecture",
+            self.build.architecture,
+            actual.build.architecture
+        );
+        compare!(
+            "build.pointer_bits",
+            self.build.pointer_bits,
+            actual.build.pointer_bits
+        );
+        compare!("build.dirty", self.build.dirty, actual.build.dirty);
+        compare!(
+            "capabilities.persistent_control",
+            self.capabilities.persistent_control,
+            actual.capabilities.persistent_control
+        );
+        compare!(
+            "capabilities.engine_session",
+            self.capabilities.engine_session,
+            actual.capabilities.engine_session
+        );
+        compare!(
+            "capabilities.headless",
+            self.capabilities.headless,
+            actual.capabilities.headless
+        );
+        compare!(
+            "capabilities.scenario_load",
+            self.capabilities.scenario_load,
+            actual.capabilities.scenario_load
+        );
+        compare!(
+            "capabilities.input_tape",
+            self.capabilities.input_tape,
+            actual.capabilities.input_tape
+        );
+        compare!(
+            "capabilities.batch_run",
+            self.capabilities.batch_run,
+            actual.capabilities.batch_run
+        );
+        compare!(
+            "capabilities.commands",
+            self.capabilities.commands,
+            actual.capabilities.commands
+        );
+        differences
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

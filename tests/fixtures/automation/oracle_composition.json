@@ -1,0 +1,33 @@
+{
+  "schema": "dusklight-oracle-composition/v1",
+  "catalog": {
+    "schema": "dusklight-semantic-event-catalog/v1",
+    "signatures": []
+  },
+  "runs": [
+    {
+      "label": "intervention",
+      "role": "treatment",
+      "complete": true,
+      "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "run_outcome": {
+        "schema": "dusklight-run-outcome/v1",
+        "monitored": ["watched_fields"],
+        "termination": {
+          "kind": "completed",
+          "exit_code": 0
+        },
+        "anomalies": [
+          {
+            "kind": "watched_field_corruption",
+            "simulation_tick": 700,
+            "tape_frame": 699,
+            "field": "player.inventory.wallet",
+            "expected": "0..=999",
+            "actual": "65535"
+          }
+        ]
+      }
+    }
+  ]
+}

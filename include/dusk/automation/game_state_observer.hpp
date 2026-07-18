@@ -18,6 +18,21 @@ struct ControllerObservationStorage {
     bool truncated = false;
 };
 
+inline constexpr std::size_t kMilestoneEventFlagCount = 822;
+inline constexpr std::size_t kMilestoneTemporaryFlagCount = 185;
+inline constexpr std::size_t kMilestoneDungeonFlagCount = 64;
+inline constexpr std::size_t kMilestoneSwitchFlagCount = 240;
+
+struct MilestoneObservationStorage {
+    std::array<MilestoneObservation::Actor, kInputControllerMaximumActors> actors{};
+    std::size_t actorCount = 0;
+    bool actorsTruncated = false;
+    std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
+    std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
+    std::array<std::uint8_t, kMilestoneDungeonFlagCount> dungeonFlags{};
+    std::array<std::uint8_t, kMilestoneSwitchFlagCount> switchFlags{};
+};
+
 [[nodiscard]] bool game_state_observers_enabled();
 
 // These functions copy already-realized state only. Their implementation is
@@ -25,7 +40,8 @@ struct ControllerObservationStorage {
 // field-access audit surface for these legacy automation consumers.
 [[nodiscard]] ControllerObservation capture_controller_observation(
     ControllerObservationStorage& storage);
-[[nodiscard]] MilestoneObservation capture_milestone_observation();
+[[nodiscard]] MilestoneObservation capture_milestone_observation(
+    MilestoneObservationStorage& storage);
 [[nodiscard]] EyeShredderGameplayTelemetry capture_eye_shredder_gameplay_telemetry();
 
 }  // namespace dusk::automation

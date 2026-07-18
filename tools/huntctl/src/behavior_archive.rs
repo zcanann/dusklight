@@ -1,7 +1,7 @@
 //! Bounded behavior archive for finite-sample route search.
 //!
 //! Fastest-first selection alone collapses a population onto one local route.
-//! This archive keeps one proved episode per coarse path/procedure descriptor
+//! This archive keeps one proved episode per authenticated state/path descriptor
 //! and can retain the entries farthest from the current elites.
 
 use crate::q_search::QEpisode;
@@ -15,8 +15,27 @@ use std::fmt;
 pub const MAX_BEHAVIOR_ARCHIVE_ENTRIES: usize = 256;
 const POSITION_BIN_WORLD_UNITS: f32 = 256.0;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BehaviorContext {
+    /// Digest of available named RNG projections, including their definitions.
+    pub objective_rng_identity: Option<String>,
+    /// Digest of available named actor-population projections.
+    pub actor_population_identity: Option<String>,
+    /// Digest of the portable collision/contact trajectory.
+    pub contact_behavior_identity: Option<String>,
+    /// Digest of terminal milestone boundary fingerprints.
+    pub boundary_state_identity: Option<String>,
+    /// Digest of terminal boundaries and all available value projections.
+    pub downstream_state_identity: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct BehaviorDescriptor {
+    pub objective_rng_identity: Option<String>,
+    pub actor_population_identity: Option<String>,
+    pub contact_behavior_identity: Option<String>,
+    pub boundary_state_identity: Option<String>,
+    pub downstream_state_identity: Option<String>,
     pub terminal_stage: [u8; 8],
     pub terminal_room: i16,
     pub terminal_layer: i16,
@@ -24,6 +43,7 @@ pub struct BehaviorDescriptor {
     pub midpoint_position_bin: [i32; 3],
     pub terminal_position_bin: [i32; 3],
     pub closest_exit_distance_bin: i32,
+    pub route_signature: u64,
     pub procedure_signature: u64,
     pub terminal: bool,
 }
@@ -44,6 +64,7 @@ pub struct BehaviorArchive {
 #[derive(Clone, Debug, Serialize)]
 pub struct BehaviorArchiveSummary {
     pub schema: &'static str,
+    pub policy: &'static str,
     pub entries: usize,
     pub selected: usize,
     pub selected_candidate_ids: Vec<String>,
@@ -82,7 +103,17 @@ impl BehaviorArchive {
         score: LexicographicScore,
         generation: u32,
     ) -> Result<(), BehaviorArchiveError> {
-        let descriptor = describe_behavior(&episode.corpus)?;
+        self.consider_with_context(episode, score, generation, &BehaviorContext::default())
+    }
+
+    pub fn consider_with_context(
+        &mut self,
+        episode: QEpisode,
+        score: LexicographicScore,
+        generation: u32,
+        context: &BehaviorContext,
+    ) -> Result<(), BehaviorArchiveError> {
+        let descriptor = describe_behavior_with_context(&episode.corpus, context)?;
         let candidate_id = episode
             .candidate
             .id()
@@ -160,7 +191,8 @@ impl BehaviorArchive {
         selected: &[ArchivedEpisode],
     ) -> Result<BehaviorArchiveSummary, BehaviorArchiveError> {
         Ok(BehaviorArchiveSummary {
-            schema: "dusklight-behavior-archive/v1",
+            schema: "dusklight-behavior-archive/v3",
+            policy: "one_native_quality_elite_per_cell_plus_farthest_first_novelty",
             entries: self.entries.len(),
             selected: selected.len(),
             selected_candidate_ids: selected
@@ -201,6 +233,13 @@ impl BehaviorArchive {
 pub fn describe_behavior(
     corpus: &TransitionCorpus,
 ) -> Result<BehaviorDescriptor, BehaviorArchiveError> {
+    describe_behavior_with_context(corpus, &BehaviorContext::default())
+}
+
+pub fn describe_behavior_with_context(
+    corpus: &TransitionCorpus,
+    context: &BehaviorContext,
+) -> Result<BehaviorDescriptor, BehaviorArchiveError> {
     corpus
         .validate()
         .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
@@ -209,6 +248,7 @@ pub fn describe_behavior(
             "behavior descriptors require a nonempty movement-state corpus",
         ));
     }
+    validate_context(context)?;
     let midpoint = &corpus.transitions[corpus.transitions.len() / 2].next_state;
     let terminal_transition = corpus.transitions.last().expect("nonempty was checked");
     let terminal = &terminal_transition.next_state;
@@ -218,8 +258,18 @@ pub fn describe_behavior(
     }
     let mut closest_exit = None::<f32>;
     let mut signature = 0xcbf29ce484222325_u64;
+    let mut route_signature = 0xcbf29ce484222325_u64;
     let mut previous_procedure = None;
+    let mut previous_route_bin = None;
     for transition in &corpus.transitions {
+        let route_bin = position_bin(&transition.next_state);
+        if previous_route_bin != Some(route_bin) {
+            for coordinate in route_bin {
+                route_signature ^= coordinate as u32 as u64;
+                route_signature = route_signature.wrapping_mul(0x100000001b3);
+            }
+            previous_route_bin = Some(route_bin);
+        }
         for state in [&transition.state, &transition.next_state] {
             if state[41] == 1.0 {
                 closest_exit =
@@ -234,6 +284,11 @@ pub fn describe_behavior(
         }
     }
     Ok(BehaviorDescriptor {
+        objective_rng_identity: context.objective_rng_identity.clone(),
+        actor_population_identity: context.actor_population_identity.clone(),
+        contact_behavior_identity: context.contact_behavior_identity.clone(),
+        boundary_state_identity: context.boundary_state_identity.clone(),
+        downstream_state_identity: context.downstream_state_identity.clone(),
         terminal_stage: stage,
         terminal_room: terminal[8].round() as i16,
         terminal_layer: terminal[9].round() as i16,
@@ -242,9 +297,32 @@ pub fn describe_behavior(
         terminal_position_bin: position_bin(terminal),
         closest_exit_distance_bin: closest_exit
             .map_or(-1, |distance| (distance * 8192.0 / 128.0).round() as i32),
+        route_signature,
         procedure_signature: signature,
         terminal: terminal_transition.terminal,
     })
+}
+
+fn validate_context(context: &BehaviorContext) -> Result<(), BehaviorArchiveError> {
+    for (name, digest) in [
+        ("objective RNG", &context.objective_rng_identity),
+        ("actor population", &context.actor_population_identity),
+        ("contact behavior", &context.contact_behavior_identity),
+        ("boundary state", &context.boundary_state_identity),
+        ("downstream state", &context.downstream_state_identity),
+    ] {
+        if digest.as_ref().is_some_and(|digest| {
+            digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        }) {
+            return Err(BehaviorArchiveError::new(format!(
+                "behavior {name} identity is not lowercase SHA-256"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn position_bin(state: &[f32]) -> [i32; 3] {
@@ -270,6 +348,21 @@ fn novelty(
 
 fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) -> u128 {
     let mut distance = 0_u128;
+    if left.objective_rng_identity != right.objective_rng_identity {
+        distance += 1_u128 << 116;
+    }
+    if left.actor_population_identity != right.actor_population_identity {
+        distance += 1_u128 << 112;
+    }
+    if left.contact_behavior_identity != right.contact_behavior_identity {
+        distance += 1_u128 << 110;
+    }
+    if left.boundary_state_identity != right.boundary_state_identity {
+        distance += 1_u128 << 109;
+    }
+    if left.downstream_state_identity != right.downstream_state_identity {
+        distance += 1_u128 << 108;
+    }
     if left.terminal_stage != right.terminal_stage {
         distance += 1_u128 << 96;
     }
@@ -281,6 +374,9 @@ fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) ->
     }
     if left.procedure_signature != right.procedure_signature {
         distance += 1_u128 << 48;
+    }
+    if left.route_signature != right.route_signature {
+        distance += 1_u128 << 40;
     }
     for (left, right) in left
         .midpoint_position_bin
@@ -372,16 +468,22 @@ mod tests {
                 transitions,
             )
             .unwrap(),
+            outcome: crate::episode::EpisodeOutcomeClass::Successful,
         }
     }
 
     fn score(tick: u64) -> LexicographicScore {
         LexicographicScore {
+            goal_feasible: true,
             milestone_depth: 2,
             successes: 1,
             attempts: 1,
             median_first_hit_tick: tick,
             best_first_hit_tick: tick,
+            tape_frames: tick,
+            input_complexity: 0,
+            risk_events: None,
+            boundary_compatibility: crate::search::BoundaryCompatibility::Unknown,
         }
     }
 
@@ -405,5 +507,67 @@ mod tests {
             .unwrap();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].descriptor.terminal_player_procedure, 7);
+    }
+
+    #[test]
+    fn map_elites_cells_separate_rng_actors_contacts_and_boundaries() {
+        let mut archive = BehaviorArchive::default();
+        let contexts = [
+            BehaviorContext {
+                objective_rng_identity: Some("01".repeat(32)),
+                actor_population_identity: Some("11".repeat(32)),
+                downstream_state_identity: Some("21".repeat(32)),
+                ..BehaviorContext::default()
+            },
+            BehaviorContext {
+                objective_rng_identity: Some("02".repeat(32)),
+                actor_population_identity: Some("11".repeat(32)),
+                downstream_state_identity: Some("21".repeat(32)),
+                ..BehaviorContext::default()
+            },
+            BehaviorContext {
+                objective_rng_identity: Some("01".repeat(32)),
+                actor_population_identity: Some("12".repeat(32)),
+                downstream_state_identity: Some("21".repeat(32)),
+                ..BehaviorContext::default()
+            },
+            BehaviorContext {
+                objective_rng_identity: Some("01".repeat(32)),
+                actor_population_identity: Some("11".repeat(32)),
+                downstream_state_identity: Some("22".repeat(32)),
+                ..BehaviorContext::default()
+            },
+            BehaviorContext {
+                objective_rng_identity: Some("01".repeat(32)),
+                actor_population_identity: Some("11".repeat(32)),
+                contact_behavior_identity: Some("31".repeat(32)),
+                downstream_state_identity: Some("21".repeat(32)),
+                ..BehaviorContext::default()
+            },
+            BehaviorContext {
+                objective_rng_identity: Some("01".repeat(32)),
+                actor_population_identity: Some("11".repeat(32)),
+                boundary_state_identity: Some("41".repeat(32)),
+                downstream_state_identity: Some("21".repeat(32)),
+                ..BehaviorContext::default()
+            },
+        ];
+        for (index, context) in contexts.iter().enumerate() {
+            archive
+                .consider_with_context(episode(100.0, 4.0, 8), score(10), index as u32, context)
+                .unwrap();
+        }
+        assert_eq!(archive.len(), 6);
+        let descriptors = archive.entries.keys().cloned().collect::<Vec<_>>();
+        let selected = archive
+            .select_diverse(&HashSet::new(), &descriptors[..1], 5)
+            .unwrap();
+        assert_eq!(selected.len(), 5);
+        let summary = archive.summary(&selected).unwrap();
+        assert_eq!(summary.schema, "dusklight-behavior-archive/v3");
+        assert_eq!(
+            summary.policy,
+            "one_native_quality_elite_per_cell_plus_farthest_first_novelty"
+        );
     }
 }

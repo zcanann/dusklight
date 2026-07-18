@@ -15,14 +15,16 @@ struct MilestoneObservation;
 
 inline constexpr std::array<std::uint8_t, 4> kMilestoneProgramMagic{'D', 'M', 'S', 'P'};
 inline constexpr std::uint16_t kMilestoneProgramWireMajor = 1;
-inline constexpr std::uint16_t kMilestoneProgramWireMinor = 0;
+inline constexpr std::uint16_t kMilestoneProgramWireMinor = 4;
 inline constexpr std::uint16_t kMilestoneProgramLanguageMajor = 1;
-inline constexpr std::uint16_t kMilestoneProgramLanguageMinor = 0;
+inline constexpr std::uint16_t kMilestoneProgramLanguageMinor = 4;
 inline constexpr std::size_t kMilestoneProgramMaximumBytes = 1024 * 1024;
 inline constexpr std::size_t kMilestoneProgramMaximumDefinitions = 256;
 inline constexpr std::size_t kMilestoneProgramMaximumNameBytes = 96;
 inline constexpr std::size_t kMilestoneProgramMaximumSymbolBytes = 64;
 inline constexpr std::size_t kMilestoneProgramMaximumOps = 256;
+inline constexpr std::size_t kMilestoneProgramMaximumProjections = 8;
+inline constexpr std::size_t kMilestoneProgramMaximumProjectionItems = 32;
 inline constexpr std::size_t kMilestoneProgramMaximumStackDepth = 32;
 inline constexpr std::uint64_t kMilestoneProgramUnavailableTapeFrame = ~std::uint64_t{0};
 
@@ -83,12 +85,39 @@ struct MilestoneProgramContext {
     std::optional<std::uint64_t> tapeFrame;
 };
 
+enum class MilestoneValueProjectionKind : std::uint8_t {
+    Rng = 1,
+    ActorPopulation = 2,
+    Flag = 3,
+};
+
+struct MilestoneValueProjectionItem {
+    MilestoneValueProjectionKind kind = MilestoneValueProjectionKind::Rng;
+    std::uint8_t selector = 0;
+    std::array<char, 8> stage{};
+    std::int8_t room = -1;
+    std::uint16_t index = 0;
+};
+
+struct MilestoneValueProjection {
+    std::string name;
+    std::string identity;
+    std::vector<MilestoneValueProjectionItem> items;
+};
+
 struct MilestoneProgramDefinition {
     // Canonical, already-validated stack-machine instruction. Public only so the bounded
     // decoder can be implemented in small helpers; callers should use evaluate().
     struct Instruction {
         std::uint8_t opcode = 0;
         std::uint8_t field = 0;
+        std::uint8_t queryKind = 0;
+        std::array<char, 8> queryStage{};
+        std::int8_t queryRoom = -1;
+        std::uint16_t querySetId = 0xffff;
+        std::int16_t queryActorName = -1;
+        std::uint16_t queryIndex = 0;
+        std::array<float, 6> queryValues{};
         std::uint64_t bits = 0;
         std::array<char, kMilestoneProgramMaximumSymbolBytes> symbol{};
         std::uint8_t symbolLength = 0;
@@ -101,9 +130,19 @@ struct MilestoneProgramDefinition {
     std::string definitionDigest;
 
     [[nodiscard]] bool evaluate(const MilestoneProgramContext& context) const;
+    [[nodiscard]] std::size_t sequenceStepCount() const { return mSequenceStepEnds.size(); }
+    [[nodiscard]] std::uint16_t sequenceWithinTicks() const { return mSequenceWithinTicks; }
+    [[nodiscard]] bool evaluateSequenceStep(
+        std::size_t step, const MilestoneProgramContext& context) const;
+    [[nodiscard]] std::span<const MilestoneValueProjection> valueProjections() const {
+        return mValueProjections;
+    }
 
 private:
     std::vector<Instruction> mInstructions;
+    std::vector<std::size_t> mSequenceStepEnds;
+    std::uint16_t mSequenceWithinTicks = 0;
+    std::vector<MilestoneValueProjection> mValueProjections;
 
     friend MilestoneProgramError decode_milestone_program(std::span<const std::uint8_t>,
         MilestoneProgramSymbolResolver, class MilestoneProgram&);

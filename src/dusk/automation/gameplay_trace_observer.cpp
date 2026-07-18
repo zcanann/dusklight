@@ -1,6 +1,7 @@
 #include "dusk/automation/gameplay_trace_observer.hpp"
 
 #include "dusk/automation/gameplay_trace.hpp"
+#include "dusk/automation/milestones.hpp"
 
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
@@ -284,6 +285,55 @@ float box_signed_distance(const cXyz& local, const cXyz& extent, bool& inside) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+std::uint32_t fnv1a_32(const std::string_view value) {
+    std::uint32_t hash = 2166136261u;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+struct SelectedActorCapture {
+    GameplayTraceSelectedActorsSample* output = nullptr;
+    const fopAc_ac_c* player = nullptr;
+};
+
+int capture_selected_actor(void* candidate, void* context) {
+    const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
+    auto* capture = static_cast<SelectedActorCapture*>(context);
+    if (actor == capture->player)
+        return 1;
+    auto& output = *capture->output;
+    if (output.observedCount != std::numeric_limits<std::uint32_t>::max())
+        ++output.observedCount;
+    const GameplayTraceSelectedActorSample observed{
+        .sessionProcessId = static_cast<std::uint32_t>(fopAcM_GetID(actor)),
+        .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
+        .setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor)),
+        .homeRoom = actor->home.roomNo,
+        .currentRoom = actor->current.roomNo,
+        .health = actor->health,
+        .status = actor->actor_status,
+        .position = {actor->current.pos.x, actor->current.pos.y, actor->current.pos.z},
+        .currentAngle = {
+            actor->current.angle.x, actor->current.angle.y, actor->current.angle.z},
+        .shapeAngle = {actor->shape_angle.x, actor->shape_angle.y, actor->shape_angle.z},
+    };
+    if (output.count < output.actors.size()) {
+        output.actors[output.count++] = observed;
+    } else {
+        output.flags |= GameplayTraceSelectedActorsTruncated;
+        auto largest = std::max_element(output.actors.begin(), output.actors.end(),
+            [](const auto& left, const auto& right) {
+                return left.sessionProcessId < right.sessionProcessId;
+            });
+        if (observed.sessionProcessId < largest->sessionProcessId)
+            *largest = observed;
+    }
+    return 1;
+}
+
 }  // namespace
 
 #endif
@@ -377,6 +427,48 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
         sample.rng = capture_game_rng_snapshot();
     }
 
+    if (wants(Channel::GoalProgress)) {
+        sample.goalProgressStatus = Status::Present;
+        auto& output = sample.goalProgress;
+        const auto& tracker = milestone_tracker();
+        output.requestedCount = static_cast<std::uint16_t>(
+            std::min<std::size_t>(tracker.hits().size() + tracker.authoredHits().size(), 0xffff));
+        output.hitCount = static_cast<std::uint16_t>(
+            std::ranges::count(tracker.hits(), true, &MilestoneHit::hit) +
+            std::ranges::count(tracker.authoredHits(), true, &AuthoredMilestoneHit::hit));
+        if (const auto goalName = tracker.goalName(); goalName.has_value()) {
+            output.flags |= GameplayTraceGoalConfigured;
+            output.goalNameHash = fnv1a_32(*goalName);
+            if (const auto goal = tracker.goal(); goal.has_value()) {
+                const auto found = std::ranges::find(tracker.hits(), *goal, &MilestoneHit::id);
+                output.stableTicks = 1;
+                output.consecutiveTicks = found != tracker.hits().end() && found->hit ? 1 : 0;
+                if (found != tracker.hits().end() && found->hit) {
+                    output.flags |= GameplayTraceGoalReached |
+                                    GameplayTraceGoalFirstHitTickPresent;
+                    output.firstHitTick = found->simulationTick;
+                }
+            } else {
+                output.flags |= GameplayTraceGoalAuthored;
+                const auto found = std::ranges::find(
+                    tracker.authoredHits(), *goalName, &AuthoredMilestoneHit::id);
+                if (found != tracker.authoredHits().end()) {
+                    output.stableTicks = found->stableTicks;
+                    output.consecutiveTicks = found->consecutiveTicks;
+                    output.sequenceSteps = found->sequenceSteps;
+                    output.sequenceNextStep = found->sequenceNextStep;
+                    output.sequenceWithinTicks = found->sequenceWithinTicks;
+                    output.sequenceElapsedTicks = found->sequenceElapsedTicks;
+                    if (found->hit) {
+                        output.flags |= GameplayTraceGoalReached |
+                                        GameplayTraceGoalFirstHitTickPresent;
+                        output.firstHitTick = found->simulationTick;
+                    }
+                }
+            }
+        }
+    }
+
     if (wants(Channel::Camera)) {
         const auto* camera = static_cast<const camera_process_class*>(dComIfGp_getCamera(0));
         sample.cameraStatus = camera == nullptr ? Status::Absent : Status::Unavailable;
@@ -408,7 +500,8 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
 
     const bool wantsPlayer =
         wants(Channel::PlayerMotion) || wants(Channel::PlayerAction) || wants(Channel::SceneExit) ||
-        wants(Channel::PlayerBackgroundCollision) || wants(Channel::PlayerCollisionSurfaces);
+        wants(Channel::PlayerBackgroundCollision) || wants(Channel::PlayerCollisionSurfaces) ||
+        wants(Channel::SelectedActors);
     const fopAc_ac_c* player = wantsPlayer ? dComIfGp_getPlayer(0) : nullptr;
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
     const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
@@ -820,6 +913,19 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                 }
             }
         }
+    }
+
+    if (wants(Channel::SelectedActors)) {
+        sample.selectedActorsStatus = Status::Present;
+        SelectedActorCapture capture{&sample.selectedActors, player};
+        fopAcIt_Executor(capture_selected_actor, &capture);
+        std::sort(sample.selectedActors.actors.begin(),
+            sample.selectedActors.actors.begin() + sample.selectedActors.count,
+            [](const auto& left, const auto& right) {
+                return left.sessionProcessId < right.sessionProcessId;
+            });
+        if (sample.selectedActors.observedCount > sample.selectedActors.count)
+            sample.selectedActors.flags |= GameplayTraceSelectedActorsTruncated;
     }
 
     recorder.record(sample);

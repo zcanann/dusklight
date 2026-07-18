@@ -11,7 +11,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 8] = b"DUSKCTRL";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 1;
+pub const VERSION_MINOR: u16 = 4;
 const MIN_SUPPORTED_MINOR: u16 = 0;
 pub const HEADER_SIZE: usize = 32;
 pub const RECORD_SIZE: usize = 64;
@@ -22,6 +22,16 @@ const KIND_CUBIC_BEZIER: u8 = 1;
 const KIND_SEEK_POINT: u8 = 2;
 const KIND_SEEK_ACTOR: u8 = 3;
 const KIND_BUTTONS: u8 = 4;
+const KIND_SEEK_COORDINATE: u8 = 5;
+const KIND_SEEK_PLANE: u8 = 6;
+const KIND_SEEK_RESOLVED: u8 = 7;
+const KIND_NEUTRAL: u8 = 8;
+const KIND_TURN: u8 = 9;
+const KIND_BRAKE: u8 = 10;
+const KIND_HEADING: u8 = 11;
+const KIND_MAINTAIN_DISTANCE: u8 = 12;
+const KIND_CAMERA: u8 = 13;
+const KIND_SAFETY_CLAMP: u8 = 14;
 const BLEND_REPLACE: u8 = 0;
 const BLEND_ADD: u8 = 1;
 const BLEND_OR: u8 = 2;
@@ -62,6 +72,70 @@ pub enum Operation {
         stop_radius: f32,
         magnitude: u8,
     },
+    SeekCoordinate {
+        blend: StickBlend,
+        frame: CoordinateFrame,
+        target: [f32; 3],
+        offset: [f32; 3],
+        stop_radius: f32,
+        magnitude: u8,
+    },
+    SeekPlane {
+        blend: StickBlend,
+        frame: CoordinateFrame,
+        point: [f32; 3],
+        normal: [f32; 3],
+        stop_radius: f32,
+        magnitude: u8,
+    },
+    SeekResolved {
+        blend: StickBlend,
+        target: ResolvedTarget,
+        offset: [f32; 3],
+        stop_radius: f32,
+        magnitude: u8,
+    },
+    Neutral,
+    Turn {
+        blend: StickBlend,
+        direction: TurnDirection,
+        magnitude: u8,
+    },
+    Brake {
+        blend: StickBlend,
+        stop_speed: f32,
+        magnitude: u8,
+    },
+    Align {
+        blend: StickBlend,
+        frame: CoordinateFrame,
+        heading_radians: f32,
+        tolerance_radians: f32,
+        magnitude: u8,
+    },
+    MaintainHeading {
+        blend: StickBlend,
+        frame: CoordinateFrame,
+        heading_radians: f32,
+        magnitude: u8,
+    },
+    MaintainDistance {
+        blend: StickBlend,
+        frame: CoordinateFrame,
+        target: [f32; 3],
+        distance: f32,
+        tolerance: f32,
+        magnitude: u8,
+    },
+    Camera {
+        blend: StickBlend,
+        x: i16,
+        y: i16,
+    },
+    SafetyClamp {
+        main_limit: u8,
+        substick_limit: u8,
+    },
     Buttons {
         mask: u16,
     },
@@ -78,6 +152,35 @@ pub enum ActorSelector {
         set_id: u16,
         room: i8,
         stage_name: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinateFrame {
+    World,
+    Player,
+    Camera,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnDirection {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResolvedTarget {
+    PathPoint {
+        path_id: u64,
+        point_index: u32,
+        position: [f32; 3],
+    },
+    Opening {
+        opening_id: u64,
+        position: [f32; 3],
     },
 }
 
@@ -199,6 +302,125 @@ impl ControllerProgram {
                         }
                     }
                 }
+                Operation::SeekCoordinate {
+                    target,
+                    offset,
+                    stop_radius,
+                    magnitude,
+                    ..
+                } => {
+                    validate_floats(index, target, offset, *stop_radius)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::SeekPlane {
+                    point,
+                    normal,
+                    stop_radius,
+                    magnitude,
+                    ..
+                } => {
+                    validate_floats(index, point, normal, *stop_radius)?;
+                    validate_magnitude(index, *magnitude)?;
+                    let horizontal_length_squared =
+                        f64::from(normal[0]).powi(2) + f64::from(normal[2]).powi(2);
+                    if horizontal_length_squared <= f64::EPSILON {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} plane normal has no horizontal component"
+                        )));
+                    }
+                }
+                Operation::SeekResolved {
+                    target,
+                    offset,
+                    stop_radius,
+                    magnitude,
+                    ..
+                } => {
+                    let position = match target {
+                        ResolvedTarget::PathPoint {
+                            path_id, position, ..
+                        } if *path_id != 0 => position,
+                        ResolvedTarget::Opening {
+                            opening_id,
+                            position,
+                        } if *opening_id != 0 => position,
+                        _ => {
+                            return Err(ControllerError::new(format!(
+                                "layer {index} resolved target ID must be nonzero"
+                            )));
+                        }
+                    };
+                    validate_floats(index, position, offset, *stop_radius)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::Neutral => {}
+                Operation::Turn { magnitude, .. } => {
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::Brake {
+                    stop_speed,
+                    magnitude,
+                    ..
+                } => {
+                    validate_nonnegative(index, "stop speed", *stop_speed)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::Align {
+                    heading_radians,
+                    tolerance_radians,
+                    magnitude,
+                    ..
+                } => {
+                    validate_heading(index, *heading_radians)?;
+                    validate_tolerance(index, "heading tolerance", *tolerance_radians)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::MaintainHeading {
+                    heading_radians,
+                    magnitude,
+                    ..
+                } => {
+                    validate_heading(index, *heading_radians)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::MaintainDistance {
+                    target,
+                    distance,
+                    tolerance,
+                    magnitude,
+                    ..
+                } => {
+                    if target.iter().any(|value| !value.is_finite()) {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} contains a non-finite float"
+                        )));
+                    }
+                    validate_nonnegative(index, "distance", *distance)?;
+                    validate_nonnegative(index, "distance tolerance", *tolerance)?;
+                    if tolerance > distance {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} distance tolerance must not exceed distance"
+                        )));
+                    }
+                    validate_magnitude(index, *magnitude)?;
+                }
+                Operation::Camera { x, y, .. } => {
+                    if !(-128..=127).contains(x) || !(-128..=127).contains(y) {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} camera values must be in -128..=127"
+                        )));
+                    }
+                }
+                Operation::SafetyClamp {
+                    main_limit,
+                    substick_limit,
+                } => {
+                    if *main_limit > 127 || *substick_limit > 127 {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} safety-clamp limits must be in 0..=127"
+                        )));
+                    }
+                }
                 Operation::Buttons { mask } => {
                     if *mask == 0 {
                         return Err(ControllerError::new(format!(
@@ -224,6 +446,24 @@ impl ControllerProgram {
                 }
             }
         }
+        reject_overlapping_layers(
+            &self.layers,
+            |layer| {
+                matches!(
+                    layer.operation,
+                    Operation::Camera {
+                        blend: StickBlend::Replace,
+                        ..
+                    }
+                )
+            },
+            "camera replacement",
+        )?;
+        reject_overlapping_layers(
+            &self.layers,
+            |layer| matches!(layer.operation, Operation::SafetyClamp { .. }),
+            "safety clamp",
+        )?;
         Ok(())
     }
 
@@ -321,6 +561,49 @@ impl ControllerProgram {
                 "exact actor selectors require controller version 1.1",
             ));
         }
+        if minor < 2
+            && self.layers.iter().any(|layer| {
+                matches!(
+                    layer.operation,
+                    Operation::SeekCoordinate { .. }
+                        | Operation::SeekPlane { .. }
+                        | Operation::SeekResolved { .. }
+                )
+            })
+        {
+            return Err(ControllerError::new(
+                "coordinate, plane, path-point, and opening targets require controller version 1.2",
+            ));
+        }
+        if minor < 3
+            && self.layers.iter().any(|layer| {
+                matches!(
+                    layer.operation,
+                    Operation::Neutral
+                        | Operation::Turn { .. }
+                        | Operation::Brake { .. }
+                        | Operation::Align { .. }
+                        | Operation::MaintainHeading { .. }
+                        | Operation::MaintainDistance { .. }
+                )
+            })
+        {
+            return Err(ControllerError::new(
+                "turn, brake, neutral, align, heading, and distance controls require controller version 1.3",
+            ));
+        }
+        if minor < 4
+            && self.layers.iter().any(|layer| {
+                matches!(
+                    layer.operation,
+                    Operation::Camera { .. } | Operation::SafetyClamp { .. }
+                )
+            })
+        {
+            return Err(ControllerError::new(
+                "camera and safety-clamp layers require controller version 1.4",
+            ));
+        }
         let payload_len = self.layers.len() * RECORD_SIZE;
         let mut output = vec![0_u8; HEADER_SIZE + payload_len];
         output[..8].copy_from_slice(MAGIC);
@@ -352,7 +635,36 @@ impl Layer {
             } | Operation::SeekActor {
                 blend: StickBlend::Replace,
                 ..
-            }
+            } | Operation::SeekCoordinate {
+                blend: StickBlend::Replace,
+                ..
+            } | Operation::SeekPlane {
+                blend: StickBlend::Replace,
+                ..
+            } | Operation::SeekResolved {
+                blend: StickBlend::Replace,
+                ..
+            } | Operation::Neutral
+                | Operation::Turn {
+                    blend: StickBlend::Replace,
+                    ..
+                }
+                | Operation::Brake {
+                    blend: StickBlend::Replace,
+                    ..
+                }
+                | Operation::Align {
+                    blend: StickBlend::Replace,
+                    ..
+                }
+                | Operation::MaintainHeading {
+                    blend: StickBlend::Replace,
+                    ..
+                }
+                | Operation::MaintainDistance {
+                    blend: StickBlend::Replace,
+                    ..
+                }
         )
     }
 }
@@ -360,6 +672,28 @@ impl Layer {
 fn ranges_overlap(left: &Layer, right: &Layer) -> bool {
     left.start_frame < right.start_frame + right.duration_frames
         && right.start_frame < left.start_frame + left.duration_frames
+}
+
+fn reject_overlapping_layers(
+    layers: &[Layer],
+    selected: impl Fn(&Layer) -> bool,
+    label: &str,
+) -> Result<(), ControllerError> {
+    let selected: Vec<_> = layers
+        .iter()
+        .enumerate()
+        .filter(|(_, layer)| selected(layer))
+        .collect();
+    for (position, (left_index, left)) in selected.iter().enumerate() {
+        for (right_index, right) in &selected[position + 1..] {
+            if ranges_overlap(left, right) {
+                return Err(ControllerError::new(format!(
+                    "{label} layers {left_index} and {right_index} overlap"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_floats(
@@ -385,6 +719,33 @@ fn validate_magnitude(index: usize, magnitude: u8) -> Result<(), ControllerError
     if !(1..=127).contains(&magnitude) {
         return Err(ControllerError::new(format!(
             "layer {index} magnitude must be in 1..=127"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_nonnegative(index: usize, name: &str, value: f32) -> Result<(), ControllerError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(ControllerError::new(format!(
+            "layer {index} {name} must be finite and nonnegative"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_heading(index: usize, value: f32) -> Result<(), ControllerError> {
+    if !value.is_finite() || !(-std::f32::consts::PI..=std::f32::consts::PI).contains(&value) {
+        return Err(ControllerError::new(format!(
+            "layer {index} heading must be finite and in [-pi, pi] radians"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_tolerance(index: usize, name: &str, value: f32) -> Result<(), ControllerError> {
+    if !value.is_finite() || !(0.0..=std::f32::consts::PI).contains(&value) {
+        return Err(ControllerError::new(format!(
+            "layer {index} {name} must be finite and in [0, pi] radians"
         )));
     }
     Ok(())
@@ -431,7 +792,8 @@ pub fn parse(source: &str) -> Result<ControllerProgram, ControllerError> {
                 }
                 duration_frames = Some(parse_number(tokens[1], line_number, "frame count")?);
             }
-            "bezier" | "seek" | "buttons" => {
+            "bezier" | "seek" | "buttons" | "neutral" | "turn" | "brake" | "align" | "maintain"
+            | "camera" | "clamp" => {
                 if duration_frames.is_none() {
                     return Err(ControllerError::at(
                         line_number,
@@ -482,13 +844,337 @@ fn parse_layer(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
         "bezier" => parse_bezier(tokens, line),
         "seek" if tokens.get(1) == Some(&"point") => parse_seek_point(tokens, line),
         "seek" if tokens.get(1) == Some(&"actor") => parse_seek_actor(tokens, line),
+        "seek" if tokens.get(1) == Some(&"coordinate") => parse_seek_coordinate(tokens, line),
+        "seek" if tokens.get(1) == Some(&"plane") => parse_seek_plane(tokens, line),
+        "seek" if tokens.get(1) == Some(&"path-point") => parse_seek_resolved(tokens, line, true),
+        "seek" if tokens.get(1) == Some(&"opening") => parse_seek_resolved(tokens, line, false),
         "seek" => Err(ControllerError::at(
             line,
-            "seek kind must be `point` or `actor`",
+            "seek kind must be point, actor, coordinate, plane, path-point, or opening",
+        )),
+        "neutral" => parse_neutral(tokens, line),
+        "turn" => parse_turn(tokens, line),
+        "brake" => parse_brake(tokens, line),
+        "align" => parse_align(tokens, line),
+        "maintain" if tokens.get(1) == Some(&"heading") => parse_maintain_heading(tokens, line),
+        "maintain" if tokens.get(1) == Some(&"distance") => parse_maintain_distance(tokens, line),
+        "maintain" => Err(ControllerError::at(
+            line,
+            "maintain kind must be heading or distance",
         )),
         "buttons" => parse_buttons(tokens, line),
+        "camera" => parse_camera(tokens, line),
+        "clamp" => parse_safety_clamp(tokens, line),
         _ => unreachable!(),
     }
+}
+
+fn parse_neutral(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.get(1) != Some(&"replace") || tokens.len() != 6 {
+        return Err(ControllerError::at(
+            line,
+            "expected `neutral replace from N for N`",
+        ));
+    }
+    let (start_frame, duration_frames) = parse_range(tokens, 2, line)?;
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::Neutral,
+    })
+}
+
+fn parse_turn(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() < 7 {
+        return Err(ControllerError::at(line, "incomplete turn layer"));
+    }
+    let blend = parse_blend(tokens[1], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 2, line)?;
+    let mut direction = None;
+    let mut magnitude = None;
+    let mut cursor = 6;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "direction" => {
+                reject_duplicate(direction.is_some(), line, "direction")?;
+                direction = Some(
+                    match required_token(tokens, cursor + 1, line, "direction")? {
+                        "left" => TurnDirection::Left,
+                        "right" => TurnDirection::Right,
+                        value => {
+                            return Err(ControllerError::at(
+                                line,
+                                format!("unknown turn direction {value:?}; expected left or right"),
+                            ));
+                        }
+                    },
+                );
+                cursor += 2;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown turn field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::Turn {
+            blend,
+            direction: required_field(direction, line, "direction")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+        },
+    })
+}
+
+fn parse_brake(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() < 7 {
+        return Err(ControllerError::at(line, "incomplete brake layer"));
+    }
+    let blend = parse_blend(tokens[1], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 2, line)?;
+    let mut stop_speed = None;
+    let mut magnitude = None;
+    let mut cursor = 6;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "stop-speed" => {
+                reject_duplicate(stop_speed.is_some(), line, "stop-speed")?;
+                stop_speed = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "stop speed")?,
+                    line,
+                    "stop speed",
+                )?);
+                cursor += 2;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown brake field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::Brake {
+            blend,
+            stop_speed: required_field(stop_speed, line, "stop-speed")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+        },
+    })
+}
+
+fn parse_heading_fields(
+    tokens: &[&str],
+    line: usize,
+    cursor_start: usize,
+    require_tolerance: bool,
+) -> Result<(CoordinateFrame, f32, Option<f32>, u8), ControllerError> {
+    let mut frame = None;
+    let mut heading = None;
+    let mut tolerance = None;
+    let mut magnitude = None;
+    let mut cursor = cursor_start;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "frame" => {
+                reject_duplicate(frame.is_some(), line, "frame")?;
+                frame = Some(parse_coordinate_frame(
+                    required_token(tokens, cursor + 1, line, "frame")?,
+                    line,
+                )?);
+                cursor += 2;
+            }
+            "heading" => {
+                reject_duplicate(heading.is_some(), line, "heading")?;
+                heading = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "heading")?,
+                    line,
+                    "heading",
+                )?);
+                cursor += 2;
+            }
+            "tolerance" if require_tolerance => {
+                reject_duplicate(tolerance.is_some(), line, "tolerance")?;
+                tolerance = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "tolerance")?,
+                    line,
+                    "tolerance",
+                )?);
+                cursor += 2;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown heading field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok((
+        required_field(frame, line, "frame")?,
+        required_field(heading, line, "heading")?,
+        if require_tolerance {
+            Some(required_field(tolerance, line, "tolerance")?)
+        } else {
+            None
+        },
+        required_field(magnitude, line, "magnitude")?,
+    ))
+}
+
+fn parse_align(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() < 7 {
+        return Err(ControllerError::at(line, "incomplete align layer"));
+    }
+    let blend = parse_blend(tokens[1], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 2, line)?;
+    let (frame, heading_radians, tolerance, magnitude) =
+        parse_heading_fields(tokens, line, 6, true)?;
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::Align {
+            blend,
+            frame,
+            heading_radians,
+            tolerance_radians: tolerance.expect("required tolerance"),
+            magnitude,
+        },
+    })
+}
+
+fn parse_maintain_heading(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() < 8 {
+        return Err(ControllerError::at(
+            line,
+            "incomplete maintain heading layer",
+        ));
+    }
+    let blend = parse_blend(tokens[2], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 3, line)?;
+    let (frame, heading_radians, _, magnitude) = parse_heading_fields(tokens, line, 7, false)?;
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::MaintainHeading {
+            blend,
+            frame,
+            heading_radians,
+            magnitude,
+        },
+    })
+}
+
+fn parse_maintain_distance(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() < 8 {
+        return Err(ControllerError::at(
+            line,
+            "incomplete maintain distance layer",
+        ));
+    }
+    let blend = parse_blend(tokens[2], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 3, line)?;
+    let mut frame = None;
+    let mut target = None;
+    let mut distance = None;
+    let mut tolerance = None;
+    let mut magnitude = None;
+    let mut cursor = 7;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "frame" => {
+                reject_duplicate(frame.is_some(), line, "frame")?;
+                frame = Some(parse_coordinate_frame(
+                    required_token(tokens, cursor + 1, line, "frame")?,
+                    line,
+                )?);
+                cursor += 2;
+            }
+            "target" => {
+                reject_duplicate(target.is_some(), line, "target")?;
+                target = Some(parse_vec3(tokens, cursor + 1, line, "target")?);
+                cursor += 4;
+            }
+            "distance" => {
+                reject_duplicate(distance.is_some(), line, "distance")?;
+                distance = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "distance")?,
+                    line,
+                    "distance",
+                )?);
+                cursor += 2;
+            }
+            "tolerance" => {
+                reject_duplicate(tolerance.is_some(), line, "tolerance")?;
+                tolerance = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "tolerance")?,
+                    line,
+                    "tolerance",
+                )?);
+                cursor += 2;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown maintain distance field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::MaintainDistance {
+            blend,
+            frame: required_field(frame, line, "frame")?,
+            target: required_field(target, line, "target")?,
+            distance: required_field(distance, line, "distance")?,
+            tolerance: required_field(tolerance, line, "tolerance")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+        },
+    })
 }
 
 fn parse_bezier(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
@@ -769,6 +1455,247 @@ fn parse_seek_actor(tokens: &[&str], line: usize) -> Result<Layer, ControllerErr
     })
 }
 
+fn parse_seek_coordinate(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    let (start_frame, duration_frames, mut cursor) = parse_seek_prefix(tokens, line)?;
+    let blend = parse_blend(tokens[2], line)?;
+    let mut frame = None;
+    let mut target = None;
+    let mut offset = None;
+    let mut magnitude = None;
+    let mut stop_radius = None;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "frame" => {
+                reject_duplicate(frame.is_some(), line, "frame")?;
+                frame = Some(parse_coordinate_frame(
+                    required_token(tokens, cursor + 1, line, "coordinate frame")?,
+                    line,
+                )?);
+                cursor += 2;
+            }
+            "target" => {
+                reject_duplicate(target.is_some(), line, "target")?;
+                target = Some(parse_vec3(tokens, cursor + 1, line, "target")?);
+                cursor += 4;
+            }
+            "offset" => {
+                reject_duplicate(offset.is_some(), line, "offset")?;
+                offset = Some(parse_vec3(tokens, cursor + 1, line, "offset")?);
+                cursor += 4;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            "stop" => {
+                reject_duplicate(stop_radius.is_some(), line, "stop")?;
+                stop_radius = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "stop radius")?,
+                    line,
+                    "stop radius",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown seek coordinate field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::SeekCoordinate {
+            blend,
+            frame: required_field(frame, line, "frame")?,
+            target: required_field(target, line, "target")?,
+            offset: required_field(offset, line, "offset")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+            stop_radius: required_field(stop_radius, line, "stop")?,
+        },
+    })
+}
+
+fn parse_seek_plane(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    let (start_frame, duration_frames, mut cursor) = parse_seek_prefix(tokens, line)?;
+    let blend = parse_blend(tokens[2], line)?;
+    let mut frame = None;
+    let mut point = None;
+    let mut normal = None;
+    let mut magnitude = None;
+    let mut stop_radius = None;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "frame" => {
+                reject_duplicate(frame.is_some(), line, "frame")?;
+                frame = Some(parse_coordinate_frame(
+                    required_token(tokens, cursor + 1, line, "coordinate frame")?,
+                    line,
+                )?);
+                cursor += 2;
+            }
+            "point" => {
+                reject_duplicate(point.is_some(), line, "point")?;
+                point = Some(parse_vec3(tokens, cursor + 1, line, "plane point")?);
+                cursor += 4;
+            }
+            "normal" => {
+                reject_duplicate(normal.is_some(), line, "normal")?;
+                normal = Some(parse_vec3(tokens, cursor + 1, line, "plane normal")?);
+                cursor += 4;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            "stop" => {
+                reject_duplicate(stop_radius.is_some(), line, "stop")?;
+                stop_radius = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "stop radius")?,
+                    line,
+                    "stop radius",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown seek plane field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::SeekPlane {
+            blend,
+            frame: required_field(frame, line, "frame")?,
+            point: required_field(point, line, "point")?,
+            normal: required_field(normal, line, "normal")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+            stop_radius: required_field(stop_radius, line, "stop")?,
+        },
+    })
+}
+
+fn parse_seek_resolved(
+    tokens: &[&str],
+    line: usize,
+    path_point: bool,
+) -> Result<Layer, ControllerError> {
+    let (start_frame, duration_frames, mut cursor) = parse_seek_prefix(tokens, line)?;
+    let blend = parse_blend(tokens[2], line)?;
+    let mut stable_id = None;
+    let mut point_index = None;
+    let mut target = None;
+    let mut offset = None;
+    let mut magnitude = None;
+    let mut stop_radius = None;
+    while cursor < tokens.len() {
+        match tokens[cursor] {
+            "path" if path_point => {
+                reject_duplicate(stable_id.is_some(), line, "path")?;
+                stable_id = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "path ID")?,
+                    line,
+                    "path ID",
+                )?);
+                cursor += 2;
+            }
+            "point" if path_point => {
+                reject_duplicate(point_index.is_some(), line, "point")?;
+                point_index = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "path point index")?,
+                    line,
+                    "path point index",
+                )?);
+                cursor += 2;
+            }
+            "opening" if !path_point => {
+                reject_duplicate(stable_id.is_some(), line, "opening")?;
+                stable_id = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "opening ID")?,
+                    line,
+                    "opening ID",
+                )?);
+                cursor += 2;
+            }
+            "target" => {
+                reject_duplicate(target.is_some(), line, "target")?;
+                target = Some(parse_vec3(tokens, cursor + 1, line, "target")?);
+                cursor += 4;
+            }
+            "offset" => {
+                reject_duplicate(offset.is_some(), line, "offset")?;
+                offset = Some(parse_vec3(tokens, cursor + 1, line, "offset")?);
+                cursor += 4;
+            }
+            "magnitude" => {
+                reject_duplicate(magnitude.is_some(), line, "magnitude")?;
+                magnitude = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "magnitude")?,
+                    line,
+                    "magnitude",
+                )?);
+                cursor += 2;
+            }
+            "stop" => {
+                reject_duplicate(stop_radius.is_some(), line, "stop")?;
+                stop_radius = Some(parse_number(
+                    required_token(tokens, cursor + 1, line, "stop radius")?,
+                    line,
+                    "stop radius",
+                )?);
+                cursor += 2;
+            }
+            unknown => {
+                return Err(ControllerError::at(
+                    line,
+                    format!("unknown resolved target field {unknown:?}"),
+                ));
+            }
+        }
+    }
+    let stable_id = required_field(stable_id, line, if path_point { "path" } else { "opening" })?;
+    let position = required_field(target, line, "target")?;
+    let target = if path_point {
+        ResolvedTarget::PathPoint {
+            path_id: stable_id,
+            point_index: required_field(point_index, line, "point")?,
+            position,
+        }
+    } else {
+        ResolvedTarget::Opening {
+            opening_id: stable_id,
+            position,
+        }
+    };
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::SeekResolved {
+            blend,
+            target,
+            offset: required_field(offset, line, "offset")?,
+            magnitude: required_field(magnitude, line, "magnitude")?,
+            stop_radius: required_field(stop_radius, line, "stop")?,
+        },
+    })
+}
+
 fn parse_seek_prefix(tokens: &[&str], line: usize) -> Result<(u32, u32, usize), ControllerError> {
     if tokens.len() < 7 {
         return Err(ControllerError::at(line, "incomplete seek layer"));
@@ -805,6 +1732,44 @@ fn parse_buttons(tokens: &[&str], line: usize) -> Result<Layer, ControllerError>
     })
 }
 
+fn parse_camera(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() != 10 || tokens.get(6) != Some(&"x") || tokens.get(8) != Some(&"y") {
+        return Err(ControllerError::at(
+            line,
+            "expected `camera BLEND from N for N x X y Y`",
+        ));
+    }
+    let blend = parse_blend(tokens[1], line)?;
+    let (start_frame, duration_frames) = parse_range(tokens, 2, line)?;
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::Camera {
+            blend,
+            x: parse_number(tokens[7], line, "camera X")?,
+            y: parse_number(tokens[9], line, "camera Y")?,
+        },
+    })
+}
+
+fn parse_safety_clamp(tokens: &[&str], line: usize) -> Result<Layer, ControllerError> {
+    if tokens.len() != 9 || tokens.get(5) != Some(&"main") || tokens.get(7) != Some(&"substick") {
+        return Err(ControllerError::at(
+            line,
+            "expected `clamp from N for N main N substick N`",
+        ));
+    }
+    let (start_frame, duration_frames) = parse_range(tokens, 1, line)?;
+    Ok(Layer {
+        start_frame,
+        duration_frames,
+        operation: Operation::SafetyClamp {
+            main_limit: parse_number(tokens[6], line, "main clamp")?,
+            substick_limit: parse_number(tokens[8], line, "substick clamp")?,
+        },
+    })
+}
+
 fn parse_range(tokens: &[&str], start: usize, line: usize) -> Result<(u32, u32), ControllerError> {
     if tokens.get(start) != Some(&"from") || tokens.get(start + 2) != Some(&"for") {
         return Err(ControllerError::at(line, "expected `from N for N`"));
@@ -829,6 +1794,18 @@ fn parse_blend(token: &str, line: usize) -> Result<StickBlend, ControllerError> 
         unknown => Err(ControllerError::at(
             line,
             format!("unknown stick blend {unknown:?}; expected replace or add"),
+        )),
+    }
+}
+
+fn parse_coordinate_frame(token: &str, line: usize) -> Result<CoordinateFrame, ControllerError> {
+    match token {
+        "world" => Ok(CoordinateFrame::World),
+        "player" => Ok(CoordinateFrame::Player),
+        "camera" => Ok(CoordinateFrame::Camera),
+        unknown => Err(ControllerError::at(
+            line,
+            format!("unknown coordinate frame {unknown:?}; expected world, player, or camera"),
         )),
     }
 }
@@ -962,6 +1939,166 @@ fn encode_layer(layer: &Layer, output: &mut [u8], minor: u16) -> Result<(), Cont
             put_f32(output, 28, *stop_radius);
             output[32] = *magnitude;
         }
+        Operation::SeekCoordinate {
+            blend,
+            frame,
+            target,
+            offset,
+            stop_radius,
+            magnitude,
+        } => {
+            output[0] = KIND_SEEK_COORDINATE;
+            output[1] = encode_blend(*blend);
+            output[12] = encode_coordinate_frame(*frame);
+            for (index, value) in target.iter().enumerate() {
+                put_f32(output, 16 + index * 4, *value);
+            }
+            for (index, value) in offset.iter().enumerate() {
+                put_f32(output, 28 + index * 4, *value);
+            }
+            put_f32(output, 40, *stop_radius);
+            output[44] = *magnitude;
+        }
+        Operation::SeekPlane {
+            blend,
+            frame,
+            point,
+            normal,
+            stop_radius,
+            magnitude,
+        } => {
+            output[0] = KIND_SEEK_PLANE;
+            output[1] = encode_blend(*blend);
+            output[12] = encode_coordinate_frame(*frame);
+            for (index, value) in point.iter().enumerate() {
+                put_f32(output, 16 + index * 4, *value);
+            }
+            for (index, value) in normal.iter().enumerate() {
+                put_f32(output, 28 + index * 4, *value);
+            }
+            put_f32(output, 40, *stop_radius);
+            output[44] = *magnitude;
+        }
+        Operation::SeekResolved {
+            blend,
+            target,
+            offset,
+            stop_radius,
+            magnitude,
+        } => {
+            output[0] = KIND_SEEK_RESOLVED;
+            output[1] = encode_blend(*blend);
+            let (kind, stable_id, sub_index, position) = match target {
+                ResolvedTarget::PathPoint {
+                    path_id,
+                    point_index,
+                    position,
+                } => (0, *path_id, *point_index, position),
+                ResolvedTarget::Opening {
+                    opening_id,
+                    position,
+                } => (1, *opening_id, 0, position),
+            };
+            output[12] = kind;
+            put_u64(output, 16, stable_id);
+            put_u32(output, 24, sub_index);
+            for (index, value) in position.iter().enumerate() {
+                put_f32(output, 28 + index * 4, *value);
+            }
+            for (index, value) in offset.iter().enumerate() {
+                put_f32(output, 40 + index * 4, *value);
+            }
+            put_f32(output, 52, *stop_radius);
+            output[56] = *magnitude;
+        }
+        Operation::Neutral => {
+            output[0] = KIND_NEUTRAL;
+            output[1] = BLEND_REPLACE;
+        }
+        Operation::Turn {
+            blend,
+            direction,
+            magnitude,
+        } => {
+            output[0] = KIND_TURN;
+            output[1] = encode_blend(*blend);
+            output[12] = match direction {
+                TurnDirection::Left => 0,
+                TurnDirection::Right => 1,
+            };
+            output[13] = *magnitude;
+        }
+        Operation::Brake {
+            blend,
+            stop_speed,
+            magnitude,
+        } => {
+            output[0] = KIND_BRAKE;
+            output[1] = encode_blend(*blend);
+            output[12] = *magnitude;
+            put_f32(output, 16, *stop_speed);
+        }
+        Operation::Align {
+            blend,
+            frame,
+            heading_radians,
+            tolerance_radians,
+            magnitude,
+        } => {
+            output[0] = KIND_HEADING;
+            output[1] = encode_blend(*blend);
+            output[12] = 0;
+            output[13] = encode_coordinate_frame(*frame);
+            output[14] = *magnitude;
+            put_f32(output, 16, *heading_radians);
+            put_f32(output, 20, *tolerance_radians);
+        }
+        Operation::MaintainHeading {
+            blend,
+            frame,
+            heading_radians,
+            magnitude,
+        } => {
+            output[0] = KIND_HEADING;
+            output[1] = encode_blend(*blend);
+            output[12] = 1;
+            output[13] = encode_coordinate_frame(*frame);
+            output[14] = *magnitude;
+            put_f32(output, 16, *heading_radians);
+        }
+        Operation::MaintainDistance {
+            blend,
+            frame,
+            target,
+            distance,
+            tolerance,
+            magnitude,
+        } => {
+            output[0] = KIND_MAINTAIN_DISTANCE;
+            output[1] = encode_blend(*blend);
+            output[12] = encode_coordinate_frame(*frame);
+            output[13] = *magnitude;
+            for (index, value) in target.iter().enumerate() {
+                put_f32(output, 16 + index * 4, *value);
+            }
+            put_f32(output, 28, *distance);
+            put_f32(output, 32, *tolerance);
+        }
+        Operation::Camera { blend, x, y } => {
+            output[0] = KIND_CAMERA;
+            output[1] = encode_blend(*blend);
+            put_i16(output, 12, *x);
+            put_i16(output, 14, *y);
+        }
+        Operation::SafetyClamp {
+            main_limit,
+            substick_limit,
+        } => {
+            output[0] = KIND_SAFETY_CLAMP;
+            output[1] = BLEND_REPLACE;
+            output[12] = *main_limit;
+            output[13] = *substick_limit;
+        }
         Operation::Buttons { mask } => {
             output[0] = KIND_BUTTONS;
             output[1] = BLEND_OR;
@@ -1079,6 +2216,179 @@ fn decode_layer(index: usize, input: &[u8], minor: u16) -> Result<Layer, Control
                 magnitude: input[32],
             }
         }
+        KIND_SEEK_COORDINATE if minor >= 2 => {
+            if input[13..16].iter().any(|byte| *byte != 0) {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical coordinate reserved bytes"
+                )));
+            }
+            require_zero(index, input, 45)?;
+            Operation::SeekCoordinate {
+                blend: decode_stick_blend(index, input[1])?,
+                frame: decode_coordinate_frame(index, input[12])?,
+                target: [get_f32(input, 16), get_f32(input, 20), get_f32(input, 24)],
+                offset: [get_f32(input, 28), get_f32(input, 32), get_f32(input, 36)],
+                stop_radius: get_f32(input, 40),
+                magnitude: input[44],
+            }
+        }
+        KIND_SEEK_PLANE if minor >= 2 => {
+            if input[13..16].iter().any(|byte| *byte != 0) {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical plane reserved bytes"
+                )));
+            }
+            require_zero(index, input, 45)?;
+            Operation::SeekPlane {
+                blend: decode_stick_blend(index, input[1])?,
+                frame: decode_coordinate_frame(index, input[12])?,
+                point: [get_f32(input, 16), get_f32(input, 20), get_f32(input, 24)],
+                normal: [get_f32(input, 28), get_f32(input, 32), get_f32(input, 36)],
+                stop_radius: get_f32(input, 40),
+                magnitude: input[44],
+            }
+        }
+        KIND_SEEK_RESOLVED if minor >= 2 => {
+            if input[13..16].iter().any(|byte| *byte != 0) {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical resolved-target reserved bytes"
+                )));
+            }
+            require_zero(index, input, 57)?;
+            let stable_id = get_u64(input, 16);
+            let sub_index = get_u32(input, 24);
+            let position = [get_f32(input, 28), get_f32(input, 32), get_f32(input, 36)];
+            let target = match input[12] {
+                0 => ResolvedTarget::PathPoint {
+                    path_id: stable_id,
+                    point_index: sub_index,
+                    position,
+                },
+                1 if sub_index == 0 => ResolvedTarget::Opening {
+                    opening_id: stable_id,
+                    position,
+                },
+                kind => {
+                    return Err(ControllerError::new(format!(
+                        "layer {index} has invalid resolved target kind {kind}"
+                    )));
+                }
+            };
+            Operation::SeekResolved {
+                blend: decode_stick_blend(index, input[1])?,
+                target,
+                offset: [get_f32(input, 40), get_f32(input, 44), get_f32(input, 48)],
+                stop_radius: get_f32(input, 52),
+                magnitude: input[56],
+            }
+        }
+        KIND_NEUTRAL if minor >= 3 => {
+            if input[1] != BLEND_REPLACE {
+                return Err(ControllerError::new(format!(
+                    "neutral layer {index} must use replace blend"
+                )));
+            }
+            require_zero(index, input, 12)?;
+            Operation::Neutral
+        }
+        KIND_TURN if minor >= 3 => {
+            require_zero(index, input, 14)?;
+            let direction = match input[12] {
+                0 => TurnDirection::Left,
+                1 => TurnDirection::Right,
+                value => {
+                    return Err(ControllerError::new(format!(
+                        "layer {index} has invalid turn direction {value}"
+                    )));
+                }
+            };
+            Operation::Turn {
+                blend: decode_stick_blend(index, input[1])?,
+                direction,
+                magnitude: input[13],
+            }
+        }
+        KIND_BRAKE if minor >= 3 => {
+            if input[13..16].iter().any(|byte| *byte != 0) {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical brake reserved bytes"
+                )));
+            }
+            require_zero(index, input, 20)?;
+            Operation::Brake {
+                blend: decode_stick_blend(index, input[1])?,
+                stop_speed: get_f32(input, 16),
+                magnitude: input[12],
+            }
+        }
+        KIND_HEADING if minor >= 3 => {
+            if input[15] != 0 {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical heading reserved byte"
+                )));
+            }
+            require_zero(index, input, 24)?;
+            let blend = decode_stick_blend(index, input[1])?;
+            let frame = decode_coordinate_frame(index, input[13])?;
+            let heading_radians = get_f32(input, 16);
+            let magnitude = input[14];
+            match input[12] {
+                0 => Operation::Align {
+                    blend,
+                    frame,
+                    heading_radians,
+                    tolerance_radians: get_f32(input, 20),
+                    magnitude,
+                },
+                1 if get_u32(input, 20) == 0 => Operation::MaintainHeading {
+                    blend,
+                    frame,
+                    heading_radians,
+                    magnitude,
+                },
+                mode => {
+                    return Err(ControllerError::new(format!(
+                        "layer {index} has invalid heading mode {mode}"
+                    )));
+                }
+            }
+        }
+        KIND_MAINTAIN_DISTANCE if minor >= 3 => {
+            if input[14] != 0 || input[15] != 0 {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical distance reserved bytes"
+                )));
+            }
+            require_zero(index, input, 36)?;
+            Operation::MaintainDistance {
+                blend: decode_stick_blend(index, input[1])?,
+                frame: decode_coordinate_frame(index, input[12])?,
+                magnitude: input[13],
+                target: [get_f32(input, 16), get_f32(input, 20), get_f32(input, 24)],
+                distance: get_f32(input, 28),
+                tolerance: get_f32(input, 32),
+            }
+        }
+        KIND_CAMERA if minor >= 4 => {
+            require_zero(index, input, 16)?;
+            Operation::Camera {
+                blend: decode_stick_blend(index, input[1])?,
+                x: get_i16(input, 12),
+                y: get_i16(input, 14),
+            }
+        }
+        KIND_SAFETY_CLAMP if minor >= 4 => {
+            if input[1] != BLEND_REPLACE {
+                return Err(ControllerError::new(format!(
+                    "safety clamp layer {index} must use replace blend"
+                )));
+            }
+            require_zero(index, input, 14)?;
+            Operation::SafetyClamp {
+                main_limit: input[12],
+                substick_limit: input[13],
+            }
+        }
         KIND_BUTTONS => {
             if input[1] != BLEND_OR {
                 return Err(ControllerError::new(format!(
@@ -1130,6 +2440,25 @@ fn decode_stick_blend(index: usize, value: u8) -> Result<StickBlend, ControllerE
     }
 }
 
+fn encode_coordinate_frame(frame: CoordinateFrame) -> u8 {
+    match frame {
+        CoordinateFrame::World => 0,
+        CoordinateFrame::Player => 1,
+        CoordinateFrame::Camera => 2,
+    }
+}
+
+fn decode_coordinate_frame(index: usize, value: u8) -> Result<CoordinateFrame, ControllerError> {
+    match value {
+        0 => Ok(CoordinateFrame::World),
+        1 => Ok(CoordinateFrame::Player),
+        2 => Ok(CoordinateFrame::Camera),
+        _ => Err(ControllerError::new(format!(
+            "layer {index} has invalid coordinate frame {value}"
+        ))),
+    }
+}
+
 fn put_u16(output: &mut [u8], offset: usize, value: u16) {
     output[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -1140,6 +2469,10 @@ fn put_i16(output: &mut [u8], offset: usize, value: i16) {
 
 fn put_u32(output: &mut [u8], offset: usize, value: u32) {
     output[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u64(output: &mut [u8], offset: usize, value: u64) {
+    output[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
 fn put_f32(output: &mut [u8], offset: usize, value: f32) {
@@ -1156,6 +2489,10 @@ fn get_i16(input: &[u8], offset: usize) -> i16 {
 
 fn get_u32(input: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(input[offset..offset + 4].try_into().expect("u32 slice"))
+}
+
+fn get_u64(input: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(input[offset..offset + 8].try_into().expect("u64 slice"))
 }
 
 fn get_f32(input: &[u8], offset: usize) -> f32 {
@@ -1185,7 +2522,7 @@ mod tests {
         assert_eq!(bytes.len(), HEADER_SIZE + 4 * RECORD_SIZE);
         assert_eq!(&bytes[..8], MAGIC);
         assert_eq!(get_u16(&bytes, 8), 1);
-        assert_eq!(get_u16(&bytes, 10), 1);
+        assert_eq!(get_u16(&bytes, 10), VERSION_MINOR);
         assert_eq!(get_u16(&bytes, 12), 32);
         assert_eq!(get_u16(&bytes, 14), 64);
         assert_eq!(get_u32(&bytes, 16), 120);
@@ -1246,6 +2583,163 @@ seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 
         assert_eq!(&bytes[second + 39..second + 46], b"F_SP103");
         assert_eq!(bytes[second + 46], 0);
         assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+    }
+
+    #[test]
+    fn framed_coordinate_plane_path_and_opening_targets_round_trip_in_version_1_2() {
+        let source = r#"duskcontrol 1
+frames 6
+seek coordinate replace from 0 for 1 frame world target 10 0 20 offset 1 0 2 magnitude 127 stop 3
+seek coordinate replace from 1 for 1 frame player target 0 0 100 offset 0 0 0 magnitude 90 stop 2
+seek coordinate replace from 2 for 1 frame camera target 10 0 0 offset 0 0 0 magnitude 80 stop 1
+seek plane replace from 3 for 1 frame world point 0 0 50 normal 0 0 2 magnitude 70 stop 4
+seek path-point replace from 4 for 1 path 42 point 7 target 1 2 3 offset 4 5 6 magnitude 60 stop 5
+seek opening replace from 5 for 1 opening 99 target 7 8 9 offset 1 0 -1 magnitude 50 stop 6
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(program.layers.len(), 6);
+        assert!(matches!(
+            program.layers[1].operation,
+            Operation::SeekCoordinate {
+                frame: CoordinateFrame::Player,
+                ..
+            }
+        ));
+        assert!(matches!(
+            program.layers[2].operation,
+            Operation::SeekCoordinate {
+                frame: CoordinateFrame::Camera,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &program.layers[4].operation,
+            Operation::SeekResolved {
+                target: ResolvedTarget::PathPoint {
+                    path_id: 42,
+                    point_index: 7,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &program.layers[5].operation,
+            Operation::SeekResolved {
+                target: ResolvedTarget::Opening { opening_id: 99, .. },
+                ..
+            }
+        ));
+        let bytes = program.encode_for_version(2).unwrap();
+        assert_eq!(get_u16(&bytes, 10), 2);
+        assert_eq!(bytes[HEADER_SIZE], KIND_SEEK_COORDINATE);
+        assert_eq!(bytes[HEADER_SIZE + 3 * RECORD_SIZE], KIND_SEEK_PLANE);
+        assert_eq!(bytes[HEADER_SIZE + 4 * RECORD_SIZE], KIND_SEEK_RESOLVED);
+        assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+        assert!(
+            program
+                .encode_for_version(1)
+                .unwrap_err()
+                .to_string()
+                .contains("version 1.2")
+        );
+    }
+
+    #[test]
+    fn turn_brake_neutral_heading_and_distance_round_trip_in_version_1_3() {
+        let source = r#"duskcontrol 1
+frames 6
+neutral replace from 0 for 1
+turn replace from 1 for 1 direction left magnitude 40
+brake replace from 2 for 1 stop-speed 0.5 magnitude 50
+align replace from 3 for 1 frame world heading 1.5 tolerance 0.1 magnitude 60
+maintain heading replace from 4 for 1 frame camera heading -0.25 magnitude 70
+maintain distance replace from 5 for 1 frame world target 10 0 20 distance 5 tolerance 1 magnitude 80
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(program.layers.len(), 6);
+        assert!(matches!(program.layers[0].operation, Operation::Neutral));
+        assert!(matches!(
+            program.layers[1].operation,
+            Operation::Turn {
+                direction: TurnDirection::Left,
+                ..
+            }
+        ));
+        assert!(matches!(
+            program.layers[2].operation,
+            Operation::Brake { .. }
+        ));
+        assert!(matches!(
+            program.layers[3].operation,
+            Operation::Align { .. }
+        ));
+        assert!(matches!(
+            program.layers[4].operation,
+            Operation::MaintainHeading { .. }
+        ));
+        assert!(matches!(
+            program.layers[5].operation,
+            Operation::MaintainDistance { .. }
+        ));
+        let bytes = program.encode().unwrap();
+        assert_eq!(get_u16(&bytes, 10), VERSION_MINOR);
+        assert_eq!(bytes[HEADER_SIZE], KIND_NEUTRAL);
+        assert_eq!(bytes[HEADER_SIZE + RECORD_SIZE], KIND_TURN);
+        assert_eq!(bytes[HEADER_SIZE + 2 * RECORD_SIZE], KIND_BRAKE);
+        assert_eq!(bytes[HEADER_SIZE + 3 * RECORD_SIZE], KIND_HEADING);
+        assert_eq!(bytes[HEADER_SIZE + 4 * RECORD_SIZE], KIND_HEADING);
+        assert_eq!(bytes[HEADER_SIZE + 5 * RECORD_SIZE], KIND_MAINTAIN_DISTANCE);
+        assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+        assert!(program.encode_for_version(2).is_err());
+    }
+
+    #[test]
+    fn motion_control_syntax_values_and_binary_reservations_are_strict() {
+        for source in [
+            "duskcontrol 1\nframes 1\nneutral add from 0 for 1\n",
+            "duskcontrol 1\nframes 1\nturn replace from 0 for 1 direction up magnitude 1\n",
+            "duskcontrol 1\nframes 1\nbrake replace from 0 for 1 stop-speed -1 magnitude 1\n",
+            "duskcontrol 1\nframes 1\nalign replace from 0 for 1 frame world heading 4 tolerance 0 magnitude 1\n",
+            "duskcontrol 1\nframes 1\nalign replace from 0 for 1 frame world heading 0 tolerance 4 magnitude 1\n",
+            "duskcontrol 1\nframes 1\nmaintain distance replace from 0 for 1 frame world target 0 0 1 distance 1 tolerance 2 magnitude 1\n",
+        ] {
+            assert!(parse(source).is_err(), "unexpectedly accepted {source:?}");
+        }
+
+        let program = parse(
+            "duskcontrol 1\nframes 1\nmaintain heading replace from 0 for 1 frame world heading 0 magnitude 1\n",
+        )
+        .unwrap();
+        let mut bytes = program.encode().unwrap();
+        bytes[HEADER_SIZE + 15] = 1;
+        assert!(ControllerProgram::decode(&bytes).is_err());
+        let mut bytes = program.encode().unwrap();
+        put_f32(&mut bytes, HEADER_SIZE + 20, -0.0);
+        assert!(ControllerProgram::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn new_target_syntax_and_binary_reservations_are_strict() {
+        for source in [
+            "duskcontrol 1\nframes 1\nseek coordinate replace from 0 for 1 frame local target 0 0 1 offset 0 0 0 magnitude 1 stop 0\n",
+            "duskcontrol 1\nframes 1\nseek plane replace from 0 for 1 frame world point 0 0 1 normal 0 1 0 magnitude 1 stop 0\n",
+            "duskcontrol 1\nframes 1\nseek path-point replace from 0 for 1 path 0 point 1 target 0 0 1 offset 0 0 0 magnitude 1 stop 0\n",
+            "duskcontrol 1\nframes 1\nseek opening replace from 0 for 1 opening 0 target 0 0 1 offset 0 0 0 magnitude 1 stop 0\n",
+        ] {
+            assert!(parse(source).and_then(|program| program.encode()).is_err());
+        }
+
+        let program = parse(
+            "duskcontrol 1\nframes 1\nseek opening replace from 0 for 1 opening 9 target 0 0 1 offset 0 0 0 magnitude 1 stop 0\n",
+        )
+        .unwrap();
+        let mut bytes = program.encode().unwrap();
+        bytes[HEADER_SIZE + 13] = 1;
+        assert!(ControllerProgram::decode(&bytes).is_err());
+        let mut bytes = program.encode().unwrap();
+        put_u32(&mut bytes, HEADER_SIZE + 24, 1);
+        assert!(ControllerProgram::decode(&bytes).is_err());
     }
 
     #[test]
@@ -1367,6 +2861,52 @@ seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 
         );
         let adjacent = overlapping.replace("from 10 for 10", "from 11 for 9");
         assert!(parse(&adjacent).is_ok());
+    }
+
+    #[test]
+    fn camera_and_safety_clamp_round_trip_with_independent_writer_surfaces() {
+        let source = r#"duskcontrol 1
+frames 4
+bezier replace from 0 for 4 p0 120 -120 p1 120 -120 p2 120 -120 p3 120 -120
+camera replace from 0 for 4 x 100 y -100
+camera add from 0 for 4 x 40 y 40
+buttons from 0 for 4 B
+clamp from 0 for 4 main 90 substick 80
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(program.layers.len(), 5);
+        assert!(matches!(
+            program.layers[1].operation,
+            Operation::Camera {
+                blend: StickBlend::Replace,
+                x: 100,
+                y: -100
+            }
+        ));
+        assert!(matches!(
+            program.layers[4].operation,
+            Operation::SafetyClamp {
+                main_limit: 90,
+                substick_limit: 80
+            }
+        ));
+        let bytes = program.encode().unwrap();
+        assert_eq!(get_u16(&bytes, 10), 4);
+        assert_eq!(bytes[HEADER_SIZE + RECORD_SIZE], KIND_CAMERA);
+        assert_eq!(bytes[HEADER_SIZE + 4 * RECORD_SIZE], KIND_SAFETY_CLAMP);
+        assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+        assert!(program.encode_for_version(3).is_err());
+
+        let overlapping_camera = source.replace(
+            "camera add from 0 for 4 x 40 y 40",
+            "camera replace from 0 for 4 x 40 y 40",
+        );
+        assert!(parse(&overlapping_camera).is_err());
+        let overlapping_clamp = source.replace(
+            "clamp from 0 for 4 main 90 substick 80",
+            "clamp from 0 for 4 main 90 substick 80\nclamp from 1 for 1 main 1 substick 1",
+        );
+        assert!(parse(&overlapping_clamp).is_err());
     }
 
     #[test]

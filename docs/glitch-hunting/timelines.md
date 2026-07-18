@@ -46,9 +46,11 @@ second structural type. Missing or stale proof blocks only the parity claim,
 score, or predicate-backed handoff; it does not make an exact segment chain
 unplayable.
 
-The current goal engine proves Boolean predicates. Dynamic projections such as
-“same RNG value as this reference segment” still need an explicit value-parity
-form; they must not be approximated by topology or hard-coded folklore.
+Milestone language 1.4 provides named value-parity projections for exact RNG,
+actor-population, and flag-subset comparisons. Equal, different, and
+incomparable are decided from the authenticated projection identity,
+availability, and value fingerprint; topology and hard-coded folklore are not
+parity evidence.
 
 ## Pinned paths
 
@@ -118,9 +120,17 @@ the workbench rediscovers ready drafts from disk.
 Terminal thumbnails are an illustrative cache, not proof data. A proved
 segment image is owned by its terminal boundary fingerprint; an unproved draft
 image is owned by its finalized tape digest. Rebuilding Dusklight or renaming a
-segment therefore does not invalidate the image. Each graph refresh prunes PNG
-cache entries which are no longer reachable from any current segment, draft,
-or projected search result.
+segment therefore does not invalidate the image. Browsing never mutates this
+cache. Explicit pruning computes reachability from every current segment,
+ready draft, and projected search result, previews by default, and moves
+orphans to a recoverable transaction under the workbench state root:
+
+```sh
+huntctl timeline prune-thumbnails --timeline routes/intro.timeline \
+  --repository-root . \
+  --state-root build/automation-state/route-workbench
+# Review the JSON report, then repeat with --apply.
+```
 
 Draft **Rename** changes only its human label. **Delete** previews and moves the
 selected draft subtree to recoverable trash. Active, corrupt, detached, or
@@ -205,3 +215,9 @@ no parent boundary and therefore expose boot playback only.
 The content-addressed route store is an optional derived index, not route
 authority. Its objects mirror segment, goal, proof, and pinned-path identities.
 Git-owned timeline files and artifacts remain the source of truth.
+
+`huntctl timeline store gc --store DIR` verifies the complete reachable object
+graph and every unreachable object, then emits a dry-run report. Repeating with
+`--apply` moves unreachable objects into a unique `trash/objects/gc-*`
+transaction inside the store; it does not delete them. The report names that
+transaction so an accidental collection remains directly recoverable.

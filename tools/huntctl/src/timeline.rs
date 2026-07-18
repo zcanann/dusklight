@@ -1068,9 +1068,20 @@ impl<'a> Parser<'a> {
         line: usize,
     ) -> Result<(), TimelineError> {
         exact_len(tokens, 2, line, "predicate_program PATH")?;
-        let path = PathBuf::from(&tokens[1]);
+        let source = &tokens[1];
+        let path = PathBuf::from(source);
+        let windows_drive = source.as_bytes().get(1) == Some(&b':')
+            && source
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic);
+        let portable_components = source
+            .split(['/', '\\'])
+            .all(|component| !component.is_empty() && component != "." && component != "..");
         if path.as_os_str().is_empty()
             || path.is_absolute()
+            || windows_drive
+            || !portable_components
             || path
                 .components()
                 .any(|component| !matches!(component, Component::Normal(_)))
@@ -1790,6 +1801,13 @@ continue rolls with exit_rolls after boot_safe@control-rng1
         assert!(absolute.to_string().contains("contained relative path"));
         let traversal = Timeline::parse("timeline bad\npredicate_program ../outside").unwrap_err();
         assert!(traversal.to_string().contains("contained relative path"));
+        let windows_traversal =
+            Timeline::parse("timeline bad\npredicate_program ..\\outside").unwrap_err();
+        assert!(
+            windows_traversal
+                .to_string()
+                .contains("contained relative path")
+        );
         let duplicate =
             Timeline::parse("timeline bad\npredicate_program a\npredicate_program b").unwrap_err();
         assert!(

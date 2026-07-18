@@ -3,11 +3,11 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
-pub const ARTIFACT_SCHEMA_VERSION: u16 = 1;
+pub const ARTIFACT_SCHEMA_VERSION: u16 = 2;
 
 /// A stable content digest. The protocol does not prescribe the hashing
 /// implementation, but production artifacts should use SHA-256.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Digest(pub [u8; 32]);
 
 impl Digest {
@@ -90,7 +90,17 @@ pub struct ArtifactIdentity {
     pub schema_version: u16,
     pub content_digest: Digest,
     pub build: BuildIdentity,
+    pub protocol_name: String,
+    pub protocol_version: u16,
+    pub protocol_capabilities_digest: Digest,
     pub scenario_id: String,
+    pub region_digest: Digest,
+    pub language_assets_digest: Digest,
+    pub scenario_digest: Digest,
+    pub predicate_program_digest: Digest,
+    pub action_schema_digest: Digest,
+    pub observation_schema_digest: Digest,
+    pub settings_digest: Digest,
 }
 
 #[cfg(test)]

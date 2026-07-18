@@ -20,7 +20,7 @@ inline constexpr std::array<std::uint8_t, 8> kInputControllerMagic{
     'L',
 };
 inline constexpr std::uint16_t kInputControllerMajorVersion = 1;
-inline constexpr std::uint16_t kInputControllerMinorVersion = 1;
+inline constexpr std::uint16_t kInputControllerMinorVersion = 4;
 inline constexpr std::size_t kInputControllerHeaderSize = 32;
 inline constexpr std::size_t kInputControllerRecordSize = 64;
 inline constexpr std::uint32_t kInputControllerMaximumDuration = 1'000'000;
@@ -51,8 +51,15 @@ enum class InputControllerError {
     InvalidProcessId,
     InvalidSetId,
     InvalidStageName,
+    InvalidCoordinateFrame,
+    InvalidPlaneNormal,
+    InvalidResolvedTarget,
+    InvalidMotionControl,
+    InvalidHeading,
+    InvalidDistance,
     InvalidUnusedData,
     OverlappingReplaceLayers,
+    OverlappingSafetyClamps,
 };
 
 enum class InputControllerLayerKind : std::uint8_t {
@@ -60,6 +67,16 @@ enum class InputControllerLayerKind : std::uint8_t {
     SeekPoint = 2,
     SeekActor = 3,
     Buttons = 4,
+    SeekCoordinate = 5,
+    SeekPlane = 6,
+    SeekResolved = 7,
+    Neutral = 8,
+    Turn = 9,
+    Brake = 10,
+    Heading = 11,
+    MaintainDistance = 12,
+    Camera = 13,
+    SafetyClamp = 14,
 };
 
 enum class InputControllerBlend : std::uint8_t {
@@ -72,6 +89,27 @@ enum class InputControllerActorSelector : std::uint8_t {
     Nearest = 0,
     Process = 1,
     Placed = 2,
+};
+
+enum class InputControllerCoordinateFrame : std::uint8_t {
+    World = 0,
+    Player = 1,
+    Camera = 2,
+};
+
+enum class InputControllerResolvedTarget : std::uint8_t {
+    PathPoint = 0,
+    Opening = 1,
+};
+
+enum class InputControllerTurnDirection : std::uint8_t {
+    Left = 0,
+    Right = 1,
+};
+
+enum class InputControllerHeadingMode : std::uint8_t {
+    Align = 0,
+    Maintain = 1,
 };
 
 struct ControllerActor {
@@ -91,6 +129,11 @@ struct ControllerObservation {
     float playerX = 0.0F;
     float playerY = 0.0F;
     float playerZ = 0.0F;
+    bool playerYawPresent = false;
+    float playerYawRadians = 0.0F;
+    bool playerVelocityPresent = false;
+    float playerVelocityX = 0.0F;
+    float playerVelocityZ = 0.0F;
     bool cameraPresent = false;
     float cameraYawRadians = 0.0F;
     // Exact placed-actor selectors compare all eight canonical fixed-string
@@ -98,6 +141,18 @@ struct ControllerObservation {
     std::array<char, 8> stageName{};
     // Evaluation inspects at most kInputControllerMaximumActors entries.
     std::span<const ControllerActor> actors{};
+    bool actorsTruncated = false;
+};
+
+enum class InputControllerTerminalReason : std::uint8_t {
+    None = 0,
+    TargetLost = 1,
+};
+
+struct InputControllerEvaluation {
+    RawPadState input;
+    InputControllerTerminalReason terminalReason = InputControllerTerminalReason::None;
+    std::uint16_t terminalLayer = 0xffff;
 };
 
 struct InputControllerLayer {
@@ -112,6 +167,10 @@ struct InputControllerLayer {
     // SeekPoint stores its target here. SeekActor uses the selector fields.
     std::int16_t actorName = 0;
     InputControllerActorSelector actorSelector = InputControllerActorSelector::Nearest;
+    InputControllerCoordinateFrame coordinateFrame = InputControllerCoordinateFrame::World;
+    InputControllerResolvedTarget resolvedTarget = InputControllerResolvedTarget::PathPoint;
+    InputControllerTurnDirection turnDirection = InputControllerTurnDirection::Left;
+    InputControllerHeadingMode headingMode = InputControllerHeadingMode::Align;
     std::uint32_t processId = 0;
     std::uint16_t setId = 0;
     std::int8_t homeRoom = 0;
@@ -124,6 +183,15 @@ struct InputControllerLayer {
     float offsetZ = 0.0F;
     float stopRadius = 0.0F;
     std::uint8_t magnitude = 0;
+    std::uint64_t targetIdentity = 0;
+    std::uint32_t targetSubIndex = 0;
+    float headingRadians = 0.0F;
+    float tolerance = 0.0F;
+    float distance = 0.0F;
+    std::int16_t cameraX = 0;
+    std::int16_t cameraY = 0;
+    std::uint8_t mainLimit = 127;
+    std::uint8_t substickLimit = 127;
 
     std::uint16_t buttons = 0;
 };
@@ -139,6 +207,8 @@ public:
 
     /** Evaluate one zero-based controller frame. This function does not allocate. */
     [[nodiscard]] RawPadState evaluate(
+        std::uint32_t frame, const ControllerObservation& observation) const;
+    [[nodiscard]] InputControllerEvaluation evaluateDetailed(
         std::uint32_t frame, const ControllerObservation& observation) const;
 
 private:

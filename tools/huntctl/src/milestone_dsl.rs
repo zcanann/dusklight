@@ -6,22 +6,25 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 4] = *b"DMSP";
-pub const WIRE_VERSION: (u16, u16) = (1, 0);
-pub const LANGUAGE_VERSION: (u16, u16) = (1, 0);
+pub const WIRE_VERSION: (u16, u16) = (1, 4);
+pub const LANGUAGE_VERSION: (u16, u16) = (1, 4);
 pub const MAX_DEFINITIONS: usize = 256;
 pub const MAX_NAME_BYTES: usize = 96;
 pub const MAX_SYMBOL_BYTES: usize = 64;
 pub const MAX_OPS: usize = 256;
+pub const MAX_PROJECTIONS: usize = 8;
+pub const MAX_PROJECTION_ITEMS: usize = 32;
 pub const MAX_EXPRESSION_DEPTH: usize = 32;
 pub const MAX_BINARY_BYTES: usize = 1024 * 1024;
 
 const DEFINITION_DOMAIN: &[u8] = b"dusklight.milestone.definition/v1\0";
 const PROGRAM_DOMAIN: &[u8] = b"dusklight.milestone.program/v1\0";
+const PROJECTION_DOMAIN: &[u8] = b"dusklight.value-projection.identity/v1\0";
 const HEADER_BYTES: usize = 52;
 const RECORD_FIXED_BYTES: usize = 44;
 
@@ -70,6 +73,37 @@ pub struct MilestoneDefinition {
     /// Consecutive evaluations required before the milestone fires.
     pub stable_ticks: u16,
     pub when: Expression,
+    /// Ordered predicates observed on strictly later evaluations.
+    #[serde(default)]
+    pub then: Vec<Expression>,
+    /// Maximum matching-phase evaluations after the first step.
+    #[serde(default)]
+    pub within_ticks: Option<u16>,
+    /// Named, exact value sets captured from the same observation as the hit.
+    #[serde(default)]
+    pub projections: Vec<ValueProjection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ValueProjection {
+    pub name: String,
+    pub items: Vec<ValueProjectionItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ValueProjectionItem {
+    Rng { stream: RngStream },
+    ActorPopulation { stage: String, room: i8 },
+    Flag { selector: FlagSelector },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum RngStream {
+    Primary = 0,
+    Secondary = 1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -88,9 +122,73 @@ pub enum Expression {
         operator: Comparison,
         value: Value,
     },
+    Query {
+        fact: QueryFact,
+        operator: Comparison,
+        value: Value,
+    },
     Not(Box<Expression>),
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueryFact {
+    PlacedActor {
+        selector: PlacedActorSelector,
+        field: ActorFact,
+    },
+    Flag {
+        selector: FlagSelector,
+    },
+    PlayerInAabb {
+        minimum: [f32; 3],
+        maximum: [f32; 3],
+    },
+    PlayerPlaneSignedDistance {
+        point: [f32; 3],
+        normal: [f32; 3],
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlacedActorSelector {
+    pub stage: String,
+    pub home_room: i8,
+    pub set_id: u16,
+    pub actor_name: i16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorFact {
+    Exists = 1,
+    PositionX = 2,
+    PositionY = 3,
+    PositionZ = 4,
+    DistanceToPlayer = 5,
+    CurrentRoom = 6,
+    Health = 7,
+    Status = 8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FlagSelector {
+    pub domain: FlagDomain,
+    pub room: i8,
+    pub index: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum FlagDomain {
+    Event = 0,
+    Temporary = 1,
+    Dungeon = 2,
+    Switch = 3,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,6 +201,8 @@ pub enum Comparison {
     LessEqual = 0x23,
     Greater = 0x24,
     GreaterEqual = 0x25,
+    HasAll = 0x26,
+    HasAny = 0x27,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,17 +244,159 @@ pub enum Field {
     BoundaryReached = 20,
     PlayerIsLink = 21,
     NextStageEnabled = 22,
+    PlayerProcessId = 23,
+    PlayerActorName = 24,
+    PlayerVelocityX = 25,
+    PlayerVelocityY = 26,
+    PlayerVelocityZ = 27,
+    PlayerCurrentAngleX = 28,
+    PlayerCurrentAngleY = 29,
+    PlayerCurrentAngleZ = 30,
+    PlayerShapeAngleX = 31,
+    PlayerShapeAngleY = 32,
+    PlayerShapeAngleZ = 33,
+    PlayerModeFlags = 34,
+    PlayerDamageWaitTimer = 35,
+    PlayerIceDamageWaitTimer = 36,
+    PlayerSwordChangeWaitTimer = 37,
+    EventMode = 38,
+    EventStatus = 39,
+    EventMapToolId = 40,
+    EventNameHashPresent = 41,
+    EventNameHash = 42,
+    RngPrimaryState0 = 43,
+    RngPrimaryState1 = 44,
+    RngPrimaryState2 = 45,
+    RngPrimaryCalls = 46,
+    RngSecondaryState0 = 47,
+    RngSecondaryState1 = 48,
+    RngSecondaryState2 = 49,
+    RngSecondaryCalls = 50,
+    CollisionGroundContact = 51,
+    CollisionWallContact = 52,
+    CollisionRoofContact = 53,
+    CollisionWaterContact = 54,
+    CollisionWaterIn = 55,
+    CollisionGroundHeight = 56,
+    CollisionRoofHeight = 57,
+    CollisionGroundClearance = 58,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FieldType {
     Bool,
+    U32,
     U64,
     I32,
     F32,
     Symbol,
     Enum,
     Procedure,
+}
+
+impl ActorFact {
+    fn parse(path: &str) -> Option<Self> {
+        Some(match path {
+            "actor.placed.exists" => Self::Exists,
+            "actor.placed.position.x" => Self::PositionX,
+            "actor.placed.position.y" => Self::PositionY,
+            "actor.placed.position.z" => Self::PositionZ,
+            "actor.placed.distance_to_player" => Self::DistanceToPlayer,
+            "actor.placed.current_room" => Self::CurrentRoom,
+            "actor.placed.health" => Self::Health,
+            "actor.placed.status" => Self::Status,
+            _ => return None,
+        })
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::Exists => "actor.placed.exists",
+            Self::PositionX => "actor.placed.position.x",
+            Self::PositionY => "actor.placed.position.y",
+            Self::PositionZ => "actor.placed.position.z",
+            Self::DistanceToPlayer => "actor.placed.distance_to_player",
+            Self::CurrentRoom => "actor.placed.current_room",
+            Self::Health => "actor.placed.health",
+            Self::Status => "actor.placed.status",
+        }
+    }
+
+    fn field_type(self) -> FieldType {
+        match self {
+            Self::Exists => FieldType::Bool,
+            Self::PositionX | Self::PositionY | Self::PositionZ | Self::DistanceToPlayer => {
+                FieldType::F32
+            }
+            Self::CurrentRoom | Self::Health => FieldType::I32,
+            Self::Status => FieldType::U32,
+        }
+    }
+
+    fn from_id(id: u8) -> Option<Self> {
+        Self::parse(match id {
+            1 => "actor.placed.exists",
+            2 => "actor.placed.position.x",
+            3 => "actor.placed.position.y",
+            4 => "actor.placed.position.z",
+            5 => "actor.placed.distance_to_player",
+            6 => "actor.placed.current_room",
+            7 => "actor.placed.health",
+            8 => "actor.placed.status",
+            _ => return None,
+        })
+    }
+}
+
+impl FlagDomain {
+    fn parse(path: &str) -> Option<Self> {
+        Some(match path {
+            "flag.event" => Self::Event,
+            "flag.temporary" => Self::Temporary,
+            "flag.dungeon" => Self::Dungeon,
+            "flag.switch" => Self::Switch,
+            _ => return None,
+        })
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::Event => "flag.event",
+            Self::Temporary => "flag.temporary",
+            Self::Dungeon => "flag.dungeon",
+            Self::Switch => "flag.switch",
+        }
+    }
+
+    fn from_id(id: u8) -> Option<Self> {
+        match id {
+            0 => Some(Self::Event),
+            1 => Some(Self::Temporary),
+            2 => Some(Self::Dungeon),
+            3 => Some(Self::Switch),
+            _ => None,
+        }
+    }
+}
+
+impl QueryFact {
+    fn field_type(&self) -> FieldType {
+        match self {
+            Self::PlacedActor { field, .. } => field.field_type(),
+            Self::Flag { .. } => FieldType::Bool,
+            Self::PlayerInAabb { .. } => FieldType::Bool,
+            Self::PlayerPlaneSignedDistance { .. } => FieldType::F32,
+        }
+    }
+
+    fn display_name(&self) -> &'static str {
+        match self {
+            Self::PlacedActor { field, .. } => field.path(),
+            Self::Flag { selector } => selector.domain.path(),
+            Self::PlayerInAabb { .. } => "player.in_aabb",
+            Self::PlayerPlaneSignedDistance { .. } => "player.plane_signed_distance",
+        }
+    }
 }
 
 impl Field {
@@ -182,13 +424,59 @@ impl Field {
             Self::BoundaryReached => "boundary.reached",
             Self::PlayerIsLink => "player.is_link",
             Self::NextStageEnabled => "next_stage.enabled",
+            Self::PlayerProcessId => "player.process_id",
+            Self::PlayerActorName => "player.actor_name",
+            Self::PlayerVelocityX => "player.velocity.x",
+            Self::PlayerVelocityY => "player.velocity.y",
+            Self::PlayerVelocityZ => "player.velocity.z",
+            Self::PlayerCurrentAngleX => "player.current_angle.x",
+            Self::PlayerCurrentAngleY => "player.current_angle.y",
+            Self::PlayerCurrentAngleZ => "player.current_angle.z",
+            Self::PlayerShapeAngleX => "player.shape_angle.x",
+            Self::PlayerShapeAngleY => "player.shape_angle.y",
+            Self::PlayerShapeAngleZ => "player.shape_angle.z",
+            Self::PlayerModeFlags => "player.mode_flags",
+            Self::PlayerDamageWaitTimer => "player.timer.damage_wait",
+            Self::PlayerIceDamageWaitTimer => "player.timer.ice_damage_wait",
+            Self::PlayerSwordChangeWaitTimer => "player.timer.sword_change_wait",
+            Self::EventMode => "event.mode",
+            Self::EventStatus => "event.status",
+            Self::EventMapToolId => "event.map_tool_id",
+            Self::EventNameHashPresent => "event.name_hash.present",
+            Self::EventNameHash => "event.name_hash.fnv1a32",
+            Self::RngPrimaryState0 => "rng.primary.state0",
+            Self::RngPrimaryState1 => "rng.primary.state1",
+            Self::RngPrimaryState2 => "rng.primary.state2",
+            Self::RngPrimaryCalls => "rng.primary.calls",
+            Self::RngSecondaryState0 => "rng.secondary.state0",
+            Self::RngSecondaryState1 => "rng.secondary.state1",
+            Self::RngSecondaryState2 => "rng.secondary.state2",
+            Self::RngSecondaryCalls => "rng.secondary.calls",
+            Self::CollisionGroundContact => "collision.ground.contact",
+            Self::CollisionWallContact => "collision.wall.contact",
+            Self::CollisionRoofContact => "collision.roof.contact",
+            Self::CollisionWaterContact => "collision.water.contact",
+            Self::CollisionWaterIn => "collision.water.in",
+            Self::CollisionGroundHeight => "collision.ground.height",
+            Self::CollisionRoofHeight => "collision.roof.height",
+            Self::CollisionGroundClearance => "collision.ground.clearance",
         }
     }
 
     fn field_type(self) -> FieldType {
         match self {
             Self::BoundaryKind => FieldType::Enum,
-            Self::BoundaryIndex | Self::TapeFrame => FieldType::U64,
+            Self::BoundaryIndex
+            | Self::TapeFrame
+            | Self::RngPrimaryCalls
+            | Self::RngSecondaryCalls => FieldType::U64,
+            Self::PlayerProcessId
+            | Self::PlayerModeFlags
+            | Self::PlayerSwordChangeWaitTimer
+            | Self::EventMode
+            | Self::EventStatus
+            | Self::EventMapToolId
+            | Self::EventNameHash => FieldType::U32,
             Self::StageName | Self::NextStageName => FieldType::Symbol,
             Self::StageRoom
             | Self::StageLayer
@@ -196,22 +484,49 @@ impl Field {
             | Self::NextStageRoom
             | Self::NextStageLayer
             | Self::NextStageSpawn => FieldType::I32,
+            Self::PlayerActorName
+            | Self::PlayerCurrentAngleX
+            | Self::PlayerCurrentAngleY
+            | Self::PlayerCurrentAngleZ
+            | Self::PlayerShapeAngleX
+            | Self::PlayerShapeAngleY
+            | Self::PlayerShapeAngleZ
+            | Self::PlayerDamageWaitTimer
+            | Self::PlayerIceDamageWaitTimer
+            | Self::RngPrimaryState0
+            | Self::RngPrimaryState1
+            | Self::RngPrimaryState2
+            | Self::RngSecondaryState0
+            | Self::RngSecondaryState1
+            | Self::RngSecondaryState2 => FieldType::I32,
             Self::PlayerExists
             | Self::EventRunning
             | Self::BoundaryReached
             | Self::PlayerIsLink
             | Self::NextStageEnabled => FieldType::Bool,
+            Self::EventNameHashPresent
+            | Self::CollisionGroundContact
+            | Self::CollisionWallContact
+            | Self::CollisionRoofContact
+            | Self::CollisionWaterContact
+            | Self::CollisionWaterIn => FieldType::Bool,
             Self::PlayerPositionX
             | Self::PlayerPositionY
             | Self::PlayerPositionZ
             | Self::PlayerSpeed => FieldType::F32,
+            Self::PlayerVelocityX
+            | Self::PlayerVelocityY
+            | Self::PlayerVelocityZ
+            | Self::CollisionGroundHeight
+            | Self::CollisionRoofHeight
+            | Self::CollisionGroundClearance => FieldType::F32,
             Self::PlayerProcedure => FieldType::Procedure,
             Self::EventId => FieldType::I32,
         }
     }
 
     fn parse(path: &str) -> Option<Self> {
-        (1..=22).find_map(|id| {
+        (1..=58).find_map(|id| {
             let field = Self::from_id(id)?;
             (field.path() == path).then_some(field)
         })
@@ -241,6 +556,42 @@ impl Field {
             20 => Self::BoundaryReached,
             21 => Self::PlayerIsLink,
             22 => Self::NextStageEnabled,
+            23 => Self::PlayerProcessId,
+            24 => Self::PlayerActorName,
+            25 => Self::PlayerVelocityX,
+            26 => Self::PlayerVelocityY,
+            27 => Self::PlayerVelocityZ,
+            28 => Self::PlayerCurrentAngleX,
+            29 => Self::PlayerCurrentAngleY,
+            30 => Self::PlayerCurrentAngleZ,
+            31 => Self::PlayerShapeAngleX,
+            32 => Self::PlayerShapeAngleY,
+            33 => Self::PlayerShapeAngleZ,
+            34 => Self::PlayerModeFlags,
+            35 => Self::PlayerDamageWaitTimer,
+            36 => Self::PlayerIceDamageWaitTimer,
+            37 => Self::PlayerSwordChangeWaitTimer,
+            38 => Self::EventMode,
+            39 => Self::EventStatus,
+            40 => Self::EventMapToolId,
+            41 => Self::EventNameHashPresent,
+            42 => Self::EventNameHash,
+            43 => Self::RngPrimaryState0,
+            44 => Self::RngPrimaryState1,
+            45 => Self::RngPrimaryState2,
+            46 => Self::RngPrimaryCalls,
+            47 => Self::RngSecondaryState0,
+            48 => Self::RngSecondaryState1,
+            49 => Self::RngSecondaryState2,
+            50 => Self::RngSecondaryCalls,
+            51 => Self::CollisionGroundContact,
+            52 => Self::CollisionWallContact,
+            53 => Self::CollisionRoofContact,
+            54 => Self::CollisionWaterContact,
+            55 => Self::CollisionWaterIn,
+            56 => Self::CollisionGroundHeight,
+            57 => Self::CollisionRoofHeight,
+            58 => Self::CollisionGroundClearance,
             _ => return None,
         })
     }
@@ -275,6 +626,7 @@ enum TokenKind {
     RightBrace,
     LeftParen,
     RightParen,
+    Comma,
     Not,
     And,
     Or,
@@ -398,12 +750,13 @@ fn lex(source: &str) -> Result<Vec<Token>, DslError> {
                     column: start_column,
                 });
             }
-            '{' | '}' | '(' | ')' => {
+            '{' | '}' | '(' | ')' | ',' => {
                 let kind = match chars[at] {
                     '{' => TokenKind::LeftBrace,
                     '}' => TokenKind::RightBrace,
                     '(' => TokenKind::LeftParen,
-                    _ => TokenKind::RightParen,
+                    ')' => TokenKind::RightParen,
+                    _ => TokenKind::Comma,
                 };
                 tokens.push(Token { kind, line, column });
                 at += 1;
@@ -523,10 +876,14 @@ impl Parser {
         let version_token = self.take();
         let version = match version_token.kind {
             TokenKind::Number(value) if value == "1.0" => LanguageVersion { major: 1, minor: 0 },
+            TokenKind::Number(value) if value == "1.1" => LanguageVersion { major: 1, minor: 1 },
+            TokenKind::Number(value) if value == "1.2" => LanguageVersion { major: 1, minor: 2 },
+            TokenKind::Number(value) if value == "1.3" => LanguageVersion { major: 1, minor: 3 },
+            TokenKind::Number(value) if value == "1.4" => LanguageVersion { major: 1, minor: 4 },
             _ => {
                 return Err(self.at_error(
                     &version_token,
-                    "unsupported or missing language version; expected 1.0",
+                    "unsupported or missing language version; expected 1.0 through 1.4",
                 ));
             }
         };
@@ -551,6 +908,9 @@ impl Parser {
             let mut phase = None;
             let mut stable_ticks = None;
             let mut when = None;
+            let mut then = Vec::new();
+            let mut within_ticks = None;
+            let mut projections = Vec::new();
             while !self.consume(&TokenKind::RightBrace) {
                 if matches!(self.peek().kind, TokenKind::Eof) {
                     return self.error("unterminated milestone block".into());
@@ -592,6 +952,38 @@ impl Parser {
                         }
                         when = Some(self.expression(1)?);
                     }
+                    "then" => {
+                        if then.len() == 15 {
+                            return Err(self
+                                .at_error(&key_token, "a sequence may contain at most 16 steps"));
+                        }
+                        then.push(self.expression(1)?);
+                    }
+                    "within" => {
+                        if within_ticks.is_some() {
+                            return Err(self.at_error(&key_token, "duplicate within property"));
+                        }
+                        let token = self.take();
+                        let value = number_token(&token)?;
+                        let parsed = value.parse::<u16>().map_err(|_| {
+                            self.at_error(&token, "within count must be an integer from 1 to 65535")
+                        })?;
+                        if parsed == 0 {
+                            return Err(self.at_error(&token, "within count must be at least 1"));
+                        }
+                        within_ticks = Some(parsed);
+                    }
+                    "projection" => {
+                        if projections.len() == MAX_PROJECTIONS {
+                            return Err(self.at_error(
+                                &key_token,
+                                format!(
+                                    "a milestone may contain at most {MAX_PROJECTIONS} projections"
+                                ),
+                            ));
+                        }
+                        projections.push(self.value_projection()?);
+                    }
                     _ => {
                         return Err(self
                             .at_error(&key_token, format!("unknown milestone property {key:?}")));
@@ -603,6 +995,9 @@ impl Parser {
                 phase: phase.ok_or_else(|| self.at_error(&name_token, "missing phase property"))?,
                 stable_ticks: stable_ticks.unwrap_or(1),
                 when: when.ok_or_else(|| self.at_error(&name_token, "missing when property"))?,
+                then,
+                within_ticks,
+                projections,
             });
         }
         if definitions.is_empty() {
@@ -618,6 +1013,93 @@ impl Parser {
             message,
         })?;
         Ok(program)
+    }
+
+    fn value_projection(&mut self) -> Result<ValueProjection, DslError> {
+        let name_token = self.take();
+        let name = match name_token.kind.clone() {
+            TokenKind::Word(value) | TokenKind::String(value) => value,
+            _ => return Err(self.at_error(&name_token, "expected projection name")),
+        };
+        validate_text(&name, MAX_NAME_BYTES, false)
+            .map_err(|message| self.at_error(&name_token, message))?;
+        self.expect(TokenKind::LeftBrace, "expected `{` after projection name")?;
+        let mut items = Vec::new();
+        while !self.consume(&TokenKind::RightBrace) {
+            if matches!(self.peek().kind, TokenKind::Eof) {
+                return self.error("unterminated projection block".into());
+            }
+            if items.len() == MAX_PROJECTION_ITEMS {
+                return self.error(format!(
+                    "a projection may contain at most {MAX_PROJECTION_ITEMS} items"
+                ));
+            }
+            let kind_token = self.take();
+            let kind = match &kind_token.kind {
+                TokenKind::Word(value) => value.as_str(),
+                _ => return Err(self.at_error(&kind_token, "expected projection item")),
+            };
+            let item = match kind {
+                "rng" => {
+                    let stream = match self.word()?.as_str() {
+                        "primary" => RngStream::Primary,
+                        "secondary" => RngStream::Secondary,
+                        value => return self.error(format!("unknown RNG stream {value:?}")),
+                    };
+                    ValueProjectionItem::Rng { stream }
+                }
+                "actor_population" => {
+                    let stage_token = self.take();
+                    let stage = match stage_token.kind.clone() {
+                        TokenKind::Word(value) | TokenKind::String(value) => value,
+                        _ => return Err(self.at_error(&stage_token, "expected stage name")),
+                    };
+                    let room_token = self.take();
+                    let room = number_token(&room_token)?.parse::<i8>().map_err(|_| {
+                        self.at_error(&room_token, "actor population room must be -1 through 63")
+                    })?;
+                    ValueProjectionItem::ActorPopulation { stage, room }
+                }
+                "flag" => {
+                    let domain = match self.word()?.as_str() {
+                        "event" => FlagDomain::Event,
+                        "temporary" => FlagDomain::Temporary,
+                        "dungeon" => FlagDomain::Dungeon,
+                        "switch" => FlagDomain::Switch,
+                        value => return self.error(format!("unknown flag domain {value:?}")),
+                    };
+                    let (room, index_token) = if domain == FlagDomain::Switch {
+                        let room_token = self.take();
+                        let room = number_token(&room_token)?.parse::<i8>().map_err(|_| {
+                            self.at_error(&room_token, "switch room must be 0 through 63")
+                        })?;
+                        (room, self.take())
+                    } else {
+                        (-1, self.take())
+                    };
+                    let index = number_token(&index_token)?.parse::<u16>().map_err(|_| {
+                        self.at_error(
+                            &index_token,
+                            "flag index must be an unsigned 16-bit integer",
+                        )
+                    })?;
+                    ValueProjectionItem::Flag {
+                        selector: FlagSelector {
+                            domain,
+                            room,
+                            index,
+                        },
+                    }
+                }
+                _ => {
+                    return Err(
+                        self.at_error(&kind_token, format!("unknown projection item {kind:?}"))
+                    );
+                }
+            };
+            items.push(item);
+        }
+        Ok(ValueProjection { name, items })
     }
 
     fn expression(&mut self, depth: usize) -> Result<Expression, DslError> {
@@ -667,9 +1149,19 @@ impl Parser {
             TokenKind::Word(value) => value,
             _ => return Err(self.at_error(&field_token, "expected field path")),
         };
-        let field = Field::parse(path).ok_or_else(|| {
-            self.at_error(&field_token, format!("unknown milestone field {path:?}"))
-        })?;
+        let field = Field::parse(path);
+        let fact = if field.is_none() {
+            Some(self.query_fact(path, &field_token)?)
+        } else {
+            None
+        };
+        let field_type = field
+            .map(Field::field_type)
+            .unwrap_or_else(|| fact.as_ref().unwrap().field_type());
+        if matches!(&self.peek().kind, TokenKind::Word(value) if value == "between") {
+            self.at += 1;
+            return self.range_expression(field, fact, field_type, &field_token);
+        }
         let operator = match self.peek().kind {
             TokenKind::Equal => Some(Comparison::Equal),
             TokenKind::NotEqual => Some(Comparison::NotEqual),
@@ -677,29 +1169,214 @@ impl Parser {
             TokenKind::LessEqual => Some(Comparison::LessEqual),
             TokenKind::Greater => Some(Comparison::Greater),
             TokenKind::GreaterEqual => Some(Comparison::GreaterEqual),
+            TokenKind::Word(ref value) if value == "has_all" => Some(Comparison::HasAll),
+            TokenKind::Word(ref value) if value == "has_any" => Some(Comparison::HasAny),
             _ => None,
         };
         let Some(operator) = operator else {
-            if field.field_type() == FieldType::Bool {
-                return Ok(Expression::Compare {
-                    field,
-                    operator: Comparison::Equal,
-                    value: Value::Bool(true),
+            if field_type == FieldType::Bool {
+                return Ok(match (field, fact) {
+                    (Some(field), None) => Expression::Compare {
+                        field,
+                        operator: Comparison::Equal,
+                        value: Value::Bool(true),
+                    },
+                    (None, Some(fact)) => Expression::Query {
+                        fact,
+                        operator: Comparison::Equal,
+                        value: Value::Bool(true),
+                    },
+                    _ => unreachable!(),
                 });
             }
             return Err(self.at_error(&field_token, "non-boolean field requires a comparison"));
         };
         self.at += 1;
         let value_token = self.take();
-        let value = parse_typed_value(field, &value_token)
-            .map_err(|message| self.at_error(&value_token, message))?;
-        validate_comparison(field, operator, &value)
-            .map_err(|message| self.at_error(&field_token, message))?;
-        Ok(Expression::Compare {
-            field,
-            operator,
-            value,
-        })
+        match (field, fact) {
+            (Some(field), None) => {
+                let value = parse_typed_value(field, &value_token)
+                    .map_err(|message| self.at_error(&value_token, message))?;
+                validate_comparison(field, operator, &value)
+                    .map_err(|message| self.at_error(&field_token, message))?;
+                Ok(Expression::Compare {
+                    field,
+                    operator,
+                    value,
+                })
+            }
+            (None, Some(fact)) => {
+                let value =
+                    parse_value_for_type(fact.field_type(), fact.display_name(), &value_token)
+                        .map_err(|message| self.at_error(&value_token, message))?;
+                validate_query_comparison(&fact, operator, &value)
+                    .map_err(|message| self.at_error(&field_token, message))?;
+                Ok(Expression::Query {
+                    fact,
+                    operator,
+                    value,
+                })
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn range_expression(
+        &mut self,
+        field: Option<Field>,
+        fact: Option<QueryFact>,
+        field_type: FieldType,
+        field_token: &Token,
+    ) -> Result<Expression, DslError> {
+        if !matches!(
+            field_type,
+            FieldType::U32 | FieldType::U64 | FieldType::I32 | FieldType::F32
+        ) {
+            return Err(self.at_error(field_token, "between requires a numeric field or fact"));
+        }
+        let display_name = field
+            .map(Field::path)
+            .unwrap_or_else(|| fact.as_ref().unwrap().display_name());
+        let minimum_token = self.take();
+        let minimum = parse_value_for_type(field_type, display_name, &minimum_token)
+            .map_err(|message| self.at_error(&minimum_token, message))?;
+        self.expect_word("and")?;
+        let maximum_token = self.take();
+        let maximum = parse_value_for_type(field_type, display_name, &maximum_token)
+            .map_err(|message| self.at_error(&maximum_token, message))?;
+
+        let ordered = match (&minimum, &maximum) {
+            (Value::U32(a), Value::U32(b)) => a <= b,
+            (Value::U64(a), Value::U64(b)) => a <= b,
+            (Value::I32(a), Value::I32(b)) => a <= b,
+            (Value::F32(a), Value::F32(b)) => a <= b,
+            _ => false,
+        };
+        if !ordered {
+            return Err(self.at_error(
+                &maximum_token,
+                "between requires a minimum less than or equal to its maximum",
+            ));
+        }
+
+        let comparison = |operator, value| match (&field, &fact) {
+            (Some(field), None) => Expression::Compare {
+                field: *field,
+                operator,
+                value,
+            },
+            (None, Some(fact)) => Expression::Query {
+                fact: fact.clone(),
+                operator,
+                value,
+            },
+            _ => unreachable!(),
+        };
+        Ok(Expression::And(
+            Box::new(comparison(Comparison::GreaterEqual, minimum)),
+            Box::new(comparison(Comparison::LessEqual, maximum)),
+        ))
+    }
+
+    fn query_fact(&mut self, path: &str, token: &Token) -> Result<QueryFact, DslError> {
+        if matches!(path, "player.in_aabb" | "player.plane_signed_distance") {
+            self.expect(TokenKind::LeftParen, "expected `(` after spatial fact")?;
+            let values = self.six_f32_arguments()?;
+            self.expect(TokenKind::RightParen, "expected `)` after spatial fact")?;
+            let fact = if path == "player.in_aabb" {
+                QueryFact::PlayerInAabb {
+                    minimum: values[..3].try_into().unwrap(),
+                    maximum: values[3..].try_into().unwrap(),
+                }
+            } else {
+                QueryFact::PlayerPlaneSignedDistance {
+                    point: values[..3].try_into().unwrap(),
+                    normal: values[3..].try_into().unwrap(),
+                }
+            };
+            validate_query_fact(&fact).map_err(|message| self.at_error(token, message))?;
+            return Ok(fact);
+        }
+        if let Some(field) = ActorFact::parse(path) {
+            self.expect(TokenKind::LeftParen, "expected `(` after placed-actor fact")?;
+            let stage = self.string_literal("expected quoted stage name")?;
+            self.expect(TokenKind::Comma, "expected `,` after stage name")?;
+            let home_room = self.integer::<i8>("home room must be a signed 8-bit integer")?;
+            self.expect(TokenKind::Comma, "expected `,` after home room")?;
+            let set_id = self.integer::<u16>("set ID must be an unsigned 16-bit integer")?;
+            self.expect(TokenKind::Comma, "expected `,` after set ID")?;
+            let actor_name = self.integer::<i16>("actor name must be a signed 16-bit integer")?;
+            self.expect(
+                TokenKind::RightParen,
+                "expected `)` after placed-actor selector",
+            )?;
+            let fact = QueryFact::PlacedActor {
+                selector: PlacedActorSelector {
+                    stage,
+                    home_room,
+                    set_id,
+                    actor_name,
+                },
+                field,
+            };
+            validate_query_fact(&fact).map_err(|message| self.at_error(token, message))?;
+            return Ok(fact);
+        }
+        if let Some(domain) = FlagDomain::parse(path) {
+            self.expect(TokenKind::LeftParen, "expected `(` after flag domain")?;
+            let room = if domain == FlagDomain::Switch {
+                let room = self.integer::<i8>("switch room must be a signed 8-bit integer")?;
+                self.expect(TokenKind::Comma, "expected `,` after switch room")?;
+                room
+            } else {
+                -1
+            };
+            let index = self.integer::<u16>("flag index must be an unsigned 16-bit integer")?;
+            self.expect(TokenKind::RightParen, "expected `)` after flag selector")?;
+            let fact = QueryFact::Flag {
+                selector: FlagSelector {
+                    domain,
+                    room,
+                    index,
+                },
+            };
+            validate_query_fact(&fact).map_err(|message| self.at_error(token, message))?;
+            return Ok(fact);
+        }
+        Err(self.at_error(token, format!("unknown milestone field {path:?}")))
+    }
+
+    fn string_literal(&mut self, message: &str) -> Result<String, DslError> {
+        let token = self.take();
+        match token.kind {
+            TokenKind::String(value) => Ok(value),
+            _ => Err(self.at_error(&token, message)),
+        }
+    }
+
+    fn integer<T: std::str::FromStr>(&mut self, message: &str) -> Result<T, DslError> {
+        let token = self.take();
+        let value = number_token(&token)?;
+        value.parse().map_err(|_| self.at_error(&token, message))
+    }
+
+    fn six_f32_arguments(&mut self) -> Result<[f32; 6], DslError> {
+        let mut values = [0.0_f32; 6];
+        for (index, value) in values.iter_mut().enumerate() {
+            if index != 0 {
+                self.expect(TokenKind::Comma, "expected `,` between spatial arguments")?;
+            }
+            let token = self.take();
+            let source = number_token(&token)?;
+            let parsed = source.parse::<f32>().map_err(|_| {
+                self.at_error(&token, "spatial arguments must be finite 32-bit floats")
+            })?;
+            if !parsed.is_finite() {
+                return Err(self.at_error(&token, "spatial arguments must be finite 32-bit floats"));
+            }
+            *value = canonical_float(parsed);
+        }
+        Ok(values)
     }
 
     fn word(&mut self) -> Result<String, DslError> {
@@ -786,37 +1463,49 @@ fn number_token(token: &Token) -> Result<&str, DslError> {
 }
 
 fn parse_typed_value(field: Field, token: &Token) -> Result<Value, String> {
+    parse_value_for_type(field.field_type(), field.path(), token)
+}
+
+fn parse_value_for_type(
+    field_type: FieldType,
+    display_name: &str,
+    token: &Token,
+) -> Result<Value, String> {
     let number = || match &token.kind {
         TokenKind::Number(value) => Ok(value.as_str()),
-        _ => Err(format!("{} requires a numeric value", field.path())),
+        _ => Err(format!("{display_name} requires a numeric value")),
     };
     let string = || match &token.kind {
         TokenKind::String(value) => {
             validate_text(value, MAX_SYMBOL_BYTES, false)?;
             Ok(value.clone())
         }
-        _ => Err(format!("{} requires a quoted symbolic value", field.path())),
+        _ => Err(format!("{display_name} requires a quoted symbolic value")),
     };
-    match field.field_type() {
+    match field_type {
         FieldType::Bool => match &token.kind {
             TokenKind::Word(value) if value == "true" => Ok(Value::Bool(true)),
             TokenKind::Word(value) if value == "false" => Ok(Value::Bool(false)),
-            _ => Err(format!("{} requires true or false", field.path())),
+            _ => Err(format!("{display_name} requires true or false")),
         },
+        FieldType::U32 => number()?
+            .parse()
+            .map(Value::U32)
+            .map_err(|_| "expected an unsigned 32-bit integer".into()),
         FieldType::U64 => number()?
             .parse::<u64>()
             .map(Value::U64)
-            .map_err(|_| format!("{} requires an unsigned 64-bit integer", field.path())),
+            .map_err(|_| format!("{display_name} requires an unsigned 64-bit integer")),
         FieldType::I32 => number()?
             .parse::<i32>()
             .map(Value::I32)
-            .map_err(|_| format!("{} requires a signed 32-bit integer", field.path())),
+            .map_err(|_| format!("{display_name} requires a signed 32-bit integer")),
         FieldType::F32 => {
             let value = number()?
                 .parse::<f32>()
-                .map_err(|_| format!("{} requires a finite 32-bit float", field.path()))?;
+                .map_err(|_| format!("{display_name} requires a finite 32-bit float"))?;
             if !value.is_finite() {
-                return Err(format!("{} requires a finite 32-bit float", field.path()));
+                return Err(format!("{display_name} requires a finite 32-bit float"));
             }
             Ok(Value::F32(canonical_float(value)))
         }
@@ -826,8 +1515,8 @@ fn parse_typed_value(field: Field, token: &Token) -> Result<Value, String> {
             TokenKind::Number(_) => number()?
                 .parse::<u32>()
                 .map(Value::U32)
-                .map_err(|_| format!("{} requires a u32 or quoted symbol", field.path())),
-            _ => Err(format!("{} requires a u32 or quoted symbol", field.path())),
+                .map_err(|_| format!("{display_name} requires a u32 or quoted symbol")),
+            _ => Err(format!("{display_name} requires a u32 or quoted symbol")),
         },
         FieldType::Procedure => match &token.kind {
             TokenKind::String(_) => {
@@ -837,8 +1526,8 @@ fn parse_typed_value(field: Field, token: &Token) -> Result<Value, String> {
             TokenKind::Number(_) => number()?
                 .parse::<u32>()
                 .map(Value::ProcedureNumber)
-                .map_err(|_| format!("{} requires a u32 or quoted symbol", field.path())),
-            _ => Err(format!("{} requires a u32 or quoted symbol", field.path())),
+                .map_err(|_| format!("{display_name} requires a u32 or quoted symbol")),
+            _ => Err(format!("{display_name} requires a u32 or quoted symbol")),
         },
     }
 }
@@ -864,6 +1553,7 @@ fn validate_comparison(field: Field, operator: Comparison, value: &Value) -> Res
     let type_matches = matches!(
         (field.field_type(), value),
         (FieldType::Bool, Value::Bool(_))
+            | (FieldType::U32, Value::U32(_))
             | (FieldType::U64, Value::U64(_))
             | (FieldType::I32, Value::I32(_))
             | (FieldType::F32, Value::F32(_))
@@ -908,10 +1598,147 @@ fn validate_comparison(field: Field, operator: Comparison, value: &Value) -> Res
     }
     if !matches!(
         field.field_type(),
-        FieldType::U64 | FieldType::I32 | FieldType::F32
+        FieldType::U32 | FieldType::U64 | FieldType::I32 | FieldType::F32
     ) && !matches!(operator, Comparison::Equal | Comparison::NotEqual)
     {
         return Err(format!("field {} supports only == and !=", field.path()));
+    }
+    if matches!(operator, Comparison::HasAll | Comparison::HasAny)
+        && !matches!(field.field_type(), FieldType::U32 | FieldType::U64)
+    {
+        return Err(format!(
+            "field {} does not support bit-mask comparisons",
+            field.path()
+        ));
+    }
+    if matches!(operator, Comparison::HasAll | Comparison::HasAny)
+        && matches!(value, Value::U32(0) | Value::U64(0))
+    {
+        return Err("bit-mask comparisons require a nonzero mask".into());
+    }
+    Ok(())
+}
+
+fn validate_query_fact(fact: &QueryFact) -> Result<(), String> {
+    match fact {
+        QueryFact::PlacedActor { selector, .. } => {
+            if !valid_stage_name(&selector.stage) {
+                return Err(
+                    "placed actor stage names must be 1..8 ASCII uppercase, digit, or underscore bytes"
+                        .into(),
+                );
+            }
+            if !(-1..=63).contains(&selector.home_room) {
+                return Err("placed actor home room must be -1..63".into());
+            }
+            if selector.set_id == u16::MAX {
+                return Err("placed actor set ID 65535 is reserved as unavailable".into());
+            }
+            if selector.actor_name < 0 {
+                return Err("placed actor name must be nonnegative".into());
+            }
+        }
+        QueryFact::Flag { selector } => {
+            let maximum = match selector.domain {
+                FlagDomain::Event => 822,
+                FlagDomain::Temporary => 185,
+                FlagDomain::Dungeon => 64,
+                FlagDomain::Switch => 240,
+            };
+            if usize::from(selector.index) >= maximum {
+                return Err(format!(
+                    "{} index must be below {maximum}",
+                    selector.domain.path()
+                ));
+            }
+            if selector.domain == FlagDomain::Switch {
+                if !(0..=63).contains(&selector.room) {
+                    return Err("switch flag room must be 0..63".into());
+                }
+            } else if selector.room != -1 {
+                return Err(format!(
+                    "{} flags do not accept a room",
+                    selector.domain.path()
+                ));
+            }
+        }
+        QueryFact::PlayerInAabb { minimum, maximum } => {
+            for axis in 0..3 {
+                if !minimum[axis].is_finite()
+                    || !maximum[axis].is_finite()
+                    || minimum[axis].to_bits() != canonical_float(minimum[axis]).to_bits()
+                    || maximum[axis].to_bits() != canonical_float(maximum[axis]).to_bits()
+                    || minimum[axis] > maximum[axis]
+                {
+                    return Err(
+                        "player.in_aabb requires canonical finite minimum <= maximum on every axis"
+                            .into(),
+                    );
+                }
+            }
+        }
+        QueryFact::PlayerPlaneSignedDistance { point, normal } => {
+            if point.iter().chain(normal).any(|value| {
+                !value.is_finite() || value.to_bits() != canonical_float(*value).to_bits()
+            }) {
+                return Err(
+                    "player.plane_signed_distance requires canonical finite arguments".into(),
+                );
+            }
+            let length_squared = normal
+                .iter()
+                .map(|value| f64::from(*value) * f64::from(*value))
+                .sum::<f64>();
+            if length_squared == 0.0 || !length_squared.is_finite() {
+                return Err("player plane normal must be finite and nonzero".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_query_comparison(
+    fact: &QueryFact,
+    operator: Comparison,
+    value: &Value,
+) -> Result<(), String> {
+    validate_query_fact(fact)?;
+    let field_type = fact.field_type();
+    let type_matches = matches!(
+        (field_type, value),
+        (FieldType::Bool, Value::Bool(_))
+            | (FieldType::U32, Value::U32(_))
+            | (FieldType::I32, Value::I32(_))
+            | (FieldType::F32, Value::F32(_))
+    );
+    if !type_matches {
+        return Err(format!(
+            "value type does not match fact {}",
+            fact.display_name()
+        ));
+    }
+    if matches!(value, Value::F32(value) if !value.is_finite() || value.to_bits() != canonical_float(*value).to_bits())
+    {
+        return Err("floating-point constants must be finite and canonical".into());
+    }
+    if field_type == FieldType::Bool
+        && !matches!(operator, Comparison::Equal | Comparison::NotEqual)
+    {
+        return Err(format!(
+            "fact {} supports only == and !=",
+            fact.display_name()
+        ));
+    }
+    if matches!(operator, Comparison::HasAll | Comparison::HasAny) {
+        if field_type != FieldType::U32 {
+            return Err(format!(
+                "fact {} does not support bit-mask comparisons",
+                fact.display_name()
+            ));
+        }
+        if matches!(value, Value::U32(0)) {
+            return Err("bit-mask comparisons require a nonzero mask".into());
+        }
     }
     Ok(())
 }
@@ -942,7 +1769,7 @@ fn canonical_procedure_symbol(value: &str) -> String {
 }
 
 fn validate_program(program: &MilestoneProgram) -> Result<(), String> {
-    if (program.version.major, program.version.minor) != LANGUAGE_VERSION {
+    if program.version.major != LANGUAGE_VERSION.0 || program.version.minor > LANGUAGE_VERSION.1 {
         return Err("unsupported milestone language version".into());
     }
     if program.definitions.is_empty() || program.definitions.len() > MAX_DEFINITIONS {
@@ -962,8 +1789,103 @@ fn validate_program(program: &MilestoneProgram) -> Result<(), String> {
                 definition.name
             ));
         }
+        if definition.then.is_empty() != definition.within_ticks.is_none() {
+            return Err(format!(
+                "milestone {:?} must use `within` exactly when it has ordered `then` steps",
+                definition.name
+            ));
+        }
+        if !definition.then.is_empty() {
+            if program.version.minor < 3 {
+                return Err(format!(
+                    "milestone {:?} ordered sequences require language 1.3",
+                    definition.name
+                ));
+            }
+            if definition.stable_ticks != 1 {
+                return Err(format!(
+                    "milestone {:?} cannot combine stable with an ordered sequence",
+                    definition.name
+                ));
+            }
+            if definition.then.len() > 15 || definition.within_ticks == Some(0) {
+                return Err(format!(
+                    "milestone {:?} has an invalid bounded sequence",
+                    definition.name
+                ));
+            }
+        }
+        if !definition.projections.is_empty() && program.version.minor < 4 {
+            return Err(format!(
+                "milestone {:?} value projections require language 1.4",
+                definition.name
+            ));
+        }
+        if definition.projections.len() > MAX_PROJECTIONS {
+            return Err(format!(
+                "milestone {:?} exceeds {MAX_PROJECTIONS} value projections",
+                definition.name
+            ));
+        }
+        let mut projection_names = BTreeSet::new();
+        for projection in &definition.projections {
+            validate_text(&projection.name, MAX_NAME_BYTES, false)?;
+            if !projection_names.insert(&projection.name) {
+                return Err(format!(
+                    "milestone {:?} has duplicate projection {:?}",
+                    definition.name, projection.name
+                ));
+            }
+            if projection.items.is_empty() || projection.items.len() > MAX_PROJECTION_ITEMS {
+                return Err(format!(
+                    "projection {:?} must contain 1 to {MAX_PROJECTION_ITEMS} items",
+                    projection.name
+                ));
+            }
+            let mut items = BTreeSet::new();
+            for item in &projection.items {
+                let identity = match item {
+                    ValueProjectionItem::Rng { stream } => format!("rng:{}", *stream as u8),
+                    ValueProjectionItem::ActorPopulation { stage, room } => {
+                        if !valid_stage_name(stage) || !(-1..=63).contains(room) {
+                            return Err(format!(
+                                "projection {:?} has an invalid actor population scope",
+                                projection.name
+                            ));
+                        }
+                        format!("actors:{stage}:{room}")
+                    }
+                    ValueProjectionItem::Flag { selector } => {
+                        validate_query_fact(&QueryFact::Flag {
+                            selector: selector.clone(),
+                        })?;
+                        format!(
+                            "flag:{}:{}:{}",
+                            selector.domain as u8, selector.room, selector.index
+                        )
+                    }
+                };
+                if !items.insert(identity) {
+                    return Err(format!(
+                        "projection {:?} contains a duplicate item",
+                        projection.name
+                    ));
+                }
+            }
+        }
         let mut operations = 0;
-        validate_expression(&definition.when, 1, &mut operations)?;
+        if !definition.then.is_empty() {
+            operations += 2 + definition.then.len();
+        }
+        validate_expression(&definition.when, program.version.minor, 1, &mut operations)?;
+        for step in &definition.then {
+            validate_expression(step, program.version.minor, 1, &mut operations)?;
+        }
+        operations += definition
+            .projections
+            .iter()
+            .map(|projection| 1 + projection.items.len())
+            .sum::<usize>();
         if operations > MAX_OPS {
             return Err(format!(
                 "milestone {:?} exceeds {MAX_OPS} operations",
@@ -976,6 +1898,7 @@ fn validate_program(program: &MilestoneProgram) -> Result<(), String> {
 
 fn validate_expression(
     expression: &Expression,
+    language_minor: u16,
     depth: usize,
     operations: &mut usize,
 ) -> Result<(), String> {
@@ -990,16 +1913,47 @@ fn validate_expression(
             operator,
             value,
         } => {
+            if language_minor == 0
+                && ((*field as u8) > Field::NextStageEnabled as u8
+                    || matches!(operator, Comparison::HasAll | Comparison::HasAny))
+            {
+                return Err(format!(
+                    "field/operator {} requires milestone language 1.1",
+                    field.path()
+                ));
+            }
             validate_comparison(*field, *operator, value)?;
             *operations += 3;
         }
+        Expression::Query {
+            fact,
+            operator,
+            value,
+        } => {
+            let required_minor = if matches!(
+                fact,
+                QueryFact::PlayerInAabb { .. } | QueryFact::PlayerPlaneSignedDistance { .. }
+            ) {
+                3
+            } else {
+                2
+            };
+            if language_minor < required_minor {
+                return Err(format!(
+                    "fact {} requires milestone language 1.{required_minor}",
+                    fact.display_name(),
+                ));
+            }
+            validate_query_comparison(fact, *operator, value)?;
+            *operations += 3;
+        }
         Expression::Not(inner) => {
-            validate_expression(inner, depth + 1, operations)?;
+            validate_expression(inner, language_minor, depth + 1, operations)?;
             *operations += 1;
         }
         Expression::And(left, right) | Expression::Or(left, right) => {
-            validate_expression(left, depth + 1, operations)?;
-            validate_expression(right, depth + 1, operations)?;
+            validate_expression(left, language_minor, depth + 1, operations)?;
+            validate_expression(right, language_minor, depth + 1, operations)?;
             *operations += 1;
         }
     }
@@ -1025,8 +1979,53 @@ pub fn format(program: &MilestoneProgram) -> Result<String, BinaryError> {
         if definition.stable_ticks != 1 {
             output.push_str(&format!("  stable {}\n", definition.stable_ticks));
         }
+        if let Some(within_ticks) = definition.within_ticks {
+            output.push_str(&format!("  within {within_ticks}\n"));
+        }
         output.push_str("  when ");
         format_expression(&definition.when, 0, &mut output);
+        for step in &definition.then {
+            output.push_str("\n  then ");
+            format_expression(step, 0, &mut output);
+        }
+        for projection in &definition.projections {
+            output.push_str("\n  projection ");
+            output.push_str(&quoted(&projection.name));
+            output.push_str(" {");
+            for item in &projection.items {
+                output.push_str("\n    ");
+                match item {
+                    ValueProjectionItem::Rng { stream } => {
+                        output.push_str("rng ");
+                        output.push_str(match stream {
+                            RngStream::Primary => "primary",
+                            RngStream::Secondary => "secondary",
+                        });
+                    }
+                    ValueProjectionItem::ActorPopulation { stage, room } => {
+                        output.push_str("actor_population ");
+                        output.push_str(&quoted(stage));
+                        output.push(' ');
+                        output.push_str(&room.to_string());
+                    }
+                    ValueProjectionItem::Flag { selector } => {
+                        output.push_str("flag ");
+                        output.push_str(match selector.domain {
+                            FlagDomain::Event => "event ",
+                            FlagDomain::Temporary => "temporary ",
+                            FlagDomain::Dungeon => "dungeon ",
+                            FlagDomain::Switch => "switch ",
+                        });
+                        if selector.domain == FlagDomain::Switch {
+                            output.push_str(&selector.room.to_string());
+                            output.push(' ');
+                        }
+                        output.push_str(&selector.index.to_string());
+                    }
+                }
+            }
+            output.push_str("\n  }");
+        }
         output.push_str("\n}");
         if index + 1 != program.definitions.len() {
             output.push_str("\n\n");
@@ -1042,7 +2041,7 @@ fn format_expression(expression: &Expression, parent_precedence: u8, output: &mu
         Expression::Or(..) => 1,
         Expression::And(..) => 2,
         Expression::Not(..) => 3,
-        Expression::Compare { .. } => 4,
+        Expression::Compare { .. } | Expression::Query { .. } => 4,
     };
     let parentheses = precedence < parent_precedence;
     if parentheses {
@@ -1063,6 +2062,28 @@ fn format_expression(expression: &Expression, parent_precedence: u8, output: &mu
                 Comparison::LessEqual => "<=",
                 Comparison::Greater => ">",
                 Comparison::GreaterEqual => ">=",
+                Comparison::HasAll => "has_all",
+                Comparison::HasAny => "has_any",
+            });
+            output.push(' ');
+            format_value(value, output);
+        }
+        Expression::Query {
+            fact,
+            operator,
+            value,
+        } => {
+            format_query_fact(fact, output);
+            output.push(' ');
+            output.push_str(match operator {
+                Comparison::Equal => "==",
+                Comparison::NotEqual => "!=",
+                Comparison::Less => "<",
+                Comparison::LessEqual => "<=",
+                Comparison::Greater => ">",
+                Comparison::GreaterEqual => ">=",
+                Comparison::HasAll => "has_all",
+                Comparison::HasAny => "has_any",
             });
             output.push(' ');
             format_value(value, output);
@@ -1084,6 +2105,52 @@ fn format_expression(expression: &Expression, parent_precedence: u8, output: &mu
     }
     if parentheses {
         output.push(')');
+    }
+}
+
+fn format_query_fact(fact: &QueryFact, output: &mut String) {
+    match fact {
+        QueryFact::PlacedActor { selector, field } => {
+            output.push_str(field.path());
+            output.push('(');
+            output.push_str(&quoted(&selector.stage));
+            output.push_str(", ");
+            output.push_str(&selector.home_room.to_string());
+            output.push_str(", ");
+            output.push_str(&selector.set_id.to_string());
+            output.push_str(", ");
+            output.push_str(&selector.actor_name.to_string());
+            output.push(')');
+        }
+        QueryFact::Flag { selector } => {
+            output.push_str(selector.domain.path());
+            output.push('(');
+            if selector.domain == FlagDomain::Switch {
+                output.push_str(&selector.room.to_string());
+                output.push_str(", ");
+            }
+            output.push_str(&selector.index.to_string());
+            output.push(')');
+        }
+        QueryFact::PlayerInAabb { minimum, maximum } => {
+            output.push_str("player.in_aabb(");
+            format_f32_arguments(minimum.iter().chain(maximum), output);
+            output.push(')');
+        }
+        QueryFact::PlayerPlaneSignedDistance { point, normal } => {
+            output.push_str("player.plane_signed_distance(");
+            format_f32_arguments(point.iter().chain(normal), output);
+            output.push(')');
+        }
+    }
+}
+
+fn format_f32_arguments<'a>(values: impl Iterator<Item = &'a f32>, output: &mut String) {
+    for (index, value) in values.enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        format_value(&Value::F32(*value), output);
     }
 }
 
@@ -1130,7 +2197,22 @@ pub fn compile(program: &MilestoneProgram) -> Result<CompiledMilestones, BinaryE
     for definition in &program.definitions {
         let mut bytecode = Vec::new();
         let mut operation_count = 0_u16;
-        encode_expression(&definition.when, &mut bytecode, &mut operation_count)?;
+        if definition.then.is_empty() {
+            encode_expression(&definition.when, &mut bytecode, &mut operation_count)?;
+        } else {
+            bytecode.push(0x40);
+            push_u16(&mut bytecode, definition.within_ticks.unwrap());
+            bytecode.push((definition.then.len() + 1) as u8);
+            increment_ops(&mut operation_count, 1)?;
+            for step in std::iter::once(&definition.when).chain(&definition.then) {
+                encode_expression(step, &mut bytecode, &mut operation_count)?;
+                bytecode.push(0x41);
+                increment_ops(&mut operation_count, 1)?;
+            }
+        }
+        for projection in &definition.projections {
+            encode_value_projection(projection, &mut bytecode, &mut operation_count)?;
+        }
         let name = definition.name.as_bytes();
         let identity_bytes = definition_identity_bytes(
             name,
@@ -1161,7 +2243,7 @@ pub fn compile(program: &MilestoneProgram) -> Result<CompiledMilestones, BinaryE
     let mut bytes = Vec::with_capacity(HEADER_BYTES + records.len());
     bytes.extend_from_slice(&MAGIC);
     push_u16(&mut bytes, WIRE_VERSION.0);
-    push_u16(&mut bytes, WIRE_VERSION.1);
+    push_u16(&mut bytes, program.version.minor);
     push_u16(&mut bytes, program.version.major);
     push_u16(&mut bytes, program.version.minor);
     push_u16(
@@ -1185,6 +2267,346 @@ pub fn compile(program: &MilestoneProgram) -> Result<CompiledMilestones, BinaryE
         program_sha256,
         definitions: identities,
     })
+}
+
+fn encode_value_projection(
+    projection: &ValueProjection,
+    output: &mut Vec<u8>,
+    operations: &mut u16,
+) -> Result<(), BinaryError> {
+    output.push(0x50);
+    output.push(
+        u8::try_from(projection.name.len())
+            .map_err(|_| BinaryError("projection name is too long".into()))?,
+    );
+    output.extend_from_slice(projection.name.as_bytes());
+    output.push(
+        u8::try_from(projection.items.len())
+            .map_err(|_| BinaryError("projection has too many items".into()))?,
+    );
+    increment_ops(operations, 1)?;
+    for item in &projection.items {
+        match item {
+            ValueProjectionItem::Rng { stream } => {
+                output.extend_from_slice(&[0x51, *stream as u8]);
+            }
+            ValueProjectionItem::ActorPopulation { stage, room } => {
+                output.push(0x52);
+                let mut fixed_stage = [0_u8; 8];
+                fixed_stage[..stage.len()].copy_from_slice(stage.as_bytes());
+                output.extend_from_slice(&fixed_stage);
+                output.push(*room as u8);
+            }
+            ValueProjectionItem::Flag { selector } => {
+                output.extend_from_slice(&[0x53, selector.domain as u8, selector.room as u8]);
+                push_u16(output, selector.index);
+            }
+        }
+        increment_ops(operations, 1)?;
+    }
+    Ok(())
+}
+
+/// Stable identity for one named projection, independent of milestone topology.
+pub fn value_projection_identity(projection: &ValueProjection) -> Result<[u8; 32], BinaryError> {
+    validate_text(&projection.name, MAX_NAME_BYTES, false).map_err(BinaryError)?;
+    if projection.items.is_empty() || projection.items.len() > MAX_PROJECTION_ITEMS {
+        return Err(BinaryError("invalid projection item count".into()));
+    }
+    for item in &projection.items {
+        match item {
+            ValueProjectionItem::Rng { .. } => {}
+            ValueProjectionItem::ActorPopulation { stage, room }
+                if valid_stage_name(stage) && (-1..=63).contains(room) => {}
+            ValueProjectionItem::Flag { selector } => {
+                validate_query_fact(&QueryFact::Flag {
+                    selector: selector.clone(),
+                })
+                .map_err(BinaryError)?;
+            }
+            _ => {
+                return Err(BinaryError(
+                    "invalid actor population projection scope".into(),
+                ));
+            }
+        }
+    }
+    let mut bytes = Vec::new();
+    let mut operations = 0;
+    encode_value_projection(projection, &mut bytes, &mut operations)?;
+    Ok(Sha256::new()
+        .chain_update(PROJECTION_DOMAIN)
+        .chain_update(bytes)
+        .finalize()
+        .into())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecordedTraceMilestoneHit {
+    pub record_index: usize,
+    pub boundary_index: u64,
+    pub simulation_tick: u64,
+    pub tape_frame: Option<u64>,
+}
+
+/// Evaluate authored predicates offline over immutable decoded gameplay records.
+/// Facts not present in the trace schema (currently actor catalogs and flags)
+/// are unavailable and therefore cannot make a comparison true.
+pub fn evaluate_recorded_trace(
+    program: &MilestoneProgram,
+    trace: &crate::trace::DecodedTrace,
+) -> Result<BTreeMap<String, Option<RecordedTraceMilestoneHit>>, BinaryError> {
+    validate_program(program).map_err(BinaryError)?;
+    #[derive(Default)]
+    struct State {
+        stable: u16,
+        sequence_next: usize,
+        sequence_elapsed: u16,
+        hit: Option<RecordedTraceMilestoneHit>,
+    }
+    let mut states = (0..program.definitions.len())
+        .map(|_| State::default())
+        .collect::<Vec<_>>();
+    for (record_index, record) in trace.records.iter().enumerate() {
+        for (definition, state) in program.definitions.iter().zip(&mut states) {
+            if state.hit.is_some()
+                || !matches!(
+                    (definition.phase, record.observation_phase),
+                    (
+                        EvaluationPhase::PreInput,
+                        crate::trace::TracePhase::PreInput
+                    ) | (
+                        EvaluationPhase::PostSim,
+                        crate::trace::TracePhase::PostSimulation
+                    )
+                )
+            {
+                continue;
+            }
+            let capture = || RecordedTraceMilestoneHit {
+                record_index,
+                boundary_index: record.boundary_index,
+                simulation_tick: record.simulation_tick,
+                tape_frame: record.tape_frame,
+            };
+            if !definition.then.is_empty() {
+                let steps = std::iter::once(&definition.when)
+                    .chain(&definition.then)
+                    .collect::<Vec<_>>();
+                if state.sequence_next == 0 {
+                    if evaluate_trace_expression(steps[0], record) {
+                        state.sequence_next = 1;
+                        state.sequence_elapsed = 0;
+                    }
+                    continue;
+                }
+                let next_elapsed = state.sequence_elapsed.saturating_add(1);
+                if next_elapsed > definition.within_ticks.unwrap() {
+                    state.sequence_next = usize::from(evaluate_trace_expression(steps[0], record));
+                    state.sequence_elapsed = 0;
+                    continue;
+                }
+                state.sequence_elapsed = next_elapsed;
+                if evaluate_trace_expression(steps[state.sequence_next], record) {
+                    state.sequence_next += 1;
+                } else if evaluate_trace_expression(steps[0], record) {
+                    state.sequence_next = 1;
+                    state.sequence_elapsed = 0;
+                }
+                if state.sequence_next == steps.len() {
+                    state.hit = Some(capture());
+                }
+                continue;
+            }
+            if evaluate_trace_expression(&definition.when, record) {
+                state.stable = state.stable.saturating_add(1).min(definition.stable_ticks);
+                if state.stable == definition.stable_ticks {
+                    state.hit = Some(capture());
+                }
+            } else {
+                state.stable = 0;
+            }
+        }
+    }
+    Ok(program
+        .definitions
+        .iter()
+        .zip(states)
+        .map(|(definition, state)| (definition.name.clone(), state.hit))
+        .collect())
+}
+
+fn trace_channel_present(
+    record: &crate::trace::TraceRecord,
+    channel: crate::trace::TraceChannel,
+) -> bool {
+    record.channel_status.get(&channel) == Some(&crate::trace::TraceChannelStatus::Present)
+}
+
+fn evaluate_trace_expression(expression: &Expression, record: &crate::trace::TraceRecord) -> bool {
+    match expression {
+        Expression::Compare {
+            field,
+            operator,
+            value,
+        } => trace_field(record, *field)
+            .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
+        Expression::Query {
+            fact,
+            operator,
+            value,
+        } => trace_query(record, fact)
+            .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
+        Expression::Not(inner) => !evaluate_trace_expression(inner, record),
+        Expression::And(left, right) => {
+            evaluate_trace_expression(left, record) && evaluate_trace_expression(right, record)
+        }
+        Expression::Or(left, right) => {
+            evaluate_trace_expression(left, record) || evaluate_trace_expression(right, record)
+        }
+    }
+}
+
+fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value> {
+    use crate::trace::TraceChannel as Channel;
+    let stage = trace_channel_present(record, Channel::Stage);
+    let player = trace_channel_present(record, Channel::PlayerMotion);
+    let event = trace_channel_present(record, Channel::Event);
+    let action = record.player_action.as_ref();
+    let rng = record.rng.as_ref();
+    let collision = record.player_background_collision.as_ref();
+    Some(match field {
+        Field::BoundaryKind => Value::U32(u32::from(record.boundary_index != 0)),
+        Field::BoundaryIndex => Value::U64(record.boundary_index),
+        Field::TapeFrame => Value::U64(record.tape_frame?),
+        Field::BoundaryReached => Value::Bool(true),
+        Field::StageName if stage => Value::Symbol(record.stage_name.clone()),
+        Field::StageRoom if stage => Value::I32(record.room.into()),
+        Field::StageLayer if stage => Value::I32(record.layer.into()),
+        Field::StageSpawn if stage => Value::I32(record.point.into()),
+        Field::NextStageName if stage => Value::Symbol(record.next_stage_name.clone()),
+        Field::NextStageRoom if stage => Value::I32(record.next_room.into()),
+        Field::NextStageLayer if stage => Value::I32(record.next_layer.into()),
+        Field::NextStageSpawn if stage => Value::I32(record.next_point.into()),
+        Field::NextStageEnabled if stage => Value::Bool(record.next_stage_enabled),
+        Field::PlayerExists => Value::Bool(player && record.player_present()),
+        Field::PlayerIsLink if player => Value::Bool(record.player_is_link()),
+        Field::PlayerProcessId if player => Value::U32(record.player_session_process_id?),
+        Field::PlayerActorName if player => Value::I32(record.player_actor_name.into()),
+        Field::PlayerPositionX if player => Value::F32(record.position[0]),
+        Field::PlayerPositionY if player => Value::F32(record.position[1]),
+        Field::PlayerPositionZ if player => Value::F32(record.position[2]),
+        Field::PlayerVelocityX if player => Value::F32(record.velocity[0]),
+        Field::PlayerVelocityY if player => Value::F32(record.velocity[1]),
+        Field::PlayerVelocityZ if player => Value::F32(record.velocity[2]),
+        Field::PlayerSpeed if player => Value::F32(record.forward_speed),
+        Field::PlayerProcedure if player => Value::ProcedureNumber(record.player_proc_id?.into()),
+        Field::PlayerCurrentAngleX if player => Value::I32(record.current_angle[0].into()),
+        Field::PlayerCurrentAngleY if player => Value::I32(record.current_angle[1].into()),
+        Field::PlayerCurrentAngleZ if player => Value::I32(record.current_angle[2].into()),
+        Field::PlayerShapeAngleX if player => Value::I32(record.shape_angle[0].into()),
+        Field::PlayerShapeAngleY if player => Value::I32(record.shape_angle[1].into()),
+        Field::PlayerShapeAngleZ if player => Value::I32(record.shape_angle[2].into()),
+        Field::PlayerModeFlags => Value::U32(action?.mode_flags),
+        Field::PlayerDamageWaitTimer => Value::I32(action?.damage_wait_timer.into()),
+        Field::PlayerIceDamageWaitTimer => Value::I32(action?.ice_damage_wait_timer.into()),
+        Field::PlayerSwordChangeWaitTimer => Value::U32(action?.sword_change_wait_timer.into()),
+        Field::EventRunning if event => Value::Bool(record.event_running()),
+        Field::EventId if event => Value::I32(record.event_id.into()),
+        Field::EventMode if event => Value::U32(record.event_mode.into()),
+        Field::EventStatus if event => Value::U32(record.event_status.into()),
+        Field::EventMapToolId if event => Value::U32(record.event_map_tool_id.into()),
+        Field::EventNameHashPresent if event => Value::Bool(record.event_name_hash_present),
+        Field::EventNameHash if event && record.event_name_hash_present => {
+            Value::U32(record.event_name_hash)
+        }
+        Field::RngPrimaryState0 => Value::I32(rng?.primary.state[0]),
+        Field::RngPrimaryState1 => Value::I32(rng?.primary.state[1]),
+        Field::RngPrimaryState2 => Value::I32(rng?.primary.state[2]),
+        Field::RngPrimaryCalls => Value::U64(rng?.primary.call_count),
+        Field::RngSecondaryState0 => Value::I32(rng?.secondary.state[0]),
+        Field::RngSecondaryState1 => Value::I32(rng?.secondary.state[1]),
+        Field::RngSecondaryState2 => Value::I32(rng?.secondary.state[2]),
+        Field::RngSecondaryCalls => Value::U64(rng?.secondary.call_count),
+        Field::CollisionGroundContact => Value::Bool(collision?.flags & (1 << 1) != 0),
+        Field::CollisionWallContact => Value::Bool(collision?.flags & (1 << 6) != 0),
+        Field::CollisionRoofContact => Value::Bool(collision?.flags & (1 << 8) != 0),
+        Field::CollisionWaterContact => Value::Bool(collision?.flags & (1 << 11) != 0),
+        Field::CollisionWaterIn => Value::Bool(collision?.flags & (1 << 12) != 0),
+        Field::CollisionGroundHeight => Value::F32(collision?.ground_height),
+        Field::CollisionRoofHeight => Value::F32(collision?.roof_height),
+        Field::CollisionGroundClearance if player => {
+            Value::F32(record.position[1] - collision?.ground_height)
+        }
+        _ => return None,
+    })
+}
+
+fn trace_query(record: &crate::trace::TraceRecord, fact: &QueryFact) -> Option<Value> {
+    match fact {
+        QueryFact::PlayerInAabb { minimum, maximum } if record.player_present() => {
+            Some(Value::Bool((0..3).all(|axis| {
+                record.position[axis] >= minimum[axis] && record.position[axis] <= maximum[axis]
+            })))
+        }
+        QueryFact::PlayerPlaneSignedDistance { point, normal } if record.player_present() => {
+            let length =
+                (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+            Some(Value::F32(
+                ((record.position[0] - point[0]) * normal[0]
+                    + (record.position[1] - point[1]) * normal[1]
+                    + (record.position[2] - point[2]) * normal[2])
+                    / length,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn compare_trace_values(actual: &Value, operator: Comparison, expected: &Value) -> bool {
+    macro_rules! ordered {
+        ($left:expr, $right:expr) => {
+            match operator {
+                Comparison::Equal => $left == $right,
+                Comparison::NotEqual => $left != $right,
+                Comparison::Less => $left < $right,
+                Comparison::LessEqual => $left <= $right,
+                Comparison::Greater => $left > $right,
+                Comparison::GreaterEqual => $left >= $right,
+                Comparison::HasAll | Comparison::HasAny => false,
+            }
+        };
+    }
+    match (actual, expected) {
+        (Value::Bool(left), Value::Bool(right)) => ordered!(*left, *right),
+        (Value::U32(left), Value::U32(right)) => match operator {
+            Comparison::HasAll => left & right == *right,
+            Comparison::HasAny => left & right != 0,
+            _ => ordered!(*left, *right),
+        },
+        (Value::U64(left), Value::U64(right)) => match operator {
+            Comparison::HasAll => left & right == *right,
+            Comparison::HasAny => left & right != 0,
+            _ => ordered!(*left, *right),
+        },
+        (Value::I32(left), Value::I32(right)) => ordered!(*left, *right),
+        (Value::F32(left), Value::F32(right)) => match operator {
+            Comparison::Equal => left.to_bits() == right.to_bits(),
+            Comparison::NotEqual => left.to_bits() != right.to_bits(),
+            _ => ordered!(*left, *right),
+        },
+        (Value::Symbol(left), Value::Symbol(right)) => ordered!(left, right),
+        (Value::U32(left), Value::Symbol(right)) if *left <= 1 => {
+            let expected = match right.as_str() {
+                "boot" => 0,
+                "tick" => 1,
+                _ => return false,
+            };
+            ordered!(*left, expected)
+        }
+        (Value::ProcedureNumber(left), Value::ProcedureNumber(right)) => ordered!(*left, *right),
+        _ => false,
+    }
 }
 
 /// Parse, validate, and compile source in one operation.
@@ -1237,6 +2659,18 @@ fn encode_expression(
             output.push(*operator as u8);
             increment_ops(operations, 1)?;
         }
+        Expression::Query {
+            fact,
+            operator,
+            value,
+        } => {
+            encode_query_fact(fact, output)?;
+            increment_ops(operations, 1)?;
+            encode_value(value, output)?;
+            increment_ops(operations, 1)?;
+            output.push(*operator as u8);
+            increment_ops(operations, 1)?;
+        }
         Expression::Not(inner) => {
             encode_expression(inner, output, operations)?;
             output.push(0x30);
@@ -1251,6 +2685,42 @@ fn encode_expression(
                 0x32
             });
             increment_ops(operations, 1)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_query_fact(fact: &QueryFact, output: &mut Vec<u8>) -> Result<(), BinaryError> {
+    validate_query_fact(fact).map_err(BinaryError)?;
+    output.push(0x02);
+    match fact {
+        QueryFact::PlacedActor { selector, field } => {
+            output.push(1);
+            output.push(*field as u8);
+            let mut stage = [0_u8; 8];
+            stage[..selector.stage.len()].copy_from_slice(selector.stage.as_bytes());
+            output.extend_from_slice(&stage);
+            output.push(selector.home_room as u8);
+            push_u16(output, selector.set_id);
+            output.extend_from_slice(&selector.actor_name.to_le_bytes());
+        }
+        QueryFact::Flag { selector } => {
+            output.push(2);
+            output.push(selector.domain as u8);
+            output.push(selector.room as u8);
+            push_u16(output, selector.index);
+        }
+        QueryFact::PlayerInAabb { minimum, maximum } => {
+            output.push(3);
+            for value in minimum.iter().chain(maximum) {
+                output.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+        }
+        QueryFact::PlayerPlaneSignedDistance { point, normal } => {
+            output.push(4);
+            for value in point.iter().chain(normal) {
+                output.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
         }
     }
     Ok(())
@@ -1339,7 +2809,7 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedMilestones, BinaryError> {
         return Err(BinaryError("invalid milestone program magic".into()));
     }
     let wire = (cursor.u16()?, cursor.u16()?);
-    if wire != WIRE_VERSION {
+    if wire.0 != WIRE_VERSION.0 || wire.1 > WIRE_VERSION.1 {
         return Err(BinaryError(format!(
             "unsupported milestone wire version {}.{}",
             wire.0, wire.1
@@ -1349,7 +2819,10 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedMilestones, BinaryError> {
         major: cursor.u16()?,
         minor: cursor.u16()?,
     };
-    if (version.major, version.minor) != LANGUAGE_VERSION {
+    if version.major != LANGUAGE_VERSION.0
+        || version.minor > LANGUAGE_VERSION.1
+        || version.minor != wire.1
+    {
         return Err(BinaryError("unsupported milestone language version".into()));
     }
     let definition_count = usize::from(cursor.u16()?);
@@ -1449,13 +2922,16 @@ fn decode_definition(
     if actual_digest != expected_digest {
         return Err(BinaryError("milestone definition digest mismatch".into()));
     }
-    let when = decode_expression(bytecode, operation_count)?;
+    let (when, then, within_ticks, projections) = decode_expression(bytecode, operation_count)?;
     Ok((
         MilestoneDefinition {
             name: name.clone(),
             phase,
             stable_ticks,
             when,
+            then,
+            within_ticks,
+            projections,
         },
         CompiledDefinitionIdentity {
             name,
@@ -1467,21 +2943,203 @@ fn decode_definition(
 #[derive(Clone, Debug)]
 enum StackItem {
     Field(Field),
+    Query(QueryFact),
     Value(Value),
     Expression(Expression),
 }
 
-fn decode_expression(bytes: &[u8], operation_count: u16) -> Result<Expression, BinaryError> {
+fn decode_expression(
+    bytes: &[u8],
+    operation_count: u16,
+) -> Result<
+    (
+        Expression,
+        Vec<Expression>,
+        Option<u16>,
+        Vec<ValueProjection>,
+    ),
+    BinaryError,
+> {
     let mut cursor = Cursor::new(bytes);
     let mut stack = Vec::new();
-    for _ in 0..operation_count {
+    let mut sequence_within = None;
+    let mut expected_steps = 0_usize;
+    let mut sequence_steps = Vec::new();
+    let mut projections = Vec::new();
+    let mut current_projection: Option<ValueProjection> = None;
+    let mut projection_items_remaining = 0_usize;
+    let mut metadata_started = false;
+    for operation_index in 0..operation_count {
         let opcode = cursor.u8()?;
+        if metadata_started && !(0x50..=0x53).contains(&opcode) {
+            return Err(BinaryError(
+                "predicate opcodes may not follow value projections".into(),
+            ));
+        }
         match opcode {
+            0x40 => {
+                if operation_index != 0 || sequence_within.is_some() || !stack.is_empty() {
+                    return Err(BinaryError("invalid sequence start opcode".into()));
+                }
+                let within = cursor.u16()?;
+                expected_steps = usize::from(cursor.u8()?);
+                if within == 0 || !(2..=16).contains(&expected_steps) {
+                    return Err(BinaryError("invalid bounded sequence descriptor".into()));
+                }
+                sequence_within = Some(within);
+            }
+            0x41 => {
+                if sequence_within.is_none() || sequence_steps.len() == expected_steps {
+                    return Err(BinaryError("unexpected sequence step terminator".into()));
+                }
+                let step = pop_expression(&mut stack, "sequence step")?;
+                if !stack.is_empty() {
+                    return Err(BinaryError(
+                        "sequence step does not yield exactly one boolean".into(),
+                    ));
+                }
+                sequence_steps.push(step);
+            }
+            0x50 => {
+                let expression_complete = if sequence_within.is_some() {
+                    stack.is_empty() && sequence_steps.len() == expected_steps
+                } else {
+                    matches!(stack.as_slice(), [StackItem::Expression(_)])
+                };
+                if !expression_complete
+                    || current_projection.is_some()
+                    || projections.len() == MAX_PROJECTIONS
+                {
+                    return Err(BinaryError("invalid value projection start".into()));
+                }
+                metadata_started = true;
+                let name_len = usize::from(cursor.u8()?);
+                if name_len == 0 || name_len > MAX_NAME_BYTES {
+                    return Err(BinaryError("invalid projection name length".into()));
+                }
+                let name = cursor.string(name_len)?;
+                validate_text(&name, MAX_NAME_BYTES, false).map_err(BinaryError)?;
+                projection_items_remaining = usize::from(cursor.u8()?);
+                if projection_items_remaining == 0
+                    || projection_items_remaining > MAX_PROJECTION_ITEMS
+                {
+                    return Err(BinaryError("invalid projection item count".into()));
+                }
+                current_projection = Some(ValueProjection {
+                    name,
+                    items: Vec::with_capacity(projection_items_remaining),
+                });
+            }
+            0x51..=0x53 => {
+                if !metadata_started || projection_items_remaining == 0 {
+                    return Err(BinaryError(
+                        "projection item has no active projection".into(),
+                    ));
+                }
+                let item = match opcode {
+                    0x51 => ValueProjectionItem::Rng {
+                        stream: match cursor.u8()? {
+                            0 => RngStream::Primary,
+                            1 => RngStream::Secondary,
+                            _ => return Err(BinaryError("invalid projected RNG stream".into())),
+                        },
+                    },
+                    0x52 => {
+                        let stage_bytes = cursor.take(8)?;
+                        let stage_len = stage_bytes
+                            .iter()
+                            .position(|byte| *byte == 0)
+                            .unwrap_or(stage_bytes.len());
+                        if stage_bytes[stage_len..].iter().any(|byte| *byte != 0) {
+                            return Err(BinaryError("noncanonical projected stage padding".into()));
+                        }
+                        ValueProjectionItem::ActorPopulation {
+                            stage: String::from_utf8(stage_bytes[..stage_len].to_vec())
+                                .map_err(|_| BinaryError("invalid projected stage".into()))?,
+                            room: cursor.u8()? as i8,
+                        }
+                    }
+                    _ => ValueProjectionItem::Flag {
+                        selector: FlagSelector {
+                            domain: FlagDomain::from_id(cursor.u8()?).ok_or_else(|| {
+                                BinaryError("invalid projected flag domain".into())
+                            })?,
+                            room: cursor.u8()? as i8,
+                            index: cursor.u16()?,
+                        },
+                    },
+                };
+                current_projection.as_mut().unwrap().items.push(item);
+                projection_items_remaining -= 1;
+                if projection_items_remaining == 0 {
+                    projections.push(current_projection.take().unwrap());
+                }
+            }
             0x01 => {
                 let id = cursor.u8()?;
                 stack.push(StackItem::Field(Field::from_id(id).ok_or_else(|| {
                     BinaryError(format!("unknown milestone field ID {id}"))
                 })?));
+            }
+            0x02 => {
+                let kind = cursor.u8()?;
+                let fact = match kind {
+                    1 => {
+                        let field_id = cursor.u8()?;
+                        let field = ActorFact::from_id(field_id).ok_or_else(|| {
+                            BinaryError(format!("unknown actor fact ID {field_id}"))
+                        })?;
+                        let stage_bytes = cursor.take(8)?;
+                        let stage_len = stage_bytes
+                            .iter()
+                            .position(|byte| *byte == 0)
+                            .unwrap_or(stage_bytes.len());
+                        if stage_bytes[stage_len..].iter().any(|byte| *byte != 0) {
+                            return Err(BinaryError(
+                                "noncanonical placed-actor stage padding".into(),
+                            ));
+                        }
+                        let stage = String::from_utf8(stage_bytes[..stage_len].to_vec())
+                            .map_err(|_| BinaryError("invalid placed-actor stage".into()))?;
+                        QueryFact::PlacedActor {
+                            selector: PlacedActorSelector {
+                                stage,
+                                home_room: cursor.u8()? as i8,
+                                set_id: cursor.u16()?,
+                                actor_name: cursor.i16()?,
+                            },
+                            field,
+                        }
+                    }
+                    2 => QueryFact::Flag {
+                        selector: FlagSelector {
+                            domain: FlagDomain::from_id(cursor.u8()?)
+                                .ok_or_else(|| BinaryError("unknown flag fact domain".into()))?,
+                            room: cursor.u8()? as i8,
+                            index: cursor.u16()?,
+                        },
+                    },
+                    3 | 4 => {
+                        let mut values = [0.0_f32; 6];
+                        for value in &mut values {
+                            *value = f32::from_bits(cursor.u32()?);
+                        }
+                        if kind == 3 {
+                            QueryFact::PlayerInAabb {
+                                minimum: values[..3].try_into().unwrap(),
+                                maximum: values[3..].try_into().unwrap(),
+                            }
+                        } else {
+                            QueryFact::PlayerPlaneSignedDistance {
+                                point: values[..3].try_into().unwrap(),
+                                normal: values[3..].try_into().unwrap(),
+                            }
+                        }
+                    }
+                    _ => return Err(BinaryError(format!("unknown query fact kind {kind}"))),
+                };
+                validate_query_fact(&fact).map_err(BinaryError)?;
+                stack.push(StackItem::Query(fact));
             }
             0x10 => match cursor.u8()? {
                 0 => stack.push(StackItem::Value(Value::Bool(false))),
@@ -1501,29 +3159,41 @@ fn decode_expression(bytes: &[u8], operation_count: u16) -> Result<Expression, B
             0x15 => stack.push(StackItem::Value(Value::Symbol(cursor.symbol()?))),
             0x16 => stack.push(StackItem::Value(Value::ProcedureNumber(cursor.u32()?))),
             0x17 => stack.push(StackItem::Value(Value::ProcedureSymbol(cursor.symbol()?))),
-            0x20..=0x25 => {
+            0x20..=0x27 => {
                 let operator = match opcode {
                     0x20 => Comparison::Equal,
                     0x21 => Comparison::NotEqual,
                     0x22 => Comparison::Less,
                     0x23 => Comparison::LessEqual,
                     0x24 => Comparison::Greater,
-                    _ => Comparison::GreaterEqual,
+                    0x25 => Comparison::GreaterEqual,
+                    0x26 => Comparison::HasAll,
+                    _ => Comparison::HasAny,
                 };
                 let value = match stack.pop() {
                     Some(StackItem::Value(value)) => value,
                     _ => return Err(BinaryError("comparison requires a literal value".into())),
                 };
-                let field = match stack.pop() {
-                    Some(StackItem::Field(field)) => field,
-                    _ => return Err(BinaryError("comparison requires a field".into())),
+                let expression = match stack.pop() {
+                    Some(StackItem::Field(field)) => {
+                        validate_comparison(field, operator, &value).map_err(BinaryError)?;
+                        Expression::Compare {
+                            field,
+                            operator,
+                            value,
+                        }
+                    }
+                    Some(StackItem::Query(fact)) => {
+                        validate_query_comparison(&fact, operator, &value).map_err(BinaryError)?;
+                        Expression::Query {
+                            fact,
+                            operator,
+                            value,
+                        }
+                    }
+                    _ => return Err(BinaryError("comparison requires a field or query".into())),
                 };
-                validate_comparison(field, operator, &value).map_err(BinaryError)?;
-                stack.push(StackItem::Expression(Expression::Compare {
-                    field,
-                    operator,
-                    value,
-                }));
+                stack.push(StackItem::Expression(expression));
             }
             0x30 => {
                 let inner = pop_expression(&mut stack, "not")?;
@@ -1551,12 +3221,30 @@ fn decode_expression(bytes: &[u8], operation_count: u16) -> Result<Expression, B
     if cursor.remaining() != 0 {
         return Err(BinaryError("trailing milestone bytecode".into()));
     }
+    if current_projection.is_some() {
+        return Err(BinaryError("incomplete value projection".into()));
+    }
+    if let Some(within) = sequence_within {
+        if !stack.is_empty() || sequence_steps.len() != expected_steps {
+            return Err(BinaryError(
+                "bounded sequence does not contain its declared steps".into(),
+            ));
+        }
+        let mut steps = sequence_steps.into_iter();
+        let when = steps.next().unwrap();
+        return Ok((when, steps.collect(), Some(within), projections));
+    }
     if stack.len() != 1 {
         return Err(BinaryError(
             "milestone bytecode does not yield one boolean".into(),
         ));
     }
-    pop_expression(&mut stack, "program result")
+    Ok((
+        pop_expression(&mut stack, "program result")?,
+        Vec::new(),
+        None,
+        projections,
+    ))
 }
 
 fn pop_expression(stack: &mut Vec<StackItem>, context: &str) -> Result<Expression, BinaryError> {
@@ -1599,6 +3287,10 @@ impl<'a> Cursor<'a> {
 
     fn u16(&mut self) -> Result<u16, BinaryError> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+
+    fn i16(&mut self) -> Result<i16, BinaryError> {
+        Ok(i16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
 
     fn u32(&mut self) -> Result<u32, BinaryError> {
@@ -1857,5 +3549,195 @@ milestone p {
             &bytes[bytecode_start..bytecode_start + 8],
             &[0x01, 15, 0x13, 0xff, 0xff, 0xff, 0xff, 0x20]
         );
+    }
+
+    #[test]
+    fn language_1_1_types_flags_timers_hashes_rng_and_collision_facts() {
+        let source = r#"milestones 1.1
+milestone rich {
+  phase post_sim
+  stable 3
+  when player.actor_name == 253 && player.velocity.y <= 0.0 &&
+       player.mode_flags has_all 1024 && player.mode_flags has_any 1028 &&
+       player.timer.damage_wait == 0 && player.timer.sword_change_wait <= 4 &&
+       event.mode == 2 && event.status >= 1 && event.name_hash.present &&
+       event.name_hash.fnv1a32 == 305419896 && rng.primary.state0 == 11 &&
+       rng.secondary.calls >= 200 && collision.ground.contact &&
+       collision.ground.clearance <= 0.5
+}"#;
+        let program = parse(source).unwrap();
+        let compiled = compile(&program).unwrap();
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 1, 0, 1, 0, 1, 0]);
+        let decoded = decode(&compiled.bytes).unwrap();
+        assert_eq!(decoded.program, program);
+        let formatted = format(&program).unwrap();
+        assert!(formatted.contains("player.mode_flags has_all 1024"));
+        assert!(formatted.contains("player.mode_flags has_any 1028"));
+        assert_eq!(parse(&formatted).unwrap(), program);
+
+        assert!(parse(&source.replace("milestones 1.1", "milestones 1.0")).is_err());
+        assert!(parse(&source.replace("has_all 1024", "has_all 0")).is_err());
+        assert!(
+            parse(&source.replace(
+                "collision.ground.contact",
+                "collision.ground.contact has_any true"
+            ))
+            .is_err()
+        );
+        assert_eq!(Field::PlayerModeFlags as u8, 34);
+        assert_eq!(Field::EventNameHash as u8, 42);
+        assert_eq!(Field::CollisionGroundClearance as u8, 58);
+        assert_eq!(Comparison::HasAll as u8, 0x26);
+        assert_eq!(Comparison::HasAny as u8, 0x27);
+    }
+
+    #[test]
+    fn language_1_2_stable_actor_queries_geometry_and_indexed_flags_round_trip() {
+        let source = r#"milestones 1.2
+
+milestone local_actor_goal {
+  phase post_sim
+  stable 4
+  when actor.placed.exists("F_SP103", -1, 7, 42) &&
+       actor.placed.position.y("F_SP103", -1, 7, 42) >= -20.0 &&
+       actor.placed.distance_to_player("F_SP103", -1, 7, 42) <= 125.5 &&
+       actor.placed.current_room("F_SP103", -1, 7, 42) == 0 &&
+       actor.placed.health("F_SP103", -1, 7, 42) > 0 &&
+       actor.placed.status("F_SP103", -1, 7, 42) has_any 4 &&
+       flag.event(821) && flag.temporary(184) == false &&
+       flag.dungeon(63) && flag.switch(0, 239)
+}
+"#;
+        let program = parse(source).unwrap();
+        let formatted = format(&program).unwrap();
+        assert_eq!(parse(&formatted).unwrap(), program);
+        assert!(formatted.contains("actor.placed.distance_to_player(\"F_SP103\", -1, 7, 42)"));
+        assert!(formatted.contains("flag.switch(0, 239) == true"));
+
+        let compiled = compile(&program).unwrap();
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 2, 0, 1, 0, 2, 0]);
+        assert!(compiled.bytes.iter().any(|byte| *byte == 0x02));
+        let decoded = decode(&compiled.bytes).unwrap();
+        assert_eq!(decoded.program, program);
+        assert_eq!(compile(&decoded.program).unwrap().bytes, compiled.bytes);
+
+        for invalid in [
+            source.replace("milestones 1.2", "milestones 1.1"),
+            source.replace("F_SP103\", -1", "bad-stage\", -1"),
+            source.replace("flag.event(821)", "flag.event(822)"),
+            source.replace("flag.temporary(184)", "flag.temporary(185)"),
+            source.replace("flag.dungeon(63)", "flag.dungeon(64)"),
+            source.replace("flag.switch(0, 239)", "flag.switch(0, 240)"),
+            source.replace(", 7, 42)", ", 65535, 42)"),
+        ] {
+            assert!(
+                parse(&invalid).is_err(),
+                "accepted invalid source: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn language_1_3_ranges_regions_planes_transitions_and_sequences_round_trip() {
+        let source = r#"milestones 1.3
+
+milestone crossed_plane_after_contact {
+  phase post_sim
+  within 4
+  when collision.ground.contact && player.position.x between -5.0 and 5.0
+  then player.in_aabb(-10.0, -20.0, -30.0, 10.0, 20.0, 30.0)
+  then event.id == 17
+  then player.plane_signed_distance(0.0, 0.0, 0.0, 1.0, 0.0, 0.0) >= 0.0
+}
+
+milestone exact_next_tick_transition {
+  phase post_sim
+  within 1
+  when player.procedure == 7
+  then player.procedure == 8
+}
+"#;
+        let program = parse(source).unwrap();
+        assert_eq!(program.definitions[0].then.len(), 3);
+        assert_eq!(program.definitions[0].within_ticks, Some(4));
+        let formatted = format(&program).unwrap();
+        assert!(!formatted.contains(" between "));
+        assert!(formatted.contains("player.position.x >= -5.0 && player.position.x <= 5.0"));
+        assert!(formatted.contains("player.in_aabb(-10.0, -20.0, -30.0, 10.0, 20.0, 30.0)"));
+        assert_eq!(parse(&formatted).unwrap(), program);
+
+        let compiled = compile(&program).unwrap();
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 3, 0, 1, 0, 3, 0]);
+        assert!(compiled.bytes.contains(&0x40));
+        assert!(compiled.bytes.contains(&0x41));
+        let decoded = decode(&compiled.bytes).unwrap();
+        assert_eq!(decoded.program, program);
+        assert_eq!(compile(&decoded.program).unwrap().bytes, compiled.bytes);
+
+        for invalid in [
+            source.replace("milestones 1.3", "milestones 1.2"),
+            source.replace("  within 4\n", ""),
+            source.replace("  then player.procedure == 8\n", ""),
+            source.replace("  within 4", "  stable 2\n  within 4"),
+            source.replace(
+                "player.in_aabb(-10.0, -20.0, -30.0, 10.0, 20.0, 30.0)",
+                "player.in_aabb(10.0, -20.0, -30.0, -10.0, 20.0, 30.0)",
+            ),
+            source.replace(
+                "player.plane_signed_distance(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)",
+                "player.plane_signed_distance(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)",
+            ),
+            source.replace("between -5.0 and 5.0", "between 5.0 and -5.0"),
+        ] {
+            assert!(
+                parse(&invalid).is_err(),
+                "accepted invalid source: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn language_1_4_named_value_projections_round_trip() {
+        let source = include_str!("../../../tests/fixtures/automation/value_projection.milestones");
+        let program = parse(source).unwrap();
+        let projections = &program.definitions[0].projections;
+        assert_eq!(projections.len(), 1);
+        assert_eq!(projections[0].name, "handoff-state");
+        assert_eq!(projections[0].items.len(), 5);
+        let projection_identity = value_projection_identity(&projections[0]).unwrap();
+        let projection_identity_hex = projection_identity
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            projection_identity_hex,
+            "acb5c9cd5570ebe610e321a3f5a33856a6af7cfaaf808b5b394f471170fcf5f3"
+        );
+        let formatted = format(&program).unwrap();
+        assert_eq!(parse(&formatted).unwrap(), program);
+
+        let compiled = compile(&program).unwrap();
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 4, 0, 1, 0, 4, 0]);
+        for opcode in 0x50..=0x53 {
+            assert!(compiled.bytes.contains(&opcode));
+        }
+        let decoded = decode(&compiled.bytes).unwrap();
+        assert_eq!(decoded.program, program);
+        assert_eq!(compile(&decoded.program).unwrap().bytes, compiled.bytes);
+
+        for invalid in [
+            source.replace("milestones 1.4", "milestones 1.3"),
+            source.replace("    rng secondary\n", "    rng primary\n"),
+            source.replace("flag event 821", "flag event 822"),
+            source.replace(
+                "actor_population \"F_SP103\" 1",
+                "actor_population \"bad\" 1",
+            ),
+        ] {
+            assert!(
+                parse(&invalid).is_err(),
+                "accepted invalid source: {invalid}"
+            );
+        }
     }
 }

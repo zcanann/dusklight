@@ -248,8 +248,29 @@ failures use `evaluation_status: worker_error`. Trace decoding is diagnostic
 and cannot change success or score. This distinction lets an optimizer treat
 bad candidates as samples without hiding broken workers.
 
-The checked seed tape starts with 180 neutral frames for direct-stage loading
-and the short automatic opening event. Search candidates currently need the
-same fixed prefix. Direct stage/save initialization can also be supplied with
-the existing `--stage` and `--load-save` CLI options, but those fields are not
-yet embedded in a portable tape artifact.
+For expensive diagnostic channels, retain bounded windows instead of every
+tick:
+
+```powershell
+dusklight --dvd game.iso --input-tape candidate.tape --exit-after-tape `
+  --gameplay-trace build/candidate.trace --gameplay-trace-channels all `
+  --gameplay-trace-retention 90,30 --gameplay-trace-retention-capacity 4096 `
+  --gameplay-trace-triggers contact,flag,predicate,crash
+```
+
+The recorder reserves its output and pre-trigger ring before the game loop.
+Untriggered ticks only replace a ring slot; a trigger flushes the preceding 90
+ticks, retains the trigger tick and 30 following ticks, and later windows remain
+bounded by the declared capacity. The `crash` trigger is an explicit hook for
+controlled failure paths that can still perform normal artifact shutdown; an
+uncatchable process or host failure cannot be claimed as a completed trace.
+Dense and retained output share a hard 131,072-record ceiling. A larger dense
+request is rejected before allocation; choose a retention window and capacity
+within that bound for long candidates.
+
+The checked seed tape declares its F_SP103 stage origin directly. Dusklight
+holds its ports neutral while the stage loads and begins frame zero only after
+the exact room, entrance, layer, and live-player readiness check. Its initial
+neutral frames now cover only the short automatic opening event; stage loading
+is not authored timing slack. An optional save slot is part of the stage-boot
+identity and maps to the existing native save-loading path.

@@ -13,13 +13,15 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint16_t GameplayTraceVersion = 2;
-inline constexpr std::uint16_t GameplayTraceHeaderSize = 64;
+inline constexpr std::uint16_t GameplayTraceVersion = 5;
+inline constexpr std::uint16_t GameplayTraceHeaderSize = 128;
+inline constexpr std::uint16_t GameplayTraceV2HeaderSize = 64;
 inline constexpr std::uint16_t GameplayTraceDirectoryEntrySize = 64;
 inline constexpr std::uint16_t GameplayTraceV1HeaderSize = 36;
 inline constexpr std::uint16_t GameplayTraceV1RecordSize = 102;
 inline constexpr std::uint64_t GameplayTraceNoTick = ~std::uint64_t{0};
 inline constexpr std::uint64_t GameplayTraceNoTapeFrame = ~std::uint64_t{0};
+inline constexpr std::size_t GameplayTraceMaximumSamples = 131072;
 
 enum class GameplayTraceChannel : std::uint16_t {
     Core = 0,
@@ -33,6 +35,8 @@ enum class GameplayTraceChannel : std::uint16_t {
     PlayerAction = 8,
     PlayerBackgroundCollision = 9,
     PlayerCollisionSurfaces = 10,
+    GoalProgress = 11,
+    SelectedActors = 12,
 };
 
 constexpr std::uint64_t gameplay_trace_channel_bit(const GameplayTraceChannel channel) {
@@ -50,10 +54,13 @@ inline constexpr std::uint64_t GameplayTraceKnownChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::Camera) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
-    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::GoalProgress) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::SelectedActors);
 inline constexpr std::uint64_t GameplayTraceDefaultChannels =
     GameplayTraceKnownChannels &
-    ~gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+    ~(gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces) |
+        gameplay_trace_channel_bit(GameplayTraceChannel::SelectedActors));
 
 enum class GameplayTraceChannelStatus : std::uint8_t {
     NotSampled = 0,
@@ -175,6 +182,38 @@ enum GameplayTraceCollisionBackingFormat : std::uint8_t {
     GameplayTraceCollisionBackingDzb = 1,
     GameplayTraceCollisionBackingKcl = 2,
 };
+
+enum GameplayTraceGoalFlags : std::uint32_t {
+    GameplayTraceGoalConfigured = 1u << 0,
+    GameplayTraceGoalReached = 1u << 1,
+    GameplayTraceGoalAuthored = 1u << 2,
+    GameplayTraceGoalFirstHitTickPresent = 1u << 3,
+};
+
+enum GameplayTraceSelectedActorFlags : std::uint32_t {
+    GameplayTraceSelectedActorsTruncated = 1u << 0,
+};
+
+enum GameplayTraceRetentionTrigger : std::uint32_t {
+    GameplayTraceTriggerCrash = 1u << 0,
+    GameplayTraceTriggerNovelContact = 1u << 1,
+    GameplayTraceTriggerFlagChange = 1u << 2,
+    GameplayTraceTriggerPredicateHit = 1u << 3,
+};
+
+inline constexpr std::uint32_t GameplayTraceKnownRetentionTriggers =
+    GameplayTraceTriggerCrash | GameplayTraceTriggerNovelContact |
+    GameplayTraceTriggerFlagChange | GameplayTraceTriggerPredicateHit;
+
+struct GameplayTraceRetentionConfig {
+    std::size_t preTriggerTicks = 0;
+    std::size_t postTriggerTicks = 0;
+    std::uint32_t triggers = 0;
+
+    bool enabled() const { return triggers != 0; }
+};
+
+inline constexpr std::size_t GameplayTraceSelectedActorCapacity = 16;
 
 struct GameplayTraceCoreSample {
     std::uint64_t boundaryIndex = 0;
@@ -361,6 +400,41 @@ struct GameplayTracePlayerActionSample {
     std::array<GameplayTraceAnimationLane, 3> upperAnimations{};
 };
 
+struct GameplayTraceGoalProgressSample {
+    std::uint32_t flags = 0;
+    std::uint32_t goalNameHash = 0;
+    std::uint16_t requestedCount = 0;
+    std::uint16_t hitCount = 0;
+    std::uint16_t stableTicks = 0;
+    std::uint16_t consecutiveTicks = 0;
+    std::uint8_t sequenceSteps = 0;
+    std::uint8_t sequenceNextStep = 0;
+    std::uint16_t sequenceWithinTicks = 0;
+    std::uint16_t sequenceElapsedTicks = 0;
+    std::uint64_t firstHitTick = GameplayTraceNoTick;
+};
+
+struct GameplayTraceSelectedActorSample {
+    std::uint32_t sessionProcessId = 0xffffffffu;
+    std::int16_t actorName = -1;
+    std::uint16_t setId = 0xffff;
+    std::int8_t homeRoom = -1;
+    std::int8_t currentRoom = -1;
+    std::int16_t health = 0;
+    std::uint32_t status = 0;
+    std::array<float, 3> position{};
+    std::array<std::int16_t, 3> currentAngle{};
+    std::array<std::int16_t, 3> shapeAngle{};
+};
+
+struct GameplayTraceSelectedActorsSample {
+    std::uint16_t count = 0;
+    std::uint16_t capacity = GameplayTraceSelectedActorCapacity;
+    std::uint32_t flags = 0;
+    std::uint32_t observedCount = 0;
+    std::array<GameplayTraceSelectedActorSample, GameplayTraceSelectedActorCapacity> actors{};
+};
+
 struct GameplayTraceSample {
     GameplayTraceCoreSample core{};
     GameplayTraceStageSample stage{};
@@ -373,6 +447,8 @@ struct GameplayTraceSample {
     GameplayTracePlayerActionSample playerAction{};
     GameplayTracePlayerBackgroundCollisionSample playerBackgroundCollision{};
     GameplayTracePlayerCollisionSurfacesSample playerCollisionSurfaces{};
+    GameplayTraceGoalProgressSample goalProgress{};
+    GameplayTraceSelectedActorsSample selectedActors{};
 
     GameplayTraceChannelStatus stageStatus = GameplayTraceChannelStatus::NotSampled;
     GameplayTraceChannelStatus appliedPadsStatus = GameplayTraceChannelStatus::NotSampled;
@@ -386,23 +462,46 @@ struct GameplayTraceSample {
         GameplayTraceChannelStatus::NotSampled;
     GameplayTraceChannelStatus playerCollisionSurfacesStatus =
         GameplayTraceChannelStatus::NotSampled;
+    GameplayTraceChannelStatus goalProgressStatus = GameplayTraceChannelStatus::NotSampled;
+    GameplayTraceChannelStatus selectedActorsStatus = GameplayTraceChannelStatus::NotSampled;
 };
 
 class GameplayTraceRecorder {
 public:
     void start(
-        std::size_t capacity, std::uint64_t requestedChannels = GameplayTraceDefaultChannels);
+        std::size_t capacity, std::uint64_t requestedChannels = GameplayTraceDefaultChannels,
+        TapeBoot boot = {}, GameplayTraceRetentionConfig retention = {});
     void record(const GameplayTraceSample& sample);
+    void trigger(GameplayTraceRetentionTrigger trigger);
     void stop();
 
     bool active() const { return mActive; }
     bool capacityExhausted() const { return mCapacityExhausted; }
     std::uint64_t requestedChannels() const { return mRequestedChannels; }
     const std::vector<GameplayTraceSample>& samples() const { return mSamples; }
+    const TapeBoot& bootOrigin() const { return mBootOrigin; }
+    const GameplayTraceRetentionConfig& retention() const { return mRetention; }
+    std::uint32_t observedTriggers() const { return mObservedTriggers; }
+    std::uint32_t triggerCount() const { return mTriggerCount; }
+    std::uint64_t observedSampleCount() const { return mObservedSampleCount; }
 
 private:
+    void retain(const GameplayTraceSample& sample);
+    void flushPreTrigger();
+    std::uint32_t detectTriggers(const GameplayTraceSample& sample) const;
+
     std::vector<GameplayTraceSample> mSamples;
+    std::vector<GameplayTraceSample> mPreTrigger;
     std::uint64_t mRequestedChannels = GameplayTraceDefaultChannels;
+    TapeBoot mBootOrigin;
+    GameplayTraceRetentionConfig mRetention;
+    GameplayTraceSample mPreviousSample{};
+    std::size_t mPreTriggerHead = 0;
+    std::size_t mPostTriggerRemaining = 0;
+    std::uint32_t mObservedTriggers = 0;
+    std::uint32_t mTriggerCount = 0;
+    std::uint64_t mObservedSampleCount = 0;
+    bool mPreviousSampleValid = false;
     bool mActive = false;
     bool mCapacityExhausted = false;
 };
@@ -411,6 +510,8 @@ GameplayTraceRecorder& gameplay_trace_recorder();
 
 bool parse_gameplay_trace_channels(
     std::string_view text, std::uint64_t& channels, std::string& error);
+bool parse_gameplay_trace_retention_triggers(
+    std::string_view text, std::uint32_t& triggers, std::string& error);
 bool write_gameplay_trace(
     const std::filesystem::path& path, const GameplayTraceRecorder& recorder, std::string& error);
 

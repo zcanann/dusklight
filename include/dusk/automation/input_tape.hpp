@@ -3,8 +3,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
 #include <vector>
+
+#include "dusk/automation/scenario_fixture.hpp"
 
 struct PADStatus;
 
@@ -20,11 +24,13 @@ inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
     'P',
     'E',
 };
-// DUSKTAPE v2 stores the canonical 52-byte v1.2 frame stream in one zstd
-// frame. The decoder continues to accept uncompressed v1.0-v1.2 tapes.
-inline constexpr std::uint16_t kInputTapeMajorVersion = 2;
-inline constexpr std::uint16_t kInputTapeMinorVersion = 0;
-inline constexpr std::size_t kInputTapeHeaderSize = 40;
+// DUSKTAPE v3 adds a portable boot origin to the v2 compressed frame stream;
+// minor 1 adds the optional stage save-slot fixture; minor 2 embeds a bounded
+// canonical scenario loadout after the compressed controller payload.
+// The decoder continues to accept uncompressed v1.0-v1.2 and compressed v2.
+inline constexpr std::uint16_t kInputTapeMajorVersion = 3;
+inline constexpr std::uint16_t kInputTapeMinorVersion = 2;
+inline constexpr std::size_t kInputTapeHeaderSize = 64;
 inline constexpr std::size_t kRawPadStateSize = 12;
 inline constexpr std::size_t kInputFrameSize = 52;
 inline constexpr std::size_t kInputPortCount = 4;
@@ -100,7 +106,26 @@ struct InputFrame {
     bool operator==(const InputFrame&) const = default;
 };
 
+enum class TapeBootKind : std::uint8_t {
+    Process = 0,
+    Stage = 1,
+};
+
+struct TapeBoot {
+    TapeBootKind kind = TapeBootKind::Process;
+    std::string stage;
+    std::int8_t room = 0;
+    std::int16_t point = 0;
+    std::int8_t layer = -1;
+    // Zero means no save fixture; 1-3 map to the existing --load-save slots.
+    std::uint8_t saveSlot = 0;
+    std::optional<ScenarioFixture> fixture;
+
+    bool operator==(const TapeBoot&) const = default;
+};
+
 struct InputTape {
+    TapeBoot boot;
     std::uint32_t tickRateNumerator = 30;
     std::uint32_t tickRateDenominator = 1;
     std::vector<InputFrame> frames;
@@ -116,6 +141,7 @@ enum class InputTapeError {
     InvalidHeaderSize,
     InvalidFrameSize,
     InvalidTickRate,
+    InvalidBoot,
     InvalidOwnedPorts,
     InvalidFrameCondition,
     InvalidPadFlags,

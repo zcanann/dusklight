@@ -1,0 +1,10 @@
+milestones 1.3
+
+milestone grounded_region_event_plane {
+  phase post_sim
+  within 3
+  when collision.ground.contact && player.position.x between 660.0 and 670.0
+  then player.in_aabb(660.0, 790.0, -2440.0, 670.0, 810.0, -2420.0)
+  then event.id == 17
+  then player.plane_signed_distance(666.0, 0.0, 0.0, 1.0, 0.0, 0.0) >= 0.0
+}

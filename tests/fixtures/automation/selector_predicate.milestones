@@ -1,0 +1,14 @@
+milestones 1.2
+
+milestone selected_actor_and_flags {
+  phase post_sim
+  stable 2
+  when actor.placed.exists("F_SP103", 0, 7, 42) &&
+       actor.placed.position.y("F_SP103", 0, 7, 42) >= -20.0 &&
+       actor.placed.distance_to_player("F_SP103", 0, 7, 42) <= 5.0 &&
+       actor.placed.current_room("F_SP103", 0, 7, 42) == 0 &&
+       actor.placed.health("F_SP103", 0, 7, 42) > 0 &&
+       actor.placed.status("F_SP103", 0, 7, 42) has_all 4 &&
+       flag.event(821) && flag.temporary(184) == false &&
+       flag.dungeon(63) && flag.switch(0, 239)
+}

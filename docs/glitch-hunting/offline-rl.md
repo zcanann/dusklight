@@ -18,10 +18,13 @@ the learner consumes immutable observations and ranks discrete input actions.
   depth so malformed batches cannot create unbounded training work;
 - a fixed eight-transition shortest-path benchmark queried at held-out feature
   vectors; and
-- a v1/v2 gameplay-trace bridge with explicit post-simulation boundaries,
+- a v1/v2/v3/v4 gameplay-trace bridge with explicit post-simulation boundaries,
   typed channel presence, and exact input provenance; and
 - a closed-loop fitted-Q proposal layer that returns ordinary deterministic
-  candidates to the native milestone evaluator.
+  candidates to the native milestone evaluator; and
+- authenticated potential-based proposal shaping over distance, corridor,
+  phase, and event-progress facts, with mandatory per-transition component
+  reports.
 
 Run the implementation benchmark directly:
 
@@ -44,12 +47,44 @@ transition stores:
 - a discrete action ID and compact macro parameters;
 - simulation-tick duration, reward, next state, and terminal flag.
 
+Every trace extraction also writes `<batch>.evidence.json` with schema
+`dusklight-transition-evidence/v1`. This sidecar is bound to the canonical
+corpus content, source trace, and source tape by SHA-256. For every compact
+transition it retains the exact post-simulation observation before the action,
+the complete four-port tape frame (or a typed `OptionExecution` when an option
+producer supplies one), realized duration, the post-action observation,
+goal-predicate progress, reward components and their source facts, and an
+optional typed terminal reason. Exact event and selected-actor snapshots live
+in interned side tables; each transition stores only its pre/post indices, so
+unchanged world facts are serialized once while the dense state vectors remain
+in the compact corpus. Actor order, finite positions, bounded slots,
+availability, observed count, and truncation are validated. Boundary indices,
+simulation ticks, tape frames, reference kinds, and reference digests are
+checked together, so a one-tick phase shift or detached sidecar is rejected.
+
+Manual `--terminal` extraction records `declared_extraction_boundary`; it does
+not invent objective proof from frame bounds. Anchored search can record
+`objective_reached` because its terminal transition is already backed by the
+native milestone verdict and boundary fingerprint. Older traces without the
+goal-progress channel remain explicit `unrequested` predicate evidence rather
+than silently acquiring zero-valued facts.
+
+The corpus is a view, not the raw-data authority. Its evidence sidecar keeps
+the source DUSKTRCE and DUSKTAPE digests, and both manual and anchored reports
+retain their paths. Running `learn extract-trace` again with a different
+authenticated view re-featurizes the same immutable observations. The trace
+preserves integer RNG state, raw procedure/timer/animation facts, exact camera
+and collision geometry, scene-exit destinations, KCL/DZB indices and raw code
+words, actor session IDs, and placed-actor `(stage, type, home room, set ID)`
+references; these are not reconstructed from normalized `f32` features.
+
 Inspect or fit compatible batches with:
 
 ```powershell
 huntctl learn inspect --input build/search/episode.dtcz
 huntctl learn fit --input build/search/a.dtcz --input build/search/b.dtcz `
-  --query-transition 0 --iterations 24 --trees 31 --seed 1 --all-continuous
+  --query-transition 0 --iterations 24 --trees 31 --seed 1 --all-continuous `
+  --model-output build/search/q-model.json
 ```
 
 The ranking reports mean Q, ensemble disagreement, and observed support for
@@ -57,6 +92,129 @@ each action. Disagreement is a sampling hint, not a calibrated probability.
 The movement schema's categorical map is selected by its authenticated digest.
 Other schemas must explicitly declare `--all-continuous` or repeat
 `--categorical-feature N`; the learner never guesses category ordering.
+`--model-output` serializes the complete fitted forest, authenticated feature
+and action schemas, and training configuration, then stores the same bytes by
+SHA-256.
+
+### FQI support and uncertainty contract
+
+The fitted-Q core accepts any authenticated, fixed-width finite feature schema
+and discrete action schema represented by a compatible transition corpus. The
+CLI has owned categorical maps only for `movement-state/v1` with movement
+actions v2 and the authenticated `movement-state/v2` observation spec. An
+unknown feature schema is supported only when the caller explicitly declares
+every categorical index or declares all features continuous. Corpora with
+different feature digest, action digest, or width are never merged.
+
+Training is seeded and deterministic. `learn fit` and anchored Q proposal
+training assign every input episode corpus a group and bootstrap complete
+episode groups, stratified by action, for each tree. Thus correlated frames are
+not presented as independent bootstrap evidence. The lower-level `FittedQ::fit`
+row-bootstrap entry point remains available for synthetic/tiny batches;
+`FittedQ::fit_with_episode_groups` is the evidence-bearing path. Model schema
+`dusklight-fitted-q-model/v2` and the ranking report record the bootstrap unit,
+episode count, seed, forest configuration, and exact input corpus identities.
+
+Forest variance measures disagreement among these seeded bootstrap/randomized
+trees. It is not a posterior variance, confidence interval, calibrated error
+bar, or proof that an unsupported action is safe. Action support is reported
+separately, and every proposed action still requires a new native rollout and
+cold replay. FQI is currently a discrete offline proposer: it does not infer
+counterfactual transitions, restore checkpoints, handle continuous actions
+directly, or establish predicate feasibility.
+
+### Nearest-neighbor and tabular return baselines
+
+For small objective-specific state spaces, compare FQI against empirical
+nonparametric baselines:
+
+```text
+huntctl learn baseline --method nearest-neighbor --input episode-a.dtcz \
+  --input episode-b.dtcz --neighbors 8 \
+  --feature 17:0.03125:continuous --feature 16:1:categorical
+
+huntctl learn baseline --method tabular --input episode-a.dtcz \
+  --axis 17:0:0.03125 --axis 16:0:1
+```
+
+Both methods first calculate duration-discounted observed return-to-go within
+whole input episode groups. A terminal transition zeros continuation. The end
+of a nonterminal/truncated episode also stops return accumulation; it never
+bootstraps from the next corpus. Nearest-neighbor ranking uses a caller-declared
+scaled distance with exact mismatch distance for categorical features, selects
+at most 256 same-action neighbors, and reports support plus nearest squared
+distance. The two built-in movement schemas provide their authenticated
+categorical maps when no feature list is supplied; unknown schemas require an
+explicit feature declaration.
+
+The tabular baseline accepts at most eight declared quantization axes and
+100,000 observed `(cell, action)` entries. It averages returns only for actions
+observed in the query's exact cell. An unseen cell returns no ranking rather
+than borrowing a neighbor or inventing zero support. Schema
+`dusklight-low-data-baseline/v1` records input corpora, episode count, discount,
+query, configuration, support, and the explicit limitation that these are
+observed-return proposal heuristics requiring native rollout proof.
+
+## Potential-based proposal shaping
+
+`learn fit` can derive a denser proposal signal without changing the terminal
+predicate or any leaderboard score:
+
+```powershell
+huntctl learn fit --input build/search/a.dtcz --all-continuous `
+  --discount 0.995 --shaping build/search/shaping.json `
+  --shaping-report build/search/reward-components.json
+```
+
+The shaping file uses schema `dusklight-potential-shaping/v1` and names the
+exact feature-schema SHA-256 digest whose indices and units it interprets. A
+mismatch is rejected. Its bounded term list supports four explicit potentials:
+
+```json
+{
+  "schema": "dusklight-potential-shaping/v1",
+  "feature_schema": "FEATURE_SCHEMA_SHA256",
+  "terms": [
+    {
+      "kind": "distance", "name": "exit-distance", "feature": 46,
+      "goal": 0.0, "scale": 1.0, "weight": 1.0,
+      "unavailable_value": -0.0001220703125
+    },
+    {
+      "kind": "corridor_progress", "name": "tunnel", "feature": 17,
+      "start": 0.0, "end": 1.0, "weight": 2.0
+    },
+    {
+      "kind": "phase_progress", "name": "load-phase", "feature": 8,
+      "ordered_values": [0.0, 1.0, 2.0], "weight": 1.0
+    },
+    {
+      "kind": "event_progress", "name": "event-step", "feature": 41,
+      "ordered_values": [0.0, 1.0, 2.0, 3.0], "weight": 1.0
+    }
+  ]
+}
+```
+
+Distance is negative absolute distance from `goal`, normalized by `scale`.
+Corridor progress is clamped from `start` to `end`, including decreasing
+corridors. Phase and event terms accept only their exact declared ordered
+values; an unlisted or explicitly unavailable value is an error rather than an
+invented progress value.
+
+For a transition of `d` simulation ticks the learner receives
+`base_reward + gamma^d * Phi(next) - Phi(source)`. The effective next potential
+is forced to zero at an episodic terminal boundary, so discounted shaping
+telescopes to a start-state constant. The external terminal predicate remains
+the sole feasibility authority, and shaping is never read by
+`LexicographicScore`.
+
+`--shaping` is accepted only together with a new `--shaping-report` path. The
+versioned report authenticates the shaping spec and records, for every input
+transition and named term, the feature index, source and next fact, both
+potentials, terminal adjustment, component reward, base reward, and final
+training reward. This makes unavailable facts and sign/scale mistakes directly
+inspectable.
 
 ## Exploratory trace extraction
 
@@ -118,9 +276,37 @@ huntctl observe inspect build/movement-state-v2.json
 Extracting this view writes the compact transition corpus plus a canonical
 `.observation.json` sidecar whose digest is the corpus feature-schema digest:
 
+Manual imports also require an explicit `dusklight-episode-context/v1` file.
+The executable and objective digests must be the real SHA-256 values for the
+run; huntctl rejects zero or omitted identities instead of manufacturing
+`unknown` provenance. A minimal manually sourced context is:
+
+```json
+{
+  "schema": "dusklight-episode-context/v1",
+  "run_build": {
+    "executable_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "objective": {
+    "id": "fsp103-exit",
+    "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "producer": {
+    "kind": "manual_import",
+    "name": "huntctl",
+    "version": "0.1.0"
+  },
+  "seed": { "kind": "not_applicable" },
+  "worker_id": "manual-workstation",
+  "lineage": { "generation": 0 },
+  "outcome": { "class": "successful", "reason": "objective proof supplied" }
+}
+```
+
 ```powershell
 huntctl learn extract-trace `
   --trace build/run.gameplay.trace --tape build/run.tape `
+  --episode-context build/run.episode-context.json `
   --start-frame 440 --end-frame 827 --terminal `
   --view movement-state/v2 --output build/run-v2.dtcz
 ```
@@ -138,12 +324,38 @@ repetitions do not duplicate the learning episode. Trace or extraction failure
 is explicit learning metadata but cannot turn valid milestone evidence into a
 different gameplay result.
 
+Every extraction also writes `<batch>.episode.json` (or `episode.json` in an
+anchored attempt). It binds scenario and full stage fixture, first parent
+boundary, absolute tape, executable build, query and action schemas, objective,
+producer, deterministic seed, worker, candidate lineage, structured absolute
+frame intervention, terminal outcome, corpus, trace, and evidence. Its
+`input_identity_sha256` deliberately excludes worker and realized output so
+independent repetitions group together; `episode_sha256` includes those facts
+so distinct runs remain distinct evidence.
+
+Anchored evaluations additionally write `episodes.json`. It groups by input
+identity, collapses byte-identical episode identities to an occurrence count,
+and retains each independently hashed `attempt.json` as repetition evidence.
+Deduplication therefore reduces storage/index noise without converting repeated
+runs—or correlated frames inside one run—into extra independent samples.
+
+Large immutable outputs use `dusklight-content-blob/v1` references. Gameplay
+traces are streamed into `content/blobs/sha256/<prefix>/<suffix>` and every
+attempt reports the digest, exact byte count, media type, and relative blob
+path. Non-successful attempts preserve nonempty stdout, stderr, partial trace,
+and milestone files as deduplicated crash artifacts. Manual extraction accepts
+`--artifact-store ROOT`; otherwise its source trace is stored under the output
+directory's `content/` store. World inventories and spatial indices use the
+same store and optional argument. Route Workbench keeps semantic thumbnail
+cache keys for stable URLs while also mirroring every valid PNG by image bytes.
+
 Example using an explicitly selected successful window:
 
 ```powershell
 huntctl learn extract-trace `
   --trace build/test-results/run.gameplay.trace `
   --tape build/intro-first-exit.tape `
+  --episode-context build/test-results/run.episode-context.json `
   --start-frame 440 --end-frame 827 --terminal `
   --output build/search/intro-first-exit.dtcz
 ```
@@ -156,18 +368,137 @@ actions.
 
 Anchored search now accumulates content-deduplicated episode corpora across
 generations. It fits Q on compatible batches, scores tape-aligned states from
-repeat-proved elites, and alternates mean-Q exploitation with
-ensemble-disagreement exploration. Proposed one-, two-, and four-frame action
-windows become normal candidates and cannot bypass cold replay, predicate
-proof, or determinism checks. A generation-local `q-proposals.json` makes the
-sample budget and proposal ancestry inspectable.
+repeat-proved elites and diverse behavior-archive routes, and allocates the
+bounded non-elite budget across five named proposers: least-supported systematic
+alternates, ensemble-disagreement probes, deterministic random probes,
+Latin-hypercube probes, and guided mean-Q exploitation. Proposed one-, two-,
+and four-frame action windows become normal candidates and cannot bypass cold
+replay, predicate proof, or determinism checks. Ensemble disagreement is
+recorded as a sampling heuristic, never a calibrated confidence estimate.
 
-A bounded behavior archive prevents fastest-first selection from erasing every
-different route. It retains one best episode per coarse map, procedure, path,
-position, and exit-distance descriptor, then reserves a small population budget
-for entries farthest from the current elites. Those retained episodes are also
-eligible Q parents. `behavior-archive.json` records the selected candidate IDs
-and exact descriptors.
+The generation-local `q-proposals.json` reports requested, available, and
+generated counts per proposer plus coverage by stage/room, spatial cell, player
+procedure, option, parameter/action bin, duration, goal phase, terminal outcome,
+and observed action support. Its collapse audit reports unique parents and
+proposed actions. This makes failures and blind-spot probes first-class
+collection evidence rather than repeatedly perturbing only successful
+headings.
+
+## Dataset splits and withheld evaluation
+
+Every manual or anchored extraction emits a `dusklight-dataset-source/v1`
+descriptor pointing at its verified episode manifest, corpus, absolute tape,
+and transition evidence. Build an immutable dataset with:
+
+```powershell
+huntctl learn dataset --source build/a.dataset-source.json `
+  --source build/b.dataset-source.json --output build/dataset.json `
+  --withheld-objective frozen-route-benchmark
+huntctl learn fit --dataset build/dataset.json `
+  --model-output build/q-model.json
+```
+
+The splitter unions related episodes before assigning a split. Scenario,
+parent boundary, route family, exact tape, tape-prefix relationships,
+checkpoint or screenshot digests, and candidate/continuation ancestry can
+therefore never cross train, validation, test, or frozen-withheld boundaries.
+Withheld objective components receive a separate stable digest and `learn fit`
+loads only `train` corpus entries, so model selection cannot consume the frozen
+suite.
+
+`dusklight-dataset-manifest/v1` reports unique episodes and inputs, effective
+decisions, action support, quantized state coverage, explicit
+present/absent/unavailable/truncated/unrequested evidence counts, outcome
+imbalance, and parent-boundary diversity. Versioned means and standard
+deviations list the exact training episode identities and are computed from
+training states only. The content-addressed dataset and fitted-model artifacts
+bind the ordered corpus digests, dataset digest, schemas, and complete learner
+configuration.
+
+For a successful/failing sibling pair, run:
+
+```powershell
+huntctl learn diff-episodes --success-trace success.trace `
+  --failure-trace failure.trace --success-evidence success.evidence.json `
+  --failure-evidence failure.evidence.json --output sibling-diff.json
+```
+
+The typed report identifies the first different boundary for phase, event,
+selected actors, collision/contact state, core flags, RNG state/draw counts,
+selected-actor process population, and objective/reward components. Domain
+coverage is complete, partial, or unavailable; current traces explicitly note
+that selected actors are not full heap-allocation evidence.
+
+## Corpus lifecycle operations
+
+Transition batches can be inspected and transformed without weakening their
+schema or content identities:
+
+```powershell
+huntctl corpus query --input a.dtcz --action 7 --minimum-reward 0
+huntctl corpus compare --left a.dtcz --right b.dtcz
+huntctl corpus merge --input a.dtcz --input b.dtcz --output merged.dtcz
+huntctl corpus compact --input merged.dtcz --output compact.dtcz
+huntctl corpus shard --input compact.dtcz --output-directory shards `
+  --maximum-transitions 100000
+huntctl corpus validate-transitions --input compact.dtcz
+```
+
+Merge and compact reject incompatible feature/action schemas and deduplicate by
+the complete authenticated transition value. Sharding preserves schemas and
+transition order. `corpus refeature --source episode.dataset-source.json`
+replays immutable trace/tape evidence through a named observation view and
+emits a new corpus, evidence bundle, episode manifest, and dataset-source
+descriptor; it does not attempt to invert an older feature vector. Invalid
+batches can be previewed and then moved, never overwritten, with `corpus
+quarantine --quarantine-root DIR [--apply]`.
+
+Large-artifact collection is also non-destructive by default:
+
+```powershell
+huntctl corpus gc-content --store build/content `
+  --manifest build/dataset.json --manifest build/q-model.json `
+  --trash-root build/recoverable-trash
+# Review the JSON report, then repeat with --apply.
+```
+
+Every 64-hex identity referenced by a supplied JSON root is retained, as is the
+root document's own byte digest; exact roots can also be supplied with repeated
+`--reference SHA256`. GC verifies every live blob before classification,
+reports referenced-but-missing identities, refuses trash inside the live blob
+tree, and moves unreachable blobs to the same digest-shaped path under the
+explicit trash root. It never permanently deletes user route data.
+
+For notebooks, DuckDB, Polars, or other analysis tools, export a bounded Apache
+Arrow IPC file outside the collection/training hot path:
+
+```powershell
+huntctl corpus export-arrow --input compact.dtcz `
+  --output build/analysis/transitions.arrow
+```
+
+The typed table retains source-corpus identity, transition index, state and
+next-state fixed-size vectors, reference kinds/digests, action ID/family and
+signed parameter list, duration, reward, and terminal status. Arrow schema
+metadata binds the feature/action digests and explicitly sets
+`dusklight.replay_authority=false`. A `dusklight-analysis-export/v1` sidecar
+binds every authoritative input digest and the resulting Arrow-file digest.
+The export is capped at 64 compatible corpora and one million rows; it is never
+accepted as tape, replay, episode, or learner-corpus authority.
+
+A bounded MAP-Elites archive prevents fastest-first selection from erasing every
+different route or terminal state. Archive schema v3 retains one
+native-quality elite per coarse map, procedure sequence, deduplicated route-bin
+sequence, position, and exit-distance descriptor. It additionally binds
+available named RNG and actor-population projections, the portable
+run-deduplicated collision/contact trajectory, terminal boundary fingerprints,
+and complete downstream boundary/value state. A distinct RNG, actor
+population, contact path, route, procedure, boundary, or downstream digest
+therefore occupies a separate cell rather than silently replacing another
+behavior. Farthest-first novelty selection reserves a small population budget
+for cells farthest from the current elites. Those retained episodes are also
+eligible Q parents. `behavior-archive.json` records the policy, selected
+candidate IDs, and exact descriptors.
 
 ## Promotion boundary
 

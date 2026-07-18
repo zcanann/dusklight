@@ -1,37 +1,68 @@
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
+use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
+use huntctl::content_store::{ContentKind, ContentStore};
+use huntctl::continuous_search::{ContinuousAxes, ContinuousMethod};
+use huntctl::controller_compilation::{ControllerObservationProvenance, compile_static_controller};
 use huntctl::controller_program::ControllerProgram;
 use huntctl::corpus::Corpus;
+use huntctl::dataset::{
+    DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
+};
+use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
 use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_ITERATIONS, MAX_FQI_TRANSITIONS,
     MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
+use huntctl::low_data_baselines::{
+    LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
+    empirical_return_samples,
+};
 use huntctl::milestone_dsl;
+use huntctl::motion_path::{MotionPathPlan, PathCancellationHit};
+use huntctl::motion_path_golf::{MotionPathGolfSteps, golf_motion_path};
 use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, ObservationSpec, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
     extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
 };
+use huntctl::option_execution::OptionExecution;
+use huntctl::option_golf::{RollGolfSteps, golf_roll_option};
+use huntctl::oracle_pipeline::OracleCompositionManifest;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
+use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
+use huntctl::roll_option::{RollCancellationHit, RollOptionPlan};
 use huntctl::route_store::{ObjectId, RouteStore};
 use huntctl::route_workbench::{
-    MaterializeTarget, WorkbenchConfig, materialize_lineage, serve as serve_route_workbench,
+    MaterializeTarget, WorkbenchConfig, materialize_lineage, prune_thumbnails,
+    serve as serve_route_workbench,
 };
+use huntctl::scenario_fixture::ScenarioFixture;
 use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
     rank_population, write_seed_population,
 };
 use huntctl::search_evaluator::{
-    AnchoredObjectiveConfig, AnchoredSearchRunConfig, BootGolfConfig, BootMinimizeConfig,
-    EvaluateConfig, SearchRunConfig, evaluate_population, golf_boot, minimize_boot,
-    run_anchored_search, run_search,
+    AnchoredObjectiveConfig, AnchoredSearchRunConfig, BayesianSearchRunConfig, BeamSearchConfig,
+    BootGolfConfig, BootMinimizeConfig, BoundaryFingerprint, ContinuousSearchRunConfig,
+    EvaluateConfig, ProposerTournamentConfig, SearchRunConfig, TournamentDefinition,
+    evaluate_population, golf_boot, minimize_boot, run_anchored_search, run_bayesian_search,
+    run_beam_search, run_continuous_search, run_proposer_tournament, run_search,
+};
+use huntctl::semantic_oracle::{
+    RunOutcomeEvidence, SemanticOracleProgram, SupplementalObservations,
 };
 use huntctl::tape::InputTape;
 use huntctl::tape_chain::{ChainSegment, concatenate};
 use huntctl::tape_dsl;
+use huntctl::tape_edit::{diff as diff_tapes, layer_at, resample_to_canonical};
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::timeline::Timeline;
+use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
+use huntctl::transition_evidence::{
+    TerminalReasonEvidence, TransitionEvidenceBuild, TransitionEvidenceBundle,
+};
 use huntctl::transport::ProcessTransport;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
 use huntctl::world_inventory::WorldInventory;
@@ -42,15 +73,16 @@ use huntctl::world_spatial::{
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const MAX_LEARN_INPUT_CORPORA: usize = 64;
 
@@ -73,21 +105,137 @@ fn run() -> Result<(), Box<dyn Error>> {
         "corpus" => command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
         "milestone" => command_milestone(&args[1..]),
+        "fixture" => command_fixture(&args[1..]),
         "tape" => command_tape(&args[1..]),
         "trace" => command_trace(&args[1..]),
         "timeline" => command_timeline(&args[1..]),
         "search" => command_search(&args[1..]),
         "learn" => command_learn(&args[1..]),
         "observe" => command_observe(&args[1..]),
+        "oracle" => command_oracle(&args[1..]),
         "world" => command_world(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
         "mock-search-worker" => mock_search_worker(&args[1..]),
+        "mock-record-worker" => mock_record_worker(&args[1..]),
         "help" | "--help" | "-h" => {
             print_usage();
             Ok(())
         }
         _ => usage_error(),
+    }
+}
+
+fn command_oracle(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("evaluate") => {
+            let oracle_args = &args[1..];
+            let program_path = required_path(oracle_args, "--program")?;
+            let trace_path = required_path(oracle_args, "--trace")?;
+            let program: SemanticOracleProgram =
+                serde_json::from_slice(&fs::read(&program_path)?)?;
+            let trace = huntctl::trace::decode(&fs::read(&trace_path)?)?;
+            let mut supplemental: SupplementalObservations =
+                if let Some(path) = option(oracle_args, "--supplemental") {
+                    serde_json::from_slice(&fs::read(path)?)?
+                } else {
+                    SupplementalObservations::default()
+                };
+            if let Some(path) = option(oracle_args, "--run-outcome") {
+                if supplemental.run_outcome.is_some() {
+                    return Err(
+                        "run outcome was supplied in both --supplemental and --run-outcome".into(),
+                    );
+                }
+                supplemental.run_outcome = Some(serde_json::from_slice::<RunOutcomeEvidence>(
+                    &fs::read(path)?,
+                )?);
+            }
+            let report = program.evaluate(&trace, &supplemental)?;
+            let encoded = serde_json::to_vec_pretty(&report)?;
+            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
+                if let Some(parent) = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, &encoded)?;
+            }
+            println!("{}", String::from_utf8(encoded)?);
+            Ok(())
+        }
+        Some("compare") => {
+            let oracle_args = &args[1..];
+            let program: ComparisonOracleProgram = serde_json::from_slice(&fs::read(
+                required_path(oracle_args, "--program")?,
+            )?)?;
+            let evidence: ComparisonEvidence = serde_json::from_slice(&fs::read(required_path(
+                oracle_args,
+                "--evidence",
+            )?)?)?;
+            let report = program.evaluate(&evidence)?;
+            let encoded = serde_json::to_vec_pretty(&report)?;
+            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
+                if let Some(parent) = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, &encoded)?;
+            }
+            println!("{}", String::from_utf8(encoded)?);
+            Ok(())
+        }
+        Some("compose") => {
+            let oracle_args = &args[1..];
+            let manifest: OracleCompositionManifest = serde_json::from_slice(&fs::read(
+                required_path(oracle_args, "--manifest")?,
+            )?)?;
+            let evidence = manifest.compose()?;
+            let encoded = serde_json::to_vec_pretty(&evidence)?;
+            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
+                if let Some(parent) = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, &encoded)?;
+            }
+            println!("{}", String::from_utf8(encoded)?);
+            Ok(())
+        }
+        _ => Err("oracle command: evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json] | compose --manifest COMPOSITION.json [--output EVIDENCE.json] | compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]".into()),
+    }
+}
+
+fn command_fixture(args: &[String]) -> Result<(), Box<dyn Error>> {
+    match args.first().map(String::as_str) {
+        Some("compile") if args.len() == 3 => {
+            let fixture: ScenarioFixture = serde_json::from_slice(&fs::read(&args[1])?)?;
+            let bytes = fixture.encode()?;
+            fs::write(&args[2], &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": fixture.schema,
+                    "name": fixture.name,
+                    "encoded_bytes": bytes.len(),
+                    "output": args[2]
+                }))?
+            );
+            Ok(())
+        }
+        Some("inspect") if args.len() == 2 => {
+            let fixture = ScenarioFixture::decode(&fs::read(&args[1])?)?;
+            println!("{}", serde_json::to_string_pretty(&fixture)?);
+            Ok(())
+        }
+        _ => Err(
+            "fixture commands: compile SOURCE.json OUTPUT.fixture, inspect INPUT.fixture".into(),
+        ),
     }
 }
 
@@ -158,12 +306,19 @@ fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&output, &bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::WorldInventory)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "schema": inventory.schema,
                     "stage": inventory.stage,
                     "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
                     "sha256": digest,
                     "bytes": bytes.len(),
                     "sources": inventory.sources.len(),
@@ -191,6 +346,11 @@ fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&output, &bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::WorldInventory)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -204,6 +364,8 @@ fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                         .map(|room| room.primitive_ids.len()).sum::<usize>(),
                     "excluded_surfaces": index.artifact().excluded.len(),
                     "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
                 }))?
             );
             Ok(())
@@ -407,13 +569,26 @@ fn command_milestone(args: &[String]) -> Result<(), Box<dyn Error>> {
             let definitions = decoded
                 .definitions
                 .iter()
-                .map(|definition| {
-                    json!({
+                .zip(&decoded.program.definitions)
+                .map(|(definition, ast)| -> Result<_, milestone_dsl::BinaryError> {
+                    let projections = ast
+                        .projections
+                        .iter()
+                        .map(|projection| {
+                            Ok(json!({
+                                "name": projection.name,
+                                "identity": Digest(milestone_dsl::value_projection_identity(projection)?),
+                                "items": projection.items,
+                            }))
+                        })
+                        .collect::<Result<Vec<_>, milestone_dsl::BinaryError>>()?;
+                    Ok(json!({
                         "id": definition.name,
                         "sha256": Digest(definition.sha256),
-                    })
+                        "value_projections": projections,
+                    }))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -465,6 +640,7 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
             let program = ControllerProgram::decode(&bytes)?;
             let version_major = u16::from_le_bytes(bytes[8..10].try_into()?);
             let version_minor = u16::from_le_bytes(bytes[10..12].try_into()?);
+            let provenance = ControllerObservationProvenance::for_program(&program);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -472,8 +648,28 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "version": { "major": version_major, "minor": version_minor },
                     "duration_frames": program.duration_frames,
                     "layer_count": program.layers.len(),
+                    "static_tape_compilable": provenance.is_static(),
+                    "observation_provenance": provenance,
                     "layers": program.layers,
                 }))?
+            );
+            Ok(())
+        }
+        Some("flatten") if args.len() == 3 => {
+            let program = ControllerProgram::decode(&fs::read(&args[1])?)?;
+            let tape = compile_static_controller(&program)?;
+            let output = PathBuf::from(&args[2]);
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, tape.encode()?)?;
+            println!(
+                "flattened {} controller frames to {}",
+                tape.frames.len(),
+                output.display()
             );
             Ok(())
         }
@@ -483,10 +679,121 @@ fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
 
 fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("diff-episodes") => {
+            let learn_args = &args[1..];
+            let success_trace_path = required_path(learn_args, "--success-trace")?;
+            let failure_trace_path = required_path(learn_args, "--failure-trace")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("trace diff output already exists: {}", output.display()).into(),
+                );
+            }
+            let success_evidence_path = option(learn_args, "--success-evidence").map(PathBuf::from);
+            let failure_evidence_path = option(learn_args, "--failure-evidence").map(PathBuf::from);
+            if success_evidence_path.is_some() != failure_evidence_path.is_some() {
+                return Err(
+                    "--success-evidence and --failure-evidence must be supplied together".into(),
+                );
+            }
+            let success_bytes = fs::read(&success_trace_path)?;
+            let failure_bytes = fs::read(&failure_trace_path)?;
+            let success_trace = huntctl::trace::decode(&success_bytes)?;
+            let failure_trace = huntctl::trace::decode(&failure_bytes)?;
+            let success_evidence: Option<TransitionEvidenceBundle> = success_evidence_path
+                .as_ref()
+                .map(|path| fs::read(path).map_err(Box::<dyn Error>::from))
+                .transpose()?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?;
+            let failure_evidence: Option<TransitionEvidenceBundle> = failure_evidence_path
+                .as_ref()
+                .map(|path| fs::read(path).map_err(Box::<dyn Error>::from))
+                .transpose()?
+                .map(|bytes| serde_json::from_slice(&bytes))
+                .transpose()?;
+            let report = SiblingTraceDiff::compare(
+                &success_trace,
+                &success_bytes,
+                &failure_trace,
+                &failure_bytes,
+                success_evidence.as_ref(),
+                failure_evidence.as_ref(),
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, serde_json::to_vec_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("dataset") => {
+            let learn_args = &args[1..];
+            let source_paths = repeated_option(learn_args, "--source");
+            if source_paths.is_empty() {
+                return Err("learn dataset requires at least one --source SOURCE.json".into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!("dataset output already exists: {}", output.display()).into());
+            }
+            let mut sources = Vec::with_capacity(source_paths.len());
+            for source_path in &source_paths {
+                let source_path = PathBuf::from(source_path);
+                let descriptor: DatasetSourceDescriptor =
+                    serde_json::from_slice(&fs::read(&source_path)?)?;
+                sources.push(descriptor.load(source_path.parent().unwrap_or(Path::new(".")))?);
+            }
+            let validation_percent =
+                u8::try_from(usize_option(learn_args, "--validation-percent", 10)?)?;
+            let test_percent = u8::try_from(usize_option(learn_args, "--test-percent", 10)?)?;
+            let manifest = DatasetManifest::build(
+                &sources,
+                &DatasetBuildConfig {
+                    validation_percent,
+                    test_percent,
+                    withheld_objectives: repeated_option(learn_args, "--withheld-objective")
+                        .into_iter()
+                        .collect(),
+                },
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let bytes = serde_json::to_vec_pretty(&manifest)?;
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::DatasetManifest)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": manifest.schema,
+                    "dataset_sha256": manifest.dataset_sha256,
+                    "frozen_withheld_sha256": manifest.frozen_withheld_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": manifest.report,
+                    "leakage": manifest.leakage,
+                    "normalization_schemas": manifest.normalization.len(),
+                }))?
+            );
+            Ok(())
+        }
         Some("extract-trace") => {
             let learn_args = &args[1..];
             let trace_path = required_path(learn_args, "--trace")?;
             let tape_path = required_path(learn_args, "--tape")?;
+            let episode_context_path = required_path(learn_args, "--episode-context")?;
             let output = required_path(learn_args, "--output")?;
             let start_tape_frame: u64 = option(learn_args, "--start-frame")
                 .ok_or("missing required --start-frame N")?
@@ -496,6 +803,9 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .parse()?;
             let trace_bytes = fs::read(&trace_path)?;
             let tape_bytes = fs::read(&tape_path)?;
+            let episode_context: EpisodeContext =
+                serde_json::from_slice(&fs::read(&episode_context_path)?)?;
+            episode_context.validate()?;
             let episode_digest = if let Some(value) = option(learn_args, "--episode-digest") {
                 value.parse::<Digest>()?
             } else {
@@ -532,6 +842,33 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
             };
+            let decoded_trace = huntctl::trace::decode(&trace_bytes)?;
+            let decoded_tape = InputTape::decode(&tape_bytes)?.tape;
+            let transition_evidence = TransitionEvidenceBundle::build(TransitionEvidenceBuild {
+                corpus: &corpus,
+                trace: &decoded_trace,
+                tape: &decoded_tape,
+                trace_sha256: Digest(Sha256::digest(&trace_bytes).into()),
+                tape_sha256: Digest(Sha256::digest(&tape_bytes).into()),
+                start_tape_frame,
+                end_tape_frame,
+                terminal_reason: end_is_terminal
+                    .then_some(TerminalReasonEvidence::DeclaredExtractionBoundary),
+            })?;
+            let transition_evidence_bytes = serde_json::to_vec_pretty(&transition_evidence)?;
+            let trace_sha256 = Digest(Sha256::digest(&trace_bytes).into());
+            let tape_sha256 = Digest(Sha256::digest(&tape_bytes).into());
+            let episode_manifest = EpisodeManifest::build(EpisodeManifestBuild {
+                context: &episode_context,
+                boot: &decoded_tape.boot,
+                corpus: &corpus,
+                query_view_id: &feature_view,
+                tape_sha256,
+                trace_sha256,
+                transition_evidence_sha256: Digest(
+                    Sha256::digest(&transition_evidence_bytes).into(),
+                ),
+            })?;
             let compression_level: i32 = option(learn_args, "--compression-level")
                 .map(|value| value.parse())
                 .transpose()?
@@ -543,6 +880,36 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::create_dir_all(parent)?;
             }
             let content_digest = corpus.write_zstd_file(&output, compression_level)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let trace_content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&trace_bytes, ContentKind::GameplayTrace)?;
+            let transition_evidence_path =
+                PathBuf::from(format!("{}.evidence.json", output.display()));
+            fs::write(&transition_evidence_path, transition_evidence_bytes)?;
+            let episode_manifest_path = PathBuf::from(format!("{}.episode.json", output.display()));
+            fs::write(
+                &episode_manifest_path,
+                serde_json::to_vec_pretty(&episode_manifest)?,
+            )?;
+            let dataset_source_path =
+                PathBuf::from(format!("{}.dataset-source.json", output.display()));
+            fs::write(
+                &dataset_source_path,
+                serde_json::to_vec_pretty(&DatasetSourceDescriptor {
+                    schema: DATASET_SOURCE_SCHEMA_V1.into(),
+                    source_id: episode_manifest.episode_sha256.to_string(),
+                    episode_manifest: fs::canonicalize(&episode_manifest_path)?,
+                    transition_corpus: fs::canonicalize(&output)?,
+                    absolute_tape: fs::canonicalize(&tape_path)?,
+                    transition_evidence: fs::canonicalize(&transition_evidence_path)?,
+                    gameplay_trace: fs::canonicalize(&trace_path)?,
+                    route_family: episode_manifest.objective.id.clone(),
+                    screenshot_sha256: Vec::new(),
+                    checkpoint_sha256: Vec::new(),
+                })?,
+            )?;
             let observation_spec = if feature_view == MOVEMENT_STATE_V2_ID {
                 let spec = movement_state_v2_spec();
                 let path = PathBuf::from(format!("{}.observation.json", output.display()));
@@ -559,11 +926,20 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "limitations": [
                         "the batch contains observed behavior, not counterfactual actions",
                         "explicit frame bounds are not native milestone proof",
+                        "--terminal records a declared extraction boundary, not inferred objective proof",
                         "the observation view is objective-specific and not a complete process state"
                     ],
                     "trace": trace_path,
+                    "trace_content_blob": trace_content_blob,
+                    "artifact_store": artifact_store,
                     "tape": tape_path,
                     "output": output,
+                    "transition_evidence": transition_evidence_path,
+                    "episode_context": episode_context_path,
+                    "episode_manifest": episode_manifest_path,
+                    "dataset_source": dataset_source_path,
+                    "input_identity": episode_manifest.input_identity_sha256,
+                    "episode_identity": episode_manifest.episode_sha256,
                     "feature_view": feature_view,
                     "observation_spec": observation_spec,
                     "episode_digest": episode_digest,
@@ -604,11 +980,206 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
-        Some("fit") => {
+        Some("baseline") => {
             let learn_args = &args[1..];
             let inputs = repeated_option(learn_args, "--input");
+            if inputs.is_empty() || inputs.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn baseline requires 1..={MAX_LEARN_INPUT_CORPORA} --input corpora"
+                )
+                .into());
+            }
+            let method = option(learn_args, "--method")
+                .ok_or("learn baseline requires --method nearest-neighbor|tabular")?;
+            let discount = option(learn_args, "--discount")
+                .map(|value| value.parse::<f32>())
+                .transpose()?
+                .unwrap_or(1.0);
+            let mut feature_schema = None;
+            let mut action_schema = None;
+            let mut feature_count = None;
+            let mut transitions = Vec::new();
+            let mut episode_groups = Vec::new();
+            for (episode_group, input) in inputs.iter().enumerate() {
+                let corpus = TransitionCorpus::read_zstd_file(input)?;
+                if feature_schema.is_some_and(|value| value != corpus.feature_schema)
+                    || action_schema.is_some_and(|value| value != corpus.action_schema)
+                    || feature_count.is_some_and(|value| value != corpus.feature_count)
+                {
+                    return Err("baseline corpora use incompatible schemas".into());
+                }
+                feature_schema = Some(corpus.feature_schema);
+                action_schema = Some(corpus.action_schema);
+                feature_count = Some(corpus.feature_count);
+                for transition in corpus.transitions {
+                    transitions.push(FqiTransition {
+                        state: transition.state,
+                        action: transition.action.action_id,
+                        duration: transition.duration_ticks,
+                        reward: transition.reward,
+                        next_state: transition.next_state,
+                        terminal: transition.terminal,
+                    });
+                    episode_groups.push(episode_group as u64);
+                }
+            }
+            let query_index = usize_option(learn_args, "--query-transition", 0)?;
+            let query = transitions
+                .get(query_index)
+                .ok_or("--query-transition is outside the merged transition batch")?;
+            let query_side = option(learn_args, "--query-side").unwrap_or_else(|| "state".into());
+            let query_state = match query_side.as_str() {
+                "state" => &query.state,
+                "next-state" => &query.next_state,
+                _ => return Err("--query-side must be state or next-state".into()),
+            };
+            let samples = empirical_return_samples(&transitions, &episode_groups, discount)?;
+            let (ranking, configuration) = match method.as_str() {
+                "nearest-neighbor" => {
+                    let declared = repeated_option(learn_args, "--feature");
+                    let categorical = if feature_schema == Some(movement_feature_schema_digest_v1())
+                    {
+                        MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec()
+                    } else if feature_schema == Some(movement_state_v2_spec().digest()?) {
+                        movement_state_v2_spec().categorical_features()
+                    } else {
+                        Vec::new()
+                    };
+                    let features = if declared.is_empty() {
+                        if categorical.is_empty() {
+                            return Err("unknown schema requires repeated --feature INDEX:SCALE:continuous|categorical".into());
+                        }
+                        (0..feature_count.unwrap() as usize)
+                            .map(|index| LocalFeature {
+                                index,
+                                scale: 1.0,
+                                categorical: categorical.contains(&index),
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        declared
+                            .iter()
+                            .map(|value| -> Result<LocalFeature, Box<dyn Error>> {
+                                let parts = value.split(':').collect::<Vec<_>>();
+                                if parts.len() != 3
+                                    || !matches!(parts[2], "continuous" | "categorical")
+                                {
+                                    return Err(
+                                        "--feature syntax is INDEX:SCALE:continuous|categorical"
+                                            .into(),
+                                    );
+                                }
+                                Ok(LocalFeature {
+                                    index: parts[0].parse()?,
+                                    scale: parts[1].parse()?,
+                                    categorical: parts[2] == "categorical",
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                    };
+                    let neighbors = usize_option(learn_args, "--neighbors", 8)?;
+                    let model = NearestNeighborReturn::fit(
+                        samples,
+                        LocalReturnConfig {
+                            neighbors,
+                            features: features.clone(),
+                        },
+                    )?;
+                    (
+                        model.rank(query_state)?,
+                        json!({
+                            "neighbors": neighbors,
+                            "features": features.iter().map(|feature| json!({
+                                "index": feature.index,
+                                "scale": feature.scale,
+                                "categorical": feature.categorical,
+                            })).collect::<Vec<_>>(),
+                        }),
+                    )
+                }
+                "tabular" => {
+                    let axes = repeated_option(learn_args, "--axis")
+                        .iter()
+                        .map(|value| -> Result<TabularAxis, Box<dyn Error>> {
+                            let parts = value.split(':').collect::<Vec<_>>();
+                            if parts.len() != 3 {
+                                return Err("--axis syntax is INDEX:ORIGIN:WIDTH".into());
+                            }
+                            Ok(TabularAxis {
+                                index: parts[0].parse()?,
+                                origin: parts[1].parse()?,
+                                width: parts[2].parse()?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let model = TabularReturn::fit(&samples, axes.clone())?;
+                    (
+                        model.rank(query_state)?,
+                        json!({
+                            "axes": axes.iter().map(|axis| json!({
+                                "index": axis.index,
+                                "origin": axis.origin,
+                                "width": axis.width,
+                            })).collect::<Vec<_>>(),
+                        }),
+                    )
+                }
+                _ => return Err("--method must be nearest-neighbor or tabular".into()),
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-low-data-baseline/v1",
+                    "method": method,
+                    "feature_schema": feature_schema,
+                    "action_schema": action_schema,
+                    "input_corpora": inputs,
+                    "episode_groups": episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+                    "transitions": transitions.len(),
+                    "per_tick_discount": discount,
+                    "query_transition": query_index,
+                    "query_side": query_side,
+                    "configuration": configuration,
+                    "ranking": ranking,
+                    "limitations": [
+                        "empirical observed returns only; no counterfactual inference",
+                        "a nonterminal episode end is truncated and receives no cross-episode bootstrap",
+                        "rankings are proposal heuristics and require native rollout proof"
+                    ]
+                }))?
+            );
+            Ok(())
+        }
+        Some("fit") => {
+            let learn_args = &args[1..];
+            let direct_inputs = repeated_option(learn_args, "--input");
+            let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
+            if dataset_path.is_some() && !direct_inputs.is_empty() {
+                return Err("learn fit accepts either --dataset or --input, not both".into());
+            }
+            let dataset_manifest: Option<DatasetManifest> = dataset_path
+                .as_ref()
+                .map(|path| -> Result<_, Box<dyn Error>> {
+                    let manifest: DatasetManifest = serde_json::from_slice(&fs::read(path)?)?;
+                    manifest.validate()?;
+                    Ok(manifest)
+                })
+                .transpose()?;
+            let inputs = if let Some(manifest) = &dataset_manifest {
+                manifest
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.split == huntctl::dataset::DatasetSplit::Train)
+                    .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+                    .collect()
+            } else {
+                direct_inputs
+            };
             if inputs.is_empty() {
-                return Err("learn fit requires at least one --input FILE".into());
+                return Err(
+                    "learn fit requires training entries in --dataset or at least one --input FILE"
+                        .into(),
+                );
             }
             if inputs.len() > MAX_LEARN_INPUT_CORPORA {
                 return Err(format!(
@@ -622,6 +1193,10 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 trees_per_action: usize_option(learn_args, "--trees", 31)?,
                 max_tree_depth: usize_option(learn_args, "--max-depth", 8)?,
                 seed: u64_option(learn_args, "--seed", FqiConfig::default().seed)?,
+                discount: option(learn_args, "--discount")
+                    .map(|value| value.parse::<f32>())
+                    .transpose()?
+                    .unwrap_or(FqiConfig::default().discount),
                 ..FqiConfig::default()
             };
             if config.iterations > MAX_FQI_ITERATIONS {
@@ -649,9 +1224,26 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let mut action_schema = None;
             let mut feature_count = None;
             let mut transitions = Vec::new();
+            let mut episode_groups = Vec::new();
+            let mut training_corpus_sha256 = Vec::new();
             let mut action_support = BTreeMap::<u32, usize>::new();
-            for input in &inputs {
+            let shaping_path = option(learn_args, "--shaping").map(PathBuf::from);
+            let shaping_report_path = option(learn_args, "--shaping-report").map(PathBuf::from);
+            if shaping_path.is_some() != shaping_report_path.is_some() {
+                return Err(
+                    "--shaping SPEC.json and --shaping-report REPORT.json must be supplied together"
+                        .into(),
+                );
+            }
+            let shaping_spec: Option<PotentialShapingSpec> = if let Some(path) = &shaping_path {
+                Some(serde_json::from_slice(&fs::read(path)?)?)
+            } else {
+                None
+            };
+            let mut shaping_records = Vec::new();
+            for (episode_group, input) in inputs.iter().enumerate() {
                 let corpus = TransitionCorpus::read_zstd_file(input)?;
+                training_corpus_sha256.push(corpus.content_digest()?);
                 if feature_schema.is_some_and(|value| value != corpus.feature_schema)
                     || action_schema.is_some_and(|value| value != corpus.action_schema)
                     || feature_count.is_some_and(|value| value != corpus.feature_count)
@@ -663,6 +1255,16 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 feature_schema = Some(corpus.feature_schema);
                 action_schema = Some(corpus.action_schema);
                 feature_count = Some(corpus.feature_count);
+                if let Some(spec) = &shaping_spec {
+                    if spec.feature_schema != corpus.feature_schema {
+                        return Err(format!(
+                            "shaping feature schema {} does not match corpus feature schema {}",
+                            spec.feature_schema, corpus.feature_schema
+                        )
+                        .into());
+                    }
+                    spec.validate(corpus.feature_count as usize)?;
+                }
                 let merged_count = transitions
                     .len()
                     .checked_add(corpus.transitions.len())
@@ -674,7 +1276,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
                 transitions.reserve(corpus.transitions.len());
-                for transition in corpus.transitions {
+                for (transition_index, transition) in corpus.transitions.into_iter().enumerate() {
                     let action = transition.action.action_id;
                     if !action_support.contains_key(&action)
                         && action_support.len() >= MAX_FQI_ACTIONS
@@ -685,14 +1287,37 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                         .into());
                     }
                     *action_support.entry(action).or_default() += 1;
+                    let reward = if let Some(spec) = &shaping_spec {
+                        let breakdown = spec.shape_reward(
+                            corpus.feature_count as usize,
+                            &transition.state,
+                            &transition.next_state,
+                            transition.reward,
+                            transition.duration_ticks,
+                            transition.terminal,
+                            config.discount,
+                        )?;
+                        let training_reward = breakdown.training_reward;
+                        shaping_records.push(json!({
+                            "input_corpus": input,
+                            "transition": transition_index,
+                            "source_reference": transition.source.digest,
+                            "next_reference": transition.next.digest,
+                            "reward": breakdown,
+                        }));
+                        training_reward
+                    } else {
+                        transition.reward
+                    };
                     transitions.push(FqiTransition {
                         state: transition.state,
                         action,
                         duration: transition.duration_ticks,
-                        reward: transition.reward,
+                        reward,
                         next_state: transition.next_state,
                         terminal: transition.terminal,
                     });
+                    episode_groups.push(episode_group as u64);
                 }
             }
             let declared_categorical = repeated_option(learn_args, "--categorical-feature")
@@ -742,12 +1367,80 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "next-state" => query_transition.next_state.clone(),
                 _ => return Err("--query-side must be state or next-state".into()),
             };
-            let model = FittedQ::fit(
-                feature_count.ok_or("transition corpus has no feature width")? as usize,
+            let learned_feature_count =
+                feature_count.ok_or("transition corpus has no feature width")? as usize;
+            let shaping_identity = shaping_spec
+                .as_ref()
+                .map(|spec| spec.identity(learned_feature_count))
+                .transpose()?;
+            if let (Some(spec), Some(path)) = (&shaping_spec, &shaping_report_path) {
+                if path.exists() {
+                    return Err(format!(
+                        "shaping reward report already exists: {}",
+                        path.display()
+                    )
+                    .into());
+                }
+                if let Some(parent) = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(
+                    path,
+                    serde_json::to_vec_pretty(&json!({
+                        "schema": REWARD_REPORT_SCHEMA_V1,
+                        "shaping_identity": shaping_identity,
+                        "shaping_spec": spec,
+                        "feature_schema": feature_schema,
+                        "action_schema": action_schema,
+                        "per_tick_discount": config.discount,
+                        "proposal_signal_only": true,
+                        "terminal_objective": "unchanged_external_predicate",
+                        "input_corpora": &inputs,
+                        "transitions": shaping_records,
+                    }))?,
+                )?;
+            }
+            let model = FittedQ::fit_with_episode_groups(
+                learned_feature_count,
                 &actions,
                 &transitions,
+                &episode_groups,
                 &config,
             )?;
+            let model_output = option(learn_args, "--model-output").map(PathBuf::from);
+            let mut model_content_blob = None;
+            let mut model_artifact_store = None;
+            if let Some(path) = &model_output {
+                if path.exists() {
+                    return Err(format!("model output already exists: {}", path.display()).into());
+                }
+                if let Some(parent) = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                let bytes = model.artifact_bytes(
+                    feature_schema.ok_or("transition corpus has no feature schema")?,
+                    action_schema.ok_or("transition corpus has no action schema")?,
+                    dataset_manifest
+                        .as_ref()
+                        .map(|manifest| manifest.dataset_sha256),
+                    &training_corpus_sha256,
+                    &config,
+                )?;
+                fs::write(path, &bytes)?;
+                let store_path = option(learn_args, "--artifact-store")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).join("content"));
+                model_content_blob = Some(
+                    ContentStore::initialize(&store_path)?.put_bytes(&bytes, ContentKind::Model)?,
+                );
+                model_artifact_store = Some(store_path);
+            }
             let ranking: Vec<_> = model
                 .rank_actions(&query_state)?
                 .into_iter()
@@ -767,9 +1460,19 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "feature_schema": feature_schema,
                     "action_schema": action_schema,
                     "input_corpora": inputs,
+                    "training_dataset": dataset_path,
+                    "training_dataset_sha256": dataset_manifest.as_ref().map(|manifest| manifest.dataset_sha256),
                     "transition_count": transitions.len(),
+                    "episode_groups": inputs.len(),
+                    "bootstrap_unit": model.bootstrap_unit(),
                     "query_transition": query_index,
                     "query_side": query_side,
+                    "per_tick_discount": config.discount,
+                    "potential_shaping": shaping_identity,
+                    "reward_report": shaping_report_path,
+                    "model_output": model_output,
+                    "model_artifact_store": model_artifact_store,
+                    "model_content_blob": model_content_blob,
                     "iterations": config.iterations,
                     "trees_per_action": config.trees_per_action,
                     "categorical_features": config.categorical_features,
@@ -926,6 +1629,24 @@ fn command_timeline(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
         Some("workbench") => command_timeline_workbench(&args[1..]),
         Some("store") => command_timeline_store(&args[1..]),
+        Some("prune-thumbnails") => {
+            let timeline_args = &args[1..];
+            let path = required_path(timeline_args, "--timeline")?;
+            let timeline = load_timeline(&path)?;
+            let repository_root = option(timeline_args, "--repository-root")
+                .map(PathBuf::from)
+                .unwrap_or(env::current_dir()?);
+            let state_root = required_path(timeline_args, "--state-root")?;
+            let report = prune_thumbnails(
+                &timeline,
+                &path,
+                &repository_root,
+                &state_root,
+                flag(timeline_args, "--apply"),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         _ => usage_error(),
     }
 }
@@ -1277,6 +1998,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 tick_rate_numerator: through_goal.tape.tick_rate_numerator,
                 tick_rate_denominator: through_goal.tape.tick_rate_denominator,
                 frames: through_goal.tape.frames[prefix.tape.frames.len()..].to_vec(),
+                ..InputTape::default()
             };
             let observed_candidate = Candidate::from_absolute_tape(segment.profile, &suffix)?;
             let seed_candidate = if let Some(path) = option(search_args, "--candidate") {
@@ -1464,6 +2186,138 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
         }
+        Some("beam") => {
+            let search_args = &args[1..];
+            let seed_candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            seed_candidate.validate()?;
+            let options: Vec<huntctl::search::MacroAction> =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--options")?)?)?;
+            let summary = run_beam_search(&BeamSearchConfig {
+                segment: seed_candidate.segment,
+                seed_candidate,
+                options,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                beam_width: usize_option(search_args, "--beam-width", 8)?,
+                maximum_depth: u32_option(search_args, "--maximum-depth", 8)?,
+                candidate_budget: usize_option(search_args, "--candidate-budget", 1_000)?,
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("continuous") => {
+            let search_args = &args[1..];
+            let seed_candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            seed_candidate.validate()?;
+            let axes: ContinuousAxes =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--axes")?)?)?;
+            let method: ContinuousMethod = option(search_args, "--method")
+                .ok_or("missing required --method cem|cma-es")?
+                .parse()?;
+            let population_size = usize_option(search_args, "--population", 32)?;
+            let summary = run_continuous_search(&ContinuousSearchRunConfig {
+                method,
+                seed_candidate,
+                axes,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                generations: u32_option(search_args, "--generations", 10)?,
+                population_size,
+                elite_count: usize_option(search_args, "--elites", (population_size / 4).max(1))?,
+                initial_sigma: option(search_args, "--initial-sigma")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(0.25),
+                candidate_budget: usize_option(search_args, "--candidate-budget", 10_000)?,
+                rng_seed: u64_option(search_args, "--rng-seed", 1)?,
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("bayesian") => {
+            let search_args = &args[1..];
+            let seed_candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            seed_candidate.validate()?;
+            let axes: ContinuousAxes =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--axes")?)?)?;
+            let parse_f64 = |name: &str, default: f64| -> Result<f64, Box<dyn Error>> {
+                Ok(option(search_args, name)
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(default))
+            };
+            let summary = run_bayesian_search(&BayesianSearchRunConfig {
+                seed_candidate,
+                axes,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                generations: u32_option(search_args, "--generations", 20)?,
+                batch_size: usize_option(search_args, "--batch-size", 4)?,
+                initial_samples: usize_option(search_args, "--initial-samples", 8)?,
+                acquisition_pool: usize_option(search_args, "--acquisition-pool", 2_048)?,
+                length_scale: parse_f64("--length-scale", 0.2)?,
+                observation_noise: parse_f64("--observation-noise", 1.0e-6)?,
+                exploration: parse_f64("--exploration", 0.01)?,
+                candidate_budget: usize_option(search_args, "--candidate-budget", 80)?,
+                rng_seed: u64_option(search_args, "--rng-seed", 1)?,
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("tournament") => {
+            let search_args = &args[1..];
+            let definition_path = required_path(search_args, "--definition")?;
+            let definition: TournamentDefinition =
+                serde_json::from_slice(&fs::read(&definition_path)?)?;
+            let definition_directory = fs::canonicalize(
+                definition_path
+                    .parent()
+                    .ok_or("tournament definition has no parent directory")?,
+            )?;
+            let summary = run_proposer_tournament(&ProposerTournamentConfig {
+                definition,
+                definition_directory,
+                game: required_path(search_args, "--game")?,
+                dvd: required_path(search_args, "--dvd")?,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: option(search_args, "--working-directory")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                timeout: timeout_option(search_args)?,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
         Some("minimize-boot") => {
             let search_args = &args[1..];
             let candidate: Candidate =
@@ -1504,6 +2358,116 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 timeout: timeout_option(search_args)?,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("golf-option") => {
+            let search_args = &args[1..];
+            let plan: RollOptionPlan =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--plan")?)?)?;
+            let execution: OptionExecution =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--execution")?)?)?;
+            let tape_path = required_path(search_args, "--tape")?;
+            let tape = InputTape::decode(&fs::read(&tape_path)?)?.tape;
+            let cancellation_tick = option(search_args, "--cancellation-tick")
+                .map(|value| value.parse::<u32>())
+                .transpose()?;
+            let condition_index = option(search_args, "--condition-index")
+                .map(|value| value.parse::<u32>())
+                .transpose()?;
+            let cancellation = match (cancellation_tick, condition_index) {
+                (Some(tick), Some(condition_index)) => Some(RollCancellationHit {
+                    tick,
+                    condition_index,
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "--cancellation-tick and --condition-index must be supplied together"
+                            .into(),
+                    );
+                }
+            };
+            let steps = RollGolfSteps {
+                heading_degrees: u16::try_from(u32_option(search_args, "--heading-step", 1)?)?,
+                magnitude: u8::try_from(u32_option(search_args, "--magnitude-step", 1)?)?,
+                duration_ticks: u32_option(search_args, "--duration-step", 1)?,
+                phase_ticks: u32_option(search_args, "--phase-step", 1)?,
+                button_ticks: u32_option(search_args, "--button-step", 1)?,
+                cancellation_ticks: u32_option(search_args, "--cancellation-step", 1)?,
+            };
+            let proposals = golf_roll_option(&plan, cancellation, &execution, &tape, steps)?;
+            let output = required_path(search_args, "--output")?;
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let manifest = json!({
+                "schema": "dusklight-option-relative-golf-manifest/v1",
+                "seed_option_id": execution.option_id,
+                "seed_tape": tape_path,
+                "steps": steps,
+                "proposal_count": proposals.len(),
+                "proposals": proposals,
+            });
+            fs::write(&output, serde_json::to_vec_pretty(&manifest)?)?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
+            Ok(())
+        }
+        Some("golf-path") => {
+            let search_args = &args[1..];
+            let plan: MotionPathPlan =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--plan")?)?)?;
+            let execution: OptionExecution =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--execution")?)?)?;
+            let tape_path = required_path(search_args, "--tape")?;
+            let tape = InputTape::decode(&fs::read(&tape_path)?)?.tape;
+            let cancellation_tick = option(search_args, "--cancellation-tick")
+                .map(|value| value.parse::<u32>())
+                .transpose()?;
+            let condition_index = option(search_args, "--condition-index")
+                .map(|value| value.parse::<u32>())
+                .transpose()?;
+            let cancellation = match (cancellation_tick, condition_index) {
+                (Some(tick), Some(condition_index)) => Some(PathCancellationHit {
+                    tick,
+                    condition_index,
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "--cancellation-tick and --condition-index must be supplied together"
+                            .into(),
+                    );
+                }
+            };
+            let steps = MotionPathGolfSteps {
+                point_units: u16::try_from(u32_option(search_args, "--point-step", 1)?)?,
+                duration_ticks: u32_option(search_args, "--duration-step", 1)?,
+                phase_units: u32_option(search_args, "--phase-step", 1)?,
+                cancellation_ticks: u32_option(search_args, "--cancellation-step", 1)?,
+            };
+            let proposals = golf_motion_path(&plan, cancellation, &execution, &tape, steps)?;
+            let output = required_path(search_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("path-golf output already exists: {}", output.display()).into(),
+                );
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let manifest = json!({
+                "schema": "dusklight-motion-path-relative-golf-manifest/v1",
+                "seed_option_id": execution.option_id,
+                "seed_tape": tape_path,
+                "steps": steps,
+                "proposal_count": proposals.len(),
+                "proposals": proposals,
+            });
+            fs::write(&output, serde_json::to_vec_pretty(&manifest)?)?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
             Ok(())
         }
         Some("import-tape") => {
@@ -1636,10 +2600,13 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     (
                         member.candidate_id.clone(),
                         CandidateResult {
+                            goal_reached: Some(true),
                             milestone_depth: manifest.segment.target_depth(),
                             attempts,
                             successes: attempts,
                             first_hit_ticks: vec![member.frame_count; attempts as usize],
+                            risk_events: None,
+                            boundary_compatibility: huntctl::search::BoundaryCompatibility::Unknown,
                         },
                     )
                 })
@@ -1647,6 +2614,7 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let results = SearchResults {
                 schema: RESULTS_SCHEMA.into(),
                 segment: manifest.segment,
+                boot: manifest.boot,
                 candidates,
             };
             fs::write(&output, serde_json::to_vec_pretty(&results)?)?;
@@ -1804,7 +2772,159 @@ fn command_corpus(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("query") => {
+            let inputs = repeated_option(&args[1..], "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let action = option(&args[1..], "--action")
+                .map(|value| value.parse())
+                .transpose()?;
+            let terminal = option(&args[1..], "--terminal")
+                .map(|value| value.parse::<bool>())
+                .transpose()?;
+            let minimum_reward = option(&args[1..], "--minimum-reward")
+                .map(|value| value.parse::<f32>())
+                .transpose()?;
+            let rows = huntctl::corpus_ops::query(
+                &inputs,
+                action,
+                terminal,
+                minimum_reward,
+                usize_option(&args[1..], "--limit", 1000)?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+            Ok(())
+        }
+        Some("compare") => {
+            let report = huntctl::corpus_ops::compare(
+                &required_path(&args[1..], "--left")?,
+                &required_path(&args[1..], "--right")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("merge" | "compact") => {
+            let inputs = repeated_option(&args[1..], "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let output = required_path(&args[1..], "--output")?;
+            let level = if args[0] == "compact" { 19 } else { 3 };
+            let report = huntctl::corpus_ops::merge(&inputs, &output, level)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("shard") => {
+            let report = huntctl::corpus_ops::shard(
+                &required_path(&args[1..], "--input")?,
+                &required_path(&args[1..], "--output-directory")?,
+                usize_option(&args[1..], "--maximum-transitions", 100_000)?,
+                3,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("refeature") => {
+            let descriptor = huntctl::corpus_ops::refeature(
+                &required_path(&args[1..], "--source")?,
+                &required_path(&args[1..], "--output")?,
+                &option(&args[1..], "--view").unwrap_or_else(|| MOVEMENT_STATE_V2_ID.into()),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&descriptor)?);
+            Ok(())
+        }
+        Some("validate-transitions") => {
+            let inputs = repeated_option(&args[1..], "--input");
+            let mut reports = Vec::new();
+            for input in inputs {
+                let corpus = TransitionCorpus::read_zstd_file(&input)?;
+                reports.push(json!({
+                    "input": input,
+                    "content_sha256": corpus.content_digest()?,
+                    "feature_schema": corpus.feature_schema,
+                    "action_schema": corpus.action_schema,
+                    "transitions": corpus.transitions.len(),
+                }));
+            }
+            println!("{}", serde_json::to_string_pretty(&reports)?);
+            Ok(())
+        }
+        Some("quarantine") => {
+            let inputs = repeated_option(&args[1..], "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let report = huntctl::corpus_ops::quarantine_invalid(
+                &inputs,
+                &required_path(&args[1..], "--quarantine-root")?,
+                !args[1..].iter().any(|argument| argument == "--apply"),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("gc-content") => {
+            let corpus_args = &args[1..];
+            let store_root = required_path(corpus_args, "--store")?;
+            let trash_root = required_path(corpus_args, "--trash-root")?;
+            let mut referenced = BTreeSet::new();
+            for value in repeated_option(corpus_args, "--reference") {
+                referenced.insert(value.parse::<Digest>()?);
+            }
+            let manifests = repeated_option(corpus_args, "--manifest");
+            if manifests.is_empty() && referenced.is_empty() {
+                return Err(
+                    "corpus gc-content requires at least one --manifest or --reference".into(),
+                );
+            }
+            for manifest in manifests {
+                let bytes = fs::read(&manifest)?;
+                referenced.insert(Digest(Sha256::digest(&bytes).into()));
+                collect_json_digests(&serde_json::from_slice(&bytes)?, &mut referenced);
+            }
+            let report = ContentStore::initialize(store_root)?.garbage_collect(
+                &referenced,
+                &trash_root,
+                !flag(corpus_args, "--apply"),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("export-arrow") => {
+            let corpus_args = &args[1..];
+            let inputs = repeated_option(corpus_args, "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let report = huntctl::corpus_ops::export_arrow(
+                &inputs,
+                &required_path(corpus_args, "--output")?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         _ => usage_error(),
+    }
+}
+
+fn collect_json_digests(value: &Value, output: &mut BTreeSet<Digest>) {
+    match value {
+        Value::String(value) => {
+            if let Ok(digest) = value.parse() {
+                output.insert(digest);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_json_digests(value, output);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                collect_json_digests(value, output);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 
@@ -1915,6 +3035,7 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
                     serde_json::to_string_pretty(&json!({
                         "format": "DUSKTAPE",
                         "source_version": decoded.source_version,
+                        "boot": decoded.tape.boot,
                         "tick_rate": {
                             "numerator": decoded.tape.tick_rate_numerator,
                             "denominator": decoded.tape.tick_rate_denominator
@@ -1932,14 +3053,34 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
-        Some("compile") if args.len() == 3 => {
+        Some("compile") if args.len() == 3 || args.len() == 5 => {
+            if args.len() == 5 && args[3] != "--fixture" {
+                return Err("tape compile optional argument is --fixture FIXTURE.json".into());
+            }
             let source = fs::read_to_string(&args[1])?;
             let program = if source.trim_start().starts_with('{') {
                 TapeProgram::from_json(&source)?
             } else {
                 tape_dsl::parse(&source)?
             };
-            let compiled = program.compile()?;
+            let mut compiled = program.compile()?;
+            if let Some(path) = option(&args[3..], "--fixture") {
+                let fixture: ScenarioFixture = serde_json::from_slice(&fs::read(path)?)?;
+                fixture.validate()?;
+                match &mut compiled.tape.boot {
+                    huntctl::tape::TapeBoot::Stage {
+                        fixture: target, ..
+                    } => {
+                        if target.is_some() {
+                            return Err("tape boot already contains a scenario fixture".into());
+                        }
+                        *target = Some(fixture);
+                    }
+                    huntctl::tape::TapeBoot::Process => {
+                        return Err("--fixture requires a stage-boot tape".into());
+                    }
+                }
+            }
             let bytes = compiled.tape.encode()?;
             fs::write(&args[2], &bytes)?;
             let marker_path = format!("{}.markers.json", args[2]);
@@ -1960,6 +3101,9 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("run") if args.len() >= 2 => command_tape_run(&args[1..]),
+        Some("record") if args.len() >= 3 => command_tape_record(&args[1..]),
+        Some("minimize") if args.len() >= 3 => command_tape_minimize(&args[1..]),
         Some("concat") if args.len() >= 4 => {
             let output = PathBuf::from(&args[1]);
             let mut segments = Vec::with_capacity(args.len() - 2);
@@ -2021,8 +3165,667 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
-        _ => usage_error(),
+        Some("layer") if args.len() == 6 && args[4] == "--start" => {
+            let base_path = PathBuf::from(&args[1]);
+            let overlay_path = PathBuf::from(&args[2]);
+            let output = PathBuf::from(&args[3]);
+            let start = args[5].parse::<usize>()?;
+            let base = InputTape::decode(&fs::read(&base_path)?)?.tape;
+            let overlay = InputTape::decode(&fs::read(&overlay_path)?)?.tape;
+            let overlay_frames = overlay.frames.len();
+            let layered = layer_at(base, overlay, start)?;
+            let bytes = layered.encode()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "layered {} frames at {start} into {} frames ({} bytes) at {}",
+                overlay_frames,
+                layered.frames.len(),
+                bytes.len(),
+                output.display()
+            );
+            Ok(())
+        }
+        Some("resample") if args.len() == 3 => {
+            let input = PathBuf::from(&args[1]);
+            let output = PathBuf::from(&args[2]);
+            let source = InputTape::decode(&fs::read(&input)?)?.tape;
+            let source_rate = (
+                source.tick_rate_numerator,
+                source.tick_rate_denominator,
+            );
+            let source_frames = source.frames.len();
+            let resampled = resample_to_canonical(source)?;
+            let bytes = resampled.encode()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "resampled {source_frames} frames at {}/{} Hz to {} frames at 30/1 Hz ({} bytes) at {}",
+                source_rate.0,
+                source_rate.1,
+                resampled.frames.len(),
+                bytes.len(),
+                output.display()
+            );
+            Ok(())
+        }
+        Some("diff") if args.len() == 3 => {
+            let left = InputTape::decode(&fs::read(&args[1])?)?.tape;
+            let right = InputTape::decode(&fs::read(&args[2])?)?.tape;
+            println!("{}", serde_json::to_string_pretty(&diff_tapes(&left, &right))?);
+            Ok(())
+        }
+        _ => Err("tape commands: inspect, compile, run, record, minimize, concat, slice, layer, resample, diff".into()),
     }
+}
+
+fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = PathBuf::from(args.first().ok_or("tape run requires INPUT.tape")?);
+    let game = required_path(args, "--game")?;
+    let dvd = required_path(args, "--dvd")?;
+    let state_root = required_path(args, "--state-root")?;
+    let decoded = InputTape::decode(&fs::read(&input)?)?;
+    if decoded.tape.frames.is_empty() {
+        return Err("tape run requires at least one input frame".into());
+    }
+    fs::create_dir_all(&state_root)?;
+    let renderer_cache = state_root
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""))
+        .join("renderer-cache");
+    fs::create_dir_all(&renderer_cache)?;
+    let milestone_result = option(args, "--milestone-result")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_root.join("milestones.json"));
+    let milestone_goal = option(args, "--milestone-goal");
+    let milestones = option(args, "--milestones").or_else(|| milestone_goal.clone());
+    let gameplay_trace = option(args, "--gameplay-trace").map(PathBuf::from);
+    let gameplay_trace_channels = option(args, "--gameplay-trace-channels");
+    if gameplay_trace_channels.is_some() && gameplay_trace.is_none() {
+        return Err("--gameplay-trace-channels requires --gameplay-trace FILE".into());
+    }
+    if milestones.is_some()
+        && let Some(parent) = milestone_result.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = gameplay_trace
+        .as_ref()
+        .and_then(|path| path.parent())
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut command = Command::new(&game);
+    command
+        .args(repeated_option(args, "--game-arg"))
+        .arg("--dvd")
+        .arg(&dvd)
+        .arg("--input-tape")
+        .arg(&input)
+        .arg("--automation-data-root")
+        .arg(&state_root)
+        .arg("--renderer-cache-root")
+        .arg(&renderer_cache)
+        .arg("--cvar")
+        .arg("game.instantSaves=true")
+        .arg("--cvar")
+        .arg("backend.cardFileType=1")
+        .arg("--cvar")
+        .arg("backend.wasPresetChosen=true")
+        .arg("--cvar")
+        .arg("game.enableMenuPointer=false")
+        .arg("--fixed-step")
+        .arg("--exit-after-tape");
+    if !flag(args, "--headful") {
+        command.arg("--headless");
+    }
+    if let Some(program) = option(args, "--milestone-program") {
+        command.arg("--milestone-program").arg(program);
+    }
+    if let Some(milestones) = &milestones {
+        command.arg("--milestones").arg(milestones);
+    }
+    if let Some(goal) = &milestone_goal {
+        command.arg("--milestone-goal").arg(goal);
+    }
+    if milestones.is_some() {
+        command.arg("--milestone-result").arg(&milestone_result);
+    }
+    if let Some(path) = &gameplay_trace {
+        command.arg("--gameplay-trace").arg(path);
+    }
+    if let Some(channels) = &gameplay_trace_channels {
+        command.arg("--gameplay-trace-channels").arg(channels);
+    }
+
+    let timeout = timeout_option(args)?;
+    let started = Instant::now();
+    let mut child = command.spawn()?;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            child.kill()?;
+            let _ = child.wait();
+            return Err(format!(
+                "tape run timed out after {:.3} seconds",
+                timeout.as_secs_f64()
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    if status.success()
+        && let Some(path) = &gameplay_trace
+    {
+        let trace = huntctl::trace::decode(&fs::read(path)?)?;
+        if trace.boot != decoded.tape.boot {
+            return Err(format!(
+                "gameplay trace boot origin {:?} does not match tape origin {:?}",
+                trace.boot, decoded.tape.boot
+            )
+            .into());
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "huntctl-tape-run/v1",
+            "boot": decoded.tape.boot,
+            "source_version": decoded.source_version,
+            "frames": decoded.tape.frames.len(),
+            "exit_code": status.code(),
+            "elapsed_millis": started.elapsed().as_millis(),
+            "state_root": state_root,
+            "milestone_result": milestones.is_some().then_some(milestone_result),
+            "gameplay_trace": gameplay_trace,
+        }))?
+    );
+    if !status.success() {
+        return Err(format!("tape run exited with {:?}", status.code()).into());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TapeMinimizeProof {
+    sim_tick: u64,
+    tape_frame: u64,
+    fingerprint: BoundaryFingerprint,
+}
+
+fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = PathBuf::from(args.first().ok_or("tape minimize requires INPUT.tape")?);
+    let output = PathBuf::from(args.get(1).ok_or("tape minimize requires OUTPUT.tape")?);
+    let game = required_path(args, "--game")?;
+    let dvd = required_path(args, "--dvd")?;
+    let work_root = required_path(args, "--state-root")?;
+    let goal =
+        option(args, "--milestone-goal").ok_or("tape minimize requires --milestone-goal ID")?;
+    let milestone_program = option(args, "--milestone-program").map(PathBuf::from);
+    let repetitions = u32_option(args, "--repetitions", 2)?;
+    if repetitions < 2 {
+        return Err("tape minimize requires at least two repetitions".into());
+    }
+    if output.exists() {
+        return Err(format!("minimized tape already exists: {}", output.display()).into());
+    }
+    let proof_path = output.with_extension("proof.json");
+    if proof_path.exists() {
+        return Err(format!(
+            "minimization proof already exists: {}",
+            proof_path.display()
+        )
+        .into());
+    }
+    if work_root.exists() && fs::read_dir(&work_root)?.next().is_some() {
+        return Err(format!(
+            "tape minimize --state-root must be new or empty: {}",
+            work_root.display()
+        )
+        .into());
+    }
+    fs::create_dir_all(&work_root)?;
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    let source = InputTape::decode(&fs::read(&input)?)?.tape;
+    if source.frames.is_empty() {
+        return Err("tape minimize requires at least one frame".into());
+    }
+    let timeout = timeout_option(args)?;
+    let game_args = repeated_option(args, "--game-arg");
+    let mut evaluation_index = 0_u64;
+    let target = evaluate_minimize_tape(
+        &source,
+        &game,
+        &dvd,
+        &work_root,
+        &goal,
+        milestone_program.as_deref(),
+        &game_args,
+        repetitions,
+        timeout,
+        &mut evaluation_index,
+    )?
+    .ok_or("source tape does not reach the requested milestone goal")?;
+    let source_active_frames = tape_active_frames(&source).len();
+    let mut current = source.clone();
+
+    let mut granularity = 2_usize;
+    loop {
+        let active = tape_active_frames(&current);
+        if active.is_empty() {
+            break;
+        }
+        let partitions = granularity.min(active.len());
+        let mut accepted = None;
+        for partition in 0..partitions {
+            let start = active.len() * partition / partitions;
+            let end = active.len() * (partition + 1) / partitions;
+            let mut candidate = current.clone();
+            neutralize_tape_frames(&mut candidate, &active[start..end]);
+            if evaluate_minimize_tape(
+                &candidate,
+                &game,
+                &dvd,
+                &work_root,
+                &goal,
+                milestone_program.as_deref(),
+                &game_args,
+                repetitions,
+                timeout,
+                &mut evaluation_index,
+            )?
+            .is_some_and(|proof| proof == target)
+            {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        if let Some(candidate) = accepted {
+            current = candidate;
+            granularity = 2;
+        } else if partitions == active.len() {
+            break;
+        } else {
+            granularity = (partitions * 2).min(active.len());
+        }
+    }
+
+    loop {
+        let active = tape_active_frames(&current);
+        let mut accepted = None;
+        for frame in active {
+            let mut candidate = current.clone();
+            neutralize_tape_frames(&mut candidate, &[frame]);
+            if evaluate_minimize_tape(
+                &candidate,
+                &game,
+                &dvd,
+                &work_root,
+                &goal,
+                milestone_program.as_deref(),
+                &game_args,
+                repetitions,
+                timeout,
+                &mut evaluation_index,
+            )?
+            .is_some_and(|proof| proof == target)
+            {
+                accepted = Some(candidate);
+                break;
+            }
+        }
+        let Some(candidate) = accepted else {
+            break;
+        };
+        current = candidate;
+    }
+
+    let required_frames = usize::try_from(target.tape_frame)?
+        .checked_add(1)
+        .ok_or("goal tape frame overflows")?;
+    if required_frames > current.frames.len() {
+        return Err("goal tape frame lies outside the source tape".into());
+    }
+    current.frames.truncate(required_frames);
+    let final_proof = evaluate_minimize_tape(
+        &current,
+        &game,
+        &dvd,
+        &work_root,
+        &goal,
+        milestone_program.as_deref(),
+        &game_args,
+        repetitions,
+        timeout,
+        &mut evaluation_index,
+    )?
+    .ok_or("trimmed minimized tape no longer reaches the goal")?;
+    if final_proof != target {
+        return Err("trimmed minimized tape changed the exact goal proof".into());
+    }
+
+    fs::write(&output, current.encode()?)?;
+    let summary = json!({
+        "schema": "huntctl-tape-minimization/v1",
+        "boot": current.boot,
+        "goal": goal,
+        "source_tape": input,
+        "minimized_tape": output,
+        "source_frames": source.frames.len(),
+        "minimized_frames": current.frames.len(),
+        "source_active_frames": source_active_frames,
+        "minimized_active_frames": tape_active_frames(&current).len(),
+        "evaluated_candidates": evaluation_index,
+        "repetitions": repetitions,
+        "proof": {
+            "sim_tick": target.sim_tick,
+            "tape_frame": target.tape_frame,
+            "boundary_fingerprint": target.fingerprint,
+        },
+        "evidence_root": work_root,
+    });
+    fs::write(&proof_path, serde_json::to_vec_pretty(&summary)?)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+fn tape_active_frames(tape: &InputTape) -> Vec<usize> {
+    tape.frames
+        .iter()
+        .enumerate()
+        .filter_map(|(index, frame)| {
+            frame
+                .pads
+                .iter()
+                .any(|pad| *pad != huntctl::tape::RawPadState::default())
+                .then_some(index)
+        })
+        .collect()
+}
+
+fn neutralize_tape_frames(tape: &mut InputTape, frames: &[usize]) {
+    for &index in frames {
+        tape.frames[index]
+            .pads
+            .fill(huntctl::tape::RawPadState::default());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_minimize_tape(
+    tape: &InputTape,
+    game: &Path,
+    dvd: &Path,
+    work_root: &Path,
+    goal: &str,
+    milestone_program: Option<&Path>,
+    game_args: &[String],
+    repetitions: u32,
+    timeout: Duration,
+    evaluation_index: &mut u64,
+) -> Result<Option<TapeMinimizeProof>, Box<dyn Error>> {
+    let evaluation = *evaluation_index;
+    *evaluation_index = evaluation
+        .checked_add(1)
+        .ok_or("minimization evaluation count overflowed")?;
+    let root = work_root.join(format!("candidate-{evaluation:06}"));
+    fs::create_dir_all(&root)?;
+    let tape_path = root.join("candidate.tape");
+    fs::write(&tape_path, tape.encode()?)?;
+    let mut accepted: Option<TapeMinimizeProof> = None;
+    let mut missed = false;
+    for repetition in 1..=repetitions {
+        let trial = root.join(format!("repeat-{repetition:03}"));
+        let state = trial.join("state");
+        let renderer_cache = trial.join("renderer-cache");
+        let result_path = trial.join("milestones.json");
+        fs::create_dir_all(&state)?;
+        fs::create_dir_all(&renderer_cache)?;
+        let stdout = fs::File::create(trial.join("stdout.txt"))?;
+        let stderr = fs::File::create(trial.join("stderr.txt"))?;
+        let mut command = Command::new(game);
+        command
+            .args(game_args)
+            .arg("--dvd")
+            .arg(dvd)
+            .arg("--input-tape")
+            .arg(&tape_path)
+            .arg("--input-tape-end")
+            .arg("hold")
+            .arg("--automation-data-root")
+            .arg(&state)
+            .arg("--renderer-cache-root")
+            .arg(&renderer_cache)
+            .arg("--milestones")
+            .arg(goal)
+            .arg("--milestone-goal")
+            .arg(goal)
+            .arg("--milestone-result")
+            .arg(&result_path)
+            .arg("--cvar")
+            .arg("game.instantSaves=true")
+            .arg("--cvar")
+            .arg("backend.cardFileType=1")
+            .arg("--cvar")
+            .arg("backend.wasPresetChosen=true")
+            .arg("--cvar")
+            .arg("game.enableMenuPointer=false")
+            .arg("--headless")
+            .arg("--fixed-step")
+            .arg("--exit-after-tape")
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        if let Some(program) = milestone_program {
+            command.arg("--milestone-program").arg(program);
+        }
+        let started = Instant::now();
+        let mut child = command.spawn()?;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if started.elapsed() >= timeout {
+                child.kill()?;
+                let _ = child.wait();
+                return Err(format!(
+                    "minimization candidate {evaluation} repeat {repetition} timed out"
+                )
+                .into());
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        if status.code() == Some(2) {
+            if accepted.is_some() {
+                return Err("minimization repetitions disagree on goal reachability".into());
+            }
+            missed = true;
+            continue;
+        }
+        if !status.success() {
+            return Err(format!(
+                "minimization candidate {evaluation} repeat {repetition} exited with {:?}",
+                status.code()
+            )
+            .into());
+        }
+        let result: Value = serde_json::from_slice(&fs::read(&result_path)?)?;
+        if missed {
+            return Err("minimization repetitions disagree on goal reachability".into());
+        }
+        if result["schema"]["name"] != "dusklight.automation.milestones"
+            || result["schema"]["version"] != 5
+            || result["boot_origin_established"] != true
+        {
+            return Err("minimization received an unauthenticated milestone result".into());
+        }
+        let result_boot: huntctl::tape::TapeBoot = serde_json::from_value(result["boot"].clone())?;
+        if result_boot != tape.boot {
+            return Err("minimization result boot origin does not match its tape".into());
+        }
+        let milestone = result["milestones"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["id"] == goal))
+            .ok_or("minimization result omitted the requested goal")?;
+        if milestone["hit"] != true || result["goal_reached"] != true {
+            return Err("successful minimization process did not report a goal hit".into());
+        }
+        let fingerprint: BoundaryFingerprint =
+            serde_json::from_value(milestone["evidence"]["boundary_fingerprint"].clone())?;
+        if fingerprint.schema != "dusklight.milestone-boundary/v4"
+            || fingerprint.canonical_encoding != "little-endian-fixed-v4"
+            || fingerprint.algorithm != "xxh3-128"
+        {
+            return Err("minimization received an unsupported boundary fingerprint".into());
+        }
+        let proof = TapeMinimizeProof {
+            sim_tick: milestone["sim_tick"]
+                .as_u64()
+                .ok_or("goal hit omitted sim_tick")?,
+            tape_frame: milestone["tape_frame"]
+                .as_u64()
+                .ok_or("goal hit omitted tape_frame")?,
+            fingerprint,
+        };
+        if accepted.as_ref().is_some_and(|prior| prior != &proof) {
+            return Err("minimization repetitions produced contradictory exact proofs".into());
+        }
+        accepted = Some(proof);
+    }
+    Ok(if missed { None } else { accepted })
+}
+
+fn command_tape_record(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let seed_path = PathBuf::from(args.first().ok_or("tape record requires SEED.tape")?);
+    let output_path = PathBuf::from(args.get(1).ok_or("tape record requires OUTPUT.tape")?);
+    if output_path.exists() {
+        return Err(format!("recording output already exists: {}", output_path.display()).into());
+    }
+    let game = required_path(args, "--game")?;
+    let dvd = required_path(args, "--dvd")?;
+    let state_root = required_path(args, "--state-root")?;
+    let seed = InputTape::decode(&fs::read(&seed_path)?)?.tape;
+    if seed.frames.is_empty() {
+        return Err("tape record seed requires at least one input frame".into());
+    }
+    fs::create_dir_all(&state_root)?;
+    let renderer_cache = state_root
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""))
+        .join("renderer-cache");
+    fs::create_dir_all(&renderer_cache)?;
+    let continuation_path = state_root.join("huntctl-recorded-continuation.tape");
+    if continuation_path.exists() {
+        return Err(format!(
+            "recording continuation already exists: {}; use a fresh state root",
+            continuation_path.display()
+        )
+        .into());
+    }
+    let capacity = usize_option(args, "--capacity", 1_080_000)?;
+    if capacity == 0 {
+        return Err("tape record --capacity must be greater than zero".into());
+    }
+
+    let mut command = Command::new(&game);
+    command
+        .args(repeated_option(args, "--game-arg"))
+        .arg("--dvd")
+        .arg(&dvd)
+        .arg("--input-tape")
+        .arg(&seed_path)
+        .arg("--input-tape-end")
+        .arg("release")
+        .arg("--record-input-tape")
+        .arg(&continuation_path)
+        .arg("--record-input-capacity")
+        .arg(capacity.to_string())
+        .arg("--automation-data-root")
+        .arg(&state_root)
+        .arg("--renderer-cache-root")
+        .arg(&renderer_cache)
+        .arg("--cvar")
+        .arg("game.instantSaves=true")
+        .arg("--cvar")
+        .arg("backend.cardFileType=1")
+        .arg("--cvar")
+        .arg("backend.wasPresetChosen=true")
+        .arg("--cvar")
+        .arg("game.enableMenuPointer=false")
+        .arg("--fixed-step");
+
+    let timeout = timeout_option(args)?;
+    let started = Instant::now();
+    let mut child = command.spawn()?;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            child.kill()?;
+            let _ = child.wait();
+            return Err(format!(
+                "tape recording timed out after {:.3} seconds",
+                timeout.as_secs_f64()
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    if !status.success() {
+        return Err(format!("tape recording exited with {:?}", status.code()).into());
+    }
+    let continuation = InputTape::decode(&fs::read(&continuation_path)?)?.tape;
+    if continuation.boot != huntctl::tape::TapeBoot::Process {
+        return Err("native continuation unexpectedly declared its own boot origin".into());
+    }
+    let continuation_frames = continuation.frames.len();
+    let composed = concatenate(vec![
+        ChainSegment::all(seed),
+        ChainSegment::all(continuation),
+    ])?
+    .tape;
+    if let Some(parent) = output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&output_path, composed.encode()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "huntctl-tape-recording/v1",
+            "boot": composed.boot,
+            "seed_frames": composed.frames.len() - continuation_frames,
+            "recorded_frames": continuation_frames,
+            "total_frames": composed.frames.len(),
+            "output": output_path,
+            "native_continuation": continuation_path,
+            "elapsed_millis": started.elapsed().as_millis(),
+        }))?
+    );
+    Ok(())
 }
 
 fn command_hello(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -2030,14 +3833,19 @@ fn command_hello(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut client = WorkerClient::new(ProcessTransport::spawn(program, &worker_args)?);
     let hello = client.handshake()?.clone();
     println!(
-        "protocol={CONTROL_PROTOCOL_NAME}/{} version={} revision={} platform={}/{} pointer_bits={} dirty={}",
+        "protocol={CONTROL_PROTOCOL_NAME}/{} version={} revision={} dirty_digest={} aurora={} compiler={} target={} config={} features={} platform={}/{} pointer_bits={}",
         CONTROL_PROTOCOL_VERSION,
         hello.build.version,
         hello.build.revision,
+        hello.build.dirty_digest,
+        hello.build.aurora_revision,
+        hello.build.compiler,
+        hello.build.compiler_target,
+        hello.build.build_type,
+        hello.build.feature_digest,
         hello.build.platform,
         hello.build.architecture,
-        hello.build.pointer_bits,
-        hello.build.dirty
+        hello.build.pointer_bits
     );
     println!(
         "persistent={} engine_session={} headless={} input_tape={} batch_run={} commands={}",
@@ -2067,7 +3875,7 @@ fn command_not_ready(command: &str, args: &[String]) -> Result<(), Box<dyn Error
     let mut client = WorkerClient::new(ProcessTransport::spawn(program, &worker_args)?);
     let capabilities = client.handshake()?.capabilities.clone();
     client.shutdown()?;
-    Err(format!("{command} is unavailable (engine_session={}, input_tape={}, batch_run={}); protocol v1 currently exposes bootstrap control only",
+    Err(format!("{command} is unavailable (engine_session={}, input_tape={}, batch_run={}); protocol v{CONTROL_PROTOCOL_VERSION} currently exposes bootstrap control only",
         capabilities.engine_session, capabilities.input_tape, capabilities.batch_run).into())
 }
 
@@ -2141,23 +3949,40 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
-    eprintln!("\nTape editing:\n  huntctl tape slice INPUT.tape OUTPUT.tape --start N --frames N");
     eprintln!(
-        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
+        "  huntctl timeline prune-thumbnails --timeline FILE --state-root DIR [--repository-root DIR] [--apply]"
+    );
+    eprintln!(
+        "\nScenario fixtures:\n  huntctl fixture compile SOURCE.json OUTPUT.fixture\n  huntctl fixture inspect INPUT.fixture\n  huntctl tape compile PROGRAM.tas OUTPUT.tape [--fixture FIXTURE.json]"
+    );
+    eprintln!(
+        "\nTape editing:\n  huntctl tape slice INPUT.tape OUTPUT.tape --start N --frames N\n  huntctl tape layer BASE.tape OVERLAY.tape OUTPUT.tape --start N\n  huntctl tape resample INPUT.tape OUTPUT.tape\n  huntctl tape diff LEFT.tape RIGHT.tape"
+    );
+    eprintln!(
+        "\nTransition corpus lifecycle:\n  huntctl corpus query --input BATCH.dtcz [--input MORE.dtcz] [--action N] [--terminal BOOL] [--minimum-reward R] [--limit N]\n  huntctl corpus compare --left LEFT.dtcz --right RIGHT.dtcz\n  huntctl corpus merge|compact --input BATCH.dtcz [--input MORE.dtcz] --output OUTPUT.dtcz\n  huntctl corpus shard --input BATCH.dtcz --output-directory DIR [--maximum-transitions N]\n  huntctl corpus refeature --source SOURCE.json --output OUTPUT.dtcz [--view movement-state/v1|movement-state/v2]\n  huntctl corpus validate-transitions --input BATCH.dtcz [--input MORE.dtcz]\n  huntctl corpus quarantine --input BATCH.dtcz [--input MORE.dtcz] --quarantine-root DIR [--apply]\n  huntctl corpus gc-content --store ROOT --trash-root DIR (--manifest ROOT.json | --reference SHA256)... [--apply]\n  huntctl corpus export-arrow --input BATCH.dtcz [--input MORE.dtcz] --output ANALYSIS.arrow"
+    );
+    eprintln!(
+        "\nTape recording:\n  huntctl tape record SEED.tape OUTPUT.tape --game PATH --dvd PATH --state-root DIR [--capacity N] [--timeout-seconds N] [--game-arg ARG]..."
+    );
+    eprintln!(
+        "\nNative search:\n  huntctl search evaluate --population MANIFEST --game PATH --dvd PATH --output DIR [--results FILE] [--workers N] [--repetitions N] [--timeout-seconds N]\n  huntctl search run --segment ID [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n  huntctl search beam --candidate SEED.json --options OPTIONS.json --game PATH --dvd PATH --output DIR [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n  huntctl search tournament --definition TOURNAMENT.json --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n  huntctl search golf-path --plan PATH.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--point-step N] [--duration-step N] [--phase-step N] [--cancellation-step N]\n  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"
     );
     eprintln!(
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
-        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
+        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
-        "\nOffline world geometry:\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json\n  huntctl world spatial-index --stage-dir STAGE_DIR --stage STAGE_ID --output INDEX.json\n  huntctl world query point --stage-dir STAGE_DIR --stage STAGE_ID --room N --point X,Y,Z [--max-distance D] [--limit K] [FILTERS]\n  huntctl world query aabb --stage-dir STAGE_DIR --stage STAGE_ID --room N --min X,Y,Z --max X,Y,Z [--limit K] [FILTERS]\n  huntctl world query ray --stage-dir STAGE_DIR --stage STAGE_ID --room N --origin X,Y,Z --direction X,Y,Z --max-distance D [--limit K] [FILTERS]\n  FILTERS: [--load-triggers-only] [--trigger-id ID] [--destination-stage ID] [--destination-room N] [--destination-point N]\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
+        "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
+    );
+    eprintln!(
+        "\nOffline world geometry:\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json [--artifact-store ROOT]\n  huntctl world spatial-index --stage-dir STAGE_DIR --stage STAGE_ID --output INDEX.json [--artifact-store ROOT]\n  huntctl world query point --stage-dir STAGE_DIR --stage STAGE_ID --room N --point X,Y,Z [--max-distance D] [--limit K] [FILTERS]\n  huntctl world query aabb --stage-dir STAGE_DIR --stage STAGE_ID --room N --min X,Y,Z --max X,Y,Z [--limit K] [FILTERS]\n  huntctl world query ray --stage-dir STAGE_DIR --stage STAGE_ID --room N --origin X,Y,Z --direction X,Y,Z --max-distance D [--limit K] [FILTERS]\n  FILTERS: [--load-triggers-only] [--trigger-id ID] [--destination-stage ID] [--destination-room N] [--destination-point N]\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
     );
 }
 
@@ -2175,7 +4000,9 @@ fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "type": "hello", "ok": true,
                 "build": {
                     "version": "mock", "describe": revision, "revision": revision, "branch": "test",
-                    "source_date": "1970-01-01", "build_type": "test", "platform": env::consts::OS,
+                    "dirty_digest": "", "source_date": "1970-01-01", "aurora_revision": "mock-aurora",
+                    "compiler": "mock-compiler", "compiler_target": "mock-target", "build_type": "test",
+                    "feature_switches": "mock=ON", "feature_digest": "mock-feature-digest", "platform": env::consts::OS,
                     "architecture": env::consts::ARCH, "pointer_bits": usize::BITS, "dirty": false
                 },
                 "capabilities": {
@@ -2216,25 +4043,15 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
     let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
+    let tape_path = required_path(args, "--input-tape")?;
+    let input_tape = InputTape::decode(&fs::read(tape_path)?)?.tape;
     if let Some(path) = option(args, "--gameplay-trace") {
-        let mut trace = Vec::with_capacity(36 + 102);
-        trace.extend_from_slice(b"DUSKTRCE");
-        trace.extend_from_slice(&1_u16.to_le_bytes());
-        trace.extend_from_slice(&102_u16.to_le_bytes());
-        trace.extend_from_slice(&30_u32.to_le_bytes());
-        trace.extend_from_slice(&1_u32.to_le_bytes());
-        trace.extend_from_slice(&1_u64.to_le_bytes());
-        trace.extend_from_slice(&0_u32.to_le_bytes());
-        trace.extend_from_slice(&0_u32.to_le_bytes());
-        trace.extend_from_slice(&[0_u8; 102]);
-        fs::write(path, trace)?;
+        fs::write(path, mock_gameplay_trace(&input_tape.boot))?;
     }
     let second_attempt = state_root.contains("attempt-002");
     let unstable_miss = mode == "unstable-goal" && second_attempt;
     let coordinate_golf_tick = if mode == "coordinate-golf" {
-        let tape_path = required_path(args, "--input-tape")?;
-        let tape = InputTape::decode(&fs::read(tape_path)?)?.tape;
-        let pulse_timestamps: Vec<_> = tape
+        let pulse_timestamps: Vec<_> = input_tape
             .frames
             .iter()
             .enumerate()
@@ -2283,10 +4100,11 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "sim_tick": hit.then_some(tick),
                 "tape_frame": hit.then_some(tape_frame),
                 "evidence": hit.then(|| json!({
+                    "boot": input_tape.boot,
                     "boundary_fingerprint": {
-                        "schema": "dusklight.milestone-boundary/v1",
+                        "schema": "dusklight.milestone-boundary/v4",
                         "algorithm": "xxh3-128",
-                        "canonical_encoding": "little-endian-fixed-v1",
+                        "canonical_encoding": "little-endian-fixed-v4",
                         "digest": digest_character.repeat(32)
                     }
                 }))
@@ -2298,8 +4116,10 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
         serde_json::to_vec_pretty(&json!({
             "schema": {
                 "name": "dusklight.automation.milestones",
-                "version": 1
+                "version": 5
             },
+            "boot": input_tape.boot,
+            "boot_origin_established": true,
             "goal": goal,
             "goal_reached": hit_goal,
             "milestones": milestones
@@ -2308,6 +4128,74 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     if mode == "miss" || unstable_miss || (mode == "coordinate-golf" && !hit_goal) {
         std::process::exit(2);
     }
+    Ok(())
+}
+
+fn mock_gameplay_trace(boot: &huntctl::tape::TapeBoot) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 225];
+    bytes[..8].copy_from_slice(b"DUSKTRCE");
+    bytes[8..10].copy_from_slice(&4_u16.to_le_bytes());
+    bytes[10..12].copy_from_slice(&128_u16.to_le_bytes());
+    bytes[12..16].copy_from_slice(&30_u32.to_le_bytes());
+    bytes[16..20].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[20..28].copy_from_slice(&1_u64.to_le_bytes());
+    bytes[28..32].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[32..34].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[34..36].copy_from_slice(&64_u16.to_le_bytes());
+    bytes[36..44].copy_from_slice(&128_u64.to_le_bytes());
+    bytes[44..52].copy_from_slice(&192_u64.to_le_bytes());
+    bytes[52..60].copy_from_slice(&1_u64.to_le_bytes());
+    if let huntctl::tape::TapeBoot::Stage {
+        stage,
+        room,
+        point,
+        layer,
+        save_slot,
+        fixture,
+        ..
+    } = boot
+    {
+        bytes[64] = 1;
+        bytes[65] = save_slot.unwrap_or(0);
+        bytes[66] = *room as u8;
+        bytes[67] = *layer as u8;
+        bytes[68..70].copy_from_slice(&point.to_le_bytes());
+        bytes[70] = stage.len() as u8;
+        bytes[72..72 + stage.len()].copy_from_slice(stage.as_bytes());
+        if let Some(fixture) = fixture {
+            let encoded = fixture.encode().expect("validated mock fixture");
+            let fixture_offset = bytes.len() as u64;
+            bytes[88..96].copy_from_slice(&fixture_offset.to_le_bytes());
+            bytes[96..100].copy_from_slice(&(encoded.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&encoded);
+        }
+    }
+    bytes[128..130].copy_from_slice(&0_u16.to_le_bytes());
+    bytes[130..132].copy_from_slice(&1_u16.to_le_bytes());
+    bytes[132..136].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[136..140].copy_from_slice(&32_u32.to_le_bytes());
+    bytes[140..144].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[144..152].copy_from_slice(&192_u64.to_le_bytes());
+    bytes[152..160].copy_from_slice(&1_u64.to_le_bytes());
+    bytes[160..168].copy_from_slice(&193_u64.to_le_bytes());
+    bytes[168..176].copy_from_slice(&32_u64.to_le_bytes());
+    bytes[192] = 1;
+    bytes[193..201].copy_from_slice(&1_u64.to_le_bytes());
+    bytes[201..209].copy_from_slice(&0_u64.to_le_bytes());
+    bytes[209..217].copy_from_slice(&u64::MAX.to_le_bytes());
+    bytes[217..221].copy_from_slice(&1_u32.to_le_bytes());
+    bytes[221] = 2;
+    bytes[222] = 1;
+    bytes
+}
+
+fn mock_record_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let output = required_path(args, "--record-input-tape")?;
+    let tape = InputTape {
+        frames: vec![huntctl::tape::InputFrame::default()],
+        ..InputTape::default()
+    };
+    fs::write(output, tape.encode()?)?;
     Ok(())
 }
 

@@ -18,6 +18,9 @@ constexpr std::uint8_t kKnownPadFlags = static_cast<std::uint8_t>(RawPadFlags::C
 constexpr std::uint16_t kLegacyMajorVersion = 1;
 constexpr std::uint16_t kLegacyMaximumMinorVersion = 2;
 constexpr std::size_t kLegacyHeaderSize = 32;
+constexpr std::uint16_t kCompressedV2MajorVersion = 2;
+constexpr std::size_t kCompressedV2HeaderSize = 40;
+constexpr std::size_t kStageNameCapacity = 16;
 
 bool valid_frame_condition(const InputFrameCondition condition) {
     return condition == InputFrameCondition::None ||
@@ -37,6 +40,20 @@ bool valid_condition_frame(const InputFrame& frame) {
         return frame.timeoutTicks == 0;
     }
     return frame.timeoutTicks != 0;
+}
+
+bool valid_boot(const TapeBoot& boot) {
+    if (boot.kind == TapeBootKind::Process) {
+        return boot.stage.empty() && boot.saveSlot == 0 && !boot.fixture;
+    }
+    return boot.kind == TapeBootKind::Stage && !boot.stage.empty() &&
+           boot.saveSlot <= 3 &&
+           boot.stage.size() <= kStageNameCapacity &&
+           (!boot.fixture ||
+               validate_scenario_fixture(*boot.fixture) == ScenarioFixtureError::None) &&
+           std::ranges::all_of(boot.stage, [](const unsigned char character) {
+               return character >= 0x21 && character <= 0x7e && character != ',';
+           });
 }
 
 std::uint16_t read_u16(const std::uint8_t* input) {
@@ -157,6 +174,8 @@ const char* input_tape_error_message(const InputTapeError error) {
         return "input tape frame size is invalid";
     case InputTapeError::InvalidTickRate:
         return "input tape tick rate is invalid";
+    case InputTapeError::InvalidBoot:
+        return "input tape boot origin is invalid";
     case InputTapeError::InvalidOwnedPorts:
         return "input tape owns an invalid controller port";
     case InputTapeError::InvalidFrameCondition:
@@ -196,6 +215,9 @@ const char* input_frame_condition_name(const InputFrameCondition condition) {
 InputTapeError validate_input_tape(const InputTape& tape) {
     if (tape.tickRateNumerator == 0 || tape.tickRateDenominator == 0) {
         return InputTapeError::InvalidTickRate;
+    }
+    if (!valid_boot(tape.boot)) {
+        return InputTapeError::InvalidBoot;
     }
 
     for (const InputFrame& frame : tape.frames) {
@@ -246,12 +268,17 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
     const std::uint16_t minorVersion = read_u16(bytes.data() + 10);
     const bool legacy =
         majorVersion == kLegacyMajorVersion && minorVersion <= kLegacyMaximumMinorVersion;
-    const bool compressed =
-        majorVersion == kInputTapeMajorVersion && minorVersion == kInputTapeMinorVersion;
+    const bool compressedV2 =
+        majorVersion == kCompressedV2MajorVersion && minorVersion == 0;
+    const bool compressedV3 =
+        majorVersion == kInputTapeMajorVersion && minorVersion <= kInputTapeMinorVersion;
+    const bool compressed = compressedV2 || compressedV3;
     if (!legacy && !compressed) {
         return InputTapeError::UnsupportedVersion;
     }
-    const std::size_t headerSize = legacy ? kLegacyHeaderSize : kInputTapeHeaderSize;
+    const std::size_t headerSize = legacy ? kLegacyHeaderSize :
+                                   compressedV2 ? kCompressedV2HeaderSize :
+                                                  kInputTapeHeaderSize;
     if (bytes.size() < headerSize) {
         return InputTapeError::Truncated;
     }
@@ -267,6 +294,41 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
     decoded.tickRateDenominator = read_u32(bytes.data() + 20);
     if (decoded.tickRateNumerator == 0 || decoded.tickRateDenominator == 0) {
         return InputTapeError::InvalidTickRate;
+    }
+    bool fixturePresent = false;
+    if (compressedV3) {
+        const auto bootKind = static_cast<TapeBootKind>(bytes[40]);
+        if (bootKind == TapeBootKind::Process) {
+            if (std::ranges::any_of(bytes.subspan(41, kInputTapeHeaderSize - 41),
+                    [](const std::uint8_t byte) { return byte != 0; }))
+            {
+                return InputTapeError::InvalidBoot;
+            }
+        } else if (bootKind == TapeBootKind::Stage) {
+            const std::size_t stageLength = bytes[41];
+            if (stageLength == 0 || stageLength > kStageNameCapacity || bytes[47] > 1 ||
+                (minorVersion < 2 && bytes[47] != 0) ||
+                (minorVersion == 0 && bytes[46] != 0) ||
+                std::ranges::any_of(bytes.subspan(48 + stageLength,
+                                        kInputTapeHeaderSize - 48 - stageLength),
+                    [](const std::uint8_t byte) { return byte != 0; }))
+            {
+                return InputTapeError::InvalidBoot;
+            }
+            decoded.boot.kind = TapeBootKind::Stage;
+            decoded.boot.stage.assign(
+                reinterpret_cast<const char*>(bytes.data() + 48), stageLength);
+            decoded.boot.room = static_cast<std::int8_t>(bytes[42]);
+            decoded.boot.layer = static_cast<std::int8_t>(bytes[43]);
+            decoded.boot.point = static_cast<std::int16_t>(read_u16(bytes.data() + 44));
+            decoded.boot.saveSlot = bytes[46];
+            fixturePresent = bytes[47] != 0;
+            if (!valid_boot(decoded.boot)) {
+                return InputTapeError::InvalidBoot;
+            }
+        } else {
+            return InputTapeError::InvalidBoot;
+        }
     }
 
     const std::uint64_t frameCount = read_u64(bytes.data() + 24);
@@ -301,15 +363,15 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
         return InputTapeError::TooManyFrames;
     }
     const std::size_t payloadSize = static_cast<std::size_t>(payloadSize64);
-    const std::size_t availablePayload = bytes.size() - kInputTapeHeaderSize;
+    const std::size_t availablePayload = bytes.size() - headerSize;
     if (payloadSize > availablePayload) {
         return InputTapeError::Truncated;
     }
-    if (payloadSize < availablePayload) {
+    if (payloadSize < availablePayload && !fixturePresent) {
         return InputTapeError::TrailingData;
     }
 
-    const std::span<const std::uint8_t> payload = bytes.subspan(kInputTapeHeaderSize, payloadSize);
+    const std::span<const std::uint8_t> payload = bytes.subspan(headerSize, payloadSize);
     const std::size_t zstdFrameSize = ZSTD_findFrameCompressedSize(payload.data(), payload.size());
     if (ZSTD_isError(zstdFrameSize) || zstdFrameSize != payload.size()) {
         return InputTapeError::InvalidCompressedPayload;
@@ -335,6 +397,19 @@ InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, Inpu
     if (frameError != InputTapeError::None) {
         return frameError;
     }
+    if (fixturePresent) {
+        const std::size_t fixtureStart = headerSize + payloadSize;
+        if (fixtureStart == bytes.size()) {
+            return InputTapeError::Truncated;
+        }
+        ScenarioFixture fixture;
+        if (decode_scenario_fixture(bytes.subspan(fixtureStart), fixture) !=
+            ScenarioFixtureError::None)
+        {
+            return InputTapeError::InvalidBoot;
+        }
+        decoded.boot.fixture = std::move(fixture);
+    }
 
     output = std::move(decoded);
     return InputTapeError::None;
@@ -345,8 +420,15 @@ InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t
     if (validationError != InputTapeError::None) {
         return validationError;
     }
+    std::vector<std::uint8_t> fixtureBytes;
+    if (tape.boot.fixture &&
+        encode_scenario_fixture(*tape.boot.fixture, fixtureBytes) != ScenarioFixtureError::None)
+    {
+        return InputTapeError::InvalidBoot;
+    }
     if (tape.frames.size() >
-        (std::numeric_limits<std::size_t>::max() - kInputTapeHeaderSize) / kInputFrameSize)
+        (std::numeric_limits<std::size_t>::max() - kInputTapeHeaderSize - fixtureBytes.size()) /
+            kInputFrameSize)
     {
         return InputTapeError::TooManyFrames;
     }
@@ -356,7 +438,8 @@ InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t
 
     const std::size_t compressionBound = ZSTD_compressBound(expanded.size());
     if (ZSTD_isError(compressionBound) ||
-        compressionBound > std::numeric_limits<std::size_t>::max() - kInputTapeHeaderSize)
+        compressionBound >
+            std::numeric_limits<std::size_t>::max() - kInputTapeHeaderSize - fixtureBytes.size())
     {
         return InputTapeError::TooManyFrames;
     }
@@ -371,7 +454,8 @@ InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t
     }
     compressed.resize(compressedSize);
 
-    std::vector<std::uint8_t> encoded(kInputTapeHeaderSize + compressed.size(), 0);
+    std::vector<std::uint8_t> encoded(
+        kInputTapeHeaderSize + compressed.size() + fixtureBytes.size(), 0);
     std::copy(kInputTapeMagic.begin(), kInputTapeMagic.end(), encoded.begin());
     write_u16(encoded.data() + 8, kInputTapeMajorVersion);
     write_u16(encoded.data() + 10, kInputTapeMinorVersion);
@@ -381,7 +465,19 @@ InputTapeError encode_input_tape(const InputTape& tape, std::vector<std::uint8_t
     write_u32(encoded.data() + 20, tape.tickRateDenominator);
     write_u64(encoded.data() + 24, tape.frames.size());
     write_u64(encoded.data() + 32, compressed.size());
+    if (tape.boot.kind == TapeBootKind::Stage) {
+        encoded[40] = static_cast<std::uint8_t>(TapeBootKind::Stage);
+        encoded[41] = static_cast<std::uint8_t>(tape.boot.stage.size());
+        encoded[42] = static_cast<std::uint8_t>(tape.boot.room);
+        encoded[43] = static_cast<std::uint8_t>(tape.boot.layer);
+        write_u16(encoded.data() + 44, static_cast<std::uint16_t>(tape.boot.point));
+        encoded[46] = tape.boot.saveSlot;
+        encoded[47] = tape.boot.fixture ? 1 : 0;
+        std::copy(tape.boot.stage.begin(), tape.boot.stage.end(), encoded.begin() + 48);
+    }
     std::copy(compressed.begin(), compressed.end(), encoded.begin() + kInputTapeHeaderSize);
+    std::copy(fixtureBytes.begin(), fixtureBytes.end(),
+        encoded.begin() + kInputTapeHeaderSize + compressed.size());
 
     output = std::move(encoded);
     return InputTapeError::None;

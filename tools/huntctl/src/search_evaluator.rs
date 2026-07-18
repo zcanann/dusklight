@@ -1,18 +1,36 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
 use crate::artifact::Digest as ArtifactDigest;
-use crate::behavior_archive::{BehaviorArchive, describe_behavior};
+use crate::bayesian_search::{
+    BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
+};
+use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
+use crate::content_store::{ContentBlob, ContentKind, ContentStore};
+use crate::continuous_search::{
+    ContinuousAxes, ContinuousMethod, ContinuousOptimizer, ContinuousOptimizerConfig,
+    ContinuousOptimizerSnapshot, ContinuousSample, ContinuousTemplate,
+};
+use crate::dataset::{DATASET_SOURCE_SCHEMA_V1, DatasetSourceDescriptor};
+use crate::episode::{
+    EPISODE_CONTEXT_SCHEMA_V1, EpisodeContext, EpisodeIntervention, EpisodeLedger, EpisodeLineage,
+    EpisodeManifest, EpisodeManifestBuild, EpisodeObjectiveIdentity, EpisodeOutcome,
+    EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
+    RunBuildIdentity,
+};
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
 use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates};
 use crate::search::{
-    Candidate, CandidateResult, EvolutionConfig, POPULATION_SCHEMA, PopulationManifest,
-    RESULTS_SCHEMA, SearchResults, SegmentProfile, evolve_population,
-    evolve_population_with_retained_and_proposals, rank_population, write_explicit_population,
-    write_seed_population,
+    Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LexicographicScore,
+    MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
+    SegmentProfile, evolve_population, evolve_population_with_retained_and_proposals,
+    rank_population, write_explicit_population, write_seed_population,
 };
-use crate::tape::{InputTape, RawPadState};
+use crate::tape::{InputTape, RawPadState, TapeBoot};
 use crate::tape_chain::{ChainSegment, concatenate};
 use crate::transition_corpus::{StateReference, StateReferenceKind, TransitionCorpus};
+use crate::transition_evidence::{
+    TerminalReasonEvidence, TransitionEvidenceBuild, TransitionEvidenceBundle,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -27,8 +45,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v2";
-pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v3";
+pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v4";
+pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v4";
 pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 pub const ANCHORED_RUN_SCHEMA: &str = "dusklight-anchored-search-run/v2";
@@ -128,17 +146,236 @@ pub struct SearchRunConfig {
     pub rng_seed: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct BeamSearchConfig {
+    pub segment: SegmentProfile,
+    pub seed_candidate: Candidate,
+    pub options: Vec<MacroAction>,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub beam_width: usize,
+    pub maximum_depth: u32,
+    pub candidate_budget: usize,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BeamSearchSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub beam_width: usize,
+    pub maximum_depth: u32,
+    pub candidate_budget: usize,
+    pub evaluated_candidates: usize,
+    pub simulator_episodes: usize,
+    pub duplicate_proposals: usize,
+    pub beam_pruned_prefixes: usize,
+    pub terminal_bound_pruned_children: usize,
+    pub depths_evaluated: u32,
+    pub champion_id: String,
+    pub champion_score: LexicographicScore,
+    pub champion_candidate: PathBuf,
+    pub champion_tape: PathBuf,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContinuousSearchRunConfig {
+    pub method: ContinuousMethod,
+    pub seed_candidate: Candidate,
+    pub axes: ContinuousAxes,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub generations: u32,
+    pub population_size: usize,
+    pub elite_count: usize,
+    pub initial_sigma: f64,
+    pub candidate_budget: usize,
+    pub rng_seed: u64,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContinuousSearchRunSummary {
+    pub schema: &'static str,
+    pub method: ContinuousMethod,
+    pub segment: SegmentProfile,
+    pub generations_requested: u32,
+    pub generations_completed: u32,
+    pub population_size: usize,
+    pub elite_count: usize,
+    pub candidate_budget: usize,
+    pub evaluated_candidates: usize,
+    pub simulator_episodes: usize,
+    pub duplicate_proposals: usize,
+    pub invalid_proposals: usize,
+    pub rng_seed: u64,
+    pub final_optimizer: ContinuousOptimizerSnapshot,
+    pub champion_id: String,
+    pub champion_score: LexicographicScore,
+    pub champion_values: Vec<f64>,
+    pub champion_candidate: PathBuf,
+    pub champion_tape: PathBuf,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct BayesianSearchRunConfig {
+    pub seed_candidate: Candidate,
+    pub axes: ContinuousAxes,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub generations: u32,
+    pub batch_size: usize,
+    pub initial_samples: usize,
+    pub acquisition_pool: usize,
+    pub length_scale: f64,
+    pub observation_noise: f64,
+    pub exploration: f64,
+    pub candidate_budget: usize,
+    pub rng_seed: u64,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BayesianSearchRunSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub generations_requested: u32,
+    pub generations_completed: u32,
+    pub batch_size: usize,
+    pub candidate_budget: usize,
+    pub evaluated_candidates: usize,
+    pub simulator_episodes: usize,
+    pub duplicate_proposals: usize,
+    pub invalid_proposals: usize,
+    pub rng_seed: u64,
+    pub final_optimizer: BayesianSnapshot,
+    pub champion_id: String,
+    pub champion_score: LexicographicScore,
+    pub champion_values: Vec<f64>,
+    pub champion_candidate: PathBuf,
+    pub champion_tape: PathBuf,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TournamentBudgetUnit {
+    Episodes,
+    CandidateTicks,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TournamentProposerKind {
+    IncumbentMutation,
+    BlindExploration,
+    Structured,
+    Learned,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TournamentProposer {
+    pub name: String,
+    pub kind: TournamentProposerKind,
+    pub population: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TournamentDefinition {
+    pub schema: String,
+    pub budget_unit: TournamentBudgetUnit,
+    pub budget_per_proposer: u64,
+    pub proposers: Vec<TournamentProposer>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProposerTournamentConfig {
+    pub definition: TournamentDefinition,
+    pub definition_directory: PathBuf,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProposerTournamentRow {
+    pub name: String,
+    pub kind: TournamentProposerKind,
+    pub selected_candidates: usize,
+    pub charged_episodes: u64,
+    pub charged_candidate_ticks: u64,
+    pub observed_simulator_ticks: u64,
+    pub shared_duplicate_proposals: usize,
+    pub improvements_over_incumbent: usize,
+    pub misses: usize,
+    pub crashes: usize,
+    pub predicate_hits: usize,
+    pub predicate_hit_rate: f64,
+    pub frame_wins: usize,
+    pub boundary_diversity: usize,
+    pub cold_replay_pass_rate: f64,
+    pub best_candidate_id: String,
+    pub best_score: LexicographicScore,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProposerTournamentSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub boot: TapeBoot,
+    pub budget_unit: TournamentBudgetUnit,
+    pub budget_per_proposer: u64,
+    pub repetitions: u32,
+    pub physical_candidates: usize,
+    pub physical_episodes: usize,
+    pub physical_candidate_ticks: u64,
+    pub physical_simulator_ticks: u64,
+    pub evaluation_wall_millis: u128,
+    pub incumbent_score: LexicographicScore,
+    pub rows: Vec<ProposerTournamentRow>,
+    pub champion_id: String,
+    pub champion_score: LexicographicScore,
+    pub output_root: PathBuf,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct EvaluationReport {
     pub schema: &'static str,
     pub population: PathBuf,
     pub results: PathBuf,
     pub segment: SegmentProfile,
+    pub boot: TapeBoot,
     pub workers: usize,
     pub repetitions: u32,
     pub planned_attempts: usize,
     pub completed_attempts: usize,
     pub infrastructure_faults: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episode_ledger: Option<PathBuf>,
     pub attempts: Vec<AttemptEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective: Option<AnchoredObjectiveIdentity>,
@@ -149,7 +386,9 @@ pub struct AttemptEvidence {
     pub schema: &'static str,
     pub candidate_id: String,
     pub attempt: u32,
+    pub worker_id: String,
     pub segment: SegmentProfile,
+    pub boot: TapeBoot,
     pub tape: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suffix_tape: Option<PathBuf>,
@@ -159,9 +398,17 @@ pub struct AttemptEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gameplay_trace: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub gameplay_trace_blob: Option<ContentBlob>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gameplay_trace_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition_corpus: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_evidence: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episode_manifest: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_source: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,12 +420,16 @@ pub struct AttemptEvidence {
     pub timed_out: bool,
     pub cancelled: bool,
     pub infrastructure_error: Option<String>,
+    pub outcome: EpisodeOutcome,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub crash_artifacts: Vec<ContentBlob>,
     pub milestone_depth: u16,
     pub deepest_milestone: String,
     pub first_hit_tick: Option<u64>,
     pub goal_reached: bool,
     pub milestone_observations: BTreeMap<String, MilestoneObservation>,
     pub boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
+    pub value_projections: BTreeMap<String, BTreeMap<String, ValueProjectionEvidence>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -203,6 +454,45 @@ pub struct BoundaryFingerprint {
     pub algorithm: String,
     pub canonical_encoding: String,
     pub digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueProjectionEvidence {
+    pub name: String,
+    pub identity: String,
+    pub available: bool,
+    pub value_fingerprint: Option<BoundaryFingerprint>,
+    pub values: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueParityComparison {
+    Equal,
+    Different,
+    Incomparable,
+}
+
+/// Compare one exact named value axis. Route ancestry is deliberately absent.
+pub fn compare_value_projections(
+    left: &ValueProjectionEvidence,
+    right: &ValueProjectionEvidence,
+) -> ValueParityComparison {
+    if left.name != right.name
+        || left.identity != right.identity
+        || !left.available
+        || !right.available
+        || left.value_fingerprint.is_none()
+        || right.value_fingerprint.is_none()
+    {
+        return ValueParityComparison::Incomparable;
+    }
+    if left.value_fingerprint == right.value_fingerprint {
+        ValueParityComparison::Equal
+    } else {
+        ValueParityComparison::Different
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -305,6 +595,7 @@ struct AuthoredDefinitionExpectation {
     phase: String,
     stable_ticks: u16,
     digest: String,
+    projections: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -394,6 +685,15 @@ fn prepare_anchored_objective(
             .into(),
             stable_ticks: ast.stable_ticks,
             digest: hex_bytes(&identity.sha256),
+            projections: ast
+                .projections
+                .iter()
+                .map(|projection| {
+                    crate::milestone_dsl::value_projection_identity(projection)
+                        .map(|identity| (projection.name.clone(), hex_bytes(&identity)))
+                        .map_err(|error| EvaluateError::InvalidConfig(error.to_string()))
+                })
+                .collect::<Result<_, _>>()?,
         })
     };
     let source = definition(&config.source_milestone)?;
@@ -517,8 +817,9 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     write_json(
         &config.output_root.join("plan.json"),
         &serde_json::json!({
-            "schema": "dusklight-search-evaluation-plan/v2",
+            "schema": "dusklight-search-evaluation-plan/v3",
             "segment": manifest.segment,
+            "boot": manifest.boot,
             "population": config.population_path,
             "game": config.game,
             "dvd": config.dvd,
@@ -538,7 +839,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     thread::scope(|scope| {
         let config = &config;
         let segment = manifest.segment;
-        for _ in 0..worker_count {
+        for worker_index in 0..worker_count {
             let trials = Arc::clone(&trials);
             let next = Arc::clone(&next);
             let cancelled = Arc::clone(&cancelled);
@@ -552,7 +853,14 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
                     let Some(trial) = trials.get(index) else {
                         break;
                     };
-                    let mut evidence = run_trial(config, segment, trial, &cancelled, None);
+                    let mut evidence = run_trial(
+                        config,
+                        segment,
+                        trial,
+                        &format!("worker-{worker_index}"),
+                        &cancelled,
+                        None,
+                    );
                     if let Err(error) = write_json(&trial.root.join("attempt.json"), &evidence) {
                         evidence.infrastructure_error =
                             Some(format!("could not persist attempt evidence: {error}"));
@@ -575,20 +883,24 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
             .cmp(&right.candidate_id)
             .then(left.attempt.cmp(&right.attempt))
     });
+    address_attempt_artifacts(&config.output_root, &mut attempts)?;
     let faults = attempts
         .iter()
         .filter(|attempt| attempt.infrastructure_error.is_some())
         .count();
+    let episode_ledger = write_episode_ledger(&config.output_root, &attempts)?;
     let report = EvaluationReport {
         schema: EVALUATION_SCHEMA,
         population: config.population_path.clone(),
         results: config.results_path.clone(),
         segment: manifest.segment,
+        boot: manifest.boot.clone(),
         workers: config.workers,
         repetitions: config.repetitions,
         planned_attempts: trials.len(),
         completed_attempts: attempts.len(),
         infrastructure_faults: faults,
+        episode_ledger,
         attempts,
         objective: None,
     };
@@ -658,8 +970,9 @@ fn evaluate_anchored_population_internal(
     write_json(
         &base.output_root.join("plan.json"),
         &serde_json::json!({
-            "schema": "dusklight-search-evaluation-plan/v3",
+            "schema": "dusklight-search-evaluation-plan/v4",
             "segment": manifest.segment,
+            "boot": manifest.boot,
             "objective": objective.identity,
             "population": base.population_path,
             "game": base.game,
@@ -680,7 +993,7 @@ fn evaluate_anchored_population_internal(
     let worker_count = base.workers.min(trials.len()).max(1);
     let segment = manifest.segment;
     thread::scope(|scope| {
-        for _ in 0..worker_count {
+        for worker_index in 0..worker_count {
             let trials = Arc::clone(&trials);
             let objective = Arc::clone(&objective);
             let next = Arc::clone(&next);
@@ -696,8 +1009,14 @@ fn evaluate_anchored_population_internal(
                     let Some(trial) = trials.get(index) else {
                         break;
                     };
-                    let mut evidence =
-                        run_trial(base, segment, trial, &cancelled, Some(&objective));
+                    let mut evidence = run_trial(
+                        base,
+                        segment,
+                        trial,
+                        &format!("worker-{worker_index}"),
+                        &cancelled,
+                        Some(&objective),
+                    );
                     if let Err(error) = write_json(&trial.root.join("attempt.json"), &evidence) {
                         evidence.infrastructure_error =
                             Some(format!("could not persist attempt evidence: {error}"));
@@ -719,20 +1038,24 @@ fn evaluate_anchored_population_internal(
             .cmp(&right.candidate_id)
             .then(left.attempt.cmp(&right.attempt))
     });
+    address_attempt_artifacts(&base.output_root, &mut attempts)?;
     let faults = attempts
         .iter()
         .filter(|attempt| attempt.infrastructure_error.is_some())
         .count();
+    let episode_ledger = write_episode_ledger(&base.output_root, &attempts)?;
     let report = EvaluationReport {
         schema: EVALUATION_SCHEMA,
         population: base.population_path.clone(),
         results: base.results_path.clone(),
         segment: manifest.segment,
+        boot: manifest.boot.clone(),
         workers: base.workers,
         repetitions: base.repetitions,
         planned_attempts: trials.len(),
         completed_attempts: attempts.len(),
         infrastructure_faults: faults,
+        episode_ledger,
         attempts,
         objective: Some(objective.identity.clone()),
     };
@@ -925,6 +1248,913 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
     Ok(summary)
 }
 
+/// Beam search over a finite discrete option catalog. Every score comes from
+/// the ordinary native evaluator. Branch-and-bound prunes only descendants of
+/// a prefix whose terminal goal was already proved: appending inputs after its
+/// first hit cannot improve that hit and can only make the tape larger.
+pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, EvaluateError> {
+    if config.seed_candidate.segment != config.segment
+        || config.options.is_empty()
+        || config.options.len() > 128
+        || config.beam_width == 0
+        || config.beam_width > 256
+        || config.maximum_depth == 0
+        || config.maximum_depth > 32
+        || config.candidate_budget == 0
+        || config.candidate_budget > 100_000
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.timeout.is_zero()
+        || !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "beam search requires a matching seed, 1..=128 options, bounded positive beam/depth/budget, native inputs, at least two repetitions, and a new output root"
+                .into(),
+        ));
+    }
+    config.seed_candidate.validate()?;
+    fs::create_dir_all(&config.output_root)?;
+    let mut seen = HashSet::new();
+    seen.insert(config.seed_candidate.id()?);
+    let mut batch = vec![config.seed_candidate.clone()];
+    let mut evaluated = 0_usize;
+    let mut duplicate_proposals = 0_usize;
+    let mut beam_pruned_prefixes = 0_usize;
+    let mut terminal_bound_pruned_children = 0_usize;
+    let mut depths_evaluated = 0_u32;
+    let mut champion: Option<(LexicographicScore, String, Candidate)> = None;
+
+    for depth in 0..=config.maximum_depth {
+        if batch.is_empty() || evaluated >= config.candidate_budget {
+            break;
+        }
+        let remaining = config.candidate_budget - evaluated;
+        batch.truncate(remaining);
+        let depth_root = config.output_root.join(format!("d{depth:03}"));
+        let manifest =
+            write_explicit_population(&depth_root, config.segment, depth, batch.clone())?;
+        let manifest_path = depth_root.join("manifest.json");
+        let results_path = depth_root.join("results.json");
+        evaluate_population(&EvaluateConfig {
+            population_path: manifest_path,
+            game: config.game.clone(),
+            dvd: config.dvd.clone(),
+            output_root: depth_root.join("evaluations"),
+            results_path: results_path.clone(),
+            working_directory: config.working_directory.clone(),
+            game_args_prefix: config.game_args_prefix.clone(),
+            workers: config.workers,
+            repetitions: config.repetitions,
+            timeout: config.timeout,
+        })?;
+        let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
+        let leaderboard = rank_population(&manifest, &results)?;
+        write_json(&depth_root.join("leaderboard.json"), &leaderboard)?;
+        evaluated += batch.len();
+        depths_evaluated += 1;
+        let candidates = batch
+            .drain(..)
+            .map(|candidate| Ok((candidate.id()?, candidate)))
+            .collect::<Result<BTreeMap<_, _>, EvaluateError>>()?;
+        for row in &leaderboard {
+            let candidate = candidates
+                .get(&row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            if champion.as_ref().is_none_or(|(score, prior_id, _)| {
+                row.score > *score || (row.score == *score && row.candidate_id < *prior_id)
+            }) {
+                champion = Some((row.score, row.candidate_id.clone(), candidate.clone()));
+            }
+        }
+        if depth == config.maximum_depth || evaluated >= config.candidate_budget {
+            break;
+        }
+
+        let mut frontier = Vec::new();
+        for row in &leaderboard {
+            let result = results
+                .candidates
+                .get(&row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            if result.goal_reached == Some(true) {
+                terminal_bound_pruned_children =
+                    terminal_bound_pruned_children.saturating_add(config.options.len());
+                continue;
+            }
+            if frontier.len() < config.beam_width {
+                frontier.push(
+                    candidates
+                        .get(&row.candidate_id)
+                        .ok_or(EvaluateError::EmptyLeaderboard)?
+                        .clone(),
+                );
+            } else {
+                beam_pruned_prefixes += 1;
+            }
+        }
+        let mut next = Vec::new();
+        'parents: for parent in frontier {
+            let parent_id = parent.id()?;
+            let parent_frames = parent.frame_count();
+            for (option_index, option) in config.options.iter().enumerate() {
+                if evaluated + next.len() >= config.candidate_budget {
+                    break 'parents;
+                }
+                let mut child = parent.clone();
+                child.actions.push(option.clone());
+                let child_frames = child.frame_count();
+                child.ancestry = Ancestry {
+                    generation: depth + 1,
+                    parent_id: Some(parent_id.clone()),
+                    mutation: Some(format!("beam discrete option {option_index}")),
+                    intervention: Some(InterventionRange {
+                        start_frame: parent_frames,
+                        end_frame_exclusive: child_frames,
+                        parent_end_frame_exclusive: parent_frames,
+                    }),
+                };
+                if child.validate().is_err() {
+                    continue;
+                }
+                let id = child.id()?;
+                if seen.insert(id) {
+                    next.push(child);
+                } else {
+                    duplicate_proposals += 1;
+                }
+            }
+        }
+        batch = next;
+    }
+
+    let (champion_score, champion_id, champion) =
+        champion.ok_or(EvaluateError::EmptyLeaderboard)?;
+    let champion_candidate = config.output_root.join("champion.candidate.json");
+    let champion_tape = config.output_root.join("champion.tape");
+    fs::write(&champion_candidate, serde_json::to_vec_pretty(&champion)?)?;
+    fs::write(&champion_tape, champion.compile()?.encode()?)?;
+    let summary = BeamSearchSummary {
+        schema: "dusklight-beam-search/v1",
+        segment: config.segment,
+        beam_width: config.beam_width,
+        maximum_depth: config.maximum_depth,
+        candidate_budget: config.candidate_budget,
+        evaluated_candidates: evaluated,
+        simulator_episodes: evaluated.saturating_mul(config.repetitions as usize),
+        duplicate_proposals,
+        beam_pruned_prefixes,
+        terminal_bound_pruned_children,
+        depths_evaluated,
+        champion_id,
+        champion_score,
+        champion_candidate,
+        champion_tape,
+        output_root: config.output_root.clone(),
+    };
+    write_json(&config.output_root.join("beam.summary.json"), &summary)?;
+    Ok(summary)
+}
+
+/// Runs seeded CEM or full-covariance CMA-ES while keeping native repeated
+/// rollout evidence as the only ranking signal.
+pub fn run_continuous_search(
+    config: &ContinuousSearchRunConfig,
+) -> Result<ContinuousSearchRunSummary, EvaluateError> {
+    if config.generations == 0
+        || config.generations > 1_000
+        || config.candidate_budget == 0
+        || config.candidate_budget > 100_000
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.timeout.is_zero()
+        || !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "continuous search requires bounded generations/budget, native inputs, at least two repetitions, and a new output root"
+                .into(),
+        ));
+    }
+    let template = ContinuousTemplate::new(config.seed_candidate.clone(), config.axes.clone())?;
+    let mut optimizer = ContinuousOptimizer::new(
+        template.clone(),
+        ContinuousOptimizerConfig {
+            method: config.method,
+            population_size: config.population_size,
+            elite_count: config.elite_count,
+            initial_sigma: config.initial_sigma,
+            seed: config.rng_seed,
+        },
+    )?;
+    fs::create_dir_all(&config.output_root)?;
+    let seed_id = config.seed_candidate.id()?;
+    let seed_tape = config.seed_candidate.compile()?;
+    let mut seen = HashSet::new();
+    let mut evaluated = 0_usize;
+    let mut duplicate_proposals = 0_usize;
+    let mut invalid_proposals = 0_usize;
+    let mut generations_completed = 0_u32;
+    let mut champion: Option<(LexicographicScore, String, Candidate, Vec<f64>)> = None;
+
+    for generation in 0..config.generations {
+        if evaluated >= config.candidate_budget {
+            break;
+        }
+        let samples = optimizer.ask()?;
+        let mut sample_by_candidate = BTreeMap::<String, ContinuousSample>::new();
+        let mut candidates = Vec::new();
+        for sample in samples {
+            if evaluated + candidates.len() >= config.candidate_budget {
+                break;
+            }
+            let Ok(mut candidate) = template.candidate(&sample.values) else {
+                invalid_proposals += 1;
+                continue;
+            };
+            let tape = candidate.compile()?;
+            let Some(intervention) = tape_intervention(&seed_tape, &tape) else {
+                duplicate_proposals += 1;
+                continue;
+            };
+            candidate.ancestry = Ancestry {
+                generation,
+                parent_id: Some(seed_id.clone()),
+                mutation: Some(format!("{:?} bounded continuous sample", config.method)),
+                intervention: Some(intervention),
+            };
+            let id = candidate.id()?;
+            if !seen.insert(id.clone()) {
+                duplicate_proposals += 1;
+                continue;
+            }
+            sample_by_candidate.insert(id, sample);
+            candidates.push(candidate);
+        }
+        if candidates.len() < config.elite_count {
+            if generations_completed == 0 {
+                return Err(EvaluateError::InvalidConfig(format!(
+                    "continuous bounds produced only {} unique valid candidates; at least {} are required",
+                    candidates.len(),
+                    config.elite_count
+                )));
+            }
+            break;
+        }
+        let generation_root = config.output_root.join(format!("g{generation:03}"));
+        let manifest = write_explicit_population(
+            &generation_root,
+            config.seed_candidate.segment,
+            generation,
+            candidates,
+        )?;
+        let results_path = generation_root.join("results.json");
+        evaluate_population(&EvaluateConfig {
+            population_path: generation_root.join("manifest.json"),
+            game: config.game.clone(),
+            dvd: config.dvd.clone(),
+            output_root: generation_root.join("evaluations"),
+            results_path: results_path.clone(),
+            working_directory: config.working_directory.clone(),
+            game_args_prefix: config.game_args_prefix.clone(),
+            workers: config.workers,
+            repetitions: config.repetitions,
+            timeout: config.timeout,
+        })?;
+        let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
+        let leaderboard = rank_population(&manifest, &results)?;
+        write_json(&generation_root.join("leaderboard.json"), &leaderboard)?;
+        let ranked_samples = leaderboard
+            .iter()
+            .map(|row| {
+                sample_by_candidate
+                    .get(&row.candidate_id)
+                    .cloned()
+                    .ok_or(EvaluateError::EmptyLeaderboard)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for row in &leaderboard {
+            let sample = sample_by_candidate
+                .get(&row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            let member = manifest
+                .members
+                .iter()
+                .find(|member| member.candidate_id == row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(generation_root.join(&member.candidate_file))?)?;
+            if champion.as_ref().is_none_or(|(score, id, _, _)| {
+                row.score > *score || (row.score == *score && row.candidate_id < *id)
+            }) {
+                champion = Some((
+                    row.score,
+                    row.candidate_id.clone(),
+                    candidate,
+                    sample.values.clone(),
+                ));
+            }
+        }
+        optimizer.tell(&ranked_samples)?;
+        write_json(
+            &generation_root.join("optimizer.json"),
+            &serde_json::json!({
+                "schema": "dusklight-continuous-generation/v1",
+                "method": config.method,
+                "axes": config.axes,
+                "ranked_samples": ranked_samples,
+                "next_state": optimizer.snapshot(),
+            }),
+        )?;
+        evaluated += manifest.members.len();
+        generations_completed += 1;
+    }
+
+    let (champion_score, champion_id, champion, champion_values) =
+        champion.ok_or(EvaluateError::EmptyLeaderboard)?;
+    let champion_candidate = config.output_root.join("champion.candidate.json");
+    let champion_tape = config.output_root.join("champion.tape");
+    fs::write(&champion_candidate, serde_json::to_vec_pretty(&champion)?)?;
+    fs::write(&champion_tape, champion.compile()?.encode()?)?;
+    let summary = ContinuousSearchRunSummary {
+        schema: "dusklight-continuous-search/v1",
+        method: config.method,
+        segment: config.seed_candidate.segment,
+        generations_requested: config.generations,
+        generations_completed,
+        population_size: config.population_size,
+        elite_count: config.elite_count,
+        candidate_budget: config.candidate_budget,
+        evaluated_candidates: evaluated,
+        simulator_episodes: evaluated.saturating_mul(config.repetitions as usize),
+        duplicate_proposals,
+        invalid_proposals,
+        rng_seed: config.rng_seed,
+        final_optimizer: optimizer.snapshot(),
+        champion_id,
+        champion_score,
+        champion_values,
+        champion_candidate,
+        champion_tape,
+        output_root: config.output_root.clone(),
+    };
+    write_json(
+        &config.output_root.join("continuous.summary.json"),
+        &summary,
+    )?;
+    Ok(summary)
+}
+
+/// Bounded Gaussian-process expected-improvement search. The surrogate models
+/// empirical native rank utility only; final ordering and proof remain native.
+pub fn run_bayesian_search(
+    config: &BayesianSearchRunConfig,
+) -> Result<BayesianSearchRunSummary, EvaluateError> {
+    if config.generations == 0
+        || config.generations > 1_000
+        || config.batch_size == 0
+        || config.batch_size > 512
+        || config.candidate_budget == 0
+        || config.candidate_budget > 100_000
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.timeout.is_zero()
+        || !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "Bayesian search requires bounded batches/generations/budget, native inputs, at least two repetitions, and a new output root"
+                .into(),
+        ));
+    }
+    let template = ContinuousTemplate::new(config.seed_candidate.clone(), config.axes.clone())?;
+    let mut optimizer = BayesianOptimizer::new(BayesianConfig {
+        dimensions: template.dimensions(),
+        initial_samples: config.initial_samples,
+        acquisition_pool: config.acquisition_pool,
+        length_scale: config.length_scale,
+        observation_noise: config.observation_noise,
+        exploration: config.exploration,
+        seed: config.rng_seed,
+    })?;
+    fs::create_dir_all(&config.output_root)?;
+    let seed_id = config.seed_candidate.id()?;
+    let seed_tape = config.seed_candidate.compile()?;
+    let mut seen = HashSet::new();
+    let mut evaluated = 0_usize;
+    let mut duplicate_proposals = 0_usize;
+    let mut invalid_proposals = 0_usize;
+    let mut generations_completed = 0_u32;
+    let mut champion: Option<(LexicographicScore, String, Candidate, Vec<f64>)> = None;
+
+    for generation in 0..config.generations {
+        if evaluated >= config.candidate_budget {
+            break;
+        }
+        let request = config
+            .batch_size
+            .min(config.candidate_budget.saturating_sub(evaluated));
+        let proposals = optimizer.ask(request)?;
+        let mut proposal_by_candidate = BTreeMap::<String, (BayesianProposal, Vec<f64>)>::new();
+        let mut candidates = Vec::new();
+        for proposal in proposals {
+            let values = template.values_from_normalized(&proposal.normalized)?;
+            let Ok(mut candidate) = template.candidate(&values) else {
+                invalid_proposals += 1;
+                continue;
+            };
+            let tape = candidate.compile()?;
+            let Some(intervention) = tape_intervention(&seed_tape, &tape) else {
+                duplicate_proposals += 1;
+                continue;
+            };
+            candidate.ancestry = Ancestry {
+                generation,
+                parent_id: Some(seed_id.clone()),
+                mutation: Some("Gaussian-process expected-improvement proposal".into()),
+                intervention: Some(intervention),
+            };
+            let id = candidate.id()?;
+            if !seen.insert(id.clone()) {
+                duplicate_proposals += 1;
+                continue;
+            }
+            proposal_by_candidate.insert(id, (proposal, values));
+            candidates.push(candidate);
+        }
+        if candidates.is_empty() {
+            if generations_completed == 0 {
+                return Err(EvaluateError::InvalidConfig(
+                    "Bayesian bounds produced no unique valid candidates".into(),
+                ));
+            }
+            break;
+        }
+        let generation_root = config.output_root.join(format!("g{generation:03}"));
+        let manifest = write_explicit_population(
+            &generation_root,
+            config.seed_candidate.segment,
+            generation,
+            candidates,
+        )?;
+        let results_path = generation_root.join("results.json");
+        evaluate_population(&EvaluateConfig {
+            population_path: generation_root.join("manifest.json"),
+            game: config.game.clone(),
+            dvd: config.dvd.clone(),
+            output_root: generation_root.join("evaluations"),
+            results_path: results_path.clone(),
+            working_directory: config.working_directory.clone(),
+            game_args_prefix: config.game_args_prefix.clone(),
+            workers: config.workers,
+            repetitions: config.repetitions,
+            timeout: config.timeout,
+        })?;
+        let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
+        let leaderboard = rank_population(&manifest, &results)?;
+        write_json(&generation_root.join("leaderboard.json"), &leaderboard)?;
+        let denominator = leaderboard.len().saturating_sub(1).max(1) as f64;
+        let mut observations = Vec::with_capacity(leaderboard.len());
+        for (rank, row) in leaderboard.iter().enumerate() {
+            let (proposal, values) = proposal_by_candidate
+                .get(&row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            let utility = if leaderboard.len() == 1 {
+                1.0
+            } else {
+                (leaderboard.len() - rank - 1) as f64 / denominator
+            };
+            observations.push(BayesianObservation {
+                normalized: proposal.normalized.clone(),
+                rank_utility: utility,
+            });
+            let member = manifest
+                .members
+                .iter()
+                .find(|member| member.candidate_id == row.candidate_id)
+                .ok_or(EvaluateError::EmptyLeaderboard)?;
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(generation_root.join(&member.candidate_file))?)?;
+            if champion.as_ref().is_none_or(|(score, id, _, _)| {
+                row.score > *score || (row.score == *score && row.candidate_id < *id)
+            }) {
+                champion = Some((
+                    row.score,
+                    row.candidate_id.clone(),
+                    candidate,
+                    values.clone(),
+                ));
+            }
+        }
+        optimizer.tell(observations.clone())?;
+        write_json(
+            &generation_root.join("optimizer.json"),
+            &serde_json::json!({
+                "schema": "dusklight-bayesian-generation/v1",
+                "axes": config.axes,
+                "proposals": proposal_by_candidate,
+                "rank_observations": observations,
+                "next_state": optimizer.snapshot(),
+            }),
+        )?;
+        evaluated += manifest.members.len();
+        generations_completed += 1;
+    }
+
+    let (champion_score, champion_id, champion, champion_values) =
+        champion.ok_or(EvaluateError::EmptyLeaderboard)?;
+    let champion_candidate = config.output_root.join("champion.candidate.json");
+    let champion_tape = config.output_root.join("champion.tape");
+    fs::write(&champion_candidate, serde_json::to_vec_pretty(&champion)?)?;
+    fs::write(&champion_tape, champion.compile()?.encode()?)?;
+    let summary = BayesianSearchRunSummary {
+        schema: "dusklight-bayesian-search/v1",
+        segment: config.seed_candidate.segment,
+        generations_requested: config.generations,
+        generations_completed,
+        batch_size: config.batch_size,
+        candidate_budget: config.candidate_budget,
+        evaluated_candidates: evaluated,
+        simulator_episodes: evaluated.saturating_mul(config.repetitions as usize),
+        duplicate_proposals,
+        invalid_proposals,
+        rng_seed: config.rng_seed,
+        final_optimizer: optimizer.snapshot(),
+        champion_id,
+        champion_score,
+        champion_values,
+        champion_candidate,
+        champion_tape,
+        output_root: config.output_root.clone(),
+    };
+    write_json(&config.output_root.join("bayesian.summary.json"), &summary)?;
+    Ok(summary)
+}
+
+/// Evaluate several proposer populations under the same declared cap. Every
+/// selected candidate enters one deduplicated native population, so no proposer
+/// can bypass the evaluator or spend simulator time twice on a shared tape.
+pub fn run_proposer_tournament(
+    config: &ProposerTournamentConfig,
+) -> Result<ProposerTournamentSummary, EvaluateError> {
+    let definition = &config.definition;
+    if definition.schema != "dusklight-proposer-tournament-definition/v1"
+        || definition.budget_per_proposer == 0
+        || definition.proposers.len() < 2
+        || definition.proposers.len() > 16
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.timeout.is_zero()
+        || !config.definition_directory.is_dir()
+        || !config.game.is_file()
+        || !config.dvd.is_file()
+        || !config.working_directory.is_dir()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "tournaments require a bounded v1 definition, 2..=16 proposers, native inputs, at least two repetitions, and a new output root"
+                .into(),
+        ));
+    }
+    if !definition
+        .proposers
+        .iter()
+        .any(|proposer| proposer.kind == TournamentProposerKind::IncumbentMutation)
+        || !definition
+            .proposers
+            .iter()
+            .any(|proposer| proposer.kind == TournamentProposerKind::BlindExploration)
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "a fair tournament must retain incumbent_mutation and blind_exploration proposers"
+                .into(),
+        ));
+    }
+    let episode_slots = match definition.budget_unit {
+        TournamentBudgetUnit::Episodes => {
+            let repetitions = u64::from(config.repetitions);
+            if definition.budget_per_proposer % repetitions != 0 {
+                return Err(EvaluateError::InvalidConfig(
+                    "episode budget must be an exact multiple of repetitions".into(),
+                ));
+            }
+            Some(
+                usize::try_from(definition.budget_per_proposer / repetitions).map_err(|_| {
+                    EvaluateError::InvalidConfig("episode budget is too large".into())
+                })?,
+            )
+        }
+        TournamentBudgetUnit::CandidateTicks => None,
+    };
+    if episode_slots == Some(0) {
+        return Err(EvaluateError::InvalidConfig(
+            "episode budget cannot select zero candidates".into(),
+        ));
+    }
+
+    struct SelectedProposer {
+        name: String,
+        kind: TournamentProposerKind,
+        candidate_ids: Vec<String>,
+        candidate_ticks: u64,
+    }
+
+    let mut names = HashSet::new();
+    let mut segment = None;
+    let mut boot = None;
+    let mut selected = Vec::new();
+    let mut union = BTreeMap::<String, Candidate>::new();
+    for proposer in &definition.proposers {
+        if proposer.name.is_empty()
+            || proposer.name.len() > 64
+            || !proposer
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            || !names.insert(proposer.name.clone())
+        {
+            return Err(EvaluateError::InvalidConfig(
+                "proposer names must be unique 1..=64 byte identifiers".into(),
+            ));
+        }
+        let population_path = if proposer.population.is_absolute() {
+            proposer.population.clone()
+        } else {
+            config.definition_directory.join(&proposer.population)
+        };
+        let population_path = fs::canonicalize(population_path)?;
+        let manifest: PopulationManifest = serde_json::from_slice(&fs::read(&population_path)?)?;
+        validate_manifest(&manifest, &population_path)?;
+        if segment.is_some_and(|value| value != manifest.segment)
+            || boot.as_ref().is_some_and(|value| *value != manifest.boot)
+        {
+            return Err(EvaluateError::InvalidManifest(
+                "tournament populations must share one segment and boot origin".into(),
+            ));
+        }
+        segment = Some(manifest.segment);
+        boot.get_or_insert_with(|| manifest.boot.clone());
+        let population_root = canonical_parent(&population_path)?;
+        let mut ids = Vec::new();
+        let mut candidate_ticks = 0_u64;
+        for member in &manifest.members {
+            let candidate_path = fs::canonicalize(population_root.join(&member.candidate_file))?;
+            if !candidate_path.starts_with(&population_root) {
+                return Err(EvaluateError::InvalidManifest(
+                    "tournament candidate escapes its population root".into(),
+                ));
+            }
+            let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
+            candidate.validate()?;
+            let id = candidate.id()?;
+            if id != member.candidate_id
+                || candidate.segment != manifest.segment
+                || candidate.boot != manifest.boot
+                || candidate.frame_count() != member.frame_count
+            {
+                return Err(EvaluateError::InvalidManifest(format!(
+                    "proposer {:?} contains a candidate/manifest identity mismatch",
+                    proposer.name
+                )));
+            }
+            let cost = member
+                .frame_count
+                .checked_mul(u64::from(config.repetitions))
+                .ok_or_else(|| {
+                    EvaluateError::InvalidConfig("candidate-tick cost overflowed".into())
+                })?;
+            let accept = match episode_slots {
+                Some(slots) => ids.len() < slots,
+                None => candidate_ticks
+                    .checked_add(cost)
+                    .is_some_and(|total| total <= definition.budget_per_proposer),
+            };
+            if !accept {
+                continue;
+            }
+            candidate_ticks += cost;
+            ids.push(id.clone());
+            union.entry(id).or_insert(candidate);
+            if episode_slots.is_some_and(|slots| ids.len() == slots) {
+                break;
+            }
+        }
+        if ids.is_empty() || episode_slots.is_some_and(|slots| ids.len() != slots) {
+            return Err(EvaluateError::InvalidConfig(format!(
+                "proposer {:?} cannot fill its declared budget with valid candidates",
+                proposer.name
+            )));
+        }
+        selected.push(SelectedProposer {
+            name: proposer.name.clone(),
+            kind: proposer.kind,
+            candidate_ids: ids,
+            candidate_ticks,
+        });
+    }
+    if union.len() > 10_000 {
+        return Err(EvaluateError::InvalidConfig(
+            "tournament union exceeds 10,000 physical candidates".into(),
+        ));
+    }
+    let segment = segment.ok_or_else(|| EvaluateError::InvalidConfig("empty tournament".into()))?;
+    let boot = boot.ok_or_else(|| EvaluateError::InvalidConfig("empty tournament".into()))?;
+    fs::create_dir_all(&config.output_root)?;
+    let population_root = config.output_root.join("population");
+    let manifest =
+        write_explicit_population(&population_root, segment, 0, union.into_values().collect())?;
+    if manifest.boot != boot {
+        return Err(EvaluateError::InvalidManifest(
+            "deduplicated tournament changed the boot origin".into(),
+        ));
+    }
+    let results_path = config.output_root.join("results.json");
+    let started = Instant::now();
+    let report = evaluate_population(&EvaluateConfig {
+        population_path: population_root.join("manifest.json"),
+        game: config.game.clone(),
+        dvd: config.dvd.clone(),
+        output_root: config.output_root.join("evaluations"),
+        results_path: results_path.clone(),
+        working_directory: config.working_directory.clone(),
+        game_args_prefix: config.game_args_prefix.clone(),
+        workers: config.workers,
+        repetitions: config.repetitions,
+        timeout: config.timeout,
+    })?;
+    let evaluation_wall_millis = started.elapsed().as_millis();
+    let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
+    let leaderboard = rank_population(&manifest, &results)?;
+    write_json(&config.output_root.join("leaderboard.json"), &leaderboard)?;
+    let scores = leaderboard
+        .iter()
+        .map(|row| (row.candidate_id.as_str(), row.score))
+        .collect::<BTreeMap<_, _>>();
+    let incumbent_score = selected
+        .iter()
+        .filter(|proposer| proposer.kind == TournamentProposerKind::IncumbentMutation)
+        .flat_map(|proposer| &proposer.candidate_ids)
+        .filter_map(|id| scores.get(id.as_str()).copied())
+        .max()
+        .ok_or(EvaluateError::EmptyLeaderboard)?;
+    let incidence = selected
+        .iter()
+        .flat_map(|proposer| &proposer.candidate_ids)
+        .fold(BTreeMap::<String, usize>::new(), |mut counts, id| {
+            *counts.entry(id.clone()).or_default() += 1;
+            counts
+        });
+    let frame_counts = manifest
+        .members
+        .iter()
+        .map(|member| (member.candidate_id.as_str(), member.frame_count))
+        .collect::<BTreeMap<_, _>>();
+    let mut rows = Vec::new();
+    for proposer in selected {
+        let best = leaderboard
+            .iter()
+            .filter(|row| proposer.candidate_ids.contains(&row.candidate_id))
+            .max_by(|left, right| left.score.cmp(&right.score))
+            .ok_or(EvaluateError::EmptyLeaderboard)?;
+        let predicate_hits = proposer
+            .candidate_ids
+            .iter()
+            .filter(|id| results.candidates[*id].goal_reached == Some(true))
+            .count();
+        let misses = proposer.candidate_ids.len() - predicate_hits;
+        let boundaries = report
+            .attempts
+            .iter()
+            .filter(|attempt| proposer.candidate_ids.contains(&attempt.candidate_id))
+            .flat_map(|attempt| attempt.boundary_fingerprints.values())
+            .map(|fingerprint| fingerprint.digest.as_str())
+            .collect::<HashSet<_>>();
+        let improvements_over_incumbent = proposer
+            .candidate_ids
+            .iter()
+            .filter(|id| scores[id.as_str()] > incumbent_score)
+            .count();
+        let frame_wins = proposer
+            .candidate_ids
+            .iter()
+            .map(|id| scores[id.as_str()])
+            .filter(|score| {
+                score.goal_feasible
+                    && incumbent_score.goal_feasible
+                    && score.milestone_depth >= incumbent_score.milestone_depth
+                    && score.median_first_hit_tick < incumbent_score.median_first_hit_tick
+            })
+            .count();
+        let observed_simulator_ticks = report
+            .attempts
+            .iter()
+            .filter(|attempt| proposer.candidate_ids.contains(&attempt.candidate_id))
+            .map(|attempt| {
+                attempt
+                    .first_hit_tick
+                    .map(|tick| tick.saturating_add(1))
+                    .unwrap_or(frame_counts[attempt.candidate_id.as_str()])
+            })
+            .sum();
+        rows.push(ProposerTournamentRow {
+            name: proposer.name,
+            kind: proposer.kind,
+            selected_candidates: proposer.candidate_ids.len(),
+            charged_episodes: proposer.candidate_ids.len() as u64 * u64::from(config.repetitions),
+            charged_candidate_ticks: proposer.candidate_ticks,
+            observed_simulator_ticks,
+            shared_duplicate_proposals: proposer
+                .candidate_ids
+                .iter()
+                .filter(|id| incidence[id.as_str()] > 1)
+                .count(),
+            improvements_over_incumbent,
+            misses,
+            crashes: 0,
+            predicate_hits,
+            predicate_hit_rate: predicate_hits as f64 / proposer.candidate_ids.len() as f64,
+            frame_wins,
+            boundary_diversity: boundaries.len(),
+            cold_replay_pass_rate: predicate_hits as f64 / proposer.candidate_ids.len() as f64,
+            best_candidate_id: best.candidate_id.clone(),
+            best_score: best.score,
+        });
+    }
+    rows.sort_by(|left, right| left.name.cmp(&right.name));
+    let champion = leaderboard.first().ok_or(EvaluateError::EmptyLeaderboard)?;
+    let physical_candidate_ticks = manifest
+        .members
+        .iter()
+        .map(|member| member.frame_count * u64::from(config.repetitions))
+        .sum();
+    let physical_simulator_ticks = report
+        .attempts
+        .iter()
+        .map(|attempt| {
+            attempt
+                .first_hit_tick
+                .map(|tick| tick.saturating_add(1))
+                .unwrap_or(frame_counts[attempt.candidate_id.as_str()])
+        })
+        .sum();
+    let summary = ProposerTournamentSummary {
+        schema: "dusklight-proposer-tournament/v1",
+        segment,
+        boot,
+        budget_unit: definition.budget_unit,
+        budget_per_proposer: definition.budget_per_proposer,
+        repetitions: config.repetitions,
+        physical_candidates: manifest.members.len(),
+        physical_episodes: manifest.members.len() * config.repetitions as usize,
+        physical_candidate_ticks,
+        physical_simulator_ticks,
+        evaluation_wall_millis,
+        incumbent_score,
+        rows,
+        champion_id: champion.candidate_id.clone(),
+        champion_score: champion.score,
+        output_root: config.output_root.clone(),
+    };
+    write_json(
+        &config.output_root.join("tournament.summary.json"),
+        &summary,
+    )?;
+    Ok(summary)
+}
+
+fn tape_intervention(parent: &InputTape, child: &InputTape) -> Option<InterventionRange> {
+    if parent.boot != child.boot
+        || parent.tick_rate_numerator != child.tick_rate_numerator
+        || parent.tick_rate_denominator != child.tick_rate_denominator
+    {
+        return None;
+    }
+    let shared = parent.frames.len().min(child.frames.len());
+    let start = (0..shared)
+        .find(|index| parent.frames[*index] != child.frames[*index])
+        .or_else(|| (parent.frames.len() != child.frames.len()).then_some(shared))?;
+    let mut parent_end = parent.frames.len();
+    let mut child_end = child.frames.len();
+    while parent_end > start
+        && child_end > start
+        && parent.frames[parent_end - 1] == child.frames[child_end - 1]
+    {
+        parent_end -= 1;
+        child_end -= 1;
+    }
+    Some(InterventionRange {
+        start_frame: start as u64,
+        end_frame_exclusive: child_end as u64,
+        parent_end_frame_exclusive: parent_end as u64,
+    })
+}
+
 pub fn run_anchored_search(
     config: &AnchoredSearchRunConfig,
 ) -> Result<AnchoredSearchRunSummary, EvaluateError> {
@@ -1004,6 +2234,8 @@ pub fn run_anchored_search(
         let leaderboard = rank_population(&manifest, &results.results)?;
         write_json(&population_root.join("leaderboard.json"), &leaderboard)?;
         let mut generation_corpora = BTreeMap::new();
+        let mut generation_contexts = BTreeMap::new();
+        let mut generation_outcomes = BTreeMap::new();
         for attempt in &report.attempts {
             let Some(path) = attempt.transition_corpus.as_ref() else {
                 continue;
@@ -1020,6 +2252,15 @@ pub fn run_anchored_search(
             generation_corpora
                 .entry(attempt.candidate_id.clone())
                 .or_insert(corpus);
+            if !generation_contexts.contains_key(&attempt.candidate_id) {
+                generation_contexts.insert(
+                    attempt.candidate_id.clone(),
+                    archive_behavior_context(attempt)?,
+                );
+            }
+            generation_outcomes
+                .entry(attempt.candidate_id.clone())
+                .or_insert(attempt.outcome.class);
         }
         let member_by_id: BTreeMap<_, _> = manifest
             .members
@@ -1037,11 +2278,18 @@ pub fn run_anchored_search(
             let episode = QEpisode {
                 candidate,
                 corpus: corpus.clone(),
+                outcome: generation_outcomes[&row.candidate_id],
             };
+            let context = generation_contexts
+                .get(&row.candidate_id)
+                .cloned()
+                .unwrap_or_default();
             behavior_archive
-                .consider(episode.clone(), row.score, generation)
+                .consider_with_context(episode.clone(), row.score, generation, &context)
                 .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
-            evaluated_episodes.insert(row.candidate_id.clone(), episode);
+            let descriptor = describe_behavior_with_context(corpus, &context)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            evaluated_episodes.insert(row.candidate_id.clone(), (episode, descriptor));
         }
         final_results = Some(results);
         if generation + 1 < search.generations {
@@ -1051,13 +2299,10 @@ pub fn run_anchored_search(
             let mut elite_descriptors = Vec::new();
             for row in leaderboard.iter().take(search.elite_count) {
                 elite_ids.insert(row.candidate_id.clone());
-                let Some(episode) = evaluated_episodes.get(&row.candidate_id) else {
+                let Some((episode, descriptor)) = evaluated_episodes.get(&row.candidate_id) else {
                     continue;
                 };
-                elite_descriptors.push(
-                    describe_behavior(&episode.corpus)
-                        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?,
-                );
+                elite_descriptors.push(descriptor.clone());
                 q_episodes.push(episode.clone());
             }
             let non_elite_budget = search.population_size - search.elite_count;
@@ -1382,6 +2627,11 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
         generation: round,
         parent_id: Some(current.candidate.id()?),
         mutation: Some("trim after exact goal tape frame".into()),
+        intervention: Some(crate::search::InterventionRange {
+            start_frame: required_frames as u64,
+            end_frame_exclusive: required_frames as u64,
+            parent_end_frame_exclusive: current.tape.frames.len() as u64,
+        }),
     };
     let proof_root = config.output_root.join("proof");
     let (mut proof_candidates, proof_report) =
@@ -1563,6 +2813,11 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
         generation: round,
         parent_id: Some(current.candidate.id()?),
         mutation: Some("trim after exact goal tape frame".into()),
+        intervention: Some(crate::search::InterventionRange {
+            start_frame: required_frames as u64,
+            end_frame_exclusive: required_frames as u64,
+            parent_end_frame_exclusive: current.tape.frames.len() as u64,
+        }),
     };
     let proof_root = config.output_root.join("proof");
     let (mut proof_candidates, proof_report) =
@@ -1682,6 +2937,11 @@ fn candidate_with_shifted_pulse(
         mutation: Some(format!(
             "move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
         )),
+        intervention: Some(crate::search::InterventionRange {
+            start_frame: old_timestamp.min(new_timestamp),
+            end_frame_exclusive: old_timestamp.max(new_timestamp) + 1,
+            parent_end_frame_exclusive: old_timestamp.max(new_timestamp) + 1,
+        }),
     };
     Ok(candidate)
 }
@@ -1724,6 +2984,19 @@ fn candidate_with_neutralized_ranges(
         generation,
         parent_id: Some(parent.candidate.id()?),
         mutation: Some(mutation.into()),
+        intervention: Some(crate::search::InterventionRange {
+            start_frame: ranges
+                .iter()
+                .map(|(start, _)| *start as u64)
+                .min()
+                .unwrap_or(0),
+            end_frame_exclusive: ranges.iter().map(|(_, end)| *end as u64).max().unwrap_or(0),
+            parent_end_frame_exclusive: ranges
+                .iter()
+                .map(|(_, end)| *end as u64)
+                .max()
+                .unwrap_or(0),
+        }),
     };
     Ok(candidate)
 }
@@ -1827,8 +3100,11 @@ fn evaluate_boot_batch_with_report(
 #[derive(Clone, Debug)]
 struct Trial {
     candidate_id: String,
+    ancestry: crate::search::Ancestry,
+    rng_seed: u64,
     attempt: u32,
     tape: PathBuf,
+    boot: TapeBoot,
     suffix_tape: Option<PathBuf>,
     root: PathBuf,
     state: PathBuf,
@@ -1864,7 +3140,29 @@ fn build_trials(
                 member.candidate_id
             )));
         }
-        InputTape::decode(&fs::read(&tape)?)?;
+        let decoded = InputTape::decode(&fs::read(&tape)?)?;
+        let expected_boot = match manifest.segment {
+            SegmentProfile::BootToFsp103 => TapeBoot::Process,
+            SegmentProfile::Fsp103ToFsp104 => TapeBoot::Stage {
+                stage: "F_SP103".into(),
+                room: 1,
+                point: 1,
+                layer: 3,
+                save_slot: None,
+                fixture: None,
+            },
+            SegmentProfile::LinkControlToTunnelCrawlStart => {
+                return Err(EvaluateError::InvalidManifest(
+                    "anchored movement candidates require an anchored objective".into(),
+                ));
+            }
+        };
+        if manifest.boot != expected_boot || decoded.tape.boot != manifest.boot {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "candidate {} boot origin {:?} and manifest origin {:?} do not match direct profile origin {:?}",
+                member.candidate_id, decoded.tape.boot, manifest.boot, expected_boot
+            )));
+        }
         for attempt in 1..=repetitions {
             let root = output_root
                 .join("candidates")
@@ -1872,8 +3170,11 @@ fn build_trials(
                 .join(format!("attempt-{attempt:03}"));
             trials.push(Trial {
                 candidate_id: member.candidate_id.clone(),
+                ancestry: member.ancestry.clone(),
+                rng_seed: manifest.rng_seed,
                 attempt,
                 tape: tape.clone(),
+                boot: decoded.tape.boot.clone(),
                 suffix_tape: None,
                 state: root.join("state"),
                 milestones: root.join("milestones.json"),
@@ -1927,6 +3228,7 @@ fn build_anchored_trials(
         let suffix = InputTape::decode(&suffix_bytes)?.tape;
         let compiled = candidate.compile()?;
         if candidate.segment != manifest.segment
+            || candidate.boot != manifest.boot
             || candidate.id()? != member.candidate_id
             || candidate.ancestry != member.ancestry
             || compiled.frames.len() as u64 != member.frame_count
@@ -1952,8 +3254,11 @@ fn build_anchored_trials(
             fs::write(&full_tape, chained.tape.encode()?)?;
             trials.push(Trial {
                 candidate_id: member.candidate_id.clone(),
+                ancestry: candidate.ancestry.clone(),
+                rng_seed: manifest.rng_seed,
                 attempt,
                 tape: full_tape,
+                boot: chained.tape.boot.clone(),
                 suffix_tape: Some(suffix_path.clone()),
                 state: root.join("state"),
                 milestones: root.join("milestones.json"),
@@ -1971,6 +3276,7 @@ fn run_trial(
     config: &EvaluateConfig,
     segment: SegmentProfile,
     trial: &Trial,
+    worker_id: &str,
     global_cancel: &AtomicBool,
     anchored: Option<&PreparedAnchoredObjective>,
 ) -> AttemptEvidence {
@@ -1979,15 +3285,21 @@ fn run_trial(
         schema: ATTEMPT_SCHEMA,
         candidate_id: trial.candidate_id.clone(),
         attempt: trial.attempt,
+        worker_id: worker_id.into(),
         segment,
+        boot: trial.boot.clone(),
         tape: trial.tape.clone(),
         suffix_tape: trial.suffix_tape.clone(),
         artifact_root: trial.root.clone(),
         state_root: trial.state.clone(),
         milestone_result: trial.milestones.clone(),
         gameplay_trace: None,
+        gameplay_trace_blob: None,
         gameplay_trace_error: None,
         transition_corpus: None,
+        transition_evidence: None,
+        episode_manifest: None,
+        dataset_source: None,
         transition_count: None,
         transition_corpus_error: None,
         stdout: trial.stdout.clone(),
@@ -1997,12 +3309,18 @@ fn run_trial(
         timed_out: false,
         cancelled: false,
         infrastructure_error: None,
+        outcome: EpisodeOutcome {
+            class: EpisodeOutcomeClass::Failed,
+            reason: "trial has not completed".into(),
+        },
+        crash_artifacts: Vec::new(),
         milestone_depth: 0,
         deepest_milestone: "none".into(),
         first_hit_tick: None,
         goal_reached: false,
         milestone_observations: BTreeMap::new(),
         boundary_fingerprints: BTreeMap::new(),
+        value_projections: BTreeMap::new(),
     };
     let mut run = || -> Result<TrialScore, EvaluateError> {
         fs::create_dir_all(&trial.state)?;
@@ -2026,9 +3344,6 @@ fn run_trial(
                 objective.identity.goal_milestone.clone(),
             )
         } else {
-            if segment == SegmentProfile::Fsp103ToFsp104 {
-                command.arg("--stage").arg("F_SP103,1,1,3");
-            }
             match segment {
                 SegmentProfile::BootToFsp103 => (
                     "gameplay-ready-f-sp103".into(),
@@ -2097,9 +3412,9 @@ fn run_trial(
             }
         };
         let score = if let Some(objective) = anchored {
-            parse_anchored_milestones(&trial.milestones, objective)
+            parse_anchored_milestones(&trial.milestones, objective, &trial.boot)
         } else {
-            parse_native_milestones(&trial.milestones, segment)
+            parse_native_milestones(&trial.milestones, segment, &trial.boot)
         }?;
         validate_native_exit(status, score.goal_reached)?;
         Ok(score)
@@ -2112,6 +3427,7 @@ fn run_trial(
             evidence.goal_reached = score.goal_reached;
             evidence.milestone_observations = score.milestone_observations;
             evidence.boundary_fingerprints = score.boundary_fingerprints;
+            evidence.value_projections = score.value_projections;
         }
         Err(error) => evidence.infrastructure_error = Some(error.to_string()),
     }
@@ -2120,7 +3436,12 @@ fn run_trial(
             .map_err(|error| error.to_string())
             .and_then(|bytes| crate::trace::decode(&bytes).map_err(|error| error.to_string()))
             .and_then(|trace| {
-                if trace.capacity_exhausted {
+                if trace.boot != trial.boot {
+                    Err(format!(
+                        "gameplay trace boot origin {:?} does not match tape origin {:?}",
+                        trace.boot, trial.boot
+                    ))
+                } else if trace.capacity_exhausted {
                     Err("gameplay trace capacity was exhausted".into())
                 } else if trace.records.is_empty() {
                     Err("gameplay trace contains no records".into())
@@ -2132,13 +3453,17 @@ fn run_trial(
             Err(error) => evidence.gameplay_trace_error = Some(error),
         }
     }
+    evidence.outcome = classify_attempt_outcome(&evidence);
     if evidence.infrastructure_error.is_none()
         && evidence.gameplay_trace.is_some()
         && let Some(objective) = anchored
     {
         match extract_trial_transition_corpus(trial, &evidence, objective) {
-            Ok((path, count)) => {
+            Ok((path, evidence_path, episode_manifest, dataset_source, count)) => {
                 evidence.transition_corpus = Some(path);
+                evidence.transition_evidence = Some(evidence_path);
+                evidence.episode_manifest = Some(episode_manifest);
+                evidence.dataset_source = Some(dataset_source);
                 evidence.transition_count = Some(count);
             }
             Err(error) => evidence.transition_corpus_error = Some(error),
@@ -2148,11 +3473,72 @@ fn run_trial(
     evidence
 }
 
+fn classify_attempt_outcome(evidence: &AttemptEvidence) -> EpisodeOutcome {
+    classify_outcome(
+        evidence.timed_out,
+        evidence.cancelled,
+        evidence.gameplay_trace_error.as_deref(),
+        evidence.infrastructure_error.as_deref(),
+        evidence.goal_reached,
+    )
+}
+
+fn classify_outcome(
+    timed_out: bool,
+    cancelled: bool,
+    gameplay_trace_error: Option<&str>,
+    infrastructure_error: Option<&str>,
+    goal_reached: bool,
+) -> EpisodeOutcome {
+    if timed_out {
+        return EpisodeOutcome {
+            class: EpisodeOutcomeClass::TimedOut,
+            reason: "evaluation timeout expired".into(),
+        };
+    }
+    if gameplay_trace_error.is_some_and(|reason| reason.contains("capacity was exhausted")) {
+        return EpisodeOutcome {
+            class: EpisodeOutcomeClass::Truncated,
+            reason: gameplay_trace_error.unwrap().into(),
+        };
+    }
+    if let Some(reason) = infrastructure_error {
+        let class = if reason.starts_with("could not launch Dusklight") {
+            EpisodeOutcomeClass::Unsupported
+        } else if reason.contains("worker exit") {
+            EpisodeOutcomeClass::Crashed
+        } else if reason.starts_with("invalid native milestone result")
+            || reason.starts_with("invalid search result")
+        {
+            EpisodeOutcomeClass::Desynced
+        } else if cancelled {
+            EpisodeOutcomeClass::Failed
+        } else {
+            EpisodeOutcomeClass::Crashed
+        };
+        return EpisodeOutcome {
+            class,
+            reason: reason.into(),
+        };
+    }
+    if goal_reached {
+        EpisodeOutcome {
+            class: EpisodeOutcomeClass::Successful,
+            reason: "objective reached".into(),
+        }
+    } else {
+        EpisodeOutcome {
+            class: EpisodeOutcomeClass::Failed,
+            reason: "objective not reached".into(),
+        }
+    }
+}
+
 fn extract_trial_transition_corpus(
     trial: &Trial,
     evidence: &AttemptEvidence,
     objective: &PreparedAnchoredObjective,
-) -> Result<(PathBuf, u64), String> {
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, u64), String> {
     let trace_path = evidence
         .gameplay_trace
         .as_ref()
@@ -2183,6 +3569,9 @@ fn extract_trial_transition_corpus(
         ));
     }
     let tape_bytes = fs::read(&trial.tape).map_err(|error| error.to_string())?;
+    let decoded_tape = InputTape::decode(&tape_bytes)
+        .map_err(|error| error.to_string())?
+        .tape;
     let start_reference = learning_boundary_reference(
         &objective.identity.digest,
         &objective.identity.source_milestone,
@@ -2222,10 +3611,153 @@ fn extract_trial_transition_corpus(
     let count = u64::try_from(corpus.transitions.len())
         .map_err(|_| "transition count does not fit u64".to_string())?;
     let path = trial.root.join("transitions.dtcz");
+    let transition_evidence = TransitionEvidenceBundle::build(TransitionEvidenceBuild {
+        corpus: &corpus,
+        trace: &decoded,
+        tape: &decoded_tape,
+        trace_sha256: ArtifactDigest(Sha256::digest(&trace_bytes).into()),
+        tape_sha256: ArtifactDigest(Sha256::digest(&tape_bytes).into()),
+        start_tape_frame,
+        end_tape_frame,
+        terminal_reason: evidence
+            .goal_reached
+            .then_some(TerminalReasonEvidence::ObjectiveReached),
+    })
+    .map_err(|error| error.to_string())?;
+    let transition_evidence_bytes =
+        serde_json::to_vec_pretty(&transition_evidence).map_err(|error| error.to_string())?;
+    let intervention_offset = objective.prefix.frames.len() as u64;
+    let intervention = trial
+        .ancestry
+        .intervention
+        .as_ref()
+        .map(|value| EpisodeIntervention {
+            start_frame: intervention_offset.saturating_add(value.start_frame),
+            end_frame_exclusive: intervention_offset.saturating_add(value.end_frame_exclusive),
+            parent_end_frame_exclusive: intervention_offset
+                .saturating_add(value.parent_end_frame_exclusive),
+            description: trial
+                .ancestry
+                .mutation
+                .clone()
+                .unwrap_or_else(|| "candidate intervention".into()),
+        });
+    let producer_kind = if let Some(mutation) = trial.ancestry.mutation.as_deref() {
+        if mutation.starts_with("q_") {
+            EpisodeProducerKind::FittedQ
+        } else if mutation.starts_with("systematic_probe") {
+            EpisodeProducerKind::SystematicProbe
+        } else if mutation.starts_with("random_probe") {
+            EpisodeProducerKind::RandomProbe
+        } else if mutation.starts_with("latin_hypercube") {
+            EpisodeProducerKind::LatinHypercube
+        } else if trial.ancestry.generation == 0 && trial.ancestry.parent_id.is_none() {
+            EpisodeProducerKind::Seed
+        } else {
+            EpisodeProducerKind::Evolution
+        }
+    } else if trial.ancestry.generation == 0 && trial.ancestry.parent_id.is_none() {
+        EpisodeProducerKind::Seed
+    } else {
+        EpisodeProducerKind::Evolution
+    };
+    let context = EpisodeContext {
+        schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+        run_build: RunBuildIdentity {
+            executable_sha256: objective
+                .identity
+                .game_sha256
+                .parse()
+                .map_err(|error| format!("invalid objective game digest: {error}"))?,
+            dusklight_commit: None,
+            aurora_commit: None,
+            target: Some(format!(
+                "{}-{}",
+                std::env::consts::ARCH,
+                std::env::consts::OS
+            )),
+            profile: None,
+            feature_digest: None,
+        },
+        objective: EpisodeObjectiveIdentity {
+            id: format!(
+                "{}:{}",
+                objective.identity.segment.as_str(),
+                objective.identity.goal_milestone
+            ),
+            digest: objective
+                .identity
+                .digest
+                .parse()
+                .map_err(|error| format!("invalid objective digest: {error}"))?,
+        },
+        producer: EpisodeProducerIdentity {
+            kind: producer_kind,
+            name: "huntctl".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        },
+        seed: EpisodeSeed::Deterministic {
+            value: trial.rng_seed,
+        },
+        worker_id: evidence.worker_id.clone(),
+        lineage: EpisodeLineage {
+            candidate_id: Some(trial.candidate_id.clone()),
+            parent_candidate_id: trial.ancestry.parent_id.clone(),
+            generation: trial.ancestry.generation,
+            intervention,
+        },
+        outcome: evidence.outcome.clone(),
+    };
+    let episode_manifest = EpisodeManifest::build(EpisodeManifestBuild {
+        context: &context,
+        boot: &decoded_tape.boot,
+        corpus: &corpus,
+        query_view_id: "movement-state/v1",
+        tape_sha256: ArtifactDigest(Sha256::digest(&tape_bytes).into()),
+        trace_sha256: ArtifactDigest(Sha256::digest(&trace_bytes).into()),
+        transition_evidence_sha256: ArtifactDigest(
+            Sha256::digest(&transition_evidence_bytes).into(),
+        ),
+    })
+    .map_err(|error| error.to_string())?;
+    let evidence_path = trial.root.join("transitions.dtcz.evidence.json");
+    let episode_manifest_path = trial.root.join("episode.json");
+    let dataset_source_path = trial.root.join("dataset-source.json");
     corpus
         .write_zstd_file(&path, 3)
         .map_err(|error| error.to_string())?;
-    Ok((path, count))
+    fs::write(&evidence_path, transition_evidence_bytes).map_err(|error| error.to_string())?;
+    fs::write(
+        &episode_manifest_path,
+        serde_json::to_vec_pretty(&episode_manifest).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        &dataset_source_path,
+        serde_json::to_vec_pretty(&DatasetSourceDescriptor {
+            schema: DATASET_SOURCE_SCHEMA_V1.into(),
+            source_id: episode_manifest.episode_sha256.to_string(),
+            episode_manifest: fs::canonicalize(&episode_manifest_path)
+                .map_err(|error| error.to_string())?,
+            transition_corpus: fs::canonicalize(&path).map_err(|error| error.to_string())?,
+            absolute_tape: fs::canonicalize(&trial.tape).map_err(|error| error.to_string())?,
+            transition_evidence: fs::canonicalize(&evidence_path)
+                .map_err(|error| error.to_string())?,
+            gameplay_trace: fs::canonicalize(trace_path).map_err(|error| error.to_string())?,
+            route_family: episode_manifest.objective.id.clone(),
+            screenshot_sha256: Vec::new(),
+            checkpoint_sha256: Vec::new(),
+        })
+        .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((
+        path,
+        evidence_path,
+        episode_manifest_path,
+        dataset_source_path,
+        count,
+    ))
 }
 
 fn learning_episode_digest(
@@ -2244,6 +3776,253 @@ fn learning_episode_digest(
         hasher.update(bytes);
     }
     ArtifactDigest(hasher.finalize().into())
+}
+
+fn write_episode_ledger(
+    output_root: &Path,
+    attempts: &[AttemptEvidence],
+) -> Result<Option<PathBuf>, EvaluateError> {
+    let mut ledger = EpisodeLedger::new();
+    let mut candidate_inputs = BTreeMap::new();
+    for attempt in attempts {
+        let (Some(manifest_path), Some(corpus_path)) =
+            (&attempt.episode_manifest, &attempt.transition_corpus)
+        else {
+            continue;
+        };
+        let manifest: EpisodeManifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+        let corpus = TransitionCorpus::read_zstd_file(corpus_path)
+            .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        manifest
+            .validate(&corpus)
+            .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        if let Some(previous) =
+            candidate_inputs.insert(attempt.candidate_id.clone(), manifest.input_identity_sha256)
+            && previous != manifest.input_identity_sha256
+        {
+            return Err(EvaluateError::InvalidResult(format!(
+                "candidate {} produced conflicting episode input identities",
+                attempt.candidate_id
+            )));
+        }
+        ledger.ingest_episode(&manifest, manifest_path.clone());
+    }
+    if ledger.groups.is_empty() {
+        return Ok(None);
+    }
+    for attempt in attempts {
+        let Some(input_identity) = candidate_inputs.get(&attempt.candidate_id).copied() else {
+            continue;
+        };
+        let proof_path = attempt.artifact_root.join("attempt.json");
+        let proof_bytes = fs::read(&proof_path)?;
+        ledger
+            .ingest_proof(
+                input_identity,
+                ArtifactDigest(Sha256::digest(&proof_bytes).into()),
+                proof_path,
+                attempt.worker_id.clone(),
+                attempt.attempt,
+                attempt.outcome.clone(),
+            )
+            .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    }
+    ledger
+        .validate()
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    let path = output_root.join("episodes.json");
+    write_json(&path, &ledger)?;
+    Ok(Some(path))
+}
+
+fn address_attempt_artifacts(
+    output_root: &Path,
+    attempts: &mut [AttemptEvidence],
+) -> Result<(), EvaluateError> {
+    let store = ContentStore::initialize(output_root.join("content"))
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    for attempt in attempts {
+        if let Some(path) = &attempt.gameplay_trace {
+            attempt.gameplay_trace_blob = Some(
+                store
+                    .put_file(path, ContentKind::GameplayTrace)
+                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?,
+            );
+        }
+        if matches!(
+            attempt.outcome.class,
+            EpisodeOutcomeClass::Crashed
+                | EpisodeOutcomeClass::TimedOut
+                | EpisodeOutcomeClass::Desynced
+                | EpisodeOutcomeClass::Unsupported
+                | EpisodeOutcomeClass::Truncated
+        ) {
+            let mut paths = vec![
+                attempt.stdout.clone(),
+                attempt.stderr.clone(),
+                attempt.milestone_result.clone(),
+            ];
+            if attempt.gameplay_trace.is_none() {
+                paths.push(attempt.artifact_root.join("gameplay.trace"));
+            }
+            for path in paths {
+                if fs::metadata(&path)
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+                {
+                    let blob = store
+                        .put_file(&path, ContentKind::CrashArtifact)
+                        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                    if !attempt
+                        .crash_artifacts
+                        .iter()
+                        .any(|existing| existing.sha256 == blob.sha256)
+                    {
+                        attempt.crash_artifacts.push(blob);
+                    }
+                }
+            }
+        }
+        write_json(&attempt.artifact_root.join("attempt.json"), attempt)?;
+    }
+    Ok(())
+}
+
+fn archive_behavior_context(evidence: &AttemptEvidence) -> Result<BehaviorContext, EvaluateError> {
+    let contact_behavior_identity = if let Some(path) = evidence.gameplay_trace.as_ref() {
+        let bytes = fs::read(path)?;
+        let trace = crate::trace::decode(&bytes)
+            .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        trace_contact_behavior_identity(&trace)?
+    } else {
+        None
+    };
+    Ok(archive_behavior_context_from_evidence(
+        &evidence.boundary_fingerprints,
+        &evidence.value_projections,
+        contact_behavior_identity,
+    ))
+}
+
+fn archive_behavior_context_from_evidence(
+    boundaries: &BTreeMap<String, BoundaryFingerprint>,
+    projections: &BTreeMap<String, BTreeMap<String, ValueProjectionEvidence>>,
+    contact_behavior_identity: Option<String>,
+) -> BehaviorContext {
+    let mut rng = Vec::new();
+    let mut actors = Vec::new();
+    let mut downstream_boundaries = Vec::new();
+    let mut downstream = Vec::new();
+    for (milestone, milestone_projections) in projections {
+        for (name, projection) in milestone_projections {
+            let Some(fingerprint) = projection.value_fingerprint.as_ref() else {
+                continue;
+            };
+            if !projection.available {
+                continue;
+            }
+            let encoded = serde_json::to_vec(&(
+                milestone,
+                name,
+                &projection.identity,
+                &fingerprint.schema,
+                &fingerprint.algorithm,
+                &fingerprint.canonical_encoding,
+                &fingerprint.digest,
+            ))
+            .expect("validated value-projection identity is serializable");
+            if projection
+                .values
+                .iter()
+                .any(|value| value.get("kind").and_then(serde_json::Value::as_str) == Some("rng"))
+            {
+                rng.push(encoded.clone());
+            }
+            if projection.values.iter().any(|value| {
+                value.get("kind").and_then(serde_json::Value::as_str) == Some("actor_population")
+            }) {
+                actors.push(encoded.clone());
+            }
+            downstream.push(encoded);
+        }
+    }
+    for (milestone, fingerprint) in boundaries {
+        let encoded = serde_json::to_vec(&(
+            milestone,
+            &fingerprint.schema,
+            &fingerprint.algorithm,
+            &fingerprint.canonical_encoding,
+            &fingerprint.digest,
+        ))
+        .expect("validated boundary identity is serializable");
+        downstream_boundaries.push(encoded.clone());
+        downstream.push(encoded);
+    }
+    BehaviorContext {
+        objective_rng_identity: archive_axis_identity(b"rng/v1", &rng),
+        actor_population_identity: archive_axis_identity(b"actors/v1", &actors),
+        contact_behavior_identity,
+        boundary_state_identity: archive_axis_identity(b"boundaries/v1", &downstream_boundaries),
+        downstream_state_identity: archive_axis_identity(b"downstream/v1", &downstream),
+    }
+}
+
+/// Hash the exact observed collision/contact trajectory after removing native
+/// session process IDs. Consecutive identical contact states are run-deduplicated
+/// so the axis describes touched geometry and contact transitions rather than
+/// merely episode duration.
+fn trace_contact_behavior_identity(
+    trace: &crate::trace::DecodedTrace,
+) -> Result<Option<String>, EvaluateError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-contact-behavior/v1\0");
+    let mut previous = None::<Vec<u8>>;
+    let mut states = 0_u64;
+    for record in &trace.records {
+        if record.player_background_collision.is_none()
+            && record.player_collision_surfaces.is_none()
+        {
+            continue;
+        }
+        let mut background = record.player_background_collision.clone();
+        if let Some(background) = background.as_mut() {
+            background.ground_owner_session_process_id = None;
+            background.roof_owner_session_process_id = None;
+            background.water_owner_session_process_id = None;
+            for wall in &mut background.walls {
+                wall.owner_session_process_id = None;
+            }
+        }
+        let mut surfaces = record.player_collision_surfaces.clone();
+        if let Some(surfaces) = surfaces.as_mut() {
+            for surface in &mut surfaces.surfaces {
+                surface.owner_session_process_id = None;
+            }
+        }
+        let encoded = serde_json::to_vec(&(background, surfaces))?;
+        if previous.as_ref() == Some(&encoded) {
+            continue;
+        }
+        hasher.update((encoded.len() as u64).to_le_bytes());
+        hasher.update(&encoded);
+        previous = Some(encoded);
+        states += 1;
+    }
+    Ok((states != 0).then(|| format!("{:x}", hasher.finalize())))
+}
+
+fn archive_axis_identity(domain: &[u8], entries: &[Vec<u8>]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-behavior-archive-axis/v1\0");
+    hasher.update((domain.len() as u64).to_le_bytes());
+    hasher.update(domain);
+    for entry in entries {
+        hasher.update((entry.len() as u64).to_le_bytes());
+        hasher.update(entry);
+    }
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 fn learning_boundary_reference(
@@ -2280,11 +4059,14 @@ struct TrialScore {
     goal_reached: bool,
     milestone_observations: BTreeMap<String, MilestoneObservation>,
     boundary_fingerprints: BTreeMap<String, BoundaryFingerprint>,
+    value_projections: BTreeMap<String, BTreeMap<String, ValueProjectionEvidence>>,
 }
 
 #[derive(Deserialize)]
 struct NativeMilestoneResult {
     schema: NativeSchema,
+    boot: Option<TapeBoot>,
+    boot_origin_established: Option<bool>,
     goal: Option<String>,
     goal_reached: bool,
     program_digest: Option<String>,
@@ -2309,11 +4091,13 @@ struct NativeMilestone {
     program_digest: Option<String>,
     boundary_index: Option<u64>,
     evidence: Option<NativeEvidence>,
+    projections: Option<Vec<ValueProjectionEvidence>>,
 }
 
 #[derive(Deserialize)]
 struct NativeEvidence {
     boundary_fingerprint: BoundaryFingerprint,
+    boot: Option<TapeBoot>,
     stage: Option<NativeStageEvidence>,
     next_stage: Option<NativeNextStageEvidence>,
     player: Option<NativePlayerEvidence>,
@@ -2344,6 +4128,7 @@ struct NativePlayerEvidence {
 fn parse_anchored_milestones(
     path: &Path,
     objective: &PreparedAnchoredObjective,
+    expected_boot: &TapeBoot,
 ) -> Result<TrialScore, EvaluateError> {
     let native: NativeMilestoneResult =
         serde_json::from_slice(&fs::read(path).map_err(|error| {
@@ -2353,12 +4138,13 @@ fn parse_anchored_milestones(
             ))
         })?)?;
     if native.schema.name != "dusklight.automation.milestones"
-        || !matches!(native.schema.version, 1 | 2)
+        || !matches!(native.schema.version, 1 | 2 | 3 | 4 | 5)
     {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),
         ));
     }
+    validate_native_boot(&native, expected_boot)?;
     if native.program_digest.as_deref()
         != Some(objective.identity.milestone_program_sha256.as_str())
     {
@@ -2401,6 +4187,7 @@ fn parse_anchored_milestones(
     };
     let mut observations = BTreeMap::new();
     let mut fingerprints = BTreeMap::new();
+    let mut value_projections = BTreeMap::new();
     for (id, milestone) in &milestones {
         let definition = expected(id);
         if milestone.phase.as_deref() != Some(definition.phase.as_str())
@@ -2411,6 +4198,30 @@ fn parse_anchored_milestones(
         {
             return Err(EvaluateError::NativeResult(format!(
                 "milestone {id} authored proof metadata does not match the anchored objective"
+            )));
+        }
+        if milestone.hit {
+            if native.schema.version >= 5 && milestone.projections.is_none() {
+                return Err(EvaluateError::NativeResult(format!(
+                    "milestone {id} omitted its value projection evidence"
+                )));
+            }
+            let projections = validate_value_projections(milestone.projections.as_ref())?;
+            if projections.len() != definition.projections.len()
+                || definition.projections.iter().any(|(name, identity)| {
+                    projections.get(name).map(|projection| &projection.identity) != Some(identity)
+                })
+            {
+                return Err(EvaluateError::NativeResult(format!(
+                    "milestone {id} value projection identities do not match the authored program"
+                )));
+            }
+            if !projections.is_empty() {
+                value_projections.insert(id.clone(), projections);
+            }
+        } else if milestone.projections.is_some() {
+            return Err(EvaluateError::NativeResult(format!(
+                "unhit milestone {id} contains value projection evidence"
             )));
         }
         match (
@@ -2427,6 +4238,7 @@ fn parse_anchored_milestones(
                     )));
                 }
                 validate_fingerprint(&evidence.boundary_fingerprint)?;
+                validate_evidence_boot(evidence, native.schema.version, expected_boot)?;
                 observations.insert(
                     id.clone(),
                     MilestoneObservation {
@@ -2535,12 +4347,14 @@ fn parse_anchored_milestones(
         goal_reached: goal.hit,
         milestone_observations: observations,
         boundary_fingerprints: fingerprints,
+        value_projections,
     })
 }
 
 fn parse_native_milestones(
     path: &Path,
     segment: SegmentProfile,
+    expected_boot: &TapeBoot,
 ) -> Result<TrialScore, EvaluateError> {
     let native: NativeMilestoneResult =
         serde_json::from_slice(&fs::read(path).map_err(|error| {
@@ -2550,12 +4364,13 @@ fn parse_native_milestones(
             ))
         })?)?;
     if native.schema.name != "dusklight.automation.milestones"
-        || !matches!(native.schema.version, 1 | 2)
+        || !matches!(native.schema.version, 1 | 2 | 3 | 4 | 5)
     {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),
         ));
     }
+    validate_native_boot(&native, expected_boot)?;
     let expected_goal = match segment {
         SegmentProfile::BootToFsp103 => "gameplay-ready-f-sp103",
         SegmentProfile::Fsp103ToFsp104 => "entered-f-sp104",
@@ -2598,6 +4413,7 @@ fn parse_native_milestones(
     }
     let mut fingerprints = BTreeMap::new();
     let mut observations = BTreeMap::new();
+    let value_projections = BTreeMap::new();
     for (id, milestone) in &milestones {
         match (
             milestone.hit,
@@ -2607,6 +4423,7 @@ fn parse_native_milestones(
         ) {
             (true, Some(sim_tick), Some(tape_frame), Some(evidence)) => {
                 validate_fingerprint(&evidence.boundary_fingerprint)?;
+                validate_evidence_boot(evidence, native.schema.version, expected_boot)?;
                 observations.insert(
                     id.clone(),
                     MilestoneObservation {
@@ -2677,14 +4494,58 @@ fn parse_native_milestones(
         goal_reached: native.goal_reached,
         milestone_observations: observations,
         boundary_fingerprints: fingerprints,
+        value_projections,
     })
+}
+
+fn validate_native_boot(
+    native: &NativeMilestoneResult,
+    expected_boot: &TapeBoot,
+) -> Result<(), EvaluateError> {
+    if native.schema.version < 3 {
+        if *expected_boot != TapeBoot::Process {
+            return Err(EvaluateError::NativeResult(
+                "legacy native milestone result cannot authenticate a stage boot origin".into(),
+            ));
+        }
+        return Ok(());
+    }
+    if native.boot.as_ref() != Some(expected_boot) {
+        return Err(EvaluateError::NativeResult(format!(
+            "native milestone boot origin {:?} does not match tape origin {:?}",
+            native.boot, expected_boot
+        )));
+    }
+    if native.boot_origin_established != Some(true) {
+        return Err(EvaluateError::NativeResult(
+            "native milestone result did not establish its declared boot origin".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_evidence_boot(
+    evidence: &NativeEvidence,
+    schema_version: u32,
+    expected_boot: &TapeBoot,
+) -> Result<(), EvaluateError> {
+    if schema_version >= 3 && evidence.boot.as_ref() != Some(expected_boot) {
+        return Err(EvaluateError::NativeResult(
+            "native boundary evidence lost or changed its boot origin".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_fingerprint(fingerprint: &BoundaryFingerprint) -> Result<(), EvaluateError> {
     let supported_contract = (fingerprint.schema == "dusklight.milestone-boundary/v1"
         && fingerprint.canonical_encoding == "little-endian-fixed-v1")
         || (fingerprint.schema == "dusklight.milestone-boundary/v2"
-            && fingerprint.canonical_encoding == "little-endian-fixed-v2");
+            && fingerprint.canonical_encoding == "little-endian-fixed-v2")
+        || (fingerprint.schema == "dusklight.milestone-boundary/v3"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v3")
+        || (fingerprint.schema == "dusklight.milestone-boundary/v4"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v4");
     if !supported_contract
         || fingerprint.algorithm != "xxh3-128"
         || fingerprint.digest.len() != 32
@@ -2698,6 +4559,65 @@ fn validate_fingerprint(fingerprint: &BoundaryFingerprint) -> Result<(), Evaluat
         ));
     }
     Ok(())
+}
+
+fn validate_value_projections(
+    projections: Option<&Vec<ValueProjectionEvidence>>,
+) -> Result<BTreeMap<String, ValueProjectionEvidence>, EvaluateError> {
+    let mut output = BTreeMap::new();
+    for projection in projections.into_iter().flatten() {
+        if projection.name.is_empty()
+            || projection.name.len() > 96
+            || projection.identity.len() != 64
+            || !projection
+                .identity
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || projection.values.is_empty()
+        {
+            return Err(EvaluateError::NativeResult(
+                "invalid native value projection identity".into(),
+            ));
+        }
+        let all_items_available = projection
+            .values
+            .iter()
+            .all(|value| value.get("available").and_then(serde_json::Value::as_bool) == Some(true));
+        if projection.available != all_items_available {
+            return Err(EvaluateError::NativeResult(format!(
+                "value projection {:?} availability disagrees with its items",
+                projection.name
+            )));
+        }
+        match (&projection.value_fingerprint, projection.available) {
+            (Some(fingerprint), true)
+                if fingerprint.schema == "dusklight.value-projection/v1"
+                    && fingerprint.algorithm == "xxh3-128"
+                    && fingerprint.canonical_encoding == "little-endian-exact-v1"
+                    && fingerprint.digest.len() == 32
+                    && fingerprint
+                        .digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) => {}
+            (None, false) => {}
+            _ => {
+                return Err(EvaluateError::NativeResult(format!(
+                    "value projection {:?} has an invalid value fingerprint",
+                    projection.name
+                )));
+            }
+        }
+        if output
+            .insert(projection.name.clone(), projection.clone())
+            .is_some()
+        {
+            return Err(EvaluateError::NativeResult(format!(
+                "duplicate native value projection {:?}",
+                projection.name
+            )));
+        }
+    }
+    Ok(output)
 }
 
 fn aggregate_results(
@@ -2728,6 +4648,7 @@ fn aggregate_results(
                 || sample.goal_reached != reference.goal_reached
                 || sample.milestone_observations != reference.milestone_observations
                 || sample.boundary_fingerprints != reference.boundary_fingerprints
+                || sample.value_projections != reference.value_projections
         }) {
             return Err(EvaluateError::InvalidResult(format!(
                 "candidate {} produced nondeterministic milestone evidence across identical trials",
@@ -2751,16 +4672,20 @@ fn aggregate_results(
         candidates.insert(
             member.candidate_id.clone(),
             CandidateResult {
+                goal_reached: Some(reference.goal_reached),
                 milestone_depth: depth,
                 attempts: samples.len() as u32,
                 successes: if depth == 0 { 0 } else { samples.len() as u32 },
                 first_hit_ticks: ticks,
+                risk_events: None,
+                boundary_compatibility: crate::search::BoundaryCompatibility::Unknown,
             },
         );
     }
     Ok(SearchResults {
         schema: RESULTS_SCHEMA.into(),
         segment: manifest.segment,
+        boot: manifest.boot.clone(),
         candidates,
     })
 }
@@ -2952,11 +4877,80 @@ impl From<crate::tape::TapeError> for EvaluateError {
         Self::Tape(value)
     }
 }
+impl From<crate::continuous_search::ContinuousSearchError> for EvaluateError {
+    fn from(value: crate::continuous_search::ContinuousSearchError) -> Self {
+        Self::InvalidConfig(value.to_string())
+    }
+}
+impl From<crate::bayesian_search::BayesianError> for EvaluateError {
+    fn from(value: crate::bayesian_search::BayesianError) -> Self {
+        Self::InvalidConfig(value.to_string())
+    }
+}
 
 #[cfg(test)]
 mod minimize_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn attempt_outcomes_keep_all_terminal_classes_distinct() {
+        let class = |timed_out, cancelled, trace, infrastructure, goal| {
+            classify_outcome(timed_out, cancelled, trace, infrastructure, goal).class
+        };
+        assert_eq!(
+            class(false, false, None, None, true),
+            EpisodeOutcomeClass::Successful
+        );
+        assert_eq!(
+            class(false, false, None, None, false),
+            EpisodeOutcomeClass::Failed
+        );
+        assert_eq!(
+            class(
+                false,
+                false,
+                None,
+                Some("invalid native milestone result: worker exit None disagrees"),
+                false,
+            ),
+            EpisodeOutcomeClass::Crashed
+        );
+        assert_eq!(
+            class(true, false, None, None, false),
+            EpisodeOutcomeClass::TimedOut
+        );
+        assert_eq!(
+            class(
+                false,
+                false,
+                None,
+                Some("invalid native milestone result: bad boundary digest"),
+                false,
+            ),
+            EpisodeOutcomeClass::Desynced
+        );
+        assert_eq!(
+            class(
+                false,
+                false,
+                None,
+                Some("could not launch Dusklight: unsupported executable"),
+                false,
+            ),
+            EpisodeOutcomeClass::Unsupported
+        );
+        assert_eq!(
+            class(
+                false,
+                false,
+                Some("gameplay trace capacity was exhausted"),
+                None,
+                false,
+            ),
+            EpisodeOutcomeClass::Truncated
+        );
+    }
 
     fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
         let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
@@ -3003,6 +4997,7 @@ mod minimize_tests {
             tick_rate_numerator: 30,
             tick_rate_denominator: 1,
             frames: vec![crate::tape::InputFrame::default(); 2],
+            ..InputTape::default()
         };
         fs::write(&prefix_path, prefix.encode().unwrap()).unwrap();
         let program = crate::milestone_dsl::compile_source(
@@ -3090,7 +5085,7 @@ milestone tunnel_crawl_start {
         });
         let result_path = root.join("result.json");
         fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
-        let score = parse_anchored_milestones(&result_path, &prepared).unwrap();
+        let score = parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).unwrap();
         assert!(score.goal_reached);
         assert_eq!(score.depth, 2);
         assert_eq!(score.score_tick, Some(0));
@@ -3156,7 +5151,207 @@ milestone tunnel_crawl_start {
         wrong["milestones"][0]["evidence"]["boundary_fingerprint"]["digest"] =
             serde_json::Value::String("c".repeat(32));
         fs::write(&result_path, serde_json::to_vec_pretty(&wrong).unwrap()).unwrap();
-        assert!(parse_anchored_milestones(&result_path, &prepared).is_err());
+        assert!(parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn named_value_parity_is_equal_different_or_incomparable_without_topology() {
+        let projection = |identity: &str, digest: &str, available: bool| ValueProjectionEvidence {
+            name: "handoff-state".into(),
+            identity: identity.into(),
+            available,
+            value_fingerprint: available.then(|| BoundaryFingerprint {
+                schema: "dusklight.value-projection/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-exact-v1".into(),
+                digest: digest.into(),
+            }),
+            values: vec![serde_json::json!({"kind":"flag", "available":available})],
+        };
+        let reference = projection(&"a".repeat(64), &"1".repeat(32), true);
+        assert_eq!(
+            compare_value_projections(
+                &reference,
+                &projection(&"a".repeat(64), &"1".repeat(32), true)
+            ),
+            ValueParityComparison::Equal
+        );
+        assert_eq!(
+            compare_value_projections(
+                &reference,
+                &projection(&"a".repeat(64), &"2".repeat(32), true)
+            ),
+            ValueParityComparison::Different
+        );
+        assert_eq!(
+            compare_value_projections(
+                &reference,
+                &projection(&"b".repeat(64), &"1".repeat(32), true)
+            ),
+            ValueParityComparison::Incomparable
+        );
+        assert_eq!(
+            compare_value_projections(
+                &reference,
+                &projection(&"a".repeat(64), &"1".repeat(32), false)
+            ),
+            ValueParityComparison::Incomparable
+        );
+    }
+
+    #[test]
+    fn archive_context_partitions_named_rng_actors_and_downstream_boundaries() {
+        let boundary = |digest: &str| BoundaryFingerprint {
+            schema: "dusklight.milestone-boundary/v4".into(),
+            algorithm: "xxh3-128".into(),
+            canonical_encoding: "little-endian-fixed-v4".into(),
+            digest: digest.into(),
+        };
+        let projection = |digest: &str| ValueProjectionEvidence {
+            name: "handoff-state".into(),
+            identity: "a".repeat(64),
+            available: true,
+            value_fingerprint: Some(BoundaryFingerprint {
+                schema: "dusklight.value-projection/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-exact-v1".into(),
+                digest: digest.into(),
+            }),
+            values: vec![
+                serde_json::json!({"kind":"rng", "available":true}),
+                serde_json::json!({"kind":"actor_population", "available":true}),
+            ],
+        };
+        let boundaries = BTreeMap::from([("goal".into(), boundary(&"1".repeat(32)))]);
+        let projections = |digest: &str| {
+            BTreeMap::from([(
+                "goal".into(),
+                BTreeMap::from([("handoff-state".into(), projection(digest))]),
+            )])
+        };
+        let reference = archive_behavior_context_from_evidence(
+            &boundaries,
+            &projections(&"2".repeat(32)),
+            Some("c".repeat(64)),
+        );
+        assert!(reference.objective_rng_identity.is_some());
+        assert!(reference.actor_population_identity.is_some());
+        assert_eq!(reference.contact_behavior_identity, Some("c".repeat(64)));
+        assert!(reference.boundary_state_identity.is_some());
+        assert!(reference.downstream_state_identity.is_some());
+
+        let changed_projection = archive_behavior_context_from_evidence(
+            &boundaries,
+            &projections(&"3".repeat(32)),
+            Some("d".repeat(64)),
+        );
+        assert_ne!(
+            reference.objective_rng_identity,
+            changed_projection.objective_rng_identity
+        );
+        assert_ne!(
+            reference.actor_population_identity,
+            changed_projection.actor_population_identity
+        );
+        assert_ne!(
+            reference.downstream_state_identity,
+            changed_projection.downstream_state_identity
+        );
+        assert_ne!(
+            reference.contact_behavior_identity,
+            changed_projection.contact_behavior_identity
+        );
+
+        let changed_boundary = BTreeMap::from([("goal".into(), boundary(&"4".repeat(32)))]);
+        let changed_downstream = archive_behavior_context_from_evidence(
+            &changed_boundary,
+            &projections(&"2".repeat(32)),
+            Some("c".repeat(64)),
+        );
+        assert_eq!(
+            reference.objective_rng_identity,
+            changed_downstream.objective_rng_identity
+        );
+        assert_eq!(
+            reference.actor_population_identity,
+            changed_downstream.actor_population_identity
+        );
+        assert_ne!(
+            reference.boundary_state_identity,
+            changed_downstream.boundary_state_identity
+        );
+        assert_ne!(
+            reference.downstream_state_identity,
+            changed_downstream.downstream_state_identity
+        );
+    }
+
+    #[test]
+    fn contact_behavior_identity_is_portable_and_run_deduplicated() {
+        fn contact_trace(flags: u32, owner: u32, records: usize) -> crate::trace::DecodedTrace {
+            let collision = crate::trace::TracePlayerBackgroundCollision {
+                flags,
+                ground_height: 12.0,
+                roof_height: 100.0,
+                water_height: -100.0,
+                ground_bg_index: Some(2),
+                ground_poly_index: Some(3),
+                ground_owner_session_process_id: Some(owner),
+                ground_plane: [0.0, 1.0, 0.0, -12.0],
+                ground_identity_present: true,
+                roof_bg_index: None,
+                roof_poly_index: None,
+                roof_owner_session_process_id: None,
+                roof_identity_present: false,
+                water_bg_index: None,
+                water_poly_index: None,
+                water_owner_session_process_id: None,
+                water_identity_present: false,
+                walls: std::array::from_fn(|_| crate::trace::TraceCollisionWall {
+                    identity_present: false,
+                    bg_index: None,
+                    poly_index: None,
+                    owner_session_process_id: Some(owner),
+                    angle_y: 0,
+                    flags: 0,
+                }),
+                old_position: [1.0, 2.0, 3.0],
+                resolved_frame_displacement: [1.0, 0.0, 0.0],
+                final_position: [2.0, 2.0, 3.0],
+            };
+            crate::trace::DecodedTrace {
+                version: 5,
+                boot: TapeBoot::Process,
+                tick_rate_numerator: 30,
+                tick_rate_denominator: 1,
+                requested_channels: 0,
+                capacity_exhausted: false,
+                retention: None,
+                channel_formats: BTreeMap::new(),
+                records: (0..records)
+                    .map(|_| crate::trace::TraceRecord {
+                        player_background_collision: Some(collision.clone()),
+                        ..crate::trace::TraceRecord::default()
+                    })
+                    .collect(),
+            }
+        }
+
+        let reference = trace_contact_behavior_identity(&contact_trace(1, 7, 1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reference,
+            trace_contact_behavior_identity(&contact_trace(1, 99, 3))
+                .unwrap()
+                .unwrap()
+        );
+        assert_ne!(
+            reference,
+            trace_contact_behavior_identity(&contact_trace(2, 7, 1))
+                .unwrap()
+                .unwrap()
+        );
     }
 }

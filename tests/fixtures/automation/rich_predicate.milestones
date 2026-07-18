@@ -1,0 +1,13 @@
+milestones 1.1
+
+milestone rich_state {
+  phase post_sim
+  stable 3
+  when player.actor_name == 253 && player.velocity.y <= 0.0 &&
+       player.mode_flags has_all 1024 && player.mode_flags has_any 1028 &&
+       player.timer.damage_wait == 0 && player.timer.sword_change_wait <= 4 &&
+       event.mode == 2 && event.status >= 1 && event.name_hash.present &&
+       event.name_hash.fnv1a32 == 305419896 && rng.primary.state0 == 11 &&
+       rng.secondary.calls >= 200 && collision.ground.contact &&
+       collision.ground.clearance <= 0.5
+}

@@ -87,3 +87,18 @@ bool cM_getRndState(const cM_RndStream id, cM_RndState& output) {
     output.callCount = rng->callCount;
     return true;
 }
+
+bool cM_setRndState(const cM_RndStream id, const cM_RndState& state) {
+    if (state.version != cM_RndStateVersion) {
+        return false;
+    }
+    RngStream* rng = stream(id);
+    if (rng == nullptr) {
+        return false;
+    }
+    rng->state0 = state.state0;
+    rng->state1 = state.state1;
+    rng->state2 = state.state2;
+    rng->callCount = state.callCount;
+    return true;
+}

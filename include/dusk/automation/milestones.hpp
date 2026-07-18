@@ -9,12 +9,13 @@
 #include <vector>
 
 #include "dusk/automation/milestone_program.hpp"
+#include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/rng.hpp"
 
 namespace dusk::automation {
 
-inline constexpr std::uint32_t MilestoneResultSchemaVersion = 2;
-inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 2;
+inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
+inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 4;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -46,6 +47,19 @@ struct MilestoneObservation {
     std::int16_t playerShapeAngleX = 0;
     std::int16_t playerShapeAngleY = 0;
     std::int16_t playerShapeAngleZ = 0;
+    std::uint32_t playerModeFlags = 0;
+    std::int16_t playerDamageWaitTimer = 0;
+    std::int16_t playerIceDamageWaitTimer = 0;
+    std::uint8_t playerSwordChangeWaitTimer = 0;
+    bool playerGroundContact = false;
+    bool playerWallContact = false;
+    bool playerRoofContact = false;
+    bool playerWaterContact = false;
+    bool playerWaterIn = false;
+    bool playerGroundHeightPresent = false;
+    bool playerRoofHeightPresent = false;
+    float playerGroundHeight = 0.0f;
+    float playerRoofHeight = 0.0f;
 
     bool eventRunning = false;
     std::int16_t eventId = -1;
@@ -62,6 +76,31 @@ struct MilestoneObservation {
     std::int16_t nextPoint = -1;
 
     GameRngSnapshot rng;
+
+    struct Actor {
+        std::uint64_t runtimeGeneration = 0;
+        std::int16_t actorName = -1;
+        std::uint16_t setId = 0xffff;
+        std::int8_t homeRoom = -1;
+        std::int8_t currentRoom = -1;
+        float positionX = 0.0f;
+        float positionY = 0.0f;
+        float positionZ = 0.0f;
+        std::int16_t health = 0;
+        std::uint32_t status = 0;
+    };
+    std::span<const Actor> actors;
+    bool actorsTruncated = false;
+
+    // Indexed flag snapshots are immutable copies captured at the same phase
+    // as the scalar observation. Switches cover exactly switchFlagRoom; an
+    // off-room query evaluates as unavailable rather than reading live state.
+    std::span<const std::uint8_t> eventFlags;
+    std::span<const std::uint8_t> temporaryFlags;
+    std::span<const std::uint8_t> dungeonFlags;
+    std::span<const std::uint8_t> switchFlags;
+    std::int8_t switchFlagRoom = -1;
+    bool flagsPresent = false;
 };
 
 struct MilestoneDefinition {
@@ -72,6 +111,7 @@ struct MilestoneDefinition {
 };
 
 struct MilestoneEvidence {
+    TapeBoot boot;
     std::string stageName;
     std::int8_t room = -1;
     std::int8_t layer = -1;
@@ -126,6 +166,10 @@ struct AuthoredMilestoneHit {
     MilestoneProgramPhase phase = MilestoneProgramPhase::PostSim;
     std::uint16_t stableTicks = 1;
     std::uint16_t consecutiveTicks = 0;
+    std::uint8_t sequenceSteps = 0;
+    std::uint8_t sequenceNextStep = 0;
+    std::uint16_t sequenceWithinTicks = 0;
+    std::uint16_t sequenceElapsedTicks = 0;
     std::string definitionDigest;
     std::string programDigest;
     bool hit = false;
@@ -133,6 +177,40 @@ struct AuthoredMilestoneHit {
     std::uint64_t simulationTick = 0;
     std::uint64_t tapeFrame = MilestoneNoTapeFrame;
     MilestoneEvidence evidence;
+
+    struct ProjectedActor {
+        std::int16_t actorName = -1;
+        std::uint16_t setId = 0xffff;
+        std::int8_t homeRoom = -1;
+        std::int8_t currentRoom = -1;
+        std::uint32_t positionXBits = 0;
+        std::uint32_t positionYBits = 0;
+        std::uint32_t positionZBits = 0;
+        std::int16_t health = 0;
+        std::uint32_t status = 0;
+    };
+
+    struct ProjectionItem {
+        MilestoneValueProjectionKind kind = MilestoneValueProjectionKind::Rng;
+        std::uint8_t selector = 0;
+        std::string stage;
+        std::int8_t room = -1;
+        std::uint16_t index = 0;
+        bool available = false;
+        GameRngStreamSnapshot rng;
+        std::vector<ProjectedActor> actors;
+        bool flagValue = false;
+    };
+
+    struct Projection {
+        std::string name;
+        std::string identity;
+        bool available = false;
+        std::string valueDigest;
+        std::vector<ProjectionItem> items;
+    };
+
+    std::vector<Projection> projections;
 };
 
 std::span<const MilestoneDefinition> milestone_definitions();
@@ -166,6 +244,8 @@ public:
     bool configureNames(std::span<const std::string> requested, std::optional<std::string> goal,
         const MilestoneProgram& program, std::string& error);
     void reset();
+    void setBootOrigin(TapeBoot boot);
+    void markBootOriginEstablished() { mBootOriginEstablished = true; }
     void observe(const MilestoneObservation& observation, std::uint64_t simulationTick,
         std::uint64_t tapeFrame);
     void observeBoundary(const MilestoneObservation& observation, MilestoneProgramPhase phase,
@@ -180,6 +260,8 @@ public:
     const std::vector<MilestoneHit>& hits() const { return mHits; }
     const std::vector<AuthoredMilestoneHit>& authoredHits() const { return mAuthoredHits; }
     std::string_view programDigest() const { return mProgramDigest; }
+    const TapeBoot& bootOrigin() const { return mBootOrigin; }
+    bool bootOriginEstablished() const { return mBootOriginEstablished; }
 
 private:
     std::vector<MilestoneHit> mHits;
@@ -188,6 +270,8 @@ private:
     std::optional<std::string> mGoalName;
     const MilestoneProgram* mProgram = nullptr;
     std::string mProgramDigest;
+    TapeBoot mBootOrigin;
+    bool mBootOriginEstablished = true;
 };
 
 MilestoneTracker& milestone_tracker();

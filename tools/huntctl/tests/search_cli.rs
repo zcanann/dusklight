@@ -1,5 +1,5 @@
 use huntctl::search::{PopulationManifest, SearchResults};
-use huntctl::tape::InputTape;
+use huntctl::tape::{InputTape, TapeBoot};
 use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -42,6 +42,17 @@ fn file_oriented_search_round_trip_works_without_the_game() {
     let manifest: PopulationManifest =
         serde_json::from_slice(&fs::read(g0.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest.members.len(), 6);
+    assert_eq!(
+        manifest.boot,
+        TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: None,
+            fixture: None,
+        }
+    );
     for member in &manifest.members {
         let decoded = InputTape::decode(&fs::read(g0.join(&member.tape_file)).unwrap()).unwrap();
         assert_eq!(decoded.tape.frames.len() as u64, member.frame_count);
@@ -60,6 +71,7 @@ fn file_oriented_search_round_trip_works_without_the_game() {
     assert!(output.status.success());
     let scores: SearchResults = serde_json::from_slice(&fs::read(&results).unwrap()).unwrap();
     assert_eq!(scores.candidates.len(), 6);
+    assert_eq!(scores.boot, manifest.boot);
 
     let output = run(&[
         "search",
@@ -72,6 +84,7 @@ fn file_oriented_search_round_trip_works_without_the_game() {
     assert!(output.status.success());
     let leaderboard: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(leaderboard[0]["rank"], 1);
+    assert_eq!(leaderboard[0]["boot"]["kind"], "stage");
 
     let output = run(&[
         "search",

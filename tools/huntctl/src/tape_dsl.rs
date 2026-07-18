@@ -1,3 +1,4 @@
+use crate::tape::TapeBoot;
 use crate::tape_program::{
     FrameSpec, PROGRAM_SCHEMA, PadSpec, ProgramWaitCondition, Step, TapeProgram, TickRate,
 };
@@ -147,6 +148,8 @@ impl Parser {
         self.require_separator("after `dusktape 1`")?;
 
         let mut tick_rate = TickRate::default();
+        let mut boot = TapeBoot::Process;
+        let mut boot_declared = false;
         let mut default_owned_ports = 1;
         let mut steps = Vec::new();
         while !matches!(self.peek().kind, Kind::Eof) {
@@ -157,6 +160,52 @@ impl Parser {
             let command_token = self.peek().clone();
             let command = self.atom()?;
             match command.as_str() {
+                "boot" => {
+                    if boot_declared {
+                        return Err(DslError {
+                            line: command_token.line,
+                            column: command_token.column,
+                            message: "duplicate boot declaration".into(),
+                        });
+                    }
+                    boot_declared = true;
+                    let kind_token = self.peek().clone();
+                    boot = match self.atom()?.as_str() {
+                        "process" => TapeBoot::Process,
+                        "stage" => {
+                            let stage = self.atom()?;
+                            let room = self.i8()?;
+                            let point = self.i16()?;
+                            let layer = self.i8()?;
+                            let save_slot = if matches!(
+                                &self.peek().kind,
+                                Kind::Atom(value) if value == "save"
+                            ) {
+                                self.atom()?;
+                                Some(self.u8()?)
+                            } else {
+                                None
+                            };
+                            TapeBoot::Stage {
+                                stage,
+                                room,
+                                point,
+                                layer,
+                                save_slot,
+                                fixture: None,
+                            }
+                        }
+                        kind => {
+                            return Err(DslError {
+                                line: kind_token.line,
+                                column: kind_token.column,
+                                message: format!(
+                                    "unknown boot kind {kind:?}; expected process or stage"
+                                ),
+                            });
+                        }
+                    };
+                }
                 "rate" => {
                     tick_rate.numerator = self.u32()?;
                     self.expect_kind(Kind::Slash, "expected `/` in tick rate")?;
@@ -185,6 +234,20 @@ impl Parser {
                     frame: self.frame_ref()?,
                 }),
                 "hold" => steps.push(Step::Hold { count: self.u64()? }),
+                "press" => {
+                    let port = self.port()?;
+                    steps.push(Step::Press {
+                        port,
+                        buttons: self.button_list()?,
+                    });
+                }
+                "release" => {
+                    let port = self.port()?;
+                    steps.push(Step::Release {
+                        port,
+                        buttons: self.button_list()?,
+                    });
+                }
                 "wait" => steps.push(Step::WaitUntil {
                     condition: self.condition()?,
                     timeout_ticks: self.u16()?,
@@ -224,6 +287,7 @@ impl Parser {
         }
         Ok(TapeProgram {
             schema: PROGRAM_SCHEMA.into(),
+            boot,
             tick_rate,
             default_owned_ports,
             steps,
@@ -241,6 +305,39 @@ impl Parser {
             column: token.column,
             message: format!("unknown state {name:?}"),
         })
+    }
+
+    fn port(&mut self) -> Result<u8, DslError> {
+        let token = self.peek().clone();
+        let value = self.atom()?;
+        parse_port(&value).ok_or_else(|| DslError {
+            line: token.line,
+            column: token.column,
+            message: format!("invalid controller port {value:?}; expected p0, p1, p2, or p3"),
+        })
+    }
+
+    fn button_list(&mut self) -> Result<u16, DslError> {
+        let first = self.peek().clone();
+        let mut buttons = 0_u16;
+        let mut count = 0;
+        while let Kind::Atom(name) = &self.peek().kind {
+            buttons |= button_mask(name).ok_or_else(|| DslError {
+                line: self.peek().line,
+                column: self.peek().column,
+                message: format!("unknown button {name:?}"),
+            })?;
+            self.at += 1;
+            count += 1;
+        }
+        if count == 0 {
+            return Err(DslError {
+                line: first.line,
+                column: first.column,
+                message: "press and release require at least one button name".into(),
+            });
+        }
+        Ok(buttons)
     }
 
     fn frame_body(&mut self) -> Result<FrameSpec, DslError> {
@@ -382,6 +479,9 @@ impl Parser {
     }
     fn i8(&mut self) -> Result<i8, DslError> {
         self.integer::<i8>("i8")
+    }
+    fn i16(&mut self) -> Result<i16, DslError> {
+        self.integer::<i16>("i16")
     }
 
     fn integer<T>(&mut self, expected: &str) -> Result<T, DslError>
@@ -546,6 +646,7 @@ mod tests {
             r#"
             # compact deterministic source
             dusktape 1
+            boot stage F_SP103 1 1 3 save 2
             rate 60/2
             ports 0x0f
             state neutral {}
@@ -558,6 +659,13 @@ mod tests {
         )
         .unwrap();
         let compiled = program.compile().unwrap();
+        assert!(matches!(
+            &compiled.tape.boot,
+            TapeBoot::Stage {
+                save_slot: Some(2),
+                ..
+            }
+        ));
         assert_eq!(compiled.tape.tick_rate_numerator, 60);
         assert_eq!(compiled.tape.frames.len(), 8);
         assert_eq!(compiled.tape.frames[3].pads[0].buttons, 0x1100);
@@ -573,6 +681,67 @@ mod tests {
         let error = parse("dusktape 1\nstate x { p0 buttons NOPE }\n").unwrap_err();
         assert_eq!((error.line, error.column), (2, 22));
         assert!(error.to_string().contains("unknown button"));
+    }
+
+    #[test]
+    fn authors_every_native_button_and_pad_field_on_every_port() {
+        let program = parse(
+            r#"dusktape 1
+ports 0x0f
+frame {
+  p0 buttons LEFT RIGHT DOWN UP Z R L A B X Y START stick -128 127
+     substick -127 126 triggers 255 254 analogs 253 252 connected true error 0
+  p1 buttons A stick_x 1 stick_y 2 substick_x 3 substick_y 4
+     trigger_left 5 trigger_right 6 analog_a 7 analog_b 8 connected true error -3
+  p2 buttons B connected false error -1
+  p3 buttons X Y connected true error 2
+}
+"#,
+        )
+        .unwrap();
+        let tape = program.compile().unwrap().tape;
+        let frame = &tape.frames[0];
+        assert_eq!(frame.owned_ports, 0x0f);
+        assert_eq!(frame.pads[0].buttons, 0x1f7f);
+        assert_eq!((frame.pads[0].stick_x, frame.pads[0].stick_y), (-128, 127));
+        assert_eq!(
+            (frame.pads[0].substick_x, frame.pads[0].substick_y),
+            (-127, 126)
+        );
+        assert_eq!(
+            (frame.pads[0].trigger_left, frame.pads[0].trigger_right),
+            (255, 254)
+        );
+        assert_eq!((frame.pads[0].analog_a, frame.pads[0].analog_b), (253, 252));
+        assert_eq!(frame.pads[1].error, -3);
+        assert!(!frame.pads[2].connected);
+        assert_eq!(frame.pads[3].error, 2);
+    }
+
+    #[test]
+    fn authors_explicit_press_hold_release_and_conflicting_edges() {
+        let tape = parse(
+            r#"dusktape 1
+ports 1
+press p0 LEFT RIGHT
+hold 2
+release p0 LEFT
+press p3 A
+release p0 RIGHT
+"#,
+        )
+        .unwrap()
+        .compile()
+        .unwrap()
+        .tape;
+        assert_eq!(tape.frames.len(), 6);
+        assert_eq!(tape.frames[0].pads[0].buttons, 0x0003);
+        assert_eq!(tape.frames[2].pads[0].buttons, 0x0003);
+        assert_eq!(tape.frames[3].pads[0].buttons, 0x0002);
+        assert_eq!(tape.frames[4].pads[3].buttons, 0x0100);
+        assert_eq!(tape.frames[4].owned_ports, 0b1001);
+        assert_eq!(tape.frames[5].pads[0].buttons, 0);
+        assert_eq!(tape.frames[5].pads[3].buttons, 0x0100);
     }
 
     #[test]

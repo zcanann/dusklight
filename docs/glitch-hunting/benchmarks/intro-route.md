@@ -20,8 +20,8 @@ Boot and movement are deliberately scored on two leaderboards:
    memory-backed controllable `F_SP103`, room 1, point 1 state. It includes the
    title, file/name menus, and opening skip. This is where title-streaming and
    readiness-barrier work competes.
-2. **`F_SP103` to `F_SP104` point 0** starts from the direct
-   `--stage F_SP103,1,1,3` seed and scores the first source-exit activation that
+2. **`F_SP103` to `F_SP104` point 0** starts from the tape-declared
+   `F_SP103,1,1,3` stage fixture and scores the first source-exit activation that
    is followed by an `F_SP104` point-0 transition. This is where movement,
    turns, rolls, splines, and route search compete.
 
@@ -29,9 +29,10 @@ Do not add the two scores or let title I/O variance decide which movement tape
 wins. A route champion is promoted into a full process-boot tape for end-to-end
 proof, but it retains its route-local score and ancestry.
 
-The checked route-local scenario is `fsp103-next-map-seed`. Its 180-frame
-neutral prefix covers direct stage creation and the short automatic event;
-candidate movement begins at its `candidate-start` marker. On the current
+The checked route-local scenario is `fsp103-next-map-seed`. Stage creation
+happens before tape tick zero; its 180-frame neutral prefix covers only the
+short automatic event. Candidate movement begins at its `candidate-start`
+marker. On the current
 baseline, one native milestone run observed exit activation at tape tick 571
 and fully entered `F_SP104` room 1 point 0 at tick 640. It is a functional
 seed, not a speed claim.
@@ -70,7 +71,7 @@ Success is semantic, not a screenshot or a sleep:
   name hash identified this as `demo01_04`, but Trace v2 does not call the
   non-const event-manager name query merely to reproduce that diagnostic.
 
-The native `--gameplay-trace` v2 stream records explicit post-simulation
+The native `--gameplay-trace` v4 stream records explicit post-simulation
 boundaries and channel status, the current/pending stage tuple, all four
 post-clamp pads, Link motion/action/animation state, event control, both global
 RNG streams, realized camera, exact live `SCENE_EXIT` actor volumes, and Link's
@@ -78,9 +79,10 @@ already-resolved background-collision cache on every completed tick. Optional
 channel 10 also decodes the six cached surface identities directly from bounded
 DZB/KCL backing tables, including raw material words, source geometry indices,
 and ground-exit SCLS resolution. It never issues a fresh collision query.
+V4 additionally authenticates the exact canonical scenario descriptor after the channel region.
 `huntctl trace inspect` extracts the milestones; `timeline` exposes state
 changes and input frames; `compare` ranks several traces by milestone depth and
-tick. Immutable v1 files remain decodable.
+tick. Immutable v1-v3 files remain decodable.
 
 The July 17, 2026 channel-10 matrix produced three byte-identical 925-record
 traces (SHA-256

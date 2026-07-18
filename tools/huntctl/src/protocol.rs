@@ -642,7 +642,17 @@ fn encode_artifact(
     writer.u16(artifact.schema_version);
     writer.digest(artifact.content_digest);
     encode_build(writer, &artifact.build)?;
+    writer.string(&artifact.protocol_name)?;
+    writer.u16(artifact.protocol_version);
+    writer.digest(artifact.protocol_capabilities_digest);
     writer.string(&artifact.scenario_id)?;
+    writer.digest(artifact.region_digest);
+    writer.digest(artifact.language_assets_digest);
+    writer.digest(artifact.scenario_digest);
+    writer.digest(artifact.predicate_program_digest);
+    writer.digest(artifact.action_schema_digest);
+    writer.digest(artifact.observation_schema_digest);
+    writer.digest(artifact.settings_digest);
     Ok(())
 }
 
@@ -651,7 +661,17 @@ fn decode_artifact(reader: &mut WireReader<'_>) -> Result<ArtifactIdentity, Prot
         schema_version: reader.u16()?,
         content_digest: reader.digest()?,
         build: decode_build(reader)?,
+        protocol_name: reader.string()?,
+        protocol_version: reader.u16()?,
+        protocol_capabilities_digest: reader.digest()?,
         scenario_id: reader.string()?,
+        region_digest: reader.digest()?,
+        language_assets_digest: reader.digest()?,
+        scenario_digest: reader.digest()?,
+        predicate_program_digest: reader.digest()?,
+        action_schema_digest: reader.digest()?,
+        observation_schema_digest: reader.digest()?,
+        settings_digest: reader.digest()?,
     })
 }
 
@@ -752,10 +772,20 @@ mod tests {
 
         let replay = ReplayRequest {
             artifact: ArtifactIdentity {
-                schema_version: 1,
+                schema_version: crate::artifact::ARTIFACT_SCHEMA_VERSION,
                 content_digest: Digest([9; 32]),
                 build: build(),
+                protocol_name: "dusklight-worker".into(),
+                protocol_version: 1,
+                protocol_capabilities_digest: Digest([10; 32]),
                 scenario_id: "title".into(),
+                region_digest: Digest([11; 32]),
+                language_assets_digest: Digest([12; 32]),
+                scenario_digest: Digest([13; 32]),
+                predicate_program_digest: Digest([14; 32]),
+                action_schema_digest: Digest([15; 32]),
+                observation_schema_digest: Digest([16; 32]),
+                settings_digest: Digest([17; 32]),
             },
             tape: vec![5, 6],
             presentation: PresentationMode::UnpacedHeadful,

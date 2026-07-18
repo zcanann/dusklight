@@ -1,6 +1,6 @@
 //! Deterministic compact-tape composition and milestone-addressed splicing.
 
-use crate::tape::{InputTape, TapeError, WaitCondition};
+use crate::tape::{InputTape, TapeBoot, TapeError, WaitCondition};
 use crate::tape_program::Marker;
 use serde::Serialize;
 use std::error::Error;
@@ -118,6 +118,11 @@ pub enum ChainError {
         actual_numerator: u32,
         actual_denominator: u32,
     },
+    BootMismatch {
+        segment_index: usize,
+        expected: TapeBoot,
+        actual: TapeBoot,
+    },
     PortMismatch {
         segment_index: usize,
         tape_frame: u64,
@@ -166,6 +171,14 @@ impl fmt::Display for ChainError {
             } => write!(
                 formatter,
                 "segment {segment_index} tick rate {actual_numerator}/{actual_denominator} does not match {expected_numerator}/{expected_denominator}"
+            ),
+            Self::BootMismatch {
+                segment_index,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "segment {segment_index} boot origin {actual:?} conflicts with chain origin {expected:?}"
             ),
             Self::PortMismatch {
                 segment_index,
@@ -228,6 +241,7 @@ pub fn concatenate_with_options(
 
     let expected_numerator = segments[0].tape.tick_rate_numerator;
     let expected_denominator = segments[0].tape.tick_rate_denominator;
+    let output_boot = segments[0].tape.boot.clone();
     let mut windows = Vec::with_capacity(segments.len());
     let mut output_capacity = 0_usize;
 
@@ -251,6 +265,20 @@ pub fn concatenate_with_options(
                 expected_denominator,
                 actual_numerator: segment.tape.tick_rate_numerator,
                 actual_denominator: segment.tape.tick_rate_denominator,
+            });
+        }
+        // Process-boot continuation tapes carry no fixture assertion. A later
+        // explicit fixture must, however, describe the same origin as the
+        // first segment; silently discarding a different map start would make
+        // the composed artifact lie about its initial state.
+        if segment_index != 0
+            && !matches!(&segment.tape.boot, TapeBoot::Process)
+            && segment.tape.boot != output_boot
+        {
+            return Err(ChainError::BootMismatch {
+                segment_index,
+                expected: output_boot.clone(),
+                actual: segment.tape.boot.clone(),
             });
         }
         for (tape_frame, frame) in segment.tape.frames.iter().enumerate() {
@@ -337,6 +365,7 @@ pub fn concatenate_with_options(
 
     Ok(ChainedTape {
         tape: InputTape {
+            boot: output_boot,
             tick_rate_numerator: expected_numerator,
             tick_rate_denominator: expected_denominator,
             frames,
@@ -478,6 +507,46 @@ mod tests {
             concatenate(vec![ChainSegment::all(first), ChainSegment::all(second)]).unwrap();
         assert_eq!(chained.tape.tick_rate_numerator, 30);
         assert_eq!(chained.tape.tick_rate_denominator, 1);
+    }
+
+    #[test]
+    fn preserves_one_boot_origin_and_rejects_conflicting_stage_segments() {
+        let origin = TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: Some(2),
+            fixture: None,
+        };
+        let mut first = tape(&[1]);
+        first.boot = origin.clone();
+        let mut matching = tape(&[2]);
+        matching.boot = origin.clone();
+        let chained = concatenate(vec![
+            ChainSegment::all(first.clone()),
+            ChainSegment::all(matching),
+            ChainSegment::all(tape(&[3])),
+        ])
+        .unwrap();
+        assert_eq!(chained.tape.boot, origin);
+
+        let mut conflict = tape(&[4]);
+        conflict.boot = TapeBoot::Stage {
+            stage: "F_SP104".into(),
+            room: 0,
+            point: 0,
+            layer: -1,
+            save_slot: None,
+            fixture: None,
+        };
+        assert!(matches!(
+            concatenate(vec![ChainSegment::all(first), ChainSegment::all(conflict)]),
+            Err(ChainError::BootMismatch {
+                segment_index: 1,
+                ..
+            })
+        ));
     }
 
     #[test]

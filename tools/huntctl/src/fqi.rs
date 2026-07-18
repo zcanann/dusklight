@@ -3,7 +3,10 @@
 //! The learner deliberately operates on compact, memory-backed feature vectors
 //! and discrete macro actions. It is not tied to a game process or tape format.
 
+use crate::artifact::Digest;
+use serde::Serialize;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -12,6 +15,8 @@ pub const MAX_FQI_ACTIONS: usize = 128;
 pub const MAX_FQI_ITERATIONS: usize = 128;
 pub const MAX_FQI_TREES_PER_ACTION: usize = 127;
 pub const MAX_FQI_TREE_DEPTH: usize = 24;
+pub const MAX_FQI_BACKUP_STEPS: usize = 64;
+pub const FITTED_Q_MODEL_SCHEMA_V2: &str = "dusklight-fitted-q-model/v2";
 
 /// One observed macro-action transition.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,10 +31,12 @@ pub struct Transition {
 }
 
 /// Controls both Bellman fitting and the small regression forests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FqiConfig {
     /// Number of fitted Bellman backups.
     pub iterations: usize,
+    /// Observed semi-Markov transitions accumulated before max-Q bootstrap.
+    pub backup_steps: usize,
     /// Trees fitted independently for each action on each backup.
     pub trees_per_action: usize,
     pub max_tree_depth: usize,
@@ -55,6 +62,7 @@ impl Default for FqiConfig {
     fn default() -> Self {
         Self {
             iterations: 24,
+            backup_steps: 1,
             trees_per_action: 31,
             max_tree_depth: 8,
             min_samples_leaf: 1,
@@ -78,12 +86,20 @@ pub struct QEstimate {
     pub variance: f64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FqiBootstrapUnit {
+    TransitionRow,
+    Episode,
+}
+
 /// A fitted, immutable Q function.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FittedQ {
     feature_width: usize,
     actions: Vec<u32>,
     forests: Vec<RegressionForest>,
+    bootstrap_unit: FqiBootstrapUnit,
 }
 
 impl FittedQ {
@@ -94,6 +110,57 @@ impl FittedQ {
         feature_width: usize,
         actions: &[u32],
         transitions: &[Transition],
+        config: &FqiConfig,
+    ) -> Result<Self, FqiError> {
+        if config.backup_steps != 1 {
+            return Err(FqiError::InvalidConfig(
+                "n-step fitting requires explicit episode groups",
+            ));
+        }
+        let groups = (0..transitions.len())
+            .map(|row| row as u64)
+            .collect::<Vec<_>>();
+        Self::fit_internal(
+            feature_width,
+            actions,
+            transitions,
+            &groups,
+            FqiBootstrapUnit::TransitionRow,
+            config,
+        )
+    }
+
+    /// Fit while resampling complete episode clusters rather than presenting
+    /// correlated transition rows as independent bootstrap evidence.
+    pub fn fit_with_episode_groups(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        episode_groups: &[u64],
+        config: &FqiConfig,
+    ) -> Result<Self, FqiError> {
+        if episode_groups.len() != transitions.len() {
+            return Err(FqiError::EpisodeGroupCount {
+                expected: transitions.len(),
+                actual: episode_groups.len(),
+            });
+        }
+        Self::fit_internal(
+            feature_width,
+            actions,
+            transitions,
+            episode_groups,
+            FqiBootstrapUnit::Episode,
+            config,
+        )
+    }
+
+    fn fit_internal(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        episode_groups: &[u64],
+        bootstrap_unit: FqiBootstrapUnit,
         config: &FqiConfig,
     ) -> Result<Self, FqiError> {
         validate_inputs(feature_width, actions, transitions, config)?;
@@ -110,23 +177,19 @@ impl FittedQ {
         }
 
         let mut current: Option<Self> = None;
+        let successors = episode_successors(episode_groups);
         for iteration in 0..config.iterations {
             let targets: Vec<f64> = transitions
                 .iter()
                 .enumerate()
-                .map(|(transition_index, transition)| {
-                    let continuation = match current.as_ref() {
-                        Some(model) if !transition.terminal => {
-                            model
-                                .best_action(&transition.next_state)
-                                .expect("validated state and non-empty actions")
-                                .mean
-                        }
-                        _ => 0.0,
-                    };
-                    let target = f64::from(transition.reward)
-                        + discount_for_duration(config.discount, transition.duration)
-                            * continuation;
+                .map(|(transition_index, _)| {
+                    let target = bellman_target(
+                        transition_index,
+                        transitions,
+                        &successors,
+                        current.as_ref(),
+                        config,
+                    );
                     if target.is_finite() {
                         Ok(target)
                     } else {
@@ -146,6 +209,8 @@ impl FittedQ {
                         transitions,
                         &targets,
                         rows,
+                        episode_groups,
+                        bootstrap_unit,
                         feature_width,
                         config,
                         derive_seed(config.seed, iteration, action_index),
@@ -157,6 +222,7 @@ impl FittedQ {
                 feature_width,
                 actions: action_set.clone(),
                 forests,
+                bootstrap_unit,
             });
         }
 
@@ -169,6 +235,29 @@ impl FittedQ {
 
     pub fn actions(&self) -> &[u32] {
         &self.actions
+    }
+
+    pub fn bootstrap_unit(&self) -> FqiBootstrapUnit {
+        self.bootstrap_unit
+    }
+
+    pub fn artifact_bytes(
+        &self,
+        feature_schema: Digest,
+        action_schema: Digest,
+        training_dataset_sha256: Option<Digest>,
+        training_corpus_sha256: &[Digest],
+        config: &FqiConfig,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&FittedQArtifact {
+            schema: FITTED_Q_MODEL_SCHEMA_V2,
+            feature_schema,
+            action_schema,
+            training_dataset_sha256,
+            training_corpus_sha256,
+            config,
+            model: self,
+        })
     }
 
     pub fn estimate(&self, state: &[f32], action: u32) -> Result<QEstimate, FqiError> {
@@ -226,6 +315,7 @@ pub enum FqiError {
     MissingActionSamples(u32),
     UnknownAction(u32),
     EmptyTransitions,
+    EpisodeGroupCount { expected: usize, actual: usize },
     FeatureWidth { expected: usize, actual: usize },
     NonFiniteFeature,
     NonFiniteReward,
@@ -249,6 +339,10 @@ impl fmt::Display for FqiError {
             }
             Self::UnknownAction(action) => write!(formatter, "unknown action {action}"),
             Self::EmptyTransitions => write!(formatter, "transition batch must be non-empty"),
+            Self::EpisodeGroupCount { expected, actual } => write!(
+                formatter,
+                "episode-group count mismatch: expected {expected}, got {actual}"
+            ),
             Self::FeatureWidth { expected, actual } => write!(
                 formatter,
                 "feature width mismatch: expected {expected}, got {actual}"
@@ -322,6 +416,11 @@ fn validate_inputs(
     }
     if config.iterations > MAX_FQI_ITERATIONS {
         return Err(FqiError::InvalidConfig("iterations must not exceed 128"));
+    }
+    if config.backup_steps == 0 || config.backup_steps > MAX_FQI_BACKUP_STEPS {
+        return Err(FqiError::InvalidConfig(
+            "backup_steps must be within 1..=64",
+        ));
     }
     if config.trees_per_action == 0 {
         return Err(FqiError::InvalidConfig("trees_per_action must be non-zero"));
@@ -417,7 +516,7 @@ fn validate_inputs(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 struct RegressionForest {
     trees: Vec<RegressionTree>,
 }
@@ -427,6 +526,8 @@ impl RegressionForest {
         transitions: &[Transition],
         targets: &[f64],
         action_rows: &[usize],
+        episode_groups: &[u64],
+        bootstrap_unit: FqiBootstrapUnit,
         feature_width: usize,
         config: &FqiConfig,
         seed: u64,
@@ -435,9 +536,7 @@ impl RegressionForest {
             .map(|tree_index| {
                 let mut random = SplitMix64::new(mix64(seed ^ tree_index as u64));
                 let rows = if config.bootstrap {
-                    (0..action_rows.len())
-                        .map(|_| action_rows[random.index(action_rows.len())])
-                        .collect()
+                    bootstrap_rows(action_rows, episode_groups, bootstrap_unit, &mut random)
                 } else {
                     action_rows.to_vec()
                 };
@@ -474,7 +573,32 @@ impl RegressionForest {
     }
 }
 
-#[derive(Clone, Debug)]
+fn bootstrap_rows(
+    action_rows: &[usize],
+    episode_groups: &[u64],
+    unit: FqiBootstrapUnit,
+    random: &mut SplitMix64,
+) -> Vec<usize> {
+    match unit {
+        FqiBootstrapUnit::TransitionRow => (0..action_rows.len())
+            .map(|_| action_rows[random.index(action_rows.len())])
+            .collect(),
+        FqiBootstrapUnit::Episode => {
+            let mut grouped = BTreeMap::<u64, Vec<usize>>::new();
+            for row in action_rows {
+                grouped.entry(episode_groups[*row]).or_default().push(*row);
+            }
+            let groups = grouped.into_values().collect::<Vec<_>>();
+            let mut rows = Vec::new();
+            for _ in 0..groups.len() {
+                rows.extend_from_slice(&groups[random.index(groups.len())]);
+            }
+            rows
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 struct RegressionTree {
     root: TreeNode,
 }
@@ -497,7 +621,7 @@ impl RegressionTree {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 enum TreeNode {
     Leaf(f64),
     Split {
@@ -650,10 +774,21 @@ struct SplitCandidate {
     right: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 enum SplitRule {
     NumericLessOrEqual(f32),
     CategoricalEqual(f32),
+}
+
+#[derive(Serialize)]
+struct FittedQArtifact<'a> {
+    schema: &'static str,
+    feature_schema: Digest,
+    action_schema: Digest,
+    training_dataset_sha256: Option<Digest>,
+    training_corpus_sha256: &'a [Digest],
+    config: &'a FqiConfig,
+    model: &'a FittedQ,
 }
 
 impl SplitRule {
@@ -701,6 +836,52 @@ fn target_sse(targets: &[f64], rows: &[usize], mean: f64) -> f64 {
 
 fn integer_sqrt(value: usize) -> usize {
     (value as f64).sqrt().floor() as usize
+}
+
+fn episode_successors(groups: &[u64]) -> Vec<Option<usize>> {
+    let mut successors = vec![None; groups.len()];
+    let mut last = BTreeMap::<u64, usize>::new();
+    for (index, group) in groups.iter().enumerate() {
+        if let Some(previous) = last.insert(*group, index) {
+            successors[previous] = Some(index);
+        }
+    }
+    successors
+}
+
+fn bellman_target(
+    start: usize,
+    transitions: &[Transition],
+    successors: &[Option<usize>],
+    current: Option<&FittedQ>,
+    config: &FqiConfig,
+) -> f64 {
+    let mut target = 0.0;
+    let mut cumulative_discount = 1.0;
+    let mut index = start;
+    for step in 0..config.backup_steps {
+        let transition = &transitions[index];
+        target += cumulative_discount * f64::from(transition.reward);
+        cumulative_discount *= discount_for_duration(config.discount, transition.duration);
+        if transition.terminal {
+            return target;
+        }
+        let reached_horizon = step + 1 == config.backup_steps;
+        match (reached_horizon, successors[index]) {
+            (false, Some(next)) => index = next,
+            _ => {
+                if let Some(model) = current {
+                    target += cumulative_discount
+                        * model
+                            .best_action(&transition.next_state)
+                            .expect("validated state and non-empty actions")
+                            .mean;
+                }
+                return target;
+            }
+        }
+    }
+    target
 }
 
 fn discount_for_duration(discount: f32, mut duration: u32) -> f64 {
@@ -858,6 +1039,57 @@ mod tests {
         let second_rank = second.rank_actions(&[0.0]).unwrap();
         assert_eq!(first_rank, second_rank);
         assert!(first_rank.iter().any(|estimate| estimate.variance > 0.0));
+    }
+
+    #[test]
+    fn episode_bootstrap_resamples_whole_correlated_groups() {
+        let action_rows = vec![0, 1, 2, 3, 4];
+        let episode_groups = vec![10, 10, 20, 20, 20];
+        let mut random = SplitMix64::new(7);
+        let sampled = bootstrap_rows(
+            &action_rows,
+            &episode_groups,
+            FqiBootstrapUnit::Episode,
+            &mut random,
+        );
+        let count = |row| sampled.iter().filter(|sample| **sample == row).count();
+        assert_eq!(count(0), count(1));
+        assert_eq!(count(2), count(3));
+        assert_eq!(count(3), count(4));
+
+        let batch = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 4.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, false),
+        ];
+        let model = FittedQ::fit_with_episode_groups(
+            1,
+            &[ADVANCE, WAIT],
+            &batch,
+            &[1, 1, 2, 2],
+            &FqiConfig {
+                iterations: 2,
+                trees_per_action: 3,
+                ..FqiConfig::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(model.bootstrap_unit(), FqiBootstrapUnit::Episode);
+        assert_eq!(
+            FittedQ::fit_with_episode_groups(
+                1,
+                &[ADVANCE, WAIT],
+                &batch,
+                &[1, 2],
+                &FqiConfig::default(),
+            )
+            .unwrap_err(),
+            FqiError::EpisodeGroupCount {
+                expected: 4,
+                actual: 2
+            }
+        );
     }
 
     #[test]

@@ -27,6 +27,7 @@
 #include "dusk/logging.h"
 #include "dusk/version.hpp"
 #include "dusk/main.h"
+#include "dusk/automation/scenario_fixture_runtime.hpp"
 #include "m_Do/m_Do_MemCard.h"
 #endif
 
@@ -810,6 +811,13 @@ void dScnLogo_c::nextSceneChange() {
 
                     fopScnM_ChangeReq(this, fpcNm_PLAY_SCENE_e, 0, 30);
                     dusk::SaveRequested = 0xff; //Skip requesting the scene from above
+                }
+
+                if (!dusk::automation::apply_scenario_fixture_save_state()) {
+                    DuskLog.error("Scenario fixture save-state application failed: {}",
+                        dusk::automation::scenario_fixture_runtime_error());
+                    dusk::IsRunning = false;
+                    return;
                 }
 
                 // Use both to force-set start stage

@@ -139,6 +139,66 @@
       }
     },
     {
+      "label": "Glitch Hunt: Prepare Route Workbench (macOS)",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Glitch Hunt: Build Dusklight (macOS)",
+        "Glitch Hunt: Build Route Workbench (macOS)"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Glitch Hunt: Configure Dusklight (macOS)",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--preset", "macos-default-debug",
+        "-DDUSK_ENABLE_CODE_MODS=OFF",
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON",
+        "-DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=ON",
+        "-DSQLite3_INCLUDE_DIR=/opt/homebrew/opt/sqlite/include",
+        "-DSQLite3_LIBRARY=/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib"
+      ],
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Glitch Hunt: Build Dusklight (macOS)",
+      "type": "process",
+      "command": "cmake",
+      "args": [
+        "--build", "--preset", "macos-default-debug",
+        "--target", "dusklight"
+      ],
+      "problemMatcher": "$gcc",
+      "dependsOn": "Glitch Hunt: Configure Dusklight (macOS)",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Glitch Hunt: Build Route Workbench (macOS)",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--manifest-path", "${workspaceFolder}/tools/huntctl/Cargo.toml"
+      ],
+      "problemMatcher": "$rustc",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "Glitch Hunt: Run Selected Test",
       "type": "process",
       "command": "powershell.exe",

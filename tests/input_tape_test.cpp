@@ -1,6 +1,7 @@
 #include "dusk/automation/file_select_observer.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
+#include "dusk/automation/scenario_fixture.hpp"
 
 #include <dolphin/pad.h>
 #include <zstd.h>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -165,6 +167,98 @@ void testCanonicalRoundTrip() {
     REQUIRE(decoded == tape);
 }
 
+void testFullPadSurfaceOnAllFourPorts() {
+    using namespace dusk::automation;
+
+    InputTape tape;
+    tape.frames.resize(1);
+    InputFrame& frame = tape.frames[0];
+    frame.ownedPorts = 0x0f;
+    for (std::size_t port = 0; port < kInputPortCount; ++port) {
+        frame.pads[port] = {
+            .buttons = static_cast<std::uint16_t>(0xffffu - port),
+            .stickX = static_cast<std::int8_t>(-128 + port),
+            .stickY = static_cast<std::int8_t>(127 - port),
+            .substickX = static_cast<std::int8_t>(-64 + port),
+            .substickY = static_cast<std::int8_t>(64 - port),
+            .triggerLeft = static_cast<std::uint8_t>(255 - port),
+            .triggerRight = static_cast<std::uint8_t>(port),
+            .analogA = static_cast<std::uint8_t>(17 + port),
+            .analogB = static_cast<std::uint8_t>(239 - port),
+            .flags = port == 3 ? RawPadFlags::None : RawPadFlags::Connected,
+            .error = static_cast<std::int8_t>(port == 3 ? PAD_ERR_NO_CONTROLLER : port),
+        };
+    }
+
+    std::vector<std::uint8_t> encoded;
+    REQUIRE(encode_input_tape(tape, encoded) == InputTapeError::None);
+    InputTape decoded;
+    REQUIRE(decode_input_tape(encoded, decoded) == InputTapeError::None);
+    REQUIRE(decoded == tape);
+    REQUIRE(decoded.frames[0].ownedPorts == 0x0f);
+
+    for (std::size_t port = 0; port < kInputPortCount; ++port) {
+        const PADStatus native = raw_pad_state_to_pad_status(decoded.frames[0].pads[port]);
+        REQUIRE(native.button == frame.pads[port].buttons);
+        REQUIRE(native.stickX == frame.pads[port].stickX);
+        REQUIRE(native.stickY == frame.pads[port].stickY);
+        REQUIRE(native.substickX == frame.pads[port].substickX);
+        REQUIRE(native.substickY == frame.pads[port].substickY);
+        REQUIRE(native.triggerLeft == frame.pads[port].triggerLeft);
+        REQUIRE(native.triggerRight == frame.pads[port].triggerRight);
+        REQUIRE(native.analogA == frame.pads[port].analogA);
+        REQUIRE(native.analogB == frame.pads[port].analogB);
+        REQUIRE(native.err == frame.pads[port].error);
+    }
+}
+
+void testStageBootAndCompressedV2Compatibility() {
+    using namespace dusk::automation;
+
+    InputTape stageTape;
+    stageTape.boot = {
+        .kind = TapeBootKind::Stage,
+        .stage = "F_SP103",
+        .room = 1,
+        .point = 257,
+        .layer = -1,
+        .saveSlot = 2,
+    };
+    stageTape.frames.resize(1);
+    std::vector<std::uint8_t> stageBytes;
+    REQUIRE(encode_input_tape(stageTape, stageBytes) == InputTapeError::None);
+    InputTape decoded;
+    REQUIRE(decode_input_tape(stageBytes, decoded) == InputTapeError::None);
+    REQUIRE(decoded.boot == stageTape.boot);
+
+    std::vector<std::uint8_t> v30 = stageBytes;
+    writeU16(v30.data() + 10, 0);
+    v30[46] = 0;
+    REQUIRE(decode_input_tape(v30, decoded) == InputTapeError::None);
+    REQUIRE(decoded.boot.kind == TapeBootKind::Stage);
+    REQUIRE(decoded.boot.saveSlot == 0);
+
+    InputTape processTape;
+    processTape.frames.resize(1);
+    std::vector<std::uint8_t> v3;
+    REQUIRE(encode_input_tape(processTape, v3) == InputTapeError::None);
+    constexpr std::size_t v2HeaderSize = 40;
+    std::vector<std::uint8_t> v2;
+    v2.insert(v2.end(), v3.begin(), v3.begin() + v2HeaderSize);
+    v2.insert(v2.end(), v3.begin() + kInputTapeHeaderSize, v3.end());
+    writeU16(v2.data() + 8, 2);
+    writeU16(v2.data() + 10, 0);
+    writeU16(v2.data() + 12, v2HeaderSize);
+    REQUIRE(decode_input_tape(v2, decoded) == InputTapeError::None);
+    REQUIRE(decoded.boot.kind == TapeBootKind::Process);
+
+    stageTape.boot.stage.clear();
+    REQUIRE(encode_input_tape(stageTape, stageBytes) == InputTapeError::InvalidBoot);
+    stageTape.boot.stage = "F_SP103";
+    stageTape.boot.saveSlot = 4;
+    REQUIRE(encode_input_tape(stageTape, stageBytes) == InputTapeError::InvalidBoot);
+}
+
 void testMalformedTapesAreRejected() {
     using namespace dusk::automation;
 
@@ -179,7 +273,7 @@ void testMalformedTapesAreRejected() {
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::BadMagic);
 
     malformed = bytes;
-    malformed[8] = 3;
+    malformed[8] = 4;
     REQUIRE(decode_input_tape(malformed, decoded) == InputTapeError::UnsupportedVersion);
 
     malformed = bytes;
@@ -893,6 +987,96 @@ void testRecorderOutputDependsOnPadTicksNotHostPacing() {
     REQUIRE(roundTrip.frames[2].pads[0].buttons == (PAD_BUTTON_A | PAD_BUTTON_B));
 }
 
+void testScenarioFixtureCanonicalRoundTripAndCorruption() {
+    using namespace dusk::automation;
+
+    constexpr std::string_view goldenHex =
+        "4455534b465854520100000020000c002c010000000000000000000000000000"
+        "0100000013000000776f6c6620636f6d626174206c6f61646f75740002000000"
+        "0400000001000000030000000400000014002800040000001800000000000000"
+        "0100000002000000030000000700000000000000040000001800000001000000"
+        "0400000005000000060000000800000000000000050000000400000002000000"
+        "0600000008000000010010001e000000060000000800000004002a0001000000"
+        "0700000004000000020009000800000008000000030101000c00000009000000"
+        "210000001502080067616d652e64616d6167654d756c7469706c696572020000"
+        "0000000000000000090000001a0000001501010067616d652e656e61626c654d"
+        "6972726f724d6f6465000000";
+    const auto nibble = [](const char value) -> std::uint8_t {
+        return static_cast<std::uint8_t>(value <= '9' ? value - '0' : value - 'a' + 10);
+    };
+    std::vector<std::uint8_t> golden;
+    golden.reserve(goldenHex.size() / 2);
+    for (std::size_t index = 0; index < goldenHex.size(); index += 2) {
+        golden.push_back(static_cast<std::uint8_t>(
+            (nibble(goldenHex[index]) << 4) | nibble(goldenHex[index + 1])));
+    }
+
+    ScenarioFixture fixture;
+    fixture.name = "wolf combat loadout";
+    fixture.form = PlayerFixtureForm::Wolf;
+    fixture.health = HealthFixture{20, 40};
+    fixture.rng = {
+        {FixtureRngStream::Secondary, 4, 5, 6, 8},
+        {FixtureRngStream::Primary, 1, 2, 3, 7},
+    };
+    fixture.videoMode = FixtureVideoMode::NtscProgressive;
+    fixture.inventory = {{4, 0x2a, 1}, {1, 0x10, 30}};
+    fixture.equipment = {{2, 9}};
+    fixture.flags = {{FixtureFlagDomain::Switch, 1, 12, true}};
+    fixture.settings = {
+        {"game.enableMirrorMode", false},
+        {"game.damageMultiplier", std::int64_t{2}},
+    };
+
+    std::vector<std::uint8_t> encoded;
+    REQUIRE(encode_scenario_fixture(fixture, encoded) == ScenarioFixtureError::None);
+    REQUIRE(encoded == golden);
+    REQUIRE(encoded.size() > kScenarioFixtureHeaderSize);
+    REQUIRE(encoded[0] == 'D' && encoded[4] == 'F');
+    REQUIRE(encoded[14] == 12 && encoded[15] == 0);
+
+    ScenarioFixture decoded;
+    REQUIRE(decode_scenario_fixture(encoded, decoded) == ScenarioFixtureError::None);
+    REQUIRE(decoded.name == fixture.name);
+    REQUIRE(decoded.form == fixture.form);
+    REQUIRE(decoded.health == fixture.health);
+    REQUIRE(decoded.rng.front().stream == FixtureRngStream::Primary);
+    REQUIRE(decoded.inventory.front().slot == 1);
+    REQUIRE(decoded.settings.front().key == "game.damageMultiplier");
+
+    std::vector<std::uint8_t> second;
+    REQUIRE(encode_scenario_fixture(decoded, second) == ScenarioFixtureError::None);
+    REQUIRE(second == encoded);
+
+    InputTape tape;
+    tape.boot.kind = TapeBootKind::Stage;
+    tape.boot.stage = "F_SP103";
+    tape.boot.room = 1;
+    tape.boot.point = 1;
+    tape.boot.layer = 3;
+    tape.boot.fixture = decoded;
+    tape.frames.resize(1);
+    std::vector<std::uint8_t> tapeBytes;
+    REQUIRE(encode_input_tape(tape, tapeBytes) == InputTapeError::None);
+    REQUIRE(tapeBytes[47] == 1);
+    InputTape decodedTape;
+    REQUIRE(decode_input_tape(tapeBytes, decodedTape) == InputTapeError::None);
+    REQUIRE(decodedTape == tape);
+
+    for (std::size_t end = 0; end < encoded.size(); ++end) {
+        ScenarioFixture truncated;
+        REQUIRE(decode_scenario_fixture(
+                    std::span<const std::uint8_t>(encoded.data(), end), truncated) !=
+                ScenarioFixtureError::None);
+    }
+    auto reserved = encoded;
+    reserved[20] = 1;
+    REQUIRE(decode_scenario_fixture(reserved, decoded) == ScenarioFixtureError::InvalidHeader);
+
+    fixture.inventory.push_back({1, 99, 1});
+    REQUIRE(encode_scenario_fixture(fixture, second) == ScenarioFixtureError::DuplicateKey);
+}
+
 } // namespace
 
 extern "C" void PADSetAutomationStatus(const u32 port, const PADStatus* status) {
@@ -938,6 +1122,8 @@ extern "C" void PADClamp(PADStatus* statuses) {
 
 int main() {
     testCanonicalRoundTrip();
+    testFullPadSurfaceOnAllFourPorts();
+    testStageBootAndCompressedV2Compatibility();
     testMalformedTapesAreRejected();
     testMinorZeroConnectionErrorsRemainCompatible();
     testLegacyMinorOneAndTwoRemainCompatible();
@@ -962,6 +1148,7 @@ int main() {
     testRecorderArmsUntilExactHandoff();
     testRecordedRawInputReplaysThroughExactlyOneClamp();
     testRecorderOutputDependsOnPadTicksNotHostPacing();
+    testScenarioFixtureCanonicalRoundTripAndCorruption();
     std::cout << "input tape tests passed\n";
     return 0;
 }

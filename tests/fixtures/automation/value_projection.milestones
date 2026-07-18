@@ -1,0 +1,13 @@
+milestones 1.4
+
+milestone "value-parity-fixture" {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1
+  projection "handoff-state" {
+    rng primary
+    rng secondary
+    actor_population "F_SP103" 1
+    flag event 821
+    flag switch 1 239
+  }
+}

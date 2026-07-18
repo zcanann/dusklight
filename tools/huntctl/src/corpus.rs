@@ -1,5 +1,5 @@
 use crate::artifact::{BuildIdentity, Digest};
-use crate::tape::{InputTape, TapeError, TapeVersion};
+use crate::tape::{InputTape, TapeBoot, TapeError, TapeVersion};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const CORPUS_SCHEMA: &str = "dusklight-corpus/v1";
-pub const RUN_SCHEMA: &str = "dusklight-run/v1";
+pub const RUN_SCHEMA: &str = "dusklight-run/v2";
+const LEGACY_RUN_SCHEMA: &str = "dusklight-run/v1";
 pub const TAPE_MEDIA_TYPE: &str = "application/x-dusktape";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -44,6 +45,8 @@ pub struct RunManifest {
     pub schema: String,
     pub build: BuildIdentity,
     pub scenario: ScenarioManifest,
+    #[serde(default)]
+    pub boot: TapeBoot,
     pub tape: BlobManifest,
     pub tape_version: TapeVersion,
     pub tick_rate_numerator: u32,
@@ -81,6 +84,7 @@ pub enum CorpusError {
         received: String,
     },
     InvalidScenario,
+    BootMismatch,
     InvalidDigestName(String),
     HashMismatch {
         expected: Digest,
@@ -105,6 +109,9 @@ impl fmt::Display for CorpusError {
             }
             Self::InvalidScenario => {
                 f.write_str("scenario id must be nonempty and metadata must be a JSON object")
+            }
+            Self::BootMismatch => {
+                f.write_str("run manifest boot origin does not match its input tape")
             }
             Self::InvalidDigestName(name) => {
                 write!(f, "invalid content-addressed filename {name:?}")
@@ -195,6 +202,7 @@ impl Corpus {
                 id: scenario_id,
                 metadata: scenario_metadata,
             },
+            boot: decoded.tape.boot,
             tape: BlobManifest {
                 algorithm: "sha256".into(),
                 digest: tape_digest,
@@ -268,7 +276,10 @@ impl Corpus {
                 });
             }
             verify_digest(blob.digest, &bytes)?;
-            InputTape::decode(&bytes)?;
+            let decoded = InputTape::decode(&bytes)?;
+            if decoded.tape.boot != artifact.manifest.boot {
+                return Err(CorpusError::BootMismatch);
+            }
             referenced.insert(blob.digest);
         }
         for first_byte in fs::read_dir(self.root.join("blobs").join("sha256"))? {
@@ -313,7 +324,12 @@ impl Corpus {
         let bytes = fs::read(self.run_path(artifact_id))?;
         verify_digest(artifact_id, &bytes)?;
         let manifest: RunManifest = serde_json::from_slice(&bytes)?;
-        require_schema(&manifest.schema, RUN_SCHEMA)?;
+        if manifest.schema != RUN_SCHEMA && manifest.schema != LEGACY_RUN_SCHEMA {
+            return Err(CorpusError::SchemaMismatch {
+                expected: RUN_SCHEMA,
+                received: manifest.schema,
+            });
+        }
         Ok(manifest)
     }
 }

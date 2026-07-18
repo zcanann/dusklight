@@ -16,24 +16,47 @@ evolution. Python and PowerShell are not in the execution path.
 
 ## Candidate IR
 
-A candidate uses schema dusklight-search-candidate/v1. Its typed macros compile
+A candidate uses schema dusklight-search-candidate/v2. Its typed macros compile
 to DUSKTAPE, which remains replay authority:
 
     {
-      "schema": "dusklight-search-candidate/v1",
+      "schema": "dusklight-search-candidate/v2",
       "segment": "fsp103_to_fsp104",
+      "boot": {
+        "kind": "stage", "stage": "F_SP103", "room": 1, "point": 1, "layer": 3
+      },
       "actions": [
         { "op": "neutral", "frames": 180 },
         { "op": "move", "angle_degrees": 0, "magnitude": 127, "frames": 30 },
-        { "op": "roll", "angle_degrees": 4, "magnitude": 127, "recovery_frames": 12 }
+        {
+          "op": "roll", "angle_degrees": 4, "magnitude": 127,
+          "button_frame": 1, "recovery_frames": 12,
+          "spacing": { "period_ticks": 4, "phase_tick": 2 }
+        },
+        {
+          "op": "game_tactic",
+          "plan": {
+            "schema": "dusklight-game-tactic/v1",
+            "tactic": {
+              "kind": "crawl", "direction_degrees": 0,
+              "magnitude": 127, "frames": 20, "action_held": true
+            },
+            "cancellation_conditions": []
+          }
+        }
       ],
       "ancestry": { "generation": 0 }
     }
 
 Zero degrees is forward and positive 90 degrees is right. A roll presses B on
-its first frame and holds its analog direction during recovery. Press supports
-typed A, B, and Start pulses for boot-menu optimization. Neutral makes startup
-and inter-input waits explicit and evolvable.
+its declared frame, holds its analog direction during recovery, and may require
+an absolute modulo spacing phase. Missing timing fields preserve the legacy
+first-frame, unconstrained-phase behavior. Press supports typed A, B, and Start
+pulses for boot-menu optimization. `game_tactic` exposes bounded combat, item,
+interaction, traversal, and mount recipes; static candidates reject reactive
+cancellation conditions. `motion_path` exposes exact-duration integer waypoint,
+rail, Catmull–Rom spline, and cubic Bézier stick paths with rational sampling
+phase. Neutral makes startup and inter-input waits explicit and evolvable.
 
 An existing absolute boot tape can be imported without hand-authoring JSON:
 
@@ -43,13 +66,14 @@ Boot import is lossless and deliberately narrow. It accepts neutral frames and
 zero-stick typed A/B/Start pulses. Both anchored movement profiles accept an
 absolute port-one movement tape: they run-length encode the complete raw pad
 state as `pad_run` actions, including analog samples and trigger values, and
-verifies that compilation reproduces every source byte. Reactive waits and
+preserve the tape's boot origin while verifying that compilation reproduces
+every source byte. Reactive waits and
 noncanonical secondary-port state remain rejected.
 
 The segment profiles are:
 
 - boot_to_fsp103: process boot through restored control in F_SP103;
-- fsp103_to_fsp104: direct F_SP103 start through entry into F_SP104;
+- fsp103_to_fsp104: tape-declared direct F_SP103 start through entry into F_SP104;
 - link_control_to_tunnel_crawl_start: an anchored suffix from the checked-in
   Link-control boundary to `crawl_start` in F_SP104 room 1 spawn 0.
 
@@ -71,7 +95,8 @@ continue from an exact previously mined suffix candidate; its segment profile
 must match the selected timeline segment.
 
 Every trial concatenates the same immutable prefix with one candidate suffix
-and boots that complete tape in a clean process. It does not pass `--stage`.
+and boots that complete tape in a clean process. It does not pass `--stage`;
+any fixture origin comes from the composed tape itself.
 The native run receives the compiled milestone program and exactly the source
 and goal milestones. A result is accepted only when all of the following match:
 
@@ -142,6 +167,13 @@ The native command owns seed, evaluate, rank, evolve, and champion promotion:
 Each generation contains its manifest, candidates, compact tapes, isolated
 attempt evidence, results, and leaderboard. The final root contains the exact
 `champion.candidate.json`, its compiled `champion.tape`, and `run.summary.json`.
+Population schema v3 and result schema v3 bind one exact tape boot origin at
+the top level, and every leaderboard row repeats it. Population v3 also stores
+the compiled tape's canonical input-complexity count. Construction rejects
+candidates with mixed origins; collection and ranking reject results whose
+origin differs from the population. Consequently a process-boot score can
+never enter a stage-fixture leaderboard even when both use the same segment
+label.
 To continue mining from an existing candidate instead of restarting from the
 built-in baseline, pass `--candidate FILE` to `search run`. The candidate is
 validated and must match `--segment`.
@@ -192,16 +224,177 @@ coordinated moves that require a temporarily later goal tick.
 Both boot proof tools require at least two repetitions; `--repetitions 1` is
 rejected rather than silently weakening determinism into a single observation.
 
+## Discrete beam search and terminal branch bounds
+
+For a finite catalog of typed `MacroAction` JSON values, run bounded beam
+search through the same native evaluator used by ordinary populations:
+
+```text
+huntctl search beam --candidate build/seed.candidate.json \
+  --options build/discrete-options.json --game ./dusklight --dvd game.iso \
+  --output build/search/beam --beam-width 8 --maximum-depth 8 \
+  --candidate-budget 1000 --workers 8 --repetitions 3
+```
+
+Depth zero evaluates the seed. Each later depth appends one catalog option to
+each retained prefix, deduplicates candidate identities before launch, and
+ranks only repeated native milestone results. The candidate budget counts
+evaluated prefixes and the summary reports the corresponding simulator
+episodes, duplicates, beam-pruned prefixes, and depth count.
+
+Branch-and-bound uses one deliberately narrow exact bound: a prefix that has
+already proved the terminal goal is never expanded. A suffix appended after
+that first hit cannot improve its hit tick and can only increase tape size, so
+all such children are dominated. No learned estimate or heuristic is treated
+as a bound. Every nonterminal score remains an exact simulator rollout, and
+the complete per-depth populations, results, leaderboards, and attempt evidence
+remain under the output root.
+
+## Bounded CEM and CMA-ES
+
+Low-dimensional typed parameters can be optimized with seeded cross-entropy or
+full-covariance CMA-ES:
+
+```text
+huntctl search continuous --method cma-es \
+  --candidate build/seed.candidate.json --axes build/axes.json \
+  --game ./dusklight --dvd game.iso --output build/search/cma \
+  --generations 20 --population 32 --elites 8 \
+  --initial-sigma 0.25 --candidate-budget 640 --rng-seed 7
+```
+
+`dusklight-continuous-axes/v1` declares 1–16 unique bounded axes over typed move
+and roll heading, magnitude, duration/button fields or motion-path duration,
+sample phase, and point coordinates. Values are sampled continuously, rounded
+once into the declared native field, compiled into an ordinary candidate, and
+validated. Candidates that round to a previously seen input are attributed as
+duplicates and never launched.
+
+CEM maintains a smoothed full covariance over its ranked elite set. CMA-ES
+maintains the standard weighted mean, global step size, covariance and
+conjugate evolution paths, using a jitter-bounded Cholesky transform. Both are
+seeded and bounded; neither consumes scalar model fitness. Each generation is
+ranked best-to-worst exclusively by repeated native `SearchResults`, then saves
+the ranked samples and next optimizer state under `gNNN/optimizer.json`.
+`continuous.summary.json` reports candidate/episode budgets, invalid and
+duplicate proposals, final optimizer state, exact champion tape, and native
+lexicographic score.
+
+## Bounded Bayesian optimization
+
+For tactics where each native episode is expensive but the response is expected
+to be locally smooth, the same typed axis file can drive Gaussian-process
+expected-improvement search:
+
+```text
+huntctl search bayesian \
+  --candidate build/seed.candidate.json --axes build/axes.json \
+  --game ./dusklight --dvd game.iso --output build/search/bayesian \
+  --generations 20 --batch-size 4 --initial-samples 8 \
+  --acquisition-pool 2048 --candidate-budget 80 --rng-seed 7
+```
+
+The initial design and every bounded acquisition pool come from a seeded,
+shifted Halton sequence. After the initial design, an RBF Gaussian process fits
+the empirical within-generation native rank utility and expected improvement
+selects the next batch. That utility is intentionally ordinal: it does not
+replace or approximate the milestone score across generations. Every proposed
+vector is rounded into typed candidate fields, compiled, validated, and
+deduplicated before launch; repeated native `SearchResults` remain the only
+ranking and champion authority.
+
+The optimizer accepts at most 16 dimensions, 512 observations, and 65,536
+acquisition points per batch so exact cubic GP fitting stays operationally
+bounded. Each `gNNN/optimizer.json` records proposals, native rank observations,
+and the next acquisition state. `bayesian.summary.json` records candidate and
+episode budgets, invalid and duplicate proposals, the final surrogate state,
+and the exact native-ranked champion candidate and tape.
+
+## Equal-budget proposer tournaments
+
+`search tournament` compares already materialized proposer populations through
+one deduplicated native evaluation:
+
+```text
+huntctl search tournament --definition build/tournament.json \
+  --game ./dusklight --dvd game.iso --output build/search/tournament \
+  --workers 8 --repetitions 3
+```
+
+The definition uses schema `dusklight-proposer-tournament-definition/v1`, one
+`episodes` or `candidate_ticks` cap per proposer, and 2–16 named entries:
+
+```json
+{
+  "schema": "dusklight-proposer-tournament-definition/v1",
+  "budget_unit": "episodes",
+  "budget_per_proposer": 48,
+  "proposers": [
+    { "name": "incumbent", "kind": "incumbent_mutation", "population": "incumbent/manifest.json" },
+    { "name": "blind", "kind": "blind_exploration", "population": "blind/manifest.json" },
+    { "name": "cma", "kind": "structured", "population": "cma/manifest.json" },
+    { "name": "fqi", "kind": "learned", "population": "fqi/manifest.json" }
+  ]
+}
+```
+
+All populations must carry the same segment and boot origin. Episode caps must
+be exact multiples of the repetition count; candidate-tick caps charge compiled
+tape frames times repetitions. The runner refuses definitions without both an
+incumbent-mutation lane and a blind-exploration lane, selects every lane under
+the same declared cap, and deduplicates candidate IDs globally before launching
+the combined population. A shared tape is evaluated once but credited to every
+proposer that supplied it.
+
+`tournament.summary.json` attributes shared duplicates, native predicate hits
+and misses, improvements over the incumbent champion, frame wins, distinct
+authenticated boundaries, repeated cold-replay passes, charged and physical
+episodes/ticks, and total evaluation wall time. Infrastructure failures remain
+hard failures; their candidate/proposer ancestry and typed crash, timeout,
+desync, or unsupported outcome stay in `evaluations/evaluation.json` rather than
+being converted into a score. No proposer supplies results or bypasses native
+predicate, determinism, and replay validation.
+
 Individual primitives remain available:
 
     huntctl search seed --segment fsp103_to_fsp104 --output build/search/g0 --size 16 --rng-seed 1
     huntctl search rank --population build/search/g0/manifest.json --results build/search/g0/results.json
     huntctl search evolve --population build/search/g0/manifest.json --results build/search/g0/results.json --output build/search/g1 --size 16 --elites 4 --rng-seed 2
 
-Ranking is lexicographic: deepest verified milestone, first-hit tick, then
-shorter tape. Repetitions are a hard determinism check, not a probabilistic
+Current result schema v3 carries the exact terminal predicate verdict instead
+of inferring feasibility from progress depth. Ranking uses this complete,
+declared lexicographic vector, with earlier axes always dominating later ones:
+
+1. exact terminal-predicate feasibility, feasible first;
+2. deepest verified goal/milestone depth, deeper first;
+3. first-hit median and then best simulation tick, earlier first;
+4. compiled tape frame count, shorter first;
+5. canonical input complexity, simpler first;
+6. authenticated risk-event count, lower first; and
+7. declared boundary compatibility, ordered `exact`, `compatible`, `unknown`,
+   then `incompatible`.
+
+Input complexity is representation-independent because it is computed after
+candidate compilation over absolute DUSKTAPE frames. Each changed ownership
+bit and button bit counts independently; each change to wait kind, wait
+timeout, stick/substick axis, trigger, analog button, connection, or controller
+error counts once. Repeating an unchanged frame costs no additional
+complexity.
+
+Risk `null` means unmeasured, never zero, and ranks below every measured risk
+count. Boundary compatibility remains `unknown` until it is compared against a
+declared authenticated reference; route topology is never used as a substitute.
+Candidate ID is only a deterministic tie-breaker after all declared axes.
+
+A current result without `goal_reached`, a goal hit with no milestone evidence,
+or repeated runs that disagree on the verdict is rejected before ranking.
+Legacy result v1/v2 and population v1/v2 files remain readable under their old
+depth-implied or unmeasured-complexity semantics.
+
+Repetitions are a hard determinism check, not a probabilistic
 ranking dimension: identical trials must agree on milestone depth, goal
-outcome, every hit's simulation tick and tape frame, and boundary fingerprints.
+outcome, every hit's simulation tick and tape frame, boundary fingerprints, and
+named value projections.
 Any disagreement rejects the evaluation. Deterministic all-miss candidates are
 valid evidence and remain below candidates that reach a milestone.
 
@@ -216,6 +409,14 @@ tapes deduplicate even if
 separate search branches rediscover them; ancestry records the retained parent
 and mutation for every generation.
 
+For a successful typed roll, `search golf-option` provides a deterministic
+option-relative neighborhood instead of a population mutation. It authenticates
+the seed execution and tape, then emits exact proposals for heading, magnitude,
+duration, roll-spacing phase, button timing, and cancellation timing. The
+proposal manifest does not claim success; each variant must go through the same
+goal evaluation, exact execution capture, and cold-tape replay as any other
+candidate.
+
 ## Hybrid fitted-Q proposals
 
 For anchored movement searches, every proved candidate's first repetition
@@ -226,26 +427,52 @@ can use every compatible episode observed so far without confusing a losing
 episode with an eligible parent.
 
 After elites are retained, up to one quarter of the non-elite slots preserve a
-bounded behavior archive. Its coarse descriptor covers terminal map/room,
-player procedure, midpoint and terminal position, closest scene exit, and the
-sequence of player procedures. Farthest-first selection keeps proved routes
-which differ from the current elites even when they are not currently fastest.
-The archive keeps at most 256 descriptors and one best episode per descriptor.
+bounded quality-diversity archive. Its v3 descriptor covers terminal map/room,
+player procedure, midpoint and terminal position, closest scene exit,
+deduplicated coarse route sequence, and the sequence of player procedures.
+Available named RNG and actor-population projections add authenticated value
+axes. The run-deduplicated collision/contact trajectory adds a portable axis
+with native session process IDs removed, and terminal milestone boundaries add
+a separate authenticated boundary axis. All terminal boundary and value
+fingerprints also remain bound into the downstream-state axis.
+
+This is a bounded MAP-Elites policy: each exact descriptor cell retains its
+best native lexicographic result, with frame count and candidate ID as stable
+tie-breakers. Farthest-first novelty selection then reserves population slots
+for cells farthest from the current elites and already selected cells, even
+when they are not currently fastest. The archive keeps at most 256 cells;
+`behavior-archive.json` schema v3 records the policy, chosen candidate IDs, and
+complete cell descriptors. Neither cell placement nor novelty can promote a
+candidate without the normal repeated native evaluation and proof gates.
 
 Fitted-Q proposals receive half of the slots left after archive retention. They
-alternate between the highest predicted mean-Q action change and an
+alternate between a state-guided mean-Q action change and a fully unmasked
 uncertainty-weighted action change. Each change replaces a one-, two-, or
 four-frame window with an exact canonical controller sample, compiles back to
 an ordinary candidate, and goes through the same cold-process milestone
 evaluator as every other route. Unsupported schemas, misaligned tape/action
 pairs, and insufficient action coverage disable Q proposals for that generation
-rather than weakening evaluation. Remaining slots use the structured mutation
-operators, so waypoint and roll specialists are never displaced wholesale.
+rather than weakening evaluation. Remaining slots use the unmasked structured
+mutation operators, so waypoint and roll specialists are never displaced
+wholesale.
 
-Each generation writes `q-proposals.json` with its training size, action
-coverage, considered states, intervention counts, and proposal count (or an
-explicit unavailable reason). Candidate ancestry marks `q_Exploit` and
-`q_Explore` proposals, making equal-budget attribution auditable. In the first
+The versioned `dusklight-action-guidance/movement-v1` mask is an advisory prior
+over the 68 movement-v2 action classes. Normal gameplay recommends all actions;
+an event prefers unbuttoned movement and neutral-stick button states; an absent
+player prefers neutral-stick button states; and a pad error prefers neutral.
+These recommendations exist only in Q proposal ordering. The alternating
+unmasked lane can still select any observed action class, including one the
+mask does not recommend. Tape compilation, candidate validation, corpus
+ingestion, native evaluation, milestone scoring, minimization, replay, and
+proof acceptance do not import or consult the mask. Consequently a
+glitch-producing input that looks invalid to the prior remains an ordinary
+executable and promotable proof candidate.
+
+Each generation writes `q-proposals.json` v2 with its training size, action
+coverage, guidance schema, masked-state count, guided/unmasked intervention
+counts, and proposal count (or an explicit unavailable reason). Candidate
+ancestry marks `q_GuidedExploit` and `q_UnmaskedExplore` proposals, making
+equal-budget attribution auditable. In the first
 closed-loop route smoke, both Q proposals replayed and reached the 138-frame
 goal; the accompanying 137-frame improvement came from a conventional deletion
 mutation, not from Q. The distinction matters: executing learned proposals is

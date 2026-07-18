@@ -5,7 +5,7 @@
 
 namespace dusk::automation {
 
-inline constexpr unsigned WorkerProtocolVersion = 1;
+inline constexpr unsigned WorkerProtocolVersion = 2;
 
 /**
  * Handles automation-only command-line modes before any game, SDL, renderer,

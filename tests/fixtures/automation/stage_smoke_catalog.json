@@ -1,0 +1,26 @@
+{
+  "schema": "dusklight-stage-smoke-catalog/v1",
+  "entries": [
+    {
+      "id": "fsp103-room1-point1-layer3",
+      "source": "tests/fixtures/automation/fsp103_next_map_seed.tas",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "readiness_milestone": "gameplay-ready-f-sp103",
+      "expected": {
+        "boundary_schema": "dusklight.milestone-boundary/v4",
+        "canonical_encoding": "little-endian-fixed-v4",
+        "algorithm": "xxh3-128",
+        "digest": "33e867ceb2d908460bd6871f54aef658",
+        "sim_tick": 42,
+        "tape_frame": 42
+      },
+      "repeat_proof_count": 2
+    }
+  ]
+}

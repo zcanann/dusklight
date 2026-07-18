@@ -1,4 +1,5 @@
-use crate::tape::RawPadState;
+use crate::scenario_fixture::ScenarioFixture;
+use crate::tape::{RawPadState, TapeBoot};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -7,11 +8,22 @@ use std::fmt;
 const V1_HEADER_SIZE: usize = 36;
 const V1_RECORD_SIZE: usize = 102;
 const V2_HEADER_SIZE: usize = 64;
+const V3_HEADER_SIZE: usize = 128;
+const V4_HEADER_SIZE: usize = 128;
+const V5_HEADER_SIZE: usize = 128;
 const V2_DIRECTORY_ENTRY_SIZE: usize = 64;
 const MAGIC: &[u8; 8] = b"DUSKTRCE";
+const MAX_TRACE_RECORDS: usize = 131_072;
 
 const FILE_COMPLETE: u32 = 1 << 0;
 const FILE_CAPACITY_EXHAUSTED: u32 = 1 << 1;
+const FILE_TRIGGER_RETENTION: u32 = 1 << 2;
+const RETENTION_CRASH: u32 = 1 << 0;
+const RETENTION_NOVEL_CONTACT: u32 = 1 << 1;
+const RETENTION_FLAG_CHANGE: u32 = 1 << 2;
+const RETENTION_PREDICATE_HIT: u32 = 1 << 3;
+const KNOWN_RETENTION_TRIGGERS: u32 =
+    RETENTION_CRASH | RETENTION_NOVEL_CONTACT | RETENTION_FLAG_CHANGE | RETENTION_PREDICATE_HIT;
 const CHANNEL_REQUIRED: u32 = 1 << 0;
 const CHANNEL_DENSE: u32 = 1 << 1;
 const CORE_SIMULATION_TICK_VALID: u32 = 1 << 0;
@@ -72,6 +84,13 @@ const COLLISION_SURFACE_PENDING_MATCH: u32 = 1 << 10;
 const COLLISION_SURFACE_GEOMETRY_PRESENT: u32 = 1 << 11;
 const COLLISION_SURFACE_KCL_HEIGHT_PRESENT: u32 = 1 << 12;
 const COLLISION_SURFACE_KNOWN_FLAGS: u32 = 0x1fff;
+const GOAL_CONFIGURED: u32 = 1 << 0;
+const GOAL_REACHED: u32 = 1 << 1;
+const GOAL_AUTHORED: u32 = 1 << 2;
+const GOAL_FIRST_HIT_TICK_PRESENT: u32 = 1 << 3;
+const GOAL_KNOWN_FLAGS: u32 = 0x0f;
+const SELECTED_ACTORS_TRUNCATED: u32 = 1 << 0;
+const SELECTED_ACTOR_CAPACITY: usize = 16;
 const INVALID_U16_ID: u16 = u16::MAX;
 const INVALID_U32_ID: u32 = u32::MAX;
 const INVALID_I8: i8 = i8::MIN;
@@ -99,10 +118,12 @@ pub enum TraceChannel {
     PlayerAction = 8,
     PlayerBackgroundCollision = 9,
     PlayerCollisionSurfaces = 10,
+    GoalProgress = 11,
+    SelectedActors = 12,
 }
 
 impl TraceChannel {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 13] = [
         Self::Core,
         Self::Stage,
         Self::AppliedPads,
@@ -114,6 +135,8 @@ impl TraceChannel {
         Self::PlayerAction,
         Self::PlayerBackgroundCollision,
         Self::PlayerCollisionSurfaces,
+        Self::GoalProgress,
+        Self::SelectedActors,
     ];
 
     pub const fn bit(self) -> u64 {
@@ -137,11 +160,13 @@ impl TraceChannel {
             Self::PlayerAction => "player_action",
             Self::PlayerBackgroundCollision => "player_background_collision",
             Self::PlayerCollisionSurfaces => "player_collision_surfaces",
+            Self::GoalProgress => "goal_progress",
+            Self::SelectedActors => "selected_actors",
         }
     }
 }
 
-const KNOWN_CHANNELS: u64 = (1 << 11) - 1;
+const KNOWN_CHANNELS: u64 = (1 << 13) - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -383,6 +408,44 @@ pub struct TracePlayerCollisionSurfaces {
     pub surfaces: [TraceCollisionSurface; 6],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TraceGoalProgress {
+    pub configured: bool,
+    pub reached: bool,
+    pub authored: bool,
+    pub goal_name_hash: Option<u32>,
+    pub requested_count: u16,
+    pub hit_count: u16,
+    pub stable_ticks: u16,
+    pub consecutive_ticks: u16,
+    pub sequence_steps: u8,
+    pub sequence_next_step: u8,
+    pub sequence_within_ticks: u16,
+    pub sequence_elapsed_ticks: u16,
+    pub first_hit_tick: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceSelectedActor {
+    pub session_process_id: u32,
+    pub actor_name: i16,
+    pub set_id: u16,
+    pub home_room: i8,
+    pub current_room: i8,
+    pub health: i16,
+    pub status: u32,
+    pub position: [f32; 3],
+    pub current_angle: [i16; 3],
+    pub shape_angle: [i16; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceSelectedActors {
+    pub observed_count: u32,
+    pub truncated: bool,
+    pub actors: Vec<TraceSelectedActor>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TraceRecord {
     pub boundary_index: u64,
@@ -432,6 +495,8 @@ pub struct TraceRecord {
     pub player_action: Option<TracePlayerAction>,
     pub player_background_collision: Option<TracePlayerBackgroundCollision>,
     pub player_collision_surfaces: Option<TracePlayerCollisionSurfaces>,
+    pub goal_progress: Option<TraceGoalProgress>,
+    pub selected_actors: Option<TraceSelectedActors>,
 }
 
 impl Default for TraceRecord {
@@ -484,6 +549,8 @@ impl Default for TraceRecord {
             player_action: None,
             player_background_collision: None,
             player_collision_surfaces: None,
+            goal_progress: None,
+            selected_actors: None,
         }
     }
 }
@@ -542,9 +609,12 @@ pub struct TraceMilestone {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TraceSummary {
     pub version: u16,
+    pub boot: TapeBoot,
     pub requested_channels: Vec<&'static str>,
     pub record_count: usize,
     pub capacity_exhausted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retention: Option<TraceRetention>,
     pub first_playable: Option<TraceMilestone>,
     pub route_control: Option<TraceMilestone>,
     pub first_loading_trigger: Option<TraceMilestone>,
@@ -558,12 +628,24 @@ pub struct TraceSummary {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecodedTrace {
     pub version: u16,
+    pub boot: TapeBoot,
     pub tick_rate_numerator: u32,
     pub tick_rate_denominator: u32,
     pub requested_channels: u64,
     pub capacity_exhausted: bool,
+    pub retention: Option<TraceRetention>,
     pub channel_formats: BTreeMap<TraceChannel, TraceChannelWireFormat>,
     pub records: Vec<TraceRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TraceRetention {
+    pub configured_triggers: u32,
+    pub observed_triggers: u32,
+    pub pre_trigger_ticks: u32,
+    pub post_trigger_ticks: u32,
+    pub trigger_count: u32,
+    pub observed_sample_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -608,6 +690,8 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
         (TraceChannel::PlayerAction, 1) => 104,
         (TraceChannel::PlayerBackgroundCollision, 1) => 128,
         (TraceChannel::PlayerCollisionSurfaces, 1) => 496,
+        (TraceChannel::GoalProgress, 1) => 32,
+        (TraceChannel::SelectedActors, 1) => 656,
         _ => return None,
     };
     Some(ChannelDefinition { stride })
@@ -639,7 +723,16 @@ pub fn decode(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
     }
     match u16_at(bytes, 8) {
         1 => decode_v1(bytes),
-        2 => decode_v2(bytes),
+        2 => decode_columnar(bytes, 2, V2_HEADER_SIZE, TapeBoot::Process),
+        3 => decode_columnar(bytes, 3, V3_HEADER_SIZE, decode_v3_boot(bytes)?),
+        4 => {
+            let (boot, data_end) = decode_v4_boot(bytes)?;
+            decode_columnar(&bytes[..data_end], 4, V4_HEADER_SIZE, boot)
+        }
+        5 => {
+            let (boot, data_end) = decode_v5_boot(bytes)?;
+            decode_columnar(&bytes[..data_end], 5, V5_HEADER_SIZE, boot)
+        }
         version => Err(TraceError(format!(
             "unsupported gameplay trace version {version}"
         ))),
@@ -675,6 +768,7 @@ fn decode_v1(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(DecodedTrace {
         version: 1,
+        boot: TapeBoot::Process,
         tick_rate_numerator: u32_at(bytes, 12),
         tick_rate_denominator: u32_at(bytes, 16),
         requested_channels: TraceChannel::Core.bit()
@@ -684,6 +778,7 @@ fn decode_v1(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
             | TraceChannel::Event.bit()
             | TraceChannel::SceneExit.bit(),
         capacity_exhausted: u32_at(bytes, 28) != 0,
+        retention: None,
         channel_formats: BTreeMap::new(),
         records,
     })
@@ -764,34 +859,217 @@ fn decode_v1_record(bytes: &[u8]) -> Result<TraceRecord, TraceError> {
     })
 }
 
-fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
-    if bytes.len() < V2_HEADER_SIZE {
-        return Err(TraceError("truncated gameplay trace v2 header".into()));
+fn decode_v3_boot(bytes: &[u8]) -> Result<TapeBoot, TraceError> {
+    if bytes.len() < V3_HEADER_SIZE {
+        return Err(TraceError("truncated gameplay trace v3 header".into()));
     }
-    if usize::from(u16_at(bytes, 10)) != V2_HEADER_SIZE {
+    let extension = &bytes[V2_HEADER_SIZE..V3_HEADER_SIZE];
+    match extension[0] {
+        0 => {
+            if extension.iter().any(|byte| *byte != 0) {
+                return Err(TraceError(
+                    "noncanonical process boot in gameplay trace v3".into(),
+                ));
+            }
+            Ok(TapeBoot::Process)
+        }
+        1 => {
+            let save_slot = extension[1];
+            let stage_len = usize::from(extension[6]);
+            if save_slot > 3
+                || stage_len == 0
+                || stage_len > 16
+                || extension[7] != 0
+                || extension[8 + stage_len..].iter().any(|byte| *byte != 0)
+                || extension[8..8 + stage_len]
+                    .iter()
+                    .any(|byte| !(0x21..=0x7e).contains(byte) || *byte == b',')
+            {
+                return Err(TraceError(
+                    "noncanonical stage boot in gameplay trace v3".into(),
+                ));
+            }
+            let stage = String::from_utf8(extension[8..8 + stage_len].to_vec())
+                .map_err(|_| TraceError("invalid stage name in gameplay trace v3".into()))?;
+            Ok(TapeBoot::Stage {
+                stage,
+                room: extension[2] as i8,
+                layer: extension[3] as i8,
+                point: i16::from_le_bytes([extension[4], extension[5]]),
+                save_slot: (save_slot != 0).then_some(save_slot),
+                fixture: None,
+            })
+        }
+        _ => Err(TraceError("unknown boot kind in gameplay trace v3".into())),
+    }
+}
+
+fn decode_v4_boot(bytes: &[u8]) -> Result<(TapeBoot, usize), TraceError> {
+    decode_v4_or_v5_boot(bytes, true)
+}
+
+fn decode_v5_boot(bytes: &[u8]) -> Result<(TapeBoot, usize), TraceError> {
+    decode_v4_or_v5_boot(bytes, false)
+}
+
+fn decode_v4_or_v5_boot(
+    bytes: &[u8],
+    require_reserved_zero: bool,
+) -> Result<(TapeBoot, usize), TraceError> {
+    if bytes.len() < V4_HEADER_SIZE {
+        return Err(TraceError("truncated gameplay trace v4/v5 header".into()));
+    }
+    let extension = &bytes[V2_HEADER_SIZE..88];
+    let mut boot = match extension[0] {
+        0 => {
+            if extension.iter().any(|byte| *byte != 0) {
+                return Err(TraceError(
+                    "noncanonical process boot in gameplay trace v4".into(),
+                ));
+            }
+            TapeBoot::Process
+        }
+        1 => {
+            let save_slot = extension[1];
+            let stage_len = usize::from(extension[6]);
+            if save_slot > 3
+                || stage_len == 0
+                || stage_len > 16
+                || extension[7] != 0
+                || extension[8 + stage_len..].iter().any(|byte| *byte != 0)
+                || extension[8..8 + stage_len]
+                    .iter()
+                    .any(|byte| !(0x21..=0x7e).contains(byte) || *byte == b',')
+            {
+                return Err(TraceError(
+                    "noncanonical stage boot in gameplay trace v4".into(),
+                ));
+            }
+            TapeBoot::Stage {
+                stage: String::from_utf8(extension[8..8 + stage_len].to_vec())
+                    .map_err(|_| TraceError("invalid stage name in gameplay trace v4".into()))?,
+                room: extension[2] as i8,
+                layer: extension[3] as i8,
+                point: i16::from_le_bytes([extension[4], extension[5]]),
+                save_slot: (save_slot != 0).then_some(save_slot),
+                fixture: None,
+            }
+        }
+        _ => return Err(TraceError("unknown boot kind in gameplay trace v4".into())),
+    };
+    if require_reserved_zero && bytes[100..V4_HEADER_SIZE].iter().any(|byte| *byte != 0) {
         return Err(TraceError(
-            "unsupported gameplay trace v2 header size".into(),
+            "nonzero gameplay trace v4 reserved field".into(),
         ));
+    }
+    let fixture_offset = usize_at_u64(bytes, 88)?;
+    let fixture_size = usize::try_from(u32_at(bytes, 96))
+        .map_err(|_| TraceError("gameplay trace fixture size overflow".into()))?;
+    if fixture_size == 0 {
+        if fixture_offset != 0 {
+            return Err(TraceError(
+                "gameplay trace v4 has an offset for an absent fixture".into(),
+            ));
+        }
+        return Ok((boot, bytes.len()));
+    }
+    if fixture_offset < V4_HEADER_SIZE
+        || fixture_offset
+            .checked_add(fixture_size)
+            .is_none_or(|end| end != bytes.len())
+    {
+        return Err(TraceError(
+            "gameplay trace v4 fixture range is invalid".into(),
+        ));
+    }
+    let fixture = ScenarioFixture::decode(&bytes[fixture_offset..])
+        .map_err(|error| TraceError(format!("invalid gameplay trace fixture: {error}")))?;
+    match &mut boot {
+        TapeBoot::Stage {
+            fixture: target, ..
+        } => *target = Some(fixture),
+        TapeBoot::Process => {
+            return Err(TraceError(
+                "process boot gameplay trace cannot carry a scenario fixture".into(),
+            ));
+        }
+    }
+    Ok((boot, fixture_offset))
+}
+
+fn decode_columnar(
+    bytes: &[u8],
+    version: u16,
+    header_size: usize,
+    boot: TapeBoot,
+) -> Result<DecodedTrace, TraceError> {
+    if bytes.len() < header_size {
+        return Err(TraceError(format!(
+            "truncated gameplay trace v{version} header"
+        )));
+    }
+    if usize::from(u16_at(bytes, 10)) != header_size {
+        return Err(TraceError(format!(
+            "unsupported gameplay trace v{version} header size"
+        )));
     }
     validate_tick_rate(bytes)?;
     let count = count_at(bytes, 20)?;
     let file_flags = u32_at(bytes, 28);
-    if file_flags & FILE_COMPLETE == 0
-        || file_flags & !(FILE_COMPLETE | FILE_CAPACITY_EXHAUSTED) != 0
-    {
+    let known_file_flags = if version >= 5 {
+        FILE_COMPLETE | FILE_CAPACITY_EXHAUSTED | FILE_TRIGGER_RETENTION
+    } else {
+        FILE_COMPLETE | FILE_CAPACITY_EXHAUSTED
+    };
+    if file_flags & FILE_COMPLETE == 0 || file_flags & !known_file_flags != 0 {
         return Err(TraceError(
             "incomplete or noncanonical gameplay trace v2 flags".into(),
         ));
     }
+    let retention = if version >= 5 {
+        let configured_triggers = u32_at(bytes, 100);
+        let observed_triggers = u32_at(bytes, 104);
+        let pre_trigger_ticks = u32_at(bytes, 108);
+        let post_trigger_ticks = u32_at(bytes, 112);
+        let trigger_count = u32_at(bytes, 116);
+        let observed_sample_count = u64_at(bytes, 120);
+        let enabled = file_flags & FILE_TRIGGER_RETENTION != 0;
+        if configured_triggers & !KNOWN_RETENTION_TRIGGERS != 0
+            || observed_triggers & !configured_triggers != 0
+            || ((trigger_count == 0) != (observed_triggers == 0))
+            || observed_sample_count < count as u64
+            || (enabled != (configured_triggers != 0))
+            || (!enabled
+                && (observed_triggers != 0
+                    || pre_trigger_ticks != 0
+                    || post_trigger_ticks != 0
+                    || trigger_count != 0
+                    || observed_sample_count != count as u64))
+        {
+            return Err(TraceError(
+                "inconsistent gameplay trace v5 retention metadata".into(),
+            ));
+        }
+        enabled.then_some(TraceRetention {
+            configured_triggers,
+            observed_triggers,
+            pre_trigger_ticks,
+            post_trigger_ticks,
+            trigger_count,
+            observed_sample_count,
+        })
+    } else {
+        None
+    };
     let channel_count = usize::from(u16_at(bytes, 32));
     if usize::from(u16_at(bytes, 34)) != V2_DIRECTORY_ENTRY_SIZE
-        || usize_at_u64(bytes, 36)? != V2_HEADER_SIZE
+        || usize_at_u64(bytes, 36)? != header_size
     {
         return Err(TraceError(
             "unsupported gameplay trace v2 directory layout".into(),
         ));
     }
-    let directory_end = checked_region_end(V2_HEADER_SIZE, channel_count, V2_DIRECTORY_ENTRY_SIZE)?;
+    let directory_end = checked_region_end(header_size, channel_count, V2_DIRECTORY_ENTRY_SIZE)?;
     if usize_at_u64(bytes, 44)? != directory_end || directory_end > bytes.len() {
         return Err(TraceError("invalid gameplay trace v2 data offset".into()));
     }
@@ -808,7 +1086,7 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
     let mut descriptors = BTreeMap::<u16, ChannelDescriptor>::new();
     let mut regions = vec![(0_usize, directory_end)];
     for index in 0..channel_count {
-        let offset = V2_HEADER_SIZE + index * V2_DIRECTORY_ENTRY_SIZE;
+        let offset = header_size + index * V2_DIRECTORY_ENTRY_SIZE;
         let id = u16_at(bytes, offset);
         let version = u16_at(bytes, offset + 2);
         let flags = u32_at(bytes, offset + 4);
@@ -981,11 +1259,13 @@ fn decode_v2(bytes: &[u8]) -> Result<DecodedTrace, TraceError> {
         validate_collision_surface_joins(record)?;
     }
     Ok(DecodedTrace {
-        version: 2,
+        version,
+        boot,
         tick_rate_numerator: u32_at(bytes, 12),
         tick_rate_denominator: u32_at(bytes, 16),
         requested_channels,
         capacity_exhausted: file_flags & FILE_CAPACITY_EXHAUSTED != 0,
+        retention,
         channel_formats,
         records,
     })
@@ -1020,6 +1300,9 @@ fn validate_channel_status(
                     | TraceChannelStatus::Absent
                     | TraceChannelStatus::Unavailable
             ),
+            (TraceChannel::GoalProgress | TraceChannel::SelectedActors, 1) => {
+                status == TraceChannelStatus::Present
+            }
             _ => true,
         };
     if !valid {
@@ -1240,8 +1523,136 @@ fn decode_v2_channel(
         TraceChannel::PlayerCollisionSurfaces => {
             decode_player_collision_surfaces_v1(bytes, record)?
         }
+        TraceChannel::GoalProgress => {
+            let flags = u32_at(bytes, 0);
+            let first_hit_tick = u64_at(bytes, 24);
+            let configured = flags & GOAL_CONFIGURED != 0;
+            let reached = flags & GOAL_REACHED != 0;
+            let authored = flags & GOAL_AUTHORED != 0;
+            let first_hit_present = flags & GOAL_FIRST_HIT_TICK_PRESENT != 0;
+            let requested_count = u16_at(bytes, 8);
+            let hit_count = u16_at(bytes, 10);
+            let stable_ticks = u16_at(bytes, 12);
+            let consecutive_ticks = u16_at(bytes, 14);
+            let sequence_steps = bytes[16];
+            let sequence_next_step = bytes[17];
+            let sequence_within_ticks = u16_at(bytes, 18);
+            let sequence_elapsed_ticks = u16_at(bytes, 20);
+            if flags & !GOAL_KNOWN_FLAGS != 0
+                || u16_at(bytes, 22) != 0
+                || reached != first_hit_present
+                || reached && !configured
+                || authored && !configured
+                || first_hit_present == (first_hit_tick == u64::MAX)
+                || hit_count > requested_count
+                || consecutive_ticks > stable_ticks
+                || sequence_next_step > sequence_steps
+                || (!configured
+                    && (u32_at(bytes, 4) != 0
+                        || stable_ticks != 0
+                        || consecutive_ticks != 0
+                        || sequence_steps != 0
+                        || sequence_next_step != 0
+                        || sequence_within_ticks != 0
+                        || sequence_elapsed_ticks != 0))
+            {
+                return Err(TraceError(
+                    "inconsistent gameplay trace goal-progress payload".into(),
+                ));
+            }
+            record.goal_progress = Some(TraceGoalProgress {
+                configured,
+                reached,
+                authored,
+                goal_name_hash: configured.then(|| u32_at(bytes, 4)),
+                requested_count,
+                hit_count,
+                stable_ticks,
+                consecutive_ticks,
+                sequence_steps,
+                sequence_next_step,
+                sequence_within_ticks,
+                sequence_elapsed_ticks,
+                first_hit_tick: first_hit_present.then_some(first_hit_tick),
+            });
+        }
+        TraceChannel::SelectedActors => {
+            let count = usize::from(u16_at(bytes, 0));
+            let capacity = usize::from(u16_at(bytes, 2));
+            let flags = u32_at(bytes, 4);
+            let observed_count = u32_at(bytes, 8);
+            let truncated = flags & SELECTED_ACTORS_TRUNCATED != 0;
+            if capacity != SELECTED_ACTOR_CAPACITY
+                || count > capacity
+                || flags & !SELECTED_ACTORS_TRUNCATED != 0
+                || u32_at(bytes, 12) != 0
+                || observed_count < count as u32
+                || truncated != (observed_count > count as u32)
+            {
+                return Err(TraceError(
+                    "inconsistent gameplay trace selected-actor header".into(),
+                ));
+            }
+            let mut actors = Vec::with_capacity(count);
+            for index in 0..SELECTED_ACTOR_CAPACITY {
+                let offset = 16 + index * 40;
+                if index < count {
+                    let actor = decode_selected_actor(&bytes[offset..offset + 40])?;
+                    if actors.last().is_some_and(|previous: &TraceSelectedActor| {
+                        previous.session_process_id >= actor.session_process_id
+                    }) {
+                        return Err(TraceError(
+                            "gameplay trace selected actors are not strictly ordered".into(),
+                        ));
+                    }
+                    actors.push(actor);
+                } else if !unused_selected_actor_is_canonical(&bytes[offset..offset + 40]) {
+                    return Err(TraceError(
+                        "noncanonical unused gameplay trace selected-actor slot".into(),
+                    ));
+                }
+            }
+            record.selected_actors = Some(TraceSelectedActors {
+                observed_count,
+                truncated,
+                actors,
+            });
+        }
     }
     Ok(())
+}
+
+fn decode_selected_actor(bytes: &[u8]) -> Result<TraceSelectedActor, TraceError> {
+    let actor = TraceSelectedActor {
+        session_process_id: u32_at(bytes, 0),
+        actor_name: i16_at(bytes, 4),
+        set_id: u16_at(bytes, 6),
+        home_room: bytes[8] as i8,
+        current_room: bytes[9] as i8,
+        health: i16_at(bytes, 10),
+        status: u32_at(bytes, 12),
+        position: [f32_at(bytes, 16), f32_at(bytes, 20), f32_at(bytes, 24)],
+        current_angle: [i16_at(bytes, 28), i16_at(bytes, 30), i16_at(bytes, 32)],
+        shape_angle: [i16_at(bytes, 34), i16_at(bytes, 36), i16_at(bytes, 38)],
+    };
+    if actor.session_process_id == u32::MAX || actor.position.iter().any(|value| !value.is_finite())
+    {
+        return Err(TraceError(
+            "invalid retained gameplay trace selected actor".into(),
+        ));
+    }
+    Ok(actor)
+}
+
+fn unused_selected_actor_is_canonical(bytes: &[u8]) -> bool {
+    u32_at(bytes, 0) == u32::MAX
+        && i16_at(bytes, 4) == -1
+        && u16_at(bytes, 6) == u16::MAX
+        && bytes[8] as i8 == -1
+        && bytes[9] as i8 == -1
+        && i16_at(bytes, 10) == 0
+        && u32_at(bytes, 12) == 0
+        && bytes[16..40].iter().all(|byte| *byte == 0)
 }
 
 fn decode_scene_exit_v1(bytes: &[u8], record: &mut TraceRecord) -> Result<(), TraceError> {
@@ -2163,6 +2574,7 @@ fn milestone(kind: &'static str, record: &TraceRecord) -> TraceMilestone {
 }
 
 fn summarize(decoded: DecodedTrace) -> TraceSummary {
+    let boot = decoded.boot.clone();
     let records = decoded.records;
     let playable_index = records.iter().position(|record| {
         record.stage_name == "F_SP103"
@@ -2230,9 +2642,11 @@ fn summarize(decoded: DecodedTrace) -> TraceSummary {
 
     TraceSummary {
         version: decoded.version,
+        boot,
         requested_channels,
         record_count: records.len(),
         capacity_exhausted: decoded.capacity_exhausted,
+        retention: decoded.retention,
         first_playable: playable_index.map(|index| milestone("first_playable", &records[index])),
         route_control: route_control_index.map(|index| milestone("route_control", &records[index])),
         first_loading_trigger: loading_trigger_index
@@ -2273,8 +2687,14 @@ fn checked_region_end(start: usize, count: usize, stride: usize) -> Result<usize
 }
 
 fn count_at(bytes: &[u8], offset: usize) -> Result<usize, TraceError> {
-    usize::try_from(u64_at(bytes, offset))
-        .map_err(|_| TraceError("gameplay trace record count is too large".into()))
+    let count = usize::try_from(u64_at(bytes, offset))
+        .map_err(|_| TraceError("gameplay trace record count is too large".into()))?;
+    if count > MAX_TRACE_RECORDS {
+        return Err(TraceError(format!(
+            "gameplay trace record count exceeds {MAX_TRACE_RECORDS}"
+        )));
+    }
+    Ok(count)
 }
 
 fn usize_at_u64(bytes: &[u8], offset: usize) -> Result<usize, TraceError> {
@@ -2860,6 +3280,102 @@ mod tests {
     }
 
     #[test]
+    fn v2_decodes_goal_progress_and_bounded_selected_actors() {
+        let mut goal = vec![0; 32];
+        goal[0..4].copy_from_slice(
+            &(GOAL_CONFIGURED | GOAL_REACHED | GOAL_AUTHORED | GOAL_FIRST_HIT_TICK_PRESENT)
+                .to_le_bytes(),
+        );
+        goal[4..8].copy_from_slice(&0x1234_5678_u32.to_le_bytes());
+        goal[8..10].copy_from_slice(&3_u16.to_le_bytes());
+        goal[10..12].copy_from_slice(&2_u16.to_le_bytes());
+        goal[12..14].copy_from_slice(&3_u16.to_le_bytes());
+        goal[14..16].copy_from_slice(&3_u16.to_le_bytes());
+        goal[16] = 2;
+        goal[17] = 2;
+        goal[18..20].copy_from_slice(&30_u16.to_le_bytes());
+        goal[20..22].copy_from_slice(&7_u16.to_le_bytes());
+        goal[24..32].copy_from_slice(&12_u64.to_le_bytes());
+
+        let mut actors = vec![0; 656];
+        actors[0..2].copy_from_slice(&1_u16.to_le_bytes());
+        actors[2..4].copy_from_slice(&(SELECTED_ACTOR_CAPACITY as u16).to_le_bytes());
+        actors[4..8].copy_from_slice(&SELECTED_ACTORS_TRUNCATED.to_le_bytes());
+        actors[8..12].copy_from_slice(&2_u32.to_le_bytes());
+        for index in 0..SELECTED_ACTOR_CAPACITY {
+            let offset = 16 + index * 40;
+            actors[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            actors[offset + 4..offset + 6].copy_from_slice(&(-1_i16).to_le_bytes());
+            actors[offset + 6..offset + 8].copy_from_slice(&u16::MAX.to_le_bytes());
+            actors[offset + 8] = -1_i8 as u8;
+            actors[offset + 9] = -1_i8 as u8;
+        }
+        actors[16..20].copy_from_slice(&10_u32.to_le_bytes());
+        actors[20..22].copy_from_slice(&77_i16.to_le_bytes());
+        actors[22..24].copy_from_slice(&4_u16.to_le_bytes());
+        actors[24] = 1;
+        actors[25] = 2;
+        actors[26..28].copy_from_slice(&9_i16.to_le_bytes());
+        actors[28..32].copy_from_slice(&0x1234_u32.to_le_bytes());
+        write_f32(&mut actors, 32, 1.0);
+        write_f32(&mut actors, 36, 2.0);
+        write_f32(&mut actors, 40, 3.0);
+        actors[44..46].copy_from_slice(&4_i16.to_le_bytes());
+        actors[50..52].copy_from_slice(&7_i16.to_le_bytes());
+
+        let bytes = build_v2_trace(vec![
+            (
+                TraceChannel::GoalProgress,
+                1,
+                TraceChannelStatus::Present,
+                goal.clone(),
+            ),
+            (
+                TraceChannel::SelectedActors,
+                1,
+                TraceChannelStatus::Present,
+                actors.clone(),
+            ),
+        ]);
+        let decoded = decode(&bytes).unwrap();
+        let record = &decoded.records[0];
+        let decoded_goal = record.goal_progress.as_ref().unwrap();
+        assert!(decoded_goal.reached && decoded_goal.authored);
+        assert_eq!(decoded_goal.goal_name_hash, Some(0x1234_5678));
+        assert_eq!(decoded_goal.first_hit_tick, Some(12));
+        let decoded_actors = record.selected_actors.as_ref().unwrap();
+        assert!(decoded_actors.truncated);
+        assert_eq!(decoded_actors.observed_count, 2);
+        assert_eq!(decoded_actors.actors[0].session_process_id, 10);
+        assert_eq!(decoded_actors.actors[0].position, [1.0, 2.0, 3.0]);
+
+        goal[24..32].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(
+            decode(&build_v2_trace(vec![(
+                TraceChannel::GoalProgress,
+                1,
+                TraceChannelStatus::Present,
+                goal,
+            )]))
+            .unwrap_err()
+            .to_string()
+            .contains("goal-progress")
+        );
+        actors[56..60].copy_from_slice(&0_u32.to_le_bytes());
+        assert!(
+            decode(&build_v2_trace(vec![(
+                TraceChannel::SelectedActors,
+                1,
+                TraceChannelStatus::Present,
+                actors,
+            )]))
+            .unwrap_err()
+            .to_string()
+            .contains("unused")
+        );
+    }
+
+    #[test]
     fn rejects_unknown_required_v2_channel() {
         let mut bytes = minimal_v2_header(2, TraceChannel::Core.bit());
         bytes.resize(V2_HEADER_SIZE + 2 * V2_DIRECTORY_ENTRY_SIZE, 0);
@@ -2871,6 +3387,177 @@ mod tests {
             true,
         );
         assert!(decode(&bytes).unwrap_err().to_string().contains("required"));
+    }
+
+    #[test]
+    fn rejects_trace_record_count_above_global_bound_before_allocation() {
+        let mut bytes = minimal_v2_header(0, TraceChannel::Core.bit());
+        bytes[20..28].copy_from_slice(&((MAX_TRACE_RECORDS as u64) + 1).to_le_bytes());
+        assert!(
+            decode(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("record count exceeds")
+        );
+    }
+
+    #[test]
+    fn v3_authenticates_stage_boot_origin() {
+        let mut bytes = build_v2_trace(Vec::new());
+        let channel_count = usize::from(u16_at(&bytes, 32));
+        bytes.splice(V2_HEADER_SIZE..V2_HEADER_SIZE, [0_u8; 64]);
+        bytes[8..10].copy_from_slice(&3_u16.to_le_bytes());
+        bytes[10..12].copy_from_slice(&(V3_HEADER_SIZE as u16).to_le_bytes());
+        bytes[36..44].copy_from_slice(&(V3_HEADER_SIZE as u64).to_le_bytes());
+        let data_offset = usize_at_u64(&bytes, 44).unwrap() + 64;
+        bytes[44..52].copy_from_slice(&(data_offset as u64).to_le_bytes());
+        for index in 0..channel_count {
+            let descriptor = V3_HEADER_SIZE + index * V2_DIRECTORY_ENTRY_SIZE;
+            for offset in [16, 32] {
+                let value = usize_at_u64(&bytes, descriptor + offset).unwrap() + 64;
+                bytes[descriptor + offset..descriptor + offset + 8]
+                    .copy_from_slice(&(value as u64).to_le_bytes());
+            }
+        }
+        bytes[64] = 1;
+        bytes[65] = 2;
+        bytes[66] = 1;
+        bytes[67] = 3;
+        bytes[68..70].copy_from_slice(&1_i16.to_le_bytes());
+        bytes[70] = 7;
+        bytes[72..79].copy_from_slice(b"F_SP103");
+
+        let decoded = decode(&bytes).unwrap();
+        assert_eq!(decoded.version, 3);
+        assert_eq!(
+            decoded.boot,
+            TapeBoot::Stage {
+                stage: "F_SP103".into(),
+                room: 1,
+                point: 1,
+                layer: 3,
+                save_slot: Some(2),
+                fixture: None,
+            }
+        );
+
+        bytes[79] = 1;
+        assert!(
+            decode(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("noncanonical stage boot")
+        );
+    }
+
+    #[test]
+    fn v4_authenticates_embedded_scenario_fixture() {
+        use crate::scenario_fixture::{HealthFixture, PlayerForm, SCENARIO_FIXTURE_SCHEMA};
+
+        let mut bytes = build_v2_trace(Vec::new());
+        let channel_count = usize::from(u16_at(&bytes, 32));
+        bytes.splice(V2_HEADER_SIZE..V2_HEADER_SIZE, [0_u8; 64]);
+        bytes[8..10].copy_from_slice(&4_u16.to_le_bytes());
+        bytes[10..12].copy_from_slice(&(V4_HEADER_SIZE as u16).to_le_bytes());
+        bytes[36..44].copy_from_slice(&(V4_HEADER_SIZE as u64).to_le_bytes());
+        let data_offset = usize_at_u64(&bytes, 44).unwrap() + 64;
+        bytes[44..52].copy_from_slice(&(data_offset as u64).to_le_bytes());
+        for index in 0..channel_count {
+            let descriptor = V4_HEADER_SIZE + index * V2_DIRECTORY_ENTRY_SIZE;
+            for offset in [16, 32] {
+                let value = usize_at_u64(&bytes, descriptor + offset).unwrap() + 64;
+                bytes[descriptor + offset..descriptor + offset + 8]
+                    .copy_from_slice(&(value as u64).to_le_bytes());
+            }
+        }
+        bytes[64] = 1;
+        bytes[66] = 1;
+        bytes[67] = 3;
+        bytes[68..70].copy_from_slice(&1_i16.to_le_bytes());
+        bytes[70] = 7;
+        bytes[72..79].copy_from_slice(b"F_SP103");
+        let fixture = ScenarioFixture {
+            schema: SCENARIO_FIXTURE_SCHEMA.into(),
+            name: "low-health wolf".into(),
+            form: Some(PlayerForm::Wolf),
+            health: Some(HealthFixture {
+                current: 4,
+                maximum: 20,
+            }),
+            rng: Vec::new(),
+            video_mode: None,
+            inventory: Vec::new(),
+            equipment: Vec::new(),
+            flags: Vec::new(),
+            settings: Vec::new(),
+        };
+        let encoded = fixture.encode().unwrap();
+        let fixture_offset = bytes.len();
+        bytes[88..96].copy_from_slice(&(fixture_offset as u64).to_le_bytes());
+        bytes[96..100].copy_from_slice(&(encoded.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&encoded);
+
+        let decoded = decode(&bytes).unwrap();
+        assert_eq!(decoded.version, 4);
+        assert!(matches!(
+            decoded.boot,
+            TapeBoot::Stage {
+                fixture: Some(value),
+                ..
+            } if value == fixture
+        ));
+
+        bytes[fixture_offset + 20] = 1;
+        assert!(decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn v5_authenticates_trigger_retention_metadata() {
+        let mut bytes = build_v2_trace(Vec::new());
+        let channel_count = usize::from(u16_at(&bytes, 32));
+        bytes.splice(V2_HEADER_SIZE..V2_HEADER_SIZE, [0_u8; 64]);
+        bytes[8..10].copy_from_slice(&5_u16.to_le_bytes());
+        bytes[10..12].copy_from_slice(&(V5_HEADER_SIZE as u16).to_le_bytes());
+        bytes[28..32].copy_from_slice(&(FILE_COMPLETE | FILE_TRIGGER_RETENTION).to_le_bytes());
+        bytes[36..44].copy_from_slice(&(V5_HEADER_SIZE as u64).to_le_bytes());
+        let data_offset = usize_at_u64(&bytes, 44).unwrap() + 64;
+        bytes[44..52].copy_from_slice(&(data_offset as u64).to_le_bytes());
+        for index in 0..channel_count {
+            let descriptor = V5_HEADER_SIZE + index * V2_DIRECTORY_ENTRY_SIZE;
+            for offset in [16, 32] {
+                let value = usize_at_u64(&bytes, descriptor + offset).unwrap() + 64;
+                bytes[descriptor + offset..descriptor + offset + 8]
+                    .copy_from_slice(&(value as u64).to_le_bytes());
+            }
+        }
+        bytes[100..104].copy_from_slice(&KNOWN_RETENTION_TRIGGERS.to_le_bytes());
+        bytes[104..108].copy_from_slice(&RETENTION_PREDICATE_HIT.to_le_bytes());
+        bytes[108..112].copy_from_slice(&2_u32.to_le_bytes());
+        bytes[112..116].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[116..120].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[120..128].copy_from_slice(&10_u64.to_le_bytes());
+
+        let decoded = decode(&bytes).unwrap();
+        assert_eq!(decoded.version, 5);
+        assert_eq!(
+            decoded.retention,
+            Some(TraceRetention {
+                configured_triggers: KNOWN_RETENTION_TRIGGERS,
+                observed_triggers: RETENTION_PREDICATE_HIT,
+                pre_trigger_ticks: 2,
+                post_trigger_ticks: 1,
+                trigger_count: 1,
+                observed_sample_count: 10,
+            })
+        );
+
+        bytes[104..108].copy_from_slice(&(1_u32 << 12).to_le_bytes());
+        assert!(
+            decode(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("retention")
+        );
     }
 
     fn write_empty_descriptor(bytes: &mut [u8], id: u16, stride: u32, required: bool) {
@@ -3032,6 +3719,101 @@ mod tests {
             payload[22..24].copy_from_slice(&(-1_i16).to_le_bytes());
         }
         payload
+    }
+
+    fn predicate_player_payload() -> Vec<u8> {
+        let mut payload = vec![0; 52];
+        payload[0..4].copy_from_slice(&19_u32.to_le_bytes());
+        payload[4..6].copy_from_slice(&253_i16.to_le_bytes());
+        payload[6..8].copy_from_slice(&7_u16.to_le_bytes());
+        write_f32(&mut payload, 20, 666.0);
+        write_f32(&mut payload, 24, 800.0);
+        write_f32(&mut payload, 28, -2431.0);
+        write_f32(&mut payload, 32, 1.0);
+        write_f32(&mut payload, 44, 3.0);
+        payload[48..52].copy_from_slice(&PLAYER_IS_LINK.to_le_bytes());
+        payload
+    }
+
+    fn predicate_event_payload() -> Vec<u8> {
+        let mut payload = vec![0; 16];
+        payload[4..6].copy_from_slice(&(-1_i16).to_le_bytes());
+        payload[8] = u8::MAX;
+        payload
+    }
+
+    fn predicate_rng_payload() -> Vec<u8> {
+        let mut payload = vec![0; 64];
+        payload[0..4].copy_from_slice(&1_u32.to_le_bytes());
+        payload[4..8].copy_from_slice(&2_u32.to_le_bytes());
+        for (offset, id, states, calls) in [
+            (8, 0_u8, [11_i32, 12, 13], 100_u64),
+            (36, 1_u8, [21_i32, 22, 23], 200_u64),
+        ] {
+            payload[offset] = id;
+            payload[offset + 4..offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+            for (index, state) in states.into_iter().enumerate() {
+                payload[offset + 8 + index * 4..offset + 12 + index * 4]
+                    .copy_from_slice(&state.to_le_bytes());
+            }
+            payload[offset + 20..offset + 28].copy_from_slice(&calls.to_le_bytes());
+        }
+        payload
+    }
+
+    #[test]
+    fn authored_predicates_evaluate_against_a_decoded_recorded_trace_fixture() {
+        let bytes = build_v2_trace(vec![
+            (
+                TraceChannel::Stage,
+                1,
+                TraceChannelStatus::Present,
+                stage_payload(false),
+            ),
+            (
+                TraceChannel::PlayerMotion,
+                1,
+                TraceChannelStatus::Present,
+                predicate_player_payload(),
+            ),
+            (
+                TraceChannel::Event,
+                1,
+                TraceChannelStatus::Present,
+                predicate_event_payload(),
+            ),
+            (
+                TraceChannel::Rng,
+                1,
+                TraceChannelStatus::Present,
+                predicate_rng_payload(),
+            ),
+        ]);
+        let trace = decode(&bytes).unwrap();
+        let program = crate::milestone_dsl::parse(
+            r#"milestones 1.3
+
+milestone recorded_hit {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 &&
+       player.exists && player.is_link && player.procedure == 7 &&
+       player.position.x between 665.0 and 667.0 &&
+       player.in_aabb(600.0, 700.0, -2500.0, 700.0, 900.0, -2400.0) &&
+       !event.running && event.id == -1 && rng.primary.calls == 100
+}
+
+milestone unavailable_actor_catalog_cannot_guess {
+  phase post_sim
+  when actor.placed.exists("F_SP103", 1, 7, 42)
+}
+"#,
+        )
+        .unwrap();
+        let hits = crate::milestone_dsl::evaluate_recorded_trace(&program, &trace).unwrap();
+        let hit = hits["recorded_hit"].as_ref().unwrap();
+        assert_eq!(hit.record_index, 0);
+        assert_eq!(hit.boundary_index, 1);
+        assert!(hits["unavailable_actor_catalog_cannot_guess"].is_none());
     }
 
     fn empty_collision_surface(payload: &mut [u8], index: usize) {

@@ -1,0 +1,83 @@
+{
+  "schema": "dusklight-comparison-evidence/v1",
+  "catalog_identity": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "known_event_signatures": [
+    "1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "runs": [
+    {
+      "label": "gui",
+      "role": "headful",
+      "complete": true,
+      "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "events": [
+        {
+          "simulation_tick": 1,
+          "tape_frame": 0,
+          "event_kind": "procedure_change",
+          "signature": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "simulation_tick": 2,
+          "tape_frame": 1,
+          "event_kind": "procedure_change",
+          "signature": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ]
+    },
+    {
+      "label": "null-renderer",
+      "role": "headless",
+      "complete": true,
+      "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "events": [
+        {
+          "simulation_tick": 1,
+          "tape_frame": 0,
+          "event_kind": "procedure_change",
+          "signature": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "simulation_tick": 2,
+          "tape_frame": 1,
+          "event_kind": "procedure_change",
+          "signature": "3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ]
+    },
+    {
+      "label": "baseline",
+      "role": "control",
+      "complete": true,
+      "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "events": [
+        {
+          "simulation_tick": 1,
+          "tape_frame": 0,
+          "event_kind": "procedure_change",
+          "signature": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    {
+      "label": "intervention",
+      "role": "treatment",
+      "complete": true,
+      "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "events": [
+        {
+          "simulation_tick": 1,
+          "tape_frame": 0,
+          "event_kind": "procedure_change",
+          "signature": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "simulation_tick": 2,
+          "tape_frame": 1,
+          "event_kind": "flag_change",
+          "signature": "4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      ]
+    }
+  ]
+}

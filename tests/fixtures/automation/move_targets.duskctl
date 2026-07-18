@@ -1,0 +1,15 @@
+duskcontrol 1
+frames 10
+seek coordinate replace from 0 for 1 frame player target 0 0 10 offset 1 0 0 magnitude 100 stop 2
+seek plane replace from 1 for 1 frame world point 0 0 20 normal 0 0 2 magnitude 90 stop 3
+seek path-point replace from 2 for 1 path 42 point 7 target 10 0 0 offset 0 0 1 magnitude 80 stop 4
+seek opening replace from 3 for 1 opening 99 target 0 0 30 offset -1 0 0 magnitude 70 stop 5
+neutral replace from 4 for 1
+turn replace from 5 for 1 direction right magnitude 40
+brake replace from 6 for 1 stop-speed 0.5 magnitude 50
+align replace from 7 for 1 frame world heading 1.5 tolerance 0.1 magnitude 60
+maintain heading replace from 8 for 1 frame camera heading -0.25 magnitude 70
+maintain distance replace from 9 for 1 frame world target 0 0 10 distance 5 tolerance 1 magnitude 80
+camera replace from 0 for 10 x 80 y -80
+camera add from 0 for 10 x 30 y 20
+clamp from 0 for 10 main 100 substick 90

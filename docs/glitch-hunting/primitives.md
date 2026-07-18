@@ -15,6 +15,29 @@ Every artifact records enough identity to reject a misleading replay:
 - protocol and artifact schema versions; and
 - fidelity profile.
 
+The portable artifact identity also authenticates the protocol name/version and
+capability set; region and language assets; scenario and predicate program; the
+action and observation schemas; and all simulation-relevant settings. Digests
+are SHA-256 over canonical, versioned bytes. A path, filename, JSON object order,
+or native structure layout is never an identity.
+
+### Compatibility modes
+
+Compatibility is always selected for a concrete operation. There is no generic
+"close enough" or implicit use of the currently configured game path.
+
+| Operation | Must match | Intentionally may differ |
+| --- | --- | --- |
+| Replay | artifact schema; complete build; game, region, language, scenario, predicate, action/observation schemas, settings; protocol/capabilities; fidelity | artifact payload digest only |
+| Trace merge | complete build; game, region, language, action/observation schemas, settings; protocol/capabilities; fidelity | scenario and predicate; payload |
+| Model training | build feature digest; game, region, language, action/observation schemas, settings; protocol/capabilities; fidelity | commits, compiler/target/configuration, dirty tree, scenario, predicate, payload |
+| Checkpoint restore | complete build; game, region, language, scenario, settings; protocol/capabilities; fidelity | predicate and action/observation schemas; payload |
+| Cross-build comparison | game, region, language, scenario, predicate, action/observation schemas, settings; protocol/capabilities; fidelity | complete build identity and payload |
+
+These are conservative rules. Relaxing one requires a new identity schema or an
+explicit mode revision; callers may not silently omit a field. Rejections list
+every mismatched required field with expected and received values.
+
 ## Scenario
 
 A `Scenario` describes repeatable initial conditions, not just a map:
@@ -56,12 +79,75 @@ port for one tick:
 Do not serialize `sizeof(PADStatus)`: its padding and PC-only fields are build
 details. Use a canonical packed schema.
 
-An `InputTape` contains build-independent metadata, a scenario reference,
-run-length encoded frames, named markers, and optional expected hash/event
-checkpoints. It supports lossless splice, trim, and neutral-frame insertion.
+An `InputTape` contains build-independent metadata, an explicit process or
+stage boot origin, a scenario reference, run-length encoded frames, named
+markers, and optional expected hash/event checkpoints. A stage origin includes
+stage ID, room, spawn point, layer, and an optional memory-card save slot;
+tape tick zero is armed only after that fixture's readiness assertion succeeds.
+It supports lossless splice and trim, port-owned layering, exhaustive typed
+diffs, deterministic authoring-rate resampling to canonical 30 Hz, and
+neutral-frame insertion. Layering replaces the complete native PAD record only
+for ports owned by the overlay; all other ports and the base boot identity are
+preserved. A process-boot overlay is reusable, while an explicit stage-boot
+overlay must have the exact same stage and fixture identity as the base.
+Reactive waits are rejected by splice, layer, and resample because they do not
+have a stable absolute tick.
 The tape is the final proof produced by any higher-level controller. Its input
 at tick N is fixed before replay begins; it contains no observation-dependent
 waits or branches.
+
+For a map-local test, the direct tape workflow is:
+
+```sh
+huntctl tape compile test.tas test.tape
+huntctl tape run test.tape --game ./dusklight --dvd game.iso --state-root build/test-state \
+  --milestone-goal arbitrary-map-goal --gameplay-trace build/test.trace
+huntctl tape minimize test.tape minimized.tape --game ./dusklight --dvd game.iso \
+  --state-root build/minimize-state --milestone-goal arbitrary-map-goal --repetitions 2
+huntctl tape slice test.tape room-only.tape --start 120 --frames 300
+huntctl tape layer room-only.tape correction.tape layered.tape --start 45
+huntctl tape resample authored-60hz.tape canonical-30hz.tape
+huntctl tape diff room-only.tape layered.tape
+```
+
+`tape minimize` treats the requested milestone goal as the run's semantic
+success oracle. It first neutralizes contiguous chunks of active input with
+ddmin, then retries individual active frames, and finally truncates after the
+proved goal frame. Every accepted reduction must reproduce the source proof in
+at least two cold runs: the same boot origin, goal simulation tick, goal tape
+frame, and complete `dusklight.milestone-boundary/v4` fingerprint. The emitted
+`.proof.json` retains the exact oracle/boundary evidence and all candidate-run
+artifacts remain under the supplied state root.
+
+`tape resample` treats the source as a piecewise-constant authoring signal and
+samples it at the start of every canonical 30 Hz tick. Upsampling repeats exact
+PAD records; downsampling selects the record active at the output tick and can
+therefore discard shorter-than-one-tick authoring changes. `tape diff` reports
+boot/rate metadata plus every changed frame field, including all native fields
+on all four controller ports.
+
+The text authoring DSL also has explicit stateful button transitions:
+
+```text
+dusktape 1
+press p0 LEFT RIGHT
+hold 2
+release p0 LEFT
+release p0 RIGHT
+```
+
+`press` and `release` each emit one frame derived from the preceding exact PAD
+state; at the start of a program that state is neutral. `hold N` emits `N`
+additional copies. Re-pressing a held bit or releasing an absent bit is an
+authoring error rather than a silently redundant frame. Multiple names on one
+press are one edge, and conflicting hardware-visible combinations such as
+`LEFT RIGHT` remain set exactly as authored. The JSON program represents the
+same operations as `{"op":"press|release","port":N,"buttons":[...]}`.
+
+Generic minimization preserves absolute timing while neutralizing removable input frames, then
+trims after the exact goal frame. It accepts a reduction only when repeated native runs reproduce
+the same v4 boot-and-fixture-authenticated boundary fingerprint, simulation tick, and tape frame. An authored
+milestone program may be supplied with `--milestone-program` for goals not built into Dusklight.
 
 ## ControllerProgram
 
@@ -75,8 +161,9 @@ It is not itself a TAS proof. Initial operations may include:
 - repeat and branch on an observation; and
 - invoke a parameterized motion segment.
 
-Motion segments may later include stick-space splines, angle/speed targets, roll
-spacing, and state-feedback controllers. A successful run must materialize the
+Motion segments include exact-duration stick-space waypoint, rail, Catmull–Rom
+spline, and Bézier paths plus angle/speed targets and roll spacing; bounded
+state-feedback controllers cover observation-dependent movement. A successful run must materialize the
 exact raw `InputFrame` sequence it actually used. Verification replays that
 flattened sequence with all program waits and branches removed. A spline is a
 search convenience, not a replay format.
@@ -99,6 +186,24 @@ set includes:
 - UI screen, selection, cursor, and text-entry state;
 - heap usage and GC-relative offsets for watched objects; and
 - canonical state hashes.
+
+Trace channel coverage currently includes per-tick global RNG streams and call
+counters, realized camera pose, Link procedure context/timers/animations,
+ground/wall/roof/water contacts, collision correction vectors, and joined
+local collision geometry. Channel 11 (`goal-progress`, fixed 32-byte version 1)
+adds the configured goal's FNV-1a display key, overall requested/hit counts,
+stable and ordered-sequence progress, and exact first-hit tick. It is sampled
+after predicate evaluation at the same post-simulation boundary; the hash is a
+compact feature key, not predicate identity.
+
+Channel 12 (`selected-actors`, fixed 656-byte version 1) retains at most 16
+non-player actors ordered by exact session process ID. Each entry copies actor
+type, placed set/home identity, current room, health/status, position, and
+current/shape angles. The header records the total observed population and an
+explicit truncation bit. Lowest process IDs win independent of actor iteration
+order, unused slots have canonical sentinels, and pointer values never enter
+the artifact. This heavier channel is opt-in; `goal-progress` is in the default
+set.
 
 Stable actor handles combine a spawn/event identity and generation. Native
 pointers are diagnostic values only and never enter portable artifacts or
