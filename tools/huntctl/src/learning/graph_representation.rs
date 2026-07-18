@@ -3,7 +3,7 @@
 use crate::artifact::Digest;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -22,16 +22,22 @@ pub enum GraphDomain {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct GraphEdge {
-    pub source: usize,
-    pub target: usize,
+    pub source_id: u64,
+    pub target_id: u64,
     pub weight: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct GraphNode {
+    pub stable_id: u64,
+    pub features: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]
 pub struct GraphSample {
     pub sample_sha256: Digest,
     pub base_features: Vec<f32>,
-    pub nodes: Vec<Vec<f32>>,
+    pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     pub target: f32,
 }
@@ -215,6 +221,20 @@ fn rows(samples: &[GraphSample], graph: bool, node_width: usize) -> RegressionRo
 }
 
 fn encode(sample: &GraphSample, graph: bool, width: usize) -> Vec<f64> {
+    let mut nodes = sample.nodes.iter().collect::<Vec<_>>();
+    nodes.sort_by_key(|node| node.stable_id);
+    let indices = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.stable_id, index))
+        .collect::<BTreeMap<_, _>>();
+    let mut edges = sample.edges.iter().collect::<Vec<_>>();
+    edges.sort_by(|left, right| {
+        left.source_id
+            .cmp(&right.source_id)
+            .then_with(|| left.target_id.cmp(&right.target_id))
+            .then_with(|| left.weight.total_cmp(&right.weight))
+    });
     let mut output = vec![1.0];
     output.extend(sample.base_features.iter().map(|value| f64::from(*value)));
     output.push(sample.nodes.len() as f64 / MAX_NODES as f64);
@@ -222,9 +242,9 @@ fn encode(sample: &GraphSample, graph: bool, width: usize) -> Vec<f64> {
     let mut mean = vec![0.0_f64; width];
     let mut minimum = vec![f64::INFINITY; width];
     let mut maximum = vec![f64::NEG_INFINITY; width];
-    for node in &sample.nodes {
+    for node in &nodes {
         for index in 0..width {
-            let value = f64::from(node[index]);
+            let value = f64::from(node.features[index]);
             mean[index] += value;
             minimum[index] = minimum[index].min(value);
             maximum[index] = maximum[index].max(value);
@@ -239,13 +259,15 @@ fn encode(sample: &GraphSample, graph: bool, width: usize) -> Vec<f64> {
     if !graph {
         return output;
     }
-    let mut messages = vec![vec![0.0_f64; width]; sample.nodes.len()];
-    let mut degrees = vec![0_u32; sample.nodes.len()];
-    for edge in &sample.edges {
-        degrees[edge.target] += 1;
+    let mut messages = vec![vec![0.0_f64; width]; nodes.len()];
+    let mut degrees = vec![0_u32; nodes.len()];
+    for edge in edges {
+        let source = indices[&edge.source_id];
+        let target = indices[&edge.target_id];
+        degrees[target] += 1;
         for index in 0..width {
-            messages[edge.target][index] +=
-                f64::from(sample.nodes[edge.source][index]) * f64::from(edge.weight);
+            messages[target][index] +=
+                f64::from(nodes[source].features[index]) * f64::from(edge.weight);
         }
     }
     let mut message_mean = vec![0.0; width];
@@ -373,7 +395,11 @@ fn validate_inputs(
         ));
     }
     let first = &training[0];
-    let node_width = first.nodes.first().map(Vec::len).unwrap_or(0);
+    let node_width = first
+        .nodes
+        .first()
+        .map(|node| node.features.len())
+        .unwrap_or(0);
     let base_width = first.base_features.len();
     if node_width == 0 || node_width > MAX_FEATURE_WIDTH || base_width > MAX_FEATURE_WIDTH {
         return Err(GraphRepresentationError::new(
@@ -382,6 +408,11 @@ fn validate_inputs(
     }
     let mut identities = BTreeSet::new();
     for sample in training.iter().chain(held_out) {
+        let node_ids = sample
+            .nodes
+            .iter()
+            .map(|node| node.stable_id)
+            .collect::<BTreeSet<_>>();
         if sample.sample_sha256 == Digest::ZERO
             || !identities.insert(sample.sample_sha256)
             || sample.base_features.len() != base_width
@@ -389,13 +420,14 @@ fn validate_inputs(
             || sample.nodes.len() > MAX_NODES
             || sample.edges.len() > MAX_EDGES
             || sample.base_features.iter().any(|value| !value.is_finite())
-            || sample
-                .nodes
-                .iter()
-                .any(|node| node.len() != node_width || node.iter().any(|value| !value.is_finite()))
+            || sample.nodes.iter().any(|node| {
+                node.features.len() != node_width
+                    || node.features.iter().any(|value| !value.is_finite())
+            })
+            || node_ids.len() != sample.nodes.len()
             || sample.edges.iter().any(|edge| {
-                edge.source >= sample.nodes.len()
-                    || edge.target >= sample.nodes.len()
+                !node_ids.contains(&edge.source_id)
+                    || !node_ids.contains(&edge.target_id)
                     || !edge.weight.is_finite()
             })
             || !sample.target.is_finite()
@@ -448,30 +480,43 @@ mod tests {
                 GraphSample {
                     sample_sha256: Digest([start.wrapping_add(index as u8); 32]),
                     base_features: vec![0.0],
-                    nodes: vec![vec![1.0], vec![2.0], vec![3.0]],
+                    nodes: vec![
+                        GraphNode {
+                            stable_id: 10,
+                            features: vec![1.0],
+                        },
+                        GraphNode {
+                            stable_id: 20,
+                            features: vec![2.0],
+                        },
+                        GraphNode {
+                            stable_id: 30,
+                            features: vec![3.0],
+                        },
+                    ],
                     edges: if positive {
                         vec![
                             GraphEdge {
-                                source: 2,
-                                target: 0,
+                                source_id: 30,
+                                target_id: 10,
                                 weight: 1.0,
                             },
                             GraphEdge {
-                                source: 2,
-                                target: 1,
+                                source_id: 30,
+                                target_id: 20,
                                 weight: 1.0,
                             },
                         ]
                     } else {
                         vec![
                             GraphEdge {
-                                source: 0,
-                                target: 1,
+                                source_id: 10,
+                                target_id: 20,
                                 weight: 1.0,
                             },
                             GraphEdge {
-                                source: 0,
-                                target: 2,
+                                source_id: 10,
+                                target_id: 30,
                                 weight: 1.0,
                             },
                         ]
@@ -508,6 +553,16 @@ mod tests {
             assert!(!report.promotion_authority);
             assert_ne!(report.comparison_sha256, Digest::ZERO);
         }
+    }
+
+    #[test]
+    fn stable_node_id_canonicalizes_node_and_edge_enumeration() {
+        let sample = samples(1, 1).remove(0);
+        let mut reordered = sample.clone();
+        reordered.nodes.reverse();
+        reordered.edges.reverse();
+        assert_eq!(encode(&sample, false, 1), encode(&reordered, false, 1));
+        assert_eq!(encode(&sample, true, 1), encode(&reordered, true, 1));
     }
 
     #[test]
