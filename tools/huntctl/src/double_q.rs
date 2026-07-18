@@ -13,6 +13,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const DOUBLE_Q_MODEL_SCHEMA_V1: &str = "dusklight-double-q-model/v1";
+pub const CONSERVATIVE_Q_MODEL_SCHEMA_V1: &str = "dusklight-conservative-q-model/v1";
 pub const MAX_DOUBLE_Q_EPOCHS: usize = 256;
 pub const MAX_DOUBLE_Q_HIDDEN_WIDTH: usize = 128;
 pub const MAX_DOUBLE_Q_TARGET_SYNC_STEPS: usize = 1_000_000;
@@ -42,6 +43,25 @@ impl Default for DoubleQConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ConservativeQConfig {
+    pub double_q: DoubleQConfig,
+    /// Weight of `T * logsumexp(Q(s, .) / T) - Q(s, observed_action)`.
+    pub conservative_weight: f64,
+    /// Temperature used by the discrete log-sum-exp penalty.
+    pub temperature: f64,
+}
+
+impl Default for ConservativeQConfig {
+    fn default() -> Self {
+        Self {
+            double_q: DoubleQConfig::default(),
+            conservative_weight: 1.0,
+            temperature: 1.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct DoubleQEstimate {
     pub action: u32,
@@ -63,12 +83,30 @@ pub struct DoubleQ {
     target_synchronizations: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct ConservativeQ {
+    model: DoubleQ,
+    conservative_updates: u64,
+    mean_conservative_gap: f64,
+}
+
 impl DoubleQ {
     pub fn fit(
         feature_width: usize,
         actions: &[u32],
         transitions: &[Transition],
         config: &DoubleQConfig,
+    ) -> Result<Self, DoubleQError> {
+        Self::fit_internal(feature_width, actions, transitions, config, 0.0, 1.0)
+    }
+
+    fn fit_internal(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        config: &DoubleQConfig,
+        conservative_weight: f64,
+        conservative_temperature: f64,
     ) -> Result<Self, DoubleQError> {
         validate(feature_width, actions, transitions, config)?;
         let mut actions = actions.to_vec();
@@ -132,6 +170,8 @@ impl DoubleQ {
                     target,
                     config.learning_rate,
                     config.gradient_clip,
+                    conservative_weight,
+                    conservative_temperature,
                 )?;
                 gradient_updates += 1;
                 if gradient_updates % config.target_sync_steps as u64 == 0 {
@@ -249,6 +289,116 @@ impl DoubleQ {
     }
 }
 
+impl ConservativeQ {
+    pub fn fit(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        config: &ConservativeQConfig,
+    ) -> Result<Self, DoubleQError> {
+        if !config.conservative_weight.is_finite()
+            || config.conservative_weight <= 0.0
+            || config.conservative_weight > 100.0
+        {
+            return Err(DoubleQError::InvalidConfig(
+                "conservative weight must be finite and within (0, 100]",
+            ));
+        }
+        if !config.temperature.is_finite()
+            || config.temperature <= 0.0
+            || config.temperature > 100.0
+        {
+            return Err(DoubleQError::InvalidConfig(
+                "CQL temperature must be finite and within (0, 100]",
+            ));
+        }
+        let model = DoubleQ::fit_internal(
+            feature_width,
+            actions,
+            transitions,
+            &config.double_q,
+            config.conservative_weight,
+            config.temperature,
+        )?;
+        let mut conservative_gap_sum = 0.0;
+        for transition in transitions {
+            let state = model.normalized_state(&transition.state)?;
+            let observed_action = model
+                .actions
+                .binary_search(&transition.action)
+                .expect("transition actions were validated");
+            conservative_gap_sum += conservative_gap(
+                &model.critic_a.values(&state),
+                observed_action,
+                config.temperature,
+            );
+            conservative_gap_sum += conservative_gap(
+                &model.critic_b.values(&state),
+                observed_action,
+                config.temperature,
+            );
+        }
+        let conservative_updates = model.gradient_updates();
+        let mean_conservative_gap = conservative_gap_sum / (transitions.len() as f64 * 2.0);
+        Ok(Self {
+            model,
+            conservative_updates,
+            mean_conservative_gap,
+        })
+    }
+
+    pub fn feature_width(&self) -> usize {
+        self.model.feature_width()
+    }
+
+    pub fn actions(&self) -> &[u32] {
+        self.model.actions()
+    }
+
+    pub fn gradient_updates(&self) -> u64 {
+        self.model.gradient_updates()
+    }
+
+    pub fn target_synchronizations(&self) -> u64 {
+        self.model.target_synchronizations()
+    }
+
+    pub fn conservative_updates(&self) -> u64 {
+        self.conservative_updates
+    }
+
+    pub fn mean_conservative_gap(&self) -> f64 {
+        self.mean_conservative_gap
+    }
+
+    pub fn estimate(&self, state: &[f32], action: u32) -> Result<DoubleQEstimate, DoubleQError> {
+        self.model.estimate(state, action)
+    }
+
+    pub fn rank_actions(&self, state: &[f32]) -> Result<Vec<DoubleQEstimate>, DoubleQError> {
+        self.model.rank_actions(state)
+    }
+
+    pub fn artifact_bytes(
+        &self,
+        feature_schema: Digest,
+        action_schema: Digest,
+        training_dataset_sha256: Option<Digest>,
+        training_corpus_sha256: &[Digest],
+        config: &ConservativeQConfig,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&ConservativeQArtifact {
+            schema: CONSERVATIVE_Q_MODEL_SCHEMA_V1,
+            feature_schema,
+            action_schema,
+            training_dataset_sha256,
+            training_corpus_sha256,
+            config,
+            model: self,
+        })
+    }
+}
+
 #[derive(Serialize)]
 struct DoubleQArtifact<'a> {
     schema: &'static str,
@@ -258,6 +408,17 @@ struct DoubleQArtifact<'a> {
     training_corpus_sha256: &'a [Digest],
     config: &'a DoubleQConfig,
     model: &'a DoubleQ,
+}
+
+#[derive(Serialize)]
+struct ConservativeQArtifact<'a> {
+    schema: &'static str,
+    feature_schema: Digest,
+    action_schema: Digest,
+    training_dataset_sha256: Option<Digest>,
+    training_corpus_sha256: &'a [Digest],
+    config: &'a ConservativeQConfig,
+    model: &'a ConservativeQ,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -357,25 +518,55 @@ impl Critic {
         target: f64,
         learning_rate: f64,
         gradient_clip: f64,
+        conservative_weight: f64,
+        conservative_temperature: f64,
     ) -> Result<(), DoubleQError> {
         let (hidden, active) = self.hidden(state);
-        let output_offset = action * self.hidden_width;
-        let prediction = self.output_bias[action]
-            + hidden
+        let values = (0..self.action_count)
+            .map(|output_action| {
+                let offset = output_action * self.hidden_width;
+                self.output_bias[output_action]
+                    + hidden
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| self.output_weights[offset + index] * value)
+                        .sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+        let td_error = (values[action] - target).clamp(-gradient_clip, gradient_clip);
+        let mut output_gradients = vec![0.0; self.action_count];
+        output_gradients[action] = td_error;
+        if conservative_weight > 0.0 {
+            let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let exponentials = values
                 .iter()
-                .enumerate()
-                .map(|(index, value)| self.output_weights[output_offset + index] * value)
-                .sum::<f64>();
-        let error = (prediction - target).clamp(-gradient_clip, gradient_clip);
-        let prior_output_weights =
-            self.output_weights[output_offset..output_offset + self.hidden_width].to_vec();
-
-        self.output_bias[action] -= learning_rate * error;
+                .map(|value| ((value - maximum) / conservative_temperature).exp())
+                .collect::<Vec<_>>();
+            let denominator = exponentials.iter().sum::<f64>();
+            for output_action in 0..self.action_count {
+                let observed = if output_action == action { 1.0 } else { 0.0 };
+                output_gradients[output_action] +=
+                    conservative_weight * (exponentials[output_action] / denominator - observed);
+            }
+        }
+        let prior_output_weights = self.output_weights.clone();
+        for output_action in 0..self.action_count {
+            let gradient = output_gradients[output_action].clamp(-gradient_clip, gradient_clip);
+            self.output_bias[output_action] -= learning_rate * gradient;
+            let output_offset = output_action * self.hidden_width;
+            for hidden_index in 0..self.hidden_width {
+                self.output_weights[output_offset + hidden_index] -= learning_rate
+                    * (gradient * hidden[hidden_index]).clamp(-gradient_clip, gradient_clip);
+            }
+        }
         for hidden_index in 0..self.hidden_width {
-            self.output_weights[output_offset + hidden_index] -=
-                learning_rate * (error * hidden[hidden_index]).clamp(-gradient_clip, gradient_clip);
             if active[hidden_index] {
-                let hidden_gradient = (error * prior_output_weights[hidden_index])
+                let hidden_gradient = (0..self.action_count)
+                    .map(|output_action| {
+                        output_gradients[output_action]
+                            * prior_output_weights[output_action * self.hidden_width + hidden_index]
+                    })
+                    .sum::<f64>()
                     .clamp(-gradient_clip, gradient_clip);
                 self.hidden_bias[hidden_index] -= learning_rate * hidden_gradient;
                 let input_offset = hidden_index * self.feature_width;
@@ -385,7 +576,7 @@ impl Critic {
                 }
             }
         }
-        if !self.output_bias[action].is_finite()
+        if self.output_bias.iter().any(|value| !value.is_finite())
             || self.input_weights.iter().any(|value| !value.is_finite())
             || self.hidden_bias.iter().any(|value| !value.is_finite())
             || self.output_weights.iter().any(|value| !value.is_finite())
@@ -519,6 +710,15 @@ fn normalize(state: &[f32], mean: &[f64], inverse_stddev: &[f64]) -> Vec<f64> {
         .zip(inverse_stddev)
         .map(|((value, mean), inverse_stddev)| (f64::from(*value) - mean) * inverse_stddev)
         .collect()
+}
+
+fn conservative_gap(values: &[f64], observed_action: usize, temperature: f64) -> f64 {
+    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let denominator = values
+        .iter()
+        .map(|value| ((value - maximum) / temperature).exp())
+        .sum::<f64>();
+    maximum + temperature * denominator.ln() - values[observed_action]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -666,5 +866,40 @@ mod tests {
             DoubleQ::fit(1, &[WAIT], &zero_duration, &DoubleQConfig::default()).unwrap_err(),
             DoubleQError::ZeroDuration
         );
+    }
+
+    #[test]
+    fn conservative_penalty_separates_state_local_unsupported_actions() {
+        let mut transitions = Vec::new();
+        for _ in 0..16 {
+            transitions.push(transition(-1.0, WAIT, 0.0, true));
+            transitions.push(transition(1.0, ADVANCE, 0.0, true));
+        }
+        let base = DoubleQConfig {
+            epochs: 128,
+            hidden_width: 8,
+            learning_rate: 0.01,
+            target_sync_steps: 32,
+            seed: 11,
+            ..DoubleQConfig::default()
+        };
+        let ordinary = DoubleQ::fit(1, &[WAIT, ADVANCE], &transitions, &base).unwrap();
+        let conservative = ConservativeQ::fit(
+            1,
+            &[WAIT, ADVANCE],
+            &transitions,
+            &ConservativeQConfig {
+                double_q: base,
+                conservative_weight: 1.0,
+                temperature: 1.0,
+            },
+        )
+        .unwrap();
+        let ordinary_gap = ordinary.estimate(&[-1.0], WAIT).unwrap().mean
+            - ordinary.estimate(&[-1.0], ADVANCE).unwrap().mean;
+        let conservative_gap = conservative.estimate(&[-1.0], WAIT).unwrap().mean
+            - conservative.estimate(&[-1.0], ADVANCE).unwrap().mean;
+        assert!(conservative_gap > ordinary_gap + 0.5);
+        assert_eq!(conservative.rank_actions(&[-1.0]).unwrap()[0].action, WAIT);
     }
 }
