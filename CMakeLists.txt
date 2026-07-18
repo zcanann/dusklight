@@ -94,9 +94,16 @@ option(DUSK_ENABLE_AUTOMATION_OBSERVERS
        "Enable fork-only read-only game observation adapters" OFF)
 option(DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS
        "Enable explicit write-capable automation fidelity models" OFF)
+option(DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS
+       "Enable explicitly gated typed experimental gameplay interventions" OFF)
 if (DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS AND NOT DUSK_ENABLE_AUTOMATION_OBSERVERS)
     message(FATAL_ERROR
         "DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS requires DUSK_ENABLE_AUTOMATION_OBSERVERS")
+endif ()
+if (DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS AND
+        (NOT DUSK_ENABLE_AUTOMATION_OBSERVERS OR NOT DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS))
+    message(FATAL_ERROR
+        "DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS requires automation observers and fidelity models")
 endif ()
 
 # Edit & Continue
@@ -458,7 +465,8 @@ endif ()
 target_compile_definitions(dusklight PRIVATE
     ${GAME_COMPILE_DEFS}
     DUSK_ENABLE_AUTOMATION_OBSERVERS=$<BOOL:${DUSK_ENABLE_AUTOMATION_OBSERVERS}>
-    DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=$<BOOL:${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS}>)
+    DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=$<BOOL:${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS}>
+    DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS=$<BOOL:${DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS}>)
 target_include_directories(dusklight PRIVATE ${miniz_SOURCE_DIR})
 target_link_libraries(dusklight PRIVATE aurora::main ${GAME_LIBS} ${JSYSTEM_LINK_LIBRARIES})
 target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/include/dusk_pch.hpp>")

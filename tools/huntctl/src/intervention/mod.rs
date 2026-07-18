@@ -2,6 +2,8 @@
 //!
 //! This artifact is deliberately unrelated to `DUSKTAPE` and `DUSKCTRL`.
 
+pub mod runtime;
+
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;

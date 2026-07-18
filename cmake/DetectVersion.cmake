@@ -190,7 +190,7 @@ macro(configure_version_header)
     endif ()
 
     set(DUSK_FEATURE_SWITCHES
-            "asan=${ENABLE_ASAN};selected_opt=${DUSK_SELECTED_OPT};movie=${DUSK_MOVIE_SUPPORT};update_checker=${DUSK_ENABLE_UPDATE_CHECKER};sentry=${DUSK_ENABLE_SENTRY_NATIVE};gfx_debug_groups=${DUSK_GFX_DEBUG_GROUPS};code_mods=${DUSK_ENABLE_CODE_MODS};automation_observers=${DUSK_ENABLE_AUTOMATION_OBSERVERS};automation_fidelity_models=${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS};discord=${DUSK_ENABLE_DISCORD}")
+            "asan=${ENABLE_ASAN};selected_opt=${DUSK_SELECTED_OPT};movie=${DUSK_MOVIE_SUPPORT};update_checker=${DUSK_ENABLE_UPDATE_CHECKER};sentry=${DUSK_ENABLE_SENTRY_NATIVE};gfx_debug_groups=${DUSK_GFX_DEBUG_GROUPS};code_mods=${DUSK_ENABLE_CODE_MODS};automation_observers=${DUSK_ENABLE_AUTOMATION_OBSERVERS};automation_fidelity_models=${DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS};experimental_interventions=${DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS};discord=${DUSK_ENABLE_DISCORD}")
     string(SHA256 DUSK_FEATURE_DIGEST "${DUSK_FEATURE_SWITCHES}")
 
     configure_file(${_DUSK_VERSION_ROOT}/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.h)
