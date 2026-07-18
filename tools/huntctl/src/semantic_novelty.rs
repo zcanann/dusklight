@@ -8,6 +8,7 @@ pub mod archive;
 pub mod catalog;
 pub mod clustering;
 pub mod headful_review;
+pub mod human_labels;
 pub mod minimization;
 pub mod proposal_signal;
 
