@@ -32,8 +32,12 @@ roadmap documents describe the larger target.
   `huntctl harness execute` now routes neutral, TAS-source, absolute-tape, and
   reactive-controller seeds through an isolated native process, retains the
   controller's absolute realized tape, and seals the typed result. Exact target
-  loss is not exhaustion. Search evaluation v5 derives one authenticated
-  candidate request per attempt and retains its sealed request/result digests;
+  loss is not exhaustion. Controller steps use a versioned synchronous
+  pre-input request/response with echoed logical/frame counters; the response
+  can supply only a bounded PAD state or target-loss reason, and a missing or
+  stale response is a protocol failure. Search evaluation v5 derives one
+  authenticated candidate request per attempt and retains its sealed
+  request/result digests;
   multi-generation and fitted-Q-origin candidates use that same executor and
   cannot override request-owned execution inputs. `harness inspect-objective`
   presents the authenticated source, identities, requirements, progress,

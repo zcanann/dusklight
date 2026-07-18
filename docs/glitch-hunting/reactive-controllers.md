@@ -13,8 +13,14 @@ The controller path has a deliberately narrow contract:
   `DUSKCTRL` v1.
 - C++ decodes it once, captures bounded immutable observations, and evaluates
   one frame immediately before `JUTGamePad::read()`.
-- The evaluator is pure and allocation-free. It receives a program plus a
-  snapshot and returns one raw port-0 PAD state.
+- `InputControllerStepRequest` v1.0 labels that snapshot `pre_input` and binds
+  its simulation tick, absolute input frame, and controller frame. The pure,
+  allocation-free evaluator synchronously returns exactly one fixed-size
+  `InputControllerStepResponse` carrying the echoed counters and raw port-0 PAD
+  state.
+- Unsupported versions, a non-pre-input phase, an out-of-range frame, or a
+  stale/mismatched response cannot inject input. A runtime response-contract
+  failure exits through the harness `protocol_failure` terminal.
 - Runtime integration reads player position/yaw, camera yaw, and actor identity
   and position. It never writes gameplay state.
 - The only game-facing write is the existing exclusive virtual PAD injection.

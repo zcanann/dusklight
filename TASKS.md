@@ -62,7 +62,7 @@ judgment.
   budgets, fidelity, evidence, and terminal reason.
 - [x] Route tape playback, reactive control, the active population search, and
   learned proposals through that same request/result executor.
-- [ ] Give a controller one versioned pre-input observation and require one
+- [x] Give a controller one versioned pre-input observation and require one
   bounded action response without game-state mutation authority.
 - [ ] Enforce the logical-tick budget independently of host timeout and retain
   a precise terminal reason plus authenticated partial artifacts on failure.
