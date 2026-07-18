@@ -75,6 +75,7 @@ pub struct CriticEvaluation {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct HistoryCriticComparison {
     pub schema: &'static str,
+    pub representation_sha256: Digest,
     pub config: HistoryCriticConfig,
     pub observation_width: usize,
     pub training_episodes: usize,
@@ -84,17 +85,22 @@ pub struct HistoryCriticComparison {
     pub single_frame: CriticEvaluation,
     pub short_stack: CriticEvaluation,
     pub recurrent: CriticEvaluation,
+    pub equal_training_row_budget: bool,
+    pub equal_held_out_row_budget: bool,
     pub disposition: HistoryCriticDisposition,
+    pub promotion_authority: bool,
+    pub limitation: &'static str,
     pub comparison_sha256: Digest,
 }
 
 impl HistoryCriticComparison {
     pub fn compare(
+        representation_sha256: Digest,
         training: &[SequenceEpisode],
         held_out: &[SequenceEpisode],
         config: HistoryCriticConfig,
     ) -> Result<Self, HistoryCriticError> {
-        let observation_width = validate_inputs(training, held_out, config)?;
+        let observation_width = validate_inputs(representation_sha256, training, held_out, config)?;
         let training_aliasing = aliasing_audit(training, config.alias_target_tolerance);
         let held_out_aliasing = aliasing_audit(held_out, config.alias_target_tolerance);
 
@@ -131,8 +137,18 @@ impl HistoryCriticComparison {
             &recurrent,
             config.minimum_relative_improvement,
         );
+        let equal_training_row_budget = single_frame.training_rows == short_stack.training_rows
+            && short_stack.training_rows == recurrent.training_rows;
+        let equal_held_out_row_budget = single_frame.held_out_rows == short_stack.held_out_rows
+            && short_stack.held_out_rows == recurrent.held_out_rows;
+        if !equal_training_row_budget || !equal_held_out_row_budget {
+            return Err(HistoryCriticError::new(
+                "history critics did not consume equal row budgets",
+            ));
+        }
         let mut report = Self {
             schema: HISTORY_CRITIC_COMPARISON_SCHEMA_V1,
+            representation_sha256,
             config,
             observation_width,
             training_episodes: training.len(),
@@ -142,7 +158,11 @@ impl HistoryCriticComparison {
             single_frame,
             short_stack,
             recurrent,
+            equal_training_row_budget,
+            equal_held_out_row_budget,
             disposition,
+            promotion_authority: false,
+            limitation: "held-out target MSE is not native objective success",
             comparison_sha256: Digest::ZERO,
         };
         report.comparison_sha256 = report.digest()?;
@@ -152,6 +172,7 @@ impl HistoryCriticComparison {
     fn digest(&self) -> Result<Digest, HistoryCriticError> {
         let bytes = serde_json::to_vec(&(
             self.schema,
+            self.representation_sha256,
             self.config,
             self.observation_width,
             self.training_episodes,
@@ -161,7 +182,11 @@ impl HistoryCriticComparison {
             &self.single_frame,
             &self.short_stack,
             &self.recurrent,
+            self.equal_training_row_budget,
+            self.equal_held_out_row_budget,
             self.disposition,
+            self.promotion_authority,
+            self.limitation,
         ))
         .map_err(|error| HistoryCriticError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
@@ -172,11 +197,13 @@ impl HistoryCriticComparison {
 }
 
 fn validate_inputs(
+    representation_sha256: Digest,
     training: &[SequenceEpisode],
     held_out: &[SequenceEpisode],
     config: HistoryCriticConfig,
 ) -> Result<usize, HistoryCriticError> {
-    if training.is_empty()
+    if representation_sha256 == Digest::ZERO
+        || training.is_empty()
         || held_out.is_empty()
         || training.len() > MAX_EPISODES
         || held_out.len() > MAX_EPISODES
@@ -546,6 +573,7 @@ mod tests {
     #[test]
     fn history_models_improve_when_current_state_aliases_hidden_cue() {
         let report = HistoryCriticComparison::compare(
+            Digest([90; 32]),
             &hidden_cue_episodes(1, 20),
             &hidden_cue_episodes(101, 10),
             HistoryCriticConfig {
@@ -570,9 +598,13 @@ mod tests {
     fn episode_boundaries_reset_history_and_splits_are_content_disjoint() {
         let training = hidden_cue_episodes(1, 4);
         let held_out = hidden_cue_episodes(20, 4);
-        let report =
-            HistoryCriticComparison::compare(&training, &held_out, HistoryCriticConfig::default())
-                .unwrap();
+        let report = HistoryCriticComparison::compare(
+            Digest([90; 32]),
+            &training,
+            &held_out,
+            HistoryCriticConfig::default(),
+        )
+        .unwrap();
         assert_eq!(report.single_frame.training_rows, 8);
         assert_eq!(report.short_stack.training_rows, 8);
         assert_eq!(report.recurrent.training_rows, 8);
@@ -581,6 +613,7 @@ mod tests {
         duplicated[0].episode_sha256 = training[0].episode_sha256;
         assert!(
             HistoryCriticComparison::compare(
+                Digest([90; 32]),
                 &training,
                 &duplicated,
                 HistoryCriticConfig::default()
@@ -601,6 +634,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let report = HistoryCriticComparison::compare(
+            Digest([90; 32]),
             &episodes(1),
             &episodes(20),
             HistoryCriticConfig::default(),
