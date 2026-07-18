@@ -250,6 +250,17 @@ as a bound. Every nonterminal score remains an exact simulator rollout, and
 the complete per-depth populations, results, leaderboards, and attempt evidence
 remain under the output root.
 
+An optional `--q-priors PRIORS.json` supplies
+`dusklight-q-beam-priors/v1`. The table binds the learned model, feature,
+action, objective, and exact option-catalog digests. For each parent it orders
+supported children by `Q - uncertainty_penalty * ensemble_stddev`; unsupported
+options remain available after supported ones. This ordering matters only when
+the candidate budget truncates expansion. Q never changes a native leaderboard
+score, declares a bound or terminal, selects the champion, or carries route or
+promotion authority. `beam.summary.json` records the prior table/model and the
+number of prior-ranked children while explicitly retaining native rollout
+ranking authority.
+
 ## Bounded CEM and CMA-ES
 
 Low-dimensional typed parameters can be optimized with seeded cross-entropy or

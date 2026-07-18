@@ -891,7 +891,7 @@ simple random baseline.
 
 ### P2: planning and model-based research
 
-- [ ] Use learned Q values as priors/heuristics for beam search or MCTS rather
+- [x] Use learned Q values as priors/heuristics for beam search or MCTS rather
   than requiring the policy to own the whole route.
 - [ ] Learn short-horizon local dynamics only after measuring prediction error
   on contacts, procedures, RNG-sensitive branches, and actor interaction.
