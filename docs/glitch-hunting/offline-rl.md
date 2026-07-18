@@ -690,6 +690,21 @@ snapshot count, maxima, configured limits, and the exact healthy or rejected
 disposition. This is a numerical circuit breaker, not a calibration claim;
 native evaluation remains mandatory.
 
+Before each online refit, anchored search writes
+`online-dataset-generation.json`. Its content identity covers the cumulative
+corpus digests and schemas, the prior dataset-generation identity, and the
+evaluation seal that admitted the current delta. A generation is accepted only
+when it is exactly its immutable parent union those sealed corpora; dropped,
+silently added, or modified corpora fail validation.
+
+The learner deliberately resumes by deterministic full refit over that exact
+cumulative generation, rather than claiming an incremental weight warm start.
+When a fitted model is available, `online-model-lineage.json` binds its
+serialized bytes to the dataset-generation digest, exact FQI configuration,
+model schema, and previous model/lineage digests. The same immutable inputs must
+reproduce the same model lineage; a changed dataset, config, or model fails the
+resume check. `q-proposals.json` uses schema v6 and embeds both identities.
+
 The generation-local `q-proposals.json` reports requested, available, and
 generated counts per proposer, the generation's cycle offset and actual lane
 schedule, plus coverage by stage/room, spatial cell, player procedure, option,

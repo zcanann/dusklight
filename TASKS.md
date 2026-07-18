@@ -858,7 +858,7 @@ simple random baseline.
 - [x] Cap update-to-data ratio and detect critic divergence or value explosion.
 - [x] Use independent evaluation workers/corpora so online training cannot turn
   proof repetitions into training samples before evaluation completes.
-- [ ] Resume training with immutable dataset generations and exact model lineage.
+- [x] Resume training with immutable dataset generations and exact model lineage.
 - [ ] Stop or fall back when supported-action or state coverage is inadequate.
 
 ### P1: model representation
