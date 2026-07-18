@@ -10,7 +10,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const ONLINE_DATASET_GENERATION_SCHEMA_V1: &str = "dusklight-online-dataset-generation/v1";
-pub const ONLINE_MODEL_LINEAGE_SCHEMA_V1: &str = "dusklight-online-model-lineage/v1";
+pub const ONLINE_MODEL_LINEAGE_SCHEMA_V2: &str = "dusklight-online-model-lineage/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -198,6 +198,7 @@ pub struct OnlineModelLineage {
     pub parent_model_sha256: Option<Digest>,
     pub model_schema: String,
     pub training_mode: String,
+    pub training_config: serde_json::Value,
     pub training_config_sha256: Digest,
     pub model_sha256: Digest,
     pub lineage_sha256: Digest,
@@ -224,17 +225,20 @@ impl OnlineModelLineage {
             }
             None => (None, None),
         };
+        let training_config = serde_json::to_value(training_config)
+            .map_err(|error| OnlineLineageError::new(error.to_string()))?;
         let mut lineage = Self {
-            schema: ONLINE_MODEL_LINEAGE_SCHEMA_V1.into(),
+            schema: ONLINE_MODEL_LINEAGE_SCHEMA_V2.into(),
             generation: dataset.generation,
             dataset_generation_sha256: dataset.generation_sha256,
             parent_lineage_sha256,
             parent_model_sha256,
             model_schema: model_schema.into(),
             training_mode: "deterministic_full_refit".into(),
+            training_config: training_config.clone(),
             training_config_sha256: canonical_digest(
                 b"dusklight.online-training-config/v1\0",
-                training_config,
+                &training_config,
             )?,
             model_sha256: canonical_digest(b"dusklight.online-model/v1\0", model)?,
             lineage_sha256: Digest::ZERO,
@@ -252,10 +256,12 @@ impl OnlineModelLineage {
     ) -> Result<(), OnlineLineageError> {
         self.validate()?;
         dataset.validate()?;
+        let training_config = serde_json::to_value(training_config)
+            .map_err(|error| OnlineLineageError::new(error.to_string()))?;
         if self.generation != dataset.generation
             || self.dataset_generation_sha256 != dataset.generation_sha256
             || self.training_config_sha256
-                != canonical_digest(b"dusklight.online-training-config/v1\0", training_config)?
+                != canonical_digest(b"dusklight.online-training-config/v1\0", &training_config)?
             || self.model_sha256 != canonical_digest(b"dusklight.online-model/v1\0", model)?
         {
             return Err(OnlineLineageError::new(
@@ -266,11 +272,17 @@ impl OnlineModelLineage {
     }
 
     pub fn validate(&self) -> Result<(), OnlineLineageError> {
-        if self.schema != ONLINE_MODEL_LINEAGE_SCHEMA_V1
+        if self.schema != ONLINE_MODEL_LINEAGE_SCHEMA_V2
             || self.generation == 0
             || self.dataset_generation_sha256 == Digest::ZERO
             || self.model_schema.is_empty()
             || self.training_mode != "deterministic_full_refit"
+            || self.training_config.is_null()
+            || self.training_config_sha256
+                != canonical_digest(
+                    b"dusklight.online-training-config/v1\0",
+                    &self.training_config,
+                )?
             || self.training_config_sha256 == Digest::ZERO
             || self.model_sha256 == Digest::ZERO
             || self.parent_lineage_sha256.is_some() != self.parent_model_sha256.is_some()
@@ -294,6 +306,7 @@ impl OnlineModelLineage {
                 self.parent_model_sha256,
                 &self.model_schema,
                 &self.training_mode,
+                &self.training_config,
                 self.training_config_sha256,
                 self.model_sha256,
             ),
@@ -469,5 +482,6 @@ mod tests {
         let encoded = serde_json::to_vec(&lineage).unwrap();
         let decoded: OnlineModelLineage = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, lineage);
+        assert_eq!(decoded.training_config, config);
     }
 }
