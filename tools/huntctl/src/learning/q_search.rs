@@ -4,12 +4,16 @@
 //! episode corpora, proposes small state-aware tape interventions, and hands
 //! ordinary candidates back to the native evaluator.
 
+use super::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use super::training_guard::{CriticSnapshot, OnlineTrainingHealth, TrainingGuardConfig};
 use crate::action_guidance::{
     ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
 };
+use crate::artifact::Digest;
 use crate::episode::EpisodeOutcomeClass;
-use crate::fqi::{FittedQ, FqiConfig, QEstimate, Transition as FqiTransition};
+use crate::fqi::{
+    FITTED_Q_MODEL_SCHEMA_V2, FittedQ, FqiConfig, QEstimate, Transition as FqiTransition,
+};
 use crate::offline_rl::{
     MOVEMENT_ACTION_COUNT_V2, MOVEMENT_CATEGORICAL_FEATURES_V1, canonical_movement_pad_v2,
     movement_action_id_v2, movement_action_schema_digest_v2, movement_feature_schema_digest_v1,
@@ -45,6 +49,8 @@ pub struct QProposalConfig {
 #[derive(Clone, Debug, Serialize)]
 pub struct QProposalSummary {
     pub schema: &'static str,
+    pub dataset_generation_sha256: Option<Digest>,
+    pub model_lineage: Option<OnlineModelLineage>,
     pub training_transitions: usize,
     pub training_actions: usize,
     pub training_health: Option<OnlineTrainingHealth>,
@@ -173,6 +179,38 @@ pub fn propose_q_candidates(
     episodes: &[QEpisode],
     config: QProposalConfig,
 ) -> Result<QProposalBatch, QSearchError> {
+    propose_q_candidates_internal(training_corpora, episodes, config, None)
+}
+
+pub fn propose_q_candidates_with_lineage(
+    training_corpora: &[TransitionCorpus],
+    episodes: &[QEpisode],
+    config: QProposalConfig,
+    dataset_generation: &OnlineDatasetGeneration,
+    previous_model_lineage: Option<&OnlineModelLineage>,
+) -> Result<QProposalBatch, QSearchError> {
+    if dataset_generation.generation != config.generation {
+        return Err(QSearchError::new(
+            "Q proposal generation does not match its immutable dataset generation",
+        ));
+    }
+    dataset_generation
+        .validate_corpora(training_corpora)
+        .map_err(|error| QSearchError::new(error.to_string()))?;
+    propose_q_candidates_internal(
+        training_corpora,
+        episodes,
+        config,
+        Some((dataset_generation, previous_model_lineage)),
+    )
+}
+
+fn propose_q_candidates_internal(
+    training_corpora: &[TransitionCorpus],
+    episodes: &[QEpisode],
+    config: QProposalConfig,
+    lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
+) -> Result<QProposalBatch, QSearchError> {
     if training_corpora.is_empty() || episodes.is_empty() || config.max_proposals == 0 {
         return Err(QSearchError::new(
             "Q proposals require training corpora, aligned parent episodes, and a nonzero budget",
@@ -230,6 +268,14 @@ pub fn propose_q_candidates(
             config.iterations, training_limits.maximum_update_to_data_ratio
         )));
     }
+    let fqi_config = FqiConfig {
+        iterations: config.iterations,
+        trees_per_action: config.trees_per_action,
+        max_tree_depth: 8,
+        seed: config.seed,
+        categorical_features: MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec(),
+        ..FqiConfig::default()
+    };
     let model = (actions.len() >= 2)
         .then(|| {
             FittedQ::fit_with_episode_groups(
@@ -237,18 +283,24 @@ pub fn propose_q_candidates(
                 &actions,
                 &transitions,
                 &episode_groups,
-                &FqiConfig {
-                    iterations: config.iterations,
-                    trees_per_action: config.trees_per_action,
-                    max_tree_depth: 8,
-                    seed: config.seed,
-                    categorical_features: MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec(),
-                    ..FqiConfig::default()
-                },
+                &fqi_config,
             )
             .map_err(|error| QSearchError::new(error.to_string()))
         })
         .transpose()?;
+    let model_lineage = match (lineage, model.as_ref()) {
+        (Some((dataset, previous)), Some(model)) => Some(
+            OnlineModelLineage::build(
+                dataset,
+                previous,
+                FITTED_Q_MODEL_SCHEMA_V2,
+                &fqi_config,
+                model,
+            )
+            .map_err(|error| QSearchError::new(error.to_string()))?,
+        ),
+        _ => None,
+    };
     let training_health = model
         .as_ref()
         .map(|model| {
@@ -532,7 +584,9 @@ pub fn propose_q_candidates(
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v5",
+            schema: "dusklight-q-proposals/v6",
+            dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
+            model_lineage,
             training_transitions: transitions.len(),
             training_actions: actions.len(),
             training_health,
@@ -861,6 +915,7 @@ mod tests {
     use super::*;
     use crate::action_guidance::{ACTION_GUIDANCE_SCHEMA_V1, movement_action_mask_v1};
     use crate::artifact::Digest;
+    use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
     use crate::search::SegmentProfile;
     use crate::tape::{InputFrame, InputTape, RawPadState};
     use crate::transition_corpus::{MacroAction, StateReference, StateReferenceKind, Transition};
@@ -965,7 +1020,9 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v5");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v6");
+        assert!(first.summary.dataset_generation_sha256.is_none());
+        assert!(first.summary.model_lineage.is_none());
         assert_eq!(first.summary.collection_cycle_offset, 1);
         assert_eq!(first.summary.guided_action_evaluations, 4);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
@@ -1047,6 +1104,92 @@ mod tests {
                 .map(|item| item.requested_budget)
                 .sum::<usize>(),
             config.max_proposals
+        );
+    }
+
+    #[test]
+    fn online_q_binds_deterministic_model_to_immutable_dataset_generation() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..4)
+                .map(|index| InputFrame {
+                    owned_ports: 1,
+                    pads: [
+                        canonical_movement_pad_v2(if index % 2 == 0 { 0 } else { 18 }).unwrap(),
+                        disconnected,
+                        disconnected,
+                        disconnected,
+                    ],
+                    ..InputFrame::default()
+                })
+                .collect(),
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for(&candidate);
+        let corpus_digest = corpus.content_digest().unwrap();
+        let seal = EvaluationGenerationSeal::build(
+            0,
+            2,
+            2,
+            2,
+            0,
+            &[
+                EvaluationAttemptInput {
+                    candidate_id: "candidate-a".into(),
+                    attempt: 1,
+                    worker_id: "evaluation/worker-0".into(),
+                    transition_corpus_sha256: Some(corpus_digest),
+                },
+                EvaluationAttemptInput {
+                    candidate_id: "candidate-a".into(),
+                    attempt: 2,
+                    worker_id: "evaluation/worker-1".into(),
+                    transition_corpus_sha256: None,
+                },
+            ],
+        )
+        .unwrap();
+        let dataset =
+            OnlineDatasetGeneration::build(None, &seal, std::slice::from_ref(&corpus)).unwrap();
+        let episodes = [QEpisode {
+            candidate,
+            corpus: corpus.clone(),
+            outcome: EpisodeOutcomeClass::Successful,
+        }];
+        let config = QProposalConfig {
+            generation: 1,
+            max_proposals: 2,
+            iterations: 2,
+            trees_per_action: 3,
+            seed: 9,
+        };
+        let first = propose_q_candidates_with_lineage(
+            std::slice::from_ref(&corpus),
+            &episodes,
+            config,
+            &dataset,
+            None,
+        )
+        .unwrap();
+        let second =
+            propose_q_candidates_with_lineage(&[corpus], &episodes, config, &dataset, None)
+                .unwrap();
+        assert_eq!(
+            first.summary.dataset_generation_sha256,
+            Some(dataset.generation_sha256)
+        );
+        let lineage = first.summary.model_lineage.as_ref().unwrap();
+        lineage.validate().unwrap();
+        assert_eq!(
+            second.summary.model_lineage.as_ref().unwrap(),
+            lineage,
+            "same immutable dataset and training config must reproduce exact model lineage"
         );
     }
 

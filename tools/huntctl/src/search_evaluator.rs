@@ -18,8 +18,9 @@ use crate::episode::{
     RunBuildIdentity,
 };
 use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
+use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
-use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates};
+use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates_with_lineage};
 use crate::search::{
     Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LexicographicScore,
     MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
@@ -2210,6 +2211,8 @@ pub fn run_anchored_search(
     )?;
     let mut final_results = None;
     let mut training_corpora = BTreeMap::<String, TransitionCorpus>::new();
+    let mut previous_dataset_generation: Option<OnlineDatasetGeneration> = None;
+    let mut previous_model_lineage: Option<OnlineModelLineage> = None;
     let mut behavior_archive = BehaviorArchive::default();
     for generation in 0..search.generations {
         let manifest_path = population_root.join("manifest.json");
@@ -2358,6 +2361,22 @@ pub fn run_anchored_search(
                 .iter()
                 .map(|entry| entry.episode.candidate.clone())
                 .collect::<Vec<_>>();
+            let corpora = training_corpora.values().cloned().collect::<Vec<_>>();
+            let dataset_generation = if corpora.is_empty() {
+                None
+            } else {
+                let dataset = OnlineDatasetGeneration::build(
+                    previous_dataset_generation.as_ref(),
+                    &evaluation_seal,
+                    &corpora,
+                )
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                write_json(
+                    &population_root.join("online-dataset-generation.json"),
+                    &dataset,
+                )?;
+                Some(dataset)
+            };
             let mut q_ids = elite_ids;
             for entry in &archived {
                 let id = entry.episode.candidate.id()?;
@@ -2366,11 +2385,14 @@ pub fn run_anchored_search(
                 }
             }
             let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
-            let q_result = if q_budget == 0 || q_episodes.is_empty() {
-                Err("no non-elite slots or aligned elite episodes are available".to_string())
+            let q_result = if q_budget == 0 || q_episodes.is_empty() || dataset_generation.is_none()
+            {
+                Err(
+                    "no non-elite slots, aligned elite episodes, or sealed training generation is available"
+                        .to_string(),
+                )
             } else {
-                let corpora: Vec<_> = training_corpora.values().cloned().collect();
-                propose_q_candidates(
+                propose_q_candidates_with_lineage(
                     &corpora,
                     &q_episodes,
                     QProposalConfig {
@@ -2380,11 +2402,17 @@ pub fn run_anchored_search(
                         trees_per_action: 15,
                         seed: search.rng_seed + u64::from(generation) + 1,
                     },
+                    dataset_generation.as_ref().expect("checked above"),
+                    previous_model_lineage.as_ref(),
                 )
                 .map_err(|error| error.to_string())
             };
             let q_candidates = match q_result {
                 Ok(batch) => {
+                    if let Some(lineage) = batch.summary.model_lineage.as_ref() {
+                        write_json(&population_root.join("online-model-lineage.json"), lineage)?;
+                        previous_model_lineage = Some(lineage.clone());
+                    }
                     let candidate_ids = batch
                         .candidates
                         .iter()
@@ -2413,6 +2441,9 @@ pub fn run_anchored_search(
                     Vec::new()
                 }
             };
+            if let Some(dataset_generation) = dataset_generation {
+                previous_dataset_generation = Some(dataset_generation);
+            }
             manifest = evolve_population_with_retained_and_proposals(
                 &manifest_path,
                 &final_results.as_ref().unwrap().results,
