@@ -35,6 +35,13 @@ not become route history until explicitly promoted.
   implementations live out of line under the fork-only automation boundary,
   are conspicuously compile-time gated, and are absent from native/upstream
   builds that do not opt into that boundary.
+- Native gameplay code is not an observation implementation surface. Do not add
+  query getters, query virtuals, instrumentation members, instrumentation state,
+  wrapper branches, or alternative code paths to gameplay classes. A native
+  header may expose only the smallest layout-neutral, default-off aperture
+  required by an out-of-line reader: a guarded forward declaration plus a
+  guarded `friend` declaration. Prefer no aperture at all when public `const`
+  state is sufficient.
 - Decompiled/gameplay translation units are not query implementation sites. If
   no stable outer sampling boundary exists, the only permitted intrusion is a
   minimal, unmistakably `#if DUSK_ENABLE_AUTOMATION_OBSERVERS`-guarded call to
@@ -50,11 +57,23 @@ not become route history until explicitly promoted.
   the last resort and requires an explicit field-by-field audit plus A/B replay
   parity evidence; changing gameplay code or layout is not an acceptable
   shortcut.
+- `const` is necessary but not sufficient. Each invoked native helper must have
+  an audited, side-effect-free implementation; otherwise the adapter reads the
+  underlying field directly through its bounded friend aperture. Never assume a
+  method is safe merely because its signature is `const`, or because mutation is
+  not obvious at its call site.
 - Query code is instrumentation, never native gameplay implementation. Every
   query-only include, friend declaration, adapter body, and sampling hook must
   be visibly delimited by `DUSK_ENABLE_AUTOMATION_OBSERVERS`; compiling with the
   option off must erase it. Even an observationally equivalent gameplay edit is
   forbidden when an out-of-line read adapter can obtain the same fact.
+- Use the dedicated observer macro as the pragma-like boundary. Observation
+  apertures in native files must be explicitly labeled as Dusklight
+  observation-only code and enclosed by
+  `#if DUSK_ENABLE_AUTOMATION_OBSERVERS`; generic `TARGET_PC`, runtime flags, and
+  naming conventions do not qualify. With the gate off, native object layout,
+  virtual tables, initialization, control flow, and gameplay-visible work must
+  be identical to the upstream path.
 - Experimental writes are a separate compile-time-disabled intervention
   capability with explicit runtime opt-in and an unavoidable mutation audit.
   An intervention result is never represented as ordinary TAS proof.
@@ -299,6 +318,14 @@ all be copied into every per-frame neural observation.
   private state, including why an out-of-line public/const observation cannot
   provide the fact. Never alter object layout, virtual dispatch, initialization,
   or gameplay control flow for observation.
+- [ ] Standardize and statically enforce an explicit observation-only aperture
+  marker around every native forward/friend declaration. Reject inline adapter
+  bodies, query convenience methods, query state, and any aperture not erased by
+  `DUSK_ENABLE_AUTOMATION_OBSERVERS=OFF`.
+- [ ] Add observer-off/on ABI conformance checks for every native class touched
+  by a friend aperture: equal `sizeof`, `alignof`, relevant `offsetof` values,
+  vtable shape, and construction/destruction behavior. A friend declaration
+  should be the only permitted difference and must remain layout-neutral.
 - [ ] Define a stable typed fact schema with field IDs, scalar/vector/enum/bitset
   types, units, coordinate spaces, missingness, sampling phase, and version.
 - [ ] Define audited observation phases at meaningful engine boundaries such as

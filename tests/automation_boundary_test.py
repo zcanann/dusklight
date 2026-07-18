@@ -103,8 +103,29 @@ def main() -> int:
     observer_headers = tuple((root / "include").rglob("*.h")) + tuple(
         (root / "include").rglob("*.hpp")
     )
+    legacy_native_automation_members = {
+        (root / "include/d/d_name.h", "bool automationCursorMove();"),
+        (root / "include/d/d_name.h", "void automationObserve();"),
+    }
     for path in observer_headers:
         source = path.read_text(encoding="utf-8")
+        # Native headers may grant a narrowly gated friendship, but they must
+        # never contain the adapter implementation. Keeping the body in
+        # src/dusk/automation makes the code visibly fork instrumentation and
+        # prevents query logic from becoming gameplay implementation.
+        if "dusk/automation" not in path.as_posix() and re.search(
+            r"\b(?:class|struct)\s+\w*ReadAdapter\b[^;{]*\{", source
+        ):
+            failures.append(f"{path}: native header contains a read-adapter body")
+        if "dusk/automation" not in path.as_posix():
+            for number, line in enumerate(source.splitlines(), 1):
+                declaration = line.strip()
+                if not re.search(r"\bautomation[A-Z]\w*\s*\(", declaration):
+                    continue
+                if (path, declaration) not in legacy_native_automation_members:
+                    failures.append(
+                        f"{path}:{number}: native gameplay class adds an automation/query member"
+                    )
         if not re.search(r"friend.*(?:dusk::automation|ReadAdapter)", source):
             continue
         for number, line, active in guarded_lines(path):
