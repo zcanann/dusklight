@@ -905,7 +905,7 @@ simple random baseline.
 
 ### RL readiness gates
 
-- [ ] At least 500 diverse episodes and 50,000 option decisions for the selected
+- [x] At least 500 diverse episodes and 50,000 option decisions for the selected
   objective before treating a neural comparison as meaningful.
 - [ ] Broad action/option support in each relevant player procedure and spatial
   phase, with unsupported regions reported explicitly.

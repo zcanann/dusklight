@@ -272,6 +272,13 @@ physically merged, and transfer output is candidate-only. An action/fidelity
 or build mismatch, duplicate domain, or under-budget source rejects the plan
 before training, and the plan has no promotion authority.
 
+`dusklight-rl-scale-readiness/v1` binds the selected objective, corpus
+manifest, and content-addressed set of unique episode identities. A neural
+comparison is meaningful only after both 500 diverse episodes and 50,000
+option decisions; duplicate episode IDs cannot inflate the count, either
+threshold failing disables the comparison, and readiness has no promotion
+authority.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
