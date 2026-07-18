@@ -222,8 +222,9 @@ signal unavailable to equal-count pooling; the report remains non-promotional.
 ### Local-dynamics readiness
 
 `learning/local_dynamics.rs` prevents a short-horizon dynamics pilot from
-quietly becoming synthetic training data. Its content-disjoint held-out report
-binds the model, training and held-out datasets, and every prediction case,
+quietly becoming synthetic training data. Its held-out report requires
+separate training and held-out corpus identities and binds the model,
+normalization, and every prediction case,
 then measures numeric state RMSE plus exact typed-event mismatch separately for
 contacts, procedure transitions, RNG-sensitive branches, and actor
 interactions. Defaults require at least 128 cases in every stratum over at most
