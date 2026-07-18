@@ -8,7 +8,8 @@ mod n_step;
 
 pub use n_step::{NStepError, aggregate_n_step};
 
-use crate::double_q::{DoubleQ, DoubleQConfig, DoubleQError};
+use crate::double_q::ablation::{QComponent, QComponentConfig, QComponentModel};
+use crate::double_q::{DoubleQ, DoubleQConfig, DoubleQError, DoubleQEstimate};
 use crate::fqi::Transition;
 use serde::Serialize;
 use std::error::Error;
@@ -72,6 +73,44 @@ pub struct RainbowAblationReport {
 }
 
 impl RainbowAblationReport {
+    /// Evaluate a dueling value/advantage head as the sole architecture change.
+    pub fn evaluate_dueling_heads(
+        feature_width: usize,
+        actions: &[u32],
+        training: &[Transition],
+        training_episode_groups: &[u64],
+        held_out: &[Transition],
+        config: &RainbowAblationConfig,
+    ) -> Result<Self, RainbowAblationError> {
+        validate_common(training, held_out, config)?;
+        if training_episode_groups.len() != training.len() {
+            return Err(RainbowAblationError::Invalid(
+                "training episode groups must match training transitions",
+            ));
+        }
+        let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
+        let treatment = QComponentModel::fit(
+            feature_width,
+            actions,
+            training,
+            training_episode_groups,
+            &QComponentConfig {
+                critic: config.critic.clone(),
+                component: QComponent::DuelingHead,
+            },
+        )?;
+        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
+        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        Ok(Self::single_component(
+            training.len(),
+            held_out.len(),
+            RainbowComponent::DuelingHeads,
+            vec!["critic_output_head"],
+            baseline_metrics,
+            treatment_metrics,
+        ))
+    }
+
     /// Evaluate n-step returns as the sole change from deterministic Double-Q.
     pub fn evaluate_n_step(
         feature_width: usize,
@@ -100,8 +139,8 @@ impl RainbowAblationReport {
             config.critic.discount,
         )?;
         let treatment = DoubleQ::fit(feature_width, actions, &aggregated, &config.critic)?;
-        let baseline_metrics = evaluate_double_q(&baseline, held_out, config.critic.discount)?;
-        let treatment_metrics = evaluate_double_q(&treatment, held_out, config.critic.discount)?;
+        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
+        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
         Ok(Self::single_component(
             training.len(),
             held_out.len(),
@@ -163,8 +202,45 @@ fn validate_common(
     Ok(())
 }
 
-fn evaluate_double_q(
-    model: &DoubleQ,
+trait HeldOutQModel {
+    fn held_out_estimate(
+        &self,
+        state: &[f32],
+        action: u32,
+    ) -> Result<DoubleQEstimate, DoubleQError>;
+    fn held_out_rank(&self, state: &[f32]) -> Result<Vec<DoubleQEstimate>, DoubleQError>;
+}
+
+impl HeldOutQModel for DoubleQ {
+    fn held_out_estimate(
+        &self,
+        state: &[f32],
+        action: u32,
+    ) -> Result<DoubleQEstimate, DoubleQError> {
+        self.estimate(state, action)
+    }
+
+    fn held_out_rank(&self, state: &[f32]) -> Result<Vec<DoubleQEstimate>, DoubleQError> {
+        self.rank_actions(state)
+    }
+}
+
+impl HeldOutQModel for QComponentModel {
+    fn held_out_estimate(
+        &self,
+        state: &[f32],
+        action: u32,
+    ) -> Result<DoubleQEstimate, DoubleQError> {
+        self.estimate(state, action)
+    }
+
+    fn held_out_rank(&self, state: &[f32]) -> Result<Vec<DoubleQEstimate>, DoubleQError> {
+        self.rank_actions(state)
+    }
+}
+
+fn evaluate_model<M: HeldOutQModel>(
+    model: &M,
     held_out: &[Transition],
     discount: f64,
 ) -> Result<HeldOutMetrics, RainbowAblationError> {
@@ -172,18 +248,20 @@ fn evaluate_double_q(
     let mut squared_error = 0.0;
     let mut greedy_matches = 0_usize;
     for transition in held_out {
-        let prediction = model.estimate(&transition.state, transition.action)?.mean;
+        let prediction = model
+            .held_out_estimate(&transition.state, transition.action)?
+            .mean;
         let target = if transition.terminal {
             f64::from(transition.reward)
         } else {
             f64::from(transition.reward)
                 + discount.powf(f64::from(transition.duration))
-                    * model.rank_actions(&transition.next_state)?[0].mean
+                    * model.held_out_rank(&transition.next_state)?[0].mean
         };
         let error = prediction - target;
         absolute_error += error.abs();
         squared_error += error * error;
-        if model.rank_actions(&transition.state)?[0].action == transition.action {
+        if model.held_out_rank(&transition.state)?[0].action == transition.action {
             greedy_matches += 1;
         }
     }
@@ -293,5 +371,41 @@ mod tests {
         assert!(!first.evaluation.adopted);
         assert!(!first.combined_rainbow_configuration);
         assert_eq!(first.evaluation.baseline.transitions, training.len());
+    }
+
+    #[test]
+    fn dueling_head_is_reported_as_the_only_changed_component() {
+        let training = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 5.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, true),
+        ];
+        let config = RainbowAblationConfig {
+            critic: DoubleQConfig {
+                epochs: 12,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 4,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+            n_step: 3,
+        };
+        let report = RainbowAblationReport::evaluate_dueling_heads(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(report.evaluation.component, RainbowComponent::DuelingHeads);
+        assert_eq!(report.evaluation.changed_parameters, ["critic_output_head"]);
+        assert_eq!(report.evaluation.baseline.transitions, training.len());
+        assert_eq!(report.evaluation.treatment.transitions, training.len());
+        assert!(!report.evaluation.adopted);
+        assert!(!report.combined_rainbow_configuration);
     }
 }
