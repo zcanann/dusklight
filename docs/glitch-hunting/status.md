@@ -109,6 +109,9 @@ roadmap documents describe the larger target.
 - Symptom cluster index v1 groups repeated crash, hang, OOB, corruption, and
   event-sequence discoveries by stable semantic context. Volatile addresses and
   process IDs are excluded; counts grow while retained examples stay bounded.
+- Novelty minimization v1 freezes raw first-seen/rare facts and an exact replay
+  boundary before bounded tape deletion. No reduction replaces the artifact
+  unless replay preserves both contracts, and every attempt remains auditable.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

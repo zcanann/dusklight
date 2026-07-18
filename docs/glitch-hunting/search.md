@@ -492,6 +492,14 @@ addresses or process IDs. A cluster retains one representative, occurrence and
 generation counts, and at most eight distinct example artifacts, so repeated
 hits remain measurable without growing an unbounded duplicate directory.
 
+Novel artifacts use `dusklight-novelty-minimization/v1` for bounded frame
+deletion. The starting assessment is frozen into an authenticated preservation
+predicate containing every required first-seen transition, rare combination,
+catalog epoch, rarity ceiling, and one exact named replay-boundary fingerprint.
+Every deletion is replayed; it is accepted only if all semantic facts and the
+canonical boundary SHA-256 remain present. The report records every attempted
+range, before/after frame counts, acceptance, and the precise rejection reason.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots

@@ -935,7 +935,7 @@ improvements are independently proved absolute tapes.
   semantic reason a run was considered novel.
 - [x] Cluster similar crashes, hangs, OOB routes, corruptions, and event sequences
   to avoid rediscovering the same symptom endlessly.
-- [ ] Minimize novel artifacts while preserving the novelty predicate and replay
+- [x] Minimize novel artifacts while preserving the novelty predicate and replay
   boundary.
 - [ ] Automatically replay promising headless discoveries headfully, attach a
   terminal thumbnail/video when useful, and request human classification.
