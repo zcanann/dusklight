@@ -9,6 +9,7 @@ use std::fmt;
 
 pub const RL_SCALE_READINESS_SCHEMA_V1: &str = "dusklight-rl-scale-readiness/v1";
 pub const RL_COVERAGE_READINESS_SCHEMA_V1: &str = "dusklight-rl-coverage-readiness/v1";
+pub const RL_COMPARISON_READINESS_SCHEMA_V1: &str = "dusklight-rl-comparison-readiness/v1";
 const MAX_COVERAGE_REGIONS: usize = 100_000;
 const MAX_REQUIRED_ACTIONS: usize = 4096;
 
@@ -208,6 +209,193 @@ impl RlCoverageReadinessReport {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct RlComparisonReadinessConfig {
+    pub minimum_held_out_episodes: usize,
+    pub minimum_boundary_families: usize,
+    pub minimum_cold_replay_repetitions: usize,
+    pub minimum_native_success_improvement: f64,
+}
+
+impl Default for RlComparisonReadinessConfig {
+    fn default() -> Self {
+        Self {
+            minimum_held_out_episodes: 100,
+            minimum_boundary_families: 5,
+            minimum_cold_replay_repetitions: 3,
+            minimum_native_success_improvement: 0.02,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct EqualBudgetNativeComparison {
+    pub comparison_report_sha256: Digest,
+    pub cold_replay_report_sha256: Digest,
+    pub cold_replay_repetitions: usize,
+    pub cold_replay_stable: bool,
+    pub candidate_sample_budget: usize,
+    pub tree_fqi_sample_budget: usize,
+    pub structured_specialist_sample_budget: usize,
+    pub candidate_native_success_rate: f64,
+    pub tree_fqi_native_success_rate: f64,
+    pub structured_specialist_native_success_rate: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RlComparisonReadinessReport {
+    pub schema: &'static str,
+    pub objective_sha256: Digest,
+    pub model_sha256: Digest,
+    pub held_out_episode_manifest_sha256: Digest,
+    pub boundary_family_manifest_sha256: Digest,
+    pub held_out_episodes: usize,
+    pub held_out_boundary_families: usize,
+    pub config: RlComparisonReadinessConfig,
+    pub comparison: EqualBudgetNativeComparison,
+    pub equal_sample_budget: bool,
+    pub stable_cold_replay_ready: bool,
+    pub stronger_than_tree_and_structured: bool,
+    pub held_out_comparison_ready: bool,
+    pub promotion_authority: bool,
+    pub report_sha256: Digest,
+}
+
+impl RlComparisonReadinessReport {
+    pub fn assess(
+        objective_sha256: Digest,
+        model_sha256: Digest,
+        held_out_episode_sha256: &[Digest],
+        boundary_family_sha256: &[Digest],
+        comparison: EqualBudgetNativeComparison,
+        config: RlComparisonReadinessConfig,
+    ) -> Result<Self, RlReadinessError> {
+        validate_comparison_inputs(
+            objective_sha256,
+            model_sha256,
+            held_out_episode_sha256,
+            boundary_family_sha256,
+            comparison,
+            config,
+        )?;
+        let held_out_episodes = held_out_episode_sha256
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let boundary_families = boundary_family_sha256
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let held_out_episode_manifest_sha256 =
+            digest_set(b"dusklight.rl-held-out-episodes/v1\0", &held_out_episodes);
+        let boundary_family_manifest_sha256 = digest_set(
+            b"dusklight.rl-held-out-boundary-families/v1\0",
+            &boundary_families,
+        );
+        let equal_sample_budget = comparison.candidate_sample_budget
+            == comparison.tree_fqi_sample_budget
+            && comparison.candidate_sample_budget == comparison.structured_specialist_sample_budget;
+        let stable_cold_replay_ready = comparison.cold_replay_stable
+            && comparison.cold_replay_repetitions >= config.minimum_cold_replay_repetitions;
+        let strongest_baseline = comparison
+            .tree_fqi_native_success_rate
+            .max(comparison.structured_specialist_native_success_rate);
+        let stronger_than_tree_and_structured = comparison.candidate_native_success_rate
+            >= strongest_baseline + config.minimum_native_success_improvement;
+        let held_out_comparison_ready = held_out_episodes.len() >= config.minimum_held_out_episodes
+            && boundary_families.len() >= config.minimum_boundary_families
+            && equal_sample_budget
+            && stable_cold_replay_ready
+            && stronger_than_tree_and_structured;
+        let mut report = Self {
+            schema: RL_COMPARISON_READINESS_SCHEMA_V1,
+            objective_sha256,
+            model_sha256,
+            held_out_episode_manifest_sha256,
+            boundary_family_manifest_sha256,
+            held_out_episodes: held_out_episodes.len(),
+            held_out_boundary_families: boundary_families.len(),
+            config,
+            comparison,
+            equal_sample_budget,
+            stable_cold_replay_ready,
+            stronger_than_tree_and_structured,
+            held_out_comparison_ready,
+            promotion_authority: false,
+            report_sha256: Digest::ZERO,
+        };
+        report.report_sha256 = canonical_digest(
+            b"dusklight.rl-comparison-readiness/v1\0",
+            &(
+                report.schema,
+                report.objective_sha256,
+                report.model_sha256,
+                report.held_out_episode_manifest_sha256,
+                report.boundary_family_manifest_sha256,
+                report.held_out_episodes,
+                report.held_out_boundary_families,
+                report.config,
+                report.comparison,
+                report.equal_sample_budget,
+                report.stable_cold_replay_ready,
+                report.stronger_than_tree_and_structured,
+                report.held_out_comparison_ready,
+                report.promotion_authority,
+            ),
+        )?;
+        Ok(report)
+    }
+}
+
+fn validate_comparison_inputs(
+    objective_sha256: Digest,
+    model_sha256: Digest,
+    held_out_episode_sha256: &[Digest],
+    boundary_family_sha256: &[Digest],
+    comparison: EqualBudgetNativeComparison,
+    config: RlComparisonReadinessConfig,
+) -> Result<(), RlReadinessError> {
+    if objective_sha256 == Digest::ZERO
+        || model_sha256 == Digest::ZERO
+        || held_out_episode_sha256.is_empty()
+        || held_out_episode_sha256.contains(&Digest::ZERO)
+        || boundary_family_sha256.is_empty()
+        || boundary_family_sha256.contains(&Digest::ZERO)
+        || comparison.comparison_report_sha256 == Digest::ZERO
+        || comparison.cold_replay_report_sha256 == Digest::ZERO
+        || comparison.cold_replay_repetitions < 2
+        || comparison.candidate_sample_budget == 0
+        || comparison.tree_fqi_sample_budget == 0
+        || comparison.structured_specialist_sample_budget == 0
+        || !valid_unit(comparison.candidate_native_success_rate)
+        || !valid_unit(comparison.tree_fqi_native_success_rate)
+        || !valid_unit(comparison.structured_specialist_native_success_rate)
+        || config.minimum_held_out_episodes == 0
+        || config.minimum_boundary_families == 0
+        || config.minimum_cold_replay_repetitions < 2
+        || !valid_unit(config.minimum_native_success_improvement)
+    {
+        return Err(RlReadinessError::new(
+            "RL held-out comparison readiness input is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_unit(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+fn digest_set(domain: &[u8], values: &BTreeSet<Digest>) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update((values.len() as u64).to_le_bytes());
+    for value in values {
+        hasher.update(value.0);
+    }
+    Digest(hasher.finalize().into())
+}
+
 fn unsupported_region(
     region: &RegionActionCoverage,
     config: RlCoverageReadinessConfig,
@@ -396,5 +584,58 @@ mod tests {
         assert!(report.unsupported_regions.is_empty());
         assert!(!report.promotion_authority);
         assert_ne!(report.report_sha256, Digest::ZERO);
+    }
+
+    #[test]
+    fn held_out_boundary_and_cold_replay_comparison_requires_equal_budget_and_win() {
+        let episodes = (1..=3).map(|id| Digest([id; 32])).collect::<Vec<_>>();
+        let boundaries = (10..=11).map(|id| Digest([id; 32])).collect::<Vec<_>>();
+        let comparison = EqualBudgetNativeComparison {
+            comparison_report_sha256: Digest([20; 32]),
+            cold_replay_report_sha256: Digest([21; 32]),
+            cold_replay_repetitions: 3,
+            cold_replay_stable: true,
+            candidate_sample_budget: 100,
+            tree_fqi_sample_budget: 100,
+            structured_specialist_sample_budget: 100,
+            candidate_native_success_rate: 0.8,
+            tree_fqi_native_success_rate: 0.6,
+            structured_specialist_native_success_rate: 0.7,
+        };
+        let config = RlComparisonReadinessConfig {
+            minimum_held_out_episodes: 3,
+            minimum_boundary_families: 2,
+            ..RlComparisonReadinessConfig::default()
+        };
+        let ready = RlComparisonReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            &episodes,
+            &boundaries,
+            comparison,
+            config,
+        )
+        .unwrap();
+        assert!(ready.equal_sample_budget);
+        assert!(ready.stable_cold_replay_ready);
+        assert!(ready.stronger_than_tree_and_structured);
+        assert!(ready.held_out_comparison_ready);
+
+        let mut unequal = comparison;
+        unequal.structured_specialist_sample_budget = 90;
+        unequal.cold_replay_stable = false;
+        let blocked = RlComparisonReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            &episodes,
+            &boundaries,
+            unequal,
+            config,
+        )
+        .unwrap();
+        assert!(!blocked.equal_sample_budget);
+        assert!(!blocked.stable_cold_replay_ready);
+        assert!(!blocked.held_out_comparison_ready);
+        assert!(!blocked.promotion_authority);
     }
 }
