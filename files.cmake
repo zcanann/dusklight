@@ -1428,12 +1428,15 @@ set(DUSK_FILES
         include/dusk/automation/actor_catalog.hpp
         src/dusk/automation/actor_catalog.cpp
         include/dusk/automation/input_tape.hpp
+        src/dusk/automation/input_pad.cpp
         src/dusk/automation/input_tape.cpp
         include/dusk/automation/input_recording.hpp
         src/dusk/automation/input_recording.cpp
         src/dusk/automation/input_controller.cpp
         include/dusk/automation/gameplay_trace.hpp
         src/dusk/automation/gameplay_trace.cpp
+        include/dusk/automation/gameplay_trace_observer.hpp
+        src/dusk/automation/gameplay_trace_observer.cpp
         include/dusk/automation/milestones.hpp
         src/dusk/automation/milestones.cpp
         include/dusk/automation/milestone_program.hpp

@@ -18,7 +18,8 @@ the learner consumes immutable observations and ranks discrete input actions.
   depth so malformed batches cannot create unbounded training work;
 - a fixed eight-transition shortest-path benchmark queried at held-out feature
   vectors; and
-- an exploratory gameplay-trace bridge with exact post-tick alignment; and
+- a v1/v2 gameplay-trace bridge with explicit post-simulation boundaries,
+  typed channel presence, and exact input provenance; and
 - a closed-loop fitted-Q proposal layer that returns ordinary deterministic
   candidates to the native milestone evaluator.
 
@@ -67,11 +68,12 @@ trace[i - 1] -- tape[i] --> trace[i]
 ```
 
 The bridge enforces that relationship and accepts only absolute 30 Hz tapes.
-It rejects reactive waits, discontinuous trace ticks, unsupported controller
-fields, non-catalog stick vectors, tape/trace input mismatches, implicit
-terminal state, exhausted traces, and missing episode identity. Stick matching
-uses Aurora's exact integer `PADClamp` transform because the tape stores raw
-values while the trace observes post-clamp input.
+It rejects pre-input or contradictory boundaries, missing/unavailable required
+channels, reactive/controller provenance, discontinuous trace ticks,
+unsupported controller fields, non-catalog stick vectors, tape/trace input
+mismatches, implicit terminal state, exhausted traces, and missing episode
+identity. Stick matching uses Aurora's exact integer `PADClamp` transform
+because the tape stores raw values while the trace observes post-clamp input.
 
 Reactive-controller trace records carry distinct provenance and are rejected
 by this bridge. First record the run with `--realized-input-tape`, replay that
@@ -129,14 +131,24 @@ and exact descriptors.
 
 ## Promotion boundary
 
-Trace v1 omits per-tick RNG, collision contacts, ground/wall polygons, camera
-state, and several Link action timers. Explicit frame bounds are also weaker
-than native milestone proof. Extracted batches are therefore labeled
-non-authoritative and must not promote a learned route.
+Trace v2 adds an explicit channel directory/status stream, four-port applied
+PAD, current/pending stage, both global RNG streams, realized camera state,
+full Link motion/procedure context, timers, and six animation lanes. It remains
+non-Markov: collision contacts and local geometry are absent, RNG coverage is
+incomplete, process/build identity is not yet embedded, and the current
+movement-v1 feature schema requires a legacy event-name hash which the strict
+observer intentionally does not obtain through the non-const game manager API.
+That missing fact is an extraction error, never numeric zero. A new
+`movement-state/v2` view must omit or explicitly represent it under a new
+schema digest.
+
+Explicit frame bounds are also weaker than native milestone proof. Extracted
+batches remain non-authoritative and cannot promote a learned route.
 
 The next promotion gates are:
 
-1. add gameplay trace v2 fields needed for a credible movement state;
+1. add resolved collision/local-geometry channels and a truthful
+   `movement-state/v2` feature view;
 2. collect whole-episode perturbed tapes across all supported actions;
 3. split train/validation by episode and boundary fingerprint, never by frame;
 4. add larger temporal options such as waypoint-seek and deterministic

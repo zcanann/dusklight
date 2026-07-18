@@ -65,6 +65,7 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $artifactRoot = Join-Path $repoRoot "build\test-results\$scenarioName\$stamp"
 New-Item -ItemType Directory -Force $stateBase, $artifactRoot | Out-Null
 $triggerTicks = @()
+$traceHashes = @()
 $failures = @()
 
 for ($run = 1; $run -le $Runs; $run++) {
@@ -108,12 +109,12 @@ for ($run = 1; $run -le $Runs; $run++) {
         $missedIntro = $Goal -eq "intro-cutscene" -and (
             [int]$summary.post_load_playable.location.room -ne 1 -or
             $null -eq $summary.intro_cutscene -or
-            [int]$summary.intro_cutscene.location.point -ne 26 -or
-            [int]$summary.intro_cutscene.event_name_hash -ne 783959030)
+            [int]$summary.intro_cutscene.location.point -ne 26)
         if ($missedFirstExit -or $missedIntro) {
             throw "$scenarioName missed a semantic milestone; see $summaryPath"
         }
         $triggerTicks += [uint64]$summary.first_loading_trigger.simulation_tick
+        $traceHashes += (Get-FileHash -LiteralPath $tracePath -Algorithm SHA256).Hash.ToLowerInvariant()
         Write-Host "  PASS control=$($summary.route_control.simulation_tick) first-exit=$($summary.first_loading_trigger.simulation_tick) load=$($summary.first_loading_transition.simulation_tick) intro=$($summary.intro_cutscene.simulation_tick)" -ForegroundColor Green
     } catch {
         $failure = "$runName`: $($_.Exception.Message)"
@@ -146,9 +147,11 @@ $medianTriggerTick = if ($sortedTriggerTicks.Count -gt 0) {
 $triggerSpread = if ($sortedTriggerTicks.Count -gt 0) {
     $maximumTriggerTick - $minimumTriggerTick
 } else { $null }
+$uniqueTraceHashes = @($traceHashes | Sort-Object -Unique)
+$traceReplayExact = $traceHashes.Count -eq $Runs -and $uniqueTraceHashes.Count -eq 1
 
 $matrixSummary = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     scenario = $scenarioName
     requested_runs = $Runs
     passed_runs = $triggerTicks.Count
@@ -157,6 +160,8 @@ $matrixSummary = [ordered]@{
     first_exit_tick_median = $medianTriggerTick
     first_exit_tick_max = $maximumTriggerTick
     first_exit_tick_spread = $triggerSpread
+    trace_sha256 = $traceHashes
+    trace_replay_byte_exact = $traceReplayExact
     failures = $failures
 }
 $matrixSummaryPath = Join-Path $artifactRoot "matrix.summary.json"
@@ -167,6 +172,9 @@ $matrixSummaryPath = Join-Path $artifactRoot "matrix.summary.json"
 
 if ($failures.Count -gt 0) {
     throw "$scenarioName failed $($failures.Count)/$Runs run(s); see $matrixSummaryPath"
+}
+if (-not $traceReplayExact) {
+    throw "$scenarioName produced non-identical traces for the same absolute tape; this is a framework determinism bug. See $matrixSummaryPath"
 }
 
 Write-Host "`nPASS: $scenarioName ($Runs run$(if ($Runs -eq 1) { '' } else { 's' }))" -ForegroundColor Green

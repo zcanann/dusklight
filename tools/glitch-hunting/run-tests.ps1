@@ -4,6 +4,7 @@ param(
         "all",
         "native",
         "input-tape",
+        "gameplay-trace",
         "input-controller",
         "game-clock",
         "name-entry",
@@ -53,7 +54,8 @@ function Invoke-Checked {
 function Initialize-NativeBuild {
     Invoke-Checked "cmake" @(
         "--preset", $Preset,
-        "-DDUSK_ENABLE_CODE_MODS=OFF"
+        "-DDUSK_ENABLE_CODE_MODS=OFF",
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
     )
 }
 
@@ -77,6 +79,7 @@ function Invoke-NativeExecutable {
 
 $nativeTests = [ordered]@{
     "input-tape"       = @("dusk_input_tape_test", "dusk_input_tape_test.exe")
+    "gameplay-trace"   = @("dusk_gameplay_trace_test", "dusk_gameplay_trace_test.exe")
     "input-controller" = @("dusk_input_controller_test", "dusk_input_controller_test.exe")
     "game-clock"       = @("dusk_game_clock_test", "dusk_game_clock_test.exe")
     "name-entry"       = @("dusk_name_entry_observer_test", "dusk_name_entry_observer_test.exe")

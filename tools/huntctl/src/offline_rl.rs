@@ -14,7 +14,7 @@
 
 use crate::artifact::Digest;
 use crate::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
-use crate::trace::{self, DecodedTrace, TraceRecord};
+use crate::trace::{self, DecodedTrace, TraceChannel, TraceChannelStatus, TracePhase, TraceRecord};
 use crate::transition_corpus::{
     MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
     TransitionCorpusError,
@@ -134,6 +134,24 @@ pub enum OfflineRlError {
         prior_sim_tick: u64,
         next_sim_tick: u64,
     },
+    InvalidObservationPhase {
+        frame: u64,
+        phase: TracePhase,
+    },
+    InvalidBoundary {
+        frame: u64,
+        boundary_index: u64,
+        simulation_tick: u64,
+    },
+    MissingObservationChannel {
+        frame: u64,
+        channel: &'static str,
+        status: Option<TraceChannelStatus>,
+    },
+    InputProvenance {
+        frame: u64,
+        input_source: u8,
+    },
     ReactiveFrame(u64),
     PortZeroNotOwned(u64),
     UnsupportedSecondaryPad {
@@ -209,6 +227,33 @@ impl fmt::Display for OfflineRlError {
             } => write!(
                 formatter,
                 "trace is discontinuous from tape/sim {prior_tape_frame}/{prior_sim_tick} to {next_tape_frame}/{next_sim_tick}"
+            ),
+            Self::InvalidObservationPhase { frame, phase } => write!(
+                formatter,
+                "trace frame {frame} has {phase:?} observations; movement extraction requires post-simulation"
+            ),
+            Self::InvalidBoundary {
+                frame,
+                boundary_index,
+                simulation_tick,
+            } => write!(
+                formatter,
+                "trace frame {frame} has boundary {boundary_index} for completed simulation tick {simulation_tick}"
+            ),
+            Self::MissingObservationChannel {
+                frame,
+                channel,
+                status,
+            } => write!(
+                formatter,
+                "trace frame {frame} requires present {channel} observations, found {status:?}"
+            ),
+            Self::InputProvenance {
+                frame,
+                input_source,
+            } => write!(
+                formatter,
+                "trace frame {frame} has input source 0x{input_source:02x}; absolute tape extraction requires tape-only input"
             ),
             Self::ReactiveFrame(frame) => write!(formatter, "tape frame {frame} is reactive"),
             Self::PortZeroNotOwned(frame) => {
@@ -339,6 +384,7 @@ pub fn extract_exploratory(
     let records = records_by_tape_frame(decoded_trace)?;
     let first_state_frame = config.start_tape_frame - 1;
     let mut prior = record_at(&records, first_state_frame)?;
+    validate_movement_observation(decoded_trace, prior, first_state_frame)?;
     let mut transitions = Vec::with_capacity(
         usize::try_from(config.end_tape_frame - config.start_tape_frame + 1)
             .map_err(|_| OfflineRlError::FrameIndexOverflow)?,
@@ -346,6 +392,7 @@ pub fn extract_exploratory(
 
     for action_frame in config.start_tape_frame..=config.end_tape_frame {
         let next = record_at(&records, action_frame)?;
+        validate_movement_observation(decoded_trace, next, action_frame)?;
         if next.simulation_tick != prior.simulation_tick + 1 {
             return Err(OfflineRlError::DiscontinuousTrace {
                 prior_tape_frame: action_frame - 1,
@@ -414,6 +461,97 @@ pub fn extract_exploratory(
         MOVEMENT_FEATURE_COUNT_V1,
         transitions,
     )?)
+}
+
+fn validate_movement_observation(
+    trace: &DecodedTrace,
+    record: &TraceRecord,
+    frame: u64,
+) -> Result<(), OfflineRlError> {
+    if record.observation_phase != TracePhase::PostSimulation {
+        return Err(OfflineRlError::InvalidObservationPhase {
+            frame,
+            phase: record.observation_phase,
+        });
+    }
+    if record.simulation_tick == u64::MAX || record.boundary_index != record.simulation_tick + 1 {
+        return Err(OfflineRlError::InvalidBoundary {
+            frame,
+            boundary_index: record.boundary_index,
+            simulation_tick: record.simulation_tick,
+        });
+    }
+    if !record.tape_input_applied() || record.controller_input_applied() {
+        return Err(OfflineRlError::InputProvenance {
+            frame,
+            input_source: record.input_source,
+        });
+    }
+    for channel in [
+        TraceChannel::Core,
+        TraceChannel::Stage,
+        TraceChannel::AppliedPads,
+        TraceChannel::PlayerMotion,
+        TraceChannel::Event,
+    ] {
+        let status = record.channel_status.get(&channel).copied();
+        if status != Some(TraceChannelStatus::Present) {
+            return Err(OfflineRlError::MissingObservationChannel {
+                frame,
+                channel: channel.name(),
+                status,
+            });
+        }
+    }
+    let exit_status = record.channel_status.get(&TraceChannel::SceneExit).copied();
+    if !matches!(
+        exit_status,
+        Some(TraceChannelStatus::Present) | Some(TraceChannelStatus::Absent)
+    ) {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: TraceChannel::SceneExit.name(),
+            status: exit_status,
+        });
+    }
+    if !record.player_is_link() {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: "player_motion(link)",
+            status: record
+                .channel_status
+                .get(&TraceChannel::PlayerMotion)
+                .copied(),
+        });
+    }
+    if !record.event_name_hash_present {
+        return Err(OfflineRlError::MissingObservationChannel {
+            frame,
+            channel: "event.name_hash(movement-state/v1)",
+            status: record.channel_status.get(&TraceChannel::Event).copied(),
+        });
+    }
+    if trace.version == 2 {
+        let pads =
+            record
+                .applied_pads
+                .as_ref()
+                .ok_or(OfflineRlError::MissingObservationChannel {
+                    frame,
+                    channel: TraceChannel::AppliedPads.name(),
+                    status: record
+                        .channel_status
+                        .get(&TraceChannel::AppliedPads)
+                        .copied(),
+                })?;
+        if pads.owned_ports & 1 == 0 || pads.valid_ports & 1 == 0 {
+            return Err(OfflineRlError::InputProvenance {
+                frame,
+                input_source: record.input_source,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_trace_rate(bytes: &[u8]) -> Result<(), OfflineRlError> {
@@ -774,9 +912,22 @@ mod tests {
     use super::*;
 
     fn record(frame: u64, x: f32) -> TraceRecord {
+        let channel_status = [
+            (TraceChannel::Core, TraceChannelStatus::Present),
+            (TraceChannel::Stage, TraceChannelStatus::Present),
+            (TraceChannel::AppliedPads, TraceChannelStatus::Present),
+            (TraceChannel::PlayerMotion, TraceChannelStatus::Present),
+            (TraceChannel::Event, TraceChannelStatus::Present),
+            (TraceChannel::SceneExit, TraceChannelStatus::Absent),
+        ]
+        .into_iter()
+        .collect();
         TraceRecord {
+            boundary_index: 101 + frame,
             simulation_tick: 100 + frame,
             tape_frame: Some(frame),
+            input_source: 1,
+            channel_status,
             stage_name: "F_SP103".into(),
             room: 1,
             layer: 3,
@@ -798,9 +949,11 @@ mod tests {
             event_map_tool_id: 0xff,
             pad_error: 0,
             event_name_hash: 0,
+            event_name_hash_present: true,
             nearest_scene_exit_actor_name: None,
             nearest_scene_exit_position: [0.0; 3],
             nearest_scene_exit_distance: None,
+            ..TraceRecord::default()
         }
     }
 
@@ -827,6 +980,9 @@ mod tests {
         (
             DecodedTrace {
                 version: 1,
+                tick_rate_numerator: 30,
+                tick_rate_denominator: 1,
+                requested_channels: 0,
                 capacity_exhausted: false,
                 records: vec![record(0, 10.0), first_applied, second_applied],
             },
@@ -1035,6 +1191,7 @@ mod tests {
         tape.frames[1].wait_timeout_ticks = 0;
         let mut trace = trace;
         trace.records[1].simulation_tick += 1;
+        trace.records[1].boundary_index += 1;
         assert!(matches!(
             extract_exploratory(&trace, &tape, config),
             Err(OfflineRlError::DiscontinuousTrace { .. })

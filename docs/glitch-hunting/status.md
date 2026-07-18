@@ -74,7 +74,7 @@ roadmap documents describe the larger target.
 
 ```console
 # Build the game without code mods when not running in a VS developer shell
-cmake --preset windows-clang-debug -DDUSK_ENABLE_CODE_MODS=OFF
+cmake --preset windows-clang-debug -DDUSK_ENABLE_CODE_MODS=OFF -DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON
 cmake --build --preset windows-clang-debug --target dusklight
 
 # Native, game-data-free tests
@@ -84,6 +84,7 @@ cmake --build --preset windows-clang-debug --target dusk_game_clock_test
 cmake --build --preset windows-clang-debug --target dusk_name_entry_observer_test
 cmake --build --preset windows-clang-debug --target dusk_name_entry_trace_test
 cmake --build --preset windows-clang-debug --target dusk_rng_test
+cmake --build --preset windows-clang-debug --target dusk_gameplay_trace_test
 
 # Rust tests and lint
 cargo test --manifest-path tools/huntctl/Cargo.toml
@@ -133,6 +134,9 @@ dusklight --headless --dvd game.iso --input-tape eye-shredder.tape \
 - The Windows Clang debug game target builds and links.
 - Native tape, reactive-controller, fixed-step, name-entry observer/trace, and
   exact RNG sequence and round-trip tests pass.
+- Trace v2 writes atomic channel-directory artifacts with explicit status and
+  post-simulation boundaries. Its native golden-layout test, strict v1/v2 Rust
+  decoder, and offline phase/provenance guards pass.
 - Aurora's deterministic time tests pass for exact/rational stepping,
   concurrent reads, reset phase, overflow, and unchanged realtime defaults.
 - Rust formatting, all tests, and warning-clean Clippy pass.
@@ -149,6 +153,13 @@ A real `GZ2E01` run validated tape-to-controller handoff at route-control frame
 realized tape, and a fresh absolute-tape replay reached identical final map,
 position, velocity, and applied input telemetry. Broader headful/headless parity
 and throughput remain unmeasured.
+
+The real `intro-first-exit` absolute tape also produced three byte-identical
+925-record Trace v2 artifacts across independent cold headless runs (Link
+control 439, trigger 827, `F_SP104` load 858). The first conformance attempt
+exposed varying uninitialized camera-view bytes at tick 300; the observer now
+marks unrealized camera state `Unavailable`, and the runner fails if complete
+trace SHA-256 values ever disagree again.
 
 ## Known gaps
 

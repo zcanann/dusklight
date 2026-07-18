@@ -66,14 +66,17 @@ Success is semantic, not a screenshot or a sleep:
 
 - first control: `F_SP103`, room 1, point 1, Link present, opening event ended;
 - first exit: the exit event begins, followed by the `F_SP104` point-0 load;
-- intro: `F_SP104` reloads at point 26 with map-tool event 9 and FNV-1a event
-  name hash `783959030` (`demo01_04`).
+- intro: `F_SP104` reloads at point 26 with map-tool event 9. The legacy event
+  name hash identified this as `demo01_04`, but Trace v2 does not call the
+  non-const event-manager name query merely to reproduce that diagnostic.
 
-The native `--gameplay-trace` stream records the stage tuple, actual post-clamp
-pad state, Link procedure/position/velocity/facing, event state, and nearest
-scene-exit actor on every completed simulation tick. `huntctl trace inspect`
-extracts the milestones; `timeline` exposes state changes and input frames;
-`compare` ranks several traces by milestone depth and tick.
+The native `--gameplay-trace` v2 stream records explicit post-simulation
+boundaries and channel status, the current/pending stage tuple, all four
+post-clamp pads, Link motion/action/animation state, event control, both global
+RNG streams, realized camera, and nearest scene exit on every completed tick.
+`huntctl trace inspect` extracts the milestones; `timeline` exposes state
+changes and input frames; `compare` ranks several traces by milestone depth and
+tick. Immutable v1 files remain decodable.
 
 The first-control milestone also requires event ID `-1`. Checking only
 `eventRunning == false` is insufficient because player construction briefly

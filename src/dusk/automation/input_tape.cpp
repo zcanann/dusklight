@@ -45,7 +45,8 @@ std::uint16_t read_u16(const std::uint8_t* input) {
 
 std::uint32_t read_u32(const std::uint8_t* input) {
     return static_cast<std::uint32_t>(input[0]) | (static_cast<std::uint32_t>(input[1]) << 8) |
-           (static_cast<std::uint32_t>(input[2]) << 16) | (static_cast<std::uint32_t>(input[3]) << 24);
+           (static_cast<std::uint32_t>(input[2]) << 16) |
+           (static_cast<std::uint32_t>(input[3]) << 24);
 }
 
 std::uint64_t read_u64(const std::uint8_t* input) {
@@ -84,51 +85,6 @@ RawPadState decode_pad(const std::uint8_t* input) {
     pad.flags = static_cast<RawPadFlags>(input[10]);
     pad.error = static_cast<std::int8_t>(input[11]);
     return pad;
-}
-
-void encode_pad(const RawPadState& pad, std::uint8_t* output) {
-    write_u16(output, pad.buttons);
-    output[2] = static_cast<std::uint8_t>(pad.stickX);
-    output[3] = static_cast<std::uint8_t>(pad.stickY);
-    output[4] = static_cast<std::uint8_t>(pad.substickX);
-    output[5] = static_cast<std::uint8_t>(pad.substickY);
-    output[6] = pad.triggerLeft;
-    output[7] = pad.triggerRight;
-    output[8] = pad.analogA;
-    output[9] = pad.analogB;
-    output[10] = static_cast<std::uint8_t>(pad.flags);
-    output[11] = static_cast<std::uint8_t>(pad.error);
-}
-
-PADStatus to_pad_status(const RawPadState& input) {
-    PADStatus status{};
-    status.button = input.buttons;
-    status.stickX = input.stickX;
-    status.stickY = input.stickY;
-    status.substickX = input.substickX;
-    status.substickY = input.substickY;
-    status.triggerLeft = input.triggerLeft;
-    status.triggerRight = input.triggerRight;
-    status.analogA = input.analogA;
-    status.analogB = input.analogB;
-    status.err = input.error;
-    return status;
-}
-
-RawPadState from_pad_status(const PADStatus& input) {
-    RawPadState status;
-    status.buttons = input.button;
-    status.stickX = input.stickX;
-    status.stickY = input.stickY;
-    status.substickX = input.substickX;
-    status.substickY = input.substickY;
-    status.triggerLeft = input.triggerLeft;
-    status.triggerRight = input.triggerRight;
-    status.analogA = input.analogA;
-    status.analogB = input.analogB;
-    status.flags = input.err == PAD_ERR_NONE ? RawPadFlags::Connected : RawPadFlags::None;
-    status.error = input.err;
-    return status;
 }
 
 InputTapeError decode_frame_stream(const std::span<const std::uint8_t> bytes,
@@ -176,17 +132,14 @@ void encode_frame_stream(const InputTape& tape, const std::span<std::uint8_t> ou
         write_u16(destination + 2, frame.timeoutTicks);
         destination += 4;
         for (const RawPadState& pad : frame.pads) {
-            encode_pad(pad, destination);
+            encode_raw_pad_state(
+                pad, std::span<std::uint8_t, kRawPadStateSize>(destination, kRawPadStateSize));
             destination += kRawPadStateSize;
         }
     }
 }
 
-} // namespace
-
-PADStatus raw_pad_state_to_pad_status(const RawPadState& input) {
-    return to_pad_status(input);
-}
+}  // namespace
 
 const char* input_tape_error_message(const InputTapeError error) {
     switch (error) {
@@ -265,7 +218,8 @@ bool input_tape_maximum_execution_ticks(const InputTape& tape, std::size_t& outp
     std::size_t total = 0;
     for (const InputFrame& frame : tape.frames) {
         const std::size_t ticks = frame.condition == InputFrameCondition::None ?
-                                      1 : static_cast<std::size_t>(frame.timeoutTicks);
+                                      1 :
+                                      static_cast<std::size_t>(frame.timeoutTicks);
         if (ticks > std::numeric_limits<std::size_t>::max() - total) {
             return false;
         }
@@ -276,9 +230,8 @@ bool input_tape_maximum_execution_ticks(const InputTape& tape, std::size_t& outp
 }
 
 bool input_tape_is_absolute(const InputTape& tape) {
-    return std::all_of(tape.frames.begin(), tape.frames.end(), [](const InputFrame& frame) {
-        return frame.condition == InputFrameCondition::None;
-    });
+    return std::all_of(tape.frames.begin(), tape.frames.end(),
+        [](const InputFrame& frame) { return frame.condition == InputFrameCondition::None; });
 }
 
 InputTapeError decode_input_tape(const std::span<const std::uint8_t> bytes, InputTape& output) {
@@ -565,7 +518,7 @@ void InputTapePlayer::apply(const InputFrame& frame) {
     for (std::size_t port = 0; port < kInputPortCount; ++port) {
         const std::uint8_t portBit = static_cast<std::uint8_t>(1u << port);
         if ((frame.ownedPorts & portBit) != 0) {
-            const PADStatus status = to_pad_status(frame.pads[port]);
+            const PADStatus status = raw_pad_state_to_pad_status(frame.pads[port]);
             PADSetAutomationStatus(static_cast<u32>(port), &status);
         } else if ((mOwnedPorts & portBit) != 0) {
             PADClearAutomationStatus(static_cast<u32>(port));
@@ -621,9 +574,8 @@ InputTapePlayer& input_tape_player() {
 }
 
 InputTapeError InputTapeRecorder::arm(const std::uint8_t ownedPorts,
-                                      const std::size_t frameCapacity,
-                                      const std::uint32_t tickRateNumerator,
-                                      const std::uint32_t tickRateDenominator) {
+    const std::size_t frameCapacity, const std::uint32_t tickRateNumerator,
+    const std::uint32_t tickRateDenominator) {
     mTape = {};
     mFrameCapacity = 0;
     mOwnedPorts = 0;
@@ -659,9 +611,8 @@ bool InputTapeRecorder::begin() {
 }
 
 InputTapeError InputTapeRecorder::start(const std::uint8_t ownedPorts,
-                                        const std::size_t frameCapacity,
-                                        const std::uint32_t tickRateNumerator,
-                                        const std::uint32_t tickRateDenominator) {
+    const std::size_t frameCapacity, const std::uint32_t tickRateNumerator,
+    const std::uint32_t tickRateDenominator) {
     const InputTapeError error =
         arm(ownedPorts, frameCapacity, tickRateNumerator, tickRateDenominator);
     if (error != InputTapeError::None) {
@@ -685,7 +636,7 @@ InputRecordResult InputTapeRecorder::recordTick(
     InputFrame frame;
     frame.ownedPorts = mOwnedPorts;
     for (std::size_t port = 0; port < kInputPortCount; ++port) {
-        frame.pads[port] = from_pad_status(statuses[port]);
+        frame.pads[port] = raw_pad_state_from_pad_status(statuses[port]);
     }
     mTape.frames.push_back(frame);
     return InputRecordResult::Recorded;
@@ -711,4 +662,4 @@ InputTapeRecorder& input_tape_recorder() {
     return recorder;
 }
 
-} // namespace dusk::automation
+}  // namespace dusk::automation

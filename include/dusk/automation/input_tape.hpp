@@ -11,7 +11,14 @@ struct PADStatus;
 namespace dusk::automation {
 
 inline constexpr std::array<std::uint8_t, 8> kInputTapeMagic{
-    'D', 'U', 'S', 'K', 'T', 'A', 'P', 'E',
+    'D',
+    'U',
+    'S',
+    'K',
+    'T',
+    'A',
+    'P',
+    'E',
 };
 // DUSKTAPE v2 stores the canonical 52-byte v1.2 frame stream in one zstd
 // frame. The decoder continues to accept uncompressed v1.0-v1.2 tapes.
@@ -40,7 +47,8 @@ enum class InputFrameCondition : std::uint8_t {
 const char* input_frame_condition_name(InputFrameCondition condition);
 
 constexpr RawPadFlags operator|(RawPadFlags lhs, RawPadFlags rhs) {
-    return static_cast<RawPadFlags>(static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+    return static_cast<RawPadFlags>(
+        static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
 }
 
 constexpr bool has_flag(RawPadFlags value, RawPadFlags flag) {
@@ -75,6 +83,9 @@ struct RawPadState {
 // Keeping this conversion shared prevents reactive controllers and tapes from
 // drifting on error/analog field semantics.
 PADStatus raw_pad_state_to_pad_status(const RawPadState& input);
+RawPadState raw_pad_state_from_pad_status(const PADStatus& input);
+void encode_raw_pad_state(
+    const RawPadState& input, std::span<std::uint8_t, kRawPadStateSize> output);
 
 struct InputFrame {
     // Bit N means automation owns controller port N for this tick.
@@ -159,6 +170,7 @@ public:
     // the number of fully completed tape frames.
     std::size_t consumedFrameCount() const { return mNextFrame; }
     std::size_t frameCount() const { return mTape.frames.size(); }
+    std::uint8_t ownedPorts() const { return mOwnedPorts; }
     const InputTape& tape() const { return mTape; }
 
 private:
@@ -206,11 +218,10 @@ enum class InputRecordResult {
 class InputTapeRecorder {
 public:
     InputTapeError arm(std::uint8_t ownedPorts, std::size_t frameCapacity,
-                       std::uint32_t tickRateNumerator = 30,
-                       std::uint32_t tickRateDenominator = 1);
+        std::uint32_t tickRateNumerator = 30, std::uint32_t tickRateDenominator = 1);
     bool begin();
     InputTapeError start(std::uint8_t ownedPorts, std::size_t frameCapacity,
-                         std::uint32_t tickRateNumerator = 30, std::uint32_t tickRateDenominator = 1);
+        std::uint32_t tickRateNumerator = 30, std::uint32_t tickRateDenominator = 1);
     InputRecordResult recordTick(std::span<const PADStatus, kInputPortCount> statuses);
     void stop();
     InputTape take();
@@ -234,4 +245,4 @@ private:
 // The main game input read samples this process-wide recorder once per tick.
 InputTapeRecorder& input_tape_recorder();
 
-} // namespace dusk::automation
+}  // namespace dusk::automation

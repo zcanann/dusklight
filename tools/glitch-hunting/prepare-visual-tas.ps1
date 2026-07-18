@@ -35,7 +35,8 @@ Push-Location $repoRoot
 try {
     Invoke-Checked "cmake" @(
         "--preset", $Preset,
-        "-DDUSK_ENABLE_CODE_MODS=OFF"
+        "-DDUSK_ENABLE_CODE_MODS=OFF",
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
     )
     Invoke-Checked "cmake" @(
         "--build", "--preset", $Preset,

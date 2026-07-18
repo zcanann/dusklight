@@ -8,7 +8,8 @@ Run **Tasks: Run Test Task** from the command palette and choose
 - `all`: native automation, Aurora card/time, Rust tests/lint, and a real
   two-worker smoke run;
 - `native`: every game-data-free C++ and Aurora test;
-- `input-tape`, `game-clock`, `name-entry`, `name-entry-trace`, `rng`,
+- `input-tape`, `gameplay-trace`, `game-clock`, `name-entry`,
+  `name-entry-trace`, `rng`,
   `eye-shredder-oracle`, `aurora-card`, or `aurora-time`: one native suite;
 - `eye-shredder`: build and run the real isolated Eye Shredder tape three times
   silently and headlessly against the last configured GCN USA image;
@@ -36,9 +37,11 @@ preserves its isolated writable state and trace under `build/test-results`; it
 must not be hidden with a reactive tape wait. See the
 [intro route benchmark](benchmarks/intro-route.md) for the current boundary.
 
-The runner configures `windows-clang-debug` with code mods disabled. This keeps
-the automation tests usable from ordinary PowerShell rather than requiring a
-Visual Studio developer shell.
+The runner configures `windows-clang-debug` with code mods disabled and the
+fork-only read-only observer boundary explicitly enabled. This keeps the
+automation tests usable from ordinary PowerShell rather than requiring a
+Visual Studio developer shell, without silently enabling observers in normal
+builds.
 
 ## Visual route playback
 

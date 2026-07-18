@@ -90,6 +90,8 @@ option(DUSK_ENABLE_SENTRY_NATIVE "Enable sentry-native crash reporting support" 
 option(DUSK_PACKAGE_INSTALL "Install Dusklight with a Linux-native file structure" OFF)
 option(DUSK_GFX_DEBUG_GROUPS "Report debug groups to the native graphics API" ${DUSK_GFX_DEBUG_GROUPS_DEFAULT})
 option(DUSK_ENABLE_CODE_MODS "Enable code mods" OFF)
+option(DUSK_ENABLE_AUTOMATION_OBSERVERS
+       "Enable fork-only read-only game observation adapters" OFF)
 
 # Edit & Continue
 if (MSVC)
@@ -448,6 +450,12 @@ if (ENABLE_ASAN)
 endif ()
 
 target_compile_definitions(dusklight PRIVATE ${GAME_COMPILE_DEFS})
+set_source_files_properties(
+    src/dusk/automation/gameplay_trace_observer.cpp
+    src/m_Do/m_Do_main.cpp
+    PROPERTIES
+    COMPILE_DEFINITIONS
+        "DUSK_ENABLE_AUTOMATION_OBSERVERS=$<BOOL:${DUSK_ENABLE_AUTOMATION_OBSERVERS}>")
 target_include_directories(dusklight PRIVATE ${miniz_SOURCE_DIR})
 target_link_libraries(dusklight PRIVATE aurora::main ${GAME_LIBS} ${JSYSTEM_LINK_LIBRARIES})
 target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/include/dusk_pch.hpp>")
@@ -456,6 +464,7 @@ target_precompile_headers(dusklight PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_S
 # Kept out of the default build so normal packaging remains unchanged.
 add_executable(dusk_input_tape_test EXCLUDE_FROM_ALL
     tests/input_tape_test.cpp
+    src/dusk/automation/input_pad.cpp
     src/dusk/automation/input_tape.cpp
     src/dusk/automation/name_entry_observer.cpp
 )
@@ -520,6 +529,18 @@ add_executable(dusk_rng_test EXCLUDE_FROM_ALL
 )
 target_include_directories(dusk_rng_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(dusk_rng_test PROPERTIES FOLDER "Tests")
+
+add_executable(dusk_gameplay_trace_test EXCLUDE_FROM_ALL
+    tests/gameplay_trace_test.cpp
+    src/dusk/automation/gameplay_trace.cpp
+    src/dusk/automation/input_pad.cpp
+)
+target_include_directories(dusk_gameplay_trace_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/extern/aurora/include
+)
+target_compile_definitions(dusk_gameplay_trace_test PRIVATE TARGET_PC=1 AURORA=1)
+set_target_properties(dusk_gameplay_trace_test PROPERTIES FOLDER "Tests")
 
 if (DUSK_ENABLE_CODE_MODS)
     include(cmake/SymbolManifest.cmake)

@@ -30,6 +30,19 @@ not become route history until explicitly promoted.
   They may control the exclusive emulated PAD, logical pacing, presentation,
   automation-owned artifacts, and process lifecycle. Game observations enter
   automation through `const` access.
+- Observation support must not modify decompiled gameplay logic, data flow, or
+  object behavior merely to make private state convenient to inspect. Query
+  implementations live out of line under the fork-only automation boundary,
+  are conspicuously compile-time gated, and are absent from native/upstream
+  builds that do not opt into that boundary.
+- Observation adapters may copy already-realized state only. They must not call
+  mutating or non-`const` gameplay helpers, trigger lazy initialization, fill a
+  cache, allocate from a game heap, advance RNG, issue a fresh collision query,
+  or otherwise cause game-visible work. Prefer public `const` access. If a fact
+  is truly inaccessible, a narrowly scoped compile-gated friend/read adapter is
+  the last resort and requires an explicit field-by-field audit plus A/B replay
+  parity evidence; changing gameplay code or layout is not an acceptable
+  shortcut.
 - Experimental writes are a separate compile-time-disabled intervention
   capability with explicit runtime opt-in and an unavoidable mutation audit.
   An intervention result is never represented as ordinary TAS proof.
@@ -69,8 +82,10 @@ not become route history until explicitly promoted.
 - [x] Route segment graph, human child recording, playback, thumbnails, draft
   promotion, and Git-backed topology editing.
 - [x] Bounded actor catalog and exact placed-actor selectors.
-- [x] Gameplay trace v1, transition extraction, deterministic tree FQI,
-  behavior archive, structured search, Q proposal evaluation, and cold replay.
+- [x] Immutable gameplay trace v1 decoding plus the initial Trace v2
+  channel-directory writer/decoder, transition extraction, deterministic tree
+  FQI, behavior archive, structured search, Q proposal evaluation, and cold
+  replay.
 - [x] Safe Eye Shredder neighboring-memory model and name-entry instrumentation.
 
 These are foundations rather than completion claims. Known gaps include
@@ -252,6 +267,22 @@ all be copied into every per-frame neural observation.
 
 ### P0: schema and query foundations
 
+- [ ] Migrate the legacy milestone, reactive-controller, actor-catalog, and
+  name-entry game reads out of `m_Do_main.cpp` and into the same compile-gated
+  observer boundary. In particular, remove or replace the legacy non-`const`
+  `getRunEventName()` observation. Version any resulting proof or fingerprint
+  change explicitly; do not preserve an unsafe query merely to preserve hashes.
+- [ ] Put every native observer and query adapter in the fork-owned
+  `dusk/automation` boundary behind one unmistakable compile-time feature gate;
+  keep gameplay/decomp translation units free of query implementations.
+- [ ] Add a build/CI check that fails when observer code, friend declarations,
+  or query-only includes leak into an ungated upstream/native configuration.
+- [ ] Maintain an access manifest for every surfaced field: declaring type,
+  read expression, phase, portability, access mechanism, and side-effect audit.
+- [ ] Require an exception record before adding any friend/read adapter for
+  private state, including why an out-of-line public/const observation cannot
+  provide the fact. Never alter object layout, virtual dispatch, initialization,
+  or gameplay control flow for observation.
 - [ ] Define a stable typed fact schema with field IDs, scalar/vector/enum/bitset
   types, units, coordinate spaces, missingness, sampling phase, and version.
 - [ ] Define audited observation phases at meaningful engine boundaries such as
@@ -263,6 +294,9 @@ all be copied into every per-frame neural observation.
   collision, event, save, UI, loader, and map data.
 - [ ] Audit every adapter for hidden mutation, lazy initialization, game-heap
   allocation, cache updates, or collision helpers with side effects.
+- [ ] Run observer-on versus observer-off A/B conformance over identical tapes;
+  require identical canonical state hashes, RNG snapshots/counters, events,
+  terminal state, and replay proof. Treat any difference as a framework bug.
 - [ ] Return immutable snapshots; never expose a live pointer over IPC.
 - [ ] Support bounded selection, filtering, sorting, nearest-K, aggregation,
   spatial predicates, and explicit truncation metadata.
@@ -271,6 +305,9 @@ all be copied into every per-frame neural observation.
 - [ ] Hash the exact query/observation specification into traces and models.
 - [ ] Provide offline re-featurization so new model views can be produced from
   sufficiently rich raw traces without rerunning the game.
+- [ ] Define `movement-state/v2` around Trace v2 presence/status semantics so
+  it never maps an unavailable legacy field (currently event-name hash) to
+  zero or merges it under the legacy movement-v1 schema digest.
 
 ### P0: player observation
 
@@ -523,6 +560,18 @@ judgment, with the exact supporting observations retained.
 
 ### P0: trace v2
 
+- [x] Add an atomic little-endian v2 channel-directory format with explicit
+  post-simulation boundaries, input provenance, per-record channel status,
+  strict size/offset/canonical validation, and permanent v1 decoding.
+- [x] Capture opt-in current/pending stage, exact four-port applied PAD, Link
+  motion and raw action/procedure state, event control, both global RNG streams,
+  realized camera, and nearest scene exit through the gated observer boundary.
+- [x] Make the native writer and Rust decoder reject malformed flags, missing
+  requested channels, overlap/gaps, invalid statuses, incompatible RNG, and
+  contradictory phase/tape metadata; cover the wire layout with a native test.
+- [x] Enforce byte-identical repeated real traces in the intro conformance
+  runner; an initial camera-view leak was localized to tick 300 and fixed by
+  marking unrealized view state `Unavailable` without copying its payload.
 - [ ] Replace the fixed 49-field movement assumption with an authenticated,
   extensible observation-view schema and explicit missingness masks.
 - [ ] Add per-tick RNG, camera, player procedure internals/action timers,
@@ -1011,8 +1060,10 @@ query, model, or browser request can create unbounded native work.
 - [ ] Finish run identity, async determinism audit, canonical state hashes, and
   first-divergence reporting.
 - [ ] Design the typed fact/query schema and static world-inventory format.
-- [ ] Implement Trace v2 for Link, RNG, camera, action timers, collision/contact,
-  local geometry, objective state, and selected actors.
+- [x] Implement the first Trace v2 slice for Link, global RNG, camera, action
+  timers/animations, exact input, stage/event state, and explicit missingness.
+- [ ] Extend Trace v2 with resolved collision/contact, local geometry,
+  objective state, and bounded selected actors.
 - [ ] Add query/trace cost accounting and observational-inertness tests.
 
 ### Phase B: reusable action and objective toolbox
@@ -1057,12 +1108,14 @@ query, model, or browser request can create unbounded native work.
 
 ## Immediate next milestone
 
-The next implementation milestone should be **Trace v2 plus the query contract**,
-not “DDQN exists.” Its minimal vertical slice is:
+The active implementation milestone is **completing Trace v2 plus the query
+contract**, not “DDQN exists.” The channel-directory wire contract and initial
+const-only Link/RNG/camera/action slice now exist; the remaining vertical slice
+is:
 
 1. A versioned objective-specific observation specification.
-2. Per-tick Link procedure/timers, RNG, camera, consumed input, local collision
-   contacts/correction, nearest load-zone geometry, and selected actor slots.
+2. Per-tick local collision contacts/correction, nearest load-zone geometry,
+   and selected actor slots, extending the existing Link/RNG/camera/input facts.
 3. A static `F_SP103`/Ordon world inventory with stable collision, placement,
    exit, and trigger IDs.
 4. Whole-episode trace extraction with explicit missingness and exact action

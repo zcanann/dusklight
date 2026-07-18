@@ -64,6 +64,7 @@
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
+#include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/automation/input_controller.hpp"
 #include "dusk/automation/input_recording.hpp"
 #include "dusk/automation/input_tape.hpp"
@@ -675,6 +676,7 @@ static bool deterministicTimeAdvanceFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
+static std::uint64_t gameplayTraceChannels = dusk::automation::GameplayTraceDefaultChannels;
 static bool gameplayTraceWriteFailed;
 static std::filesystem::path realizedInputTapePath;
 static dusk::automation::InputTape realizedInputTape;
@@ -939,98 +941,18 @@ static void begin_automation_simulation_tick() {
                                                             automationTapeFrame);
 }
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+// Fork-only read boundary. This block is absent from observer-off builds.
 static void record_gameplay_trace_tick() {
-    auto& recorder = dusk::automation::gameplay_trace_recorder();
-    if (!recorder.active()) {
-        return;
-    }
-
-    dusk::automation::GameplayTraceSample sample{
+    dusk::automation::record_gameplay_trace_post_simulation({
         .simulationTick = automationSimulationTick,
         .tapeFrame = automationTapeFrame,
-        .room = static_cast<std::int8_t>(dComIfGp_roomControl_getStayNo()),
-        .layer = static_cast<std::int8_t>(dComIfG_play_c::getLayerNo(0)),
-        .point = dComIfGp_getStartStagePoint(),
-    };
-    if (const char* stageName = dComIfGp_getStartStageName(); stageName != nullptr) {
-        std::strncpy(sample.stageName, stageName, sizeof(sample.stageName));
-    }
-
-    if (inputTapeFrameApplied) {
-        sample.flags |= dusk::automation::GameplayTraceTapePlaying;
-    }
-    if (inputControllerFrameApplied) {
-        sample.flags |= dusk::automation::GameplayTraceControllerPlaying;
-    }
-    const PADStatus& pad = JUTGamePad::mPadStatus[0];
-    sample.buttons = pad.button;
-    sample.stickX = pad.stickX;
-    sample.stickY = pad.stickY;
-    sample.padError = pad.err;
-    if (dComIfGp_event_runCheck() != 0) {
-        sample.flags |= dusk::automation::GameplayTraceEventRunning;
-    }
-    const dEvt_control_c* event = dComIfGp_getEvent();
-    sample.eventId = event->mEventId;
-    sample.eventMode = event->getMode();
-    sample.eventStatus = event->mEventStatus;
-    sample.eventMapToolId = event->getMapToolId();
-    const char* eventName = dComIfGp_getEventManager().getRunEventName();
-    std::uint32_t eventNameHash = 2166136261u;
-    for (const unsigned char* cursor = reinterpret_cast<const unsigned char*>(eventName);
-         cursor != nullptr && *cursor != 0; ++cursor) {
-        eventNameHash = (eventNameHash ^ *cursor) * 16777619u;
-    }
-    sample.eventNameHash = eventNameHash;
-
-    if (const fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
-        sample.flags |= dusk::automation::GameplayTracePlayerPresent;
-        sample.playerActorName = fopAcM_GetName(player);
-        if (sample.playerActorName == fpcNm_ALINK_e) {
-            sample.flags |= dusk::automation::GameplayTracePlayerIsLink;
-            sample.playerProcId = static_cast<const daAlink_c*>(player)->mProcID;
-        }
-        sample.currentAngleY = player->current.angle.y;
-        sample.shapeAngleY = player->shape_angle.y;
-        sample.positionX = player->current.pos.x;
-        sample.positionY = player->current.pos.y;
-        sample.positionZ = player->current.pos.z;
-        sample.velocityX = player->speed.x;
-        sample.velocityY = player->speed.y;
-        sample.velocityZ = player->speed.z;
-        sample.forwardSpeed = player->speedF;
-
-        struct NearestSceneExit {
-            const cXyz* playerPosition;
-            const fopAc_ac_c* actor;
-            float distanceSquared;
-        } nearest{&player->current.pos, nullptr, std::numeric_limits<float>::max()};
-        fopAcIt_Executor(
-            [](void* candidate, void* context) -> int {
-                const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
-                auto* nearest = static_cast<NearestSceneExit*>(context);
-                const s16 actorName = fopAcM_GetName(actor);
-                if (actorName != fpcNm_SCENE_EXIT_e && actorName != fpcNm_SCENE_EXIT2_e) {
-                    return 1;
-                }
-                const float distance = actor->current.pos.abs2(*nearest->playerPosition);
-                if (distance < nearest->distanceSquared) {
-                    nearest->actor = actor;
-                    nearest->distanceSquared = distance;
-                }
-                return 1;
-            },
-            &nearest);
-        if (nearest.actor != nullptr) {
-            sample.nearestSceneExitActorName = fopAcM_GetName(nearest.actor);
-            sample.nearestSceneExitX = nearest.actor->current.pos.x;
-            sample.nearestSceneExitY = nearest.actor->current.pos.y;
-            sample.nearestSceneExitZ = nearest.actor->current.pos.z;
-            sample.nearestSceneExitDistance = std::sqrt(nearest.distanceSquared);
-        }
-    }
-    recorder.record(sample);
+        .tapeOwnedPorts = dusk::automation::input_tape_player().ownedPorts(),
+        .tapeFrameApplied = inputTapeFrameApplied,
+        .controllerFrameApplied = inputControllerFrameApplied,
+    });
 }
+#endif
 
 static dusk::automation::MilestoneObservation capture_milestone_observation() {
     const fopAc_ac_c* player = dComIfGp_getPlayer(0);
@@ -1185,7 +1107,9 @@ static bool record_milestone_tick() {
 }
 
 static bool finish_automation_oracle_tick() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     record_gameplay_trace_tick();
+#endif
     const bool milestoneGoalReached = record_milestone_tick();
     if (!eyeShredderOracleEnabled) {
         ++automationSimulationTick;
@@ -1989,6 +1913,7 @@ int game_main(int argc, char* argv[]) {
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
+            ("gameplay-trace-channels", "Comma-separated trace-v2 channels: core,stage,applied-pads,player-motion,event,scene-exit,rng,camera,player-action (default all)", cxxopts::value<std::string>())
             ("milestones", "Evaluate comma-separated memory-backed milestone IDs", cxxopts::value<std::string>())
             ("milestone-program", "Load a compiled read-only DMSP milestone predicate program", cxxopts::value<std::string>())
             ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
@@ -2425,6 +2350,11 @@ int game_main(int argc, char* argv[]) {
     }
 
     if (parsed_arg_options.count("gameplay-trace")) {
+        if (!dusk::automation::gameplay_trace_observer_enabled()) {
+            fprintf(stderr,
+                    "Gameplay Trace Error: this build has fork-only automation observers disabled\n");
+            return 1;
+        }
         if (!hasAutomationInput) {
             fprintf(stderr, "Gameplay Trace Error: --gameplay-trace requires --input-tape or --input-controller\n");
             return 1;
@@ -2435,6 +2365,19 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         gameplayTracePath = std::filesystem::u8path(tracePath);
+        if (parsed_arg_options.count("gameplay-trace-channels") != 0) {
+            std::string traceChannelError;
+            if (!dusk::automation::parse_gameplay_trace_channels(
+                    parsed_arg_options["gameplay-trace-channels"].as<std::string>(),
+                    gameplayTraceChannels, traceChannelError)) {
+                fprintf(stderr, "Gameplay Trace Error: %s\n", traceChannelError.c_str());
+                return 1;
+            }
+        }
+    } else if (parsed_arg_options.count("gameplay-trace-channels") != 0) {
+        fprintf(stderr,
+                "Gameplay Trace Error: --gameplay-trace-channels requires --gameplay-trace PATH\n");
+        return 1;
     }
 
     const bool hasMilestones = parsed_arg_options.count("milestones") != 0;
@@ -2906,7 +2849,7 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         dusk::automation::gameplay_trace_recorder().start(
-            inputTapeMaximumTicks + controllerFrames + 1);
+            inputTapeMaximumTicks + controllerFrames + 1, gameplayTraceChannels);
     }
 
     const bool deterministicAutomationIo =

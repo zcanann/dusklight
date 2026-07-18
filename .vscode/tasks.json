@@ -10,6 +10,7 @@
         "all",
         "native",
         "input-tape",
+        "gameplay-trace",
         "input-controller",
         "game-clock",
         "name-entry",
@@ -98,7 +99,8 @@
       "command": "cmake",
       "args": [
         "--preset", "windows-clang-debug",
-        "-DDUSK_ENABLE_CODE_MODS=OFF"
+        "-DDUSK_ENABLE_CODE_MODS=OFF",
+        "-DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON"
       ],
       "problemMatcher": "$msCompile",
       "presentation": {
