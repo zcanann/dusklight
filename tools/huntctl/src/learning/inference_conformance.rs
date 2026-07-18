@@ -21,6 +21,7 @@ pub struct InferenceConformanceReport {
     pub schema: &'static str,
     pub frozen_model_sha256: Digest,
     pub input_corpus_sha256: Digest,
+    pub input_batch_sha256: Digest,
     pub accelerator_backend: String,
     pub accelerator_build_sha256: Digest,
     pub tolerance: AcceleratorTolerance,
@@ -29,6 +30,7 @@ pub struct InferenceConformanceReport {
     pub cpu_repetitions: usize,
     pub cpu_bitwise_deterministic: bool,
     pub cpu_output_sha256: Digest,
+    pub accelerator_output_sha256: Digest,
     pub accelerator_maximum_absolute_error: f64,
     pub accelerator_maximum_relative_error: f64,
     pub accelerator_within_declared_tolerance: bool,
@@ -106,12 +108,18 @@ impl InferenceConformanceReport {
             }
         }
         let frozen_model_sha256 = model.artifact_sha256()?;
-        let cpu_output_sha256 = output_digest(&reference);
+        let input_batch_sha256 = tensor_digest(b"dusklight.inference-input-batch/v1\0", inputs);
+        let cpu_output_sha256 = tensor_digest(b"dusklight.cpu-inference-output/v1\0", &reference);
+        let accelerator_output_sha256 = tensor_digest(
+            b"dusklight.accelerator-inference-output/v1\0",
+            accelerator_outputs,
+        );
         let values_per_row = reference.first().map(Vec::len).unwrap_or(0);
         let mut report = Self {
             schema: INFERENCE_CONFORMANCE_SCHEMA_V1,
             frozen_model_sha256,
             input_corpus_sha256,
+            input_batch_sha256,
             accelerator_backend,
             accelerator_build_sha256,
             tolerance,
@@ -120,6 +128,7 @@ impl InferenceConformanceReport {
             cpu_repetitions,
             cpu_bitwise_deterministic,
             cpu_output_sha256,
+            accelerator_output_sha256,
             accelerator_maximum_absolute_error: maximum_absolute_error,
             accelerator_maximum_relative_error: maximum_relative_error,
             accelerator_within_declared_tolerance: within_tolerance,
@@ -132,21 +141,27 @@ impl InferenceConformanceReport {
 
     fn digest(&self) -> Result<Digest, InferenceConformanceError> {
         let bytes = serde_json::to_vec(&(
-            self.schema,
-            self.frozen_model_sha256,
-            self.input_corpus_sha256,
-            &self.accelerator_backend,
-            self.accelerator_build_sha256,
-            self.tolerance,
-            self.rows,
-            self.values_per_row,
-            self.cpu_repetitions,
-            self.cpu_bitwise_deterministic,
-            self.cpu_output_sha256,
-            self.accelerator_maximum_absolute_error,
-            self.accelerator_maximum_relative_error,
-            self.accelerator_within_declared_tolerance,
-            self.promotion_authority,
+            (
+                self.schema,
+                self.frozen_model_sha256,
+                self.input_corpus_sha256,
+                self.input_batch_sha256,
+                &self.accelerator_backend,
+                self.accelerator_build_sha256,
+                self.tolerance,
+                self.rows,
+                self.values_per_row,
+            ),
+            (
+                self.cpu_repetitions,
+                self.cpu_bitwise_deterministic,
+                self.cpu_output_sha256,
+                self.accelerator_output_sha256,
+                self.accelerator_maximum_absolute_error,
+                self.accelerator_maximum_relative_error,
+                self.accelerator_within_declared_tolerance,
+                self.promotion_authority,
+            ),
         ))
         .map_err(|error| InferenceConformanceError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
@@ -167,9 +182,9 @@ fn bitwise_equal(left: &[Vec<f32>], right: &[Vec<f32>]) -> bool {
         })
 }
 
-fn output_digest(output: &[Vec<f32>]) -> Digest {
+fn tensor_digest(domain: &[u8], output: &[Vec<f32>]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight.cpu-inference-output/v1\0");
+    hasher.update(domain);
     hasher.update((output.len() as u64).to_le_bytes());
     for row in output {
         hasher.update((row.len() as u64).to_le_bytes());
@@ -246,7 +261,9 @@ mod tests {
         assert!(report.cpu_bitwise_deterministic);
         assert!(report.accelerator_within_declared_tolerance);
         assert!(!report.promotion_authority);
+        assert_ne!(report.input_batch_sha256, Digest::ZERO);
         assert_ne!(report.cpu_output_sha256, Digest::ZERO);
+        assert_ne!(report.accelerator_output_sha256, Digest::ZERO);
         assert_ne!(report.report_sha256, Digest::ZERO);
     }
 
