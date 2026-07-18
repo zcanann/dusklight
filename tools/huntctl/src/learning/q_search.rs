@@ -53,6 +53,9 @@ pub struct QProposalSummary {
     pub unmasked_q_probe_states: usize,
     pub guided_exploit_interventions: usize,
     pub unmasked_exploratory_interventions: usize,
+    pub structured_counterfactual_interventions: usize,
+    pub archive_novelty_interventions: usize,
+    pub blind_coverage_interventions: usize,
     pub proposals: usize,
     pub coverage: CollectionCoverage,
     pub proposer_attribution: Vec<ProposerAttribution>,
@@ -120,7 +123,8 @@ impl Error for QSearchError {}
 enum ProposalKind {
     GuidedExploit,
     EnsembleDisagreement,
-    SystematicAlternate,
+    StructuredCounterfactual,
+    ArchiveNovelty,
     RandomProbe,
     LatinHypercube,
 }
@@ -130,9 +134,9 @@ impl ProposalKind {
         match self {
             Self::GuidedExploit => "guided_exploit",
             Self::EnsembleDisagreement => "ensemble_disagreement",
-            Self::SystematicAlternate => "systematic_alternate",
-            Self::RandomProbe => "random_probe",
-            Self::LatinHypercube => "latin_hypercube",
+            Self::StructuredCounterfactual => "structured_counterfactual",
+            Self::ArchiveNovelty => "archive_novelty",
+            Self::RandomProbe | Self::LatinHypercube => "blind_coverage",
         }
     }
 
@@ -140,9 +144,10 @@ impl ProposalKind {
         match self {
             Self::GuidedExploit => "q_guided",
             Self::EnsembleDisagreement => "q_disagreement_heuristic",
-            Self::SystematicAlternate => "systematic_probe",
-            Self::RandomProbe => "random_probe",
-            Self::LatinHypercube => "latin_hypercube",
+            Self::StructuredCounterfactual => "structured_counterfactual",
+            Self::ArchiveNovelty => "archive_novelty",
+            Self::RandomProbe => "blind_random_probe",
+            Self::LatinHypercube => "blind_latin_hypercube",
         }
     }
 }
@@ -244,6 +249,7 @@ pub fn propose_q_candidates(
     let mut exploit = Vec::new();
     let mut explore = Vec::new();
     let mut systematic = Vec::new();
+    let mut archive_novelty = Vec::new();
     let mut random = Vec::new();
     let mut latin_hypercube = Vec::new();
     let mut considered = 0_usize;
@@ -253,6 +259,15 @@ pub fn propose_q_candidates(
     let mut unmasked_q_probe_states = 0_usize;
     let mut ordinal = 0;
     let action_support = collection_action_support(training_corpora);
+    let archive_context_support = aligned
+        .iter()
+        .flat_map(|episode| &episode.corpus.transitions)
+        .fold(BTreeMap::<String, u64>::new(), |mut counts, transition| {
+            *counts
+                .entry(archive_context_key(&transition.state))
+                .or_default() += 1;
+            counts
+        });
     let mut balanced_actions: Vec<u32> = (0..MOVEMENT_ACTION_COUNT_V2).collect();
     balanced_actions
         .sort_by_key(|action| (action_support.get(action).copied().unwrap_or(0), *action));
@@ -330,8 +345,28 @@ pub fn propose_q_candidates(
                 frame,
                 action: systematic_action,
                 score: -(action_support.get(&systematic_action).copied().unwrap_or(0) as f64),
-                kind: ProposalKind::SystematicAlternate,
+                kind: ProposalKind::StructuredCounterfactual,
                 width: [1, 2, 4][ordinal % 3],
+            });
+            let novelty_action = balanced_actions
+                .iter()
+                .cycle()
+                .skip((ordinal + balanced_actions.len() / 2) % balanced_actions.len())
+                .find(|action| **action != transition.action.action_id)
+                .copied()
+                .expect("movement catalog has alternate actions");
+            let context_support = archive_context_support
+                .get(&archive_context_key(&transition.state))
+                .copied()
+                .unwrap_or(0);
+            archive_novelty.push(Intervention {
+                episode: episode_index,
+                frame,
+                action: novelty_action,
+                score: -(context_support as f64)
+                    - action_support.get(&novelty_action).copied().unwrap_or(0) as f64 / 1024.0,
+                kind: ProposalKind::ArchiveNovelty,
+                width: [1, 2, 4][(ordinal + 2) % 3],
             });
             let random_word = mix_probe(config.seed, ordinal as u64);
             let mut random_action = (random_word % u64::from(MOVEMENT_ACTION_COUNT_V2)) as u32;
@@ -367,6 +402,14 @@ pub fn propose_q_candidates(
     sort_interventions(&mut exploit);
     sort_interventions(&mut explore);
     sort_interventions(&mut systematic);
+    sort_interventions(&mut archive_novelty);
+
+    let blind_coverage = random
+        .iter()
+        .copied()
+        .zip(latin_hypercube.iter().copied())
+        .flat_map(|(random, latin)| [random, latin])
+        .collect::<Vec<_>>();
 
     let mut candidates = Vec::new();
     let mut ids = episodes
@@ -380,10 +423,14 @@ pub fn propose_q_candidates(
         .collect::<Result<HashSet<_>, _>>()?;
     let budgets = split_proposer_budget(config.max_proposals);
     let pools = [
-        (ProposalKind::SystematicAlternate, &systematic, budgets[0]),
+        (
+            ProposalKind::StructuredCounterfactual,
+            &systematic,
+            budgets[0],
+        ),
         (ProposalKind::EnsembleDisagreement, &explore, budgets[1]),
-        (ProposalKind::RandomProbe, &random, budgets[2]),
-        (ProposalKind::LatinHypercube, &latin_hypercube, budgets[3]),
+        (ProposalKind::ArchiveNovelty, &archive_novelty, budgets[2]),
+        (ProposalKind::RandomProbe, &blind_coverage, budgets[3]),
         (ProposalKind::GuidedExploit, &exploit, budgets[4]),
     ];
     let mut proposer_attribution = Vec::new();
@@ -410,7 +457,7 @@ pub fn propose_q_candidates(
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v4",
+            schema: "dusklight-q-proposals/v5",
             training_transitions: transitions.len(),
             training_actions: actions.len(),
             proposal_states: considered,
@@ -421,6 +468,9 @@ pub fn propose_q_candidates(
             unmasked_q_probe_states,
             guided_exploit_interventions: exploit.len(),
             unmasked_exploratory_interventions: explore.len(),
+            structured_counterfactual_interventions: systematic.len(),
+            archive_novelty_interventions: archive_novelty.len(),
+            blind_coverage_interventions: blind_coverage.len(),
             proposals: candidates.len(),
             coverage: collection_coverage(episodes),
             proposer_attribution,
@@ -545,6 +595,29 @@ fn collection_action_support(corpora: &[TransitionCorpus]) -> BTreeMap<u32, u64>
         *support.entry(transition.action.action_id).or_default() += 1;
     }
     support
+}
+
+fn archive_context_key(state: &[f32]) -> String {
+    let stage: String = state[..8]
+        .iter()
+        .map(|value| (value * 255.0).round().clamp(0.0, 255.0) as u8)
+        .take_while(|byte| *byte != 0)
+        .map(char::from)
+        .collect();
+    format!(
+        "{stage}:{}:{},{}:proc{}:phase{}",
+        state[8].round() as i32,
+        (state[17] * 32.0).floor() as i32,
+        (state[19] * 32.0).floor() as i32,
+        state[16].round() as i32,
+        if state[48] <= 1.0 / 1024.0 {
+            "terminal"
+        } else if state[47] <= 1.0 / 1024.0 {
+            "opening"
+        } else {
+            "middle"
+        }
+    )
 }
 
 fn collection_coverage(episodes: &[QEpisode]) -> CollectionCoverage {
@@ -807,11 +880,15 @@ mod tests {
         );
         assert!(first.summary.state_masked_proposal_states > 0);
         assert_eq!(first.summary.proposal_states, 8);
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v5");
         assert_eq!(first.summary.guided_action_evaluations, 4);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
         assert_eq!(first.summary.unmasked_action_evaluations, 2);
         assert!(first.summary.guided_exploit_interventions > 0);
         assert!(first.summary.unmasked_exploratory_interventions > 0);
+        assert!(first.summary.structured_counterfactual_interventions > 0);
+        assert!(first.summary.archive_novelty_interventions > 0);
+        assert!(first.summary.blind_coverage_interventions > 0);
         assert_eq!(
             first
                 .candidates
@@ -837,6 +914,21 @@ mod tests {
             episodes[0].corpus.transitions.len()
         );
         assert_eq!(first.summary.proposer_attribution.len(), 5);
+        for proposer in [
+            "structured_counterfactual",
+            "ensemble_disagreement",
+            "archive_novelty",
+            "blind_coverage",
+            "guided_exploit",
+        ] {
+            assert!(
+                first
+                    .summary
+                    .proposer_attribution
+                    .iter()
+                    .any(|item| item.proposer == proposer)
+            );
+        }
         assert!(
             first
                 .summary

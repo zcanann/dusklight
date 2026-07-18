@@ -3645,6 +3645,12 @@ fn extract_trial_transition_corpus(
     let producer_kind = if let Some(mutation) = trial.ancestry.mutation.as_deref() {
         if mutation.starts_with("q_") {
             EpisodeProducerKind::FittedQ
+        } else if mutation.starts_with("structured_counterfactual") {
+            EpisodeProducerKind::StructuredCounterfactual
+        } else if mutation.starts_with("archive_novelty") {
+            EpisodeProducerKind::ArchiveNovelty
+        } else if mutation.starts_with("blind_") {
+            EpisodeProducerKind::BlindCoverage
         } else if mutation.starts_with("systematic_probe") {
             EpisodeProducerKind::SystematicProbe
         } else if mutation.starts_with("random_probe") {

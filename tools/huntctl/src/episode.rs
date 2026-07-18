@@ -60,6 +60,9 @@ pub enum EpisodeProducerKind {
     SystematicProbe,
     RandomProbe,
     LatinHypercube,
+    StructuredCounterfactual,
+    ArchiveNovelty,
+    BlindCoverage,
     Replay,
 }
 
