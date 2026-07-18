@@ -119,8 +119,8 @@ impl Default for LocalDynamicsGateConfig {
             maximum_horizon_ticks: 8,
             minimum_probes_per_domain: 128,
             minimum_episodes_per_domain: 32,
-            maximum_normalized_rmse: 0.25,
-            maximum_event_error_rate: 0.1,
+            maximum_normalized_rmse: 0.1,
+            maximum_event_error_rate: 0.05,
         }
     }
 }
@@ -146,8 +146,10 @@ pub enum LocalDynamicsDisposition {
 pub struct LocalDynamicsErrorReport {
     pub schema: &'static str,
     pub model_sha256: Digest,
+    pub training_corpus_sha256: Digest,
     pub held_out_corpus_sha256: Digest,
     pub normalization_sha256: Digest,
+    pub probe_manifest_sha256: Digest,
     pub config: LocalDynamicsGateConfig,
     pub domains: Vec<LocalDynamicsDomainSummary>,
     pub disposition: LocalDynamicsDisposition,
@@ -159,6 +161,7 @@ pub struct LocalDynamicsErrorReport {
 impl LocalDynamicsErrorReport {
     pub fn evaluate(
         model_sha256: Digest,
+        training_corpus_sha256: Digest,
         held_out_corpus_sha256: Digest,
         normalization_sha256: Digest,
         probes: &[LocalDynamicsProbe],
@@ -166,10 +169,18 @@ impl LocalDynamicsErrorReport {
     ) -> Result<Self, LocalDynamicsError> {
         validate_config(
             model_sha256,
+            training_corpus_sha256,
             held_out_corpus_sha256,
             normalization_sha256,
             probes,
             config,
+        )?;
+        let probe_manifest_sha256 = canonical_digest(
+            b"dusklight.local-dynamics-probe-manifest/v1\0",
+            &probes
+                .iter()
+                .map(|probe| probe.probe_sha256)
+                .collect::<Vec<_>>(),
         )?;
         let mut domains = Vec::with_capacity(DynamicsProbeDomain::ALL.len());
         let mut coverage_ready = true;
@@ -202,7 +213,7 @@ impl LocalDynamicsErrorReport {
                 })
                 .sum::<f64>();
             let normalized_rmse = if values == 0 {
-                f64::INFINITY
+                f64::MAX
             } else {
                 (squared_error / values as f64).sqrt()
             };
@@ -237,8 +248,10 @@ impl LocalDynamicsErrorReport {
         let mut report = Self {
             schema: LOCAL_DYNAMICS_REPORT_SCHEMA_V1,
             model_sha256,
+            training_corpus_sha256,
             held_out_corpus_sha256,
             normalization_sha256,
+            probe_manifest_sha256,
             config,
             domains,
             disposition,
@@ -247,7 +260,55 @@ impl LocalDynamicsErrorReport {
             report_sha256: Digest::ZERO,
         };
         report.report_sha256 = report.digest()?;
+        report.validate()?;
         Ok(report)
+    }
+
+    pub fn validate(&self) -> Result<(), LocalDynamicsError> {
+        let coverage_ready = self.domains.iter().all(|domain| {
+            domain.probes >= self.config.minimum_probes_per_domain
+                && domain.episodes >= self.config.minimum_episodes_per_domain
+        });
+        let error_ready = self.domains.iter().all(|domain| {
+            domain.normalized_rmse <= self.config.maximum_normalized_rmse
+                && domain.event_error_rate <= self.config.maximum_event_error_rate
+        });
+        let expected_disposition = if !coverage_ready {
+            LocalDynamicsDisposition::InsufficientHeldOutCoverage
+        } else if !error_ready {
+            LocalDynamicsDisposition::PredictionErrorTooHigh
+        } else {
+            LocalDynamicsDisposition::ReadyForBoundedTraining
+        };
+        if self.schema != LOCAL_DYNAMICS_REPORT_SCHEMA_V1
+            || self.model_sha256 == Digest::ZERO
+            || self.training_corpus_sha256 == Digest::ZERO
+            || self.held_out_corpus_sha256 == Digest::ZERO
+            || self.training_corpus_sha256 == self.held_out_corpus_sha256
+            || self.normalization_sha256 == Digest::ZERO
+            || self.probe_manifest_sha256 == Digest::ZERO
+            || self.domains.len() != DynamicsProbeDomain::ALL.len()
+            || self
+                .domains
+                .iter()
+                .map(|summary| summary.domain)
+                .ne(DynamicsProbeDomain::ALL)
+            || self.domains.iter().any(|domain| {
+                !domain.normalized_rmse.is_finite()
+                    || !domain.event_error_rate.is_finite()
+                    || !(0.0..=1.0).contains(&domain.event_error_rate)
+            })
+            || self.disposition != expected_disposition
+            || self.training_authorized
+                != (self.disposition == LocalDynamicsDisposition::ReadyForBoundedTraining)
+            || self.promotion_authority
+            || self.report_sha256 != self.digest()?
+        {
+            return Err(LocalDynamicsError::new(
+                "local dynamics readiness report is invalid",
+            ));
+        }
+        Ok(())
     }
 
     fn digest(&self) -> Result<Digest, LocalDynamicsError> {
@@ -256,8 +317,10 @@ impl LocalDynamicsErrorReport {
             &(
                 self.schema,
                 self.model_sha256,
+                self.training_corpus_sha256,
                 self.held_out_corpus_sha256,
                 self.normalization_sha256,
+                self.probe_manifest_sha256,
                 self.config,
                 &self.domains,
                 self.disposition,
@@ -300,12 +363,20 @@ impl LocalDynamicsTrainingPermit {
 
 fn validate_config(
     model_sha256: Digest,
+    training_corpus_sha256: Digest,
     held_out_corpus_sha256: Digest,
     normalization_sha256: Digest,
     probes: &[LocalDynamicsProbe],
     config: LocalDynamicsGateConfig,
 ) -> Result<(), LocalDynamicsError> {
-    if [model_sha256, held_out_corpus_sha256, normalization_sha256].contains(&Digest::ZERO)
+    if [
+        model_sha256,
+        training_corpus_sha256,
+        held_out_corpus_sha256,
+        normalization_sha256,
+    ]
+    .contains(&Digest::ZERO)
+        || training_corpus_sha256 == held_out_corpus_sha256
         || probes.is_empty()
         || probes.len() > MAX_PROBES
         || config.maximum_horizon_ticks == 0
@@ -405,6 +476,7 @@ mod tests {
             Digest([1; 32]),
             Digest([2; 32]),
             Digest([3; 32]),
+            Digest([4; 32]),
             &all,
             config(),
         )
@@ -414,6 +486,7 @@ mod tests {
             LocalDynamicsDisposition::ReadyForBoundedTraining
         );
         assert_eq!(report.domains.len(), 4);
+        assert_ne!(report.probe_manifest_sha256, Digest::ZERO);
         let permit = LocalDynamicsTrainingPermit::issue(&report).unwrap();
         assert_eq!(permit.maximum_horizon_ticks, 4);
         assert!(!permit.promotion_authority);
@@ -423,6 +496,7 @@ mod tests {
             Digest([1; 32]),
             Digest([2; 32]),
             Digest([3; 32]),
+            Digest([4; 32]),
             &incomplete,
             config(),
         )
@@ -440,6 +514,7 @@ mod tests {
             Digest([1; 32]),
             Digest([2; 32]),
             Digest([3; 32]),
+            Digest([4; 32]),
             &probes(1.0, &DynamicsProbeDomain::ALL),
             config(),
         )
