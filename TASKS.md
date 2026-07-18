@@ -41,6 +41,10 @@ not become route history until explicitly promoted.
 - Headful, hidden-headful, and headless execution must preserve game-visible
   simulation. Rendering work may only be removed after parity evidence proves
   it irrelevant.
+- An identical build, scenario, and absolute tape must produce an identical
+  logical result on every run. Any disagreement is a framework determinism bug
+  requiring first-divergence investigation; it is never a reason to mine a
+  supposedly more robust tape, add timing slack, or weaken the proof.
 - A faster local segment does not automatically dominate a slower one with a
   different RNG state, actor state, loader state, or downstream opportunity.
 - Native pointers and process-local IDs may be diagnostics, but they are not
@@ -122,6 +126,14 @@ debugging, and future algorithms.
   and prints a typed field/event diff.
 - [ ] Compare realtime headful, unpaced headful, hidden-headful fast-forward,
   and null-renderer runs over a shared conformance corpus.
+- [ ] Automatically quarantine a tape/scenario/build combination after any
+  repeated-run disagreement and retain all attempts for divergence analysis.
+- [ ] Classify and trace the nondeterministic source—input, logical time, RNG,
+  asynchronous completion, uninitialized state, process leakage, floating
+  point, rendering traversal, or observation side effect—before search resumes.
+- [ ] Reject “stability rate,” extra neutral frames, repeated button presses,
+  reactive waits, or a different candidate as substitutes for fixing identical
+  absolute-tape replay.
 
 ### P0: deterministic time and asynchronous systems
 
@@ -160,7 +172,9 @@ debugging, and future algorithms.
 
 **Acceptance:** the same conformance tapes agree tick-for-tick across supported
 execution modes, or terminate with a typed, localized capability/divergence
-report. No search result is ranked when determinism evidence is contradictory.
+report. A same-mode repeated-run disagreement blocks the affected framework
+configuration until explained and fixed. No search result is ranked when
+determinism evidence is contradictory.
 
 ## 2. Persistent execution, reset, and checkpoint acceleration
 
