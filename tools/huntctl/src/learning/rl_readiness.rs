@@ -3,11 +3,14 @@
 use crate::artifact::Digest;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
 pub const RL_SCALE_READINESS_SCHEMA_V1: &str = "dusklight-rl-scale-readiness/v1";
+pub const RL_COVERAGE_READINESS_SCHEMA_V1: &str = "dusklight-rl-coverage-readiness/v1";
+const MAX_COVERAGE_REGIONS: usize = 100_000;
+const MAX_REQUIRED_ACTIONS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct RlScaleReadinessConfig {
@@ -110,6 +113,190 @@ impl RlScaleReadinessReport {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RegionActionCoverage {
+    pub player_procedure: String,
+    pub spatial_phase: String,
+    pub required_action_ids: Vec<u32>,
+    pub observed_action_decisions: BTreeMap<u32, u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct RlCoverageReadinessConfig {
+    pub minimum_decisions_per_required_action: u64,
+    pub minimum_region_support_ratio: f64,
+}
+
+impl Default for RlCoverageReadinessConfig {
+    fn default() -> Self {
+        Self {
+            minimum_decisions_per_required_action: 16,
+            minimum_region_support_ratio: 0.9,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct UnsupportedCoverageRegion {
+    pub player_procedure: String,
+    pub spatial_phase: String,
+    pub required_actions: usize,
+    pub supported_actions: usize,
+    pub support_ratio_millionths: u32,
+    pub insufficient_action_ids: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RlCoverageReadinessReport {
+    pub schema: &'static str,
+    pub objective_sha256: Digest,
+    pub corpus_manifest_sha256: Digest,
+    pub region_manifest_sha256: Digest,
+    pub config: RlCoverageReadinessConfig,
+    pub regions: usize,
+    pub unsupported_regions: Vec<UnsupportedCoverageRegion>,
+    pub broad_support_in_every_region: bool,
+    pub promotion_authority: bool,
+    pub report_sha256: Digest,
+}
+
+impl RlCoverageReadinessReport {
+    pub fn assess(
+        objective_sha256: Digest,
+        corpus_manifest_sha256: Digest,
+        regions: &[RegionActionCoverage],
+        config: RlCoverageReadinessConfig,
+    ) -> Result<Self, RlReadinessError> {
+        validate_coverage_inputs(objective_sha256, corpus_manifest_sha256, regions, config)?;
+        let region_manifest_sha256 =
+            canonical_digest(b"dusklight.rl-coverage-regions/v1\0", &regions)?;
+        let unsupported_regions = regions
+            .iter()
+            .filter_map(|region| unsupported_region(region, config))
+            .collect::<Vec<_>>();
+        let broad_support_in_every_region = unsupported_regions.iter().all(|region| {
+            f64::from(region.support_ratio_millionths) / 1_000_000.0
+                >= config.minimum_region_support_ratio
+        });
+        let mut report = Self {
+            schema: RL_COVERAGE_READINESS_SCHEMA_V1,
+            objective_sha256,
+            corpus_manifest_sha256,
+            region_manifest_sha256,
+            config,
+            regions: regions.len(),
+            unsupported_regions,
+            broad_support_in_every_region,
+            promotion_authority: false,
+            report_sha256: Digest::ZERO,
+        };
+        report.report_sha256 = canonical_digest(
+            b"dusklight.rl-coverage-readiness/v1\0",
+            &(
+                report.schema,
+                report.objective_sha256,
+                report.corpus_manifest_sha256,
+                report.region_manifest_sha256,
+                report.config,
+                report.regions,
+                &report.unsupported_regions,
+                report.broad_support_in_every_region,
+                report.promotion_authority,
+            ),
+        )?;
+        Ok(report)
+    }
+}
+
+fn unsupported_region(
+    region: &RegionActionCoverage,
+    config: RlCoverageReadinessConfig,
+) -> Option<UnsupportedCoverageRegion> {
+    let insufficient_action_ids = region
+        .required_action_ids
+        .iter()
+        .copied()
+        .filter(|action| {
+            region
+                .observed_action_decisions
+                .get(action)
+                .copied()
+                .unwrap_or(0)
+                < config.minimum_decisions_per_required_action
+        })
+        .collect::<Vec<_>>();
+    if insufficient_action_ids.is_empty() {
+        return None;
+    }
+    let supported_actions = region.required_action_ids.len() - insufficient_action_ids.len();
+    Some(UnsupportedCoverageRegion {
+        player_procedure: region.player_procedure.clone(),
+        spatial_phase: region.spatial_phase.clone(),
+        required_actions: region.required_action_ids.len(),
+        supported_actions,
+        support_ratio_millionths: ((supported_actions as u64 * 1_000_000)
+            / region.required_action_ids.len() as u64) as u32,
+        insufficient_action_ids,
+    })
+}
+
+fn validate_coverage_inputs(
+    objective_sha256: Digest,
+    corpus_manifest_sha256: Digest,
+    regions: &[RegionActionCoverage],
+    config: RlCoverageReadinessConfig,
+) -> Result<(), RlReadinessError> {
+    if objective_sha256 == Digest::ZERO
+        || corpus_manifest_sha256 == Digest::ZERO
+        || regions.is_empty()
+        || regions.len() > MAX_COVERAGE_REGIONS
+        || config.minimum_decisions_per_required_action == 0
+        || !config.minimum_region_support_ratio.is_finite()
+        || !(0.0..=1.0).contains(&config.minimum_region_support_ratio)
+    {
+        return Err(RlReadinessError::new(
+            "RL coverage readiness input is invalid",
+        ));
+    }
+    let mut identities = BTreeSet::new();
+    if regions.iter().any(|region| {
+        !valid_label(&region.player_procedure)
+            || !valid_label(&region.spatial_phase)
+            || !identities.insert((
+                region.player_procedure.as_str(),
+                region.spatial_phase.as_str(),
+            ))
+            || region.required_action_ids.is_empty()
+            || region.required_action_ids.len() > MAX_REQUIRED_ACTIONS
+            || !region
+                .required_action_ids
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+    }) {
+        return Err(RlReadinessError::new(
+            "RL coverage region is invalid or duplicated",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-/".contains(&byte))
+}
+
+fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, RlReadinessError> {
+    let bytes =
+        serde_json::to_vec(value).map_err(|error| RlReadinessError::new(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    Ok(Digest(hasher.finalize().into()))
+}
+
 fn digest_episodes(episodes: &BTreeSet<Digest>) -> Digest {
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight.rl-diverse-episodes/v1\0");
@@ -169,5 +356,45 @@ mod tests {
         );
         assert!(!small.neural_comparison_meaningful);
         assert!(!small.promotion_authority);
+    }
+
+    #[test]
+    fn low_support_actions_remain_explicit_per_procedure_and_spatial_phase() {
+        let regions = vec![RegionActionCoverage {
+            player_procedure: "roll".into(),
+            spatial_phase: "approach".into(),
+            required_action_ids: vec![0, 1, 2, 3],
+            observed_action_decisions: BTreeMap::from([(0, 20), (1, 20), (2, 20), (3, 0)]),
+        }];
+        let report = RlCoverageReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            &regions,
+            RlCoverageReadinessConfig {
+                minimum_region_support_ratio: 0.8,
+                ..RlCoverageReadinessConfig::default()
+            },
+        )
+        .unwrap();
+        assert!(!report.broad_support_in_every_region);
+        assert_eq!(report.unsupported_regions.len(), 1);
+        assert_eq!(
+            report.unsupported_regions[0].insufficient_action_ids,
+            vec![3]
+        );
+
+        let mut broad = regions;
+        broad[0].observed_action_decisions.insert(3, 20);
+        let report = RlCoverageReadinessReport::assess(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            &broad,
+            RlCoverageReadinessConfig::default(),
+        )
+        .unwrap();
+        assert!(report.broad_support_in_every_region);
+        assert!(report.unsupported_regions.is_empty());
+        assert!(!report.promotion_authority);
+        assert_ne!(report.report_sha256, Digest::ZERO);
     }
 }
