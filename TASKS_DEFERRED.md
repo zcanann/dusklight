@@ -6,6 +6,38 @@ demonstrates the need, and reduce it to the smallest testable slice when moving
 it. Existing experimental code may remain useful without making its continued
 expansion a priority.
 
+## Deferred from the active core-harness pass
+
+These are reasonable later improvements, but none is required to prove the
+first cheap-objective learning and winner-narrowing loop.
+
+- [ ] Deterministic parallel worker-pool scheduling, stable completion-order
+  independence, remote workers, and throughput tuning beyond a sequentially
+  reproducible evaluator.
+- [ ] Content-addressed episode stores, cross-run deduplication, retention and
+  garbage-collection policy, broad corpus publication, and historical schema
+  migration.
+- [ ] Full train/validation/test governance, normalization registries, broad
+  state/action/procedure/spatial coverage reports, calibration suites, and OOD
+  dashboards beyond the first baseline comparison.
+- [ ] Multi-objective or whole-route tournaments, Pareto archives, exhaustive
+  proposer combinations, automatic route-history integration, and campaign
+  management beyond one explicitly selected objective.
+- [ ] Complete identity materialization across every historical artifact and
+  automatic compatibility enforcement in inactive legacy CLIs.
+- [ ] Whole-game semantic hashing, periodic divergence capture, exhaustive
+  clock/RNG/async attribution, and determinism quarantine beyond facts touched
+  by active cases.
+- [ ] General query cost accounting, schema browsing, arbitrary subscriptions,
+  comprehensive capacity tuning, and observer A/B matrices beyond the narrow
+  read-only aperture required by active objectives.
+- [ ] A polished multi-platform VS Code workflow, full graphical diagnosis,
+  release packaging, and a one-click operator experience beyond the documented
+  macOS CLI loop.
+- [ ] Exhaustive schema corruption suites, independent codec fixtures for
+  every inactive format, broad fuzzing, sanitizer matrices, and long-running
+  soak gates beyond focused tests of the public active boundary.
+
 ## Whole-corpus glitch reproduction
 
 - [ ] Select and reproduce a small Skybook pilot after the basic objective
