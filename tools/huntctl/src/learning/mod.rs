@@ -10,6 +10,7 @@ pub mod evaluation_isolation;
 pub mod factorized_actions;
 pub mod fqi;
 pub mod goal_conditioning;
+pub mod graph_representation;
 pub mod hindsight;
 pub mod history_critics;
 pub mod iql;
