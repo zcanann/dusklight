@@ -42,7 +42,8 @@ use crate::tape::{InputTape, RawPadState, TapeBoot};
 use crate::tape_chain::{ChainSegment, concatenate};
 use crate::transition_corpus::{StateReference, StateReferenceKind, TransitionCorpus};
 use crate::transition_evidence::{
-    TerminalReasonEvidence, TransitionEvidenceBuild, TransitionEvidenceBundle,
+    ImmutableEpisodeArtifact, ImmutableEpisodeBuild, TerminalReasonEvidence,
+    TransitionEvidenceBuild, TransitionEvidenceBundle,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -495,6 +496,8 @@ pub struct AttemptEvidence {
     pub boot: TapeBoot,
     pub tape: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub realized_tape: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub suffix_tape: Option<PathBuf>,
     pub artifact_root: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -521,6 +524,8 @@ pub struct AttemptEvidence {
     pub transition_evidence: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episode_manifest: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub immutable_episode: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_source: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3621,6 +3626,7 @@ fn run_trial(
         segment,
         boot: trial.boot.clone(),
         tape: trial.tape.clone(),
+        realized_tape: None,
         suffix_tape: trial.suffix_tape.clone(),
         artifact_root: trial.root.clone(),
         harness_request: None,
@@ -3636,6 +3642,7 @@ fn run_trial(
         transition_corpus: None,
         transition_evidence: None,
         episode_manifest: None,
+        immutable_episode: None,
         dataset_source: None,
         transition_count: None,
         transition_corpus_error: None,
@@ -3814,10 +3821,18 @@ fn run_trial(
         && let Some(objective) = anchored
     {
         match extract_trial_transition_corpus(trial, &evidence, objective) {
-            Ok((path, evidence_path, episode_manifest, dataset_source, count)) => {
+            Ok((
+                path,
+                evidence_path,
+                episode_manifest,
+                immutable_episode,
+                dataset_source,
+                count,
+            )) => {
                 evidence.transition_corpus = Some(path);
                 evidence.transition_evidence = Some(evidence_path);
                 evidence.episode_manifest = Some(episode_manifest);
+                evidence.immutable_episode = immutable_episode;
                 evidence.dataset_source = Some(dataset_source);
                 evidence.transition_count = Some(count);
             }
@@ -3889,6 +3904,8 @@ fn run_harness_trial(
             .unwrap_or_else(|| artifact_root.join("objective.json"));
     evidence.gameplay_trace =
         harness_artifact_path(&artifact_root, result.artifacts.gameplay_trace.as_ref());
+    evidence.realized_tape =
+        harness_artifact_path(&artifact_root, result.artifacts.realized_input.as_ref());
     evidence.stdout = harness_artifact_path(&artifact_root, result.artifacts.stdout.as_ref())
         .unwrap_or_else(|| artifact_root.join("stdout.txt"));
     evidence.stderr = harness_artifact_path(&artifact_root, result.artifacts.stderr.as_ref())
@@ -4163,7 +4180,7 @@ fn extract_trial_transition_corpus(
     trial: &Trial,
     evidence: &AttemptEvidence,
     objective: &PreparedAnchoredObjective,
-) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, u64), String> {
+) -> Result<(PathBuf, PathBuf, PathBuf, Option<PathBuf>, PathBuf, u64), String> {
     let trace_path = evidence
         .gameplay_trace
         .as_ref()
@@ -4193,7 +4210,8 @@ fn extract_trial_transition_corpus(
             "learning range {start_tape_frame}..={end_tape_frame} is empty"
         ));
     }
-    let tape_bytes = fs::read(&trial.tape).map_err(|error| error.to_string())?;
+    let episode_tape_path = evidence.realized_tape.as_ref().unwrap_or(&trial.tape);
+    let tape_bytes = fs::read(episode_tape_path).map_err(|error| error.to_string())?;
     let decoded_tape = InputTape::decode(&tape_bytes)
         .map_err(|error| error.to_string())?
         .tape;
@@ -4339,6 +4357,8 @@ fn extract_trial_transition_corpus(
         },
         outcome: evidence.outcome.clone(),
     };
+    let transition_evidence_sha256 =
+        ArtifactDigest(Sha256::digest(&transition_evidence_bytes).into());
     let episode_manifest = EpisodeManifest::build(EpisodeManifestBuild {
         context: &context,
         boot: &decoded_tape.boot,
@@ -4346,13 +4366,12 @@ fn extract_trial_transition_corpus(
         query_view_id: "movement-state/v1",
         tape_sha256: ArtifactDigest(Sha256::digest(&tape_bytes).into()),
         trace_sha256: ArtifactDigest(Sha256::digest(&trace_bytes).into()),
-        transition_evidence_sha256: ArtifactDigest(
-            Sha256::digest(&transition_evidence_bytes).into(),
-        ),
+        transition_evidence_sha256,
     })
     .map_err(|error| error.to_string())?;
     let evidence_path = trial.root.join("transitions.dtcz.evidence.json");
     let episode_manifest_path = trial.root.join("episode.json");
+    let immutable_episode_path = trial.root.join("immutable-episode.json");
     let dataset_source_path = trial.root.join("dataset-source.json");
     corpus
         .write_zstd_file(&path, 3)
@@ -4363,6 +4382,37 @@ fn extract_trial_transition_corpus(
         serde_json::to_vec_pretty(&episode_manifest).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
+    let immutable_episode_path = if let Some(terminal) = evidence.harness_terminal {
+        let result_path = evidence
+            .harness_result
+            .as_ref()
+            .ok_or_else(|| "harness episode is missing its sealed result path".to_string())?;
+        let result: HarnessRunResult =
+            serde_json::from_slice(&fs::read(result_path).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        if result.terminal != terminal
+            || Some(result.content_sha256) != evidence.harness_result_sha256
+        {
+            return Err("harness episode terminal or result identity changed".into());
+        }
+        let immutable_episode = ImmutableEpisodeArtifact::build(ImmutableEpisodeBuild {
+            manifest: &episode_manifest,
+            corpus: &corpus,
+            evidence: &transition_evidence,
+            transition_evidence_sha256,
+            terminal,
+            terminal_detail: &result.detail.message,
+        })
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            &immutable_episode_path,
+            serde_json::to_vec_pretty(&immutable_episode).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        Some(immutable_episode_path)
+    } else {
+        None
+    };
     fs::write(
         &dataset_source_path,
         serde_json::to_vec_pretty(&DatasetSourceDescriptor {
@@ -4371,7 +4421,8 @@ fn extract_trial_transition_corpus(
             episode_manifest: fs::canonicalize(&episode_manifest_path)
                 .map_err(|error| error.to_string())?,
             transition_corpus: fs::canonicalize(&path).map_err(|error| error.to_string())?,
-            absolute_tape: fs::canonicalize(&trial.tape).map_err(|error| error.to_string())?,
+            absolute_tape: fs::canonicalize(episode_tape_path)
+                .map_err(|error| error.to_string())?,
             transition_evidence: fs::canonicalize(&evidence_path)
                 .map_err(|error| error.to_string())?,
             gameplay_trace: fs::canonicalize(trace_path).map_err(|error| error.to_string())?,
@@ -4386,6 +4437,7 @@ fn extract_trial_transition_corpus(
         path,
         evidence_path,
         episode_manifest_path,
+        immutable_episode_path,
         dataset_source_path,
         count,
     ))
