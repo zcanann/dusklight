@@ -260,6 +260,31 @@ numbers are uncalibrated sampling diagnostics. The artifact contains every
 member and draw manifest, and remains proposal evidence subject to native
 rollout and cold replay.
 
+### Bounded prioritized replay
+
+Train the twin critic with deterministic TD-error prioritization using:
+
+```text
+huntctl learn prioritized-q --dataset build/dataset.json \
+  --priority-alpha 0.6 --importance-beta-start 0.4 \
+  --importance-beta-end 1 --importance-weight-cap 1 \
+  --model-output build/prioritized-q-model.json --replay-seed 1
+```
+
+The sampler maintains an online Fenwick tree over `(absolute TD error +
+epsilon)^alpha`. Its seeded draw stream is deterministic, beta anneals over
+the bounded training budget, and importance weights scale each critic update.
+The explicit weight cap prevents rare rows from producing unbounded updates;
+because clipping introduces bias, both the cap and clipped-sample count are
+recorded rather than treated as an exact correction.
+
+The report includes total and per-row sample counts, unique rows sampled,
+effective sample size, final priority range, mean and maximum importance
+weight, clipped-weight count, and final beta. Priorities indicate where the
+current critic has error; they are neither calibrated uncertainty nor proof of
+an action's validity. The model remains a proposal artifact subject to the
+same native predicate and cold-replay gates.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

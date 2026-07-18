@@ -830,7 +830,7 @@ simple random baseline.
 - [x] Add Implicit Q-Learning plus advantage-weighted behavior cloning as a
   dataset-constrained alternative.
 - [x] Add bootstrapped/twin/ensemble critics and episode-level resampling.
-- [ ] Add prioritized replay with bounded importance correction and diagnostics.
+- [x] Add prioritized replay with bounded importance correction and diagnostics.
 - [ ] Evaluate dueling heads, n-step returns, distributional values, and noisy
   exploration one component at a time before adopting a Rainbow configuration.
 - [ ] Mask structurally unavailable actions for efficiency while retaining an

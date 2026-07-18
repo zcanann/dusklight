@@ -387,6 +387,83 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         .unwrap()
     );
 
+    let prioritized_path = root.join("prioritized-q-model.json");
+    let prioritized = Command::new(executable)
+        .args(["learn", "prioritized-q", "--input"])
+        .arg(&path)
+        .arg("--model-output")
+        .arg(&prioritized_path)
+        .args([
+            "--query-transition",
+            "0",
+            "--epochs",
+            "32",
+            "--hidden-width",
+            "4",
+            "--learning-rate",
+            "0.01",
+            "--target-sync-steps",
+            "8",
+            "--priority-alpha",
+            "0.6",
+            "--importance-beta-start",
+            "0.4",
+            "--importance-beta-end",
+            "1.0",
+            "--importance-weight-cap",
+            "0.75",
+            "--seed",
+            "7",
+            "--replay-seed",
+            "11",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        prioritized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prioritized.stderr)
+    );
+    let prioritized: serde_json::Value = serde_json::from_slice(&prioritized.stdout).unwrap();
+    assert_eq!(
+        prioritized["schema"],
+        "dusklight-prioritized-double-q-ranking/v1"
+    );
+    assert_eq!(prioritized["replay_diagnostics"]["total_samples"], 128);
+    assert!(
+        prioritized["replay_diagnostics"]["unique_rows_sampled"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        prioritized["replay_diagnostics"]["maximum_importance_weight"]
+            .as_f64()
+            .unwrap()
+            <= 0.75
+    );
+    assert_eq!(
+        prioritized["row_sample_counts"].as_array().unwrap().len(),
+        4
+    );
+    assert_eq!(prioritized["promotion_authority"], false);
+    let prioritized_model: serde_json::Value =
+        serde_json::from_slice(&fs::read(&prioritized_path).unwrap()).unwrap();
+    assert_eq!(
+        prioritized_model["schema"],
+        "dusklight-prioritized-double-q-model/v1"
+    );
+    let prioritized_blob = &prioritized["model_content_blob"];
+    assert_eq!(prioritized_blob["kind"], "model");
+    assert_eq!(
+        fs::read(&prioritized_path).unwrap(),
+        fs::read(
+            root.join("content")
+                .join(prioritized_blob["relative_path"].as_str().unwrap())
+        )
+        .unwrap()
+    );
+
     let held_out_path = root.join("held-out.dtcz");
     TransitionCorpus::new(
         Digest([0x11; 32]),
