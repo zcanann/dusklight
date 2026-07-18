@@ -884,7 +884,7 @@ simple random baseline.
   for Rust/C++ batch inference.
 - [x] Compare inference in Rust versus native worker only after measuring IPC and
   batching costs; do not put a network in the game tick by default.
-- [ ] Hash feature schema, action schema, objective, normalization, code/data
+- [x] Hash feature schema, action schema, objective, normalization, code/data
   build, corpus manifest, seed, optimizer, and model bytes.
 - [ ] Add deterministic CPU inference tests and tolerance-declared accelerator
   tests.

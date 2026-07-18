@@ -55,6 +55,13 @@ promote a model, and it is never a per-frame dependency. Returned bytes are
 sealed as a candidate-only result bound to the exact request and producer;
 native evaluation and replay remain Rust-owned promotion gates.
 
+Every candidate also carries `dusklight-complete-model-identity/v1`. One digest
+transitively binds the feature schema, action schema, objective, normalization,
+code build, game-data build, corpus manifest, deterministic seed, canonical
+optimizer configuration, and exact frozen model bytes. Import re-hashes both
+the optimizer value and supplied bytes and rejects any detached or zero
+identity, so two nominally similar models cannot silently share lineage.
+
 Accepted dense candidates can use `dusklight-frozen-inference/v1`, a bounded
 little-endian Rust/C++ interchange format. Its fixed header carries the format
 version plus feature, action, and objective digests; the body carries sorted
