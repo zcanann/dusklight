@@ -129,6 +129,10 @@ roadmap documents describe the larger target.
   cubic motion, target-player intent, health, named timers, typed flag domains,
   and placed-actor spawn or existing-actor despawn. Each operation validates
   its semantic bounds and required actor-existence precondition.
+- Interventions and milestone predicates share one validated placed-actor
+  identity. Controller conversion admits exact process/placed selectors but
+  rejects nearest selection; target loss invalidates acceptance, and semantic
+  field/lifecycle conflicts cannot overlap on one actor.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.

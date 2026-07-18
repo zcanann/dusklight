@@ -957,7 +957,7 @@ uninspectable random tapes.
 - [x] Begin with typed position, velocity, facing, bounded curve, target/intent,
   health, timer, flag, and spawn/despawn experiments only where semantics are
   understood.
-- [ ] Reuse exact stable selectors; reject target loss and overlapping writes.
+- [x] Reuse exact stable selectors; reject target loss and overlapping writes.
 - [ ] Run identical no-intervention controls and retain both artifacts.
 - [ ] Add parameter search/minimization for intervention timing and magnitude.
 - [ ] Mark results as existence/mechanism evidence until normal input reproduces

@@ -86,6 +86,12 @@ forms shared with reactive controllers. It records the resolved process ID and
 the value before the write. Target loss is a terminal or declared no-op result,
 never an implicit switch to the nearest actor.
 
+`PlacedActorSelector` is the single shared placed identity used by milestone
+predicates and interventions. A fallible bridge accepts reactive controllers'
+exact process and placed forms while rejecting `nearest`; the controller's
+separate actor procedure becomes part of the placed identity. A run that loses
+an exact target may retain that audit outcome, but cannot complete as accepted.
+
 Arbitrary address writes should remain a later, separately named unsafe lab
 capability. They are difficult to replay across builds and make causal claims
 ambiguous.
@@ -96,6 +102,12 @@ Every write declares a phase such as `before_game_tick` or `after_game_tick`.
 The initial implementation should support only one phase so ordering is
 unambiguous. Overlapping writes to the same field are rejected unless a later
 format defines a canonical composition rule.
+
+Validation treats set/add position and cubic motion as one position field,
+set/add velocity as one velocity field, and keys named timers and flags by
+their typed identities. Independent fields and actors may share an interval.
+Spawn and despawn are lifecycle writes and conflict with every simultaneous
+write to the same placed identity.
 
 An intervention timeline may coexist with a reactive controller, but the two
 remain separate streams keyed to the same simulation tick. The controller sees
