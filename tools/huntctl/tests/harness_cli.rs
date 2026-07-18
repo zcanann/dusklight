@@ -910,6 +910,8 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     assert_eq!(report["schema"], "dusklight-search-evaluation/v5");
     assert_eq!(report["attempts"].as_array().unwrap().len(), 2);
     let mut tape_digests = Vec::new();
+    let mut objective_digests = Vec::new();
+    let mut identity_digests = Vec::new();
     let mut candidate_ids = Vec::new();
     for attempt in report["attempts"].as_array().unwrap() {
         assert_eq!(attempt["harness_terminal"], "reached");
@@ -939,12 +941,16 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
             panic!("search candidate did not become an authenticated tape request");
         };
         tape_digests.push(artifact.sha256);
+        objective_digests.push(run_request.objective.program_sha256);
+        identity_digests.push(run_request.identity.content_digest);
         candidate_ids.push(attempt["candidate_id"].as_str().unwrap().to_owned());
     }
     let mut expected_ids = vec![seed_id.clone(), learned_id.clone()];
     expected_ids.sort();
     assert_eq!(candidate_ids, expected_ids);
     assert_ne!(tape_digests[0], tape_digests[1]);
+    assert_eq!(objective_digests[0], objective_digests[1]);
+    assert_eq!(identity_digests[0], identity_digests[1]);
     let learned_attempt = report["attempts"]
         .as_array()
         .unwrap()
