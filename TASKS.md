@@ -32,7 +32,7 @@ tests. Ambitious research and exhaustive coverage live in
 - [x] Define a small versioned suite manifest binding each case to its stage or
   process boot, scenario fixture, objective program, required query facts,
   controller/tape seed, time budget, and expected terminal class.
-- [ ] Check in a **stage-ready** case that boots directly into a map and proves
+- [x] Check in a **stage-ready** case that boots directly into a map and proves
   the declared player/location readiness condition without controller input.
 - [ ] Check in a **reach-point** case that moves Link into a bounded region and
   proves position plus stability for several logical ticks.

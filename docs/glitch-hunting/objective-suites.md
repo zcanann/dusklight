@@ -16,7 +16,8 @@ ID. A case binds:
 - an observation-view JSON artifact, raw SHA-256, and semantic schema SHA-256;
 - action-schema name and digest;
 - sorted required query-fact names;
-- neutral input, a canonical input tape, or a compiled controller seed;
+- neutral input, an authored TAS program, a canonical input tape, or a compiled
+  controller seed;
 - logical-tick budget, host safety timeout, and repetition count; and
 - the expected reached, objective-miss, unsupported, or impossible class.
 
@@ -35,6 +36,19 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- \
   --repository-root .
 ```
 
+Authors can seal a zero-identity draft only after every referenced artifact
+validates:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  harness seal-suite \
+  --input path/to/suite.draft.json \
+  --output path/to/suite.json \
+  --repository-root .
+```
+
+Sealing refuses to overwrite an existing output.
+
 Validation fails closed on unknown JSON fields, invalid ordering or bounds,
 zero identities, stale suite content identity, path traversal, symlink escape,
 missing artifacts, or mismatched artifact hashes. It then validates the actual
@@ -45,7 +59,8 @@ bound formats:
   declared goal;
 - the observation view must validate, match its semantic digest, and name that
   same goal;
-- a tape seed must decode and have the declared boot origin; and
+- a tape seed must decode—or an authored TAS seed must compile—and have the
+  declared boot origin; and
 - a controller seed must decode as a bounded `DUSKCTRL` program.
 
 If a tape embeds a scenario fixture, it must equal the separately referenced
@@ -55,7 +70,14 @@ and positive/negative case counts.
 
 ## Current boundary
 
-The schema and validator exist, including unit and CLI integration coverage.
-The checked-in stage-ready, reach-point, talk-to-NPC, and pick-up-object cases
-do not exist yet, and `huntctl` does not yet execute an entire suite. Those are
-separate active tasks so schema validation is not mistaken for conformance.
+The schema, validator, and sealer exist, including unit and CLI integration
+coverage. `tests/fixtures/automation/objective_conformance_suite.json` contains
+the first case: a fixture-bound direct `F_SP103` boot, a 30-tick authored tape
+whose compiled frames are all neutral, a stable three-tick `stage_ready`
+objective, and a minimal authenticated observation view. The suite validator
+authenticates and compiles all of those inputs.
+
+The reach-point, talk-to-NPC, negative-control, and pick-up-object cases do not
+exist yet, and `huntctl` does not yet execute an entire suite. Those are
+separate active tasks so authored-contract validation is not mistaken for
+native conformance evidence.

@@ -11,8 +11,10 @@ roadmap documents describe the larger target.
   seed input, budgets, repetitions, and expected terminal class. `huntctl
   harness validate-suite` resolves repository-relative artifacts, rejects path
   escape or stale hashes, and validates the bound fixture, milestone, view,
-  tape, or controller formats. Suite execution and the four checked-in cheap
-  objective cases remain open work.
+  authored TAS, tape, or controller formats. The first checked case binds a
+  direct `F_SP103` stage boot to a 30-tick neutral TAS program, stable readiness
+  objective, scenario, and minimal observation view. Suite execution and the
+  other cheap objective cases remain open work.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific
