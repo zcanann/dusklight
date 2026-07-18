@@ -80,9 +80,19 @@ impl HumanLabelLedger {
         }
         validate_request(request)?;
         validate_submission(request, &submission)?;
+        if self.records.iter().any(|record| {
+            record.source_artifact_identity == request.source_artifact_identity
+                && (record.objective_id != request.objective_id
+                    || record.objective_definition_sha256 != request.objective_definition_sha256)
+        }) {
+            return Err(HumanLabelError(
+                "human label attempted to rewrite the artifact's immutable objective".into(),
+            ));
+        }
         let prior_for_request = self.records.iter().rev().find(|record| {
             record.classification_request_identity == request.request_identity
                 && record.source_artifact_identity == request.source_artifact_identity
+                && record.reviewer_id == submission.reviewer_id
         });
         match (&submission.supersedes_label_identity, prior_for_request) {
             (None, Some(_)) => {
@@ -97,7 +107,7 @@ impl HumanLabelLedger {
             }
             (Some(_), None) => {
                 return Err(HumanLabelError(
-                    "superseded label does not exist for this review request".into(),
+                    "superseded label does not exist for this reviewer and review request".into(),
                 ));
             }
             _ => {}
@@ -179,8 +189,8 @@ fn validate_request(request: &HumanClassificationRequest) -> Result<(), HumanLab
     ] {
         validate_sha256(label, value)?;
     }
-    if request.objective_id.trim().is_empty() {
-        return Err(HumanLabelError("objective ID is empty".into()));
+    if request.objective_id.trim().is_empty() || request.objective_id.len() > 512 {
+        return Err(HumanLabelError("objective ID is empty or too long".into()));
     }
     Ok(())
 }
@@ -360,6 +370,33 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("supersede")
+        );
+        assert_eq!(ledger.records().len(), 1);
+    }
+
+    #[test]
+    fn append_rejects_an_objective_rewrite_before_metadata_export() {
+        let request = request();
+        let mut ledger = HumanLabelLedger::default();
+        ledger
+            .append(
+                &request,
+                submission(HumanClassificationChoice::ConfirmedGlitch, None),
+            )
+            .unwrap();
+        let rewritten = HumanClassificationRequest {
+            request_identity: "66".repeat(32),
+            objective_definition_sha256: "77".repeat(32),
+            ..request
+        };
+        let mut second_reviewer = submission(HumanClassificationChoice::ExpectedBehavior, None);
+        second_reviewer.reviewer_id = "reviewer-b@example".into();
+        assert!(
+            ledger
+                .append(&rewritten, second_reviewer)
+                .unwrap_err()
+                .to_string()
+                .contains("immutable objective")
         );
         assert_eq!(ledger.records().len(), 1);
     }
