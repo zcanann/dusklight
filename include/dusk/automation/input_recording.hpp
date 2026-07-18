@@ -34,7 +34,7 @@ enum class BootRecordingError {
 enum class FastForwardBoundaryError {
     None,
     PastTapeEnd,
-    TapeEndRequiresRecording,
+    TapeEndRequiresHandoff,
     TapeEndRequiresRelease,
 };
 
@@ -114,11 +114,11 @@ RecordingStartError bind_recording_start(const MilestoneTracker& tracker,
 const char* recording_start_error_message(RecordingStartError error);
 
 /**
- * Ordinary playback must retain at least one visible tape frame. An exact tape-end reveal is only
- * meaningful for recording handoff, where the next PAD read is the first live child frame.
+ * Exact tape-end reveal is allowed only for a live or recording handoff. The
+ * next PAD read is then the first live frame after the retained terminal image.
  */
 FastForwardBoundaryError validate_fast_forward_boundary(std::uint64_t requestedFrames,
-    std::uint64_t tapeFrames, bool recording, bool tapeEndReleasesInput);
+    std::uint64_t tapeFrames, bool exactTapeEndHandoffAllowed, bool tapeEndReleasesInput);
 
 /**
  * Guard used immediately before revealing an exact tape-end recording handoff. The boundary must

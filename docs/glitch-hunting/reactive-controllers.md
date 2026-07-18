@@ -194,10 +194,10 @@ The v2 status object additively reports `expected_start_fingerprint`,
 `0`, a null `start_tape_frame`, and the actual predicate digests and boundary
 fingerprint used to authorize the first live read.
 
-### Hidden prefix fast-forward
+### Windowless exact-tape fast-forward
 
-For route-tree “play from parent,” a headful absolute tape can skip rendering
-its already-reviewed prefix to the desktop without skipping simulation:
+For route-tree fast playback, a headful absolute tape can suppress desktop
+presentation for its complete run without skipping simulation:
 
 ```powershell
 dusklight --dvd game.iso `
@@ -205,29 +205,23 @@ dusklight --dvd game.iso `
   --input-tape-fast-forward-frames 12345
 ```
 
-The frame count is the exact composed length of the selected segment or draft's
-direct parent and must satisfy `0 < N < tape frame count`. The workbench first
-verifies that those `N` frames byte-match the current parent chain, including
-for generated search nodes. Dusklight starts a real
-presentation-capable backend hidden, mutes host audio, and runs full rendering
-and simulation in unpaced fixed-step mode. Once frame `N - 1` has completed its
-simulation tick, the completed-frame count is exactly `N`, but the window stays
-hidden until `aurora_end_frame` has submitted that parent-boundary image. Audio
-output is then restored and the same deterministic fixed-step clock continues
-with the configured host pacing (`--fixed-step-speed-percent`, where `0` is
-uncapped). `--input-tape-fast-forward-visible` keeps the accelerated rendered
-prefix on screen instead of hiding it. Neither option changes the 30 Hz logical
-clock or input-frame mapping. The first exposed buffer is therefore the parent
-boundary, and the next PAD read consumes child frame `N`. The tape is neither
-seeked nor truncated and
-no gameplay state is snapshotted or restored. Conditioned tapes,
-looping/holding end behavior, headless/unpaced launches, and exit-after-tape
-are rejected so the reveal boundary and eventual live handoff remain
-unambiguous.
+The workbench uses `N = tape frame count`, after verifying the complete tape's
+exact structural chain. Dusklight starts a real presentation-capable backend
+with its window and swapchain presentation disabled, mutes audio, and runs full
+GX work and simulation in unpaced fixed-step mode. Once terminal frame `N - 1`
+has completed, Aurora enables presentation and submits one retained EFB frame
+without a VI retrace, emulated tick, PAD read, or tape advancement. Only then
+does Dusklight show the window and release live input at normal pacing. The
+null backend is not used because its live GPU state cannot become graphical.
+Conditioned tapes, looping/holding end behavior, controller continuations,
+headless/unpaced launches, and exit-after-tape are rejected for this exact live
+handoff. Partial `0 < N < tape frame count` acceleration remains available to
+native callers, while ordinary workbench parent playback is visible and paced
+from process start.
 
-For authoritative **Record child from parent**, `N` is instead exactly the
-absolute prefix tape length. This equality is accepted only for a direct
-recording handoff with release end behavior and no controller continuation:
+For authoritative **Record child from parent**, `N` is likewise the absolute
+prefix tape length. Recording additionally verifies its authored start
+boundary before exposing the retained image:
 
 ```powershell
 dusklight --dvd game.iso --fixed-step `
@@ -247,8 +241,8 @@ begins the already armed recorder, prepares the physical controller handoff,
 releases input quarantine, restores audio, and enters the next outer loop.
 That loop's PAD read is therefore simultaneously the first live child input
 and recorded frame zero. A missing or failed boundary proof aborts while the
-window remains hidden. Without `--record-input-tape`, equality remains an error
-so ordinary Play from parent always retains a visible tape continuation.
+window remains hidden. Without `--record-input-tape`, the same equality performs
+a direct live handoff rather than beginning a child recorder.
 The recording status binds this unnamed handoff with `start_boundary_kind` set
 to `"tick"`, `start_boundary_index` set to `N`, and `start_tape_frame` set to
 `N - 1`; milestone and fingerprint remain null when the parent draft did not

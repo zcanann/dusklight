@@ -381,7 +381,7 @@ void testAcceleratedParentRecordingBoundaryAndRevealOrdering() {
     REQUIRE(validate_fast_forward_boundary(9, 10, false, true) ==
             FastForwardBoundaryError::None);
     REQUIRE(validate_fast_forward_boundary(10, 10, false, true) ==
-            FastForwardBoundaryError::TapeEndRequiresRecording);
+            FastForwardBoundaryError::TapeEndRequiresHandoff);
     REQUIRE(validate_fast_forward_boundary(10, 10, true, false) ==
             FastForwardBoundaryError::TapeEndRequiresRelease);
     REQUIRE(validate_fast_forward_boundary(11, 10, true, true) ==

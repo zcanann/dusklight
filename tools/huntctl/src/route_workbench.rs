@@ -38,7 +38,9 @@ const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-resul
 const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
 const SEGMENT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-rename-result.v1";
 const SEGMENT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.segment-delete-preview.v1";
+const SIBLING_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.sibling-delete-preview.v1";
 const SEGMENT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-delete-result.v1";
+const SIBLING_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.sibling-delete-result.v1";
 const MILESTONE_PROGRAM_SCHEMA: &str = "dusklight.route-workbench.milestone-program.v1";
 const THUMBNAIL_CAPTURE_SCHEMA: &str = "dusklight.route-workbench.thumbnail-capture.v1";
 const THUMBNAIL_DIRECTORY: &str = "thumbnails";
@@ -364,7 +366,7 @@ pub struct BrowserPlayRequest {
     )]
     pub speed_percent: u16,
     #[serde(default)]
-    pub show_accelerated_prefix: bool,
+    pub fast: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -457,8 +459,6 @@ pub struct BrowserRecordRequest {
         deserialize_with = "deserialize_recording_speed_percent"
     )]
     pub speed_percent: u16,
-    #[serde(default)]
-    pub show_accelerated_prefix: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -507,6 +507,19 @@ pub struct BrowserSegmentDeletePreviewRequest {
 #[serde(deny_unknown_fields)]
 pub struct BrowserSegmentDeleteApplyRequest {
     pub id: String,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSiblingDeletePreviewRequest {
+    pub keep_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSiblingDeleteApplyRequest {
+    pub keep_id: String,
     pub confirmation_token: String,
 }
 
@@ -585,6 +598,30 @@ pub struct SegmentDeleteResult {
     pub trash_transaction: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SiblingDeletePreview {
+    pub schema: String,
+    pub keep_id: String,
+    pub sibling_roots: Vec<SegmentDeleteImpact>,
+    pub segments: Vec<SegmentDeleteImpact>,
+    pub goals: Vec<String>,
+    pub proofs: usize,
+    pub lineages: Vec<String>,
+    pub drafts: Vec<DraftDeleteImpact>,
+    pub confirmation_token: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SiblingDeleteResult {
+    pub schema: String,
+    pub keep_id: String,
+    pub sibling_roots: Vec<String>,
+    pub segments: Vec<String>,
+    pub drafts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash_transaction: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserRecordParent {
@@ -618,7 +655,7 @@ pub struct PlayResponse {
     pub input_tape_end: String,
     pub origin: PlaybackOrigin,
     pub speed_percent: u16,
-    pub accelerated_prefix_visible: bool,
+    pub fast: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_forward_frames: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -628,7 +665,7 @@ pub struct PlayResponse {
 #[derive(Clone, Copy, Debug)]
 struct PlaybackSettings {
     speed_percent: u16,
-    show_accelerated_prefix: bool,
+    fast: bool,
 }
 
 #[derive(Debug)]
@@ -662,7 +699,6 @@ pub struct RecordResponse {
     pub tape: PathBuf,
     pub frames_before_recording: u64,
     pub speed_percent: u16,
-    pub accelerated_prefix_visible: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2504,10 +2540,10 @@ struct SegmentSourceDeletion {
     replacement: String,
 }
 
-fn segment_descendants(timeline: &Timeline, id: &str) -> Result<BTreeSet<String>, WorkbenchError> {
-    if !timeline.segments.contains_key(id) {
-        return Err(WorkbenchError::new(format!("unknown segment {id:?}")));
-    }
+fn segment_descendants_from_roots<'a>(
+    timeline: &Timeline,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeSet<String>, WorkbenchError> {
     let mut children = BTreeMap::<&str, Vec<&str>>::new();
     for segment in timeline.segments.values() {
         if let Some(parent) = segment.parent.as_deref() {
@@ -2515,7 +2551,19 @@ fn segment_descendants(timeline: &Timeline, id: &str) -> Result<BTreeSet<String>
         }
     }
     let mut deletion = BTreeSet::new();
-    let mut pending = vec![id];
+    let mut pending = roots
+        .into_iter()
+        .map(|root| {
+            if timeline.segments.contains_key(root) {
+                Ok(root)
+            } else {
+                Err(WorkbenchError::new(format!("unknown segment {root:?}")))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if pending.is_empty() {
+        return Err(WorkbenchError::new("segment deletion has no roots"));
+    }
     while let Some(next) = pending.pop() {
         if !deletion.insert(next.to_owned()) {
             continue;
@@ -2527,13 +2575,21 @@ fn segment_descendants(timeline: &Timeline, id: &str) -> Result<BTreeSet<String>
     Ok(deletion)
 }
 
+#[cfg(test)]
 fn delete_segment_subtree_in_timeline_source(
     source: &str,
     id: &str,
 ) -> Result<SegmentSourceDeletion, WorkbenchError> {
+    delete_segment_subtrees_in_timeline_source(source, [id])
+}
+
+fn delete_segment_subtrees_in_timeline_source<'a>(
+    source: &str,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> Result<SegmentSourceDeletion, WorkbenchError> {
     let timeline =
         Timeline::parse(source).map_err(|error| WorkbenchError::new(error.to_string()))?;
-    let segments = segment_descendants(&timeline, id)?;
+    let segments = segment_descendants_from_roots(&timeline, roots)?;
     let goals = timeline
         .goals
         .values()
@@ -2669,6 +2725,7 @@ fn validated_timeline_edit_path(path: &Path) -> Result<PathBuf, WorkbenchError> 
 
 struct SegmentDeletePlan {
     preview: SegmentDeletePreview,
+    deletion_roots: Vec<String>,
     path: PathBuf,
     original: Vec<u8>,
     replacement: String,
@@ -2682,13 +2739,36 @@ fn segment_delete_plan(
     manifests: &BTreeMap<String, DraftManifest>,
     active: &BTreeSet<String>,
 ) -> Result<SegmentDeletePlan, WorkbenchError> {
+    segment_delete_plan_for_roots(
+        timeline_path,
+        state_root,
+        id,
+        vec![id.to_owned()],
+        b"subtree",
+        manifests,
+        active,
+    )
+}
+
+fn segment_delete_plan_for_roots(
+    timeline_path: &Path,
+    state_root: &Path,
+    request_id: &str,
+    deletion_roots: Vec<String>,
+    operation_domain: &[u8],
+    manifests: &BTreeMap<String, DraftManifest>,
+    active: &BTreeSet<String>,
+) -> Result<SegmentDeletePlan, WorkbenchError> {
     let path = validated_timeline_edit_path(timeline_path)?;
     let original = fs::read(&path).map_err(|error| {
         WorkbenchError::new(format!("cannot read timeline {}: {error}", path.display()))
     })?;
     let source = std::str::from_utf8(&original)
         .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
-    let deletion = delete_segment_subtree_in_timeline_source(source, id)?;
+    let deletion = delete_segment_subtrees_in_timeline_source(
+        source,
+        deletion_roots.iter().map(String::as_str),
+    )?;
 
     let roots = manifests
         .values()
@@ -2704,7 +2784,7 @@ fn segment_delete_plan(
         let manifest = &manifests[draft_id];
         if draft_is_active(&drafts_root.join(draft_id), manifest, active) {
             return Err(WorkbenchError::new(format!(
-                "cannot delete segment {id:?}: attached recording {draft_id:?} is active"
+                "cannot delete segment {request_id:?}: attached recording {draft_id:?} is active"
             )));
         }
     }
@@ -2712,6 +2792,8 @@ fn segment_delete_plan(
     let graph_revision = draft_graph_revision(manifests)?;
     let mut digest = Sha256::new();
     digest.update(b"dusklight.route-workbench.segment-delete.v1\0");
+    digest.update((operation_domain.len() as u64).to_le_bytes());
+    digest.update(operation_domain);
     digest.update((original.len() as u64).to_le_bytes());
     digest.update(&original);
     digest.update(graph_revision.as_bytes());
@@ -2752,7 +2834,7 @@ fn segment_delete_plan(
     Ok(SegmentDeletePlan {
         preview: SegmentDeletePreview {
             schema: SEGMENT_DELETE_PREVIEW_SCHEMA.into(),
-            id: id.into(),
+            id: request_id.into(),
             segments,
             goals: deletion.goals.into_iter().collect(),
             proofs: deletion.proofs,
@@ -2760,6 +2842,7 @@ fn segment_delete_plan(
             drafts,
             confirmation_token,
         },
+        deletion_roots,
         path,
         original,
         replacement: deletion.replacement,
@@ -2777,6 +2860,115 @@ fn preview_segment_deletion(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let manifests = scan_draft_manifests_with_active(state_root, &active)?;
     Ok(segment_delete_plan(timeline_path, state_root, id, &manifests, &active)?.preview)
+}
+
+fn structural_sibling_roots(
+    timeline: &Timeline,
+    keep_id: &str,
+) -> Result<Vec<String>, WorkbenchError> {
+    let selected = timeline
+        .segments
+        .get(keep_id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown checked-in segment {keep_id:?}")))?;
+    let parent = selected.parent.as_deref().ok_or_else(|| {
+        WorkbenchError::new("the root segment has no structural siblings to delete")
+    })?;
+    let roots = timeline
+        .segments
+        .values()
+        .filter(|segment| segment.id != keep_id && segment.parent.as_deref() == Some(parent))
+        .map(|segment| segment.id.clone())
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        return Err(WorkbenchError::new(format!(
+            "segment {keep_id:?} has no structural siblings to delete"
+        )));
+    }
+    Ok(roots)
+}
+
+fn sibling_delete_plan(
+    timeline_path: &Path,
+    state_root: &Path,
+    keep_id: &str,
+    manifests: &BTreeMap<String, DraftManifest>,
+    active: &BTreeSet<String>,
+) -> Result<SegmentDeletePlan, WorkbenchError> {
+    let initial_path = validated_timeline_edit_path(timeline_path)?;
+    let initial_source = fs::read_to_string(&initial_path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read timeline {}: {error}",
+            initial_path.display()
+        ))
+    })?;
+    let initial_timeline =
+        Timeline::parse(&initial_source).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    let roots = structural_sibling_roots(&initial_timeline, keep_id)?;
+    let plan = segment_delete_plan_for_roots(
+        timeline_path,
+        state_root,
+        keep_id,
+        roots.clone(),
+        b"delete-siblings",
+        manifests,
+        active,
+    )?;
+
+    // The roots must have been derived from the exact bytes guarded by the plan's token.
+    let planned_source = std::str::from_utf8(&plan.original)
+        .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
+    let planned_timeline =
+        Timeline::parse(planned_source).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    if structural_sibling_roots(&planned_timeline, keep_id)? != roots
+        || plan
+            .preview
+            .segments
+            .iter()
+            .any(|segment| segment.id == keep_id)
+    {
+        return Err(WorkbenchError::new(
+            "timeline topology changed while planning sibling deletion; reload and retry",
+        ));
+    }
+    Ok(plan)
+}
+
+fn sibling_preview(plan: &SegmentDeletePlan) -> SiblingDeletePreview {
+    let root_ids = plan
+        .deletion_roots
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    SiblingDeletePreview {
+        schema: SIBLING_DELETE_PREVIEW_SCHEMA.into(),
+        keep_id: plan.preview.id.clone(),
+        sibling_roots: plan
+            .preview
+            .segments
+            .iter()
+            .filter(|segment| root_ids.contains(segment.id.as_str()))
+            .cloned()
+            .collect(),
+        segments: plan.preview.segments.clone(),
+        goals: plan.preview.goals.clone(),
+        proofs: plan.preview.proofs,
+        lineages: plan.preview.lineages.clone(),
+        drafts: plan.preview.drafts.clone(),
+        confirmation_token: plan.preview.confirmation_token.clone(),
+    }
+}
+
+fn preview_sibling_deletion(
+    timeline_path: &Path,
+    state_root: &Path,
+    keep_id: &str,
+) -> Result<SiblingDeletePreview, WorkbenchError> {
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let plan = sibling_delete_plan(timeline_path, state_root, keep_id, &manifests, &active)?;
+    Ok(sibling_preview(&plan))
 }
 
 fn rename_segment(
@@ -3043,26 +3235,17 @@ fn rollback_draft_move(moved: &mut Option<DraftTrashMove>) -> String {
         .unwrap_or_default()
 }
 
-fn apply_segment_deletion(
+struct AppliedSegmentDeletion {
+    segments: Vec<String>,
+    drafts: Vec<String>,
+    trash_transaction: Option<PathBuf>,
+}
+
+fn apply_segment_delete_plan(
     timeline_path: &Path,
     state_root: &Path,
-    request: &BrowserSegmentDeleteApplyRequest,
-) -> Result<SegmentDeleteResult, SegmentDeleteError> {
-    let _edit = timeline_edits()
-        .lock()
-        .map_err(|_| WorkbenchError::new("timeline edit lock is poisoned"))?;
-    let active = active_recordings()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
-    let plan = segment_delete_plan(timeline_path, state_root, &request.id, &manifests, &active)?;
-    if request.confirmation_token != plan.preview.confirmation_token {
-        return Err(SegmentDeleteError::Conflict(
-            "timeline or attached drafts changed after preview; reload and confirm deletion again"
-                .into(),
-        ));
-    }
-
+    plan: SegmentDeletePlan,
+) -> Result<AppliedSegmentDeletion, SegmentDeleteError> {
     let directory = plan
         .path
         .parent()
@@ -3142,9 +3325,7 @@ fn apply_segment_deletion(
     temporary_cleanup.0 = None;
     let _ = fs::remove_file(backup);
 
-    Ok(SegmentDeleteResult {
-        schema: SEGMENT_DELETE_RESULT_SCHEMA.into(),
-        id: request.id.clone(),
+    Ok(AppliedSegmentDeletion {
         segments: plan
             .preview
             .segments
@@ -3153,6 +3334,72 @@ fn apply_segment_deletion(
             .collect(),
         drafts: plan.draft_ids,
         trash_transaction: moved.map(|transaction| transaction.transaction),
+    })
+}
+
+fn apply_segment_deletion(
+    timeline_path: &Path,
+    state_root: &Path,
+    request: &BrowserSegmentDeleteApplyRequest,
+) -> Result<SegmentDeleteResult, SegmentDeleteError> {
+    let _edit = timeline_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("timeline edit lock is poisoned"))?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let plan = segment_delete_plan(timeline_path, state_root, &request.id, &manifests, &active)?;
+    if request.confirmation_token != plan.preview.confirmation_token {
+        return Err(SegmentDeleteError::Conflict(
+            "timeline or attached drafts changed after preview; reload and confirm deletion again"
+                .into(),
+        ));
+    }
+    let result = apply_segment_delete_plan(timeline_path, state_root, plan)?;
+    Ok(SegmentDeleteResult {
+        schema: SEGMENT_DELETE_RESULT_SCHEMA.into(),
+        id: request.id.clone(),
+        segments: result.segments,
+        drafts: result.drafts,
+        trash_transaction: result.trash_transaction,
+    })
+}
+
+fn apply_sibling_deletion(
+    timeline_path: &Path,
+    state_root: &Path,
+    request: &BrowserSiblingDeleteApplyRequest,
+) -> Result<SiblingDeleteResult, SegmentDeleteError> {
+    let _edit = timeline_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("timeline edit lock is poisoned"))?;
+    let active = active_recordings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let manifests = scan_draft_manifests_with_active(state_root, &active)?;
+    let plan = sibling_delete_plan(
+        timeline_path,
+        state_root,
+        &request.keep_id,
+        &manifests,
+        &active,
+    )?;
+    if request.confirmation_token != plan.preview.confirmation_token {
+        return Err(SegmentDeleteError::Conflict(
+            "timeline or attached drafts changed after preview; reload and confirm sibling deletion again"
+                .into(),
+        ));
+    }
+    let sibling_roots = plan.deletion_roots.clone();
+    let result = apply_segment_delete_plan(timeline_path, state_root, plan)?;
+    Ok(SiblingDeleteResult {
+        schema: SIBLING_DELETE_RESULT_SCHEMA.into(),
+        keep_id: request.keep_id.clone(),
+        sibling_roots,
+        segments: result.segments,
+        drafts: result.drafts,
+        trash_transaction: result.trash_transaction,
     })
 }
 
@@ -3759,7 +4006,7 @@ pub fn play(
             thumbnail: None,
             playback: PlaybackSettings {
                 speed_percent: 100,
-                show_accelerated_prefix: false,
+                fast: false,
             },
         },
     )
@@ -3848,8 +4095,7 @@ fn launch_materialized(
         input_tape_end: end.into(),
         origin: options.origin,
         speed_percent: options.playback.speed_percent,
-        accelerated_prefix_visible: options.fast_forward_frames.is_some()
-            && options.playback.show_accelerated_prefix,
+        fast: options.playback.fast,
         fast_forward_frames: options.fast_forward_frames,
         thumbnail: options.thumbnail.map(|thumbnail| thumbnail.url),
     };
@@ -3948,7 +4194,7 @@ fn capture_thumbnail(
             fast_forward_frames: None,
             playback: PlaybackSettings {
                 speed_percent: 100,
-                show_accelerated_prefix: false,
+                fast: false,
             },
         },
     );
@@ -3981,19 +4227,22 @@ fn play_draft(
     draft_id: &str,
     origin: PlaybackOrigin,
     speed_percent: u16,
-    show_accelerated_prefix: bool,
+    fast: bool,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_draft(timeline, &artifact_root, &config.state_root, draft_id)?;
     let fast_forward_frames = match origin {
         PlaybackOrigin::Boot => None,
-        PlaybackOrigin::Parent => Some(draft_parent_frame_count(
-            timeline,
-            &artifact_root,
-            &config.state_root,
-            draft_id,
-            materialized.tape.frames.len() as u64,
-        )?),
+        PlaybackOrigin::Parent => {
+            draft_parent_frame_count(
+                timeline,
+                &artifact_root,
+                &config.state_root,
+                draft_id,
+                materialized.tape.frames.len() as u64,
+            )?;
+            fast.then_some(materialized.tape.frames.len() as u64)
+        }
     };
     let thumbnail = prepare_missing_playback_thumbnail(
         timeline,
@@ -4012,8 +4261,8 @@ fn play_draft(
             fast_forward_frames,
             thumbnail,
             playback: PlaybackSettings {
-                speed_percent,
-                show_accelerated_prefix,
+                speed_percent: if fast { 0 } else { speed_percent },
+                fast,
             },
         },
     )
@@ -4176,9 +4425,6 @@ fn append_playback_args(
         command
             .arg("--input-tape-fast-forward-frames")
             .arg(frames.to_string());
-        if options.playback.show_accelerated_prefix {
-            command.arg("--input-tape-fast-forward-visible");
-        }
     }
     command
         .arg("--automation-data-root")
@@ -4221,7 +4467,6 @@ fn append_accelerated_recording_prefix(
     playback: &Path,
     parent_frames: usize,
     countdown_seconds: u8,
-    show_accelerated_prefix: bool,
 ) {
     command
         .arg("--input-tape")
@@ -4232,9 +4477,6 @@ fn append_accelerated_recording_prefix(
         .arg(parent_frames.to_string())
         .arg("--record-input-countdown-seconds")
         .arg(countdown_seconds.to_string());
-    if show_accelerated_prefix {
-        command.arg("--input-tape-fast-forward-visible");
-    }
 }
 
 fn record_continuation(
@@ -4432,7 +4674,6 @@ fn record_continuation(
             &playback,
             materialized.tape.frames.len(),
             request.countdown_seconds,
-            request.show_accelerated_prefix,
         );
     }
     command
@@ -4531,7 +4772,6 @@ fn record_continuation(
         tape: continuation,
         frames_before_recording: materialized.tape.frames.len() as u64,
         speed_percent: request.speed_percent,
-        accelerated_prefix_visible: !record_from_boot && request.show_accelerated_prefix,
     })
 }
 
@@ -5194,13 +5434,19 @@ fn play_segment(
         let artifact_root = configured_artifact_root(config)?;
         let fast_forward_frames = match options.origin {
             PlaybackOrigin::Boot => None,
-            PlaybackOrigin::Parent => Some(segment_parent_frame_count(
-                timeline,
-                &artifact_root,
-                projection.segment.parent.as_deref(),
-                &materialized.tape,
-                segment_id,
-            )?),
+            PlaybackOrigin::Parent => {
+                segment_parent_frame_count(
+                    timeline,
+                    &artifact_root,
+                    projection.segment.parent.as_deref(),
+                    &materialized.tape,
+                    segment_id,
+                )?;
+                options
+                    .playback
+                    .fast
+                    .then_some(materialized.tape.frames.len() as u64)
+            }
         };
         return launch_materialized(
             timeline,
@@ -5229,13 +5475,19 @@ fn play_segment(
         materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
     let fast_forward_frames = match options.origin {
         PlaybackOrigin::Boot => None,
-        PlaybackOrigin::Parent => Some(segment_parent_frame_count(
-            timeline,
-            &artifact_root,
-            timeline.segments[segment_id].parent.as_deref(),
-            &materialized.tape,
-            segment_id,
-        )?),
+        PlaybackOrigin::Parent => {
+            segment_parent_frame_count(
+                timeline,
+                &artifact_root,
+                timeline.segments[segment_id].parent.as_deref(),
+                &materialized.tape,
+                segment_id,
+            )?;
+            options
+                .playback
+                .fast
+                .then_some(materialized.tape.frames.len() as u64)
+        }
     };
     let thumbnail = prepare_missing_playback_thumbnail(
         timeline,
@@ -5452,6 +5704,11 @@ fn play_target(request: &PlayRequest) -> Result<MaterializeTarget, WorkbenchErro
 }
 
 fn validate_playback_origin(request: &BrowserPlayRequest) -> Result<(), WorkbenchError> {
+    if request.fast && request.origin != PlaybackOrigin::Parent {
+        return Err(WorkbenchError::new(
+            "fast playback requires a parent-origin segment or ready draft selection",
+        ));
+    }
     if request.origin == PlaybackOrigin::Parent
         && !matches!(
             request.selection,
@@ -5548,7 +5805,7 @@ fn handle_http(
                                     id,
                                     browser_request.origin,
                                     browser_request.speed_percent,
-                                    browser_request.show_accelerated_prefix,
+                                    browser_request.fast,
                                 )?,
                                 BrowserSelection::Segment { id } => play_segment(
                                     &timeline,
@@ -5559,9 +5816,12 @@ fn handle_http(
                                         handoff: browser_request.handoff,
                                         origin: browser_request.origin,
                                         playback: PlaybackSettings {
-                                            speed_percent: browser_request.speed_percent,
-                                            show_accelerated_prefix: browser_request
-                                                .show_accelerated_prefix,
+                                            speed_percent: if browser_request.fast {
+                                                0
+                                            } else {
+                                                browser_request.speed_percent
+                                            },
+                                            fast: browser_request.fast,
                                         },
                                     },
                                 )?,
@@ -5646,6 +5906,53 @@ fn handle_http(
                             })
                             .and_then(|delete_request| {
                                 apply_segment_deletion(
+                                    &config.timeline_path,
+                                    &config.state_root,
+                                    &delete_request,
+                                )
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error @ SegmentDeleteError::Conflict(_)) => {
+                            json_error(409, "Conflict", &error.to_string())
+                        }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/segments/delete-siblings/preview") => {
+                    let result =
+                        serde_json::from_slice::<BrowserSiblingDeletePreviewRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid sibling delete preview request: {error}"
+                                ))
+                            })
+                            .and_then(|delete_request| {
+                                preview_sibling_deletion(
+                                    &config.timeline_path,
+                                    &config.state_root,
+                                    &delete_request.keep_id,
+                                )
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/segments/delete-siblings/apply") => {
+                    let result =
+                        serde_json::from_slice::<BrowserSiblingDeleteApplyRequest>(&request.body)
+                            .map_err(|error| {
+                                SegmentDeleteError::Invalid(WorkbenchError::new(format!(
+                                    "invalid sibling delete apply request: {error}"
+                                )))
+                            })
+                            .and_then(|delete_request| {
+                                apply_sibling_deletion(
                                     &config.timeline_path,
                                     &config.state_root,
                                     &delete_request,
@@ -6197,6 +6504,19 @@ continue main with link_exit.one after boot_link.one@aaaaaaaaaaaaaaaaaaaaaaaaaaa
         )
     }
 
+    fn sibling_timeline_source() -> String {
+        r#"
+timeline siblings
+segment root root profile boot_to_fsp103 uses tape root.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment left after root profile fsp103_to_fsp104 uses tape left.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+segment left_child after left profile fsp103_to_fsp104 uses tape left-child.tape starts bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb produces cccccccccccccccccccccccccccccccc
+segment keep after root profile fsp103_to_fsp104 uses tape keep.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces dddddddddddddddddddddddddddddddd
+segment keep_child after keep profile fsp103_to_fsp104 uses tape keep-child.tape starts dddddddddddddddddddddddddddddddd produces eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+segment right after root profile fsp103_to_fsp104 uses tape right.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces ffffffffffffffffffffffffffffffff
+"#
+        .into()
+    }
+
     fn timeline_with_milestone_program(root: &Path) -> Timeline {
         fs::write(root.join("route.milestones"), MILESTONE_SOURCE).unwrap();
         Timeline::parse(&milestone_timeline_source()).unwrap()
@@ -6418,7 +6738,6 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 label: String::new(),
                 countdown_seconds: DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS,
                 speed_percent: 100,
-                show_accelerated_prefix: false,
             },
         )
         .unwrap_err();
@@ -6664,6 +6983,13 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "deleteSegment",
             "/api/segments/delete/preview",
             "/api/segments/delete/apply",
+            "data-delete-siblings",
+            "Keep this; delete siblings",
+            "deleteSiblings",
+            "/api/segments/delete-siblings/preview",
+            "/api/segments/delete-siblings/apply",
+            "Sibling roots being deleted",
+            "The selected segment and its descendants are retained",
             "selection:{kind:'segment',id}",
             "stop:{kind:'segment',segment:id}",
             "goalDetail(segment.id",
@@ -6672,9 +6998,8 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             "Child handoff",
             "id=\"recordingSpeed\"",
             "id=\"playbackSpeed\"",
-            "id=\"showAcceleratedPrefix\"",
             "speed_percent:speedPercent",
-            "show_accelerated_prefix:showAcceleratedPrefix",
+            "origin,fast,speed_percent:speedPercent",
             "window.localStorage",
             "countdown_seconds:countdownSeconds",
             "kind==='origin'?0",
@@ -6839,7 +7164,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         )
         .unwrap();
         assert_eq!(playback.speed_percent, 100);
-        assert!(!playback.show_accelerated_prefix);
+        assert!(!playback.fast);
 
         for speed_percent in PLAYBACK_SPEED_PERCENTAGES {
             let request = serde_json::from_value::<BrowserPlayRequest>(serde_json::json!({
@@ -6904,7 +7229,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             handoff: true,
             origin: PlaybackOrigin::Boot,
             speed_percent: 100,
-            show_accelerated_prefix: false,
+            fast: false,
         };
         assert!(validate_playback_origin(&boot).is_ok());
 
@@ -6916,7 +7241,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             handoff: true,
             origin: PlaybackOrigin::Parent,
             speed_percent: 100,
-            show_accelerated_prefix: true,
+            fast: true,
         };
         assert!(validate_playback_origin(&parent_origin).is_ok());
     }
@@ -7460,8 +7785,8 @@ continue main with boot_link.tas after root@clean
                 seed_stage: None,
                 fast_forward_frames: Some(9),
                 playback: PlaybackSettings {
-                    speed_percent: 200,
-                    show_accelerated_prefix: true,
+                    speed_percent: 0,
+                    fast: true,
                 },
             },
         );
@@ -7475,7 +7800,7 @@ continue main with boot_link.tas after root@clean
             .unwrap();
         assert_eq!(arguments[flag + 1], "9");
         assert!(
-            arguments
+            !arguments
                 .iter()
                 .any(|argument| argument == "--input-tape-fast-forward-visible")
         );
@@ -7484,7 +7809,7 @@ continue main with boot_link.tas after root@clean
                 .windows(2)
                 .find(|window| window[0] == "--fixed-step-speed-percent")
                 .unwrap()[1],
-            "200"
+            "0"
         );
         assert_eq!(
             arguments
@@ -7513,7 +7838,7 @@ continue main with boot_link.tas after root@clean
                 fast_forward_frames: None,
                 playback: PlaybackSettings {
                     speed_percent: 100,
-                    show_accelerated_prefix: false,
+                    fast: false,
                 },
             },
         );
@@ -7529,7 +7854,6 @@ continue main with boot_link.tas after root@clean
             Path::new("playback.tape"),
             nested.parent_frames as usize,
             3,
-            false,
         );
         let recording_arguments = recording
             .get_args()
@@ -8152,6 +8476,156 @@ continue main with boot_link.tas after root@clean
         );
         assert!(!drafts_root(&state).unwrap().join(&parent.id).exists());
         assert!(!drafts_root(&state).unwrap().join(&child.id).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sibling_delete_keeps_selected_subtree_and_removes_every_other_sibling_subtree() {
+        let root = temporary_root("sibling-delete");
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, sibling_timeline_source()).unwrap();
+        for artifact in [
+            "root.tape",
+            "left.tape",
+            "left-child.tape",
+            "keep.tape",
+            "keep-child.tape",
+            "right.tape",
+        ] {
+            fs::write(root.join(artifact), artifact.as_bytes()).unwrap();
+        }
+        let state = root.join("state");
+
+        let preview = preview_sibling_deletion(&timeline_path, &state, "keep").unwrap();
+        assert_eq!(preview.keep_id, "keep");
+        assert_eq!(
+            preview
+                .sibling_roots
+                .iter()
+                .map(|segment| segment.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["left", "right"]
+        );
+        assert_eq!(
+            preview
+                .segments
+                .iter()
+                .map(|segment| segment.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["left", "left_child", "right"]
+        );
+        let result = apply_sibling_deletion(
+            &timeline_path,
+            &state,
+            &BrowserSiblingDeleteApplyRequest {
+                keep_id: "keep".into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.sibling_roots, vec!["left", "right"]);
+        assert_eq!(result.segments, vec!["left", "left_child", "right"]);
+
+        let timeline = Timeline::parse(&fs::read_to_string(&timeline_path).unwrap()).unwrap();
+        assert_eq!(
+            timeline
+                .segments
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["keep", "keep_child", "root"]
+        );
+        for artifact in [
+            "root.tape",
+            "left.tape",
+            "left-child.tape",
+            "keep.tape",
+            "keep-child.tape",
+            "right.tape",
+        ] {
+            assert!(
+                root.join(artifact).is_file(),
+                "artifact {artifact} was removed"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sibling_delete_rejects_roots_lonely_segments_stale_tokens_and_smuggled_fields() {
+        let root = temporary_root("sibling-delete-guards");
+        let timeline_path = root.join("route.timeline");
+        fs::write(&timeline_path, sibling_timeline_source()).unwrap();
+        let state = root.join("state");
+        assert!(
+            preview_sibling_deletion(&timeline_path, &state, "root")
+                .unwrap_err()
+                .to_string()
+                .contains("root segment")
+        );
+        assert!(
+            preview_sibling_deletion(&timeline_path, &state, "keep_child")
+                .unwrap_err()
+                .to_string()
+                .contains("no structural siblings")
+        );
+        assert!(preview_sibling_deletion(&timeline_path, &state, "../keep").is_err());
+
+        write_tape(&root, "first.tape", &[1, 2, 3]);
+        write_tape(&root, "second.tape", &[4, 5]);
+        let mut active_draft = install_ready_draft(&root, &state, "draft-active-sibling", &[6]);
+        active_draft.parent = DraftParent::Segment {
+            id: "left".into(),
+            terminal_milestone: "unused".into(),
+            boundary_fingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        };
+        let active_directory = drafts_root(&state).unwrap().join(&active_draft.id);
+        fs::remove_file(active_directory.join(DRAFT_FINAL_MANIFEST)).unwrap();
+        write_draft_manifest(&active_directory, &active_draft, true).unwrap();
+        active_recordings()
+            .lock()
+            .unwrap()
+            .insert(active_draft.id.clone());
+        let active = preview_sibling_deletion(&timeline_path, &state, "keep");
+        active_recordings().lock().unwrap().remove(&active_draft.id);
+        assert!(active.unwrap_err().to_string().contains("active"));
+        fs::remove_dir_all(active_directory).unwrap();
+
+        let preview = preview_sibling_deletion(&timeline_path, &state, "keep").unwrap();
+        fs::write(
+            &timeline_path,
+            format!("{}\n# topology revision\n", sibling_timeline_source()),
+        )
+        .unwrap();
+        let stale = apply_sibling_deletion(
+            &timeline_path,
+            &state,
+            &BrowserSiblingDeleteApplyRequest {
+                keep_id: "keep".into(),
+                confirmation_token: preview.confirmation_token,
+            },
+        );
+        assert!(matches!(stale, Err(SegmentDeleteError::Conflict(_))));
+
+        let config = WorkbenchConfig {
+            timeline_path,
+            repository_root: root.clone(),
+            working_directory: root.clone(),
+            game: root.join("unused-game"),
+            dvd: root.join("unused-dvd"),
+            state_root: state,
+        };
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/segments/delete-siblings/preview",
+            &serde_json::to_vec(&serde_json::json!({
+                "keep_id": "keep",
+                "path": "../outside.timeline"
+            }))
+            .unwrap(),
+        );
+        assert_eq!(response.status, 400);
         fs::remove_dir_all(root).unwrap();
     }
 

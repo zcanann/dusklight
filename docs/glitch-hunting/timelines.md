@@ -91,12 +91,18 @@ and attached draft descendants move to recoverable trash. Input tape/TAS files
 and predicate definitions are deliberately retained because they may be shared;
 Git exposes and can restore the complete topology edit.
 
-**Record child** performs the same deterministic prefix replay, then begins
-recording live port-0 input on the first PAD read after handoff. The prefix can
-run hidden or visible, muted, and unpaced, but it is still simulated rather
-than replaced with a partial save. The global Recording control selects host
-pacing after handoff; it never changes the deterministic 30 Hz logical tick or
-the one-input-frame-per-tick contract.
+**Keep this; delete siblings** treats the selected checked-in segment as the
+survivor, previews every structural sibling root and descendant that would be
+removed, and applies the same guarded topology transaction. Root segments,
+generated results, sibling-less selections, stale confirmations, and active
+recording subtrees are rejected.
+
+**Record child** performs an exact windowless, muted, uncapped prefix replay,
+then begins recording live port-0 input on the first PAD read after handoff.
+The prefix is still fully simulated rather than replaced with a partial save.
+The global Recording control selects host pacing after handoff; it never
+changes the deterministic 30 Hz logical tick or one-input-frame-per-tick
+contract.
 
 Closing Dusklight finalizes the recording beneath the ignored
 `build/automation-state/route-workbench/drafts/` tree. Drafts are temporary
@@ -178,17 +184,16 @@ collision, loaders, heaps, and host-side state; until then exact prefix replay
 is authoritative.
 
 Every playable non-root segment, including an uncommitted generated search
-result, exposes both **Play from boot** and **Play from parent**. Parent playback
-still composes the complete absolute tape. It verifies that the tape begins
-with the exact current parent chain, runs those parent frames hidden, muted,
-fixed-step, and unpaced, then reveals the submitted parent-boundary image and
-plays only the selected segment at the global Playback host-pacing setting.
-The prefix can instead remain visible with **Show accelerated prefix**; it is
-still muted, unpaced, and fully simulated. Playback supports 1%-400% pacing or
-uncapped. Input releases to the human at normal pacing when the selected
-segment ends. None of these controls change logical game time. This is
-accelerated deterministic replay, not a checkpoint or save-state restore; root
-segments have no parent boundary and therefore expose boot playback only.
+result, exposes **Play from boot**, **Play from parent**, and **Play from parent
+(fast)**. All modes compose and verify the complete absolute tape. Ordinary
+parent playback is visible from process start and uses the global Playback
+pacing. Fast parent playback suppresses its window, presentation, and audio,
+runs the complete tape uncapped, submits the retained terminal image without a
+simulation tick, then reveals it and releases live input at normal pacing. Fast
+mode deliberately ignores Playback speed. The real renderer remains active so
+render-side game state can resume; it is not Aurora's irreversible null
+backend. None of these controls change logical game time. Root segments have
+no parent boundary and therefore expose boot playback only.
 
 ## Route store
 

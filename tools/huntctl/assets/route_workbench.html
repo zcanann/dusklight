@@ -19,8 +19,6 @@
     .status.error,.error-note { color:var(--red); }
     .record-pref { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:10px; white-space:nowrap; }
     .record-pref select { padding:4px 22px 4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
-    .record-pref input[type="checkbox"] { width:14px; height:14px; margin:0; accent-color:var(--cyan); cursor:pointer; }
-    .prefix-pref { padding:4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:#b5c0d0; cursor:pointer; }
     .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
@@ -151,10 +149,6 @@
         <option value="100" selected>100%</option>
       </select>
     </label>
-    <label class="record-pref prefix-pref" title="Keep the accelerated parent replay visible instead of hiding its window">
-      <input id="showAcceleratedPrefix" type="checkbox">
-      <span>Show accelerated prefix</span>
-    </label>
     <label class="record-pref" title="Pause on the final parent frame before child recording begins">
       <span>Child handoff</span>
       <select id="recordCountdown" aria-label="Child recording handoff countdown">
@@ -206,7 +200,6 @@
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
     const RECORDING_SPEED_STORAGE_KEY='dusklight.route-workbench.recording-speed-percent';
     const PLAYBACK_SPEED_STORAGE_KEY='dusklight.route-workbench.playback-speed-percent';
-    const SHOW_ACCELERATED_PREFIX_STORAGE_KEY='dusklight.route-workbench.show-accelerated-prefix';
     const DEFAULT_RECORD_COUNTDOWN_SECONDS=3;
     const RECORDING_SPEEDS=[1,5,10,20,30,40,50,60,70,80,90,100];
     const PLAYBACK_SPEEDS=[0,1,5,10,20,30,40,50,60,70,80,90,100,125,150,175,200,300,400];
@@ -242,13 +235,6 @@
       const speed=validSpeed($(selectId).value,allowed);
       $(selectId).value=String(speed);
       try { window.localStorage.setItem(key,String(speed)); } catch (_) {}
-    }
-    function loadShowAcceleratedPrefix() {
-      try { return window.localStorage.getItem(SHOW_ACCELERATED_PREFIX_STORAGE_KEY)==='true'; }
-      catch (_) { return false; }
-    }
-    function saveShowAcceleratedPrefix() {
-      try { window.localStorage.setItem(SHOW_ACCELERATED_PREFIX_STORAGE_KEY,String($('showAcceleratedPrefix').checked)); } catch (_) {}
     }
     function toast(message, error=false) {
       const element=$('toast'); element.textContent=message; element.className=`toast show${error?' error':''}`;
@@ -441,11 +427,14 @@
       return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function segmentActions(segment) {
-      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play from boot</button>${segment.parent?`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-id="${escapeHtml(segment.id)}">Play from parent</button>`:''}`:'';
+      const parentPlays=segment.parent?`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-id="${escapeHtml(segment.id)}">Play from parent</button>${segment.generated?'':`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-play-fast="true" data-id="${escapeHtml(segment.id)}">Play from parent (fast)</button>`}`:'';
+      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play from boot</button>${parentPlays}`:'';
       if(segment.generated)return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}</div>`;
       const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
-      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
+      const hasSiblings=segment.parent&&graph.segments.some(item=>!item.generated&&item.id!==segment.id&&item.parent===segment.parent);
+      const siblingDelete=hasSiblings?`<button class="delete" type="button" data-delete-siblings="${escapeHtml(segment.id)}">Keep this; delete siblings…</button>`:'';
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button>${siblingDelete}<button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
     }
     function renderDetail() {
       let html='';
@@ -463,10 +452,17 @@
       bindActions($('detail'));
     }
     function bindActions(root) {
+      root.querySelectorAll('[data-play-kind="draft"][data-play-origin="parent"]:not([data-play-fast])').forEach(button=>{
+        const fast=button.cloneNode(true);
+        fast.dataset.playFast='true';
+        fast.textContent='Play from parent (fast)';
+        button.after(fast);
+      });
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
       root.querySelectorAll('[data-delete-segment]').forEach(button=>button.addEventListener('click',()=>deleteSegment(button.dataset.deleteSegment,button)));
+      root.querySelectorAll('[data-delete-siblings]').forEach(button=>button.addEventListener('click',()=>deleteSiblings(button.dataset.deleteSiblings,button)));
       root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
       root.querySelectorAll('[data-capture-kind]').forEach(button=>button.addEventListener('click',()=>captureThumbnail(button)));
@@ -504,6 +500,7 @@
     async function play(button) {
       const {playKind:kind,id}=button.dataset;
       const origin=button.dataset.playOrigin||'boot';
+      const fast=button.dataset.playFast==='true';
       const segment=kind==='segment'&&graph.segments.find(item=>item.id===id);
       const draft=kind==='draft'&&graph.drafts.find(item=>item.id===id);
       if(!segment&&!draft)return;
@@ -511,22 +508,21 @@
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
       const speedPercent=validSpeed($('playbackSpeed').value,PLAYBACK_SPEEDS);
-      const showAcceleratedPrefix=origin==='parent'&&$('showAcceleratedPrefix').checked;
-      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix};
+      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin,fast,speed_percent:speedPercent}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin,fast,speed_percent:speedPercent};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent=`Running ${name}`; $('status').className='status ok';
-        const detail=body.fast_forward_frames?` Fast-forwarding ${body.fast_forward_frames} parent frames ${showAcceleratedPrefix?'visibly':'hidden'}.`:'';
         const pacing=speedPercent===0?'uncapped':`at ${speedPercent}%`;
         const thumbnail=body.thumbnail?' Its missing thumbnail will be captured from the same terminal frame.':'';
-        toast(`Launched ${name} from ${body.origin||origin} ${pacing}.${detail} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
+        const playback=fast?'Windowless, muted, uncapped playback to the terminal boundary.':`Playback ${pacing}.`;
+        toast(`Launched ${name} from ${body.origin||origin}. ${playback} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
         if(body.thumbnail)waitForThumbnail(body.thumbnail).then(async()=>{await load();toast(`Captured the terminal frame for ${name} during normal playback.`);}).catch(error=>toast(error.message,true));
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(segment?.playable||draft?.playable); button.textContent=origin==='parent'?'Play from parent':'Play from boot';
+        button.disabled=!(segment?.playable||draft?.playable); button.textContent=origin==='parent'?(fast?'Play from parent (fast)':'Play from parent'):'Play from boot';
       }
     }
     async function waitForThumbnail(url,timeoutMs=180000) {
@@ -614,6 +610,33 @@
         button.disabled=false; button.textContent='Delete subtree…';
       }
     }
+    async function deleteSiblings(keepId,button) {
+      button.disabled=true; button.textContent='Checking…';
+      try {
+        const previewResponse=await fetch('/api/segments/delete-siblings/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keep_id:keepId})});
+        const preview=await previewResponse.json().catch(()=>({}));
+        if(!previewResponse.ok)throw new Error(preview.error||`HTTP ${previewResponse.status}`);
+        const roots=(preview.sibling_roots||[]).map(item=>`• ${item.name||item.id} (${item.id})`).join('\n');
+        const rootCount=(preview.sibling_roots||[]).length;
+        const segmentCount=(preview.segments||[]).length;
+        const descendantCount=segmentCount-rootCount;
+        const draftCount=(preview.drafts||[]).length;
+        const goalCount=(preview.goals||[]).length;
+        const lineageCount=(preview.lineages||[]).length;
+        const attached=draftCount?` Attached drafts: ${draftCount} (moved to recoverable trash).`:'';
+        if(!window.confirm(`Keep ${segmentName(keepId)} and delete every other structural sibling subtree?\n\nSibling roots being deleted (${rootCount}):\n${roots}\n\nTotal removal: ${segmentCount} checked-in segments (${rootCount} roots + ${descendantCount} descendants), ${goalCount} goals, ${preview.proofs||0} proofs, and ${lineageCount} emptied lineages.${attached}\n\nThe selected segment and its descendants are retained. Input tape/TAS artifacts and predicate definitions are left untouched. Git can restore this edit.`))return;
+        button.textContent='Deleting…';
+        const applyResponse=await fetch('/api/segments/delete-siblings/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keep_id:keepId,confirmation_token:preview.confirmation_token})});
+        const result=await applyResponse.json().catch(()=>({}));
+        if(!applyResponse.ok)throw new Error(result.error||`HTTP ${applyResponse.status}`);
+        toast(`Kept ${segmentName(keepId)} and deleted ${(result.segments||[]).length} segment${(result.segments||[]).length===1?'':'s'} across ${(result.sibling_roots||[]).length} sibling subtree${(result.sibling_roots||[]).length===1?'':'s'}.`);
+        await load();
+      } catch(error) {
+        $('status').textContent='Delete failed'; $('status').className='status error'; toast(error.message,true);
+      } finally {
+        button.disabled=false; button.textContent='Keep this; delete siblings…';
+      }
+    }
     async function renameDraft(id,button) {
       const draft=graph.drafts.find(item=>item.id===id); if(!draft)return;
       const expectedRevision=graph.draft_graph_revision;
@@ -655,13 +678,12 @@
       const parent=kind==='segment'?{kind,id,terminal_goal:button.dataset.terminalGoal||null}:{kind,id};
       const countdownSeconds=kind==='origin'?0:validRecordingCountdown($('recordCountdown').value);
       const speedPercent=validSpeed($('recordingSpeed').value,RECORDING_SPEEDS);
-      const showAcceleratedPrefix=kind!=='origin'&&$('showAcceleratedPrefix').checked;
       button.disabled=true; button.textContent='Launching...';
       try {
-        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered,countdown_seconds:countdownSeconds,speed_percent:speedPercent,show_accelerated_prefix:showAcceleratedPrefix})});
+        const response=await fetch('/api/record',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({parent,label:entered,countdown_seconds:countdownSeconds,speed_percent:speedPercent})});
         const body=await response.json().catch(()=>({})); if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent='Recording live input'; $('status').className='status ok';
-        const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames ${showAcceleratedPrefix?'visibly':'hidden'}, muted, and unpaced first.`:'';
+        const prefix=body.frames_before_recording?` Replaying ${body.frames_before_recording} parent frames windowless, muted, and uncapped first.`:'';
         const countdown=countdownSeconds?` Holding the final parent frame for a ${countdownSeconds}s handoff countdown.`:'';
         toast(`Recording ${body.draft_id} at ${speedPercent}%.${prefix}${countdown} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
@@ -686,11 +708,9 @@
     $('recordCountdown').value=String(loadRecordingCountdown());
     $('recordingSpeed').value=String(loadStoredSpeed(RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
     $('playbackSpeed').value=String(loadStoredSpeed(PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
-    $('showAcceleratedPrefix').checked=loadShowAcceleratedPrefix();
     $('recordCountdown').addEventListener('change',saveRecordingCountdown);
     $('recordingSpeed').addEventListener('change',()=>saveSpeed('recordingSpeed',RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
     $('playbackSpeed').addEventListener('change',()=>saveSpeed('playbackSpeed',PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
-    $('showAcceleratedPrefix').addEventListener('change',saveShowAcceleratedPrefix);
     $('savePredicate').addEventListener('click',savePredicate);
     $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
     load();

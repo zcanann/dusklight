@@ -201,11 +201,11 @@ const char* recording_start_error_message(const RecordingStartError error) {
 }
 
 FastForwardBoundaryError validate_fast_forward_boundary(const std::uint64_t requestedFrames,
-    const std::uint64_t tapeFrames, const bool recording,
+    const std::uint64_t tapeFrames, const bool exactTapeEndHandoffAllowed,
     const bool tapeEndReleasesInput) {
     if (requestedFrames > tapeFrames) return FastForwardBoundaryError::PastTapeEnd;
     if (requestedFrames < tapeFrames) return FastForwardBoundaryError::None;
-    if (!recording) return FastForwardBoundaryError::TapeEndRequiresRecording;
+    if (!exactTapeEndHandoffAllowed) return FastForwardBoundaryError::TapeEndRequiresHandoff;
     if (!tapeEndReleasesInput) return FastForwardBoundaryError::TapeEndRequiresRelease;
     return FastForwardBoundaryError::None;
 }
@@ -237,10 +237,10 @@ const char* fast_forward_boundary_error_message(const FastForwardBoundaryError e
     case FastForwardBoundaryError::None: return "no error";
     case FastForwardBoundaryError::PastTapeEnd:
         return "fast-forward frame count exceeds tape frame count";
-    case FastForwardBoundaryError::TapeEndRequiresRecording:
-        return "fast-forward to tape end requires --record-input-tape PATH with no controller continuation";
+    case FastForwardBoundaryError::TapeEndRequiresHandoff:
+        return "fast-forward to tape end requires direct live or recording handoff with no controller continuation";
     case FastForwardBoundaryError::TapeEndRequiresRelease:
-        return "fast-forward to recording handoff requires --input-tape-end release";
+        return "fast-forward to tape-end handoff requires --input-tape-end release";
     }
     return "unknown fast-forward boundary error";
 }

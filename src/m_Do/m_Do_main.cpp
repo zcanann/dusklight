@@ -658,6 +658,7 @@ static std::size_t inputTapeFastForwardFrames;
 static bool inputTapeFastForwardActive;
 static bool inputTapeFastForwardVisible;
 static bool inputTapeFastForwardRevealPending;
+static bool inputTapeFastForwardAtTapeEnd;
 static bool inputTapeFastForwardAtRecordingHandoff;
 static bool exitAfterInputController;
 static bool inputControllerConfigured;
@@ -1435,7 +1436,7 @@ static bool finish_input_tape_tick() {
         return true;
     }
     if (!headlessMainLoop && !automationInputHandedOff) {
-        if (inputTapeFastForwardAtRecordingHandoff && inputTapeFastForwardRevealPending) {
+        if (inputTapeFastForwardAtTapeEnd && inputTapeFastForwardRevealPending) {
             // The submitted parent image must be revealed (and any host countdown completed)
             // before recorder activation and the first child PAD read.
             return false;
@@ -1503,15 +1504,29 @@ static bool finalize_input_tape_fast_forward_reveal() {
         return true;
     }
 
-    // The parent-boundary image has now been submitted and renderer telemetry
-    // finalized for this outer tick. Revealing here cannot expose the prior
-    // N-2 buffer, and the limiter below paces this same completed parent frame.
-    if (!inputTapeFastForwardVisible && !aurora_show_window()) {
-        DuskLog.error("Input tape fast-forward could not reveal the Aurora window after {} frames",
-                      inputTapeFastForwardFrames);
-        inputTapePlaybackFailed = true;
-        dusk::IsRunning = false;
-        return true;
+    // Hidden acceleration suppresses swapchain work while retaining the real
+    // backend's complete GX/EFB state. Re-enable presentation and submit one
+    // retained copy of the completed boundary before exposing the window. This
+    // performs no VI retrace, game tick, PAD read, or tape advancement.
+    if (!inputTapeFastForwardVisible) {
+        aurora_set_presentation_enabled(true);
+        if (!aurora_begin_retained_frame()) {
+            DuskLog.error("Input tape fast-forward could not begin its retained reveal frame");
+            inputTapePlaybackFailed = true;
+            dusk::IsRunning = false;
+            return true;
+        }
+        mDoGph_gInf_c::updateRenderSize();
+        dusk::ui::update();
+        aurora_end_frame();
+        finish_automation_renderer_frame();
+        if (!aurora_show_window()) {
+            DuskLog.error("Input tape fast-forward could not reveal the Aurora window after {} frames",
+                          inputTapeFastForwardFrames);
+            inputTapePlaybackFailed = true;
+            dusk::IsRunning = false;
+            return true;
+        }
     }
 
     // Fixed-step deterministic time remains active. Only remove the unpaced outer-loop mode.
@@ -1540,6 +1555,23 @@ static bool finalize_input_tape_fast_forward_reveal() {
         }
     } else {
         dusk::audio::SetOutputMuted(false);
+    }
+    if (inputTapeFastForwardAtTapeEnd && !inputTapeFastForwardAtRecordingHandoff) {
+        auto& player = dusk::automation::input_tape_player();
+        player.handoffToLiveInput();
+        fixedStepSpeedPercent = 100;
+        unpacedMainLoop = false;
+        handoff_automation_to_live_input();
+        if (!automationInputHandedOff) {
+            DuskLog.error("Input tape fast handoff could not release live controller input");
+            inputTapePlaybackFailed = true;
+            dusk::IsRunning = false;
+            return true;
+        }
+        DuskLog.info("Input tape fast-forward complete after exactly {} terminal frames; "
+                     "retained boundary revealed and live controller input resumed at 100%",
+                     inputTapeFastForwardFrames);
+        return true;
     }
     if (fixedStepSpeedPercent == 0) {
         DuskLog.info("Input tape fast-forward complete after exactly {} frames; visible playback "
@@ -2759,7 +2791,7 @@ int game_main(int argc, char* argv[]) {
         }
         const auto fastForwardBoundaryError = dusk::automation::validate_fast_forward_boundary(
             inputTapeFastForwardFrames, inputTapeFrameCount,
-            hasRecordInputTape && !hasInputController,
+            !hasInputController && !exitAfterInputTape && !headlessMainLoop,
             inputTapeEndBehavior == dusk::automation::TapeEndBehavior::Release);
         if (hasInputTapeFastForward &&
             fastForwardBoundaryError != dusk::automation::FastForwardBoundaryError::None) {
@@ -2769,8 +2801,10 @@ int game_main(int argc, char* argv[]) {
                     inputTapeFastForwardFrames, inputTapeFrameCount);
             return 1;
         }
-        inputTapeFastForwardAtRecordingHandoff = hasInputTapeFastForward &&
+        inputTapeFastForwardAtTapeEnd = hasInputTapeFastForward &&
             inputTapeFastForwardFrames == inputTapeFrameCount;
+        inputTapeFastForwardAtRecordingHandoff = inputTapeFastForwardAtTapeEnd &&
+            hasRecordInputTape;
         if (!dusk::automation::input_tape_maximum_execution_ticks(
                 inputTape, inputTapeMaximumTicks)) {
             fprintf(stderr, "Input Tape Error: maximum execution tick count overflows\n");
@@ -2996,6 +3030,8 @@ int game_main(int argc, char* argv[]) {
         config.startFullscreen = headlessMainLoop ? false : dusk::getSettings().video.enableFullscreen;
         config.startHidden =
             (inputTapeFastForwardActive && !inputTapeFastForwardVisible) || frameCaptureEnabled;
+        config.disablePresentation =
+            inputTapeFastForwardActive && !inputTapeFastForwardVisible;
         config.windowPosX = -1;
         config.windowPosY = -1;
 
