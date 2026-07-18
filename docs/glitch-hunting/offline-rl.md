@@ -285,6 +285,35 @@ current critic has error; they are neither calibrated uncertainty nor proof of
 an action's validity. The model remains a proposal artifact subject to the
 same native predicate and cold-replay gates.
 
+### Controlled Rainbow-component ablations
+
+`learn ablate-q` compares exactly one experimental component against the
+deterministic Double-Q baseline on content-disjoint held-out corpora. Supported
+treatments are `dueling-heads`, `n-step`, `distributional-values`, and
+`noisy-exploration`; the command has no syntax for combining them into a
+Rainbow configuration.
+
+```sh
+huntctl learn ablate-q --component distributional-values \
+  --training build/corpus/train.dtcz \
+  --held-out build/corpus/test.dtcz \
+  --output build/ablation/distributional.json
+```
+
+The report authenticates both corpus sets, rejects overlapping files or
+digests, and records held-out Bellman error, logged-action agreement, gradient
+updates, and component-specific diagnostics. Baseline and treatment must have
+the same gradient-update budget. No component is adopted automatically:
+held-out Bellman error is not native objective success, and every proposal
+still requires equal-budget native evaluation and cold replay proof.
+
+The experimental implementations are isolated under `learning/double_q/` and
+do not alter the production learner. Dueling heads factor value and centered
+advantages; n-step returns preserve terminal versus truncated episode ends;
+categorical values use a bounded projected support; and noisy exploration uses
+learned factorized parameter noise during training while deterministic mean
+weights are used for held-out ranking.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical
