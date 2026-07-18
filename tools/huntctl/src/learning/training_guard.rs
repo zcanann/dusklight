@@ -1,10 +1,96 @@
 //! Bounded update-to-data accounting and critic health checks.
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
 pub const ONLINE_TRAINING_HEALTH_SCHEMA_V1: &str = "dusklight-online-training-health/v1";
+pub const ONLINE_COVERAGE_GATE_SCHEMA_V1: &str = "dusklight-online-coverage-gate/v1";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct CoverageGuardConfig {
+    pub minimum_supported_actions: usize,
+    pub minimum_decisions_per_supported_action: u64,
+    pub minimum_state_bins: usize,
+    pub minimum_effective_decisions: usize,
+}
+
+impl Default for CoverageGuardConfig {
+    fn default() -> Self {
+        Self {
+            minimum_supported_actions: 2,
+            minimum_decisions_per_supported_action: 2,
+            minimum_state_bins: 4,
+            minimum_effective_decisions: 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageDisposition {
+    LearningReady,
+    FallbackInsufficientActionSupport,
+    FallbackInsufficientStateCoverage,
+    FallbackInsufficientActionAndStateCoverage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OnlineCoverageGate {
+    pub schema: &'static str,
+    pub effective_decisions: usize,
+    pub observed_actions: usize,
+    pub supported_actions: usize,
+    pub state_bins: usize,
+    pub limits: CoverageGuardConfig,
+    pub learned_policy_enabled: bool,
+    pub fallback_policy: Option<&'static str>,
+    pub disposition: CoverageDisposition,
+}
+
+impl OnlineCoverageGate {
+    pub fn evaluate(
+        effective_decisions: usize,
+        action_support: &BTreeMap<u32, u64>,
+        state_bins: usize,
+        limits: CoverageGuardConfig,
+    ) -> Result<Self, TrainingGuardError> {
+        if limits.minimum_supported_actions < 2
+            || limits.minimum_decisions_per_supported_action == 0
+            || limits.minimum_state_bins == 0
+            || limits.minimum_effective_decisions == 0
+            || action_support.values().sum::<u64>() != effective_decisions as u64
+        {
+            return Err(TrainingGuardError::InvalidConfiguration);
+        }
+        let supported_actions = action_support
+            .values()
+            .filter(|count| **count >= limits.minimum_decisions_per_supported_action)
+            .count();
+        let action_ready = supported_actions >= limits.minimum_supported_actions;
+        let state_ready = state_bins >= limits.minimum_state_bins
+            && effective_decisions >= limits.minimum_effective_decisions;
+        let disposition = match (action_ready, state_ready) {
+            (true, true) => CoverageDisposition::LearningReady,
+            (false, true) => CoverageDisposition::FallbackInsufficientActionSupport,
+            (true, false) => CoverageDisposition::FallbackInsufficientStateCoverage,
+            (false, false) => CoverageDisposition::FallbackInsufficientActionAndStateCoverage,
+        };
+        let learned_policy_enabled = disposition == CoverageDisposition::LearningReady;
+        Ok(Self {
+            schema: ONLINE_COVERAGE_GATE_SCHEMA_V1,
+            effective_decisions,
+            observed_actions: action_support.len(),
+            supported_actions,
+            state_bins,
+            limits,
+            learned_policy_enabled,
+            fallback_policy: (!learned_policy_enabled).then_some("structured_archive_blind_only"),
+            disposition,
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct TrainingGuardConfig {
@@ -220,5 +306,27 @@ mod tests {
             assert_eq!(health.disposition, disposition);
             assert!(health.require_healthy().is_err());
         }
+    }
+
+    #[test]
+    fn coverage_gate_distinguishes_action_and_state_fallbacks() {
+        let limits = CoverageGuardConfig::default();
+        let ready =
+            OnlineCoverageGate::evaluate(4, &BTreeMap::from([(0, 2), (1, 2)]), 4, limits).unwrap();
+        assert!(ready.learned_policy_enabled);
+        assert_eq!(ready.disposition, CoverageDisposition::LearningReady);
+
+        let action_fallback =
+            OnlineCoverageGate::evaluate(4, &BTreeMap::from([(0, 4)]), 4, limits).unwrap();
+        assert_eq!(
+            action_fallback.disposition,
+            CoverageDisposition::FallbackInsufficientActionSupport
+        );
+        let state_fallback =
+            OnlineCoverageGate::evaluate(4, &BTreeMap::from([(0, 2), (1, 2)]), 1, limits).unwrap();
+        assert_eq!(
+            state_fallback.disposition,
+            CoverageDisposition::FallbackInsufficientStateCoverage
+        );
     }
 }

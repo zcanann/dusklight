@@ -5,7 +5,10 @@
 //! ordinary candidates back to the native evaluator.
 
 use super::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
-use super::training_guard::{CriticSnapshot, OnlineTrainingHealth, TrainingGuardConfig};
+use super::training_guard::{
+    CoverageGuardConfig, CriticSnapshot, OnlineCoverageGate, OnlineTrainingHealth,
+    TrainingGuardConfig,
+};
 use crate::action_guidance::{
     ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
 };
@@ -53,6 +56,7 @@ pub struct QProposalSummary {
     pub model_lineage: Option<OnlineModelLineage>,
     pub training_transitions: usize,
     pub training_actions: usize,
+    pub coverage_gate: OnlineCoverageGate,
     pub training_health: Option<OnlineTrainingHealth>,
     pub proposal_states: usize,
     pub action_guidance_schema: &'static str,
@@ -260,6 +264,20 @@ fn propose_q_candidates_internal(
         }
     }
     let actions: Vec<_> = actions.into_iter().collect();
+    let action_support = collection_action_support(training_corpora);
+    let state_bins = training_corpora
+        .iter()
+        .flat_map(|corpus| &corpus.transitions)
+        .map(|transition| archive_context_key(&transition.state))
+        .collect::<BTreeSet<_>>()
+        .len();
+    let coverage_gate = OnlineCoverageGate::evaluate(
+        transitions.len(),
+        &action_support,
+        state_bins,
+        CoverageGuardConfig::default(),
+    )
+    .map_err(|error| QSearchError::new(error.to_string()))?;
     let feature_width = training_corpora[0].feature_count as usize;
     let training_limits = TrainingGuardConfig::default();
     if config.iterations as f64 > training_limits.maximum_update_to_data_ratio {
@@ -276,7 +294,8 @@ fn propose_q_candidates_internal(
         categorical_features: MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec(),
         ..FqiConfig::default()
     };
-    let model = (actions.len() >= 2)
+    let model = coverage_gate
+        .learned_policy_enabled
         .then(|| {
             FittedQ::fit_with_episode_groups(
                 feature_width,
@@ -357,7 +376,6 @@ fn propose_q_candidates_internal(
     let mut unmasked_action_evaluations = 0_usize;
     let mut unmasked_q_probe_states = 0_usize;
     let mut ordinal = 0;
-    let action_support = collection_action_support(training_corpora);
     let archive_context_support = aligned
         .iter()
         .flat_map(|episode| &episode.corpus.transitions)
@@ -520,8 +538,22 @@ fn propose_q_candidates_internal(
                 .map_err(|error| QSearchError::new(error.to_string()))
         })
         .collect::<Result<HashSet<_>, _>>()?;
-    let collection_cycle_offset = config.generation as usize % 5;
-    let budgets = split_proposer_budget(config.max_proposals, collection_cycle_offset);
+    let (collection_cycle_offset, budgets, schedule_policy) =
+        if coverage_gate.learned_policy_enabled {
+            let offset = config.generation as usize % 5;
+            (
+                offset,
+                split_proposer_budget(config.max_proposals, offset),
+                "generation_rotated_budget_then_round_robin_available_lanes",
+            )
+        } else {
+            let offset = 2 + config.generation as usize % 3;
+            (
+                offset,
+                split_fallback_budget(config.max_proposals, config.generation as usize % 3),
+                "coverage_fallback_structured_archive_blind_round_robin",
+            )
+        };
     let pools = [
         (ProposalKind::GuidedExploit, &exploit, budgets[0]),
         (ProposalKind::EnsembleDisagreement, &explore, budgets[1]),
@@ -584,11 +616,12 @@ fn propose_q_candidates_internal(
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v6",
+            schema: "dusklight-q-proposals/v7",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
             training_actions: actions.len(),
+            coverage_gate,
             training_health,
             proposal_states: considered,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V1,
@@ -603,7 +636,7 @@ fn propose_q_candidates_internal(
             blind_coverage_interventions: blind_coverage.len(),
             collection_cycle_offset,
             collection_schedule,
-            schedule_policy: "generation_rotated_budget_then_round_robin_available_lanes",
+            schedule_policy,
             proposals: candidates.len(),
             coverage: collection_coverage(episodes),
             proposer_attribution,
@@ -659,6 +692,14 @@ fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
     let mut budgets = [total / 5; 5];
     for offset in 0..total % 5 {
         budgets[(cycle_offset + offset) % budgets.len()] += 1;
+    }
+    budgets
+}
+
+fn split_fallback_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
+    let mut budgets = [0; 5];
+    for ordinal in 0..total {
+        budgets[2 + (cycle_offset + ordinal) % 3] += 1;
     }
     budgets
 }
@@ -1020,9 +1061,10 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v6");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v7");
         assert!(first.summary.dataset_generation_sha256.is_none());
         assert!(first.summary.model_lineage.is_none());
+        assert!(first.summary.coverage_gate.learned_policy_enabled);
         assert_eq!(first.summary.collection_cycle_offset, 1);
         assert_eq!(first.summary.guided_action_evaluations, 4);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
@@ -1190,6 +1232,84 @@ mod tests {
             second.summary.model_lineage.as_ref().unwrap(),
             lineage,
             "same immutable dataset and training config must reproduce exact model lineage"
+        );
+    }
+
+    #[test]
+    fn inadequate_action_support_reassigns_learned_budget_to_safe_fallbacks() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..4)
+                .map(|_| InputFrame {
+                    owned_ports: 1,
+                    pads: [
+                        canonical_movement_pad_v2(0).unwrap(),
+                        disconnected,
+                        disconnected,
+                        disconnected,
+                    ],
+                    ..InputFrame::default()
+                })
+                .collect(),
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for(&candidate);
+        let batch = propose_q_candidates(
+            std::slice::from_ref(&corpus),
+            &[QEpisode {
+                candidate,
+                corpus: corpus.clone(),
+                outcome: EpisodeOutcomeClass::Successful,
+            }],
+            QProposalConfig {
+                generation: 0,
+                max_proposals: 3,
+                iterations: 2,
+                trees_per_action: 3,
+                seed: 9,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            batch.summary.coverage_gate.disposition,
+            super::super::training_guard::CoverageDisposition::FallbackInsufficientActionSupport
+        );
+        assert!(!batch.summary.coverage_gate.learned_policy_enabled);
+        assert_eq!(
+            batch.summary.coverage_gate.fallback_policy,
+            Some("structured_archive_blind_only")
+        );
+        assert!(batch.summary.model_lineage.is_none());
+        assert!(batch.summary.training_health.is_none());
+        assert_eq!(
+            batch.summary.schedule_policy,
+            "coverage_fallback_structured_archive_blind_round_robin"
+        );
+        assert!(
+            batch
+                .summary
+                .collection_schedule
+                .iter()
+                .all(|lane| matches!(
+                    *lane,
+                    "structured_counterfactual" | "archive_novelty" | "blind_coverage"
+                ))
+        );
+        assert_eq!(
+            batch
+                .summary
+                .proposer_attribution
+                .iter()
+                .take(2)
+                .map(|lane| lane.requested_budget)
+                .sum::<usize>(),
+            0
         );
     }
 
