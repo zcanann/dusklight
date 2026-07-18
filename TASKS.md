@@ -817,7 +817,7 @@ simple random baseline.
   schemas, uncertainty limitations, and episode bootstrap behavior.
 - [x] Add nearest-neighbor/local return and tabular discretization baselines for
   small objective-specific state spaces.
-- [ ] Add n-step and option-duration targets with tests for terminal and truncated
+- [x] Add n-step and option-duration targets with tests for terminal and truncated
   episodes.
 - [ ] Calibrate predictions against held-out simulator returns and proposal win
   rate rather than training Bellman loss alone.

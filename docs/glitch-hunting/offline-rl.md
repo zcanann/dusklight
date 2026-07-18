@@ -123,6 +123,16 @@ cold replay. FQI is currently a discrete offline proposer: it does not infer
 counterfactual transitions, restore checkpoints, handle continuous actions
 directly, or establish predicate feasibility.
 
+`learn fit --n-step N` selects 1–64 observed semi-Markov transitions per
+Bellman target. Rewards are accumulated only within the same episode group;
+each option's declared simulation-tick duration contributes its exact
+`gamma^duration` factor. An episodic terminal zeros continuation immediately.
+At a nonterminal truncated end, the target may bootstrap from that final
+observed `next_state` using the prior fitted iteration, but it never consumes a
+reward or state from the next episode. The model artifact and ranking report
+record the selected backup length. Focused tests cover multi-tick options,
+early terminal stopping, and truncated group boundaries.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

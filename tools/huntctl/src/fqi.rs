@@ -1118,6 +1118,163 @@ mod tests {
     }
 
     #[test]
+    fn n_step_targets_discount_option_durations_and_distinguish_truncation() {
+        let continuation_model = FittedQ::fit(
+            1,
+            &[ADVANCE],
+            &[Transition {
+                state: vec![2.0],
+                action: ADVANCE,
+                duration: 1,
+                reward: 8.0,
+                next_state: vec![3.0],
+                terminal: true,
+            }],
+            &FqiConfig {
+                iterations: 1,
+                trees_per_action: 1,
+                bootstrap: false,
+                ..FqiConfig::default()
+            },
+        )
+        .unwrap();
+        let chain = |terminal| {
+            vec![
+                Transition {
+                    state: vec![0.0],
+                    action: ADVANCE,
+                    duration: 2,
+                    reward: 1.0,
+                    next_state: vec![1.0],
+                    terminal: false,
+                },
+                Transition {
+                    state: vec![1.0],
+                    action: ADVANCE,
+                    duration: 3,
+                    reward: 2.0,
+                    next_state: vec![2.0],
+                    terminal,
+                },
+                // A different episode must never become an n-step successor.
+                Transition {
+                    state: vec![20.0],
+                    action: ADVANCE,
+                    duration: 1,
+                    reward: 100.0,
+                    next_state: vec![21.0],
+                    terminal: true,
+                },
+            ]
+        };
+        let config = FqiConfig {
+            backup_steps: 3,
+            discount: 0.5,
+            ..FqiConfig::default()
+        };
+        let terminal = chain(true);
+        let truncated = chain(false);
+        let successors = episode_successors(&[1, 1, 2]);
+        assert_eq!(
+            bellman_target(
+                0,
+                &terminal,
+                &successors,
+                Some(&continuation_model),
+                &config
+            ),
+            1.5
+        );
+        assert_eq!(
+            bellman_target(
+                0,
+                &truncated,
+                &successors,
+                Some(&continuation_model),
+                &config
+            ),
+            1.75
+        );
+
+        let fitted = FittedQ::fit_with_episode_groups(
+            1,
+            &[ADVANCE],
+            &terminal[..2],
+            &[1, 1],
+            &FqiConfig {
+                iterations: 1,
+                backup_steps: 2,
+                trees_per_action: 1,
+                max_tree_depth: 2,
+                bootstrap: false,
+                discount: 0.5,
+                ..FqiConfig::default()
+            },
+        )
+        .unwrap();
+        assert!((fitted.estimate(&[0.0], ADVANCE).unwrap().mean - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn n_step_targets_accumulate_option_durations_and_stop_at_terminal_or_truncation() {
+        let transitions = vec![
+            Transition {
+                state: vec![0.0],
+                action: ADVANCE,
+                duration: 2,
+                reward: 1.0,
+                next_state: vec![1.0],
+                terminal: false,
+            },
+            Transition {
+                state: vec![1.0],
+                action: ADVANCE,
+                duration: 3,
+                reward: 2.0,
+                next_state: vec![2.0],
+                terminal: true,
+            },
+            Transition {
+                state: vec![10.0],
+                action: ADVANCE,
+                duration: 4,
+                reward: 4.0,
+                next_state: vec![11.0],
+                terminal: false,
+            },
+            Transition {
+                state: vec![20.0],
+                action: ADVANCE,
+                duration: 1,
+                reward: 100.0,
+                next_state: vec![21.0],
+                terminal: true,
+            },
+        ];
+        let groups = [1, 1, 2, 3];
+        let config = FqiConfig {
+            iterations: 1,
+            backup_steps: 3,
+            trees_per_action: 1,
+            max_tree_depth: 4,
+            discount: 0.5,
+            bootstrap: false,
+            ..FqiConfig::default()
+        };
+        let successors = episode_successors(&groups);
+        assert!((bellman_target(0, &transitions, &successors, None, &config) - 1.5).abs() < 1.0e-9);
+        assert_eq!(
+            bellman_target(2, &transitions, &successors, None, &config),
+            4.0
+        );
+
+        let model = FittedQ::fit_with_episode_groups(1, &[ADVANCE], &transitions, &groups, &config)
+            .unwrap();
+        assert!((model.estimate(&[0.0], ADVANCE).unwrap().mean - 1.5).abs() < 0.001);
+        assert!((model.estimate(&[10.0], ADVANCE).unwrap().mean - 4.0).abs() < 0.001);
+    }
+
+    #[test]
     fn categorical_feature_uses_equality_not_numeric_order() {
         let batch = vec![
             transition(1.0, ADVANCE, 0.0, 1.0, true),

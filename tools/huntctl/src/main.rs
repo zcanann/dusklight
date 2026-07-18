@@ -10,8 +10,8 @@ use huntctl::dataset::{
 };
 use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
 use huntctl::fqi::{
-    FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_ITERATIONS, MAX_FQI_TRANSITIONS,
-    MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
+    FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
+    MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
@@ -1190,6 +1190,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             let mut config = FqiConfig {
                 iterations: usize_option(learn_args, "--iterations", 24)?,
+                backup_steps: usize_option(learn_args, "--n-step", 1)?,
                 trees_per_action: usize_option(learn_args, "--trees", 31)?,
                 max_tree_depth: usize_option(learn_args, "--max-depth", 8)?,
                 seed: u64_option(learn_args, "--seed", FqiConfig::default().seed)?,
@@ -1203,6 +1204,13 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 return Err(format!(
                     "--iterations must not exceed {MAX_FQI_ITERATIONS}; received {}",
                     config.iterations
+                )
+                .into());
+            }
+            if config.backup_steps == 0 || config.backup_steps > MAX_FQI_BACKUP_STEPS {
+                return Err(format!(
+                    "--n-step must be within 1..={MAX_FQI_BACKUP_STEPS}; received {}",
+                    config.backup_steps
                 )
                 .into());
             }
@@ -1474,6 +1482,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "model_artifact_store": model_artifact_store,
                     "model_content_blob": model_content_blob,
                     "iterations": config.iterations,
+                    "backup_steps": config.backup_steps,
                     "trees_per_action": config.trees_per_action,
                     "categorical_features": config.categorical_features,
                     "seed": config.seed,
@@ -3976,7 +3985,7 @@ fn print_usage() {
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--candidate FILE] --game PATH --dvd PATH --output DIR [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
     );
     eprintln!(
-        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
+        "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"

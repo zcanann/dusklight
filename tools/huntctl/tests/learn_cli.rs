@@ -140,6 +140,7 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
     );
     let fit: serde_json::Value = serde_json::from_slice(&fit.stdout).unwrap();
     assert_eq!(fit["transition_count"], 4);
+    assert_eq!(fit["backup_steps"], 1);
     assert_eq!(fit["categorical_features"], json!([]));
     assert_eq!(fit["ranking"][0]["action"], ADVANCE);
     assert_eq!(fit["ranking"][0]["support"], 2);
@@ -157,6 +158,28 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         serde_json::from_slice(&fs::read(root.join("model.json")).unwrap()).unwrap();
     assert_eq!(model["schema"], "dusklight-fitted-q-model/v2");
     assert_eq!(model["model"]["bootstrap_unit"], "episode");
+
+    let n_step_fit = Command::new(executable)
+        .args(["learn", "fit", "--input"])
+        .arg(&path)
+        .args([
+            "--all-continuous",
+            "--iterations",
+            "1",
+            "--n-step",
+            "2",
+            "--trees",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        n_step_fit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&n_step_fit.stderr)
+    );
+    let n_step_fit: serde_json::Value = serde_json::from_slice(&n_step_fit.stdout).unwrap();
+    assert_eq!(n_step_fit["backup_steps"], 2);
 
     for arguments in [
         vec![
@@ -280,6 +303,15 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         String::from_utf8_lossy(&oversized_config.stderr)
             .contains("iterations must not exceed 128")
     );
+
+    let oversized_backup = Command::new(executable)
+        .args(["learn", "fit", "--input"])
+        .arg(&path)
+        .args(["--n-step", "65"])
+        .output()
+        .unwrap();
+    assert!(!oversized_backup.status.success());
+    assert!(String::from_utf8_lossy(&oversized_backup.stderr).contains("within 1..=64"));
 
     let mut too_many_inputs = Command::new(executable);
     too_many_inputs.args(["learn", "fit"]);
