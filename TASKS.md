@@ -76,7 +76,7 @@ mid-run action, a filename convention, or visual-only judgment.
   cancellation, worker crash, protocol failure, objective miss, and hang.
 - [ ] Keep worker-pool scheduling deterministic for a fixed request sequence and
   seed, including stable result ordering independent of process completion.
-- [ ] Retain partial artifacts after timeout or crash without treating them as
+- [x] Retain partial artifacts after timeout or crash without treating them as
   complete evidence.
 
 **Acceptance:** a random agent, a scripted controller, and a learned proposer

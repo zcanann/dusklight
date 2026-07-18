@@ -97,4 +97,6 @@ unsupported/capability-mismatch results. CLI integration coverage seals and
 validates a complete request/result pair, executes a tape request through a
 mock native process, executes reactive control into a realized tape, proves
 exact target loss and missing trace families remain typed failures, and verifies
-overwrite refusal.
+overwrite refusal. A host-timeout integration case retains authenticated
+stdout/stderr while refusing complete replay-proof status; crash-unit coverage
+does the same for whatever partial artifacts exist before failure.
