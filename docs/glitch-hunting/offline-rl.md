@@ -626,6 +626,16 @@ and retains each independently hashed `attempt.json` as repetition evidence.
 Deduplication therefore reduces storage/index noise without converting repeated
 runs—or correlated frames inside one run—into extra independent samples.
 
+Online anchored search also writes `evaluation-generation-seal.json` before it
+exposes any newly collected corpus to a learner. The seal authenticates the
+evaluation generation, complete planned/completed attempt count, evaluation-only
+worker identities, and the exact corpus digest retained from attempt 1 of each
+candidate. It is rejected if an attempt is missing, an infrastructure fault is
+present, or a later proof repetition carries a corpus. The admitted digests have
+`minimum_training_generation = evaluation_generation + 1`; consequently the
+current evaluation cannot train on its own observations, and no proof repetition
+can become a training episode.
+
 Large immutable outputs use `dusklight-content-blob/v1` references. Gameplay
 traces are streamed into `content/blobs/sha256/<prefix>/<suffix>` and every
 attempt reports the digest, exact byte count, media type, and relative blob
