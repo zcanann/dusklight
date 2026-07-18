@@ -342,6 +342,23 @@ command fixes FQI backup length to one while discounting by its simulation-tick
 duration. The resulting model and ranking are proposal artifacts only; they
 cannot promote a route without native evaluation and cold replay proof.
 
+`learning::factorized_actions` provides the low-data action representation used
+before considering a larger neural policy. Every candidate explicitly separates
+its tactic, optional heading, optional magnitude, duration, intended target,
+and 16-bit button overlay. The authenticated encoder assigns independent
+feature blocks to those axes: tactic and target use bounded canonical catalogs,
+heading uses presence/sine/cosine, magnitude and duration are normalized
+numeric features, and overlay buttons are individual bits.
+
+The accompanying ridge critic is intentionally small and additive. Evidence
+for (for example) a roll tactic, a heading, and an actor target can therefore
+contribute to a new combination even when that full Cartesian action was never
+observed. A focused regression test fits six one-factor variations and ranks
+their unseen combined action. Unknown categorical tactic/target factors are
+rejected instead of silently mapped to an "other" bucket; this representation
+is a low-data proposal baseline, not promotion evidence or a claim that action
+factors are independent in the game.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

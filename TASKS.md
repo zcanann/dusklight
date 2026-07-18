@@ -842,7 +842,7 @@ simple random baseline.
 
 - [x] Train option-level values before per-frame neural control; keep raw actions
   for last-mile frame golf.
-- [ ] Factor tactic, heading, magnitude, duration, target, and button overlay so
+- [x] Factor tactic, heading, magnitude, duration, target, and button overlay so
   sparse combinations can share statistical strength.
 - [ ] Add goal-conditioned value/policy inputs using a compiled objective vector
   rather than a model hard-coded to one segment.

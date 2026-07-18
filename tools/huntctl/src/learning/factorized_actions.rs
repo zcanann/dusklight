@@ -288,10 +288,7 @@ fn solve(
                 continue;
             }
             let scale = matrix[row][column];
-            for (value, pivot) in matrix[row][column..]
-                .iter_mut()
-                .zip(&pivot_row[column..])
-            {
+            for (value, pivot) in matrix[row][column..].iter_mut().zip(&pivot_row[column..]) {
                 *value -= scale * pivot;
             }
             target[row] -= scale * target[column];
