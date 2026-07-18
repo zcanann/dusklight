@@ -60,7 +60,12 @@ pub use learning::{
     reward_shaping,
 };
 
-pub use artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};
+pub use artifact::{
+    ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, ArtifactIdentityError, BuildIdentity, Digest,
+};
 pub use client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, ClientError, WorkerClient};
-pub use compatibility::{CompatibilityDifference, CompatibilityMode, compatibility_differences};
+pub use compatibility::{
+    CompatibilityDifference, CompatibilityError, CompatibilityMode, compatibility_differences,
+    ensure_compatible,
+};
 pub use protocol::PROTOCOL_VERSION;

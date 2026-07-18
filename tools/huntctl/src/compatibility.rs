@@ -1,4 +1,8 @@
 use crate::artifact::ArtifactIdentity;
+use serde::Serialize;
+use std::error::Error;
+use std::fmt;
+use std::str::FromStr;
 
 /// The operation being protected by an identity comparison. Different
 /// operations intentionally admit different kinds of variation.
@@ -11,12 +15,83 @@ pub enum CompatibilityMode {
     CrossBuildComparison,
 }
 
+impl CompatibilityMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Replay => "replay",
+            Self::TraceMerge => "trace-merge",
+            Self::ModelTraining => "model-training",
+            Self::CheckpointRestore => "checkpoint-restore",
+            Self::CrossBuildComparison => "cross-build-comparison",
+        }
+    }
+}
+
+impl fmt::Display for CompatibilityMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseCompatibilityModeError;
+
+impl fmt::Display for ParseCompatibilityModeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "compatibility mode must be replay, trace-merge, model-training, checkpoint-restore, or cross-build-comparison",
+        )
+    }
+}
+
+impl Error for ParseCompatibilityModeError {}
+
+impl FromStr for CompatibilityMode {
+    type Err = ParseCompatibilityModeError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "replay" => Ok(Self::Replay),
+            "trace-merge" => Ok(Self::TraceMerge),
+            "model-training" => Ok(Self::ModelTraining),
+            "checkpoint-restore" => Ok(Self::CheckpointRestore),
+            "cross-build-comparison" => Ok(Self::CrossBuildComparison),
+            _ => Err(ParseCompatibilityModeError),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompatibilityDifference {
     pub field: &'static str,
     pub expected: String,
     pub actual: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompatibilityError {
+    pub mode: CompatibilityMode,
+    pub differences: Vec<CompatibilityDifference>,
+}
+
+impl fmt::Display for CompatibilityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            formatter,
+            "artifact identities are incompatible for {} ({} difference{}):",
+            self.mode,
+            self.differences.len(),
+            if self.differences.len() == 1 { "" } else { "s" }
+        )?;
+        for difference in &self.differences {
+            writeln!(formatter, "- {}", difference.message())?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for CompatibilityError {}
 
 impl CompatibilityDifference {
     pub fn message(&self) -> String {
@@ -183,6 +258,19 @@ pub fn compatibility_differences(
     differences
 }
 
+pub fn ensure_compatible(
+    mode: CompatibilityMode,
+    expected: &ArtifactIdentity,
+    actual: &ArtifactIdentity,
+) -> Result<(), CompatibilityError> {
+    let differences = compatibility_differences(mode, expected, actual);
+    if differences.is_empty() {
+        Ok(())
+    } else {
+        Err(CompatibilityError { mode, differences })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +384,18 @@ mod tests {
         ] {
             assert!(compatibility_differences(mode, &expected, &actual).is_empty());
         }
+    }
+
+    #[test]
+    fn rejection_message_lists_every_difference() {
+        let expected = identity();
+        let mut actual = expected.clone();
+        actual.build.compiler = "clang-b".into();
+        actual.scenario_id = "other-fixture".into();
+        let error = ensure_compatible(CompatibilityMode::Replay, &expected, &actual).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("build.compiler"));
+        assert!(message.contains("scenario_id"));
+        assert!(message.contains("2 differences"));
     }
 }

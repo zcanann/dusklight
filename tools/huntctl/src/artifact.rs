@@ -103,6 +103,110 @@ pub struct ArtifactIdentity {
     pub settings_digest: Digest,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactIdentityError {
+    pub field: &'static str,
+    pub detail: &'static str,
+}
+
+impl fmt::Display for ArtifactIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} {}", self.field, self.detail)
+    }
+}
+
+impl Error for ArtifactIdentityError {}
+
+impl BuildIdentity {
+    pub fn validate(&self) -> Result<(), ArtifactIdentityError> {
+        for (field, value) in [
+            ("build.dusklight_commit", self.dusklight_commit.as_str()),
+            ("build.aurora_commit", self.aurora_commit.as_str()),
+            ("build.compiler", self.compiler.as_str()),
+            ("build.target", self.target.as_str()),
+            ("build.profile", self.profile.as_str()),
+            ("build.fidelity_profile", self.fidelity_profile.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ArtifactIdentityError {
+                    field,
+                    detail: "must not be empty",
+                });
+            }
+        }
+        for (field, value) in [
+            ("build.feature_digest", self.feature_digest),
+            ("build.game_digest", self.game_digest),
+        ] {
+            require_digest(field, value)?;
+        }
+        if self.dirty_digest == Some(Digest::ZERO) {
+            return Err(ArtifactIdentityError {
+                field: "build.dirty_digest",
+                detail: "must be absent for a clean tree or a nonzero digest",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl ArtifactIdentity {
+    pub fn validate(&self) -> Result<(), ArtifactIdentityError> {
+        if self.schema_version != ARTIFACT_SCHEMA_VERSION {
+            return Err(ArtifactIdentityError {
+                field: "schema_version",
+                detail: "is unsupported",
+            });
+        }
+        self.build.validate()?;
+        if self.protocol_name.trim().is_empty() {
+            return Err(ArtifactIdentityError {
+                field: "protocol_name",
+                detail: "must not be empty",
+            });
+        }
+        if self.protocol_version == 0 {
+            return Err(ArtifactIdentityError {
+                field: "protocol_version",
+                detail: "must be nonzero",
+            });
+        }
+        if self.scenario_id.trim().is_empty() {
+            return Err(ArtifactIdentityError {
+                field: "scenario_id",
+                detail: "must not be empty",
+            });
+        }
+        for (field, value) in [
+            ("content_digest", self.content_digest),
+            (
+                "protocol_capabilities_digest",
+                self.protocol_capabilities_digest,
+            ),
+            ("region_digest", self.region_digest),
+            ("language_assets_digest", self.language_assets_digest),
+            ("scenario_digest", self.scenario_digest),
+            ("predicate_program_digest", self.predicate_program_digest),
+            ("action_schema_digest", self.action_schema_digest),
+            ("observation_schema_digest", self.observation_schema_digest),
+            ("settings_digest", self.settings_digest),
+        ] {
+            require_digest(field, value)?;
+        }
+        Ok(())
+    }
+}
+
+fn require_digest(field: &'static str, value: Digest) -> Result<(), ArtifactIdentityError> {
+    if value == Digest::ZERO {
+        return Err(ArtifactIdentityError {
+            field,
+            detail: "must be a nonzero SHA-256 digest",
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +221,36 @@ mod tests {
     fn digest_rejects_bad_input() {
         assert!("abcd".parse::<Digest>().is_err());
         assert!(["g"; 64].concat().parse::<Digest>().is_err());
+    }
+
+    #[test]
+    fn complete_identity_rejects_ambiguous_zero_digest() {
+        let identity = ArtifactIdentity {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            content_digest: Digest::ZERO,
+            build: BuildIdentity {
+                dusklight_commit: "dusk".into(),
+                aurora_commit: "aurora".into(),
+                compiler: "clang".into(),
+                target: "arm64-apple-darwin".into(),
+                profile: "debug".into(),
+                feature_digest: Digest([1; 32]),
+                game_digest: Digest([2; 32]),
+                dirty_digest: None,
+                fidelity_profile: "native".into(),
+            },
+            protocol_name: "dusklight-automation".into(),
+            protocol_version: 2,
+            protocol_capabilities_digest: Digest([3; 32]),
+            scenario_id: "fixture".into(),
+            region_digest: Digest([4; 32]),
+            language_assets_digest: Digest([5; 32]),
+            scenario_digest: Digest([6; 32]),
+            predicate_program_digest: Digest([7; 32]),
+            action_schema_digest: Digest([8; 32]),
+            observation_schema_digest: Digest([9; 32]),
+            settings_digest: Digest([10; 32]),
+        };
+        assert_eq!(identity.validate().unwrap_err().field, "content_digest");
     }
 }
