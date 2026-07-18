@@ -5127,6 +5127,12 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
     let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
     let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
+    let logical_tick_budget = option(args, "--automation-tick-budget")
+        .ok_or("mock worker missing automation tick budget")?
+        .parse::<u64>()?;
+    if logical_tick_budget == 0 {
+        return Err("mock worker received a zero automation tick budget".into());
+    }
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
     let input_tape = option(args, "--input-tape")
         .map(|path| -> Result<_, Box<dyn Error>> { Ok(InputTape::decode(&fs::read(path)?)?.tape) })
@@ -5139,6 +5145,15 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
         .transpose()?;
     if input_tape.frames.is_empty() && controller_duration.is_none() {
         return Err("mock worker requires an input tape or controller".into());
+    }
+    let planned_ticks = controller_duration
+        .map(u64::from)
+        .unwrap_or(input_tape.frames.len() as u64);
+    if planned_ticks > logical_tick_budget {
+        return Err(format!(
+            "mock worker input requires {planned_ticks} ticks but received budget {logical_tick_budget}"
+        )
+        .into());
     }
     if let Some(path) = option(args, "--gameplay-trace") {
         fs::write(path, mock_gameplay_trace(&input_tape.boot))?;

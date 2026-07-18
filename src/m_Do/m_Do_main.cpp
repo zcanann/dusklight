@@ -726,6 +726,8 @@ static dusk::automation::EyeShredderOracle eyeShredderOracle;
 static std::filesystem::path eyeShredderOracleResultPath;
 static bool eyeShredderOracleResultWriteFailed;
 static std::uint64_t automationSimulationTick;
+static std::uint64_t automationLogicalTickBudget;
+static bool automationLogicalTickBudgetExhausted;
 static std::uint64_t automationTapeFrame = dusk::automation::NameEntryNoTick;
 static std::uint64_t automationPreparedInputFrame = dusk::automation::NameEntryNoTick;
 
@@ -1161,8 +1163,18 @@ static bool finish_automation_oracle_tick() {
         ++automationSimulationTick;
         if (milestoneGoalReached) {
             dusk::IsRunning = false;
+            return true;
         }
-        return milestoneGoalReached;
+        if (automationLogicalTickBudget != 0 &&
+            automationSimulationTick >= automationLogicalTickBudget)
+        {
+            automationLogicalTickBudgetExhausted = true;
+            dusk::IsRunning = false;
+            DuskLog.info("Automation logical-tick budget exhausted after {} completed ticks",
+                         automationSimulationTick);
+            return true;
+        }
+        return false;
     }
 
     eyeShredderOracle.evaluate(dusk::automation::name_entry_observer().latest(),
@@ -1175,19 +1187,25 @@ static bool finish_automation_oracle_tick() {
         dusk::IsRunning = false;
         return true;
     }
-    if (!eyeShredderOracle.isTerminal()) {
-        return false;
+    if (eyeShredderOracle.isTerminal()) {
+        if (!(automationOracleContinueOnPass &&
+              eyeShredderOracle.result().status ==
+                  dusk::automation::EyeShredderOracleStatus::Passed))
+        {
+            dusk::IsRunning = false;
+            return true;
+        }
     }
-
-    if (automationOracleContinueOnPass &&
-        eyeShredderOracle.result().status ==
-            dusk::automation::EyeShredderOracleStatus::Passed)
+    if (automationLogicalTickBudget != 0 &&
+        automationSimulationTick >= automationLogicalTickBudget)
     {
-        return false;
+        automationLogicalTickBudgetExhausted = true;
+        dusk::IsRunning = false;
+        DuskLog.info("Automation logical-tick budget exhausted after {} completed ticks",
+                     automationSimulationTick);
+        return true;
     }
-
-    dusk::IsRunning = false;
-    return true;
+    return false;
 }
 
 static void finish_automation_renderer_frame() {
@@ -1935,6 +1953,7 @@ int game_main(int argc, char* argv[]) {
             ("exit-after-tape", "Exit after the final tape frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("automation-tick-budget", "Stop after this many completed logical simulation ticks", cxxopts::value<std::uint64_t>())
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-thumbnail-png", "Capture the retained terminal frame when a human input recording closes cleanly", cxxopts::value<std::string>())
@@ -2132,6 +2151,17 @@ int game_main(int argc, char* argv[]) {
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     const bool hasInputController = parsed_arg_options.count("input-controller") != 0;
     const bool hasAutomationInput = hasInputTape || hasInputController;
+    automationLogicalTickBudget = 0;
+    automationLogicalTickBudgetExhausted = false;
+    if (parsed_arg_options.count("automation-tick-budget") != 0) {
+        automationLogicalTickBudget =
+            parsed_arg_options["automation-tick-budget"].as<std::uint64_t>();
+        if (!hasAutomationInput || automationLogicalTickBudget == 0) {
+            fprintf(stderr,
+                    "Automation Tick Budget Error: --automation-tick-budget requires automation input and a nonzero tick count\n");
+            return 1;
+        }
+    }
     const bool hasRealizedInputTape =
         parsed_arg_options.count("realized-input-tape") != 0;
     const bool hasRecordInputTape =
@@ -3596,7 +3626,10 @@ int game_main(int argc, char* argv[]) {
     if (inputControllerProtocolFailed) {
         return 3;
     }
-    return milestoneGoalFailed || inputControllerTargetLost ? 2 : 0;
+    return milestoneGoalFailed || inputControllerTargetLost ||
+                   automationLogicalTickBudgetExhausted
+               ? 2
+               : 0;
 }
 
 

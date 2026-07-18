@@ -143,6 +143,8 @@ fn execute_native_request(
         .arg(&paths.realized_input)
         .arg("--automation-data-root")
         .arg(&paths.state)
+        .arg("--automation-tick-budget")
+        .arg(request.logical_tick_budget.to_string())
         .arg("--renderer-cache-root")
         .arg(&paths.renderer_cache)
         .arg("--milestone-program")

@@ -815,6 +815,28 @@ fn executes_a_reactive_controller_through_the_authenticated_boundary() {
 
 #[cfg(unix)]
 #[test]
+fn enforces_the_logical_tick_budget_independently_of_host_time() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let (root, request, result) = execute_mock_controller(
+        executable,
+        Some("miss"),
+        "artifacts/mock-controller-budget-exhausted",
+    );
+    assert_eq!(result.terminal, HarnessTerminalReason::Exhausted);
+    assert!(!result.objective.reached);
+    assert!(result.artifacts.complete);
+    assert_eq!(
+        result.timing.consumed_input_ticks,
+        request.logical_tick_budget
+    );
+    result
+        .validate_files(&request, &root.join(&request.artifact_destination))
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn reports_an_exact_controller_target_loss_without_calling_it_exhaustion() {
     let executable = env!("CARGO_BIN_EXE_huntctl");
     let (root, request, result) = execute_mock_controller(
