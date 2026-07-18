@@ -122,6 +122,9 @@ roadmap documents describe the larger target.
 - Open-question campaigns v1 ask bounded, partitioned questions about unseen
   procedure/contact pairs and collision/contact changes without semantic scene
   transitions, retaining raw findings as proposal-only evidence.
+- Canonical `DUSKINTR` v1.0 is a separately magic-numbered, fixed-record
+  experimental timeline with a bounded readable DSL. It cannot be decoded or
+  represented as controller/input tape data, and noncanonical bytes are rejected.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

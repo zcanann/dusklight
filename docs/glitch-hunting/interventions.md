@@ -26,6 +26,16 @@ The intervention format should be a compact canonical binary such as
 `DUSKINTR`, compiled from a readable timeline DSL. It must not overload
 controller fields or emit a supposedly realized input tape that omits writes.
 
+`intervention` implements `DUSKINTR` v1.0 as a 32-byte header followed by
+canonical fixed-size records. The decoder re-encodes and rejects any reserved,
+trailing, out-of-order, or otherwise noncanonical bytes. It is capped at 1,024
+writes and one million ticks and has magic distinct from both `DUSKTAPE` and
+`DUSKCTRL`. The initial readable DSL is line-oriented and requires an explicit
+timeline, tick range, `before_game_tick` phase, exact process or placed actor
+selector, `actor_exists` precondition, and typed operation. Comments and source
+line order do not affect canonical bytes; source size and line count are
+bounded before parsing.
+
 ## Gating
 
 The implementation should require all of the following:

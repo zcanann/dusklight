@@ -950,7 +950,7 @@ uninspectable random tapes.
 
 ## 10. Experimental causal interventions
 
-- [ ] Implement canonical `DUSKINTR` plus a readable bounded DSL, separately
+- [x] Implement canonical `DUSKINTR` plus a readable bounded DSL, separately
   from controller tapes.
 - [ ] Require compile-time feature, runtime opt-in, fidelity flag, exact phase,
   preconditions, and an always-on before/write/after audit.
