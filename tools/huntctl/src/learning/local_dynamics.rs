@@ -213,7 +213,7 @@ impl LocalDynamicsErrorReport {
                 })
                 .sum::<f64>();
             let normalized_rmse = if values == 0 {
-                f64::MAX
+                0.0
             } else {
                 (squared_error / values as f64).sqrt()
             };
@@ -222,7 +222,7 @@ impl LocalDynamicsErrorReport {
                 .filter(|probe| probe.predicted_event != probe.observed_event)
                 .count();
             let event_error_rate = if selected.is_empty() {
-                1.0
+                0.0
             } else {
                 event_errors as f64 / selected.len() as f64
             };
