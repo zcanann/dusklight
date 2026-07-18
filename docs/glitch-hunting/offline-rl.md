@@ -293,6 +293,13 @@ the neural candidate, tree FQI, and structured specialists, and native success
 at least two percentage points above the stronger baseline. Any one missing
 condition keeps the comparison unready; the report is not promotion evidence.
 
+`dusklight-rl-proposal-readiness/v1` binds value-calibration and OOD diagnostic
+reports to the candidate model. Defaults require expected calibration error no
+greater than 0.1, rejection of at least 80% of known OOD candidates before
+rollout, and no more than 20% of actual simulator proposals landing in
+unsupported regions. Calibration, OOD recall, and simulator-budget efficiency
+remain separate pass/fail fields so one cannot hide another.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:

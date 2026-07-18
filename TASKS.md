@@ -911,7 +911,7 @@ simple random baseline.
   phase, with unsupported regions reported explicitly.
 - [x] Held-out episodes and boundary families, stable repeated cold replay, and a
   stronger result than tree FQI plus structured specialists under equal budget.
-- [ ] Value calibration and OOD-action diagnostics good enough that proposals do
+- [x] Value calibration and OOD-action diagnostics good enough that proposals do
   not spend most of the simulator budget on unsupported fantasies.
 
 The numeric gates are initial engineering heuristics and should be revised from
