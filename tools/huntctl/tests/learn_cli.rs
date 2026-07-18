@@ -41,6 +41,51 @@ fn trace_extraction_requires_complete_episode_context() {
     );
 }
 
+#[test]
+fn episode_inspection_rejects_an_unsealed_artifact() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-episode-inspect-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let input = root.join("episode.json");
+    let zero = "0".repeat(64);
+    fs::write(
+        &input,
+        serde_json::to_vec_pretty(&json!({
+            "schema": "dusklight-immutable-episode/v1",
+            "content_sha256": zero.clone(),
+            "episode_sha256": zero.clone(),
+            "objective": { "id": "objective", "digest": zero.clone() },
+            "lineage": {
+                "generation": 0
+            },
+            "terminal": "exhausted",
+            "terminal_detail": "unsealed fixture",
+            "realized_tape_sha256": zero.clone(),
+            "gameplay_trace_sha256": zero.clone(),
+            "transition_corpus_sha256": zero.clone(),
+            "transition_evidence_sha256": zero,
+            "steps": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "inspect-episode", "--input"])
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("immutable episode identity"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn state(value: f32) -> Vec<f32> {
     vec![value]
 }

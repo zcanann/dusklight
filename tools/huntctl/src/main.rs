@@ -73,7 +73,8 @@ use huntctl::timeline::Timeline;
 use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transition_evidence::{
-    TerminalReasonEvidence, TransitionEvidenceBuild, TransitionEvidenceBundle,
+    ImmutableEpisodeArtifact, TerminalReasonEvidence, TransitionEvidenceBuild,
+    TransitionEvidenceBundle,
 };
 use huntctl::transport::ProcessTransport;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
@@ -1495,6 +1496,29 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "start_frame": start_tape_frame,
                     "end_frame": end_tape_frame,
                     "terminal": end_is_terminal,
+                }))?
+            );
+            Ok(())
+        }
+        Some("inspect-episode") => {
+            let input = required_path(&args[1..], "--input")?;
+            let artifact: ImmutableEpisodeArtifact = serde_json::from_slice(&fs::read(&input)?)?;
+            artifact.validate()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": artifact.schema,
+                    "content_sha256": artifact.content_sha256,
+                    "episode_sha256": artifact.episode_sha256,
+                    "objective": artifact.objective,
+                    "terminal": artifact.terminal,
+                    "terminal_detail": artifact.terminal_detail,
+                    "realized_tape_sha256": artifact.realized_tape_sha256,
+                    "gameplay_trace_sha256": artifact.gameplay_trace_sha256,
+                    "transition_corpus_sha256": artifact.transition_corpus_sha256,
+                    "transition_evidence_sha256": artifact.transition_evidence_sha256,
+                    "steps": artifact.steps.len(),
+                    "lineage": artifact.lineage,
                 }))?
             );
             Ok(())
@@ -5047,6 +5071,7 @@ fn print_usage() {
     eprintln!(
         "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn calibrate (--dataset DATASET.json [--split validation|test|withheld] | --training TRAIN.dtcz --held-out TEST.dtcz) --output REPORT.json [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--all-continuous | --categorical-feature N ...]\n  huntctl learn double-q (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--gradient-clip V] [--seed N] [--discount D]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
     );
+    eprintln!("  huntctl learn inspect-episode --input IMMUTABLE-EPISODE.json");
     eprintln!(
         "  huntctl learn cql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--conservative-weight A] [--temperature T] [--gradient-clip V] [--seed N] [--discount D]"
     );
