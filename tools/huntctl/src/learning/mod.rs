@@ -7,6 +7,7 @@ pub mod double_q;
 pub mod ensemble_q;
 pub mod evaluation_isolation;
 pub mod factorized_actions;
+pub mod fixed_representation;
 pub mod fqi;
 pub mod goal_conditioning;
 pub mod hindsight;
