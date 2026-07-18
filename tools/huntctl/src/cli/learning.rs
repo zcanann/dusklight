@@ -7,6 +7,8 @@ use huntctl::double_q::prioritized::{PrioritizedDoubleQ, PrioritizedDoubleQConfi
 use huntctl::iql::{ImplicitQ, IqlConfig};
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::ensemble_q::{BootstrappedQConfig, BootstrappedQEnsemble};
+use huntctl::learning::fqi::FqiConfig;
+use huntctl::learning::option_values::{OptionValueBatch, OptionValueConfig, OptionValueModel};
 use huntctl::learning::rainbow::{RainbowAblationConfig, RainbowAblationReport};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,6 +17,110 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_LEARN_INPUT_CORPORA: usize = 64;
+
+pub fn command_option_values(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = option(learn_args, "--input")
+        .map(PathBuf::from)
+        .ok_or("learn option-values requires --input BATCH.json")?;
+    let model_output = option(learn_args, "--model-output")
+        .map(PathBuf::from)
+        .ok_or("learn option-values requires --model-output MODEL.json")?;
+    if model_output.exists() {
+        return Err(format!(
+            "option-value model output already exists: {}",
+            model_output.display()
+        )
+        .into());
+    }
+    let batch: OptionValueBatch = serde_json::from_slice(&fs::read(&input)?)?;
+    batch.validate()?;
+    let defaults = OptionValueConfig::default().fitted_q;
+    let categorical_features = repeated_option(learn_args, "--categorical-feature")
+        .into_iter()
+        .map(|value| value.parse::<usize>())
+        .collect::<Result<Vec<_>, _>>()?;
+    let config = OptionValueConfig {
+        fitted_q: FqiConfig {
+            iterations: usize_option(learn_args, "--iterations", defaults.iterations)?,
+            backup_steps: 1,
+            trees_per_action: usize_option(learn_args, "--trees", defaults.trees_per_action)?,
+            max_tree_depth: usize_option(learn_args, "--max-depth", defaults.max_tree_depth)?,
+            min_samples_leaf: usize_option(
+                learn_args,
+                "--min-samples-leaf",
+                defaults.min_samples_leaf,
+            )?,
+            features_per_split: usize_option(
+                learn_args,
+                "--features-per-split",
+                defaults.features_per_split,
+            )?,
+            max_thresholds_per_feature: usize_option(
+                learn_args,
+                "--max-thresholds",
+                defaults.max_thresholds_per_feature,
+            )?,
+            discount: f64_option(learn_args, "--discount", f64::from(defaults.discount))? as f32,
+            seed: u64_option(learn_args, "--seed", defaults.seed)?,
+            bootstrap: defaults.bootstrap,
+            categorical_features,
+        },
+    };
+    let model = OptionValueModel::fit_batch(&batch, &config)?;
+    let query_sample = usize_option(learn_args, "--query-sample", 0)?;
+    let query = batch
+        .samples
+        .get(query_sample)
+        .ok_or("--query-sample is outside the option-value batch")?;
+    let query_side = option(learn_args, "--query-side").unwrap_or_else(|| "state".into());
+    let query_state = match query_side.as_str() {
+        "state" => &query.state,
+        "next-state" => &query.next_state,
+        _ => return Err("--query-side must be state or next-state".into()),
+    };
+    let ranking = model.rank_options(query_state)?;
+    if let Some(parent) = model_output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let bytes = model.artifact_bytes(&batch, &config)?;
+    fs::write(&model_output, &bytes)?;
+    let store_path = option(learn_args, "--artifact-store")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            model_output
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("content")
+        });
+    let model_content_blob =
+        ContentStore::initialize(&store_path)?.put_bytes(&bytes, ContentKind::Model)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "dusklight-option-value-ranking/v1",
+            "input": input,
+            "feature_schema": batch.feature_schema,
+            "objective_sha256": batch.objective_sha256,
+            "option_action_schema": batch.option_action_schema,
+            "samples": batch.samples.len(),
+            "episode_groups": batch.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+            "config": config,
+            "query_sample": query_sample,
+            "query_side": query_side,
+            "model_output": model_output,
+            "model_artifact_store": store_path,
+            "model_content_blob": model_content_blob,
+            "ranking": ranking,
+            "control_hierarchy": "option_value_then_deterministic_realization",
+            "raw_frame_policy": "last_mile_tape_golf_only",
+            "promotion_authority": false,
+        }))?
+    );
+    Ok(())
+}
 
 pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let component = option(learn_args, "--component")

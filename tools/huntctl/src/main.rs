@@ -878,6 +878,7 @@ fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("ensemble-q") => cli::learning::command_ensemble_q(&args[1..]),
         Some("prioritized-q") => cli::learning::command_prioritized_q(&args[1..]),
         Some("ablate-q") => cli::learning::command_q_ablation(&args[1..]),
+        Some("option-values") => cli::learning::command_option_values(&args[1..]),
         Some("diff-episodes") => {
             let learn_args = &args[1..];
             let success_trace_path = required_path(learn_args, "--success-trace")?;
@@ -4629,6 +4630,9 @@ fn print_usage() {
     );
     eprintln!(
         "  huntctl learn ablate-q --component dueling-heads|n-step|distributional-values|noisy-exploration (--dataset DATASET.json [--split validation|test|withheld] | --training TRAIN.dtcz --held-out TEST.dtcz) --output REPORT.json [--epochs N] [--hidden-width N] [--learning-rate R] [--discount D] [--target-sync-steps N] [--gradient-clip G] [--seed N] [--n-step N] [--distribution-atoms N] [--distribution-min V] [--distribution-max V] [--noisy-stddev V]"
+    );
+    eprintln!(
+        "  huntctl learn option-values --input BATCH.json --model-output MODEL.json [--artifact-store ROOT] [--query-sample N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--min-samples-leaf N] [--features-per-split N] [--max-thresholds N] [--categorical-feature INDEX] [--discount D] [--seed N]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
