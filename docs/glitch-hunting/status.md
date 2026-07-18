@@ -106,6 +106,9 @@ roadmap documents describe the larger target.
 - Semantic novelty proposal signals v1 are capped, componentized, and retain
   their raw novelty assessment. They may order proposals but explicitly have no
   native-score, proof, or promotion authority.
+- Symptom cluster index v1 groups repeated crash, hang, OOB, corruption, and
+  event-sequence discoveries by stable semantic context. Volatile addresses and
+  process IDs are excluded; counts grow while retained examples stay bounded.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

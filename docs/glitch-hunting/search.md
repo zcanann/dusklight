@@ -483,6 +483,15 @@ fixed by the constructor: proposal ordering is true, while native leaderboard,
 proof, and promotion authority are false. The normal lexicographic evaluator
 therefore remains the only path from a proposed artifact to a proved result.
 
+`dusklight-symptom-cluster-index/v1` suppresses repeated discovery symptoms
+within the same scenario/fidelity partition. Stable keys cover crashes, hangs,
+OOB routes, corruptions, and event sequences using terminal semantic state, a
+bounded event tail, portable contact identity, and terminal boundary identity.
+Crash keys use bounded module/symbol frames and a category, never volatile
+addresses or process IDs. A cluster retains one representative, occurrence and
+generation counts, and at most eight distinct example artifacts, so repeated
+hits remain measurable without growing an unbounded duplicate directory.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots
