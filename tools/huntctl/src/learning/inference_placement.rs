@@ -215,7 +215,7 @@ fn summarize(
         values.sort_unstable();
     }
     let median_index = samples.len() / 2;
-    let p95_index = (samples.len() - 1) * 95 / 100;
+    let p95_index = samples.len().saturating_mul(95).div_ceil(100) - 1;
     Ok(PlacementTimingSummary {
         placement,
         batch_rows,
@@ -260,7 +260,7 @@ fn validate_inputs(
             || (sample.placement == InferencePlacement::RustControlPlane
                 && sample.ipc_round_trip_ns != 0)
             || (sample.placement == InferencePlacement::NativeWorker
-                && sample.ipc_round_trip_ns == 0)
+                && (sample.serialization_ns == 0 || sample.ipc_round_trip_ns == 0))
         {
             return Err(InferencePlacementError::new(
                 "inference timing sample is invalid or duplicated",
@@ -379,6 +379,22 @@ mod tests {
                 Digest([1; 32]),
                 Digest([2; 32]),
                 &incomplete,
+                config()
+            )
+            .is_err()
+        );
+
+        let mut missing_serialization = samples(true);
+        for sample in &mut missing_serialization {
+            if sample.placement == InferencePlacement::NativeWorker {
+                sample.serialization_ns = 0;
+            }
+        }
+        assert!(
+            InferencePlacementReport::compare(
+                Digest([1; 32]),
+                Digest([2; 32]),
+                &missing_serialization,
                 config()
             )
             .is_err()
