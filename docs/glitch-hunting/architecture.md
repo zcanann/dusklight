@@ -45,6 +45,16 @@ ticks.
 Rust should not call into C++ once per tick. Search policies generate or mutate
 compact controller programs and tapes, then submit batches.
 
+The same ownership boundary applies to learned models.
+`dusklight-model-generation-request/v1` is issued by Rust for one immutable
+dataset generation and binds its feature, action, and objective schemas. A
+native Rust trainer or an offline Python/PyTorch job may consume that request
+and return frozen model bytes, but the trainer is only an immutable batch
+transform: it cannot launch workers, mutate corpora, schedule evaluation, or
+promote a model, and it is never a per-frame dependency. Returned bytes are
+sealed as a candidate-only result bound to the exact request and producer;
+native evaluation and replay remain Rust-owned promotion gates.
+
 ### C++ worker
 
 - owns the game process and calls the game loop directly;

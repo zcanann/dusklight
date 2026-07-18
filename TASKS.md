@@ -877,8 +877,8 @@ simple random baseline.
 
 ### P1: model ownership and deployment
 
-- [ ] Keep worker orchestration, corpora, scheduling, and promotion in Rust.
-- [ ] Permit Python/PyTorch as an offline trainer between generations; it is not
+- [x] Keep worker orchestration, corpora, scheduling, and promotion in Rust.
+- [x] Permit Python/PyTorch as an offline trainer between generations; it is not
   a per-frame or process-orchestration dependency.
 - [ ] Export inference artifacts through ONNX or another frozen, versioned format
   for Rust/C++ batch inference.
