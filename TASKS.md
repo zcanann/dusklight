@@ -1,1292 +1,287 @@
-# Serious glitch-hunting framework backlog
+# Core automation harness backlog
 
-This is the implementation backlog for a trustworthy, deliberately scoped
-Twilight Princess glitch-reproduction toolkit. The near-term goal is to prove a
-small human-selected benchmark set, not to replicate Skybook wholesale or build
-an autonomous research lab for every known glitch.
+This is the active queue for making Dusklight a trustworthy harness for
+controlling agents, expressing objectives, querying game state, collecting
+learning evidence, and narrowing proposals into proved winners.
 
-The checked-in route tree remains structurally simple: segments have segments
-as children, and alternative attempts are siblings. Goals, model scores,
-novelty, and proof are metadata attached to a segment or run. Search results do
-not become route history until explicitly promoted.
+Cheap objective tests are the primary development targets. Reaching a point,
+talking to an NPC, picking up a rock, or triggering a door is valuable when it
+proves the complete harness. Glitch reproduction is not privileged over these
+tests. Ambitious research and exhaustive coverage live in
+[`TASKS_DEFERRED.md`](TASKS_DEFERRED.md) and are not active obligations.
 
-## How to use this file
+## Queue rules
 
-- `[x]` means the foundation exists, not necessarily that it has reached its
-  final performance or fidelity target.
-- `[ ]` under **Core** is implementable work in the active queue.
-- **Selected-benchmark** work begins only after a human chooses the page and
-  agrees that its proof is worth the implementation cost.
-- **Reach** records optional research directions, not active obligations.
-- **Won't-do (current scope)** requires an explicit scope decision and a
-  demonstrated need before implementation.
-- P0/P1/P2 labels elsewhere are historical priority hints, subordinate to these
-  scope tiers.
-- Every serialized schema, query, model, scenario, tape, trace, and proof must
-  carry enough identity to reject incompatible reuse.
-- `docs/glitch-hunting/` explains the current architecture. This file owns the
-  cross-cutting work queue and should link to detailed designs as they emerge.
+- `[x]` means the stated boundary exists and has direct test evidence.
+- `[ ]` is active only when its prerequisite above it is satisfied.
+- Add observations, actions, and infrastructure for a checked-in objective,
+  not for hypothetical whole-game completeness.
+- Every result must retain exact scenario, build, objective, observation,
+  action, and settings identity.
+- A learner or reactive controller proposes. Only a realized absolute tape,
+  semantic objective proof, and independent cold replay can win.
+- Missing state remains explicitly missing. Native pointers and session-local
+  process IDs are diagnostics, never portable identity.
+- Ordinary playback and learning runs are read-only with respect to gameplay
+  state. Experimental writes remain outside the active harness.
+- Put architecture, status, evidence, and investigation notes under
+  `docs/glitch-hunting/`; keep this file as tasks only.
 
-## Non-negotiable invariants
+## 1. Immediate objective conformance suite
 
-- Normal playback and discovery are read-only with respect to gameplay state.
-  They may control the exclusive emulated PAD, logical pacing, presentation,
-  automation-owned artifacts, and process lifecycle. Game observations enter
-  automation through `const` access.
-- Observation support must not modify decompiled gameplay logic, data flow, or
-  object behavior merely to make private state convenient to inspect. Query
-  implementations live out of line under the fork-only automation boundary,
-  are conspicuously compile-time gated, and are absent from native/upstream
-  builds that do not opt into that boundary.
-- Native gameplay code is not an observation implementation surface. Do not add
-  query getters, query virtuals, instrumentation members, instrumentation state,
-  wrapper branches, or alternative code paths to gameplay classes. A native
-  header may expose only the smallest layout-neutral, default-off aperture
-  required by an out-of-line reader: a guarded forward declaration plus a
-  guarded `friend` declaration. Prefer no aperture at all when public `const`
-  state is sufficient.
-- Decompiled/gameplay translation units are not query implementation sites. If
-  no stable outer sampling boundary exists, the only permitted intrusion is a
-  minimal, unmistakably `#if DUSK_ENABLE_AUTOMATION_OBSERVERS`-guarded call to
-  a fork-owned read adapter; the surrounding native statements and control
-  flow must remain unchanged when the block is preprocessed away. Runtime
-  `if`, a generic PC-port pragma, or an `IF_DUSK` branch is not an observation
-  boundary.
-- Observation adapters may copy already-realized state only. They must not call
-  mutating or non-`const` gameplay helpers, trigger lazy initialization, fill a
-  cache, allocate from a game heap, advance RNG, issue a fresh collision query,
-  or otherwise cause game-visible work. Prefer public `const` access. If a fact
-  is truly inaccessible, a narrowly scoped compile-gated friend/read adapter is
-  the last resort and requires an explicit field-by-field audit plus A/B replay
-  parity evidence; changing gameplay code or layout is not an acceptable
-  shortcut.
-- `const` is necessary but not sufficient. Each invoked native helper must have
-  an audited, side-effect-free implementation; otherwise the adapter reads the
-  underlying field directly through its bounded friend aperture. Never assume a
-  method is safe merely because its signature is `const`, or because mutation is
-  not obvious at its call site.
-- Query code is instrumentation, never native gameplay implementation. Every
-  query-only include, friend declaration, adapter body, and sampling hook must
-  be visibly delimited by `DUSK_ENABLE_AUTOMATION_OBSERVERS`; compiling with the
-  option off must erase it. Even an observationally equivalent gameplay edit is
-  forbidden when an out-of-line read adapter can obtain the same fact.
-- Use the dedicated observer macro as the pragma-like boundary. Observation
-  apertures in native files must be explicitly labeled as Dusklight
-  observation-only code and enclosed by
-  `#if DUSK_ENABLE_AUTOMATION_OBSERVERS`; generic `TARGET_PC`, runtime flags, and
-  naming conventions do not qualify. With the gate off, native object layout,
-  virtual tables, initialization, control flow, and gameplay-visible work must
-  be identical to the upstream path.
-- Experimental writes are a separate compile-time-disabled intervention
-  capability with explicit runtime opt-in and an unavoidable mutation audit.
-  An intervention result is never represented as ordinary TAS proof.
-- Logical simulation ticks, never wall time, determine input, reward, events,
-  objectives, replay, and score.
-- A learned or reactive policy is only a proposal generator. Promotion requires
-  a realized absolute input tape, exact predicate proof, and cold deterministic
-  replay with no policy in the loop.
-- Headful, hidden-headful, and headless execution must preserve game-visible
-  simulation. Rendering work may only be removed after parity evidence proves
-  it irrelevant.
-- An identical build, scenario, and absolute tape must produce an identical
-  logical result on every run. Any disagreement is a framework determinism bug
-  requiring first-divergence investigation; it is never a reason to mine a
-  supposedly more robust tape, add timing slack, or weaken the proof.
-- A faster local segment does not automatically dominate a slower one with a
-  different RNG state, actor state, loader state, or downstream opportunity.
-- Native pointers and process-local IDs may be diagnostics, but they are not
-  portable identity.
-- Missing observations stay explicitly missing. They must never silently
-  become zero, nearest-actor fallback, or a stale value.
-- The unit of evidence is an episode or intervention, not a collection of
-  correlated frames presented as independent samples.
+- [ ] Define a small versioned suite manifest binding each case to its stage or
+  process boot, scenario fixture, objective program, required query facts,
+  controller/tape seed, time budget, and expected terminal class.
+- [ ] Check in a **stage-ready** case that boots directly into a map and proves
+  the declared player/location readiness condition without controller input.
+- [ ] Check in a **reach-point** case that moves Link into a bounded region and
+  proves position plus stability for several logical ticks.
+- [ ] Check in a **talk-to-NPC** case that selects one placed NPC, approaches it,
+  presses the interaction input, and proves the expected event/dialogue edge.
+- [ ] Check in a **pick-up-object** case that selects one placed carryable
+  object, approaches it, presses the interaction input, and proves Link owns or
+  carries that exact object.
+- [ ] Add one ordinary negative case for each objective so a nearby position,
+  wrong NPC, missed interaction, or wrong object cannot satisfy the oracle.
+- [ ] Run every case from its declared boot at least twice and require identical
+  terminal class, first-hit tick, realized tape, and selected boundary facts.
+- [ ] Emit one machine-readable suite report with pass, objective miss,
+  unsupported observation, capability mismatch, timeout, crash, and
+  nondeterminism as distinct outcomes.
+- [ ] Make the suite runnable with one documented `huntctl` command on macOS.
 
-## Existing foundation
+**Acceptance:** the four positive cases and their negative controls run through
+the same public harness path. No case relies on a debug memory write, a manual
+mid-run action, a filename convention, or visual-only judgment.
 
-- [x] Exact four-port `DUSKTAPE` codec, exclusive input ownership, recording,
-  deterministic tape/controller handoff, and realized-tape output.
-- [x] Compact TAS and controller DSLs, including timed layers, stick curves,
-  coordinate seek, actor seek, button overlays, and additive composition.
-- [x] Fixed-step logical clock, unpaced execution, hidden windowed fast-forward,
-  null-renderer execution, and retained-frame live handoff.
-- [x] Versioned native bootstrap worker and Rust worker pool supervision.
-- [x] Direct `--stage STAGE,ROOM,POINT,LAYER` process launch, optionally
-  combined with `--load-save SLOT`, plus first-class process/stage boot origins
-  in `DUSKTAPE` v3.
-- [x] Content-addressed corpus and route artifacts with SHA-256 verification.
-- [x] Authored read-only predicates, milestone evidence, boundary fingerprints,
-  and segment-attached goals/proofs.
-- [x] Route segment graph, human child recording, playback, thumbnails, draft
-  promotion, and Git-backed topology editing.
-- [x] Bounded actor catalog and exact placed-actor selectors.
-- [x] Immutable gameplay trace v1 decoding plus the initial Trace v2
-  channel-directory writer/decoder, transition extraction, deterministic tree
-  FQI, behavior archive, structured search, Q proposal evaluation, and cold
-  replay.
-- [x] Safe Eye Shredder neighboring-memory model and name-entry instrumentation.
+## 2. Agent execution and control
 
-These are foundations rather than completion claims. Known gaps include
-asynchronous timing, complete RNG coverage, engine-session worker commands,
-portable reset/checkpoints, canonical state hashes, collision/contact
-observations, general actor state, and a sufficiently Markov trace.
+- [x] Preserve exact four-port controller state in canonical `DUSKTAPE`, with
+  exclusive input ownership and a realized-tape output boundary.
+- [x] Support process boot and explicit stage/room/point/layer boot, including
+  an optional named save/loadout fixture and a readiness gate before tick zero.
+- [x] Compile bounded static and reactive controller programs while retaining
+  an ordinary absolute tape as replay authority.
+- [ ] Define one run request that binds the executable, game data, scenario,
+  objective, observation view, action/controller schema, seed, logical-tick
+  budget, fidelity mode, and artifact destination.
+- [ ] Define one run result with typed terminal reason, objective evidence,
+  realized input, trace references, boundary fingerprint, timing counters, and
+  complete identity.
+- [ ] Route tape playback, reactive control, search evaluation, and learned
+  proposals through that same request/result boundary.
+- [ ] Give a controller a versioned pre-input observation and require one
+  bounded action response without granting it game-state mutation authority.
+- [ ] Enforce logical-tick budgets independently of host timeout; distinguish
+  cancellation, worker crash, protocol failure, objective miss, and hang.
+- [ ] Keep worker-pool scheduling deterministic for a fixed request sequence and
+  seed, including stable result ordering independent of process completion.
+- [ ] Retain partial artifacts after timeout or crash without treating them as
+  complete evidence.
 
-## Dependency order
+**Acceptance:** a random agent, a scripted controller, and a learned proposer
+can execute the same objective contract, and each successful episode produces
+an independently replayable tape.
 
-```text
-determinism + identity
-        |
-        +--> persistent scenario/reset/checkpoint execution
-        |
-        +--> typed world/query toolbox --> trace v2 --> counterfactual corpus
-                                      |                   |
-                                      +--> goals/oracles  +--> FQI/CQL/IQL/DDQN
-                                      |                   |
-                                      +--> option actions +--> planning/search
-                                                          |
-                                      proof + cold replay <-+
-                                                          |
-                                      route graph / Skybook benchmarks
-```
+## 3. Objectives, predicates, and terminal semantics
 
-The query toolbox, option actions, and corpus are not throwaway RL scaffolding.
-They remain useful for manual TAS work, bounded search, debugging, and future
-algorithms. They should grow vertically from selected benchmarks rather than
-horizontally toward imagined whole-game completeness.
+- [x] Compile a versioned predicate language with Boolean composition,
+  comparisons, ranges, regions, stability, sequences, exact actor selectors,
+  flags, events, and named value projections.
+- [x] Evaluate objective facts at one immutable post-simulation boundary and
+  retain first-hit evidence plus objective progress in the gameplay trace.
+- [ ] Add typed facts required by the conformance suite for interaction
+  availability, dialogue/event start, carried/held actor identity, and object
+  ownership changes.
+- [ ] Define objective programs separately from reward shaping and proposer
+  scores; only objective truth determines success.
+- [ ] Require each objective to declare its necessary observation families and
+  fail as unsupported when a family is unavailable or truncated.
+- [ ] Return stable terminal classes for reached, exhausted, impossible,
+  unsupported, timeout, crash, hang, target-lost, and nondeterministic.
+- [ ] Add an inspection command that prints the source objective, compiled
+  identity, required facts, current progress, first-hit boundary, and missing
+  evidence in human-readable form.
+- [ ] Add truth-table and native/offline parity tests for every fact used by the
+  four conformance objectives.
 
-## 1. Run identity, determinism, and fidelity
+**Acceptance:** objective evaluation is deterministic, inspectable, independent
+of learner score, and cannot turn missing data into success.
 
-### P0: complete run identity
+## 4. Read-only state query boundary
 
-- [ ] Include the Dusklight commit and dirty-tree digest, Aurora commit,
-  compiler, configuration, feature switches, target architecture, protocol
-  capabilities, and fidelity profile in every run artifact.
-- [ ] Hash the DVD/game-data inputs, region, language assets, scenario fixture,
-  predicate program, action schema, observation schema, and relevant settings.
-- [x] Define compatibility rules separately for replay, trace merging, model
+- [ ] Define a versioned typed fact schema shared by live queries, trace
+  channels, objective evaluation, observation views, and offline inspection.
+- [ ] Define query status as present, absent, unavailable, truncated, stale, or
+  invalid; include source phase and schema identity in every response.
+- [ ] Surface the minimum player facts for the conformance suite: stage/room,
+  position and prior position, velocity, facing, procedure/action state,
+  interaction state, event/dialogue state, and carried actor identity.
+- [ ] Surface bounded placed-actor facts: portable placement identity, type,
+  room, transform, procedure/status, interaction eligibility, carry ownership,
+  and target/parent/owner relationships needed by the selected objective.
+- [ ] Provide exact placed selectors and explicit target loss; never silently
+  fall back to a nearest actor when an exact target disappears.
+- [ ] Add only the local collision/contact and static placement facts needed to
+  navigate to the NPC and carryable object.
+- [ ] Compile objective-specific observation views with stable feature order,
+  explicit masks, units, ranges, categorical domains, and a content digest.
+- [ ] Report per-query and per-view capture cost, bounded result capacity, and
+  truncation.
+- [ ] Keep query adapters out of gameplay implementation files except for the
+  smallest compile-gated read aperture; audit every invoked native helper as
+  side-effect free.
+- [ ] Prove observer-off builds erase the query boundary and observer-on A/B
+  runs preserve input, RNG, events, objective result, and selected state.
+
+**Acceptance:** the conformance objectives use the same typed facts online and
+offline, with no gameplay-visible write, allocation surprise, or guessed value.
+
+## 5. Episode evidence and learning loop
+
+- [ ] Define one immutable episode artifact binding run request/result,
+  objective, realized tape, observations, actions, rewards, terminal reason,
+  build/scenario identity, seed, worker, and lineage.
+- [ ] Align every transition as pre-input state, consumed action, option
+  duration, post-simulation state, objective/reward evidence, and terminal or
+  truncation reason.
+- [ ] Store episodes content-addressably and deduplicate exact repeats without
+  erasing repetition evidence.
+- [ ] Split train/validation/test data by episode and starting boundary, never
+  by adjacent frames; fit normalization on training data only.
+- [ ] Collect explicit failure and near-miss episodes for each conformance
+  objective instead of training only on successful demonstrations.
+- [ ] Publish state, action, procedure, spatial-phase, success, and missingness
+  coverage before training.
+- [x] Provide deterministic nearest-neighbor, tabular, and tree-FQI baselines
+  over immutable transition batches.
+- [ ] Define one learner adapter that consumes a frozen dataset generation and
+  emits a versioned model plus bounded proposal requests; it cannot launch the
+  game or promote artifacts.
+- [ ] Bind model identity to feature/action/objective schemas, normalization,
+  code/data builds, corpus generation, seed, optimizer configuration, and
+  exact model bytes.
+- [ ] Evaluate learned proposals on isolated native episodes that cannot enter
+  training until the evaluation generation closes.
+- [ ] Stop or fall back to scripted/structured proposals when coverage,
+  calibration, determinism, or supported-action checks fail.
+
+**Acceptance:** one baseline learner can improve proposal ordering for at least
+one trivial objective without owning execution or promotion, and the comparison
+is reproducible from immutable artifacts.
+
+## 6. Proposal search and narrowing winners
+
+- [x] Support exact tape slicing/layering/diffing, deletion minimization,
+  coordinate and timing golf, structured tactic mutation, beam search, CEM,
+  CMA-ES, and Bayesian bounded search.
+- [x] Deduplicate candidates before native evaluation and attribute simulator
+  budget, improvements, misses, crashes, and duplicates to each proposer.
+- [ ] Define one candidate envelope for scripted, random, structured-search,
+  archive, and learned proposals with exact parent, objective, action schema,
+  seed, and proposer identity.
+- [ ] Rank candidates lexicographically by objective feasibility, progress,
+  first-hit tick, tape length/input complexity, measured risk, and compatible
+  boundary state; unknown risk must not become zero.
+- [ ] Preserve several non-dominated winners when they end in meaningfully
+  different RNG, actor, loader, contact, or downstream boundary states.
+- [ ] Minimize a winner only while preserving objective evidence, boot origin,
+  fidelity, and terminal boundary class.
+- [ ] Require repeated cold replay of the realized tape with no controller or
+  model in the loop before promotion.
+- [ ] Keep contradictory replays and quarantine the candidate/build/scenario
+  combination instead of reporting a stability percentage.
+- [ ] Attach a promoted winner to route history only through an explicit human
+  action; unpromoted results remain disposable build artifacts.
+- [ ] Emit a compact tournament report comparing wall time, simulator ticks,
+  episodes, objective hits, unique useful boundaries, cold-replay passes, and
+  best proved tape per proposer.
+
+**Acceptance:** several proposal sources compete under the same budget and
+native objective, and the reported winner is a minimized, repeated,
+cold-replayable tape rather than a model output.
+
+## 7. Identity and deterministic evidence
+
+- [ ] Materialize complete portable identity in every run, episode, trace,
+  dataset, model, candidate, comparison, and promotion artifact.
+- [ ] Hash executable/Aurora revisions and dirty state; compiler,
+  configuration, features, architecture, protocol capabilities, fidelity;
+  game-data/region/language; scenario; objective; action/observation schemas;
+  and simulation-relevant settings.
+- [x] Define operation-specific compatibility for replay, trace merge, model
   training, checkpoint restore, and cross-build comparison.
-- [ ] Make every CLI and workbench action reject mismatched identity instead of
-  implicitly using whatever binary, disc, or configured path is available.
-- [x] Add a human-readable identity diff explaining every rejection through
-  the explicit `huntctl identity compare` compatibility boundary.
-
-### P0: first-divergence tooling
-
-- [ ] Define canonical state-hash tiers: core game state, route boundary,
-  extended gameplay state, and full supported checkpoint state.
-- [ ] Hash normalized values rather than padding, pointers, allocator addresses,
-  or unordered container traversal.
-- [ ] Store periodic hashes and allow dense hashes around a suspected desync.
-- [ ] Build a replay comparator that binary-searches to the first divergent tick
-  and prints a typed field/event diff.
-- [ ] Compare realtime headful, unpaced headful, hidden-headful fast-forward,
-  and null-renderer runs over a shared conformance corpus.
-- [ ] Automatically quarantine a tape/scenario/build combination after any
-  repeated-run disagreement and retain all attempts for divergence analysis.
-- [ ] Classify and trace the nondeterministic source—input, logical time, RNG,
-  asynchronous completion, uninitialized state, process leakage, floating
-  point, rendering traversal, or observation side effect—before search resumes.
-- [ ] Reject “stability rate,” extra neutral frames, repeated button presses,
-  reactive waits, or a different candidate as substitutes for fixing identical
-  absolute-tape replay.
-
-### Core: deterministic time for selected benchmarks
-
-- [ ] Inventory the game-visible clocks exercised by clean boot, stage boot,
-  transitions, and the selected benchmark set.
-- [ ] Drive `OSAlarm`, `__OSGetSystemTime`, and all simulation-visible timers
-  encountered there from the logical tick model.
-- [ ] Make shader compilation and nondeterministic host I/O pause simulation
-  without consuming PAD reads, RNG draws, events, or score ticks.
-- [ ] Capture and control resource-loader completion ordering where it affects
-  a selected proof.
-
-### Reach: exhaustive asynchronous-system audit
-
-- [ ] Audit every audio, movie, job, streaming, renderer, and host-I/O path for
-  game-visible ordering across the entire game.
-- [ ] Record external completion events as replay inputs only where a selected
-  benchmark demonstrates that they matter.
-
-### Core: objective-relevant RNG coverage
-
-- [ ] Inventory random streams exercised by the selected benchmark and its
-  clean/stage-boot proof path.
-- [ ] Add versioned, read-only per-tick snapshots or call counters for relevant
-  streams without advancing them.
-- [ ] Include objective-relevant RNG in boundary/archive identity without
-  pretending it is the complete process state.
-- [ ] Add tests proving capture is allocation-free and observationally inert.
-
-### Reach: whole-game RNG attribution
-
-- [ ] Inventory actor-local `cM_rnd_c`, JMath, Z2, particle/effect, static
-  manager, and subsystem-specific RNGs as benchmarks require them.
-- [ ] Attribute relevant RNG draws to stream and, where practical, call site or
-  subsystem.
-
-### Selected-benchmark: fidelity declarations
-
-- [ ] Build a machine-readable matrix for native safety fixes, `AVOID_UB`, GC
-  layout emulation, relative/absolute MEM1 address behavior, floating-point
-  behavior, GX traversal, cache behavior, and console-only quirks.
-- [ ] Let each benchmark declare required fidelity capabilities.
-- [ ] Classify failures as unsupported fidelity rather than ordinary goal misses.
-- [ ] Maintain an emulator/console transfer case only for a selected benchmark
-  the native port cannot faithfully render or execute.
-
-**Acceptance:** the same conformance tapes agree tick-for-tick across supported
-execution modes, or terminate with a typed, localized capability/divergence
-report. A same-mode repeated-run disagreement blocks the affected framework
-configuration until explained and fixed. No search result is ranked when
-determinism evidence is contradictory.
-
-## 2. Persistent execution, reset, and checkpoint acceleration
-
-### Reach: engine-session worker and batch throughput
-
-Process-per-run execution is acceptable for the small pilot. Resume this only
-if startup/reset cost is measured as the limiting factor.
-
-- [ ] Extend the persistent worker beyond `hello`/`ping`/`shutdown` to own a
-  loaded engine session.
-- [ ] Implement versioned binary or shared-file commands for scenario load,
-  tape/program upload, batch run, reset, trace configuration, screenshot,
-  checkpoint, and shutdown.
-- [ ] Upload controller data once per batch; never send one IPC request per tick.
-- [ ] Return structured terminal reasons, predicate results, events, hashes,
-  performance counters, crashes, and artifact references.
-- [ ] Add watchdog heartbeat, hard tick/memory/output bounds, crash isolation,
-  and automatic worker replacement.
-
-### P0: scenario fixtures
-
-The checked-in process-boot tapes are not yet robust or broad enough to serve
-as the validation harness for every map-local capability in this backlog.
-Direct stage boot is therefore a first-class test origin: it should make it
-cheap to author a short tape for an arbitrary map and goal—walk toward a
-target, exercise an actor, cross a trigger, test collision, or inspect a
-transition—without first extending a fragile title/menu/route prefix.
-
-- [x] Give authored tapes/programs an explicit, versioned boot origin:
-  `process` for normal executable boot or `stage` for a targeted fixture start.
-  Do not silently change the meaning of existing raw `DUSKTAPE` files; use a
-  versioned tape launch envelope/manifest if the input codec itself should
-  remain pure controller data.
-- [x] Define the initial `stage` boot descriptor as stage ID, room, spawn/point,
-  and layer, with optional save-slot or named loadout/fixture identity. Map the
-  first implementation onto Dusklight's existing `--stage` and `--load-save`
-  launch options rather than inventing a second stage loader.
-- [x] Bind boot origin and every stage/loadout field into scenario identity,
-  boundary fingerprints, corpus entries, traces, results, and proofs. Reject a
-  tape when its declared boot origin was not actually established.
-- [x] Start tape tick zero only after the declared stage fixture reaches its
-  explicit readiness predicate. Loading, shader work, and host-only waits must
-  not consume tape input or become timing slack in the authored program.
-- [x] Let `huntctl` compile, run, record, minimize, and inspect stage-boot tapes
-  directly so a test author can pair any targeted map start with an arbitrary
-  predicate/goal and promote the realized tape like any other test artifact.
-- [x] Define canonical, versioned fixtures for save data, stage, room, layer, entrance, form,
-  inventory, equipment, flags, health, RNG, video mode, and settings.
-- [x] Separate readiness from replay: fixture loading may wait before tick zero;
-  tape playback may only assert readiness and fail.
-- [x] Build a stage/room smoke catalog with expected initial fingerprints.
-- [ ] Detect durable leakage across runs: save data, memory card, globals,
-  managers, caches, particles, audio, loader queues, and temporary files.
-- [x] Keep clean-boot and fixture-start leaderboards distinct. Population,
-  results, evaluation plans/reports, and leaderboard rows carry one exact boot
-  origin; population construction and ranking reject mixed origins.
-
-### Reach: checkpoint acceleration
-
-- [ ] Keep exact prefix replay as the portable baseline and report its cost.
-- [ ] Add explicitly serialized game-state checkpoints one subsystem at a time,
-  including pointer fixups and reconstruction rules.
-- [ ] Bind each checkpoint to build, scenario, parent tape, tick, full supported
-  state hash, thread/resource state, and a validation window.
-- [ ] Quarantine a checkpoint permanently after any validation mismatch.
-- [ ] Support `play from parent`, `run suffix from parent`, and `replay visually`
-  through the fastest validated tier while retaining the absolute tape.
-
-### Won't-do (current scope): OS process snapshots and forkservers
-
-- Reconsider process snapshots or a platform forkserver only after a selected
-  benchmark proves serialized checkpoints and prefix replay insufficient.
-
-### Reach: rendering and throughput optimization
-
-- [ ] Measure cost by simulation, GX traversal, backend rendering, shader work,
-  resource I/O, tracing, hashing, IPC, and process reset.
-- [ ] Remove the hidden SDL/taskbar surface from true headless operation if the
-  backend can drain GX without it.
-- [ ] Preserve a presentation-capable hidden-headful path for instant live
-  handoff and screenshots.
-- [ ] Precompile/warm shader variants with visible host-only progress while
-  simulation remains frozen.
-- [ ] Add per-capability throughput benchmarks in deterministic candidate-ticks
-  per second, not rendered FPS.
-
-**Acceptance:** one warm worker evaluates many suffix candidates without process
-restart or state leakage; every accelerated checkpoint reproduces a validation
-window and the final candidate still passes a clean-process absolute replay.
-
-## 3. The read-only game query toolbox
-
-The toolbox grows from selected benchmark needs. The lists below are a
-capability catalog, not a mandate to expose every field or subsystem. A
-human-selected benchmark promotes only the minimum facts it needs into Core.
-
-Use three layers:
-
-1. **World inventory:** complete, relatively static map and placement data,
-   captured or indexed once per game-data identity.
-2. **Live query service:** bounded native queries over current game state,
-   actors, contacts, geometry, flags, UI, and subsystems.
-3. **Observation view:** a compact objective-specific tensor/table compiled
-   from queries for a controller, search job, or model.
-
-Every rock, tree, bush, actor placement, trigger, path, and collision polygon
-should eventually be discoverable through the first two layers. They should not
-all be copied into every per-frame neural observation.
-
-### P0: schema and query foundations
-
-- [x] Migrate the legacy milestone, reactive-controller, and actor-catalog
-  reads out of `m_Do_main.cpp` and into the compile-gated observer boundary.
-  The legacy non-`const` `getRunEventName()` observation is gone; milestone
-  result and boundary-fingerprint v2 encode its absence explicitly.
-- [ ] Move the remaining name-entry and file-select private-state capture out of
-  their gameplay translation units. Prefer a narrow compile-gated friend/read
-  adapter implemented in `dusk/automation`; leave at most a side-effect-free
-  sampling call at the native phase boundary. Do not inject convenience query
-  methods into gameplay classes.
-- [x] Put the general milestone, controller, catalog, and Trace v2 native query
-  adapters in the fork-owned `dusk/automation` boundary behind the single
-  default-off `DUSK_ENABLE_AUTOMATION_OBSERVERS` compile-time gate.
-- [x] Add a build/CI check that fails when observer code, friend declarations,
-  or query-only includes leak into an ungated upstream/native configuration.
-- [ ] Maintain an access manifest for every surfaced field: declaring type,
-  read expression, phase, portability, access mechanism, and side-effect audit.
-- [ ] Require an exception record before adding any friend/read adapter for
-  private state, including why an out-of-line public/const observation cannot
-  provide the fact. Never alter object layout, virtual dispatch, initialization,
-  or gameplay control flow for observation.
-- [ ] Standardize and statically enforce an explicit observation-only aperture
-  marker around every native forward/friend declaration. Reject inline adapter
-  bodies, query convenience methods, query state, and any aperture not erased by
-  `DUSK_ENABLE_AUTOMATION_OBSERVERS=OFF`.
-- [ ] Add observer-off/on ABI conformance checks for every native class touched
-  by a friend aperture: equal `sizeof`, `alignof`, relevant `offsetof` values,
-  vtable shape, and construction/destruction behavior. A friend declaration
-  should be the only permitted difference and must remain layout-neutral.
-- [ ] Define a stable typed fact schema with field IDs, scalar/vector/enum/bitset
-  types, units, coordinate spaces, missingness, sampling phase, and version.
-- [ ] Define audited observation phases at meaningful engine boundaries such as
-  pre-input, pre-actor execution, post-movement/pre-collision, post-collision,
-  post-event, and post-simulation. Only expose phases backed by a stable native
-  insertion point.
-- [ ] Separate portable facts from diagnostic facts such as addresses.
-- [ ] Add a native read-only adapter registry for player, actors, managers,
-  collision, event, save, UI, loader, and map data.
-- [ ] Audit every adapter for hidden mutation, lazy initialization, game-heap
-  allocation, cache updates, or collision helpers with side effects.
-- [ ] Run observer-on versus observer-off A/B conformance over identical tapes;
-  require identical canonical state hashes, RNG snapshots/counters, events,
-  terminal state, and replay proof. Treat any difference as a framework bug.
-- [x] Split write-capable original-console fidelity models from read-only
-  observation behind the separate default-off
-  `DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS` gate. Search builds force it off;
-  runtime opt-in remains mandatory when it is compiled in.
-- [ ] Return immutable snapshots; never expose a live pointer over IPC.
-- [ ] Support bounded selection, filtering, sorting, nearest-K, aggregation,
-  spatial predicates, and explicit truncation metadata.
-- [x] Implement the offline static-geometry slice of that contract: mandatory
-  room scope, pre-ranking exact trigger/destination filters, stable nearest-K,
-  AABB broad-phase and finite double-sided rays, 1..=256 result bounds, explicit
-  truncation, and node/triangle accounting. This is not the live query service.
-- [ ] Compile declarative query specifications ahead of a run. Do not parse a
-  general query language or allocate dynamically in the per-tick hot path.
-- [ ] Hash the exact query/observation specification into traces and models.
-- [x] Provide offline re-featurization so new model views can be produced from
-  sufficiently rich raw traces without rerunning the game. The first compiled
-  view is the objective-authenticated `movement-state/v2` Ordon exit view.
-- [x] Define `movement-state/v2` around Trace v2 presence/status semantics so
-  it never maps an unavailable legacy field (currently event-name hash) to
-  zero or merges it under the legacy movement-v1 schema digest. Semantic
-  absence is represented by authenticated mask fields; unavailable and
-  truncated required channels are typed extraction failures.
-
-### Selected-benchmark catalog: player observation
-
-- [ ] Position, previous position, velocity, acceleration, forward speed,
-  facing, shape angle, movement angle, and camera-relative angle.
-- [ ] Actor/profile identity, form, procedure, subprocedure, mode flags, and
-  animation identity/frame/rate.
-- [ ] Action timers and phases for roll, jump, attack, item, damage, ledge,
-  crawl, climb, swim, Epona, wolf, and cutscene-controlled states.
-- [ ] Grounded/falling/swimming/climbing/crawling/riding, invulnerability,
-  knockback, target/lock-on, held/carried actor, and item-use state.
-- [ ] Health, magic, air, stamina-like meters, inventory/equipment, item slots,
-  and contextual action prompt.
-- [ ] Collision body/extents and the exact correction/displacement applied this
-  tick.
-- [ ] Normalized PAD consumed by the game plus a short configurable input
-  history window.
-
-### Selected-benchmark catalog: actor and object observation
-
-- [ ] Enumerate all live process groups with stable runtime generation handles.
-- [ ] Preserve placed identity using game-data digest, stage, room, actor type,
-  map set ID, parameters, and home transform.
-- [ ] Surface parent/child/owner/target/mount/carry relationships.
-- [ ] Surface transform, velocity, facing, scale, collision extents, health,
-  procedure/state, animation, timers, status, attention flags, and spawn/death
-  phase through typed common fields.
-- [ ] Allow actor-type-specific read-only adapters for important internal facts
-  without bloating every actor record.
-- [ ] Query by exact placed identity, stable runtime handle, symbolic type,
-  parameter mask, relationship, room, state, tag, and spatial relation.
-- [ ] Emit spawn, delete, damage, state-change, target-change, carried, mounted,
-  and contact events.
-- [ ] Replace the current fixed lowest-process-ID sampling behavior with explicit
-  deterministic query budgets and truncation semantics.
-
-### Selected-benchmark catalog: static world inventory
-
-- [ ] Parse or capture stage/room metadata, actor placements, paths, rails,
-  spawn points, exits, doors, triggers, switches, cameras, event placements,
-  collision meshes, water, void/death planes, and special surfaces.
-- [x] Add a bounded offline RARC/DZS/DZR/KCL/PLC inventory slice for F_SP103:
-  recognized placements, player spawns, SCLS exits, every addressable collision
-  prism, and collision-exit-to-SCLS trigger joins. Unknown chunks remain
-  enumerated; this does not claim paths, rails, regions, or events are decoded.
-- [x] Assign stable IDs to the implemented static records based on source
-  content digests and structural record location rather than runtime address.
-- [x] Preserve authored KCL source indices, heights, PLC material/code words,
-  reconstructed polygons/planes, and explicit degeneracy in a
-  content-addressed map artifact. Retail degeneracy is retained, never skipped.
-- [ ] Build spatial indices for nearest polygon, region containment, ray/sweep,
-  route/load trigger, ledge, clearance, and local neighborhood queries.
-- [x] Build the first content-addressed per-room spatial slice: canonical
-  median-AABB BVHs over every reconstructed KCL triangle, retained degeneracy
-  exclusions, nearest point queries, AABB neighborhood candidates, finite rays,
-  and exact load-trigger/destination filtering. Region, sweep, ledge, and
-  clearance semantics remain open.
-- [ ] Generate semantic tags where the game data provides them; keep inferred
-  tags explicitly marked as inferred.
-- [ ] Add an inspector that can answer “what is this object/polygon/trigger?”
-  from a world coordinate and show the source record.
-- [x] Add the collision-surface portion of that inspector through `huntctl world
-  query point|aabb|ray`, returning stable source identity, raw PLC facts,
-  geometry, distances/intersections, and optional SCLS trigger metadata.
-
-### Selected-benchmark catalog: collision and local geometry
-
-- [x] Replace Trace v2's provisional nearest-`SCENE_EXIT` actor-origin distance
-  before it is used by `movement-state/v2`. Decode the realized oriented exit
-  volume and destination, report inside/signed-distance/latch/commit state, and
-  retain the ingredients for stable placed identity; an actor origin kilometers
-  from its realized volume is not geometry. Scene-exit v2 and its old v1 decoder
-  are distinct wire contracts; movement-state/v1 rejects v2 rather than silently
-  reinterpreting it. This channel describes `SCENE_EXIT`/`SCENE_EXIT2` actors,
-  not every transition mechanism.
-- [x] Add the first read-only Link background-collision slice by copying the
-  already-resolved Acch ground/roof/water/wall caches, polygon/owner presence,
-  stored ground plane, and old-to-final frame displacement. This is not yet
-  actor/attack/push contact coverage or per-pass correction attribution.
-- [x] Resolve transition metadata from Link's already-cached collision polygons,
-  including exit ID, room SCLS destination, material/code, and stable polygon
-  identity. The checked `F_SP103` to `F_SP104` route is ground-polygon-driven;
-  its unrelated live `SCENE_EXIT` actor remains outside and points back into
-  `F_SP103`, so actor-volume telemetry must never stand in for this load zone.
-  Optional Trace v2 channel 10 copies all six bounded Acch surfaces, preserves
-  raw DZB/KCL codes and geometry indices, and joins prism 2217 to the
-  content-addressed room-1 KCL/PLC source without calling gameplay queries.
-- [ ] Join collision exit polygons to static triangle/region geometry so a
-  controller can optimize signed distance and approach direction before the
-  transition fires, without issuing a fresh gameplay collision query. The
-  offline inventory and per-room BVH now join and spatially query every
-  reconstructable F_SP103 KCL/PLC exit surface against same-room SCLS metadata.
-  The remaining work is compiling bounded static features into a task-local
-  controller/model observation rather than querying the game.
-- [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
-  subject IDs, polygon IDs, normals, penetration, relative velocity, material,
-  and begin/persist/end phase.
-- [ ] Record pre-correction position, proposed displacement, collision response,
-  and final position for Link and selected actors.
-- [ ] Identify which collision/correction pass produced each displacement so
-  within-tick ordering bugs are visible rather than collapsed into one final
-  position.
-- [ ] Provide bounded radial raycasts and shape casts at configurable heights.
-- [ ] Provide local height, slope, clearance, ledge/void distance, wall angle,
-  and load-zone plane features.
-- [ ] Build optional small local occupancy, height-field, or signed-distance
-  patches for models; identify their coordinate frame and resolution exactly.
-- [ ] Detect collision crossing, tunneling, NaN, excessive displacement, and
-  contradictory contact flags as events/oracles.
-
-### Selected-benchmark catalog: stage, event, transition, and save state
-
-- [ ] Current stage/room/layer/point, requested next stage, transition phase,
-  fade/loading state, spawn resolution, and relevant trigger identity.
-- [ ] Event identity, name, phase, staff/cutscene ownership, dialogue/message
-  state, camera ownership, and control-lock reason.
-- [ ] Room switches, event bits, temporary flags, item flags, dungeon state,
-  boss flags, save slots, death/revival, warp/Ooccoo, and memory-card state.
-- [ ] Provide named typed flag registries where known, while retaining raw
-  versioned bitsets for future reinterpretation.
-- [ ] Emit flag, event, dialogue, cutscene, transition-request, load-start, and
-  load-complete deltas.
-
-### Reach: UI and menu observation beyond selected benchmarks
-
-- [ ] Typed screen stack and modal ownership for title, file select, name entry,
-  pause, map, item wheel, collection, save, continue, and game-over flows.
-- [ ] Cursor/index, enabled options, transition animation, accepted/rejected
-  input, and menu-local timers.
-- [ ] Text-entry layout, backing bytes, modeled original offsets, and writes.
-- [ ] UI events suitable for exact boot/menu tape minimization without reactive
-  timing in the final proof.
-
-### Reach: resource, heap, and process observation
-
-- [ ] Resource/archive requests, ownership, queue state, completion events, and
-  game-visible load dependencies.
-- [ ] Actor/process counts by group/profile, slot exhaustion, create/delete
-  queues, and failed allocations.
-- [ ] Heap identities, capacity/high-water/failure events, allocation classes,
-  and GC-relative offsets where meaningful.
-- [ ] Bounded watchpoints for selected fields, guards, invariants, and original
-  layout models without making ordinary observation a gameplay write.
-- [ ] Allocation/free and process-create/delete events with heap, size,
-  alignment, caller, owning actor/process, result, and logical phase.
-- [ ] Thread/current-heap and DVD/ARAM/resource-transfer events for benchmarks
-  whose failure mechanism depends on scheduling or a null destination.
-- [ ] Crash, assertion, hang, deadlock suspicion, invalid handle, and memory
-  corruption artifacts with last-known events and inputs.
-
-### Reach: camera, rendering, audio, and effects observation
-
-- [ ] Camera transform, target, mode, owner, lock-on, clipping, and transition
-  state where it affects control or a glitch predicate.
-- [ ] Render/effect state needed for visual glitches, while keeping it out of
-  movement models unless explicitly requested.
-- [ ] Audio manager/music state for sound-manager, queueing, and silence bugs.
-- [ ] Particle/effect RNG and actor linkage where effects influence gameplay or
-  fidelity diagnosis.
-
-### Reach: general-purpose toolbox UX and APIs
-
-- [ ] `huntctl inspect scene`, `inspect actor`, `inspect collision`, `inspect
-  flags`, `inspect rng`, and `query` commands against a paused/live worker or
-  artifact.
-- [ ] Schema discovery with names, units, enum values, availability, cost, and
-  fidelity requirements.
-- [ ] Symbolic research-field registry that may bind a build-specific native
-  field or class offset, while recording that binding and never presenting it
-  as portable identity.
-- [ ] Live read-only overlay for Link state, selected actors, contacts, rays,
-  triggers, paths, flags, timers, and objective values.
-- [ ] Click or spatial-pick an actor/polygon in a graphical run and copy a stable
-  selector/query into a controller, predicate, or experiment.
-- [ ] Save named query presets in Git and reference them from goals, trace
-  profiles, model views, and benchmarks.
-- [ ] Provide a bounded remote inspection API; never make the browser capable of
-  arbitrary memory access or filesystem paths.
-
-**Acceptance:** given an arbitrary Skybook setup, an author can inventory the
-room, identify exact actors and collision, inspect relevant flags/timers/RNG,
-and compile a bounded observation view without changing gameplay. Full map
-geometry is stored once; normal movement traces contain only requested local or
-semantic features plus stable references back to the inventory.
-
-## 4. Action and tactic toolbox
-
-### P0: exact controller action space
-
-- [x] Preserve the full PAD surface: all buttons, main/sub sticks, triggers,
-  analog A/B, connection/error state, and all four ports.
-- [x] Support lossless splice, trim, layer, resample-for-authoring, diff, and
-  delta minimization while retaining canonical 30 Hz output.
-- [x] Represent button edge, hold, release, and illegal/conflicting combinations
-  explicitly in the authoring layer.
-- [x] Define state-dependent action masks as search guidance, never as proof
-  restrictions that could hide a glitch-producing “invalid” input.
-
-### P0: temporally extended options
-
-- [x] Define a versioned semi-Markov option schema: type, parameters, duration,
-  cancellation/termination condition, emitted raw actions, and realized tape
-  range.
-- [x] Add move in world/player/camera coordinates toward a coordinate, plane,
-  path point, placed actor, runtime actor, or inferred opening.
-- [x] Add turn, brake, neutral, align, maintain heading, and maintain distance.
-- [x] Add roll with direction, button frame, recovery, cancellation, and
-  deterministic roll-spacing phase.
-- [x] Add jump attack, normal attack/combo, shield, target, interact, item use,
-  transform, crawl, climb, swim, Epona, boomerang, clawshot, spinner, and other
-  typed game-specific tactics as benchmarks require them.
-- [x] Add waypoint, rail, spline, and Bézier movement with exact duration and
-  sample phase.
-- [x] Allow bounded observation feedback such as seek actor or maintain offset;
-  record every realized raw frame for proof.
-- [x] Provide option-relative local golf that adjusts heading, magnitude,
-  duration, phase, button timing, and cancellation around a successful result.
-
-### P0: composition semantics
-
-- [x] Define deterministic priority and composition for base motion, additive
-  correction, button overlays, camera/sub-stick layers, and safety clamps.
-- [x] Reject ambiguous overlapping writers rather than depending on file order.
-- [x] Bound every loop, wait, branch, feedback controller, and target-loss path.
-- [x] Make loss of an exact target a typed terminal/option result; never switch
-  silently to nearest.
-- [x] Compile static programs to canonical tapes where possible and label
-  reactive executions with the exact observation provenance used.
-
-### P1: tactic diagnostics
-
-- [x] Record option start/end/reason, intended target, error vector, action mask,
-  raw output, clamps, and game-consumed input.
-- [x] Visualize option intervals, curves, targets, contacts, and goal progress on
-  the route graph and gameplay overlay.
-- [x] Maintain reusable tactic tests per player procedure and game mode.
-
-**Acceptance:** a search policy can choose a compact option and parameter tuple,
-the native worker executes it without per-tick IPC, and the result materializes
-as an exact raw tape. The same toolbox supports human-authored TAS work and
-algorithmic exploration.
-
-## 5. Goals, predicates, reward, and oracles
-
-### P0: extensible predicate DSL
-
-- [x] Compile predicates over typed facts, events, stable actor selectors,
-  geometry relations, flags, timers, hashes, and bounded temporal conditions.
-- [x] Support exact equality, ranges, regions, planes, contact relationships,
-  state transitions, persistence for N ticks, and ordered event sequences.
-- [x] Add named value-parity projections such as RNG, actor population, or flag
-  subsets; do not approximate parity using topology.
-- [x] Expose predicate sampling phase and first-hit boundary unambiguously.
-- [x] Provide predicate unit tests against recorded traces and native fixtures.
-- [x] Keep goals as optional metadata on segments/runs, never structural parents.
-
-### P0: objective semantics
-
-- [x] Separate feasibility from optimization: satisfy the exact predicate first,
-  then minimize simulation ticks or another declared cost.
-- [x] Define lexicographic objectives for goal depth, first-hit tick, tape size,
-  input complexity, risk, and boundary compatibility.
-- [x] Support potential-based shaping from distance, corridor progress, phase, or
-  event progress without changing the terminal objective.
-- [x] Record every reward component and its source fact so reward bugs are
-  inspectable.
-- [x] Preserve multiple archive cells for materially different RNG, actors,
-  routes, procedures, novelty, or downstream state.
-
-### P0: oracle library
-
-- [x] Reached/avoided stage, room, region, action, animation, flag, actor state,
-  or event.
-- [x] Collision crossing, OOB, void survival, unexpected load, wrong warp,
-  excessive displacement/speed, NaN, and impossible coordinates.
-- [x] Actor corruption, slot exhaustion, watched-field corruption, heap failure,
-  crash, hang, softlock, and control loss.
-- [x] Duplicate item/reward, preserved storage state, cutscene/event queueing,
-  sequence break, and save-state anomalies.
-- [x] Headful/headless divergence, control/treatment difference, and novel
-  semantic event signature.
-- [x] Compose cheap per-tick native oracles with expensive Rust-side corpus and
-  novelty analysis.
-
-**Acceptance:** representative movement, collision, actor, cutscene, memory,
-RNG, transition, crash, and softlock glitches can be classified without visual
-judgment, with the exact supporting observations retained.
-
-## 6. Trace v2, corpus, and data quality
-
-### P0: trace v2
-
-- [x] Add an atomic little-endian v2 channel-directory format with explicit
-  post-simulation boundaries, input provenance, per-record channel status,
-  strict size/offset/canonical validation, and permanent v1 decoding.
-- [x] Capture opt-in current/pending stage, exact four-port applied PAD, Link
-  motion and raw action/procedure state, event control, both global RNG streams,
-  realized camera, and nearest scene exit through the gated observer boundary.
-- [x] Make the native writer and Rust decoder reject malformed flags, missing
-  requested channels, overlap/gaps, invalid statuses, incompatible RNG, and
-  contradictory phase/tape metadata; cover the wire layout with a native test.
-- [x] Enforce byte-identical repeated real traces in the intro conformance
-  runner; an initial camera-view leak was localized to tick 300 and fixed by
-  marking unrealized view state `Unavailable` without copying its payload.
-- [x] Replace the fixed 49-field movement assumption with an authenticated,
-  extensible observation-view schema and explicit missingness masks while
-  retaining permanent movement-v1 compatibility for existing corpora.
-- [x] Add per-tick RNG, camera, player procedure internals/action timers,
-  contacts, correction vectors, local geometry, goal features, and selected
-  dynamic actors.
-- [x] Record pre-action observation, exact chosen action/option, duration,
-  post-action observation, events, reward components, predicate state, and
-  terminal reason with exact phase alignment.
-- [x] Support dense state views plus sparse entity/event side tables to avoid
-  repeating unchanged world data.
-- [x] Add bounded ring buffers and trigger-based retention so a crash, novel
-  contact, flag change, or predicate hit can preserve dense evidence from the
-  preceding and following ticks without paying full diagnostic trace cost for
-  every candidate.
-- [x] Preserve raw high-value observations and stable world references so later
-  featurizers can be rerun offline.
-- [x] Bound record size, actor slots, event counts, and output; report every
-  truncation explicitly.
-
-### P0: transition and episode identity
-
-- [x] Give every episode a scenario, parent boundary, absolute tape, run build,
-  query view, action schema, objective, learner/proposer, seed, and worker ID.
-- [x] Store candidate lineage and intervention location without treating frames
-  from one episode as independent provenance.
-- [x] Separate successful, failed, crashed, timed-out, desynced, unsupported,
-  and truncated runs.
-- [x] Deduplicate exact episodes while retaining independent repetition evidence.
-- [x] Content-address large traces, static inventories, screenshots, models, and
-  crash artifacts.
-
-### P0: counterfactual collection
-
-- [x] At incumbent and archive routes, choose decision boundaries and evaluate
-  systematic alternate actions/options, including failures.
-- [x] Track coverage by stage/room, spatial cell, player procedure, option,
-  parameter bin, duration, goal phase, and outcome.
-- [x] Balance collection across underrepresented supported actions instead of
-  repeatedly perturbing only successful headings.
-- [x] Let ensemble disagreement request bounded probes, but record that it is a
-  heuristic rather than calibrated uncertainty.
-- [x] Retain random/Latin-hypercube probes for blind spots and audit for policy
-  collapse.
-- [x] Make the evaluator budget and attribution per proposer visible.
-
-### P0: train/validation/test discipline
-
-- [x] Split by whole episode, scenario, parent boundary fingerprint, and route
-  family; never randomly split correlated frames.
-- [x] Keep a frozen withheld benchmark suite that model selection cannot farm.
-- [x] Report unique episodes, effective decision count, action support, state
-  coverage, missingness, class imbalance, and boundary diversity—not only rows.
-- [x] Detect train/evaluation leakage through duplicated tapes, prefixes,
-  checkpoints, screenshots, or continuation ancestry.
-- [x] Provide success/failure sibling trace diffing by phase, event, actor,
-  contact, flag, RNG draw, allocation, and objective component to expose facts
-  a model or predicate is currently missing.
-- [x] Version normalization statistics and compute them from training data only.
-- [x] Store dataset manifests and exact model-training configuration in Git or
-  content-addressed immutable artifacts.
-
-### P1: corpus operations
-
-- [x] Query, compare, merge, shard, compact, re-feature, validate, quarantine,
-  and garbage-collect corpora by schema and identity.
-- [x] Delta-debug a successful tape while retaining its oracle and boundary
-  class.
-- [x] Prune unreachable generated artifacts and orphaned thumbnails safely;
-  provide dry-run and recoverable trash for user-owned route data.
-- [x] Export analysis-friendly Arrow/Parquet or equivalent outside the hot path
-  without making it replay authority.
-
-**Acceptance:** a training manifest can be reproduced from immutable episodes,
-reports actual action/state coverage, contains both success and counterfactual
-failure evidence, and cannot leak one route's frames across dataset splits.
-
-## 7. Deterministic and sample-efficient search baselines
-
-Serious RL must beat credible specialists, not a deliberately weak random
-mutator.
-
-### P0: exact and structured methods
-
-- [x] Exhaustive menu-pulse timing search, coordinate descent, chunk deletion,
-  delta debugging, and tape truncation.
-- [x] Deterministic roll-spacing, heading, magnitude, waypoint, spline, button
-  timing, and option-duration optimizers.
-- [x] Beam search and branch-and-bound over discrete options with exact simulator
-  rollouts.
-- [x] Cross-entropy method and CMA-ES for low-dimensional continuous option
-  parameters.
-- [x] Bayesian optimization for very expensive, smooth-enough bounded tactics.
-- [x] Novelty search and quality-diversity/MAP-Elites across route, behavior,
-  RNG, actor, contact, and boundary descriptors.
-- [ ] **Reach:** MCTS over checkpointed option boundaries where restore is
-  validated and a selected benchmark justifies it.
-
-### P0: fair proposer tournament
-
-- [x] Give each proposer a declared candidate-tick or episode budget.
-- [x] Deduplicate proposals before spending simulator time.
-- [x] Attribute every improvement, miss, crash, and duplicate to its proposer.
-- [x] Compare wall time, simulator ticks, episodes, predicate-hit rate, frame
-  wins, boundary diversity, and cold-replay pass rate.
-- [x] Retain incumbent mutation and blind exploration budgets even when a learned
-  proposer appears strong.
-- [x] Do not allow any proposer to bypass the same native predicate and replay
-  gates.
-
-**Acceptance:** every learned-method claim includes equal-budget comparisons to
-exact deletion/golf, structured tactic optimization, archive exploration, and a
-simple random baseline.
-
-## 8. Reach: RL and model-based planning
-
-No neural or model-based learner is required for the initial selected set; new
-work here needs a measured failure of simpler exact or structured search.
-
-### P0: keep the low-data baseline honest
-
-- [x] Retain deterministic tree FQI and document its supported observation/action
-  schemas, uncertainty limitations, and episode bootstrap behavior.
-- [x] Add nearest-neighbor/local return and tabular discretization baselines for
-  small objective-specific state spaces.
-- [x] Add n-step and option-duration targets with tests for terminal and truncated
-  episodes.
-- [x] Calibrate predictions against held-out simulator returns and proposal win
-  rate rather than training Bellman loss alone.
-
-### P1: offline conservative value learning
-
-- [x] Implement a small discrete Double-Q learner with target networks and
-  deterministic seeded training.
-- [x] Add discrete Conservative Q-Learning to penalize unsupported actions.
-- [x] Add Implicit Q-Learning plus advantage-weighted behavior cloning as a
-  dataset-constrained alternative.
-- [x] Add bootstrapped/twin/ensemble critics and episode-level resampling.
-- [x] Add prioritized replay with bounded importance correction and diagnostics.
-- [x] Implement isolated, equal-update-budget evaluators for dueling heads,
-  n-step returns, distributional values, and noisy exploration.
-- [ ] Evaluate those four components one at a time on a readiness-qualified,
-  content-disjoint corpus before adopting a Rainbow configuration.
-- [x] Mask structurally unavailable actions for efficiency while retaining an
-  explicit exploration path for nominally invalid inputs that may cause bugs.
-
-### P1: action hierarchy and goal conditioning
-
-- [x] Train option-level values before per-frame neural control; keep raw actions
-  for last-mile frame golf.
-- [x] Factor tactic, heading, magnitude, duration, target, and button overlay so
-  sparse combinations can share statistical strength.
-- [x] Add goal-conditioned value/policy inputs using a compiled objective vector
-  rather than a model hard-coded to one segment.
-- [x] Evaluate hindsight relabeling only for predicates whose semantics make the
-  relabeled transition valid.
-- [x] Support a high-level option policy with a deterministic low-level tactic
-  executor and realized-tape proof.
-
-### P1: active online collection
-
-- [x] Alternate conservative exploitation, ensemble-disagreement probes,
-  structured counterfactuals, archive novelty, and blind coverage.
-- [x] Cap update-to-data ratio and detect critic divergence or value explosion.
-- [x] Use independent evaluation workers/corpora so online training cannot turn
-  proof repetitions into training samples before evaluation completes.
-- [x] Resume training with immutable dataset generations and exact model lineage.
-- [x] Stop or fall back when supported-action or state coverage is inadequate.
-
-### P1: model representation
-
-- [x] Begin with normalized fixed features, missingness masks, categorical
-  embeddings, objective vector, nearest-K semantic actor slots, and local
-  geometry probes.
-- [x] Test short history stacking and recurrent critics when state remains
-  partially observable after Trace v2.
-- [x] Add DeepSets/attention over variable actor sets only when fixed slots fail
-  and the corpus is large enough.
-- [x] Evaluate graph encoders for actor relationships and local collision graphs
-  only against simpler representations under equal sample budgets.
-- [x] Keep static map geometry in a spatial service or local encoder; never feed
-  the complete raw mesh to an MLP every tick.
-
-### P1: model ownership and deployment
-
-- [x] Keep worker orchestration, corpora, scheduling, and promotion in Rust.
-- [x] Permit Python/PyTorch as an offline trainer between generations; it is not
-  a per-frame or process-orchestration dependency.
-- [x] Export inference artifacts through ONNX or another frozen, versioned format
-  for Rust/C++ batch inference.
-- [x] Compare inference in Rust versus native worker only after measuring IPC and
-  batching costs; do not put a network in the game tick by default.
-- [x] Hash feature schema, action schema, objective, normalization, code/data
-  build, corpus manifest, seed, optimizer, and model bytes.
-- [x] Add deterministic CPU inference tests and tolerance-declared accelerator
-  tests.
-
-### P2: planning and model-based research
-
-- [x] Use learned Q values as priors/heuristics for beam search or MCTS rather
-  than requiring the policy to own the whole route.
-- [x] Learn short-horizon local dynamics only after measuring prediction error
-  on contacts, procedures, RNG-sensitive branches, and actor interaction.
-- [x] Investigate Dyna-style real/model rollout mixtures with strict uncertainty
-  cutoffs.
-- [x] Consider latent visual/world models only for observations unavailable from
-  memory or for console-transfer fidelity; memory-backed state should remain the
-  sample-efficient default.
-- [x] Research multi-task and transfer learning across compatible maps, tactics,
-  and goal families without merging incompatible fidelity or action schemas.
-
-### RL readiness gates
-
-- [x] At least 500 diverse episodes and 50,000 option decisions for the selected
-  objective before treating a neural comparison as meaningful.
-- [x] Broad action/option support in each relevant player procedure and spatial
-  phase, with unsupported regions reported explicitly.
-- [x] Held-out episodes and boundary families, stable repeated cold replay, and a
-  stronger result than tree FQI plus structured specialists under equal budget.
-- [x] Value calibration and OOD-action diagnostics good enough that proposals do
-  not spend most of the simulator budget on unsupported fantasies.
-
-The numeric gates are initial engineering heuristics and should be revised from
-measured learning curves. They are deliberately based on diverse episodes and
-decisions, not raw consecutive frame count.
-
-**Acceptance:** CQL/IQL/Double-Q and the existing FQI compete through one
-proposer interface; their models and datasets are reproducible; and promoted
-improvements are independently proved absolute tapes.
-
-## 9. Reach: novelty and autonomous glitch discovery
-
-- [x] Define semantic novelty descriptors over procedures, events, contacts,
-  transitions, actor relationships, flags, position/velocity extrema, and
-  boundary fingerprints.
-- [x] Detect first-seen state transitions and rare state combinations, not just
-  spatial distance from an incumbent.
-- [x] Maintain separate archives by scenario/fidelity and allow several useful
-  outcomes per behavior cell.
-- [x] Add curiosity/novelty rewards only as proposal signals; retain the raw
-  semantic reason a run was considered novel.
-- [x] Cluster similar crashes, hangs, OOB routes, corruptions, and event sequences
-  to avoid rediscovering the same symptom endlessly.
-- [x] Minimize novel artifacts while preserving the novelty predicate and replay
-  boundary.
-- [x] Automatically replay promising headless discoveries headfully, attach a
-  terminal thumbnail/video when useful, and request human classification.
-- [x] Feed human labels back as corpus metadata, never as a silent rewrite of
-  prior objective definitions.
-- [x] Support campaigns that ask open questions such as “produce an unseen
-  procedure/contact pair” or “cross collision without a transition.”
-
-**Acceptance:** a discovery run produces a ranked, deduplicated set of exact
-artifacts with machine-readable novelty reasons, rather than a directory of
-uninspectable random tapes.
-
-## 10. Reach: experimental causal interventions
-
-- [x] Implement canonical `DUSKINTR` plus a readable bounded DSL, separately
-  from controller tapes.
-- [x] Require compile-time feature, runtime opt-in, fidelity flag, exact phase,
-  preconditions, and an always-on before/write/after audit.
-- [x] Begin with typed position, velocity, facing, bounded curve, target/intent,
-  health, timer, flag, and spawn/despawn experiments only where semantics are
-  understood.
-- [x] Reuse exact stable selectors; reject target loss and overlapping writes.
-- [x] Run identical no-intervention controls and retain both artifacts.
-- [x] Add parameter search/minimization for intervention timing and magnitude.
-- [x] Mark results as existence/mechanism evidence until normal input reproduces
-  the setup.
-- [x] Keep arbitrary address writes in a separately named unsafe lab build, if
-  they are ever added at all.
-
-**Acceptance:** an enemy-push/fence experiment can establish a causal collision
-possibility with complete provenance, while a normal build cannot execute or
-mislabel the intervention.
-
-## 11. Human-selected Skybook benchmark pilot
-
-The current `..\skybook` checkout contains roughly 483 posts, including
-about 452 categorized glitch pages. It is a read-only reference corpus, not a
-commitment to reproduce, triage, or model every page. The active set should
-stay small (initially 3–5 easy or high-value pages), be chosen by a human, and
-expand one page at a time only when the capability payoff is worth the work.
-
-### P0: import a read-only benchmark manifest
-
-- [x] Record the Skybook Git revision and parse front matter, title,
-  description, category, tags, internal links, platform, map, source links,
-  images, and video evidence.
-- [x] Generate a content-addressed manifest without editing or depending on
-  Skybook at runtime.
-- [x] Normalize aliases while retaining original names and source paths.
-- [ ] Add a human-maintained selection file containing 3–5 approved pages,
-  selection rationale, and `selected`/`deferred`/`won't-do` status.
-- [ ] Link only selected benchmark definitions to the exact Skybook revision
-  and page digest.
-- [ ] Keep unselected pages out of the task queue. Do not auto-generate
-  per-page requirements, readiness state, or reproduction work.
-
-### Selected-benchmark: specification
-
-For every selected glitch, retain:
-
-- [ ] Region/platform/fidelity and game version.
-- [ ] Scenario/save/inventory/flag/RNG preconditions.
-- [ ] Human-readable setup and known input timing.
-- [ ] Relevant actors, placements, geometry, triggers, flags, procedures,
-  timers, resources, and memory facts.
-- [ ] A semantic success oracle plus failure/softlock/crash classifications.
-- [ ] Exact tape/controller/intervention ancestry and minimized proof.
-- [ ] Headful evidence where the effect is visual.
-- [ ] Open hypotheses and missing toolbox capabilities.
-
-### Core: pilot execution
-
-- [ ] With a human, choose 3–5 pages with short known setups, simple controller
-  inputs, a semantic success condition, and native-port fidelity.
-- [ ] Prove the easiest selected page end to end before adding toolbox work for
-  another page.
-- [ ] Reassess scope after each reproduction; expansion requires a human
-  decision, not automatic manifest traversal.
-
-Basic movement timing, a simple stage-boot collision/OOB setup, and an already
-instrumented menu case are reasonable candidates. Complex memory corruption,
-wrong warps, platform-only rendering, and multi-map setup chains default to
-deferred or won't-do unless explicitly selected.
-
-### Reach: mechanism graph after a useful pilot
-
-- [ ] If the selected set grows beyond roughly ten benchmarks, graph only those
-  selected glitches to mechanics, prerequisites, actors, items, maps, flags,
-  actions, oracles, and fidelity capabilities.
-- [ ] Use that small graph to prioritize toolbox features; do not graph all 483
-  pages speculatively.
-- [ ] Reuse shared benchmark modules for common mechanisms rather than coding one
-  custom observer per page.
-- [ ] Select withheld known glitches for rediscovery campaigns after their
-  scenario and oracle exist, but before their exact tape is ingested.
-- [ ] Record negative results and fidelity blockers so unsupported pages do not
-  consume repeated search campaigns.
-
-### Selected-benchmark: unknown and unseen state
-
-- [ ] Preserve rich raw actor, flag, contact, event, resource, and map references
-  around every surprising run so later analysis can ask new questions.
-- [ ] Add schema/version negotiation so new typed facts do not invalidate old
-  facts or silently reorder neural inputs.
-- [ ] Support targeted native adapters and offline derived features without
-  redesigning the worker protocol for each glitch.
-- [ ] Add differential traces between near-identical success/failure runs to
-  identify candidate fields, actors, contacts, or event edges.
-- [ ] Provide bounded address/layout diagnostics for reverse engineering while
-  keeping portable proof based on semantic facts.
-
-**Acceptance:** 3–5 human-selected pages have revision-bound specifications and
-at least one easy page has a cold-replayable semantic proof. Unselected pages
-remain inert reference data and create no implementation obligation.
-
-## 12. Reach: full graphical workbench and inspection workflow
-
-The CLI, VS Code tasks, artifacts, and current route workbench are sufficient
-for the pilot. Expand this UI only in response to repeated review friction.
-
-- [ ] Keep one graphical segment hierarchy with ordinary sibling alternatives;
-  avoid separate model, sample, milestone, and generated-result trees.
-- [ ] Project active and completed search results as ephemeral segment siblings,
-  with proposer, score, proof, boundary, and model/corpus identity in details.
-- [ ] Promote, rename, delete subtree, keep/delete siblings, and recover trash
-  with previews and Git-visible changes.
-- [ ] Record a child from an explicitly selected clean process boot, stage boot,
-  or exact parent boundary using the fastest validated prefix/checkpoint tier
-  and configurable host-only countdown. Display the selected boot origin and
-  fixture identity before recording begins.
-- [ ] Play from process boot, stage boot, parent, or parent-fast; capture a
-  thumbnail automatically only when the selected boundary has no reachable
-  image.
-- [ ] Add objective editor/query builder with syntax validation, schema
-  discovery, trace preview, and proof invalidation explanation.
-- [ ] Add run dashboard for worker health, throughput, budget, proposer
-  attribution, action/state coverage, archive cells, model training, and errors.
-- [ ] Add side-by-side candidate comparison: input diff, option intervals,
-  objective progress, events, state divergence, path/contacts, and terminal
-  boundary.
-- [ ] Allow visual scrub through recorded observations and thumbnails without
-  pretending arbitrary tick playback is a validated checkpoint.
-- [ ] Make generated data appear/disappear with the underlying build artifacts;
-  keep checked-in segments authoritative.
-- [ ] Keep settings compact and global where appropriate: playback speed,
-  recording speed, visual/headless, audio, countdown, and capture policy.
-
-**Acceptance:** a user can direct an experiment, watch progress, inspect why a
-candidate was interesting, replay it, record a continuation, and promote or
-discard it without using a separate algorithm-specific workflow.
-
-## 13. Won't-do (current scope): multi-client and distributed execution
-
-- Treat each client as an isolated worker with its own scenario, inputs,
-  state, artifacts, and crash boundary.
-- Add deterministic logical barriers and an explicit cross-client message,
-  delay, loss, and delivery schedule.
-- Record sender, receiver, logical tick, ordering, payload digest, and network
-  schedule as replay inputs.
-- Compose multi-port and multi-client goals/oracles.
-- Schedule CPU affinity, memory budgets, worker capabilities, NUMA locality,
-  and thermal/throughput telemetry based on measurements.
-- Add a single-host coordinator before distributed execution.
-- Add distributed immutable artifact transport, deduplication, leases, and
-  failure recovery only after one host saturates usefully.
-- Never let different build/game-data/fidelity workers share a training or
-  proof pool without explicit compatibility rules.
-
-These are design notes, not tasks. Reopen only if one host is measurably
-saturated by a successful Core workload and the coordinator can preserve
-logical outcomes.
-
-## 14. Testing, safety, and operational quality
-
-### P0: native and schema tests
-
-- [ ] Golden C++/Rust codecs for every binary artifact and protocol version.
-- [ ] Property/fuzz tests for parsers, bounded allocations, malformed lengths,
-  compression bombs, path traversal, and schema mismatch.
-- [ ] Unit tests proving observation capture does not mutate state or advance
-  RNG.
-- [ ] Controller composition, option termination, target loss, action mask,
-  and realized-tape round-trip tests.
-- [ ] Predicate phase, temporal operator, missingness, and oracle tests.
-- [ ] Checkpoint restore and validation-window corruption tests.
-
-### P0: end-to-end conformance
-
-- [ ] Clean-boot repetition suites for common tape, transition, recording, and
-  selected-benchmark paths.
-- [ ] Stage-boot conformance for the selected set, with goal-specific tapes
-  proving readiness, input alignment, and isolated save/loadout state.
-- [ ] For representative stage-boot tests, promote the local result into a
-  clean-process absolute replay when claiming end-to-end route capability;
-  report local fixture validation and full boot proof as distinct evidence.
-- [ ] Headful/hidden/headless parity and first-divergence reports.
-- [ ] Memory-card/save isolation and persistent-worker leak tests.
-- [ ] Worker crash/timeout/restart and partial-pool failure tests.
-- [ ] Route graph CRUD, generated-result projection, thumbnail lifecycle, and
-  recoverable deletion tests.
-- [ ] Search reproducibility and equal-budget proposer attribution tests.
-
-### P1: performance and regression gates
-
-- [ ] Track candidate-ticks/second, reset latency, checkpoint latency, trace
-  bytes/tick, query cost, model inference cost, and IPC overhead.
-- [ ] Establish representative trace profiles from minimal predicate-only to
-  full diagnostic capture.
-- [ ] Fail CI on substantial deterministic throughput or artifact-size
-  regressions only after stable machine-normalized baselines exist.
-- [ ] **Reach:** stress long tapes, large maps, actor churn, event storms, many
-  workers, crashes, and disk exhaustion after ordinary workloads justify it.
-
-### P1: security and failure containment
-
-- [ ] Loopback-only authenticated workbench sessions and no browser-supplied
-  arbitrary paths.
-- [ ] Canonicalize every artifact path inside configured roots.
-- [ ] Bound native queries, trace output, model inputs, worker memory, process
-  count, and wall/tick time.
-- [ ] Make intervention capabilities visible in UI, artifacts, logs, and build
-  identity.
-- [ ] Preserve enough failed-run evidence for diagnosis without accepting
-  partial/corrupt proof.
-
-**Acceptance:** ordinary tests can be launched from the existing VS Code test
-selector or CLI, failures retain actionable evidence, and no malformed corpus,
-query, model, or browser request can create unbounded native work.
-
-## Explicit over-engineering traps
-
-- Do not build an end-to-end pixel DDQN while memory-backed state is available
-  and the counterfactual corpus is small.
-- Do not send observations or actions through Rust IPC once per frame; upload a
-  bounded program/query and return batched artifacts.
-- Do not feed the complete map mesh or every live actor directly to a fixed MLP.
-  Keep the complete inventory queryable and compile task-local views.
-- Do not make checkpoints portable truth. Absolute tapes and clean replay remain
-  truth; checkpoints are invalidatable acceleration caches.
-- Do not create a general-purpose native scripting or arbitrary-memory query
-  engine. Prefer bounded typed adapters and compiled query specifications.
-- Do not build another VCS or algorithm-specific result hierarchy. Git owns
-  promoted segments; rebuildable content-addressed stores own experiments.
-- Do not add distributed orchestration or exotic shared-memory transport until
-  warm local workers are measured and saturated.
-- Do not turn every imported Skybook page into a task, generated requirement
-  record, readiness state, or reproduction campaign. Human selection is the
-  gate; unselected pages are inert reference data.
-- Do not add an observer, learner, intervention, or infrastructure layer for a
-  hypothetical benchmark. Tie it to a selected page and its smallest proof.
-- Do not let experimental interventions contaminate ordinary playback, model
-  evaluation, or promotion evidence.
-- Do not claim global TAS optimality. State the exact operator neighborhood,
-  scenario, fidelity, observation/action schema, and simulator budget searched.
-
-## 15. Recommended implementation sequence
-
-### Phase A: trustworthy observation substrate
-
-- [ ] Finish run identity, async determinism audit, canonical state hashes, and
-  first-divergence reporting.
-- [ ] Design the typed fact/query schema and static world-inventory format.
-- [x] Implement the first Trace v2 slice for Link, global RNG, camera, action
-  timers/animations, exact input, stage/event state, and explicit missingness.
-- [ ] Extend the initial Trace v2 background-collision cache with actor/push/
-  attack contacts, per-pass correction, local geometry,
-  objective state, and bounded selected actors.
-- [ ] Add query/trace cost accounting and observational-inertness tests.
-
-### Phase B: reusable action and objective toolbox
-
-- [ ] Implement option schema, option diagnostics, move/align/roll/waypoint/
-  spline/actor-seek tactics, and deterministic composition.
-- [ ] Extend predicates and oracles over the new facts/events.
-- [ ] Compile options to realized tapes and prove them through cold replay.
-
-### Reach phase C: high-information data collection
-
-- [ ] Land engine-session batch runs and validated prefix/checkpoint reuse.
-- [ ] Add systematic counterfactual collection and coverage reports.
-- [ ] Split immutable datasets by episode and boundary; establish frozen
-  evaluation routes.
-- [ ] Run equal-budget FQI, structured, exact, novelty, and random baselines.
-
-### Reach phase D: conservative neural learning
-
-- [ ] Add small discrete Double-Q, CQL, IQL, ensemble uncertainty, prioritized
-  replay, and option-level goal conditioning.
-- [ ] Export frozen inference artifacts and use one proposer interface.
-- [ ] Compare sample-efficiency curves and actual simulator proposal wins.
-- [ ] Introduce recurrent or object-set models only in response to measured
-  partial observability or representation failure.
-
-### Selected-benchmark phase E: small Skybook pilot
-
-- [x] Generate the revision-pinned read-only Skybook reference manifest.
-- [ ] Have a human select 3–5 easy/high-value pages; do not generate tasks for
-  the rest of the corpus.
-- [ ] Specify and reproduce the easiest page with stage/clean-boot proof,
-  minimization, and headful review where useful.
-- [ ] Add toolbox adapters only for the next approved page, then reassess scope.
-
-### Reach phase F: open-ended discovery
-
-- [ ] Add semantic novelty archives, causal interventions, model-assisted
-  planning, and human classification only after the pilot is useful.
-
-### Won't-do (current scope): scale infrastructure
-
-- Distributed workers, multi-client determinism, NUMA scheduling, and portable
-  process snapshots remain out of scope until a successful one-host workload
-  proves they are necessary.
-
-## Immediate next milestone
-
-The active milestone is **a human-selected 3–5 page benchmark pilot**, not
-whole-Skybook replication, exhaustive query coverage, or a new learner.
-
-1. [ ] Human-select the pilot pages, preferring short known setups, stage-boot
-   feasibility, controller-only execution, semantic success predicates, and
-   native-port fidelity.
-2. [ ] Add revision-bound benchmark definitions for those pages only.
-3. [ ] Reproduce the easiest page end to end with a realized absolute tape,
-   cold replay, semantic oracle, and headful evidence where useful.
-4. [ ] Add only observations/actions required by that proof; record missing
-   capabilities rather than expanding the toolbox speculatively.
-5. [ ] Review with a human and choose whether to attempt the next page, defer
-   it, or stop the pilot.
+- [x] Provide `huntctl identity compare` with complete-input validation and a
+  human-readable list of every incompatible field.
+- [ ] Apply compatibility checks automatically at every artifact-consuming CLI
+  and workbench boundary; never infer identity from a configured path.
+- [ ] Define a small canonical hash over the semantic facts used by the active
+  objective, explicitly excluding padding, pointers, volatile process IDs, and
+  unordered traversal.
+- [ ] Store periodic hashes plus dense observations around a mismatch and print
+  the first divergent boundary with typed fact/event differences.
+- [ ] Compare repeated runs of each conformance case and quarantine any
+  disagreement until its input, time, RNG, async, floating-point, observation,
+  or initialization source is explained.
+- [ ] Inventory and control only the game-visible clocks, loader completions,
+  and RNG streams exercised by the active conformance cases.
+
+**Acceptance:** incompatible evidence is rejected with a precise explanation,
+and identical requests either agree at every selected semantic boundary or
+produce a localized divergence artifact.
+
+## 8. CLI and operator workflow
+
+- [ ] Add one top-level campaign command that validates an objective-suite case,
+  launches its requested proposer(s), enforces budgets, stores episodes, ranks
+  results, cold-replays finalists, and writes a summary artifact.
+- [ ] Support dry-run inspection of all resolved paths, identities,
+  capabilities, objective requirements, budgets, and output locations before a
+  worker launches.
+- [ ] Keep generated runs, models, traces, thumbnails, and reports under an
+  ignored content-addressed build root; keep only authored fixtures,
+  objectives, seed tapes/controllers, and approved route segments in Git.
+- [ ] Print actionable failure messages with artifact paths and the first
+  unsupported/mismatched fact instead of requiring log archaeology.
+- [ ] Provide macOS VS Code launch/tasks alongside, without replacing Windows
+  configuration, for building, running the conformance suite, inspecting a
+  failure, and replaying a winner headfully.
+- [ ] Document the shortest operator loop: select case, inspect contract, run
+  campaign, inspect ranking/evidence, replay finalist, promote or discard.
+
+**Acceptance:** a developer can exercise and diagnose the harness from a clean
+macOS checkout without editing source, hand-assembling several commands, or
+opening an algorithm-specific UI.
+
+## 9. Verification and safety gates
+
+- [ ] Unit-test every active schema's round trip, limits, unknown fields,
+  truncation, corruption, noncanonical values, and content identity.
+- [ ] Maintain independent Rust/native codec fixtures for tapes, controllers,
+  objectives, traces, observations, and run messages.
+- [ ] Add mock-worker integration tests for run lifecycle, budgets, crashes,
+  partial artifacts, deterministic scheduling, and identity rejection.
+- [ ] Add native tests proving the observer-off build has no query symbols or
+  layout/control-flow changes and the observer-on hot path stays bounded and
+  allocation-free.
+- [ ] Run the objective conformance suite in process-boot and stage-boot modes
+  where applicable, including positive and negative controls.
+- [ ] Treat sanitizers, protocol fuzzing, path validation, artifact size caps,
+  and recoverable cleanup as release gates for the harness-facing code.
+- [ ] Keep CI fixtures free of copyrighted game data; real-disc acceptance runs
+  remain local and report a clear skip when inputs are absent.
+
+**Acceptance:** focused unit/integration tests and the four cheap objectives
+prove the public harness boundary before any deferred research is reactivated.
+
+## Immediate implementation order
+
+1. [ ] Write the objective-suite schema and stage-ready/reach-point fixtures.
+2. [ ] Close the minimum interaction and carried-object query facts.
+3. [ ] Add talk-to-NPC and pick-up-object fixtures with negative controls.
+4. [ ] Unify their execution under the run request/result and episode artifact.
+5. [ ] Run scripted, random, structured, and one baseline learned proposer
+   through the same campaign/tournament boundary.
+6. [ ] Cold-replay and minimize the winners; publish one conformance report.
+7. [ ] Review measured friction before moving any item back from
+   `TASKS_DEFERRED.md`.

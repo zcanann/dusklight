@@ -53,9 +53,10 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 
 ## Documents
 
-- [Serious framework backlog](../../TASKS.md) is the dependency-ordered task
-  queue for the game query toolbox, Trace v2, action options, search/RL,
-  Skybook replication, validation, and scale work.
+- [Core harness backlog](../../TASKS.md) is the active dependency-ordered queue
+  for agent control, objectives, state queries, learning evidence, winner
+  narrowing, and cheap gameplay conformance cases. [Deferred work](../../TASKS_DEFERRED.md)
+  retains ambitious glitch, research, UI, checkpoint, and scale directions.
 - [Fork-only observer boundary](observer-boundary.md) defines the explicit
   compile gate, current field-access manifest, and forbidden native query
   behavior.
@@ -85,8 +86,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   mutation-tape boundary for causal glitch-hunting experiments.
 - [Skybook benchmark import](skybook.md) documents the revision-pinned,
   content-addressed requirements manifest and its read-only import boundary.
-- [Project scope and benchmark selection](scope.md) defines the small
-  human-selected pilot, reach goals, and current won't-do boundaries.
+- [Project scope and objective selection](scope.md) defines the cheap objective
+  conformance suite, objective-driven expansion rule, deferred work, and current
+  won't-do boundaries.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.
