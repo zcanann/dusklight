@@ -858,7 +858,7 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
                         config,
                         segment,
                         trial,
-                        &format!("worker-{worker_index}"),
+                        &format!("evaluation/worker-{worker_index}"),
                         &cancelled,
                         None,
                     );
@@ -1014,7 +1014,7 @@ fn evaluate_anchored_population_internal(
                         base,
                         segment,
                         trial,
-                        &format!("worker-{worker_index}"),
+                        &format!("evaluation/worker-{worker_index}"),
                         &cancelled,
                         Some(&objective),
                     );
@@ -3487,7 +3487,8 @@ fn run_trial(
         }
     }
     evidence.outcome = classify_attempt_outcome(&evidence);
-    if evidence.infrastructure_error.is_none()
+    if trial.attempt == 1
+        && evidence.infrastructure_error.is_none()
         && evidence.gameplay_trace.is_some()
         && let Some(objective) = anchored
     {

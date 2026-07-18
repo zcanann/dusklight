@@ -63,7 +63,10 @@ impl EvaluationGenerationSeal {
         let mut by_candidate = BTreeMap::<String, Vec<&EvaluationAttemptInput>>::new();
         let mut workers = BTreeSet::new();
         for attempt in attempts {
-            if !valid_id(&attempt.candidate_id) || !valid_id(&attempt.worker_id) {
+            if !valid_id(&attempt.candidate_id)
+                || !valid_id(&attempt.worker_id)
+                || !attempt.worker_id.starts_with("evaluation/")
+            {
                 return Err(EvaluationIsolationError::InvalidAttemptIdentity);
             }
             workers.insert(attempt.worker_id.clone());
@@ -217,7 +220,7 @@ mod tests {
             .map(|attempt| EvaluationAttemptInput {
                 candidate_id: "candidate-a".into(),
                 attempt,
-                worker_id: format!("evaluation-worker-{attempt}"),
+                worker_id: format!("evaluation/worker-{attempt}"),
                 transition_corpus_sha256: (attempt == 1 || second_has_corpus)
                     .then_some(Digest([attempt as u8; 32])),
             })
