@@ -385,6 +385,13 @@ Actor, flag, region, plane, and ordinary state-field predicates remain eligible
 when they satisfy those history-free constraints. Admission also fixes
 `copied_reward_allowed` to false: reward and shaping must be recomputed from the
 authenticated pre/post observations under the relabeled compiled predicate.
+The relabeling API enforces that policy: evidence carries the compiled program,
+definition and objective-vector identities; exact pre/post observation and
+compact-state digests; and the realized raw-tape digest. It accepts only a
+native false-to-true predicate result, rejects already-satisfied or detached
+transitions, retains the original reward for audit, and writes a separately
+configured finite achievement reward while setting `reward_recomputed: true`.
+Relabeled samples always retain `promotion_authority: false`.
 
 ### Nearest-neighbor and tabular return baselines
 
