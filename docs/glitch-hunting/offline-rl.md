@@ -320,6 +320,28 @@ budget equality, and OOD accounting only. They are not evidence for adopting a
 component. Run all four treatments separately on a frozen corpus that meets the
 RL readiness gates before considering any combined Rainbow configuration.
 
+### Semi-Markov option values
+
+Learn the high-level choice between realized options before attempting any
+per-frame neural controller. An option-value batch authenticates its feature
+schema, objective, complete typed option catalog, episode groups, duration-aware
+returns, and the exact raw tape digest emitted by every realization:
+
+```sh
+huntctl learn option-values --input build/learning/options.json \
+  --model-output build/learning/option-values.json \
+  --query-sample 0 --iterations 24 --trees 31 --seed 1
+```
+
+The model ranks `OptionActionDescriptor` values, including their option type
+and typed parameters. It deliberately exposes no raw-PAD ranking API. Selection
+therefore ends at the option boundary, the chosen option is realized into a
+deterministic tape, and raw frame edits are reserved for downstream last-mile
+tape golf. Each sample already represents one semi-Markov transition, so the
+command fixes FQI backup length to one while discounting by its simulation-tick
+duration. The resulting model and ranking are proposal artifacts only; they
+cannot promote a route without native evaluation and cold replay proof.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

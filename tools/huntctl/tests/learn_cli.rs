@@ -1,4 +1,8 @@
 use huntctl::artifact::Digest;
+use huntctl::learning::option_values::{
+    OptionActionDescriptor, OptionValueBatch, OptionValueSample,
+};
+use huntctl::option_execution::OptionType;
 use huntctl::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, REWARD_REPORT_SCHEMA_V1,
 };
@@ -6,6 +10,7 @@ use huntctl::transition_corpus::{
     MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -45,6 +50,106 @@ fn reference(byte: u8) -> StateReference {
         kind: StateReferenceKind::Boundary,
         digest: Digest([byte; 32]),
     }
+}
+
+fn option_sample(
+    option_id: &str,
+    option_type: OptionType,
+    state: f32,
+    duration_ticks: u32,
+    reward: f32,
+    tape_digest: u8,
+) -> OptionValueSample {
+    OptionValueSample {
+        action: OptionActionDescriptor {
+            option_id: option_id.into(),
+            option_type,
+            parameters: BTreeMap::new(),
+        },
+        state: vec![state],
+        duration_ticks,
+        reward,
+        next_state: vec![state + 1.0],
+        terminal: true,
+        realized_tape_sha256: Digest([tape_digest; 32]),
+    }
+}
+
+#[test]
+fn option_value_cli_ranks_authenticated_realized_options() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-option-values-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let input = root.join("options.json");
+    let model_path = root.join("option-model.json");
+    let batch = OptionValueBatch::new(
+        Digest([0x31; 32]),
+        Digest([0x32; 32]),
+        1,
+        vec![
+            option_sample("wait", OptionType::Neutral, 0.0, 4, -1.0, 1),
+            option_sample("roll_forward", OptionType::Roll, 0.0, 12, 6.0, 2),
+            option_sample("wait", OptionType::Neutral, 1.0, 4, -1.0, 3),
+            option_sample("roll_forward", OptionType::Roll, 1.0, 12, 6.0, 4),
+        ],
+        vec![1, 2, 3, 4],
+    )
+    .unwrap();
+    fs::write(&input, serde_json::to_vec(&batch).unwrap()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "option-values", "--input"])
+        .arg(&input)
+        .arg("--model-output")
+        .arg(&model_path)
+        .args(["--iterations", "12", "--trees", "7", "--seed", "7"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-option-value-ranking/v1");
+    assert_eq!(
+        report["ranking"][0]["descriptor"]["option_id"],
+        "roll_forward"
+    );
+    assert_eq!(
+        report["control_hierarchy"],
+        "option_value_then_deterministic_realization"
+    );
+    assert_eq!(report["raw_frame_policy"], "last_mile_tape_golf_only");
+    assert_eq!(report["promotion_authority"], false);
+
+    let model: serde_json::Value = serde_json::from_slice(&fs::read(&model_path).unwrap()).unwrap();
+    assert_eq!(model["schema"], "dusklight-option-value-model/v1");
+    assert_eq!(
+        model["model"]["raw_frame_policy"],
+        "last_mile_tape_golf_only"
+    );
+    assert!(model["model"].get("emitted_raw_actions").is_none());
+    assert_eq!(
+        model["model"]["realized_tape_sha256"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    let model_blob = &report["model_content_blob"];
+    let stored_model = root
+        .join("content")
+        .join(model_blob["relative_path"].as_str().unwrap());
+    assert_eq!(
+        fs::read(&model_path).unwrap(),
+        fs::read(stored_model).unwrap()
+    );
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn transition(from: f32, action_id: u32, reward: f32, to: f32, terminal: bool) -> Transition {
