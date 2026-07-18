@@ -8,7 +8,14 @@ fn persistent_process_handles_hello_and_ping() {
     let child_id = transport.child_id();
     let mut client = WorkerClient::new(transport);
     let hello = client.handshake().unwrap().clone();
-    assert_eq!(hello.build.revision, "mock");
+    assert_eq!(hello.build.revision.len(), 40);
+    assert!(
+        hello
+            .build
+            .revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
     assert!(hello.capabilities.persistent_control);
     assert!(!hello.capabilities.engine_session);
     client.ping().unwrap();

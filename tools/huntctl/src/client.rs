@@ -29,6 +29,68 @@ pub struct WorkerBuildIdentity {
     pub dirty: bool,
 }
 
+impl WorkerBuildIdentity {
+    fn validate(&self) -> Result<(), ClientError> {
+        for (field, value) in [
+            ("build.version", self.version.as_str()),
+            ("build.describe", self.describe.as_str()),
+            ("build.branch", self.branch.as_str()),
+            ("build.source_date", self.source_date.as_str()),
+            ("build.compiler", self.compiler.as_str()),
+            ("build.compiler_target", self.compiler_target.as_str()),
+            ("build.build_type", self.build_type.as_str()),
+            ("build.feature_switches", self.feature_switches.as_str()),
+            ("build.fidelity_profile", self.fidelity_profile.as_str()),
+            ("build.platform", self.platform.as_str()),
+            ("build.architecture", self.architecture.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ClientError::InvalidBuildIdentity {
+                    field,
+                    message: "must not be empty".into(),
+                });
+            }
+        }
+
+        validate_lower_hex("build.revision", &self.revision, 40)?;
+        validate_lower_hex("build.aurora_revision", &self.aurora_revision, 40)?;
+        validate_lower_hex("build.feature_digest", &self.feature_digest, 64)?;
+        if self.dirty {
+            validate_lower_hex("build.dirty_digest", &self.dirty_digest, 64)?;
+        } else if !self.dirty_digest.is_empty() {
+            return Err(ClientError::InvalidBuildIdentity {
+                field: "build.dirty_digest",
+                message: "must be empty when build.dirty is false".into(),
+            });
+        }
+        if !matches!(self.pointer_bits, 32 | 64) {
+            return Err(ClientError::InvalidBuildIdentity {
+                field: "build.pointer_bits",
+                message: format!("expected 32 or 64, received {}", self.pointer_bits),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn validate_lower_hex(
+    field: &'static str,
+    value: &str,
+    expected_length: usize,
+) -> Result<(), ClientError> {
+    if value.len() != expected_length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ClientError::InvalidBuildIdentity {
+            field,
+            message: format!("must be exactly {expected_length} lowercase hexadecimal characters"),
+        });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct WorkerCapabilities {
     pub persistent_control: bool,
@@ -217,6 +279,10 @@ pub enum ClientError {
         received: String,
     },
     MissingField(&'static str),
+    InvalidBuildIdentity {
+        field: &'static str,
+        message: String,
+    },
     Worker {
         code: String,
         message: String,
@@ -243,6 +309,9 @@ impl fmt::Display for ClientError {
                 write!(f, "expected {expected} response, received {received}")
             }
             Self::MissingField(field) => write!(f, "worker response is missing {field}"),
+            Self::InvalidBuildIdentity { field, message } => {
+                write!(f, "invalid worker build identity {field}: {message}")
+            }
             Self::Worker { code, message } => write!(f, "worker error {code}: {message}"),
         }
     }
@@ -283,8 +352,10 @@ impl<T: Transport> WorkerClient<T> {
 
     pub fn handshake(&mut self) -> Result<&HelloResponse, ClientError> {
         let response = self.command("hello", "hello")?;
+        let build = response.build.ok_or(ClientError::MissingField("build"))?;
+        build.validate()?;
         self.hello = Some(HelloResponse {
-            build: response.build.ok_or(ClientError::MissingField("build"))?,
+            build,
             capabilities: response
                 .capabilities
                 .ok_or(ClientError::MissingField("capabilities"))?,
@@ -343,5 +414,64 @@ impl<T: Transport> WorkerClient<T> {
             });
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_build_identity() -> WorkerBuildIdentity {
+        WorkerBuildIdentity {
+            version: "test".into(),
+            describe: "test-build".into(),
+            revision: "1".repeat(40),
+            dirty_digest: String::new(),
+            branch: "test".into(),
+            source_date: "2026-07-18".into(),
+            aurora_revision: "2".repeat(40),
+            compiler: "test-compiler".into(),
+            compiler_target: "test-target".into(),
+            build_type: "Debug".into(),
+            feature_switches: "test=ON".into(),
+            feature_digest: "3".repeat(64),
+            fidelity_profile: "observe_only".into(),
+            platform: "test-platform".into(),
+            architecture: "test-architecture".into(),
+            pointer_bits: 64,
+            dirty: false,
+        }
+    }
+
+    #[test]
+    fn complete_build_identity_is_accepted() {
+        valid_build_identity().validate().unwrap();
+    }
+
+    #[test]
+    fn placeholder_revision_is_rejected() {
+        let mut identity = valid_build_identity();
+        identity.revision = "unknown".into();
+        let error = identity.validate().unwrap_err().to_string();
+        assert!(error.contains("build.revision"));
+        assert!(error.contains("40 lowercase hexadecimal"));
+    }
+
+    #[test]
+    fn dirty_state_requires_a_digest() {
+        let mut identity = valid_build_identity();
+        identity.dirty = true;
+        let error = identity.validate().unwrap_err().to_string();
+        assert!(error.contains("build.dirty_digest"));
+        assert!(error.contains("64 lowercase hexadecimal"));
+    }
+
+    #[test]
+    fn fidelity_profile_must_be_explicit() {
+        let mut identity = valid_build_identity();
+        identity.fidelity_profile.clear();
+        let error = identity.validate().unwrap_err().to_string();
+        assert!(error.contains("build.fidelity_profile"));
+        assert!(error.contains("must not be empty"));
     }
 }

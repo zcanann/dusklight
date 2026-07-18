@@ -4825,7 +4825,11 @@ fn print_usage() {
 }
 
 fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
-    let revision = option(args, "--mock-revision").unwrap_or_else(|| "mock".into());
+    let revision_label = option(args, "--mock-revision").unwrap_or_else(|| "mock".into());
+    let mut revision = format!("{:x}", Sha256::digest(revision_label.as_bytes()));
+    revision.truncate(40);
+    let aurora_revision = "2".repeat(40);
+    let feature_digest = "3".repeat(64);
     let fidelity_profile =
         option(args, "--mock-fidelity-profile").unwrap_or_else(|| "observe_only".into());
     let stdin = io::stdin();
@@ -4839,10 +4843,10 @@ fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "protocol": {"name": CONTROL_PROTOCOL_NAME, "version": CONTROL_PROTOCOL_VERSION},
                 "type": "hello", "ok": true,
                 "build": {
-                    "version": "mock", "describe": revision, "revision": revision, "branch": "test",
-                    "dirty_digest": "", "source_date": "1970-01-01", "aurora_revision": "mock-aurora",
+                    "version": "mock", "describe": revision_label, "revision": revision, "branch": "test",
+                    "dirty_digest": "", "source_date": "1970-01-01", "aurora_revision": aurora_revision,
                     "compiler": "mock-compiler", "compiler_target": "mock-target", "build_type": "test",
-                    "feature_switches": "mock=ON", "feature_digest": "mock-feature-digest", "fidelity_profile": fidelity_profile, "platform": env::consts::OS,
+                    "feature_switches": "mock=ON", "feature_digest": feature_digest, "fidelity_profile": fidelity_profile, "platform": env::consts::OS,
                     "architecture": env::consts::ARCH, "pointer_bits": usize::BITS, "dirty": false
                 },
                 "capabilities": {
