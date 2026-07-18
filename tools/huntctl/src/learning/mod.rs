@@ -14,6 +14,7 @@ pub mod goal_conditioning;
 pub mod graph_representation;
 pub mod hindsight;
 pub mod history_critics;
+pub mod inference_conformance;
 pub mod inference_placement;
 pub mod iql;
 pub mod low_data_baselines;
