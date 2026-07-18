@@ -17,6 +17,7 @@ use crate::episode::{
     EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
     RunBuildIdentity,
 };
+use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
 use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
 use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates};
 use crate::search::{
@@ -33,7 +34,7 @@ use crate::transition_evidence::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -2236,31 +2237,63 @@ pub fn run_anchored_search(
         let mut generation_corpora = BTreeMap::new();
         let mut generation_contexts = BTreeMap::new();
         let mut generation_outcomes = BTreeMap::new();
+        let mut evaluation_attempts = Vec::with_capacity(report.attempts.len());
+        let mut quarantined_corpora = BTreeMap::<String, TransitionCorpus>::new();
+        let mut quarantined_digests = BTreeSet::<ArtifactDigest>::new();
         for attempt in &report.attempts {
-            let Some(path) = attempt.transition_corpus.as_ref() else {
-                continue;
+            let transition_corpus_sha256 = if let Some(path) = attempt.transition_corpus.as_ref() {
+                let corpus = TransitionCorpus::read_zstd_file(path)
+                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                let digest = corpus
+                    .content_digest()
+                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                quarantined_digests.insert(digest);
+                quarantined_corpora
+                    .entry(digest.to_string())
+                    .or_insert_with(|| corpus.clone());
+                generation_corpora
+                    .entry(attempt.candidate_id.clone())
+                    .or_insert(corpus);
+                if !generation_contexts.contains_key(&attempt.candidate_id) {
+                    generation_contexts.insert(
+                        attempt.candidate_id.clone(),
+                        archive_behavior_context(attempt)?,
+                    );
+                }
+                generation_outcomes
+                    .entry(attempt.candidate_id.clone())
+                    .or_insert(attempt.outcome.class);
+                Some(digest)
+            } else {
+                None
             };
-            let corpus = TransitionCorpus::read_zstd_file(path)
+            evaluation_attempts.push(EvaluationAttemptInput {
+                candidate_id: attempt.candidate_id.clone(),
+                attempt: attempt.attempt,
+                worker_id: attempt.worker_id.clone(),
+                transition_corpus_sha256,
+            });
+        }
+        let evaluation_seal = EvaluationGenerationSeal::build(
+            generation,
+            report.repetitions,
+            report.planned_attempts,
+            report.completed_attempts,
+            report.infrastructure_faults,
+            &evaluation_attempts,
+        )
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        write_json(
+            &population_root.join("evaluation-generation-seal.json"),
+            &evaluation_seal,
+        )?;
+        if generation + 1 < search.generations {
+            evaluation_seal
+                .admit_training_generation(generation + 1, &quarantined_digests)
                 .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
-            let digest = corpus
-                .content_digest()
-                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?
-                .to_string();
-            training_corpora
-                .entry(digest)
-                .or_insert_with(|| corpus.clone());
-            generation_corpora
-                .entry(attempt.candidate_id.clone())
-                .or_insert(corpus);
-            if !generation_contexts.contains_key(&attempt.candidate_id) {
-                generation_contexts.insert(
-                    attempt.candidate_id.clone(),
-                    archive_behavior_context(attempt)?,
-                );
+            for (digest, corpus) in quarantined_corpora {
+                training_corpora.entry(digest).or_insert(corpus);
             }
-            generation_outcomes
-                .entry(attempt.candidate_id.clone())
-                .or_insert(attempt.outcome.class);
         }
         let member_by_id: BTreeMap<_, _> = manifest
             .members
