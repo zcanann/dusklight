@@ -4,6 +4,8 @@
 //! Search code may index the per-axis identities, while discovery artifacts can
 //! retain this value to explain exactly why an episode occupied a new cell.
 
+pub mod catalog;
+
 use crate::trace::{
     DecodedTrace, TraceCollisionBackingFormat, TraceCollisionSurfaceKind, TraceRecord,
 };
@@ -12,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const SEMANTIC_NOVELTY_SCHEMA: &str = "dusklight-semantic-novelty/v1";
+pub const SEMANTIC_NOVELTY_SCHEMA: &str = "dusklight-semantic-novelty/v2";
 pub const MAX_SEMANTIC_SEQUENCE_STATES: usize = 4_096;
 const POSITION_EXTREMA_BIN_WORLD_UNITS: f32 = 16.0;
 const VELOCITY_EXTREMA_BIN_WORLD_UNITS: f32 = 1.0 / 16.0;
@@ -217,7 +219,7 @@ impl SemanticNoveltyDescriptor {
     }
 
     pub fn identity(&self) -> String {
-        axis_identity(b"descriptor/v1", self)
+        axis_identity(b"descriptor/v2", self)
     }
 
     pub fn axis_identities(&self) -> SemanticNoveltyAxisIdentities {

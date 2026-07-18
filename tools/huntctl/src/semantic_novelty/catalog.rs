@@ -1,8 +1,6 @@
 //! Episode-level first-seen and low-support semantic novelty accounting.
 
-use crate::semantic_novelty::{
-    SemanticNoveltyDescriptor, SemanticStateCombination, StateTransitionFact,
-};
+use super::{SemanticNoveltyDescriptor, SemanticStateCombination, StateTransitionFact};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -11,6 +9,7 @@ use std::fmt;
 pub const SEMANTIC_NOVELTY_CATALOG_SCHEMA: &str = "dusklight-semantic-novelty-catalog/v1";
 pub const SEMANTIC_NOVELTY_ASSESSMENT_SCHEMA: &str = "dusklight-semantic-novelty-assessment/v1";
 pub const MAX_RARE_SUPPORT_EPISODES: u64 = 1_000;
+pub const MAX_TRACKED_SEMANTIC_FACTS: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SemanticNoveltyCatalogConfig {
@@ -134,27 +133,52 @@ impl SemanticNoveltyCatalog {
         })
     }
 
-    pub fn record(&mut self, descriptor: &SemanticNoveltyDescriptor) {
-        for transition in descriptor
+    pub fn record(
+        &mut self,
+        descriptor: &SemanticNoveltyDescriptor,
+    ) -> Result<(), SemanticNoveltyCatalogError> {
+        let transitions = descriptor
             .state_transitions
             .iter()
             .cloned()
-            .collect::<BTreeSet<_>>()
-        {
-            *self.transition_support.entry(transition).or_default() += 1;
-        }
-        for combination in descriptor
+            .collect::<BTreeSet<_>>();
+        let combinations = descriptor
             .state_combinations
             .iter()
             .cloned()
-            .collect::<BTreeSet<_>>()
+            .collect::<BTreeSet<_>>();
+        let new_transition_count = transitions
+            .iter()
+            .filter(|fact| !self.transition_support.contains_key(*fact))
+            .count();
+        let new_combination_count = combinations
+            .iter()
+            .filter(|fact| !self.state_combination_support.contains_key(*fact))
+            .count();
+        if self.transition_support.len() + new_transition_count > MAX_TRACKED_SEMANTIC_FACTS {
+            return Err(SemanticNoveltyCatalogError(format!(
+                "semantic transition catalog exceeds {MAX_TRACKED_SEMANTIC_FACTS} facts"
+            )));
+        }
+        if self.state_combination_support.len() + new_combination_count > MAX_TRACKED_SEMANTIC_FACTS
         {
-            *self
+            return Err(SemanticNoveltyCatalogError(format!(
+                "semantic state-combination catalog exceeds {MAX_TRACKED_SEMANTIC_FACTS} facts"
+            )));
+        }
+        for transition in transitions {
+            let support = self.transition_support.entry(transition).or_default();
+            *support = support.saturating_add(1);
+        }
+        for combination in combinations {
+            let support = self
                 .state_combination_support
                 .entry(combination)
-                .or_default() += 1;
+                .or_default();
+            *support = support.saturating_add(1);
         }
-        self.observed_episodes += 1;
+        self.observed_episodes = self.observed_episodes.saturating_add(1);
+        Ok(())
     }
 
     pub fn assess_and_record(
@@ -163,7 +187,7 @@ impl SemanticNoveltyCatalog {
         config: SemanticNoveltyCatalogConfig,
     ) -> Result<SemanticNoveltyAssessment, SemanticNoveltyCatalogError> {
         let assessment = self.assess(descriptor, config)?;
-        self.record(descriptor);
+        self.record(descriptor)?;
         Ok(assessment)
     }
 
@@ -242,7 +266,7 @@ mod tests {
     #[test]
     fn first_seen_transition_is_detected_without_spatial_distance() {
         let mut catalog = SemanticNoveltyCatalog::default();
-        catalog.record(&descriptor(&[3, 4], 100.0));
+        catalog.record(&descriptor(&[3, 4], 100.0)).unwrap();
         let assessment = catalog
             .assess(
                 &descriptor(&[3, 7], 100.0),
@@ -262,7 +286,7 @@ mod tests {
     fn state_combinations_count_support_once_per_episode() {
         let repeated = descriptor(&[3, 3, 3], 100.0);
         let mut catalog = SemanticNoveltyCatalog::default();
-        catalog.record(&repeated);
+        catalog.record(&repeated).unwrap();
         assert_eq!(catalog.observed_episodes(), 1);
         assert_eq!(catalog.snapshot().state_combination_support.len(), 1);
         assert_eq!(

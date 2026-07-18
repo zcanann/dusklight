@@ -28,6 +28,10 @@ use crate::search::{
     SegmentProfile, evolve_population, evolve_population_with_retained_and_proposals,
     rank_population, write_explicit_population, write_seed_population,
 };
+use crate::semantic_novelty::catalog::{
+    SemanticNoveltyAssessment, SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
+};
+use crate::semantic_novelty::{BoundaryFingerprintFact, SemanticNoveltyDescriptor};
 use crate::tape::{InputTape, RawPadState, TapeBoot};
 use crate::tape_chain::{ChainSegment, concatenate};
 use crate::transition_corpus::{StateReference, StateReferenceKind, TransitionCorpus};
@@ -389,6 +393,20 @@ pub struct EvaluationReport {
     pub attempts: Vec<AttemptEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective: Option<AnchoredObjectiveIdentity>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CandidateSemanticNoveltyAssessment {
+    pub candidate_id: String,
+    pub assessment: SemanticNoveltyAssessment,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SemanticNoveltyGenerationReport {
+    pub schema: &'static str,
+    pub generation: u32,
+    pub baseline_observed_episodes: u64,
+    pub candidates: Vec<CandidateSemanticNoveltyAssessment>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2248,6 +2266,7 @@ pub fn run_anchored_search(
     let mut previous_dataset_generation: Option<OnlineDatasetGeneration> = None;
     let mut previous_model_lineage: Option<OnlineModelLineage> = None;
     let mut behavior_archive = BehaviorArchive::default();
+    let mut semantic_novelty_catalog = SemanticNoveltyCatalog::default();
     for generation in 0..search.generations {
         let manifest_path = population_root.join("manifest.json");
         let results_path = population_root.join("results.json");
@@ -2273,11 +2292,25 @@ pub fn run_anchored_search(
         write_json(&population_root.join("leaderboard.json"), &leaderboard)?;
         let mut generation_corpora = BTreeMap::new();
         let mut generation_contexts = BTreeMap::new();
+        let mut generation_semantics =
+            BTreeMap::<String, (u32, SemanticNoveltyDescriptor, BehaviorContext)>::new();
         let mut generation_outcomes = BTreeMap::new();
         let mut evaluation_attempts = Vec::with_capacity(report.attempts.len());
         let mut quarantined_corpora = BTreeMap::<String, TransitionCorpus>::new();
         let mut quarantined_digests = BTreeSet::<ArtifactDigest>::new();
         for attempt in &report.attempts {
+            if let Some(descriptor) = semantic_novelty_descriptor(attempt)? {
+                let replace = generation_semantics
+                    .get(&attempt.candidate_id)
+                    .is_none_or(|(selected_attempt, _, _)| attempt.attempt < *selected_attempt);
+                if replace {
+                    let context = archive_behavior_context(attempt, &descriptor);
+                    generation_semantics.insert(
+                        attempt.candidate_id.clone(),
+                        (attempt.attempt, descriptor, context),
+                    );
+                }
+            }
             let transition_corpus_sha256 = if let Some(path) = attempt.transition_corpus.as_ref() {
                 let corpus = TransitionCorpus::read_zstd_file(path)
                     .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
@@ -2291,12 +2324,6 @@ pub fn run_anchored_search(
                 generation_corpora
                     .entry(attempt.candidate_id.clone())
                     .or_insert(corpus);
-                if !generation_contexts.contains_key(&attempt.candidate_id) {
-                    generation_contexts.insert(
-                        attempt.candidate_id.clone(),
-                        archive_behavior_context(attempt)?,
-                    );
-                }
                 generation_outcomes
                     .entry(attempt.candidate_id.clone())
                     .or_insert(attempt.outcome.class);
@@ -2311,6 +2338,42 @@ pub fn run_anchored_search(
                 transition_corpus_sha256,
             });
         }
+        generation_contexts.extend(
+            generation_semantics
+                .iter()
+                .map(|(candidate_id, (_, _, context))| (candidate_id.clone(), context.clone())),
+        );
+        let baseline_observed_episodes = semantic_novelty_catalog.observed_episodes();
+        let candidates = generation_semantics
+            .iter()
+            .map(|(candidate_id, (_, descriptor, _))| {
+                semantic_novelty_catalog
+                    .assess(descriptor, SemanticNoveltyCatalogConfig::default())
+                    .map(|assessment| CandidateSemanticNoveltyAssessment {
+                        candidate_id: candidate_id.clone(),
+                        assessment,
+                    })
+                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        write_json(
+            &population_root.join("semantic-novelty.json"),
+            &SemanticNoveltyGenerationReport {
+                schema: "dusklight-semantic-novelty-generation/v1",
+                generation,
+                baseline_observed_episodes,
+                candidates,
+            },
+        )?;
+        for (_, descriptor, _) in generation_semantics.values() {
+            semantic_novelty_catalog
+                .record(descriptor)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        }
+        write_json(
+            &population_root.join("semantic-novelty-catalog.json"),
+            &semantic_novelty_catalog.snapshot(),
+        )?;
         let evaluation_seal = EvaluationGenerationSeal::build(
             generation,
             report.repetitions,
@@ -3992,54 +4055,50 @@ fn address_attempt_artifacts(
     Ok(())
 }
 
-fn archive_behavior_context(evidence: &AttemptEvidence) -> Result<BehaviorContext, EvaluateError> {
-    let mut semantic_axes = (None, None, None, None, None, None, None);
-    let contact_behavior_identity = if let Some(path) = evidence.gameplay_trace.as_ref() {
-        let bytes = fs::read(path)?;
-        let trace = crate::trace::decode(&bytes)
-            .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
-        let boundaries = evidence
-            .boundary_fingerprints
-            .iter()
-            .map(
-                |(name, value)| crate::semantic_novelty::BoundaryFingerprintFact {
+fn semantic_novelty_descriptor(
+    evidence: &AttemptEvidence,
+) -> Result<Option<SemanticNoveltyDescriptor>, EvaluateError> {
+    evidence
+        .gameplay_trace
+        .as_ref()
+        .map(|path| {
+            let bytes = fs::read(path)?;
+            let trace = crate::trace::decode(&bytes)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            let boundaries = evidence
+                .boundary_fingerprints
+                .iter()
+                .map(|(name, value)| BoundaryFingerprintFact {
                     name: name.clone(),
                     schema: value.schema.clone(),
                     algorithm: value.algorithm.clone(),
                     canonical_encoding: value.canonical_encoding.clone(),
                     digest: value.digest.clone(),
-                },
-            )
-            .collect();
-        let descriptor =
-            crate::semantic_novelty::SemanticNoveltyDescriptor::from_trace(&trace, boundaries)
-                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
-        let axes = descriptor.axis_identities();
-        semantic_axes = (
-            axes.procedure_sequence,
-            axes.event_sequence,
-            axes.state_transitions,
-            axes.actor_relationships,
-            axes.flags,
-            axes.kinematic_extrema,
-            axes.contacts,
-        );
-        semantic_axes.6.clone()
-    } else {
-        None
-    };
+                })
+                .collect();
+            SemanticNoveltyDescriptor::from_trace(&trace, boundaries)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))
+        })
+        .transpose()
+}
+
+fn archive_behavior_context(
+    evidence: &AttemptEvidence,
+    descriptor: &SemanticNoveltyDescriptor,
+) -> BehaviorContext {
+    let axes = descriptor.axis_identities();
     let mut context = archive_behavior_context_from_evidence(
         &evidence.boundary_fingerprints,
         &evidence.value_projections,
-        contact_behavior_identity,
+        axes.contacts,
     );
-    context.procedure_sequence_identity = semantic_axes.0;
-    context.event_sequence_identity = semantic_axes.1;
-    context.state_transition_identity = semantic_axes.2;
-    context.actor_relationship_identity = semantic_axes.3;
-    context.flag_state_identity = semantic_axes.4;
-    context.kinematic_extrema_identity = semantic_axes.5;
-    Ok(context)
+    context.procedure_sequence_identity = axes.procedure_sequence;
+    context.event_sequence_identity = axes.event_sequence;
+    context.state_transition_identity = axes.state_transitions;
+    context.actor_relationship_identity = axes.actor_relationships;
+    context.flag_state_identity = axes.flags;
+    context.kinematic_extrema_identity = axes.kinematic_extrema;
+    context
 }
 
 fn archive_behavior_context_from_evidence(

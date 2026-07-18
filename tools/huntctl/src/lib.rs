@@ -33,7 +33,6 @@ pub mod scenario_fixture;
 pub mod search;
 pub mod search_evaluator;
 pub mod semantic_novelty;
-pub mod semantic_novelty_catalog;
 pub mod semantic_oracle;
 pub mod tactic_tests;
 pub mod tape;
