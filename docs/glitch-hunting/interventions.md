@@ -111,6 +111,15 @@ Arbitrary address writes should remain a later, separately named unsafe lab
 capability. They are difficult to replay across builds and make causal claims
 ambiguous.
 
+No arbitrary-address operation or executor exists. The typed DSL explicitly
+rejects common raw-write spellings and reserves
+`dusklight-unsafe-intervention-lab` as the only acceptable future build name.
+The automation boundary test scans intervention sources for raw-address
+operation variants or functions; if any appear, they must live under an
+`unsafe_lab` source path and gain a distinct, default-off
+`DUSK_ENABLE_UNSAFE_LAB_ADDRESS_WRITES` compile gate. The existing typed
+intervention feature can never satisfy that boundary.
+
 ## Timing and composition
 
 Every write declares a phase such as `before_game_tick` or `after_game_tick`.
@@ -167,7 +176,9 @@ validated intervention pair may create only `existence` evidence or `mechanism`
 evidence with an explicit bounded mechanism summary; it cannot directly claim
 normal-input reproduction. Promotion requires an absolute input tape with
 gameplay writes, intervention artifacts, and mutation audits all absent. The
-normal run must keep the source build, scenario, parent boundary, observation,
-and oracle identities, reproduce the setup on at least two cold replays, and
-retain the replay bundle, trace, and oracle report. The natural tape itself may
-differ because discovering that replacement input is the point of promotion.
+normal run must keep the source/game, compiler, target, profile, scenario,
+parent boundary, observation, and oracle identities while using a distinct
+non-intervention feature digest and fidelity profile. It must reproduce the
+setup on at least two cold replays and retain the replay bundle, trace, and
+oracle report. The natural tape itself may differ because discovering that
+replacement input is the point of promotion.

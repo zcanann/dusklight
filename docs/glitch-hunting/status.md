@@ -145,8 +145,13 @@ roadmap documents describe the larger target.
   while retaining the exact resulting `DUSKINTR` and evaluation count.
 - Intervention findings are typed as existence or mechanism evidence and
   cannot claim normal-input reproduction directly. Promotion requires repeated
-  write-free cold replay under matching setup identities plus retained absolute
-  tape, replay-bundle, trace, and oracle proof.
+  write-free cold replay under a distinct normal-build capability with matching
+  source/game and setup identities plus retained absolute tape, replay-bundle,
+  trace, and oracle proof.
+- Typed `DUSKINTR` rejects arbitrary-address spellings and reserves a separately
+  named unsafe-lab build for any future raw-write work. Static automation
+  boundary tests require such code to live under `unsafe_lab` and use a distinct
+  default-off compile gate; no raw-address executor exists today.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.
