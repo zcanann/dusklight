@@ -462,7 +462,10 @@ an event prefers unbuttoned movement and neutral-stick button states; an absent
 player prefers neutral-stick button states; and a pad error prefers neutral.
 These recommendations exist only in Q proposal ordering. The alternating
 unmasked lane can still select any observed action class, including one the
-mask does not recommend. Tape compilation, candidate validation, corpus
+mask does not recommend. If a state has no recommended learned alternative,
+the guided lane emits no proposal rather than falling back through the mask;
+the systematic, uncertainty, random, and Latin-hypercube lanes remain explicitly
+unmasked. Tape compilation, candidate validation, corpus
 ingestion, native evaluation, milestone scoring, minimization, replay, and
 proof acceptance do not import or consult the mask. Consequently a
 glitch-producing input that looks invalid to the prior remains an ordinary

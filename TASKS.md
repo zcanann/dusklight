@@ -835,7 +835,7 @@ simple random baseline.
   n-step returns, distributional values, and noisy exploration.
 - [ ] Evaluate those four components one at a time on a readiness-qualified,
   content-disjoint corpus before adopting a Rainbow configuration.
-- [ ] Mask structurally unavailable actions for efficiency while retaining an
+- [x] Mask structurally unavailable actions for efficiency while retaining an
   explicit exploration path for nominally invalid inputs that may cause bugs.
 
 ### P1: action hierarchy and goal conditioning

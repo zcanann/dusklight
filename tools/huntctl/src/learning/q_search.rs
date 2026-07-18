@@ -657,7 +657,6 @@ fn guided_exploit(alternatives: &[QEstimate], guidance: &AdvisoryActionMask) -> 
         .iter()
         .copied()
         .find(|estimate| guidance.recommends(estimate.action))
-        .or_else(|| alternatives.first().copied())
 }
 
 fn unmasked_explore(alternatives: &[QEstimate], current_mean: f64) -> Option<QEstimate> {
@@ -745,7 +744,7 @@ mod tests {
                 .map(|index| InputFrame {
                     owned_ports: 1,
                     pads: [
-                        canonical_movement_pad_v2(if index % 2 == 0 { 1 } else { 18 }).unwrap(),
+                        canonical_movement_pad_v2(if index % 2 == 0 { 0 } else { 18 }).unwrap(),
                         disconnected,
                         disconnected,
                         disconnected,
@@ -850,6 +849,11 @@ mod tests {
         );
         assert_eq!(
             unmasked_explore(&ranked, 0.0).unwrap().action,
+            masked_high_value.action
+        );
+        assert!(guided_exploit(&[masked_high_value], &guidance).is_none());
+        assert_eq!(
+            unmasked_explore(&[masked_high_value], 0.0).unwrap().action,
             masked_high_value.action
         );
     }
