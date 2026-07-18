@@ -219,6 +219,21 @@ decision unless graph held-out MSE improves by the declared threshold (10% by
 default). A controlled topology-only fixture proves the graph branch can expose
 signal unavailable to equal-count pooling; the report remains non-promotional.
 
+### Local-dynamics readiness
+
+`learning/local_dynamics.rs` prevents a short-horizon dynamics pilot from
+quietly becoming synthetic training data. Its content-disjoint held-out report
+binds the model, training and held-out datasets, and every prediction case,
+then measures numeric state RMSE plus exact typed-event mismatch separately for
+contacts, procedure transitions, RNG-sensitive branches, and actor
+interactions. Defaults require at least 128 cases in every stratum over at most
+eight ticks, RMSE no greater than 0.1, and event mismatch no greater than 5%.
+
+Missing strata or a failure in any one stratum disables short-horizon research.
+Even a passing report leaves model rollouts disabled: it is evidence for the
+next controlled comparison, not authority to add imagined transitions to a
+corpus or to promote a route.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
