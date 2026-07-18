@@ -137,7 +137,13 @@ fn validate_normal_reproduction(
     reproduction: &NormalInputReproductionEvidence,
 ) -> Result<(), InterventionEvidenceError> {
     let inputs = &reproduction.inputs;
-    if inputs.build != source.build
+    if inputs.build.dusklight_commit != source.build.dusklight_commit
+        || inputs.build.aurora_commit != source.build.aurora_commit
+        || inputs.build.compiler != source.build.compiler
+        || inputs.build.target != source.build.target
+        || inputs.build.profile != source.build.profile
+        || inputs.build.game_digest != source.build.game_digest
+        || inputs.build.dirty_digest != source.build.dirty_digest
         || inputs.scenario_id != source.scenario_id
         || inputs.scenario_sha256 != source.scenario_sha256
         || inputs.parent_boundary_sha256 != source.parent_boundary_sha256
@@ -145,7 +151,14 @@ fn validate_normal_reproduction(
         || inputs.oracle_program_sha256 != source.oracle_program_sha256
     {
         return Err(evidence_error(
-            "normal-input reproduction changed the build, setup, observation, or oracle identity",
+            "normal-input reproduction changed the source/game, setup, observation, or oracle identity",
+        ));
+    }
+    if inputs.build.feature_digest == source.build.feature_digest
+        || inputs.build.fidelity_profile == "experimental_typed_gameplay_writes"
+    {
+        return Err(evidence_error(
+            "normal-input reproduction must use a distinct non-intervention build capability",
         ));
     }
     if inputs.absolute_input_tape_sha256 == Digest::ZERO
@@ -245,8 +258,11 @@ mod tests {
     }
 
     fn normal_reproduction() -> NormalInputReproductionEvidence {
+        let mut reproduction_inputs = inputs(20);
+        reproduction_inputs.build.feature_digest = Digest([19; 32]);
+        reproduction_inputs.build.fidelity_profile = "retail_compatible_observers".into();
         NormalInputReproductionEvidence {
-            inputs: inputs(20),
+            inputs: reproduction_inputs,
             gameplay_writes_enabled: false,
             intervention_sha256: None,
             intervention_audit_sha256: None,
@@ -331,6 +347,22 @@ mod tests {
         let mut one_replay = normal_reproduction();
         one_replay.cold_replay_count = 1;
         assert!(claim.promote_with_normal_input(one_replay).is_err());
+
+        let mut intervention_build = normal_reproduction();
+        intervention_build.inputs.build.feature_digest = Digest([1; 32]);
+        intervention_build.inputs.build.fidelity_profile =
+            "experimental_typed_gameplay_writes".into();
+        assert!(
+            InterventionEvidenceClaim::from_intervention_experiment(
+                &pair(),
+                Digest([30; 32]),
+                InterventionEvidenceLevel::Existence,
+                None,
+            )
+            .unwrap()
+            .promote_with_normal_input(intervention_build)
+            .is_err()
+        );
     }
 
     #[test]
