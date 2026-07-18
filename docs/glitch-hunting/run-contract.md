@@ -77,17 +77,24 @@ huntctl harness execute --request REQUEST.json --repository-root DIR \
   [--attempt N]
 ```
 
-The native executor currently routes neutral, compiled TAS-source, and absolute
-tape seeds through this boundary. It materializes one absolute tape, launches
-an isolated native process, authenticates the milestone result, realized tape,
-gameplay trace and observation inventory, classifies the terminal, and seals
-`result.json` beneath the requested destination. Reactive-controller, search,
-and learned-proposal adapters remain open; controller requests are rejected
-rather than silently taking a legacy path.
+The native executor currently routes neutral, compiled TAS-source, absolute
+tape, and reactive-controller seeds through this boundary. It materializes or
+records one absolute tape, launches an isolated native process, authenticates
+the milestone result, realized tape, gameplay trace and observation inventory,
+classifies the terminal, and seals `result.json` beneath the requested
+destination. Exact controller target loss is distinct from input exhaustion.
+Search and learned-proposal adapters remain open.
+
+`harness inspect-objective` prints the full source objective, program and
+definition identities, phase and stability, required families and facts,
+current terminal progress, first-hit fingerprint, and missing evidence. With no
+result it reports the run as pending; with `--result` it authenticates the
+referenced artifacts before presenting them.
 
 Unit coverage verifies identity disagreement, stale bytes, external game-data
 symlinks, strict reached proof, partial crash artifacts, and distinct
 unsupported/capability-mismatch results. CLI integration coverage seals and
 validates a complete request/result pair, executes a tape request through a
-mock native process, proves missing trace families become unsupported, and
-verifies overwrite refusal.
+mock native process, executes reactive control into a realized tape, proves
+exact target loss and missing trace families remain typed failures, and verifies
+overwrite refusal.

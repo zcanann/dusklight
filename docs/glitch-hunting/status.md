@@ -29,10 +29,13 @@ roadmap documents describe the larger target.
   fingerprint, realized tape, trace, and retained complete or partial
   artifacts. `huntctl harness seal-run-request|seal-run-result` and their
   validation counterparts authenticate the contracts and referenced bytes.
-  `huntctl harness execute` now routes neutral, TAS-source, and absolute-tape
-  seeds through an isolated native process and seals the typed result. Reactive
-  controllers, search evaluators, and learners have not yet been routed through
-  this common boundary.
+  `huntctl harness execute` now routes neutral, TAS-source, absolute-tape, and
+  reactive-controller seeds through an isolated native process, retains the
+  controller's absolute realized tape, and seals the typed result. Exact target
+  loss is not exhaustion. Search evaluators and learners have not yet been
+  routed through this common boundary. `harness inspect-objective` presents the
+  authenticated source, identities, requirements, progress, first-hit boundary,
+  and missing evidence in one human-readable view.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific

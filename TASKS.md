@@ -97,9 +97,9 @@ an independently replayable tape.
   scores; only objective truth determines success.
 - [x] Require each objective to declare its necessary observation families and
   fail as unsupported when a family is unavailable or truncated.
-- [ ] Return stable terminal classes for reached, exhausted, impossible,
+- [x] Return stable terminal classes for reached, exhausted, impossible,
   unsupported, timeout, crash, hang, target-lost, and nondeterministic.
-- [ ] Add an inspection command that prints the source objective, compiled
+- [x] Add an inspection command that prints the source objective, compiled
   identity, required facts, current progress, first-hit boundary, and missing
   evidence in human-readable form.
 - [ ] Add truth-table and native/offline parity tests for every fact used by the
