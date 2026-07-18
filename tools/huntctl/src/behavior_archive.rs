@@ -448,6 +448,7 @@ fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) ->
 mod tests {
     use super::*;
     use crate::artifact::Digest;
+    use crate::candidate_envelope::NamedDigest;
     use crate::offline_rl::{
         canonical_movement_pad_v2, movement_action_schema_digest_v2,
         movement_feature_schema_digest_v1,
@@ -519,6 +520,7 @@ mod tests {
             )
             .unwrap(),
             outcome: crate::episode::EpisodeOutcomeClass::Successful,
+            objective: NamedDigest::new("archive-test", Digest([0x90; 32])),
         }
     }
 

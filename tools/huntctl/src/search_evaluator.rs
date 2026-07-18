@@ -5,6 +5,7 @@ use crate::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
 };
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
+use crate::candidate_envelope::NamedDigest;
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
     ContinuousAxes, ContinuousMethod, ContinuousOptimizer, ContinuousOptimizerConfig,
@@ -2532,6 +2533,14 @@ pub fn run_anchored_search(
                 candidate,
                 corpus: corpus.clone(),
                 outcome: generation_outcomes[&row.candidate_id],
+                objective: NamedDigest::new(
+                    prepared.identity.goal_milestone.clone(),
+                    prepared.identity.digest.parse().map_err(|error| {
+                        EvaluateError::InvalidResult(format!(
+                            "invalid anchored objective digest: {error}"
+                        ))
+                    })?,
+                ),
             };
             let context = generation_contexts
                 .get(&row.candidate_id)
@@ -2662,6 +2671,7 @@ pub fn run_anchored_search(
                             "status": "ready",
                             "summary": batch.summary,
                             "candidate_ids": candidate_ids,
+                            "envelopes": batch.envelopes,
                         }),
                     )?;
                     batch.candidates

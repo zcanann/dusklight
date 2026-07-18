@@ -6,6 +6,7 @@
 
 pub mod actor_identity;
 pub mod artifact;
+pub mod candidate_envelope;
 pub mod compatibility;
 pub mod controller_program;
 pub mod observation_view;

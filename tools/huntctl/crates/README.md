@@ -15,9 +15,9 @@ dusklight-huntctl (CLI and domain orchestration)
 ## `dusklight-automation-contracts`
 
 Owns portable value contracts: artifact/build identity, exact actor identity,
-compatibility modes, observation schemas, scenario fixtures, and DUSKTAPE.
-It has no filesystem orchestration, process control, search, learning, route,
-workbench, or native-runtime dependency.
+candidate/proposer envelopes, compatibility modes, observation schemas,
+scenario fixtures, and DUSKTAPE. It has no filesystem orchestration, process
+control, search, learning, route, workbench, or native-runtime dependency.
 
 ## `dusklight-evidence`
 
@@ -53,8 +53,8 @@ preserve the existing public module paths while callers migrate; they do not
 restore reverse dependencies into the smaller crates.
 
 The next crate extractions should be driven by dependency direction, not file
-size alone. In particular, the current search/learning cycle must be broken by
-giving candidate and proposal envelopes a lower-level owner before either
-domain becomes a crate. Native harness contracts and native process execution
-should also separate before extracting the harness domain. Do not create a
-crate that depends back on `dusklight-huntctl`.
+size alone. Candidate and proposer envelopes now have a lower-level owner;
+search and learning must finish adopting that contract before either becomes a
+crate. Native harness contracts and native process execution should also
+separate before extracting the harness domain. Do not create a crate that
+depends back on `dusklight-huntctl`.

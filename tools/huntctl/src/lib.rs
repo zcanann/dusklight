@@ -30,8 +30,8 @@ pub mod transition_evidence;
 // Compatibility re-exports keep existing callers stable while the physical
 // source tree migrates behind compiler-enforced crate boundaries.
 pub use dusklight_automation_contracts::{
-    actor_identity, artifact, compatibility, controller_program, observation_view,
-    scenario_fixture, tape,
+    actor_identity, artifact, candidate_envelope, compatibility, controller_program,
+    observation_view, scenario_fixture, tape,
 };
 pub use dusklight_control::{
     controller_compilation, game_tactic, motion_path, option_execution, roll_option, tape_chain,

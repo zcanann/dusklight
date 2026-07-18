@@ -13,6 +13,7 @@ use crate::action_guidance::{
     ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
 };
 use crate::artifact::Digest;
+use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
 use crate::episode::EpisodeOutcomeClass;
 use crate::fqi::{
     FITTED_Q_MODEL_SCHEMA_V2, FittedQ, FqiConfig, QEstimate, Transition as FqiTransition,
@@ -24,6 +25,7 @@ use crate::offline_rl::{
 use crate::search::{Ancestry, Candidate, InterventionRange};
 use crate::transition_corpus::TransitionCorpus;
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::fmt;
@@ -38,6 +40,7 @@ pub struct QEpisode {
     pub candidate: Candidate,
     pub corpus: TransitionCorpus,
     pub outcome: EpisodeOutcomeClass,
+    pub objective: NamedDigest,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -115,6 +118,7 @@ pub struct PolicyCollapseAudit {
 #[derive(Clone, Debug)]
 pub struct QProposalBatch {
     pub candidates: Vec<Candidate>,
+    pub envelopes: Vec<CandidateEnvelope>,
     pub summary: QProposalSummary,
 }
 
@@ -614,6 +618,28 @@ fn propose_q_candidates_internal(
         .collect();
 
     let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
+    let objective = &episodes[0].objective;
+    if episodes
+        .iter()
+        .any(|episode| episode.objective != *objective)
+    {
+        return Err(QSearchError::new(
+            "Q proposal parents do not share one exact objective identity",
+        ));
+    }
+    let configuration_sha256 = proposal_configuration_sha256(&config, lineage)?;
+    let envelopes = candidates
+        .iter()
+        .map(|candidate| {
+            candidate_envelope(
+                candidate,
+                objective.clone(),
+                action_schema,
+                config.seed,
+                configuration_sha256,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
             schema: "dusklight-q-proposals/v7",
@@ -643,7 +669,86 @@ fn propose_q_candidates_internal(
             policy_collapse_audit,
         },
         candidates,
+        envelopes,
     })
+}
+
+fn proposal_configuration_sha256(
+    config: &QProposalConfig,
+    lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
+) -> Result<Digest, QSearchError> {
+    let identity = (
+        config.generation,
+        config.max_proposals,
+        config.iterations,
+        config.trees_per_action,
+        config.seed,
+        lineage.map(|(dataset, _)| dataset.generation_sha256),
+        lineage.and_then(|(_, model)| model.map(|model| model.lineage_sha256)),
+    );
+    let bytes =
+        serde_json::to_vec(&identity).map_err(|error| QSearchError::new(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.q-proposer-configuration/v1\0");
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+    Ok(Digest(hasher.finalize().into()))
+}
+
+fn candidate_envelope(
+    candidate: &Candidate,
+    objective: NamedDigest,
+    action_schema_sha256: Digest,
+    seed: u64,
+    configuration_sha256: Digest,
+) -> Result<CandidateEnvelope, QSearchError> {
+    let mutation = candidate
+        .ancestry
+        .mutation
+        .as_deref()
+        .ok_or_else(|| QSearchError::new("Q proposal has no typed proposer attribution"))?;
+    let (kind, id) = if mutation.starts_with("q_guided") {
+        (ProposerKind::Learned, "learned.tree-fqi-guided")
+    } else if mutation.starts_with("q_disagreement_heuristic") {
+        (ProposerKind::Learned, "learned.tree-fqi-disagreement")
+    } else if mutation.starts_with("structured_counterfactual") {
+        (ProposerKind::StructuredSearch, "search.counterfactual")
+    } else if mutation.starts_with("archive_novelty") {
+        (ProposerKind::StructuredSearch, "search.archive-novelty")
+    } else if mutation.starts_with("blind_") {
+        (ProposerKind::Random, "random.coverage")
+    } else {
+        return Err(QSearchError::new(
+            "Q proposal mutation has no supported proposer identity",
+        ));
+    };
+    let candidate_sha256 = candidate
+        .id()
+        .map_err(|error| QSearchError::new(error.to_string()))?
+        .parse()
+        .map_err(|error| QSearchError::new(format!("invalid candidate digest: {error}")))?;
+    let parent_candidate_sha256 = candidate
+        .ancestry
+        .parent_id
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(|error| QSearchError::new(format!("invalid parent candidate digest: {error}")))?;
+    CandidateEnvelope::build(
+        candidate_sha256,
+        parent_candidate_sha256,
+        candidate.ancestry.generation,
+        objective,
+        NamedDigest::new("movement-action/v2", action_schema_sha256),
+        seed,
+        ProposerIdentity {
+            kind,
+            id: id.into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            configuration_sha256,
+        },
+    )
+    .map_err(|error| QSearchError::new(error.to_string()))
 }
 
 struct AlignedEpisode<'a> {
@@ -961,6 +1066,10 @@ mod tests {
     use crate::tape::{InputFrame, InputTape, RawPadState};
     use crate::transition_corpus::{MacroAction, StateReference, StateReferenceKind, Transition};
 
+    fn objective() -> NamedDigest {
+        NamedDigest::new("q-search-test", Digest([0xa5; 32]))
+    }
+
     fn corpus_for(candidate: &Candidate) -> TransitionCorpus {
         let tape = candidate.compile().unwrap();
         let transitions = tape
@@ -1037,6 +1146,7 @@ mod tests {
             candidate: candidate.clone(),
             corpus: corpus.clone(),
             outcome: EpisodeOutcomeClass::Successful,
+            objective: objective(),
         }];
         let config = QProposalConfig {
             generation: 1,
@@ -1049,6 +1159,13 @@ mod tests {
         let second = propose_q_candidates(&[corpus], &episodes, config).unwrap();
         assert!(!first.candidates.is_empty());
         assert_eq!(first.summary.proposals, first.candidates.len());
+        assert_eq!(first.envelopes.len(), first.candidates.len());
+        assert!(first.envelopes.iter().all(|envelope| {
+            envelope.validate().is_ok()
+                && envelope.objective == objective()
+                && envelope.action_schema.sha256 == movement_action_schema_digest_v2()
+                && envelope.seed == config.seed
+        }));
         assert_eq!(
             first.summary.action_guidance_schema,
             ACTION_GUIDANCE_SCHEMA_V1
@@ -1203,6 +1320,7 @@ mod tests {
             candidate,
             corpus: corpus.clone(),
             outcome: EpisodeOutcomeClass::Successful,
+            objective: objective(),
         }];
         let config = QProposalConfig {
             generation: 1,
@@ -1266,9 +1384,10 @@ mod tests {
                 candidate,
                 corpus: corpus.clone(),
                 outcome: EpisodeOutcomeClass::Successful,
+                objective: objective(),
             }],
             QProposalConfig {
-                generation: 0,
+                generation: 1,
                 max_proposals: 3,
                 iterations: 2,
                 trees_per_action: 3,
@@ -1389,6 +1508,7 @@ mod tests {
                 candidate,
                 corpus: corpus.clone(),
                 outcome: EpisodeOutcomeClass::Successful,
+                objective: objective(),
             }],
             QProposalConfig {
                 generation: 0,
