@@ -5,6 +5,7 @@ pub mod batch;
 pub mod calibration;
 pub mod dataset;
 pub mod double_q;
+pub mod dyna_mixture;
 pub mod ensemble_q;
 pub mod evaluation_isolation;
 pub mod factorized_actions;
