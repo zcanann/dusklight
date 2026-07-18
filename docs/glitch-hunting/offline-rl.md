@@ -672,10 +672,9 @@ estimate.
 
 The generation-local `q-proposals.json` reports requested, available, and
 generated counts per proposer, the generation's cycle offset and actual lane
-schedule, plus coverage by
-stage/room, spatial cell, player procedure, option, parameter/action bin,
-duration, goal phase, terminal outcome,
-and observed action support. Its collapse audit reports unique parents and
+schedule, plus coverage by stage/room, spatial cell, player procedure, option,
+parameter/action bin, duration, goal phase, terminal outcome, and observed
+action support. Its collapse audit reports unique parents and
 proposed actions. This makes failures and blind-spot probes first-class
 collection evidence rather than repeatedly perturbing only successful
 headings.
