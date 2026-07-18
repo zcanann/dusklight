@@ -13,6 +13,7 @@ pub mod hindsight;
 pub mod iql;
 pub mod low_data_baselines;
 pub mod offline_rl;
+pub mod online_lineage;
 pub mod option_policy;
 pub mod option_values;
 pub mod prioritized_replay;
