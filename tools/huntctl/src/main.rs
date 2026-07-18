@@ -34,6 +34,7 @@ use huntctl::timeline::Timeline;
 use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transport::ProcessTransport;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
+use huntctl::world_inventory::WorldInventory;
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -139,6 +140,39 @@ fn command_observe(args: &[String]) -> Result<(), Box<dyn Error>> {
 
 fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("inventory") => {
+            let stage_dir = required_path(&args[1..], "--stage-dir")?;
+            let stage = option(&args[1..], "--stage").ok_or("missing required --stage ID")?;
+            let output = required_path(&args[1..], "--output")?;
+            let inventory = WorldInventory::build(&stage_dir, &stage)?;
+            let bytes = inventory.canonical_bytes()?;
+            let digest = inventory.digest()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": inventory.schema,
+                    "stage": inventory.stage,
+                    "output": output,
+                    "sha256": digest,
+                    "bytes": bytes.len(),
+                    "sources": inventory.sources.len(),
+                    "chunks": inventory.chunks.len(),
+                    "placements": inventory.placements.len(),
+                    "player_spawns": inventory.player_spawns.len(),
+                    "exits": inventory.exits.len(),
+                    "collisions": inventory.collisions.len(),
+                    "load_triggers": inventory.load_triggers.len(),
+                }))?
+            );
+            Ok(())
+        }
         Some("kcl") => {
             let prism_index: u16 = option(&args[1..], "--prism")
                 .ok_or("missing required --prism INDEX")?
@@ -1988,7 +2022,7 @@ fn print_usage() {
         "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
-        "\nOffline world geometry:\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
+        "\nOffline world geometry:\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
     );
 }
 

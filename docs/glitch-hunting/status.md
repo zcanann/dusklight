@@ -180,6 +180,17 @@ facts fail extraction. `huntctl observe` emits/inspects the canonical spec, and
 v2 extraction writes a matching spec sidecar while preserving movement-v1
 compatibility.
 
+The offline world reader now builds canonical
+`dusklight-world-inventory/v1` artifacts directly from immutable
+RARC/DZS/DZR/KCL/PLC content. The checked F_SP103 fixture inventories 1,442
+placements, 48 player spawns, 44 SCLS exits, 10,794 collision prisms, and 40
+inferred collision-to-SCLS load triggers. Its artifact SHA-256 is
+`370675af90d40e5b6d8e17b8dce3ad48873bec74c7f7c05bb69b50de95201e7f`.
+Four degenerate retail prisms remain addressable with explicit reconstruction
+failures. The content-golden test independently proves that room-1 prism 2217,
+PLC attribute 19 and exit 1 join room-1 SCLS record 1 and `F_SP104` room 1.
+This path is offline and read-only; no native or gameplay file participates.
+
 ## Known gaps
 
 - `OSAlarm` dispatch, the separate SDK `__OSGetSystemTime`, and non-SDK host

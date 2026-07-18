@@ -59,6 +59,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Fork-only observer boundary](observer-boundary.md) defines the explicit
   compile gate, current field-access manifest, and forbidden native query
   behavior.
+- [Offline world inventory](world-inventory.md) documents the content-addressed
+  RARC/DZS/DZR/KCL/PLC reader and its checked F_SP103 acceptance fixture.
 - [Implementation status](status.md) records working commands, tests, and
   current fidelity/validation limits.
 - [Testing and visual TAS playback](testing.md) documents the VS Code selector,

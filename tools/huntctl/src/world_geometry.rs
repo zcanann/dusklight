@@ -15,6 +15,7 @@ const KCL_PRISM_SIZE: usize = 0x10;
 const PLC_HEADER_SIZE: usize = 0x08;
 const PLC_CODE_SIZE: usize = 0x14;
 const RARC_HEADER_SIZE: usize = 0x40;
+const RARC_NODE_SIZE: usize = 0x10;
 const RARC_FILE_ENTRY_SIZE: usize = 0x14;
 const MAX_DECOMPRESSED_ARCHIVE_SIZE: usize = 256 * 1024 * 1024;
 // G_CM3D_F_ABS_MIN in c_m3d.cpp; this keeps offline prism reconstruction
@@ -156,6 +157,38 @@ pub struct KclPrismInspection {
     pub triangle: [Vec3; 3],
 }
 
+/// Authored fields that remain meaningful even when a retail prism cannot be
+/// reconstructed into a finite triangle.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KclAuthoredPrism {
+    pub stable_id: String,
+    pub prism_index: u16,
+    pub height: f32,
+    pub source_indices: KclSourceIndices,
+    pub attribute: u16,
+    pub code: CollisionCode,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum KclReconstruction {
+    Reconstructed {
+        plane: CollisionPlane,
+        triangle: [Vec3; 3],
+    },
+    Degenerate {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KclInventoryPrism {
+    pub authored: KclAuthoredPrism,
+    pub reconstruction: KclReconstruction,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KclInspection {
@@ -205,6 +238,51 @@ impl<'a> KclPlc<'a> {
     }
 
     pub fn inspect_prism(&self, prism_index: u16) -> Result<KclInspection, WorldGeometryError> {
+        let authored = self.authored_prism(prism_index)?;
+        let (plane, triangle) = self.reconstruct_prism(&authored)?;
+
+        Ok(KclInspection {
+            format: "dusklight-kcl-inspection/v1",
+            kcl_sha256: self.kcl_digest,
+            plc_sha256: self.plc_digest,
+            position_count: self.layout.position_count,
+            normal_count: self.layout.normal_count,
+            prism_table_count: self.layout.prism_count,
+            plc_code_count: self.plc_count,
+            prism: KclPrismInspection {
+                stable_id: authored.stable_id,
+                prism_index: authored.prism_index,
+                height: authored.height,
+                source_indices: authored.source_indices,
+                attribute: authored.attribute,
+                code: authored.code,
+                plane,
+                triangle,
+            },
+        })
+    }
+
+    /// Reads every authored field and reports triangle reconstruction
+    /// separately. This is the inventory path: degenerate retail data remains
+    /// addressable instead of being silently dropped or aborting the scan.
+    pub fn inventory_prism(
+        &self,
+        prism_index: u16,
+    ) -> Result<KclInventoryPrism, WorldGeometryError> {
+        let authored = self.authored_prism(prism_index)?;
+        let reconstruction = match self.reconstruct_prism(&authored) {
+            Ok((plane, triangle)) => KclReconstruction::Reconstructed { plane, triangle },
+            Err(error) => KclReconstruction::Degenerate {
+                reason: error.to_string(),
+            },
+        };
+        Ok(KclInventoryPrism {
+            authored,
+            reconstruction,
+        })
+    }
+
+    fn authored_prism(&self, prism_index: u16) -> Result<KclAuthoredPrism, WorldGeometryError> {
         let prism_index = usize::from(prism_index);
         if prism_index == 0 {
             return Err(WorldGeometryError::new(
@@ -244,6 +322,37 @@ impl<'a> KclPlc<'a> {
             )));
         }
 
+        let code_offset = checked_add(
+            PLC_HEADER_SIZE,
+            checked_mul(usize::from(attribute), PLC_CODE_SIZE, "PLC code offset")?,
+            "PLC code offset",
+        )?;
+        let mut raw_code = [0_u32; 5];
+        for (index, word) in raw_code.iter_mut().enumerate() {
+            *word = read_u32(self.plc, code_offset + index * 4, "PLC code word")?;
+        }
+        let code = CollisionCode::decode(raw_code);
+        let stable_id = format!(
+            "kcl-sha256:{}/plc-sha256:{}/prism/{prism_index}",
+            self.kcl_digest, self.plc_digest
+        );
+
+        Ok(KclAuthoredPrism {
+            stable_id,
+            prism_index: prism_index as u16,
+            height,
+            source_indices,
+            attribute,
+            code,
+        })
+    }
+
+    fn reconstruct_prism(
+        &self,
+        prism: &KclAuthoredPrism,
+    ) -> Result<(CollisionPlane, [Vec3; 3]), WorldGeometryError> {
+        let prism_index = usize::from(prism.prism_index);
+        let source_indices = prism.source_indices;
         let anchor = self.position(source_indices.position, prism_index)?;
         let face_normal = self.normal(source_indices.face_normal, prism_index, "face")?;
         let edge_1 = self.normal(source_indices.edge_normal_1, prism_index, "edge 1")?;
@@ -265,59 +374,39 @@ impl<'a> KclPlc<'a> {
                 "KCL prism {prism_index} has degenerate edge normals"
             )));
         }
-        let vertex_1 = anchor.add_scaled(toward_vertex_1, height / denominator_1);
-        let vertex_2 = anchor.add_scaled(toward_vertex_2, height / denominator_2);
+        let vertex_1 = anchor.add_scaled(toward_vertex_1, prism.height / denominator_1);
+        let vertex_2 = anchor.add_scaled(toward_vertex_2, prism.height / denominator_2);
         if !vertex_1.finite() || !vertex_2.finite() {
             return Err(WorldGeometryError::new(format!(
                 "KCL prism {prism_index} reconstructs non-finite vertices"
             )));
         }
-
-        let code_offset = checked_add(
-            PLC_HEADER_SIZE,
-            checked_mul(usize::from(attribute), PLC_CODE_SIZE, "PLC code offset")?,
-            "PLC code offset",
-        )?;
-        let mut raw_code = [0_u32; 5];
-        for (index, word) in raw_code.iter_mut().enumerate() {
-            *word = read_u32(self.plc, code_offset + index * 4, "PLC code word")?;
-        }
-        let code = CollisionCode::decode(raw_code);
-        let stable_id = format!(
-            "kcl-sha256:{}/plc-sha256:{}/prism/{prism_index}",
-            self.kcl_digest, self.plc_digest
-        );
-
         let plane_d = -face_normal.dot(anchor);
         if !plane_d.is_finite() {
             return Err(WorldGeometryError::new(format!(
                 "KCL prism {prism_index} reconstructs a non-finite plane"
             )));
         }
-
-        Ok(KclInspection {
-            format: "dusklight-kcl-inspection/v1",
-            kcl_sha256: self.kcl_digest,
-            plc_sha256: self.plc_digest,
-            position_count: self.layout.position_count,
-            normal_count: self.layout.normal_count,
-            prism_table_count: self.layout.prism_count,
-            plc_code_count: self.plc_count,
-            prism: KclPrismInspection {
-                stable_id,
-                prism_index: prism_index as u16,
-                height,
-                source_indices,
-                attribute,
-                code,
-                plane: CollisionPlane {
-                    anchor,
-                    normal: face_normal,
-                    d: plane_d,
-                },
-                triangle: [anchor, vertex_1, vertex_2],
+        Ok((
+            CollisionPlane {
+                anchor,
+                normal: face_normal,
+                d: plane_d,
             },
-        })
+            [anchor, vertex_1, vertex_2],
+        ))
+    }
+
+    pub fn kcl_sha256(&self) -> Digest {
+        self.kcl_digest
+    }
+
+    pub fn plc_sha256(&self) -> Digest {
+        self.plc_digest
+    }
+
+    pub fn prism_table_count(&self) -> usize {
+        self.layout.prism_count
     }
 
     fn position(&self, index: u16, prism: usize) -> Result<Vec3, WorldGeometryError> {
@@ -569,6 +658,311 @@ pub fn extract_rarc_resource(
         archive.to_vec()
     };
     extract_uncompressed_rarc_resource(&decoded, resource_name)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RarcResourceEntry {
+    pub path: String,
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+    pub sha256: Digest,
+}
+
+/// A validated owned RARC index. Paths are reconstructed from the archive's
+/// node tree; file bytes remain immutable inside the decoded archive buffer.
+#[derive(Debug)]
+pub struct RarcArchive {
+    bytes: Vec<u8>,
+    resources: Vec<RarcResourceEntry>,
+    sha256: Digest,
+}
+
+impl RarcArchive {
+    pub fn parse(input: &[u8]) -> Result<Self, WorldGeometryError> {
+        let bytes = if input.starts_with(b"Yaz0") {
+            decode_yaz0(input)?
+        } else {
+            input.to_vec()
+        };
+        let resources = index_uncompressed_rarc(&bytes)?;
+        let sha256 = sha256(&bytes);
+        Ok(Self {
+            bytes,
+            resources,
+            sha256,
+        })
+    }
+
+    pub fn sha256(&self) -> Digest {
+        self.sha256
+    }
+
+    pub fn resources(&self) -> &[RarcResourceEntry] {
+        &self.resources
+    }
+
+    pub fn resource(&self, path: &str) -> Result<&[u8], WorldGeometryError> {
+        let mut matches = self.resources.iter().filter(|entry| entry.path == path);
+        let entry = matches.next().ok_or_else(|| {
+            WorldGeometryError::new(format!("RARC resource path {path:?} was not found"))
+        })?;
+        if matches.next().is_some() {
+            return Err(WorldGeometryError::new(format!(
+                "RARC contains duplicate resource path {path:?}"
+            )));
+        }
+        Ok(&self.bytes[entry.offset..entry.offset + entry.size])
+    }
+
+    pub fn unique_basename(&self, name: &str) -> Result<&[u8], WorldGeometryError> {
+        let mut matches = self.resources.iter().filter(|entry| entry.name == name);
+        let entry = matches.next().ok_or_else(|| {
+            WorldGeometryError::new(format!("RARC resource {name:?} was not found"))
+        })?;
+        if matches.next().is_some() {
+            return Err(WorldGeometryError::new(format!(
+                "RARC contains multiple files named {name:?}"
+            )));
+        }
+        Ok(&self.bytes[entry.offset..entry.offset + entry.size])
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RarcLayout {
+    node_count: usize,
+    node_table: usize,
+    file_count: usize,
+    file_table: usize,
+    string_table: usize,
+    string_size: usize,
+    data_base: usize,
+}
+
+fn index_uncompressed_rarc(archive: &[u8]) -> Result<Vec<RarcResourceEntry>, WorldGeometryError> {
+    let layout = parse_rarc_layout(archive)?;
+    let mut resources = Vec::new();
+    let mut visiting = vec![false; layout.node_count];
+    let mut visited = vec![false; layout.node_count];
+    walk_rarc_node(
+        archive,
+        layout,
+        0,
+        "",
+        &mut visiting,
+        &mut visited,
+        &mut resources,
+    )?;
+    if visited.iter().any(|value| !value) {
+        return Err(WorldGeometryError::new(
+            "RARC contains unreachable directory nodes",
+        ));
+    }
+    resources.sort_by(|left, right| left.path.cmp(&right.path));
+    for pair in resources.windows(2) {
+        if pair[0].path == pair[1].path {
+            return Err(WorldGeometryError::new(format!(
+                "RARC contains duplicate resource path {:?}",
+                pair[0].path
+            )));
+        }
+    }
+    Ok(resources)
+}
+
+fn parse_rarc_layout(archive: &[u8]) -> Result<RarcLayout, WorldGeometryError> {
+    require_range(archive, 0, RARC_HEADER_SIZE, "RARC header")?;
+    if &archive[0..4] != b"RARC" {
+        return Err(WorldGeometryError::new("RARC magic is missing"));
+    }
+    let declared_size = read_u32(archive, 4, "RARC file size")? as usize;
+    if declared_size != archive.len() {
+        return Err(WorldGeometryError::new(format!(
+            "RARC declared size {declared_size:#x} differs from decoded size {:#x}",
+            archive.len()
+        )));
+    }
+    let info_base = 0x20_usize;
+    let node_count = read_u32(archive, info_base, "RARC node count")? as usize;
+    let node_table = relative_offset(
+        info_base,
+        read_u32(archive, info_base + 4, "RARC node-table offset")?,
+        "RARC node table",
+    )?;
+    let file_count = read_u32(archive, info_base + 8, "RARC file count")? as usize;
+    let file_table = relative_offset(
+        info_base,
+        read_u32(archive, info_base + 12, "RARC file-table offset")?,
+        "RARC file table",
+    )?;
+    let string_size = read_u32(archive, info_base + 16, "RARC string-table size")? as usize;
+    let string_table = relative_offset(
+        info_base,
+        read_u32(archive, info_base + 20, "RARC string-table offset")?,
+        "RARC string table",
+    )?;
+    let data_base = relative_offset(
+        info_base,
+        read_u32(archive, 12, "RARC data offset")?,
+        "RARC data",
+    )?;
+    if node_count == 0 || file_count == 0 {
+        return Err(WorldGeometryError::new(
+            "RARC must contain at least one node and file entry",
+        ));
+    }
+    require_range(
+        archive,
+        node_table,
+        checked_mul(node_count, RARC_NODE_SIZE, "RARC node table")?,
+        "RARC node table",
+    )?;
+    require_range(
+        archive,
+        file_table,
+        checked_mul(file_count, RARC_FILE_ENTRY_SIZE, "RARC file table")?,
+        "RARC file table",
+    )?;
+    require_range(archive, string_table, string_size, "RARC string table")?;
+    if data_base > archive.len() {
+        return Err(WorldGeometryError::new("RARC data starts outside archive"));
+    }
+    Ok(RarcLayout {
+        node_count,
+        node_table,
+        file_count,
+        file_table,
+        string_table,
+        string_size,
+        data_base,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_rarc_node(
+    archive: &[u8],
+    layout: RarcLayout,
+    node_index: usize,
+    parent_path: &str,
+    visiting: &mut [bool],
+    visited: &mut [bool],
+    resources: &mut Vec<RarcResourceEntry>,
+) -> Result<(), WorldGeometryError> {
+    if node_index >= layout.node_count {
+        return Err(WorldGeometryError::new(format!(
+            "RARC directory references node {node_index} outside node count {}",
+            layout.node_count
+        )));
+    }
+    if visiting[node_index] {
+        return Err(WorldGeometryError::new(
+            "RARC directory graph contains a cycle",
+        ));
+    }
+    if visited[node_index] {
+        return Err(WorldGeometryError::new(format!(
+            "RARC directory node {node_index} has multiple parents"
+        )));
+    }
+    visiting[node_index] = true;
+    visited[node_index] = true;
+    let node = layout.node_table + node_index * RARC_NODE_SIZE;
+    let node_name_offset = read_u32(archive, node + 4, "RARC node name offset")? as usize;
+    let node_name = rarc_string(archive, layout, node_name_offset, "RARC node name")?;
+    let entry_count = usize::from(read_u16(archive, node + 10, "RARC node entry count")?);
+    let first_entry = read_u32(archive, node + 12, "RARC node first entry")? as usize;
+    let entry_end = first_entry
+        .checked_add(entry_count)
+        .ok_or_else(|| WorldGeometryError::new("RARC node entry range overflow"))?;
+    if entry_end > layout.file_count {
+        return Err(WorldGeometryError::new(format!(
+            "RARC node {node_index} entry range exceeds file count {}",
+            layout.file_count
+        )));
+    }
+    let current_path = if node_index == 0 || parent_path.is_empty() {
+        String::from_utf8(node_name.to_vec())
+            .map_err(|_| WorldGeometryError::new("RARC node name is not UTF-8"))?
+    } else {
+        format!(
+            "{parent_path}/{}",
+            std::str::from_utf8(node_name)
+                .map_err(|_| WorldGeometryError::new("RARC node name is not UTF-8"))?
+        )
+    };
+
+    for index in first_entry..entry_end {
+        let entry = layout.file_table + index * RARC_FILE_ENTRY_SIZE;
+        let flags = read_u16(archive, entry + 4, "RARC entry flags")?;
+        let name_offset = usize::from(read_u16(archive, entry + 6, "RARC name offset")?);
+        let name_bytes = rarc_string(archive, layout, name_offset, "RARC entry name")?;
+        let name = std::str::from_utf8(name_bytes)
+            .map_err(|_| WorldGeometryError::new("RARC entry name is not UTF-8"))?;
+        if name.as_bytes().contains(&b'/') || name.as_bytes().contains(&b'\\') {
+            return Err(WorldGeometryError::new(
+                "RARC entry name contains a path separator",
+            ));
+        }
+        if flags & 0x0200 != 0 {
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child = read_u32(archive, entry + 8, "RARC child node")? as usize;
+            walk_rarc_node(
+                archive,
+                layout,
+                child,
+                &current_path,
+                visiting,
+                visited,
+                resources,
+            )?;
+        } else if flags & 0x0100 != 0 {
+            let offset = relative_offset(
+                layout.data_base,
+                read_u32(archive, entry + 8, "RARC resource offset")?,
+                "RARC resource",
+            )?;
+            let size = read_u32(archive, entry + 12, "RARC resource size")? as usize;
+            require_range(archive, offset, size, "RARC resource")?;
+            resources.push(RarcResourceEntry {
+                path: format!("{current_path}/{name}"),
+                name: name.into(),
+                offset,
+                size,
+                sha256: sha256(&archive[offset..offset + size]),
+            });
+        } else {
+            return Err(WorldGeometryError::new(format!(
+                "RARC entry {index} is neither a file nor a directory"
+            )));
+        }
+    }
+    visiting[node_index] = false;
+    Ok(())
+}
+
+fn rarc_string<'a>(
+    archive: &'a [u8],
+    layout: RarcLayout,
+    relative: usize,
+    context: &str,
+) -> Result<&'a [u8], WorldGeometryError> {
+    if relative >= layout.string_size {
+        return Err(WorldGeometryError::new(format!(
+            "{context} offset is outside the RARC string table"
+        )));
+    }
+    let start = layout.string_table + relative;
+    let table_end = layout.string_table + layout.string_size;
+    let tail = &archive[start..table_end];
+    let length = tail
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or_else(|| WorldGeometryError::new(format!("unterminated {context}")))?;
+    Ok(&tail[..length])
 }
 
 fn parse_kcl_layout(kcl: &[u8]) -> Result<KclLayout, WorldGeometryError> {
@@ -1162,6 +1556,39 @@ mod tests {
         archive
     }
 
+    fn indexed_rarc_with(name: &str, resource: &[u8]) -> Vec<u8> {
+        let node_table = 0x40_usize;
+        let file_table = node_table + RARC_NODE_SIZE;
+        let string_table = file_table + RARC_FILE_ENTRY_SIZE;
+        let root_name = b"root";
+        let string_size = root_name.len() + 1 + name.len() + 1;
+        let data = (string_table + string_size + 0x1f) & !0x1f;
+        let mut archive = vec![0_u8; data + resource.len()];
+        archive[0..4].copy_from_slice(b"RARC");
+        let archive_len = archive.len() as u32;
+        put_u32(&mut archive, 4, archive_len);
+        put_u32(&mut archive, 12, (data - 0x20) as u32);
+        put_u32(&mut archive, 0x20, 1);
+        put_u32(&mut archive, 0x24, (node_table - 0x20) as u32);
+        put_u32(&mut archive, 0x28, 1);
+        put_u32(&mut archive, 0x2c, (file_table - 0x20) as u32);
+        put_u32(&mut archive, 0x30, string_size as u32);
+        put_u32(&mut archive, 0x34, (string_table - 0x20) as u32);
+        archive[node_table..node_table + 4].copy_from_slice(b"ROOT");
+        put_u32(&mut archive, node_table + 4, 0);
+        put_u16(&mut archive, node_table + 10, 1);
+        put_u32(&mut archive, node_table + 12, 0);
+        put_u16(&mut archive, file_table + 4, 0x0100);
+        put_u16(&mut archive, file_table + 6, (root_name.len() + 1) as u16);
+        put_u32(&mut archive, file_table + 8, 0);
+        put_u32(&mut archive, file_table + 12, resource.len() as u32);
+        archive[string_table..string_table + root_name.len()].copy_from_slice(root_name);
+        let name_start = string_table + root_name.len() + 1;
+        archive[name_start..name_start + name.len()].copy_from_slice(name.as_bytes());
+        archive[data..].copy_from_slice(resource);
+        archive
+    }
+
     fn yaz0_literals(source: &[u8]) -> Vec<u8> {
         let mut output = Vec::with_capacity(16 + source.len() + source.len().div_ceil(8));
         output.extend_from_slice(b"Yaz0");
@@ -1188,6 +1615,37 @@ mod tests {
             b"immutable collision bytes"
         );
         assert!(extract_rarc_resource(&rarc, "room.plc").is_err());
+    }
+
+    #[test]
+    fn indexes_full_rarc_paths_and_rejects_directory_cycles() {
+        let rarc = indexed_rarc_with("room.kcl", b"immutable collision bytes");
+        let parsed = RarcArchive::parse(&rarc).unwrap();
+        assert_eq!(parsed.resources().len(), 1);
+        assert_eq!(parsed.resources()[0].path, "root/room.kcl");
+        assert_eq!(
+            parsed.resources()[0].sha256,
+            sha256(b"immutable collision bytes")
+        );
+        assert_eq!(
+            parsed.resource("root/room.kcl").unwrap(),
+            b"immutable collision bytes"
+        );
+        assert_eq!(
+            parsed.unique_basename("room.kcl").unwrap(),
+            b"immutable collision bytes"
+        );
+
+        let mut cycle = rarc;
+        let file_table = 0x50;
+        put_u16(&mut cycle, file_table + 4, 0x0200);
+        put_u32(&mut cycle, file_table + 8, 0);
+        assert!(
+            RarcArchive::parse(&cycle)
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
     }
 
     #[test]

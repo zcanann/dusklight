@@ -399,10 +399,15 @@ all be copied into every per-frame neural observation.
 - [ ] Parse or capture stage/room metadata, actor placements, paths, rails,
   spawn points, exits, doors, triggers, switches, cameras, event placements,
   collision meshes, water, void/death planes, and special surfaces.
-- [ ] Assign stable IDs to static records based on game-data identity and source
-  placement rather than runtime address.
-- [ ] Preserve raw polygons/vertices/material flags in a content-addressed map
-  artifact.
+- [x] Add a bounded offline RARC/DZS/DZR/KCL/PLC inventory slice for F_SP103:
+  recognized placements, player spawns, SCLS exits, every addressable collision
+  prism, and collision-exit-to-SCLS trigger joins. Unknown chunks remain
+  enumerated; this does not claim paths, rails, regions, or events are decoded.
+- [x] Assign stable IDs to the implemented static records based on source
+  content digests and structural record location rather than runtime address.
+- [x] Preserve authored KCL source indices, heights, PLC material/code words,
+  reconstructed polygons/planes, and explicit degeneracy in a
+  content-addressed map artifact. Retail degeneracy is retained, never skipped.
 - [ ] Build spatial indices for nearest polygon, region containment, ray/sweep,
   route/load trigger, ledge, clearance, and local neighborhood queries.
 - [ ] Generate semantic tags where the game data provides them; keep inferred
@@ -435,9 +440,10 @@ all be copied into every per-frame neural observation.
 - [ ] Join collision exit polygons to static triangle/region geometry so a
   controller can optimize signed distance and approach direction before the
   transition fires, without issuing a fresh gameplay collision query. The
-  bounded offline KCL/PLC inspector now reconstructs and measures an exact
-  prism/point pair; the remaining work is compiling that static fact into a
-  task-local controller/model observation rather than querying the game.
+  offline inventory now joins every resolvable F_SP103 KCL/PLC exit surface to
+  same-room SCLS metadata and reconstructs its triangle. The remaining work is
+  spatial indexing plus compiling bounded static features into a task-local
+  controller/model observation rather than querying the game.
 - [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
   subject IDs, polygon IDs, normals, penetration, relative velocity, material,
   and begin/persist/end phase.
@@ -1191,18 +1197,18 @@ contract**, not “DDQN exists.” The channel-directory wire contract and initi
 const-only Link/RNG/camera/action slice now exist; the remaining vertical slice
 is:
 
-1. A versioned objective-specific observation specification.
-2. Extend exact `SCENE_EXIT` actor volumes and the initial cached Link
+1. [x] A versioned objective-specific observation specification.
+2. [ ] Extend exact `SCENE_EXIT` actor volumes and the initial cached Link
    background-collision channel with polygon exit metadata, actor contacts,
    per-pass correction, local geometry, and selected actor slots.
-3. A static `F_SP103`/Ordon world inventory with stable collision, placement,
+3. [x] A static `F_SP103`/Ordon world inventory with stable collision, placement,
    exit, and trigger IDs.
-4. Whole-episode trace extraction with explicit missingness and exact action
+4. [x] Whole-episode trace extraction with explicit missingness and exact action
    phase alignment.
-5. Systematic counterfactual probes around the current `ToOrdonSprings`
+5. [ ] Systematic counterfactual probes around the current `ToOrdonSprings`
    incumbent, including misses.
-6. Episode/boundary dataset splits and an action/option coverage report.
-7. Equal-budget comparison of forest FQI, structured roll/waypoint optimization,
+6. [ ] Episode/boundary dataset splits and an action/option coverage report.
+7. [ ] Equal-budget comparison of forest FQI, structured roll/waypoint optimization,
    and a small conservative Double-Q/CQL prototype.
 
 That slice immediately improves inspection, predicates, manual TAS work,
