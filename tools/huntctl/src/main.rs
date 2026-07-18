@@ -5037,10 +5037,17 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let goal = option(args, "--milestone-goal").ok_or("mock worker missing milestone goal")?;
     let requested = option(args, "--milestones").ok_or("mock worker missing milestone list")?;
     let state_root = option(args, "--automation-data-root").unwrap_or_default();
-    let tape_path = required_path(args, "--input-tape")?;
-    let input_tape = InputTape::decode(&fs::read(tape_path)?)?.tape;
-    if let Some(path) = option(args, "--realized-input-tape") {
-        fs::write(path, input_tape.encode()?)?;
+    let input_tape = option(args, "--input-tape")
+        .map(|path| -> Result<_, Box<dyn Error>> { Ok(InputTape::decode(&fs::read(path)?)?.tape) })
+        .transpose()?
+        .unwrap_or_default();
+    let controller_duration = option(args, "--input-controller")
+        .map(|path| -> Result<_, Box<dyn Error>> {
+            Ok(ControllerProgram::decode(&fs::read(path)?)?.duration_frames)
+        })
+        .transpose()?;
+    if input_tape.frames.is_empty() && controller_duration.is_none() {
+        return Err("mock worker requires an input tape or controller".into());
     }
     if let Some(path) = option(args, "--gameplay-trace") {
         fs::write(path, mock_gameplay_trace(&input_tape.boot))?;
@@ -5070,8 +5077,33 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
     let hit_goal = if mode == "coordinate-golf" {
         coordinate_golf_tick.is_some()
     } else {
-        mode != "miss" && !unstable_miss
+        mode != "miss" && mode != "target-lost" && !unstable_miss
     };
+    if let Some(path) = option(args, "--realized-input-tape") {
+        let realized = if let Some(duration) = controller_duration {
+            let frame_count = if hit_goal {
+                1
+            } else if mode == "target-lost" {
+                duration.saturating_sub(1)
+            } else {
+                duration
+            };
+            InputTape {
+                boot: input_tape.boot.clone(),
+                frames: vec![
+                    huntctl::tape::InputFrame {
+                        owned_ports: 1,
+                        ..huntctl::tape::InputFrame::default()
+                    };
+                    usize::try_from(frame_count)?
+                ],
+                ..InputTape::default()
+            }
+        } else {
+            input_tape.clone()
+        };
+        fs::write(path, realized.encode()?)?;
+    }
     let milestones: Vec<Value> = requested
         .split(',')
         .map(|id| {
@@ -5128,7 +5160,11 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             "milestones": milestones
         }))?,
     )?;
-    if mode == "miss" || unstable_miss || (mode == "coordinate-golf" && !hit_goal) {
+    if mode == "miss"
+        || mode == "target-lost"
+        || unstable_miss
+        || (mode == "coordinate-golf" && !hit_goal)
+    {
         std::process::exit(2);
     }
     Ok(())

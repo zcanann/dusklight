@@ -1,5 +1,6 @@
 use huntctl::Digest;
 use huntctl::artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity};
+use huntctl::controller_program::ControllerProgram;
 use huntctl::harness::objective_suite::{
     ArtifactReference, ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot,
     ObjectiveCaseRole, ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuite,
@@ -284,11 +285,23 @@ fn write_run_result_draft(root: &Path, request: &HarnessRunRequest) -> (PathBuf,
 
 #[cfg(unix)]
 fn write_mock_native_wrapper(root: &Path, huntctl_executable: &str) -> String {
+    write_mock_native_wrapper_mode(root, huntctl_executable, None)
+}
+
+#[cfg(unix)]
+fn write_mock_native_wrapper_mode(
+    root: &Path,
+    huntctl_executable: &str,
+    mode: Option<&str>,
+) -> String {
     use std::os::unix::fs::PermissionsExt;
 
+    let mode = mode
+        .map(|mode| format!(" --mock-mode {mode}"))
+        .unwrap_or_default();
     let wrapper = format!(
-        "#!/bin/sh\nexec \"{}\" mock-search-worker \"$@\"\n",
-        huntctl_executable
+        "#!/bin/sh\nexec \"{}\" mock-search-worker{} \"$@\"\n",
+        huntctl_executable, mode
     );
     let wrapper_path = root.join("inputs/dusklight");
     fs::write(&wrapper_path, wrapper.as_bytes()).unwrap();
@@ -296,6 +309,84 @@ fn write_mock_native_wrapper(root: &Path, huntctl_executable: &str) -> String {
     permissions.set_mode(0o755);
     fs::set_permissions(&wrapper_path, permissions).unwrap();
     wrapper
+}
+
+#[cfg(unix)]
+fn rewrite_request_for_mock_controller(
+    root: &Path,
+    draft_path: &Path,
+    huntctl_executable: &str,
+    mode: Option<&str>,
+    artifact_destination: &str,
+) {
+    rewrite_request_for_mock_native_execution(root, draft_path, huntctl_executable);
+    let wrapper = write_mock_native_wrapper_mode(root, huntctl_executable, mode);
+    let controller =
+        ControllerProgram::parse("duskcontrol 1\nframes 3\nneutral replace from 0 for 3\n")
+            .unwrap()
+            .encode()
+            .unwrap();
+    fs::write(root.join("inputs/controller.dctl"), &controller).unwrap();
+    let mut request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(draft_path).unwrap()).unwrap();
+    request.executable = artifact("inputs/dusklight", wrapper.as_bytes());
+    request.input = ObjectiveSeed::Controller {
+        artifact: artifact("inputs/controller.dctl", &controller),
+    };
+    request.logical_tick_budget = 3;
+    request.artifact_destination = artifact_destination.into();
+    request.content_sha256 = Digest::ZERO;
+    fs::write(draft_path, serde_json::to_vec_pretty(&request).unwrap()).unwrap();
+}
+
+#[cfg(unix)]
+fn execute_mock_controller(
+    huntctl_executable: &str,
+    mode: Option<&str>,
+    artifact_destination: &str,
+) -> (PathBuf, HarnessRunRequest, HarnessRunResult) {
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_controller(
+        &root,
+        &request_draft,
+        huntctl_executable,
+        mode,
+        artifact_destination,
+    );
+    let request_path = root.join("run-request.json");
+    let sealed = Command::new(huntctl_executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+    let executed = Command::new(huntctl_executable)
+        .args(["harness", "execute", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    (
+        root,
+        serde_json::from_slice(&fs::read(request_path).unwrap()).unwrap(),
+        serde_json::from_slice(&executed.stdout).unwrap(),
+    )
 }
 
 #[cfg(unix)]
@@ -608,5 +699,39 @@ fn execution_reports_missing_trace_families_as_unsupported() {
         result.detail.missing_query_facts,
         ["player.exists", "stage.name"]
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn executes_a_reactive_controller_through_the_authenticated_boundary() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let (root, request, result) =
+        execute_mock_controller(executable, None, "artifacts/mock-controller-run");
+    assert_eq!(result.terminal, HarnessTerminalReason::Reached);
+    assert!(result.artifacts.complete);
+    assert_eq!(result.timing.consumed_input_ticks, 1);
+    result
+        .validate_files(&request, &root.join(&request.artifact_destination))
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn reports_an_exact_controller_target_loss_without_calling_it_exhaustion() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let (root, request, result) = execute_mock_controller(
+        executable,
+        Some("target-lost"),
+        "artifacts/mock-controller-target-lost",
+    );
+    assert_eq!(result.terminal, HarnessTerminalReason::TargetLost);
+    assert!(!result.objective.reached);
+    assert!(!result.artifacts.complete);
+    assert_eq!(result.timing.consumed_input_ticks, 2);
+    result
+        .validate_files(&request, &root.join(&request.artifact_destination))
+        .unwrap();
     fs::remove_dir_all(root).unwrap();
 }

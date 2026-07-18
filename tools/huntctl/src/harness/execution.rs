@@ -11,6 +11,7 @@ use super::run_contract::{
     HarnessTerminalReason, HarnessWorkerIdentity, RUN_RESULT_SCHEMA_V2,
 };
 use crate::artifact::Digest;
+use crate::controller_program::ControllerProgram;
 use crate::milestone_dsl;
 use crate::scenario_fixture::ScenarioFixture;
 use crate::tape::{InputFrame, InputTape, TapeBoot, WaitCondition};
@@ -34,17 +35,12 @@ pub fn execute_request(
     repository_root: &Path,
     attempt: u32,
 ) -> Result<HarnessRunResult, HarnessExecutionError> {
-    match &request.input {
-        ObjectiveSeed::Controller { .. } => Err(execution_error(
-            "reactive controller requests are not routed through the native adapter yet",
-        )),
-        _ => execute_tape_request(request, repository_root, attempt),
-    }
+    execute_native_request(request, repository_root, attempt)
 }
 
-/// Executes a tape-backed request in one isolated native process and seals its
-/// typed result beneath the request's authenticated artifact destination.
-fn execute_tape_request(
+/// Executes a tape- or controller-backed request in one isolated native
+/// process and seals its typed result beneath the authenticated destination.
+fn execute_native_request(
     request: &HarnessRunRequest,
     repository_root: &Path,
     attempt: u32,
@@ -63,31 +59,12 @@ fn execute_tape_request(
         ))
     })?;
     let scenario = read_scenario(request, &repository_root)?;
-    let mut input = materialize_tape(request, &repository_root, scenario)?;
-    if input.tick_rate_numerator != 30 || input.tick_rate_denominator != 1 {
-        return Err(execution_error(
-            "native harness execution requires a canonical 30/1 input tape",
-        ));
-    }
-    if input.frames.is_empty() {
-        return Err(execution_error(
-            "native harness execution requires at least one input frame",
-        ));
-    }
-    if input
-        .frames
-        .iter()
-        .any(|frame| frame.wait_condition != WaitCondition::None)
-    {
-        return Err(execution_error(
-            "authenticated tape execution requires absolute input without reactive waits",
-        ));
-    }
-    let input_ticks = u64::try_from(input.frames.len())
-        .map_err(|_| execution_error("input tape length does not fit the logical-tick counter"))?;
-    if input_ticks > request.logical_tick_budget {
+    let prepared_input = prepare_native_input(request, &repository_root, scenario)?;
+    let expected_boot = prepared_input.boot().clone();
+    let planned_ticks = prepared_input.planned_ticks();
+    if planned_ticks > request.logical_tick_budget {
         return Err(execution_error(format!(
-            "input tape requires {input_ticks} ticks but request budget is {}",
+            "input requires {planned_ticks} ticks but request budget is {}",
             request.logical_tick_budget
         )));
     }
@@ -112,12 +89,14 @@ fn execute_tape_request(
     fs::create_dir(&paths.renderer_cache).map_err(|error| {
         execution_error(format!("cannot create isolated renderer cache: {error}"))
     })?;
-    write_new_file(
-        &paths.input,
-        &input.encode().map_err(|error| {
-            execution_error(format!("cannot encode materialized input tape: {error}"))
-        })?,
-    )?;
+    if let Some(tape) = prepared_input.launch_tape() {
+        write_new_file(
+            &paths.input,
+            &tape.encode().map_err(|error| {
+                execution_error(format!("cannot encode materialized input tape: {error}"))
+            })?,
+        )?;
+    }
     write_new_file(&paths.objective_program, &compiled.bytes)?;
 
     let stdout = File::create(&paths.stdout)
@@ -130,12 +109,35 @@ fn execute_tape_request(
     command
         .current_dir(&repository_root)
         .arg("--dvd")
-        .arg(game_data)
-        .arg("--input-tape")
-        .arg(&paths.input)
-        .arg("--input-tape-end")
-        .arg("release")
-        .arg("--exit-after-tape")
+        .arg(game_data);
+    match &prepared_input {
+        PreparedNativeInput::Tape { .. } => {
+            command
+                .arg("--input-tape")
+                .arg(&paths.input)
+                .arg("--input-tape-end")
+                .arg("release")
+                .arg("--exit-after-tape");
+        }
+        PreparedNativeInput::Controller {
+            artifact,
+            stage_boot_tape,
+            ..
+        } => {
+            if stage_boot_tape.is_some() {
+                command
+                    .arg("--input-tape")
+                    .arg(&paths.input)
+                    .arg("--input-tape-end")
+                    .arg("release");
+            }
+            command
+                .arg("--input-controller")
+                .arg(artifact)
+                .arg("--exit-after-controller");
+        }
+    }
+    command
         .arg("--realized-input-tape")
         .arg(&paths.realized_input)
         .arg("--automation-data-root")
@@ -210,18 +212,19 @@ fn execute_tape_request(
     };
     let elapsed_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-    let native_goal = read_native_goal(&paths.objective_result, request, &input.boot).ok();
+    let native_goal = read_native_goal(&paths.objective_result, request, &expected_boot).ok();
     if let Some(goal) = &native_goal
         && goal.reached
         && let Some(tape_frame) = goal.tape_frame
     {
-        trim_realized_tape(&paths.realized_input, &input.boot, tape_frame)?;
+        trim_realized_tape(&paths.realized_input, &expected_boot, tape_frame)?;
     }
+    let controller_planned_ticks = prepared_input.controller_planned_ticks();
     // Drop the large in-memory proposal before reading proof artifacts.
-    input.frames.clear();
+    drop(prepared_input);
 
-    let realized_valid = validate_realized_tape(&paths.realized_input, &input.boot).ok();
-    let trace_valid = validate_gameplay_trace(&paths.gameplay_trace, &input.boot).ok();
+    let realized_valid = validate_realized_tape(&paths.realized_input, &expected_boot).ok();
+    let trace_valid = validate_gameplay_trace(&paths.gameplay_trace, &expected_boot).ok();
     let unsupported_detail = trace_valid
         .as_ref()
         .map(|trace| request.unsupported_observation_detail(&trace.inventory))
@@ -234,6 +237,7 @@ fn execute_tape_request(
         realized_valid,
         trace_valid.as_ref().map(|trace| trace.ticks),
         unsupported_detail,
+        controller_planned_ticks,
     );
     let result = build_result(
         request,
@@ -287,6 +291,50 @@ impl ExecutionPaths {
             stdout: root.join("stdout.txt"),
             stderr: root.join("stderr.txt"),
             result: root.join("result.json"),
+        }
+    }
+}
+
+enum PreparedNativeInput {
+    Tape {
+        tape: InputTape,
+    },
+    Controller {
+        artifact: PathBuf,
+        boot: TapeBoot,
+        stage_boot_tape: Option<InputTape>,
+        duration_ticks: u64,
+    },
+}
+
+impl PreparedNativeInput {
+    fn boot(&self) -> &TapeBoot {
+        match self {
+            Self::Tape { tape } => &tape.boot,
+            Self::Controller { boot, .. } => boot,
+        }
+    }
+
+    fn planned_ticks(&self) -> u64 {
+        match self {
+            Self::Tape { tape } => u64::try_from(tape.frames.len()).unwrap_or(u64::MAX),
+            Self::Controller { duration_ticks, .. } => *duration_ticks,
+        }
+    }
+
+    fn launch_tape(&self) -> Option<&InputTape> {
+        match self {
+            Self::Tape { tape } => Some(tape),
+            Self::Controller {
+                stage_boot_tape, ..
+            } => stage_boot_tape.as_ref(),
+        }
+    }
+
+    fn controller_planned_ticks(&self) -> Option<u64> {
+        match self {
+            Self::Tape { .. } => None,
+            Self::Controller { duration_ticks, .. } => Some(*duration_ticks),
         }
     }
 }
@@ -359,25 +407,67 @@ fn read_scenario(
     .map_err(|error| execution_error(format!("cannot decode scenario fixture: {error}")))
 }
 
+fn prepare_native_input(
+    request: &HarnessRunRequest,
+    root: &Path,
+    scenario: ScenarioFixture,
+) -> Result<PreparedNativeInput, HarnessExecutionError> {
+    match &request.input {
+        ObjectiveSeed::Controller { artifact } => {
+            validate_process_scenario(request, &scenario)?;
+            let boot = objective_boot(request, Some(scenario));
+            let artifact_path = root.join(&artifact.path);
+            let program =
+                ControllerProgram::decode(&fs::read(&artifact_path).map_err(|error| {
+                    execution_error(format!("cannot read seed controller: {error}"))
+                })?)
+                .map_err(|error| {
+                    execution_error(format!("cannot decode seed controller: {error}"))
+                })?;
+            let duration_ticks = u64::from(program.duration_frames);
+            let stage_boot_tape = matches!(boot, TapeBoot::Stage { .. }).then(|| InputTape {
+                boot: boot.clone(),
+                ..InputTape::default()
+            });
+            Ok(PreparedNativeInput::Controller {
+                artifact: artifact_path,
+                boot,
+                stage_boot_tape,
+                duration_ticks,
+            })
+        }
+        _ => {
+            let tape = materialize_tape(request, root, scenario)?;
+            if tape.tick_rate_numerator != 30 || tape.tick_rate_denominator != 1 {
+                return Err(execution_error(
+                    "native harness execution requires a canonical 30/1 input tape",
+                ));
+            }
+            if tape.frames.is_empty() {
+                return Err(execution_error(
+                    "native harness execution requires at least one input frame",
+                ));
+            }
+            if tape
+                .frames
+                .iter()
+                .any(|frame| frame.wait_condition != WaitCondition::None)
+            {
+                return Err(execution_error(
+                    "authenticated tape execution requires absolute input without reactive waits",
+                ));
+            }
+            Ok(PreparedNativeInput::Tape { tape })
+        }
+    }
+}
+
 fn materialize_tape(
     request: &HarnessRunRequest,
     root: &Path,
     scenario: ScenarioFixture,
 ) -> Result<InputTape, HarnessExecutionError> {
-    if matches!(request.boot, ObjectiveBoot::Process)
-        && (scenario.form.is_some()
-            || scenario.health.is_some()
-            || !scenario.rng.is_empty()
-            || scenario.video_mode.is_some()
-            || !scenario.inventory.is_empty()
-            || !scenario.equipment.is_empty()
-            || !scenario.flags.is_empty()
-            || !scenario.settings.is_empty())
-    {
-        return Err(execution_error(
-            "process boot cannot apply a stateful scenario fixture; use an explicit stage boot",
-        ));
-    }
+    validate_process_scenario(request, &scenario)?;
     let expected_boot = objective_boot(request, Some(scenario));
     let mut tape = match &request.input {
         ObjectiveSeed::Neutral => InputTape {
@@ -426,6 +516,27 @@ fn materialize_tape(
     tape.validate()
         .map_err(|error| execution_error(format!("materialized tape is invalid: {error}")))?;
     Ok(tape)
+}
+
+fn validate_process_scenario(
+    request: &HarnessRunRequest,
+    scenario: &ScenarioFixture,
+) -> Result<(), HarnessExecutionError> {
+    if matches!(request.boot, ObjectiveBoot::Process)
+        && (scenario.form.is_some()
+            || scenario.health.is_some()
+            || !scenario.rng.is_empty()
+            || scenario.video_mode.is_some()
+            || !scenario.inventory.is_empty()
+            || !scenario.equipment.is_empty()
+            || !scenario.flags.is_empty()
+            || !scenario.settings.is_empty())
+    {
+        return Err(execution_error(
+            "process boot cannot apply a stateful scenario fixture; use an explicit stage boot",
+        ));
+    }
+    Ok(())
 }
 
 fn objective_boot(request: &HarnessRunRequest, scenario: Option<ScenarioFixture>) -> TapeBoot {
@@ -697,6 +808,7 @@ fn classify_execution(
     realized_ticks: Option<u64>,
     trace_ticks: Option<u64>,
     unsupported_detail: Option<HarnessTerminalDetail>,
+    controller_planned_ticks: Option<u64>,
 ) -> ClassifiedExecution {
     match execution {
         NativeExecution::TimedOut => ClassifiedExecution {
@@ -720,6 +832,19 @@ fn classify_execution(
         NativeExecution::Exited(status) => {
             let complete = goal.is_some() && realized_ticks.is_some() && trace_ticks.is_some();
             match (status.code(), goal.map(|goal| goal.reached), complete) {
+                (Some(VALID_GOAL_MISS_EXIT_CODE), Some(false), _)
+                    if controller_planned_ticks.is_some_and(|planned| {
+                        realized_ticks.is_some_and(|realized| realized < planned)
+                    }) =>
+                {
+                    ClassifiedExecution {
+                        terminal: HarnessTerminalReason::TargetLost,
+                        message: "exact controller target disappeared before the planned action completed"
+                            .into(),
+                        proof_complete: false,
+                        unsupported_detail: None,
+                    }
+                }
                 (Some(0 | VALID_GOAL_MISS_EXIT_CODE), _, true) if unsupported_detail.is_some() => {
                     ClassifiedExecution {
                         terminal: HarnessTerminalReason::Unsupported,
@@ -903,6 +1028,7 @@ mod tests {
             Some(1),
             Some(1),
             Some(unsupported_detail()),
+            None,
         );
         assert_eq!(outcome.terminal, HarnessTerminalReason::Unsupported);
         assert!(!outcome.proof_complete);
@@ -917,6 +1043,7 @@ mod tests {
             None,
             None,
             Some(unsupported_detail()),
+            None,
         );
         assert_eq!(outcome.terminal, HarnessTerminalReason::HostTimeout);
         assert!(outcome.unsupported_detail.is_none());
