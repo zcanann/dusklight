@@ -1,7 +1,7 @@
 # Core harness run contract
 
-`dusklight-harness-run-request/v1` and
-`dusklight-harness-run-result/v1` are the canonical materialized boundary for
+`dusklight-harness-run-request/v2` and
+`dusklight-harness-run-result/v2` are the canonical materialized boundary for
 one harness attempt. They describe execution and evidence; they do not yet
 mean that every legacy tape, search, or learning command executes through this
 boundary.
@@ -14,6 +14,13 @@ action schema, required query facts, input seed, RNG seed, logical-tick and host
 budgets, fidelity mode, and artifact destination. The input seed uses the same
 neutral, authored tape, or reactive-controller references as an objective-suite
 case.
+
+Observation dependencies use
+`dusklight-objective-observation-requirements/v1`: a sorted list of exact fact
+paths plus the minimum version of every required family. Suite validation
+derives the facts directly from the selected milestone definition and rejects
+both omitted and invented dependencies. Reward features and proposer scores do
+not enter this derivation or the objective identity.
 
 Protocol capabilities are a sorted versioned list with their own digest. This
 makes an unsupported query fact different from a worker lacking an execution
@@ -35,6 +42,12 @@ references, and logical/host timing. Terminal reasons distinguish reached,
 exhausted, impossible, unsupported observation, capability or identity
 mismatch, host timeout, cancellation, worker or game crash, protocol failure,
 hang, target loss, nondeterminism, and rejected execution.
+
+Workers expose a versioned observation inventory with present, absent,
+not-sampled, unavailable, truncated, stale, or invalid status. Present and
+semantic absence satisfy admission; a missing, old, unavailable, truncated,
+stale, or invalid required family produces a typed `unsupported` result naming
+the affected family and facts. It cannot become an objective miss or success.
 
 `reached` is deliberately strict. It requires a first-hit tick, objective
 evidence, boundary fingerprint, realized input tape, gameplay trace, objective
@@ -59,9 +72,22 @@ huntctl harness seal-run-result --input DRAFT.json --output RESULT.json \
   --request REQUEST.json --artifact-root DIR --repository-root DIR
 huntctl harness validate-run-result --result RESULT.json \
   --request REQUEST.json --artifact-root DIR --repository-root DIR
+
+huntctl harness execute --request REQUEST.json --repository-root DIR \
+  [--attempt N]
 ```
+
+The native executor currently routes neutral, compiled TAS-source, and absolute
+tape seeds through this boundary. It materializes one absolute tape, launches
+an isolated native process, authenticates the milestone result, realized tape,
+gameplay trace and observation inventory, classifies the terminal, and seals
+`result.json` beneath the requested destination. Reactive-controller, search,
+and learned-proposal adapters remain open; controller requests are rejected
+rather than silently taking a legacy path.
 
 Unit coverage verifies identity disagreement, stale bytes, external game-data
 symlinks, strict reached proof, partial crash artifacts, and distinct
 unsupported/capability-mismatch results. CLI integration coverage seals and
-validates a complete request/result pair and verifies overwrite refusal.
+validates a complete request/result pair, executes a tape request through a
+mock native process, proves missing trace families become unsupported, and
+verifies overwrite refusal.

@@ -6,7 +6,7 @@ roadmap documents describe the larger target.
 ## Working foundations
 
 - `orig/` is ignored as local extracted-game data.
-- `dusklight-objective-suite/v1` binds each positive or negative-control case to
+- `dusklight-objective-suite/v2` binds each positive or negative-control case to
   exact boot, scenario, objective, observation view, action schema, query facts,
   seed input, budgets, repetitions, and expected terminal class. `huntctl
   harness validate-suite` resolves repository-relative artifacts, rejects path
@@ -17,15 +17,22 @@ roadmap documents describe the larger target.
   interaction/object cases remain open work. A second authored case binds a
   direct `F_SP104` boot and movement seed to a stable five-tick Ordon ranch AABB
   objective with a position-bearing observation view.
-- `dusklight-harness-run-request/v1` materializes one case against exact
+- Objective-suite v2 derives each selected milestone's exact fact dependencies
+  and binds them to minimum-version observation families. The shared admission
+  model distinguishes present, absent, not-sampled, unavailable, truncated,
+  stale, and invalid families; incomplete required observations cannot become
+  an ordinary miss or success.
+- `dusklight-harness-run-request/v2` materializes one case against exact
   executable, game-data, build/protocol, seed, budgets, fidelity, and artifact
-  destination identities. `dusklight-harness-run-result/v1` binds the attempt
+  destination identities. `dusklight-harness-run-result/v2` binds the attempt
   to a typed terminal, worker identity, timing, objective evidence, boundary
   fingerprint, realized tape, trace, and retained complete or partial
   artifacts. `huntctl harness seal-run-request|seal-run-result` and their
-  validation counterparts authenticate the contracts and referenced bytes;
-  tape, controller, search, and learner executors have not yet been routed
-  through this common boundary.
+  validation counterparts authenticate the contracts and referenced bytes.
+  `huntctl harness execute` now routes neutral, TAS-source, and absolute-tape
+  seeds through an isolated native process and seals the typed result. Reactive
+  controllers, search evaluators, and learners have not yet been routed through
+  this common boundary.
 - Portable artifact identities validate all build, protocol, game-data,
   scenario, predicate, action/observation schema, and settings fields as
   nonempty or nonzero. `huntctl identity compare` applies operation-specific

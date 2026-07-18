@@ -93,9 +93,9 @@ an independently replayable tape.
 - [x] Add typed facts required by the conformance suite for interaction
   availability, dialogue/event start, carried/held actor identity, and object
   ownership changes.
-- [ ] Define objective programs separately from reward shaping and proposer
+- [x] Define objective programs separately from reward shaping and proposer
   scores; only objective truth determines success.
-- [ ] Require each objective to declare its necessary observation families and
+- [x] Require each objective to declare its necessary observation families and
   fail as unsupported when a family is unavailable or truncated.
 - [ ] Return stable terminal classes for reached, exhausted, impossible,
   unsupported, timeout, crash, hang, target-lost, and nondeterministic.
