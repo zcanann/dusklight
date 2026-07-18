@@ -2,7 +2,6 @@
 //!
 //! This artifact is deliberately unrelated to `DUSKTAPE` and `DUSKCTRL`.
 
-pub mod control_pair;
 pub mod experiment;
 #[cfg(feature = "experimental-interventions")]
 pub mod runtime;

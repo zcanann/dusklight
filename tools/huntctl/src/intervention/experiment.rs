@@ -37,6 +37,14 @@ pub enum InterventionExperimentRole {
     Treatment,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterventionExperimentRunRequest {
+    pub role: InterventionExperimentRole,
+    pub inputs: InterventionExperimentInputs,
+    pub gameplay_writes_enabled: bool,
+    pub intervention_sha256: Option<Digest>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterventionExperimentRunArtifact {
@@ -182,6 +190,42 @@ impl InterventionExperimentPair {
     }
 }
 
+/// Runs the write-disabled control first and the exactly planned treatment
+/// second, then validates that both retained artifact sets match the plan.
+pub fn execute_intervention_experiment<E>(
+    plan: InterventionExperimentPlan,
+    mut executor: E,
+) -> Result<InterventionExperimentPair, InterventionExperimentError>
+where
+    E: FnMut(
+        &InterventionExperimentRunRequest,
+    ) -> Result<InterventionExperimentRunArtifact, InterventionExperimentError>,
+{
+    plan.validate()?;
+    let control_request = InterventionExperimentRunRequest {
+        role: InterventionExperimentRole::Control,
+        inputs: plan.inputs.clone(),
+        gameplay_writes_enabled: false,
+        intervention_sha256: None,
+    };
+    let control = executor(&control_request)?;
+    let treatment_request = InterventionExperimentRunRequest {
+        role: InterventionExperimentRole::Treatment,
+        inputs: plan.inputs.clone(),
+        gameplay_writes_enabled: true,
+        intervention_sha256: Some(plan.intervention_sha256),
+    };
+    let treatment = executor(&treatment_request)?;
+    let pair = InterventionExperimentPair {
+        schema: INTERVENTION_EXPERIMENT_PAIR_SCHEMA.into(),
+        plan,
+        control,
+        treatment,
+    };
+    pair.validate()?;
+    Ok(pair)
+}
+
 fn require_digest(digest: Digest, label: &str) -> Result<(), InterventionExperimentError> {
     if digest == Digest::ZERO {
         return Err(experiment_error(format!("{label} digest is unavailable")));
@@ -291,5 +335,36 @@ mod tests {
         let mut wrong_intervention = pair();
         wrong_intervention.treatment.intervention_sha256 = Some(Digest([42; 32]));
         assert!(wrong_intervention.validate().is_err());
+    }
+
+    #[test]
+    fn runner_executes_disabled_control_before_exact_treatment() {
+        let expected = pair();
+        let mut requests = Vec::new();
+        let completed = execute_intervention_experiment(expected.plan.clone(), |request| {
+            requests.push((
+                request.role,
+                request.gameplay_writes_enabled,
+                request.intervention_sha256,
+            ));
+            Ok(match request.role {
+                InterventionExperimentRole::Control => expected.control.clone(),
+                InterventionExperimentRole::Treatment => expected.treatment.clone(),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            requests,
+            [
+                (InterventionExperimentRole::Control, false, None),
+                (
+                    InterventionExperimentRole::Treatment,
+                    true,
+                    Some(expected.plan.intervention_sha256),
+                ),
+            ]
+        );
+        assert_eq!(completed.control, expected.control);
+        assert_eq!(completed.treatment, expected.treatment);
     }
 }
