@@ -4,6 +4,7 @@
 //! episode corpora, proposes small state-aware tape interventions, and hands
 //! ordinary candidates back to the native evaluator.
 
+use super::training_guard::{CriticSnapshot, OnlineTrainingHealth, TrainingGuardConfig};
 use crate::action_guidance::{
     ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
 };
@@ -45,6 +46,7 @@ pub struct QProposalSummary {
     pub schema: &'static str,
     pub training_transitions: usize,
     pub training_actions: usize,
+    pub training_health: Option<OnlineTrainingHealth>,
     pub proposal_states: usize,
     pub action_guidance_schema: &'static str,
     pub state_masked_proposal_states: usize,
@@ -220,6 +222,13 @@ pub fn propose_q_candidates(
     }
     let actions: Vec<_> = actions.into_iter().collect();
     let feature_width = training_corpora[0].feature_count as usize;
+    let training_limits = TrainingGuardConfig::default();
+    if config.iterations as f64 > training_limits.maximum_update_to_data_ratio {
+        return Err(QSearchError::new(format!(
+            "online Q update-to-data ratio {} exceeds cap {}",
+            config.iterations, training_limits.maximum_update_to_data_ratio
+        )));
+    }
     let model = (actions.len() >= 2)
         .then(|| {
             FittedQ::fit_with_episode_groups(
@@ -237,6 +246,30 @@ pub fn propose_q_candidates(
                 },
             )
             .map_err(|error| QSearchError::new(error.to_string()))
+        })
+        .transpose()?;
+    let training_health = model
+        .as_ref()
+        .map(|model| {
+            let snapshots = transitions
+                .iter()
+                .map(|transition| {
+                    let estimate = model
+                        .estimate(&transition.state, transition.action)
+                        .map_err(|error| QSearchError::new(error.to_string()))?;
+                    Ok(CriticSnapshot {
+                        primary: estimate.mean,
+                        secondary: estimate.mean + estimate.variance.max(0.0).sqrt(),
+                    })
+                })
+                .collect::<Result<Vec<_>, QSearchError>>()?;
+            let updates = u64::try_from(transitions.len())
+                .ok()
+                .and_then(|rows| rows.checked_mul(config.iterations as u64))
+                .ok_or_else(|| QSearchError::new("online Q update count overflowed"))?;
+            OnlineTrainingHealth::evaluate(transitions.len(), updates, &snapshots, training_limits)
+                .and_then(OnlineTrainingHealth::require_healthy)
+                .map_err(|error| QSearchError::new(error.to_string()))
         })
         .transpose()?;
 
@@ -491,6 +524,7 @@ pub fn propose_q_candidates(
             schema: "dusklight-q-proposals/v5",
             training_transitions: transitions.len(),
             training_actions: actions.len(),
+            training_health,
             proposal_states: considered,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V1,
             state_masked_proposal_states: state_masked,
@@ -914,6 +948,12 @@ mod tests {
         );
         assert!(first.summary.state_masked_proposal_states > 0);
         assert_eq!(first.summary.proposal_states, 8);
+        let health = first.summary.training_health.as_ref().unwrap();
+        assert_eq!(health.update_to_data_ratio, 4.0);
+        assert_eq!(
+            health.disposition,
+            super::super::training_guard::TrainingHealthDisposition::Healthy
+        );
         assert_eq!(first.summary.schema, "dusklight-q-proposals/v5");
         assert_eq!(first.summary.collection_cycle_offset, 1);
         assert_eq!(first.summary.guided_action_evaluations, 4);
@@ -1044,5 +1084,47 @@ mod tests {
             unmasked_explore(&[masked_high_value], 0.0).unwrap().action,
             masked_high_value.action
         );
+    }
+
+    #[test]
+    fn online_q_rejects_excessive_update_to_data_ratio_before_proposing() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: vec![InputFrame {
+                owned_ports: 1,
+                pads: [
+                    canonical_movement_pad_v2(0).unwrap(),
+                    disconnected,
+                    disconnected,
+                    disconnected,
+                ],
+                ..InputFrame::default()
+            }],
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for(&candidate);
+        let error = propose_q_candidates(
+            std::slice::from_ref(&corpus),
+            &[QEpisode {
+                candidate,
+                corpus: corpus.clone(),
+                outcome: EpisodeOutcomeClass::Successful,
+            }],
+            QProposalConfig {
+                generation: 0,
+                max_proposals: 1,
+                iterations: 33,
+                trees_per_action: 1,
+                seed: 1,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("update-to-data ratio"));
     }
 }
