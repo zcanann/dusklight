@@ -447,7 +447,7 @@ with native session process IDs removed, and terminal milestone boundaries add
 a separate authenticated boundary axis. All terminal boundary and value
 fingerprints also remain bound into the downstream-state axis.
 
-Trace-backed evaluation constructs `dusklight-semantic-novelty/v1` before cell
+Trace-backed evaluation constructs `dusklight-semantic-novelty/v2` before cell
 placement. It retains the raw run-deduplicated procedure and event sequences,
 semantic state changes, portable contact sets, player-relative selected-actor
 facts, flag states, quantized position/velocity extrema, and named boundary
