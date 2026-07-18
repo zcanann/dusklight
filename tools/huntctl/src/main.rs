@@ -4768,6 +4768,9 @@ fn print_usage() {
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
     );
     eprintln!(
+        "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
+    );
+    eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
