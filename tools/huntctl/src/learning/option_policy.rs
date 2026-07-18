@@ -1,265 +1,330 @@
-//! High-level option selection joined to deterministic low-level tape proof.
+//! High-level option selection with deterministic tactic realization proof.
 
-use super::option_values::{
-    OptionActionDescriptor, OptionValueError, OptionValueModel, RankedOption,
-};
+use super::option_values::{OptionActionDescriptor, OptionValueModel, RankedOption};
 use crate::game_tactic::{GameTacticError, GameTacticPlan, TacticCancellationHit};
-use crate::option_execution::{OptionExecution, OptionExecutionError, TapeRange};
-use crate::tape::InputTape;
+use crate::option_execution::{OptionExecution, TapeRange};
+use crate::tape::{InputTape, TapeError};
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
 
-pub const PROVED_OPTION_POLICY_STEP_SCHEMA_V1: &str = "dusklight-proved-option-policy-step/v1";
+pub const EXECUTED_OPTION_POLICY_STEP_SCHEMA_V1: &str = "dusklight-executed-option-policy-step/v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct SelectedOption {
-    pub selection: RankedOption,
-    pub policy_layer: &'static str,
-    pub low_level_contract: &'static str,
+pub struct TacticOptionCandidate {
+    descriptor: OptionActionDescriptor,
+    plan: GameTacticPlan,
+}
+
+impl TacticOptionCandidate {
+    /// Derive the policy action descriptor from the same deterministic plan
+    /// that will later emit raw frames; callers cannot author the two apart.
+    pub fn new(option_id: String, plan: GameTacticPlan) -> Result<Self, OptionPolicyError> {
+        let execution = capture_isolated(&option_id, &plan)?;
+        Ok(Self {
+            descriptor: descriptor(&execution),
+            plan,
+        })
+    }
+
+    pub fn descriptor(&self) -> &OptionActionDescriptor {
+        &self.descriptor
+    }
+
+    pub fn plan(&self) -> &GameTacticPlan {
+        &self.plan
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct ProvedOptionPolicyStep {
+pub struct ExecutedOptionPolicyStep {
     pub schema: &'static str,
-    pub selection: RankedOption,
+    pub selected: RankedOption,
+    pub tape: InputTape,
     pub execution: OptionExecution,
-    pub policy_layer: &'static str,
-    pub executor_layer: &'static str,
-    pub proof_layer: &'static str,
+    pub selection_policy: &'static str,
+    pub executor: &'static str,
+    pub descriptor_matches_execution: bool,
+    pub raw_frames_match_tape: bool,
     pub promotion_authority: bool,
 }
 
-impl SelectedOption {
-    pub fn select(model: &OptionValueModel, state: &[f32]) -> Result<Self, OptionPolicyError> {
-        let selection = model
-            .rank_options(state)?
-            .into_iter()
-            .next()
-            .ok_or(OptionPolicyError::NoAvailableOption)?;
-        Ok(Self {
-            selection,
-            policy_layer: "learned_high_level_option_value",
-            low_level_contract: "deterministic_tactic_then_exact_realized_tape",
-        })
-    }
+/// Select the highest-valued typed option, deterministically append its tactic
+/// frames, and capture an `OptionExecution` bound to the complete output tape.
+pub fn select_and_execute(
+    model: &OptionValueModel,
+    state: &[f32],
+    candidates: &[TacticOptionCandidate],
+    tape_prefix: &InputTape,
+    cancellation: Option<TacticCancellationHit>,
+) -> Result<ExecutedOptionPolicyStep, OptionPolicyError> {
+    validate_catalog(model, candidates)?;
+    let selected = model
+        .rank_options(state)
+        .map_err(|error| OptionPolicyError::Values(error.to_string()))?
+        .into_iter()
+        .next()
+        .ok_or(OptionPolicyError::EmptyRanking)?;
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.descriptor == selected.descriptor)
+        .ok_or(OptionPolicyError::CatalogMismatch)?;
+    let (tape, execution) = execute_candidate(candidate, tape_prefix, cancellation)?;
+    Ok(ExecutedOptionPolicyStep {
+        schema: EXECUTED_OPTION_POLICY_STEP_SCHEMA_V1,
+        selected,
+        tape,
+        execution,
+        selection_policy: "highest_option_value_over_exact_executable_catalog",
+        executor: "deterministic_game_tactic_plan",
+        descriptor_matches_execution: true,
+        raw_frames_match_tape: true,
+        promotion_authority: false,
+    })
+}
 
-    pub fn execute_game_tactic(
-        self,
-        plan: &GameTacticPlan,
-        tape: &InputTape,
-        range: TapeRange,
-        cancellation: Option<TacticCancellationHit>,
-    ) -> Result<ProvedOptionPolicyStep, OptionPolicyError> {
-        let execution = plan.capture_execution(
-            self.selection.descriptor.option_id.clone(),
-            tape,
-            range,
-            cancellation,
-        )?;
-        self.prove_execution(execution, tape, "deterministic_game_tactic_plan")
+fn validate_catalog(
+    model: &OptionValueModel,
+    candidates: &[TacticOptionCandidate],
+) -> Result<(), OptionPolicyError> {
+    if candidates.is_empty() || candidates.len() != model.actions().len() {
+        return Err(OptionPolicyError::CatalogMismatch);
     }
+    let mut model_actions = model
+        .actions()
+        .iter()
+        .map(canonical)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut executable_actions = candidates
+        .iter()
+        .map(|candidate| canonical(&candidate.descriptor))
+        .collect::<Result<Vec<_>, _>>()?;
+    model_actions.sort();
+    executable_actions.sort();
+    executable_actions.dedup();
+    if model_actions != executable_actions {
+        return Err(OptionPolicyError::CatalogMismatch);
+    }
+    Ok(())
+}
 
-    /// Common proof boundary for other deterministic option executors.
-    pub fn prove_execution(
-        self,
-        execution: OptionExecution,
-        tape: &InputTape,
-        executor_layer: &'static str,
-    ) -> Result<ProvedOptionPolicyStep, OptionPolicyError> {
-        execution.validate_against_tape(tape)?;
-        let realized_descriptor = OptionActionDescriptor {
-            option_id: execution.option_id.clone(),
-            option_type: execution.option_type.clone(),
-            parameters: execution.parameters.clone(),
-        };
-        if realized_descriptor != self.selection.descriptor {
-            return Err(OptionPolicyError::DescriptorMismatch {
-                selected: self.selection.descriptor,
-                realized: realized_descriptor,
-            });
-        }
-        Ok(ProvedOptionPolicyStep {
-            schema: PROVED_OPTION_POLICY_STEP_SCHEMA_V1,
-            selection: self.selection,
-            execution,
-            policy_layer: self.policy_layer,
-            executor_layer,
-            proof_layer: "option_execution_validated_against_complete_canonical_tape",
-            promotion_authority: false,
-        })
+fn execute_candidate(
+    candidate: &TacticOptionCandidate,
+    tape_prefix: &InputTape,
+    cancellation: Option<TacticCancellationHit>,
+) -> Result<(InputTape, OptionExecution), OptionPolicyError> {
+    tape_prefix.validate().map_err(OptionPolicyError::Tape)?;
+    let realization = candidate.plan.realize(cancellation)?;
+    let start_frame = tape_prefix.frames.len() as u64;
+    let end_frame_exclusive = start_frame
+        .checked_add(u64::from(realization.realized_ticks))
+        .ok_or(OptionPolicyError::RangeOverflow)?;
+    let mut tape = tape_prefix.clone();
+    tape.frames.extend(realization.frames);
+    tape.validate().map_err(OptionPolicyError::Tape)?;
+    let execution = candidate.plan.capture_execution(
+        candidate.descriptor.option_id.clone(),
+        &tape,
+        TapeRange {
+            start_frame,
+            end_frame_exclusive,
+        },
+        cancellation,
+    )?;
+    execution
+        .validate_against_tape(&tape)
+        .map_err(|error| OptionPolicyError::Execution(error.to_string()))?;
+    if descriptor(&execution) != candidate.descriptor {
+        return Err(OptionPolicyError::DescriptorMismatch);
+    }
+    Ok((tape, execution))
+}
+
+fn capture_isolated(
+    option_id: &str,
+    plan: &GameTacticPlan,
+) -> Result<OptionExecution, OptionPolicyError> {
+    let realization = plan.realize(None)?;
+    let tape = InputTape {
+        frames: realization.frames,
+        ..InputTape::default()
+    };
+    plan.capture_execution(
+        option_id.into(),
+        &tape,
+        TapeRange {
+            start_frame: 0,
+            end_frame_exclusive: u64::from(realization.realized_ticks),
+        },
+        None,
+    )
+    .map_err(OptionPolicyError::from)
+}
+
+fn descriptor(execution: &OptionExecution) -> OptionActionDescriptor {
+    OptionActionDescriptor {
+        option_id: execution.option_id.clone(),
+        option_type: execution.option_type.clone(),
+        parameters: execution.parameters.clone(),
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+fn canonical<T: Serialize>(value: &T) -> Result<Vec<u8>, OptionPolicyError> {
+    serde_json::to_vec(value).map_err(|error| OptionPolicyError::Serialization(error.to_string()))
+}
+
+#[derive(Debug)]
 pub enum OptionPolicyError {
+    CatalogMismatch,
+    EmptyRanking,
+    DescriptorMismatch,
+    RangeOverflow,
     Values(String),
-    Tactic(String),
     Execution(String),
-    NoAvailableOption,
-    DescriptorMismatch {
-        selected: OptionActionDescriptor,
-        realized: OptionActionDescriptor,
-    },
+    Serialization(String),
+    Tactic(GameTacticError),
+    Tape(TapeError),
 }
 
 impl fmt::Display for OptionPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CatalogMismatch => {
+                formatter.write_str("policy and executable option catalogs differ")
+            }
+            Self::EmptyRanking => formatter.write_str("option policy produced an empty ranking"),
+            Self::DescriptorMismatch => {
+                formatter.write_str("realized tactic descriptor differs from selected option")
+            }
+            Self::RangeOverflow => formatter.write_str("realized tactic tape range overflows"),
             Self::Values(message) => write!(formatter, "option policy ranking failed: {message}"),
-            Self::Tactic(message) => write!(formatter, "option tactic execution failed: {message}"),
             Self::Execution(message) => {
                 write!(formatter, "option execution proof failed: {message}")
             }
-            Self::NoAvailableOption => formatter.write_str("option policy has no available option"),
-            Self::DescriptorMismatch { .. } => formatter
-                .write_str("selected option descriptor differs from realized tactic descriptor"),
+            Self::Serialization(message) => {
+                write!(formatter, "option catalog serialization failed: {message}")
+            }
+            Self::Tactic(error) => write!(formatter, "deterministic tactic failed: {error}"),
+            Self::Tape(error) => write!(formatter, "option policy tape is invalid: {error}"),
         }
     }
 }
 
 impl Error for OptionPolicyError {}
 
-impl From<OptionValueError> for OptionPolicyError {
-    fn from(error: OptionValueError) -> Self {
-        Self::Values(error.to_string())
-    }
-}
-
 impl From<GameTacticError> for OptionPolicyError {
     fn from(error: GameTacticError) -> Self {
-        Self::Tactic(error.to_string())
-    }
-}
-
-impl From<OptionExecutionError> for OptionPolicyError {
-    fn from(error: OptionExecutionError) -> Self {
-        Self::Execution(error.to_string())
+        Self::Tactic(error)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::option_values::{OptionValueConfig, OptionValueModel, OptionValueSample};
     use super::*;
     use crate::artifact::Digest;
+    use crate::fqi::FqiConfig;
     use crate::game_tactic::GameTactic;
-    use crate::learning::fqi::FqiConfig;
-    use crate::learning::option_values::{OptionValueConfig, OptionValueSample};
-    use crate::tape::{InputFrame, TapeBoot};
+    use crate::tape::InputFrame;
 
     fn sample(
-        descriptor: OptionActionDescriptor,
+        candidate: &TacticOptionCandidate,
+        state: f32,
         reward: f32,
-        tape_digest: u8,
+        tape_byte: u8,
     ) -> OptionValueSample {
         OptionValueSample {
-            action: descriptor,
-            state: vec![0.0],
-            duration_ticks: 2,
+            action: candidate.descriptor.clone(),
+            state: vec![state],
+            duration_ticks: candidate.plan.planned_ticks().unwrap(),
             reward,
-            next_state: vec![1.0],
+            next_state: vec![state + 1.0],
             terminal: true,
-            realized_tape_sha256: Digest([tape_digest; 32]),
+            realized_tape_sha256: Digest([tape_byte; 32]),
         }
     }
 
-    fn trained_policy_and_tape() -> (OptionValueModel, GameTacticPlan, InputTape, TapeRange) {
-        let plan = GameTacticPlan::new(GameTactic::NormalAttack {
-            direction_degrees: 0,
-            magnitude: 100,
-            press_frames: 1,
-            recovery_frames: 1,
-        });
-        let realization = plan.realize(None).unwrap();
-        let mut frames = vec![InputFrame::default()];
-        frames.extend(realization.frames);
-        frames.push(InputFrame::default());
-        let tape = InputTape {
-            boot: TapeBoot::Process,
-            frames,
-            ..InputTape::default()
-        };
-        let range = TapeRange {
-            start_frame: 1,
-            end_frame_exclusive: 3,
-        };
-        let attack = plan
-            .capture_execution("attack".into(), &tape, range, None)
-            .unwrap();
-        let attack_descriptor = OptionActionDescriptor {
-            option_id: attack.option_id,
-            option_type: attack.option_type,
-            parameters: attack.parameters,
-        };
-        let mut wait_descriptor = attack_descriptor.clone();
-        wait_descriptor.option_id = "wait".into();
-        wait_descriptor.option_type = crate::option_execution::OptionType::Neutral;
-        wait_descriptor.parameters.clear();
-        let config = OptionValueConfig {
-            fitted_q: FqiConfig {
-                iterations: 8,
-                trees_per_action: 5,
-                max_tree_depth: 2,
-                bootstrap: false,
-                seed: 7,
-                ..FqiConfig::default()
-            },
-        };
-        let model = OptionValueModel::fit(
-            1,
-            &[
-                sample(attack_descriptor.clone(), 5.0, 1),
-                sample(wait_descriptor.clone(), -1.0, 2),
-                sample(attack_descriptor, 5.0, 3),
-                sample(wait_descriptor, -1.0, 4),
-            ],
-            &[1, 2, 3, 4],
-            &config,
+    #[test]
+    fn highest_option_value_executes_exact_tactic_and_captures_tape_proof() {
+        let shield = TacticOptionCandidate::new(
+            "shield".into(),
+            GameTacticPlan::new(GameTactic::Shield { frames: 2 }),
         )
         .unwrap();
-        (model, plan, tape, range)
-    }
-
-    #[test]
-    fn selected_tactic_is_deterministically_realized_and_tape_proved() {
-        let (model, plan, tape, range) = trained_policy_and_tape();
-        let selected = SelectedOption::select(&model, &[0.0]).unwrap();
-        assert_eq!(selected.selection.descriptor.option_id, "attack");
-        let step = selected
-            .execute_game_tactic(&plan, &tape, range, None)
-            .unwrap();
-        assert_eq!(
-            step.selection.descriptor.option_id,
-            step.execution.option_id
-        );
-        assert_eq!(step.execution.emitted_raw_actions, tape.frames[1..3]);
-        assert_eq!(step.executor_layer, "deterministic_game_tactic_plan");
+        let attack = TacticOptionCandidate::new(
+            "attack".into(),
+            GameTacticPlan::new(GameTactic::NormalAttack {
+                direction_degrees: 0,
+                magnitude: 100,
+                press_frames: 1,
+                recovery_frames: 1,
+            }),
+        )
+        .unwrap();
+        let samples = vec![
+            sample(&shield, 0.0, -1.0, 1),
+            sample(&attack, 0.0, 5.0, 2),
+            sample(&shield, 1.0, -1.0, 3),
+            sample(&attack, 1.0, 5.0, 4),
+        ];
+        let model = OptionValueModel::fit(
+            1,
+            &samples,
+            &[1, 2, 3, 4],
+            &OptionValueConfig {
+                fitted_q: FqiConfig {
+                    iterations: 8,
+                    trees_per_action: 7,
+                    bootstrap: false,
+                    seed: 7,
+                    ..FqiConfig::default()
+                },
+            },
+        )
+        .unwrap();
+        let prefix = InputTape {
+            frames: vec![InputFrame::default()],
+            ..InputTape::default()
+        };
+        let step = select_and_execute(&model, &[0.0], &[shield, attack], &prefix, None).unwrap();
+        assert_eq!(step.selected.descriptor.option_id, "attack");
+        assert_eq!(step.execution.option_id, "attack");
+        assert_eq!(step.execution.realized_tape_range.start_frame, 1);
+        assert_eq!(step.execution.realized_tape_range.end_frame_exclusive, 3);
+        assert_eq!(step.execution.emitted_raw_actions, step.tape.frames[1..3]);
+        step.execution.validate_against_tape(&step.tape).unwrap();
+        assert!(step.descriptor_matches_execution);
+        assert!(step.raw_frames_match_tape);
         assert!(!step.promotion_authority);
     }
 
     #[test]
-    fn descriptor_or_complete_tape_mismatch_cannot_be_proved() {
-        let (model, plan, tape, range) = trained_policy_and_tape();
-        let mismatched = plan
-            .capture_execution("different-id".into(), &tape, range, None)
-            .unwrap();
+    fn refuses_to_rank_a_catalog_without_an_exact_executor_for_every_option() {
+        let shield = TacticOptionCandidate::new(
+            "shield".into(),
+            GameTacticPlan::new(GameTactic::Shield { frames: 2 }),
+        )
+        .unwrap();
+        let attack = TacticOptionCandidate::new(
+            "attack".into(),
+            GameTacticPlan::new(GameTactic::NormalAttack {
+                direction_degrees: 0,
+                magnitude: 100,
+                press_frames: 1,
+                recovery_frames: 1,
+            }),
+        )
+        .unwrap();
+        let model = OptionValueModel::fit(
+            1,
+            &[sample(&shield, 0.0, 0.0, 1), sample(&attack, 0.0, 1.0, 2)],
+            &[1, 2],
+            &OptionValueConfig::default(),
+        )
+        .unwrap();
         assert!(matches!(
-            SelectedOption::select(&model, &[0.0])
-                .unwrap()
-                .prove_execution(mismatched, &tape, "test"),
-            Err(OptionPolicyError::DescriptorMismatch { .. })
+            select_and_execute(&model, &[0.0], &[shield], &InputTape::default(), None),
+            Err(OptionPolicyError::CatalogMismatch)
         ));
-
-        let execution = plan
-            .capture_execution("attack".into(), &tape, range, None)
-            .unwrap();
-        let mut changed_tape = tape;
-        changed_tape.frames[0].pads[0].buttons = 1;
-        assert!(
-            SelectedOption::select(&model, &[0.0])
-                .unwrap()
-                .prove_execution(execution, &changed_tape, "test")
-                .is_err()
-        );
     }
 }
