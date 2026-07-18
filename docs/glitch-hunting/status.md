@@ -453,10 +453,11 @@ a self-contained 483-page manifest, including 452 categorized glitch pages.
 It preserves complete front matter and Markdown while extracting titles,
 descriptions, authors, categories, tags, platform/map tags, internal links,
 external sources, images, and video evidence. The manifest content identity is
-`b31e49f23ec79eee0d49783532f8bda8799b0eb2871a9da5e2e67ebed94fc270`;
-an independent import produced byte-identical JSON. Alias normalization,
-capability mapping, independent readiness states, and benchmark definitions
-remain roadmap work.
+`bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6`;
+an independent import produced byte-identical JSON. Seven explicit alias rules
+normalize 31 tag occurrences on 29 pages while retaining the original tags,
+titles, and paths. Capability mapping, independent readiness states, and
+benchmark definitions remain roadmap work.
 
 ## Known gaps
 

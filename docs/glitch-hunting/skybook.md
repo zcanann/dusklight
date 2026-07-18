@@ -8,9 +8,9 @@ revision `e9104852ff6b87862b67100f58aaa729096b42dc`.
 ## Checked artifact
 
 `benchmarks/skybook/manifest.json` uses schema
-`dusklight-skybook-manifest/v1`. It contains 483 pages, of which 452 have the
+`dusklight-skybook-manifest/v2`. It contains 483 pages, of which 452 have the
 `Glitches` category. Its canonical content digest is
-`b31e49f23ec79eee0d49783532f8bda8799b0eb2871a9da5e2e67ebed94fc270`.
+`bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6`.
 
 Each page retains:
 
@@ -19,6 +19,8 @@ Each page retains:
 - all front-matter keys plus title, description, author, category, and tag
   projections;
 - platform and map names projected from `platform-*` and `map-*` tags;
+- original tags alongside canonical tags, per-page alias resolutions, and
+  canonical platform, map, and region projections;
 - the Markdown body, internal link labels/targets/resolved slugs, external
   source links, image alt/source pairs, and typed video evidence.
 
@@ -48,11 +50,31 @@ ordered and deduplicated. The manifest digest covers the schema, source
 identity, counts, and every page; validation recomputes body and manifest
 digests and rejects reordered, duplicated, detached, or modified content. Two
 imports from the pinned checkout produced byte-identical JSON with file
-SHA-256 `bb2cddfa41c8f7383fbb77bb9d4fcbd3b9b23fcb86f282b92eb773102850b15f`.
+SHA-256 `e7cb73980bb6ef5c176ed6e2669ee04ceaceb0133d9f68f81ac7f5d9100d64b0`.
+
+## Alias catalog
+
+Normalization is a checked, versioned catalog rather than a fuzzy text rule.
+The current seven source-to-canonical mappings are:
+
+| Source tag | Canonical tag |
+| --- | --- |
+| `castle-town-sewers` | `map-castle-town-sewers` |
+| `map-snowpeak-mountain` | `map-snowpeak-mountains` |
+| `map-zora-river` | `map-zoras-river` |
+| `platform-gcn` | `platform-gamecube` |
+| `platform-hd` | `platform-wii-u-hd` |
+| `platform-pal` | `region-pal` |
+| `reference` | `type-reference` |
+
+These resolve 31 occurrences across 29 pages. Each page still stores its raw
+tags and source path, so normalization is reversible and does not rewrite
+Skybook terminology. Manifest validation recomputes canonical projections from
+the checked catalog and rejects altered rules or resolutions.
 
 ## Current boundary
 
-The importer records original names faithfully. It does not yet normalize
-aliases, infer scenarios/actions/observations/oracles, assign readiness states,
-or create per-glitch benchmark specifications. Those are separate roadmap
-steps so extraction cannot silently masquerade as completed triage.
+The importer does not yet infer scenarios/actions/observations/oracles, assign
+readiness states, or create per-glitch benchmark specifications. Those are
+separate roadmap steps so extraction cannot silently masquerade as completed
+triage.

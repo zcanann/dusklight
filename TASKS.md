@@ -984,7 +984,7 @@ not merely a list of tapes to transcribe.
   images, and video evidence.
 - [x] Generate a content-addressed manifest without editing or depending on
   Skybook at runtime.
-- [ ] Normalize aliases while retaining original names and source paths.
+- [x] Normalize aliases while retaining original names and source paths.
 - [ ] Map each page to required scenarios, actions, observations, oracles,
   fidelity, and known/unknown setup steps.
 - [ ] Track `untriaged`, `unsupported`, `scenario-ready`, `observable`,
