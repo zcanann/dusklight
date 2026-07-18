@@ -103,6 +103,9 @@ roadmap documents describe the larger target.
   fidelity identities. Each semantic cell retains several distinct useful
   outcome classes, with bounded deterministic same-class replacement instead of
   a single winner silently erasing crashes, OOB routes, or other outcomes.
+- Semantic novelty proposal signals v1 are capped, componentized, and retain
+  their raw novelty assessment. They may order proposals but explicitly have no
+  native-score, proof, or promotion authority.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

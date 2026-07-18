@@ -931,7 +931,7 @@ improvements are independently proved absolute tapes.
   spatial distance from an incumbent.
 - [x] Maintain separate archives by scenario/fidelity and allow several useful
   outcomes per behavior cell.
-- [ ] Add curiosity/novelty rewards only as proposal signals; retain the raw
+- [x] Add curiosity/novelty rewards only as proposal signals; retain the raw
   semantic reason a run was considered novel.
 - [ ] Cluster similar crashes, hangs, OOB routes, corruptions, and event sequences
   to avoid rediscovering the same symptom endlessly.

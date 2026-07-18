@@ -475,6 +475,14 @@ while native-evidence strength, cold-replay count, milestone depth, minimized
 length, and artifact identity deterministically select the representative for
 one outcome class. Unsupported evidence and weaker replacements are rejected.
 
+`dusklight-semantic-novelty-proposal-signal/v1` converts first-seen transitions
+and inverse-support rarity into a bounded numeric proposal-ordering signal. Its
+generation artifact retains the complete raw semantic assessment and publishes
+the separate transition and combination components. The authority fields are
+fixed by the constructor: proposal ordering is true, while native leaderboard,
+proof, and promotion authority are false. The normal lexicographic evaluator
+therefore remains the only path from a proposed artifact to a proved result.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots
