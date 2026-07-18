@@ -636,10 +636,14 @@ fn beam_search_spends_a_bounded_budget_on_native_rollouts() {
         String::from_utf8_lossy(&output.stderr)
     );
     let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(summary["schema"], "dusklight-beam-search/v1");
+    assert_eq!(summary["schema"], "dusklight-beam-search/v2");
     assert_eq!(summary["evaluated_candidates"], 5);
     assert_eq!(summary["simulator_episodes"], 10);
     assert_eq!(summary["depths_evaluated"], 3);
+    assert_eq!(summary["q_prior_table_sha256"], serde_json::Value::Null);
+    assert_eq!(summary["q_prior_ranked_children"], 0);
+    assert_eq!(summary["native_rollout_ranking_authority"], true);
+    assert_eq!(summary["policy_owns_route"], false);
     assert!(
         output_root
             .join("d000/evaluations/evaluation.json")
