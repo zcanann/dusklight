@@ -855,7 +855,7 @@ simple random baseline.
 
 - [x] Alternate conservative exploitation, ensemble-disagreement probes,
   structured counterfactuals, archive novelty, and blind coverage.
-- [ ] Cap update-to-data ratio and detect critic divergence or value explosion.
+- [x] Cap update-to-data ratio and detect critic divergence or value explosion.
 - [ ] Use independent evaluation workers/corpora so online training cannot turn
   proof repetitions into training samples before evaluation completes.
 - [ ] Resume training with immutable dataset generations and exact model lineage.

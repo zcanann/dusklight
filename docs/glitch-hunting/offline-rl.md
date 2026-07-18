@@ -670,6 +670,15 @@ cannot bypass cold replay, predicate proof, or determinism checks. Ensemble
 disagreement is recorded as a sampling heuristic, never a calibrated confidence
 estimate.
 
+Online fitted-Q passes `dusklight-online-training-health/v1` before any learned
+lane can emit a candidate. A fitted Bellman pass counts one update per data row,
+and the update-to-data ratio is capped at 32 with an early rejection before an
+oversized fit. After fitting, every logged state/action is checked for non-finite
+estimates, absolute-value explosion, and excessive ensemble disagreement. The
+report records update count, ratio, snapshot count, maxima, configured limits,
+and the exact healthy or rejected disposition. This is a numerical circuit
+breaker, not a calibration claim; native evaluation remains mandatory.
+
 The generation-local `q-proposals.json` reports requested, available, and
 generated counts per proposer, the generation's cycle offset and actual lane
 schedule, plus coverage by stage/room, spatial cell, player procedure, option,
