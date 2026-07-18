@@ -186,6 +186,32 @@ target synchronization count. It also records that categorical embeddings,
 calibrated uncertainty, and conservative OOD penalties are not yet provided;
 Double-Q rankings remain native-rollout proposals, never promotion evidence.
 
+### Discrete Conservative Q-Learning
+
+Use the same immutable input path with a state-local discrete CQL penalty:
+
+```text
+huntctl learn cql --dataset build/dataset.json \
+  --conservative-weight 1.0 --temperature 1.0 --seed 1 \
+  --model-output build/cql-model.json
+```
+
+The twin critics retain Double-Q target selection and frozen target copies.
+Every observed transition additionally minimizes
+`alpha * (T * logsumexp(Q(s, all actions) / T) - Q(s, observed action))`.
+This pushes down actions not represented at a sampled state while preserving
+the globally authenticated discrete action set. Weight and temperature must be
+finite and within `(0, 100]`; all Double-Q work and model-size bounds still
+apply.
+
+Schema `dusklight-conservative-q-model/v1` records the full critic pair,
+training identities, base optimizer configuration, conservative weight, and
+temperature. The ranking report includes observed global action support,
+conservative update count, and the mean post-training conservative gap. That
+gap is an objective diagnostic, not a calibrated OOD probability. CQL reduces
+unsupported-action optimism but does not establish that an action is safe,
+valid, or feasible; native rollout and cold replay remain mandatory.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

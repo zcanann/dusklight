@@ -208,6 +208,59 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         .unwrap()
     );
 
+    let cql_path = root.join("cql-model.json");
+    let cql = Command::new(executable)
+        .args(["learn", "cql", "--input"])
+        .arg(&path)
+        .arg("--model-output")
+        .arg(&cql_path)
+        .args([
+            "--query-transition",
+            "0",
+            "--epochs",
+            "128",
+            "--hidden-width",
+            "8",
+            "--learning-rate",
+            "0.01",
+            "--target-sync-steps",
+            "3",
+            "--conservative-weight",
+            "0.5",
+            "--temperature",
+            "1",
+            "--seed",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        cql.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cql.stderr)
+    );
+    let cql: serde_json::Value = serde_json::from_slice(&cql.stdout).unwrap();
+    assert_eq!(cql["schema"], "dusklight-conservative-q-ranking/v1");
+    assert_eq!(cql["ranking"][0]["action"], ADVANCE);
+    assert_eq!(cql["conservative_updates"], 512);
+    assert_eq!(cql["gradient_updates"], 512);
+    assert_eq!(cql["promotion_authority"], false);
+    assert!(cql["mean_conservative_gap"].as_f64().unwrap().is_finite());
+    let cql_model: serde_json::Value =
+        serde_json::from_slice(&fs::read(&cql_path).unwrap()).unwrap();
+    assert_eq!(cql_model["schema"], "dusklight-conservative-q-model/v1");
+    assert_eq!(cql_model["config"]["conservative_weight"], 0.5);
+    let cql_blob = &cql["model_content_blob"];
+    assert_eq!(cql_blob["kind"], "model");
+    assert_eq!(
+        fs::read(&cql_path).unwrap(),
+        fs::read(
+            root.join("content")
+                .join(cql_blob["relative_path"].as_str().unwrap())
+        )
+        .unwrap()
+    );
+
     let held_out_path = root.join("held-out.dtcz");
     TransitionCorpus::new(
         Digest([0x11; 32]),

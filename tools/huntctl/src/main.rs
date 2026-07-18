@@ -10,7 +10,7 @@ use huntctl::dataset::{
     DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
     DatasetSplit,
 };
-use huntctl::double_q::{DoubleQ, DoubleQConfig};
+use huntctl::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
 use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
 use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
@@ -757,8 +757,197 @@ fn load_fqi_batch(paths: &[String], label: &str) -> Result<LoadedFqiBatch, Box<d
     })
 }
 
+fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
+    let direct_inputs = repeated_option(learn_args, "--input");
+    let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
+    if dataset_path.is_some() && !direct_inputs.is_empty() {
+        return Err("learn cql accepts either --dataset or --input, not both".into());
+    }
+    let dataset_manifest: Option<DatasetManifest> = dataset_path
+        .as_ref()
+        .map(|path| -> Result<_, Box<dyn Error>> {
+            let manifest: DatasetManifest = serde_json::from_slice(&fs::read(path)?)?;
+            manifest.validate()?;
+            Ok(manifest)
+        })
+        .transpose()?;
+    let inputs = if let Some(manifest) = &dataset_manifest {
+        manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.split == DatasetSplit::Train)
+            .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    } else {
+        direct_inputs
+    };
+    let training = load_fqi_batch(&inputs, "CQL training")?;
+    let expected_corpus_digests = dataset_manifest.as_ref().map(|manifest| {
+        manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.split == DatasetSplit::Train)
+            .map(|entry| entry.corpus_sha256)
+            .collect::<Vec<_>>()
+    });
+    if expected_corpus_digests
+        .as_ref()
+        .is_some_and(|expected| expected != &training.corpus_digests)
+    {
+        return Err("CQL corpus content differs from dataset manifest".into());
+    }
+    let defaults = ConservativeQConfig::default();
+    let config = ConservativeQConfig {
+        double_q: DoubleQConfig {
+            epochs: usize_option(learn_args, "--epochs", defaults.double_q.epochs)?,
+            hidden_width: usize_option(
+                learn_args,
+                "--hidden-width",
+                defaults.double_q.hidden_width,
+            )?,
+            learning_rate: option(learn_args, "--learning-rate")
+                .map(|value| value.parse::<f64>())
+                .transpose()?
+                .unwrap_or(defaults.double_q.learning_rate),
+            discount: option(learn_args, "--discount")
+                .map(|value| value.parse::<f64>())
+                .transpose()?
+                .unwrap_or(defaults.double_q.discount),
+            target_sync_steps: usize_option(
+                learn_args,
+                "--target-sync-steps",
+                defaults.double_q.target_sync_steps,
+            )?,
+            gradient_clip: option(learn_args, "--gradient-clip")
+                .map(|value| value.parse::<f64>())
+                .transpose()?
+                .unwrap_or(defaults.double_q.gradient_clip),
+            seed: u64_option(learn_args, "--seed", defaults.double_q.seed)?,
+        },
+        conservative_weight: option(learn_args, "--conservative-weight")
+            .map(|value| value.parse::<f64>())
+            .transpose()?
+            .unwrap_or(defaults.conservative_weight),
+        temperature: option(learn_args, "--temperature")
+            .map(|value| value.parse::<f64>())
+            .transpose()?
+            .unwrap_or(defaults.temperature),
+    };
+    let action_support = training.transitions.iter().fold(
+        BTreeMap::<u32, usize>::new(),
+        |mut counts, transition| {
+            *counts.entry(transition.action).or_default() += 1;
+            counts
+        },
+    );
+    if action_support.len() > MAX_FQI_ACTIONS {
+        return Err(format!(
+            "CQL supports at most {MAX_FQI_ACTIONS} distinct actions; received {}",
+            action_support.len()
+        )
+        .into());
+    }
+    let actions = action_support.keys().copied().collect::<Vec<_>>();
+    let model = ConservativeQ::fit(
+        training.feature_count,
+        &actions,
+        &training.transitions,
+        &config,
+    )?;
+    let query_index = usize_option(learn_args, "--query-transition", 0)?;
+    let query_transition = training
+        .transitions
+        .get(query_index)
+        .ok_or("--query-transition is outside the merged transition batch")?;
+    let query_side = option(learn_args, "--query-side").unwrap_or_else(|| "state".into());
+    let query_state = match query_side.as_str() {
+        "state" => &query_transition.state,
+        "next-state" => &query_transition.next_state,
+        _ => return Err("--query-side must be state or next-state".into()),
+    };
+    let ranking = model
+        .rank_actions(query_state)?
+        .into_iter()
+        .map(|estimate| {
+            json!({
+                "action": estimate.action,
+                "mean_q": estimate.mean,
+                "critic_a": estimate.critic_a,
+                "critic_b": estimate.critic_b,
+                "critic_disagreement": estimate.critic_disagreement,
+                "support": action_support[&estimate.action],
+            })
+        })
+        .collect::<Vec<_>>();
+    let model_output = option(learn_args, "--model-output").map(PathBuf::from);
+    let mut model_content_blob = None;
+    let mut model_artifact_store = None;
+    if let Some(path) = &model_output {
+        if path.exists() {
+            return Err(format!("CQL model output already exists: {}", path.display()).into());
+        }
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let bytes = model.artifact_bytes(
+            training.feature_schema,
+            training.action_schema,
+            dataset_manifest
+                .as_ref()
+                .map(|manifest| manifest.dataset_sha256),
+            &training.corpus_digests,
+            &config,
+        )?;
+        fs::write(path, &bytes)?;
+        let store_path = option(learn_args, "--artifact-store")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).join("content"));
+        model_content_blob =
+            Some(ContentStore::initialize(&store_path)?.put_bytes(&bytes, ContentKind::Model)?);
+        model_artifact_store = Some(store_path);
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "dusklight-conservative-q-ranking/v1",
+            "feature_schema": training.feature_schema,
+            "action_schema": training.action_schema,
+            "input_corpora": inputs,
+            "training_corpus_sha256": training.corpus_digests,
+            "training_dataset": dataset_path,
+            "training_dataset_sha256": dataset_manifest.as_ref().map(|manifest| manifest.dataset_sha256),
+            "transition_count": training.transitions.len(),
+            "episode_groups": training.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+            "query_transition": query_index,
+            "query_side": query_side,
+            "config": config,
+            "gradient_updates": model.gradient_updates(),
+            "target_synchronizations": model.target_synchronizations(),
+            "conservative_updates": model.conservative_updates(),
+            "mean_conservative_gap": model.mean_conservative_gap(),
+            "conservative_objective": "temperature_logsumexp_all_actions_minus_observed_action",
+            "model_output": model_output,
+            "model_artifact_store": model_artifact_store,
+            "model_content_blob": model_content_blob,
+            "ranking": ranking,
+            "promotion_authority": false,
+            "limitations": [
+                "CQL reduces but does not prove safety for state-local unsupported actions",
+                "numeric normalization does not provide categorical embeddings or missingness masks",
+                "critic disagreement is not calibrated uncertainty",
+                "rankings are proposals and require native predicate and cold replay proof"
+            ]
+        }))?
+    );
+    Ok(())
+}
+
 fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("cql") => command_conservative_q(&args[1..]),
         Some("diff-episodes") => {
             let learn_args = &args[1..];
             let success_trace_path = required_path(learn_args, "--success-trace")?;
@@ -4487,6 +4676,12 @@ fn print_usage() {
     );
     eprintln!(
         "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --episode-context CONTEXT.json --start-frame N --end-frame N --output BATCH.dtcz [--artifact-store ROOT] [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn dataset --source SOURCE.json [--source MORE.json] --output DATASET.json [--withheld-objective ID] [--validation-percent N] [--test-percent N] [--artifact-store ROOT]\n  huntctl learn diff-episodes --success-trace SUCCESS.trace --failure-trace FAILURE.trace --output DIFF.json [--success-evidence SUCCESS.json --failure-evidence FAILURE.json]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn baseline --method nearest-neighbor|tabular --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--discount D] [--neighbors N --feature INDEX:SCALE:continuous|categorical ...] [--axis INDEX:ORIGIN:WIDTH ...]\n  huntctl learn calibrate (--dataset DATASET.json [--split validation|test|withheld] | --training TRAIN.dtcz --held-out TEST.dtcz) --output REPORT.json [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--all-continuous | --categorical-feature N ...]\n  huntctl learn double-q (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--gradient-clip V] [--seed N] [--discount D]\n  huntctl learn fit (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--iterations N] [--n-step N] [--trees N] [--max-depth N] [--seed N] [--discount D] [--shaping SPEC.json --shaping-report REPORT.json] [--all-continuous | --categorical-feature N ...]"
+    );
+    eprintln!(
+        "  huntctl learn cql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--conservative-weight A] [--temperature T] [--gradient-clip V] [--seed N] [--discount D]"
+    );
+    eprintln!(
+        "  huntctl learn cql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--discount D] [--target-sync-steps N] [--gradient-clip G] [--conservative-weight A] [--temperature T] [--seed N]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
