@@ -13,6 +13,7 @@ pub mod goal_conditioning;
 pub mod hindsight;
 pub mod iql;
 pub mod low_data_baselines;
+pub mod model_representation;
 pub mod offline_rl;
 pub mod online_lineage;
 pub mod option_policy;
