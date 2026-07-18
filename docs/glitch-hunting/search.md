@@ -495,10 +495,12 @@ hits remain measurable without growing an unbounded duplicate directory.
 Novel artifacts use `dusklight-novelty-minimization/v1` for bounded frame
 deletion. The starting assessment is frozen into an authenticated preservation
 predicate containing every required first-seen transition, rare combination,
-catalog epoch, rarity ceiling, and one exact named replay-boundary fingerprint.
-Every deletion is replayed; it is accepted only if all semantic facts and the
-canonical boundary SHA-256 remain present. The report records every attempted
-range, before/after frame counts, acceptance, and the precise rejection reason.
+catalog epoch, rarity ceiling, and one exact named replay boundary. Every
+deletion receives at least two cold replays; it is accepted only when all
+repetitions agree on the complete semantic evidence and preserve the boundary's
+simulation tick, tape frame, and canonical fingerprint. The report records the
+repetition contract and every attempted range, before/after frame counts,
+acceptance, and precise rejection reason.
 
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
