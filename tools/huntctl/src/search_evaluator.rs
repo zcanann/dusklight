@@ -31,6 +31,9 @@ use crate::search::{
 use crate::semantic_novelty::catalog::{
     SemanticNoveltyAssessment, SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
 };
+use crate::semantic_novelty::proposal_signal::{
+    SemanticNoveltyProposalSignal, SemanticNoveltyProposalSignalConfig,
+};
 use crate::semantic_novelty::{BoundaryFingerprintFact, SemanticNoveltyDescriptor};
 use crate::tape::{InputTape, RawPadState, TapeBoot};
 use crate::tape_chain::{ChainSegment, concatenate};
@@ -399,6 +402,7 @@ pub struct EvaluationReport {
 pub struct CandidateSemanticNoveltyAssessment {
     pub candidate_id: String,
     pub assessment: SemanticNoveltyAssessment,
+    pub proposal_signal: SemanticNoveltyProposalSignal,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2347,13 +2351,19 @@ pub fn run_anchored_search(
         let candidates = generation_semantics
             .iter()
             .map(|(candidate_id, (_, descriptor, _))| {
-                semantic_novelty_catalog
+                let assessment = semantic_novelty_catalog
                     .assess(descriptor, SemanticNoveltyCatalogConfig::default())
-                    .map(|assessment| CandidateSemanticNoveltyAssessment {
-                        candidate_id: candidate_id.clone(),
-                        assessment,
-                    })
-                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))
+                    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                let proposal_signal = SemanticNoveltyProposalSignal::from_assessment(
+                    assessment.clone(),
+                    SemanticNoveltyProposalSignalConfig::default(),
+                )
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+                Ok::<_, EvaluateError>(CandidateSemanticNoveltyAssessment {
+                    candidate_id: candidate_id.clone(),
+                    assessment,
+                    proposal_signal,
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         write_json(
