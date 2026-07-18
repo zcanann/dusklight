@@ -37,6 +37,8 @@ pub struct PromisingHeadlessDiscovery {
     pub tape_identity: String,
     pub tape_path: PathBuf,
     pub replay_boundary_identity: String,
+    pub objective_id: String,
+    pub objective_definition_sha256: String,
     pub outcome: DiscoveryOutcomeKind,
     pub quality: DiscoveryRetentionQuality,
     pub proposal_signal: SemanticNoveltyProposalSignal,
@@ -59,6 +61,8 @@ pub struct HeadfulReplayRequest {
     pub tape_identity: String,
     pub tape_path: PathBuf,
     pub replay_boundary_identity: String,
+    pub objective_id: String,
+    pub objective_definition_sha256: String,
     pub outcome: DiscoveryOutcomeKind,
     pub capture: TerminalCapturePlan,
 }
@@ -83,6 +87,8 @@ pub struct ReviewAttachment {
 pub struct HeadfulReplayEvidence {
     pub replay_identity: String,
     pub replay_boundary_identity: String,
+    pub objective_id: String,
+    pub objective_definition_sha256: String,
     pub semantic_replay_matched: bool,
     pub attachments: Vec<ReviewAttachment>,
 }
@@ -111,6 +117,8 @@ pub struct HumanClassificationRequest {
     pub source_artifact_identity: String,
     pub headful_replay_identity: String,
     pub replay_boundary_identity: String,
+    pub objective_id: String,
+    pub objective_definition_sha256: String,
     pub semantic_replay_matched: bool,
     pub outcome: DiscoveryOutcomeKind,
     pub attachments: Vec<ReviewAttachment>,
@@ -157,6 +165,13 @@ impl HeadfulReviewQueue {
             "source replay boundary identity",
             &discovery.replay_boundary_identity,
         )?;
+        if discovery.objective_id.trim().is_empty() {
+            return Err(HeadfulReviewError("objective ID is empty".into()));
+        }
+        validate_sha256(
+            "objective definition",
+            &discovery.objective_definition_sha256,
+        )?;
         validate_sha256(
             "target headful fidelity identity",
             &target_headful_fidelity_identity,
@@ -191,6 +206,8 @@ impl HeadfulReviewQueue {
             &discovery.artifact_identity,
             &discovery.tape_identity,
             &discovery.replay_boundary_identity,
+            &discovery.objective_id,
+            &discovery.objective_definition_sha256,
             &target_partition,
             &capture,
         );
@@ -203,6 +220,8 @@ impl HeadfulReviewQueue {
             tape_identity: discovery.tape_identity,
             tape_path: discovery.tape_path,
             replay_boundary_identity: discovery.replay_boundary_identity,
+            objective_id: discovery.objective_id,
+            objective_definition_sha256: discovery.objective_definition_sha256,
             outcome: discovery.outcome,
             capture,
         };
@@ -228,6 +247,13 @@ impl HeadfulReviewQueue {
         if evidence.replay_boundary_identity != request.replay_boundary_identity {
             return Err(HeadfulReviewError(
                 "headful replay changed the source replay boundary".into(),
+            ));
+        }
+        if evidence.objective_id != request.objective_id
+            || evidence.objective_definition_sha256 != request.objective_definition_sha256
+        {
+            return Err(HeadfulReviewError(
+                "headful replay changed the source objective definition".into(),
             ));
         }
         let mut attachment_kinds = BTreeSet::new();
@@ -268,6 +294,8 @@ impl HeadfulReviewQueue {
             source_artifact_identity: request.artifact_identity,
             headful_replay_identity: evidence.replay_identity,
             replay_boundary_identity: evidence.replay_boundary_identity,
+            objective_id: request.objective_id,
+            objective_definition_sha256: request.objective_definition_sha256,
             semantic_replay_matched: evidence.semantic_replay_matched,
             outcome: request.outcome,
             attachments: evidence.attachments,
@@ -305,11 +333,21 @@ fn replay_request_identity(
     artifact: &str,
     tape: &str,
     replay_boundary: &str,
+    objective_id: &str,
+    objective_definition_sha256: &str,
     target: &DiscoveryArchivePartitionKey,
     capture: &TerminalCapturePlan,
 ) -> String {
-    let encoded = serde_json::to_vec(&(artifact, tape, replay_boundary, target, capture))
-        .expect("headful replay request identity is serializable");
+    let encoded = serde_json::to_vec(&(
+        artifact,
+        tape,
+        replay_boundary,
+        objective_id,
+        objective_definition_sha256,
+        target,
+        capture,
+    ))
+    .expect("headful replay request identity is serializable");
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight-headful-replay-request/v1\0");
     hasher.update((encoded.len() as u64).to_le_bytes());
@@ -384,6 +422,8 @@ mod tests {
             tape_identity: "44".repeat(32),
             tape_path: PathBuf::from("artifacts/candidate.tape"),
             replay_boundary_identity: "77".repeat(32),
+            objective_id: "unseen-contact".into(),
+            objective_definition_sha256: "aa".repeat(32),
             outcome,
             quality: DiscoveryRetentionQuality {
                 evidence_rank: 2,
@@ -465,6 +505,8 @@ mod tests {
                 HeadfulReplayEvidence {
                     replay_identity: "66".repeat(32),
                     replay_boundary_identity: "77".repeat(32),
+                    objective_id: "unseen-contact".into(),
+                    objective_definition_sha256: "aa".repeat(32),
                     semantic_replay_matched: true,
                     attachments: vec![
                         attachment(ReviewAttachmentKind::TerminalThumbnailPng, "88"),
@@ -504,6 +546,8 @@ mod tests {
                     HeadfulReplayEvidence {
                         replay_identity: "66".repeat(32),
                         replay_boundary_identity: "77".repeat(32),
+                        objective_id: "unseen-contact".into(),
+                        objective_definition_sha256: "aa".repeat(32),
                         semantic_replay_matched: true,
                         attachments: vec![attachment(
                             ReviewAttachmentKind::TerminalThumbnailPng,
@@ -522,6 +566,8 @@ mod tests {
                     HeadfulReplayEvidence {
                         replay_identity: "66".repeat(32),
                         replay_boundary_identity: "77".repeat(32),
+                        objective_id: "unseen-contact".into(),
+                        objective_definition_sha256: "aa".repeat(32),
                         semantic_replay_matched: true,
                         attachments: vec![
                             attachment(ReviewAttachmentKind::TerminalThumbnailPng, "88"),
