@@ -1,9 +1,62 @@
 {
   "schema": "dusklight-objective-suite/v1",
-  "content_sha256": "ad2d02ce93a54721aedfad6510cf79442c6d847e3c5bf9ef6dbcab95d59699f0",
+  "content_sha256": "e14d1a200581abb54e64c02ce5439e5e45dec63ec3d163e995ae13093185f9ba",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
+    {
+      "id": "reach-point-ordon-ranch",
+      "description": "A direct F_SP104 boot moves Link into the measured Ordon ranch target region and remains there for five ticks.",
+      "role": "positive",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP104",
+        "room": 1,
+        "point": 0,
+        "layer": -1
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/basic_human.fixture.json",
+        "sha256": "f2d565f61140d914a53d6040f2cefb94559fcbfee5e5edbc5919285908852f65"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/reach_point_ordon.milestones",
+          "sha256": "3be51f5b167ba0bc094b632964ee596f6151b50f2fa68140a201fb1047db5280"
+        },
+        "program_sha256": "05c586902adeff1bcd06151002e496ff7a1024795bef18fd347f7b40ca4e5fe2",
+        "goal": "reach_point_ordon"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/reach_point_ordon.observation.json",
+          "sha256": "3d4aec2591e00e4aba72423b75d325da73fafbeb391ebc9ee43a862b7aacb2b1"
+        },
+        "schema_sha256": "615f1d5bbc3bb617193b0a22fb5ef1025d09f504c904e35dac3b50a1eb75dc4f"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "required_query_facts": [
+        "player.exists",
+        "player.in_aabb",
+        "player.is_link",
+        "stage.name",
+        "stage.room"
+      ],
+      "seed": {
+        "kind": "tape_source",
+        "artifact": {
+          "path": "tests/fixtures/automation/reach_point_ordon.tas",
+          "sha256": "f41e377879a7b3f72bad62c1fcd8ad1299f9c2176402db252482b7506404d029"
+        }
+      },
+      "logical_tick_budget": 799,
+      "host_timeout_seconds": 60,
+      "repetitions": 2,
+      "expected_terminal": "reached"
+    },
     {
       "id": "stage-ready-f-sp103",
       "description": "A direct F_SP103 boot reaches stable player control without non-neutral input.",

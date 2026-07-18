@@ -1,0 +1,22 @@
+dusktape 1
+boot stage F_SP104 1 0 -1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+state move_forward { p0 stick 0 127 }
+state move_right { p0 stick 127 0 }
+state move_left { p0 stick -127 0 }
+state move_forward_left { p0 stick -90 90 }
+
+# Direct-stage readiness begins with a live player. Neutral startup margin is
+# retained explicitly before replaying the checked intro-route movement suffix.
+repeat 60 neutral
+repeat 8 move_right
+repeat 220 move_forward
+repeat 8 move_left
+repeat 75 move_forward
+repeat 8 move_left
+repeat 120 move_forward
+repeat 100 move_forward_left
+repeat 200 neutral

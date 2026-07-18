@@ -1,0 +1,25 @@
+{
+  "schema": "dusklight-scenario-fixture/v1",
+  "name": "Basic human movement loadout",
+  "form": "human",
+  "health": {
+    "current": 12,
+    "maximum": 15
+  },
+  "rng": [
+    {
+      "stream": "primary",
+      "state0": 100,
+      "state1": 100,
+      "state2": 100,
+      "call_count": 0
+    },
+    {
+      "stream": "secondary",
+      "state0": 12,
+      "state1": 123,
+      "state2": 70,
+      "call_count": 0
+    }
+  ]
+}

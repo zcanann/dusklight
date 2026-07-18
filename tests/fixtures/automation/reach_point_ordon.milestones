@@ -1,0 +1,11 @@
+milestones 1.3
+
+# The target is the measured Ordon ranch event volume documented by the intro
+# route benchmark. Stability rejects a one-tick pass through the region.
+milestone reach_point_ordon {
+  phase post_sim
+  stable 5
+  when stage.name == "F_SP104" && stage.room == 1 &&
+       player.exists && player.is_link &&
+       player.in_aabb(-1700.0, 100.0, -9150.0, -1500.0, 300.0, -8950.0)
+}

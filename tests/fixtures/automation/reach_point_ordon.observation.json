@@ -1,0 +1,186 @@
+{
+  "schema": "dusklight-observation-spec/v1",
+  "id": "reach-point-ordon/v1",
+  "objective": {
+    "id": "reach_point_ordon",
+    "source": {
+      "stage": "F_SP104",
+      "room": 1,
+      "layer": -1,
+      "point": 0
+    },
+    "target": {
+      "stage": "F_SP104",
+      "room": 1,
+      "layer": -1,
+      "point": 0
+    }
+  },
+  "phase": "post_simulation",
+  "channels": [
+    {
+      "channel": "stage",
+      "version": 1,
+      "stride": 32,
+      "status": "present"
+    },
+    {
+      "channel": "player_motion",
+      "version": 1,
+      "stride": 52,
+      "status": "present"
+    }
+  ],
+  "features": [
+    {
+      "field_id": 1,
+      "name": "stage.byte0",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 2,
+      "name": "stage.byte1",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 3,
+      "name": "stage.byte2",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 4,
+      "name": "stage.byte3",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 5,
+      "name": "stage.byte4",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 6,
+      "name": "stage.byte5",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 7,
+      "name": "stage.byte6",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 8,
+      "name": "stage.byte7",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "divide", "divisor": 255.0 },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 9,
+      "name": "stage.room",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "identity" },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 10,
+      "name": "stage.point",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "identity" },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 11,
+      "name": "player.present",
+      "value_type": "boolean",
+      "units": "none",
+      "coordinate_space": "none",
+      "transform": { "kind": "identity" },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 12,
+      "name": "player.is_link",
+      "value_type": "boolean",
+      "units": "none",
+      "coordinate_space": "none",
+      "transform": { "kind": "identity" },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 13,
+      "name": "player.position_x",
+      "value_type": "float",
+      "units": "game_units",
+      "coordinate_space": "world",
+      "transform": { "kind": "divide", "divisor": 8192.0 },
+      "categorical": false,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 14,
+      "name": "player.position_y",
+      "value_type": "float",
+      "units": "game_units",
+      "coordinate_space": "world",
+      "transform": { "kind": "divide", "divisor": 8192.0 },
+      "categorical": false,
+      "missingness": { "kind": "required" }
+    },
+    {
+      "field_id": 15,
+      "name": "player.position_z",
+      "value_type": "float",
+      "units": "game_units",
+      "coordinate_space": "world",
+      "transform": { "kind": "divide", "divisor": 8192.0 },
+      "categorical": false,
+      "missingness": { "kind": "required" }
+    }
+  ]
+}
