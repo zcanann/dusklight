@@ -866,7 +866,7 @@ simple random baseline.
 - [x] Begin with normalized fixed features, missingness masks, categorical
   embeddings, objective vector, nearest-K semantic actor slots, and local
   geometry probes.
-- [ ] Test short history stacking and recurrent critics when state remains
+- [x] Test short history stacking and recurrent critics when state remains
   partially observable after Trace v2.
 - [ ] Add DeepSets/attention over variable actor sets only when fixed slots fail
   and the corpus is large enough.

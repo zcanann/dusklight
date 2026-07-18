@@ -181,6 +181,17 @@ sample. The complete normalization, category tables, widths, and ordering rules
 produce one representation digest; reordered source actors/surfaces encode to
 the same tensor.
 
+`learning/history_critics.rs` tests whether that fixed representation still
+aliases different return targets at byte-identical current states. It compares
+a single-frame ridge critic, an episode-boundary-masked short stack, and a
+deterministic recurrent-reservoir critic on content-disjoint episodes with the
+same training and held-out row budgets. The authenticated report binds the
+representation digest, aliasing counts, errors, configuration, and disposition;
+it has no promotion authority. Controlled hidden-cue tests show both temporal
+forms beating the current-state critic, while a fully observed fixture retains
+the simpler baseline. No route adopts history or recurrence until an actual
+held-out Trace-v2 corpus produces the same evidence.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:
