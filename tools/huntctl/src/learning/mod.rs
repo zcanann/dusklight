@@ -15,6 +15,7 @@ pub mod hindsight;
 pub mod history_critics;
 pub mod iql;
 pub mod low_data_baselines;
+pub mod model_ownership;
 pub mod model_representation;
 pub mod offline_rl;
 pub mod online_lineage;
