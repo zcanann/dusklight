@@ -447,6 +447,15 @@ with native session process IDs removed, and terminal milestone boundaries add
 a separate authenticated boundary axis. All terminal boundary and value
 fingerprints also remain bound into the downstream-state axis.
 
+Trace-backed evaluation constructs `dusklight-semantic-novelty/v1` before cell
+placement. It retains the raw run-deduplicated procedure and event sequences,
+semantic state changes, portable contact sets, player-relative selected-actor
+facts, flag states, quantized position/velocity extrema, and named boundary
+fingerprints. Per-axis SHA-256 identities keep archive keys compact, but the raw
+descriptor is the canonical explanation surface for later discovery reports.
+Missing contact or actor channels remain unobserved rather than becoming an
+observed empty set, and process-local actor IDs never affect identity.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots

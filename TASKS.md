@@ -924,7 +924,7 @@ improvements are independently proved absolute tapes.
 
 ## 9. Novelty and autonomous glitch discovery
 
-- [ ] Define semantic novelty descriptors over procedures, events, contacts,
+- [x] Define semantic novelty descriptors over procedures, events, contacts,
   transitions, actor relationships, flags, position/velocity extrema, and
   boundary fingerprints.
 - [ ] Detect first-seen state transitions and rare state combinations, not just

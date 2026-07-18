@@ -88,9 +88,13 @@ roadmap documents describe the larger target.
   versioned sidecar containing every component and its source/next facts.
 - Behavior archive v3 is a bounded MAP-Elites table over named RNG and actor
   projections, portable contact trajectories, terminal boundary identity,
-  coarse route, procedure sequence, and complete downstream state. One native
-  quality elite occupies each cell; farthest-first selection preserves novel
-  cells while the normal evaluator remains promotion authority.
+  coarse route, procedure sequence, and complete downstream state. Trace-backed
+  cells also bind run-deduplicated event, semantic state-transition, actor-
+  relationship, flag, and quantized position/velocity-extrema axes. The
+  versioned raw semantic descriptor remains inspectable and excludes native
+  session process IDs. One native quality elite occupies each cell;
+  farthest-first selection preserves novel cells while the normal evaluator
+  remains promotion authority.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable
