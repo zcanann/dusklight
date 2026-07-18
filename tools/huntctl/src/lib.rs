@@ -15,6 +15,7 @@ pub mod controller_program;
 pub mod corpus;
 pub mod corpus_ops;
 pub mod dataset;
+pub mod double_q;
 pub mod episode;
 pub mod fqi;
 pub mod game_tactic;
