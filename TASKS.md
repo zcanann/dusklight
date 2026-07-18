@@ -863,7 +863,7 @@ simple random baseline.
 
 ### P1: model representation
 
-- [ ] Begin with normalized fixed features, missingness masks, categorical
+- [x] Begin with normalized fixed features, missingness masks, categorical
   embeddings, objective vector, nearest-K semantic actor slots, and local
   geometry probes.
 - [ ] Test short history stacking and recurrent critics when state remains

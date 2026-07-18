@@ -602,6 +602,18 @@ The v1 bridge and digest remain unchanged for old corpora. Q search is not
 silently migrated: a v2 corpus is a distinct authenticated feature space, and
 the learner derives its categorical map from the matching specification.
 
+`learning::model_representation` defines the first fixed neural-model baseline
+without expanding the observation boundary. It fits continuous normalization
+from the exact training-state count, maps schema-declared categories to bounded
+deterministic embedding initializers with an unknown bucket, and emits a
+parallel presence mask for every value. The fixed vector then appends the
+authenticated compiled-objective vector, four nearest selected actors in
+player-local coordinates, and four nearest local-geometry probes supplied by
+the spatial service. Actor and surface ordering is distance/stable-ID
+deterministic; missing slots are zeroed and masked. The representation digest
+binds the observation schema, normalization, category vocabulary, embedding
+layout, and all fixed widths.
+
 Anchored native farming retains a gameplay trace for the first proof repetition
 of every candidate. After milestone validation, the evaluator automatically
 extracts the source-to-terminal window into `transitions.dtcz`, pins its source
