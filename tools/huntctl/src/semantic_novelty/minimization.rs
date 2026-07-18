@@ -11,6 +11,14 @@ use std::fmt;
 
 pub const NOVELTY_MINIMIZATION_SCHEMA: &str = "dusklight-novelty-minimization/v1";
 pub const MAX_NOVELTY_MINIMIZATION_ATTEMPTS: usize = 10_000;
+pub const MAX_NOVELTY_MINIMIZATION_REPETITIONS: u32 = 64;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NoveltyReplayBoundary {
+    pub simulation_tick: u64,
+    pub tape_frame: u64,
+    pub fingerprint: BoundaryFingerprintFact,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NoveltyPreservationPredicate {
@@ -19,13 +27,14 @@ pub struct NoveltyPreservationPredicate {
     pub rare_support_episode_ceiling: u64,
     pub required_first_seen_transitions: Vec<StateTransitionFact>,
     pub required_rare_state_combinations: Vec<RareStateCombinationReason>,
-    pub replay_boundary: BoundaryFingerprintFact,
+    pub replay_boundary: NoveltyReplayBoundary,
     pub identity: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NoveltyReplayEvidence {
     pub descriptor: SemanticNoveltyDescriptor,
+    pub replay_boundary: NoveltyReplayBoundary,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -44,6 +53,7 @@ pub struct NoveltyMinimizationReport {
     pub predicate: NoveltyPreservationPredicate,
     pub source_frames: usize,
     pub minimized_frames: usize,
+    pub repetitions: u32,
     pub attempts: Vec<NoveltyMinimizationAttempt>,
 }
 
@@ -51,6 +61,7 @@ pub struct NoveltyMinimizationReport {
 pub struct NoveltyMinimizationConfig {
     pub minimum_frames: usize,
     pub maximum_attempts: usize,
+    pub repetitions: u32,
 }
 
 impl Default for NoveltyMinimizationConfig {
@@ -58,6 +69,7 @@ impl Default for NoveltyMinimizationConfig {
         Self {
             minimum_frames: 1,
             maximum_attempts: 1_000,
+            repetitions: 2,
         }
     }
 }
@@ -76,7 +88,7 @@ impl Error for NoveltyMinimizationError {}
 impl NoveltyPreservationPredicate {
     pub fn from_assessment(
         assessment: &SemanticNoveltyAssessment,
-        replay_boundary: BoundaryFingerprintFact,
+        replay_boundary: NoveltyReplayBoundary,
     ) -> Result<Self, NoveltyMinimizationError> {
         if !assessment.semantic_novel
             || assessment.first_seen_transitions.is_empty()
@@ -86,7 +98,7 @@ impl NoveltyPreservationPredicate {
                 "novelty minimization requires a positive raw semantic predicate".into(),
             ));
         }
-        validate_boundary(&replay_boundary)?;
+        validate_boundary(&replay_boundary.fingerprint)?;
         let mut predicate = Self {
             descriptor_identity: assessment.descriptor_identity.clone(),
             catalog_observed_episodes_before: assessment.catalog_observed_episodes_before,
@@ -126,10 +138,11 @@ impl NoveltyPreservationPredicate {
         {
             return Err("candidate lost a required rare state combination".into());
         }
-        if !evidence
-            .descriptor
-            .boundary_fingerprints
-            .contains(&self.replay_boundary)
+        if evidence.replay_boundary != self.replay_boundary
+            || !evidence
+                .descriptor
+                .boundary_fingerprints
+                .contains(&self.replay_boundary.fingerprint)
         {
             return Err("candidate changed or lost the exact replay boundary".into());
         }
@@ -161,7 +174,7 @@ pub fn minimize_novel_tape<F>(
     mut replay: F,
 ) -> Result<(InputTape, NoveltyMinimizationReport), NoveltyMinimizationError>
 where
-    F: FnMut(&InputTape) -> Result<NoveltyReplayEvidence, String>,
+    F: FnMut(&InputTape, u32) -> Result<NoveltyReplayEvidence, String>,
 {
     source
         .validate()
@@ -169,17 +182,21 @@ where
     if config.minimum_frames > source.frames.len()
         || config.maximum_attempts == 0
         || config.maximum_attempts > MAX_NOVELTY_MINIMIZATION_ATTEMPTS
+        || !(2..=MAX_NOVELTY_MINIMIZATION_REPETITIONS).contains(&config.repetitions)
     {
         return Err(NoveltyMinimizationError(
             "invalid novelty minimization frame or attempt bound".into(),
         ));
     }
-    let initial = replay(source).map_err(|error| {
-        NoveltyMinimizationError(format!("initial novelty replay failed: {error}"))
-    })?;
-    predicate.accepts(&initial).map_err(|error| {
-        NoveltyMinimizationError(format!("source does not satisfy frozen novelty: {error}"))
-    })?;
+    let initial =
+        replay_repeated(source, &predicate, config.repetitions, &mut replay).map_err(|error| {
+            NoveltyMinimizationError(format!("initial novelty replay failed: {error}"))
+        })?;
+    if let Err(error) = initial {
+        return Err(NoveltyMinimizationError(format!(
+            "source does not satisfy frozen novelty: {error}"
+        )));
+    }
 
     let source_frames = source.frames.len();
     let mut current = source.clone();
@@ -202,11 +219,10 @@ where
             }
             let mut candidate = current.clone();
             candidate.frames.drain(start..end);
-            let replay_result = replay(&candidate);
-            let rejection_reason = match replay_result {
-                Ok(evidence) => predicate.accepts(&evidence).err(),
-                Err(error) => Some(format!("replay failed: {error}")),
-            };
+            let rejection_reason =
+                replay_repeated(&candidate, &predicate, config.repetitions, &mut replay)
+                    .unwrap_or_else(|error| Err(format!("replay failed: {error}")))
+                    .err();
             let accepted_attempt = rejection_reason.is_none();
             attempts.push(NoveltyMinimizationAttempt {
                 removed_start_frame: start,
@@ -235,9 +251,38 @@ where
         predicate,
         source_frames,
         minimized_frames: current.frames.len(),
+        repetitions: config.repetitions,
         attempts,
     };
     Ok((current, report))
+}
+
+fn replay_repeated<F>(
+    tape: &InputTape,
+    predicate: &NoveltyPreservationPredicate,
+    repetitions: u32,
+    replay: &mut F,
+) -> Result<Result<NoveltyReplayEvidence, String>, String>
+where
+    F: FnMut(&InputTape, u32) -> Result<NoveltyReplayEvidence, String>,
+{
+    let mut accepted = None;
+    for repetition in 1..=repetitions {
+        let evidence = replay(tape, repetition)?;
+        if let Err(error) = predicate.accepts(&evidence) {
+            return Ok(Err(error));
+        }
+        if accepted
+            .as_ref()
+            .is_some_and(|prior: &NoveltyReplayEvidence| prior != &evidence)
+        {
+            return Ok(Err(
+                "cold replay repetitions produced contradictory novelty evidence".into(),
+            ));
+        }
+        accepted = Some(evidence);
+    }
+    Ok(Ok(accepted.expect("validated repetition count is nonzero")))
 }
 
 fn validate_boundary(boundary: &BoundaryFingerprintFact) -> Result<(), NoveltyMinimizationError> {
@@ -311,7 +356,26 @@ mod tests {
         let assessment = SemanticNoveltyCatalog::default()
             .assess(&descriptor, SemanticNoveltyCatalogConfig::default())
             .unwrap();
-        NoveltyPreservationPredicate::from_assessment(&assessment, boundary("ab")).unwrap()
+        NoveltyPreservationPredicate::from_assessment(
+            &assessment,
+            NoveltyReplayBoundary {
+                simulation_tick: 120,
+                tape_frame: 7,
+                fingerprint: boundary("ab"),
+            },
+        )
+        .unwrap()
+    }
+
+    fn evidence(boundary: BoundaryFingerprintFact, novel: bool) -> NoveltyReplayEvidence {
+        NoveltyReplayEvidence {
+            descriptor: descriptor(boundary.clone(), novel),
+            replay_boundary: NoveltyReplayBoundary {
+                simulation_tick: 120,
+                tape_frame: 7,
+                fingerprint: boundary,
+            },
+        }
     }
 
     #[test]
@@ -326,12 +390,9 @@ mod tests {
             NoveltyMinimizationConfig {
                 minimum_frames: 2,
                 maximum_attempts: 100,
+                repetitions: 2,
             },
-            |candidate| {
-                Ok(NoveltyReplayEvidence {
-                    descriptor: descriptor(boundary("ab"), candidate.frames.len() >= 2),
-                })
-            },
+            |candidate, _| Ok(evidence(boundary("ab"), candidate.frames.len() >= 2)),
         )
         .unwrap();
         assert_eq!(minimized.frames.len(), 2);
@@ -341,9 +402,7 @@ mod tests {
 
     #[test]
     fn changed_boundary_is_rejected_even_when_semantic_novelty_survives() {
-        let evidence = NoveltyReplayEvidence {
-            descriptor: descriptor(boundary("cd"), true),
-        };
+        let evidence = evidence(boundary("cd"), true);
         assert_eq!(
             predicate().accepts(&evidence).unwrap_err(),
             "candidate changed or lost the exact replay boundary"
@@ -352,14 +411,45 @@ mod tests {
 
     #[test]
     fn lost_novel_transition_is_rejected_before_artifact_replacement() {
-        let evidence = NoveltyReplayEvidence {
-            descriptor: descriptor(boundary("ab"), false),
-        };
+        let evidence = evidence(boundary("ab"), false);
         assert!(
             predicate()
                 .accepts(&evidence)
                 .unwrap_err()
                 .contains("first-seen transition")
         );
+    }
+
+    #[test]
+    fn contradictory_cold_replays_reject_a_reduction() {
+        let tape = InputTape {
+            frames: vec![InputFrame::default(); 4],
+            ..InputTape::default()
+        };
+        let (_, report) = minimize_novel_tape(
+            &tape,
+            predicate(),
+            NoveltyMinimizationConfig {
+                minimum_frames: 2,
+                maximum_attempts: 10,
+                repetitions: 2,
+            },
+            |candidate, repetition| {
+                let mut evidence = evidence(boundary("ab"), candidate.frames.len() >= 2);
+                if candidate.frames.len() < tape.frames.len() && repetition == 2 {
+                    evidence.descriptor.procedure_sequence.push(Some(99));
+                }
+                Ok(evidence)
+            },
+        )
+        .unwrap();
+        assert_eq!(report.minimized_frames, tape.frames.len());
+        assert!(report.attempts.iter().all(|attempt| !attempt.accepted));
+        assert!(report.attempts.iter().all(|attempt| {
+            attempt
+                .rejection_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("contradictory novelty evidence"))
+        }));
     }
 }
