@@ -8,6 +8,7 @@ use std::fmt;
 
 pub const MODEL_GENERATION_REQUEST_SCHEMA_V1: &str = "dusklight-model-generation-request/v1";
 pub const OFFLINE_TRAINING_RESULT_SCHEMA_V1: &str = "dusklight-offline-training-result/v1";
+pub const COMPLETE_MODEL_IDENTITY_SCHEMA_V1: &str = "dusklight-complete-model-identity/v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -225,6 +226,107 @@ impl OfflineTrainingResult {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CompleteModelIdentity {
+    pub schema: &'static str,
+    pub feature_schema_sha256: Digest,
+    pub action_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub normalization_sha256: Digest,
+    pub code_build_sha256: Digest,
+    pub data_build_sha256: Digest,
+    pub corpus_manifest_sha256: Digest,
+    pub seed: u64,
+    pub optimizer: serde_json::Value,
+    pub optimizer_sha256: Digest,
+    pub model_bytes_sha256: Digest,
+    pub identity_sha256: Digest,
+}
+
+impl CompleteModelIdentity {
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal<O: Serialize>(
+        feature_schema_sha256: Digest,
+        action_schema_sha256: Digest,
+        objective_sha256: Digest,
+        normalization_sha256: Digest,
+        code_build_sha256: Digest,
+        data_build_sha256: Digest,
+        corpus_manifest_sha256: Digest,
+        seed: u64,
+        optimizer: &O,
+        model_bytes: &[u8],
+    ) -> Result<Self, ModelOwnershipError> {
+        let optimizer = serde_json::to_value(optimizer)
+            .map_err(|error| ModelOwnershipError::new(error.to_string()))?;
+        let mut identity = Self {
+            schema: COMPLETE_MODEL_IDENTITY_SCHEMA_V1,
+            feature_schema_sha256,
+            action_schema_sha256,
+            objective_sha256,
+            normalization_sha256,
+            code_build_sha256,
+            data_build_sha256,
+            corpus_manifest_sha256,
+            seed,
+            optimizer_sha256: canonical_digest(b"dusklight.model-optimizer/v1\0", &optimizer)?,
+            optimizer,
+            model_bytes_sha256: bytes_digest(b"dusklight.complete-model-bytes/v1\0", model_bytes),
+            identity_sha256: Digest::ZERO,
+        };
+        identity.identity_sha256 = identity.digest()?;
+        identity.verify(model_bytes)?;
+        Ok(identity)
+    }
+
+    pub fn verify(&self, model_bytes: &[u8]) -> Result<(), ModelOwnershipError> {
+        if self.schema != COMPLETE_MODEL_IDENTITY_SCHEMA_V1
+            || [
+                self.feature_schema_sha256,
+                self.action_schema_sha256,
+                self.objective_sha256,
+                self.normalization_sha256,
+                self.code_build_sha256,
+                self.data_build_sha256,
+                self.corpus_manifest_sha256,
+            ]
+            .contains(&Digest::ZERO)
+            || self.optimizer.is_null()
+            || self.optimizer_sha256
+                != canonical_digest(b"dusklight.model-optimizer/v1\0", &self.optimizer)?
+            || self.model_bytes_sha256
+                != bytes_digest(b"dusklight.complete-model-bytes/v1\0", model_bytes)
+            || model_bytes.is_empty()
+            || self.identity_sha256 != self.digest()?
+        {
+            return Err(ModelOwnershipError::new(
+                "complete model identity is invalid or detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn digest(&self) -> Result<Digest, ModelOwnershipError> {
+        canonical_digest(
+            b"dusklight.complete-model-identity/v1\0",
+            &(
+                self.schema,
+                self.feature_schema_sha256,
+                self.action_schema_sha256,
+                self.objective_sha256,
+                self.normalization_sha256,
+                self.code_build_sha256,
+                self.data_build_sha256,
+                self.corpus_manifest_sha256,
+                self.seed,
+                &self.optimizer,
+                self.optimizer_sha256,
+                self.model_bytes_sha256,
+            ),
+        )
+    }
+}
+
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, ModelOwnershipError> {
     let bytes =
         serde_json::to_vec(value).map_err(|error| ModelOwnershipError::new(error.to_string()))?;
@@ -296,5 +398,34 @@ mod tests {
 
         let other = generation_request(OfflineTrainerKind::RustNative);
         assert!(result.verify(&other, bytes).is_err());
+    }
+
+    #[test]
+    fn complete_identity_binds_every_schema_build_training_input_and_model_byte() {
+        let identity = CompleteModelIdentity::seal(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            Digest([3; 32]),
+            Digest([4; 32]),
+            Digest([5; 32]),
+            Digest([6; 32]),
+            Digest([7; 32]),
+            99,
+            &serde_json::json!({"name": "adamw", "learning_rate": 0.001}),
+            b"exact frozen model",
+        )
+        .unwrap();
+        identity.verify(b"exact frozen model").unwrap();
+        assert!(identity.verify(b"changed frozen model").is_err());
+
+        let mut changed = identity.clone();
+        changed.normalization_sha256 = Digest([9; 32]);
+        assert!(changed.verify(b"exact frozen model").is_err());
+        let mut changed = identity.clone();
+        changed.seed += 1;
+        assert!(changed.verify(b"exact frozen model").is_err());
+        let mut changed = identity;
+        changed.optimizer["learning_rate"] = serde_json::json!(0.01);
+        assert!(changed.verify(b"exact frozen model").is_err());
     }
 }
