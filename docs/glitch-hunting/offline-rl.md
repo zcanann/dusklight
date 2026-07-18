@@ -359,6 +359,23 @@ rejected instead of silently mapped to an "other" bucket; this representation
 is a low-data proposal baseline, not promotion evidence or a claim that action
 factors are independent in the game.
 
+Goal conditioning uses `dusklight-compiled-objective-vector/v1`, never a route
+segment label or an unchecked objective name. The encoder re-decodes canonical
+compiled DMSP bytes and rejects any program/definition identity mismatch. Its
+fixed 64-value vector includes the exact definition digest plus bounded phase,
+stability, sequence, projection, expression, query, comparison, and value-type
+structure. Editing predicate semantics therefore changes the vector and its
+authenticated identity.
+
+`GoalConditionedInputEncoder` defines one reusable model boundary. Policy input
+is `state + compiled objective`; value input is `state + compiled objective +
+factorized option action`. The serialized layout authenticates the state schema,
+factor schema, widths, and block order. This lets one model consume objectives
+from multiple route segments without making an objective string a categorical
+shortcut. It supplies model inputs, not evidence that a proposed action reaches
+the selected objective; native predicate evaluation and cold replay remain the
+promotion gates.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

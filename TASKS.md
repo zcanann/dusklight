@@ -844,7 +844,7 @@ simple random baseline.
   for last-mile frame golf.
 - [x] Factor tactic, heading, magnitude, duration, target, and button overlay so
   sparse combinations can share statistical strength.
-- [ ] Add goal-conditioned value/policy inputs using a compiled objective vector
+- [x] Add goal-conditioned value/policy inputs using a compiled objective vector
   rather than a model hard-coded to one segment.
 - [ ] Evaluate hindsight relabeling only for predicates whose semantics make the
   relabeled transition valid.
