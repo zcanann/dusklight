@@ -829,7 +829,7 @@ simple random baseline.
 - [x] Add discrete Conservative Q-Learning to penalize unsupported actions.
 - [x] Add Implicit Q-Learning plus advantage-weighted behavior cloning as a
   dataset-constrained alternative.
-- [ ] Add bootstrapped/twin/ensemble critics and episode-level resampling.
+- [x] Add bootstrapped/twin/ensemble critics and episode-level resampling.
 - [ ] Add prioritized replay with bounded importance correction and diagnostics.
 - [ ] Evaluate dueling heads, n-step returns, distributional values, and noisy
   exploration one component at a time before adopting a Rainbow configuration.

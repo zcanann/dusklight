@@ -323,6 +323,70 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         .unwrap()
     );
 
+    let ensemble_path = root.join("ensemble-q-model.json");
+    let ensemble = Command::new(executable)
+        .args(["learn", "ensemble-q", "--input"])
+        .arg(&path)
+        .arg("--model-output")
+        .arg(&ensemble_path)
+        .args([
+            "--query-transition",
+            "0",
+            "--members",
+            "3",
+            "--epochs",
+            "16",
+            "--hidden-width",
+            "4",
+            "--learning-rate",
+            "0.01",
+            "--target-sync-steps",
+            "8",
+            "--seed",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        ensemble.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ensemble.stderr)
+    );
+    let ensemble: serde_json::Value = serde_json::from_slice(&ensemble.stdout).unwrap();
+    assert_eq!(ensemble["schema"], "dusklight-bootstrapped-q-ranking/v1");
+    assert_eq!(ensemble["members"], 3);
+    assert_eq!(
+        ensemble["member_bootstrap_episode_groups"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(ensemble["promotion_authority"], false);
+    assert!(
+        ensemble["ranking"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["member_variance"].as_f64().unwrap() >= 0.0)
+    );
+    let ensemble_model: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ensemble_path).unwrap()).unwrap();
+    assert_eq!(
+        ensemble_model["schema"],
+        "dusklight-bootstrapped-q-ensemble/v1"
+    );
+    let ensemble_blob = &ensemble["model_content_blob"];
+    assert_eq!(ensemble_blob["kind"], "model");
+    assert_eq!(
+        fs::read(&ensemble_path).unwrap(),
+        fs::read(
+            root.join("content")
+                .join(ensemble_blob["relative_path"].as_str().unwrap())
+        )
+        .unwrap()
+    );
+
     let held_out_path = root.join("held-out.dtcz");
     TransitionCorpus::new(
         Digest([0x11; 32]),

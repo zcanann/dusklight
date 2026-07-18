@@ -237,6 +237,29 @@ global support, mean weight, and clipped-weight count. Function approximation
 can still generalize across states, and neither probabilities nor disagreement
 are safety estimates; every proposal retains the native proof gates.
 
+### Episode-bootstrapped twin-critic ensembles
+
+Train several seeded Double-Q members on whole-episode bootstrap draws with:
+
+```text
+huntctl learn ensemble-q --dataset build/dataset.json --members 7 \
+  --model-output build/ensemble-q-model.json --seed 1
+```
+
+Each member contains two critics and records the exact ordered episode-group
+IDs drawn with replacement. If a draw omits a globally supported action, the
+repair path appends an entire episode containing that action; it never injects
+an isolated transition. Ensemble size, expanded transition count, and total
+gradient work are bounded. Initialization, episode draws, support repairs, and
+member training are deterministic under the recorded ensemble and critic
+seeds.
+
+Rankings report the mean Q across members, between-member variance, mean
+within-member twin disagreement, and observed global support. Both uncertainty
+numbers are uncalibrated sampling diagnostics. The artifact contains every
+member and draw manifest, and remains proposal evidence subject to native
+rollout and cold replay.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical
