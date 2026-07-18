@@ -46,8 +46,12 @@ pub struct ContactChangeWithoutTransition {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OpenQuestionEvidence {
-    UnseenProcedureContactPairs { pairs: Vec<ProcedureContactPair> },
-    CollisionExitWithoutSceneTransition { contacts: Vec<ContactFact> },
+    UnseenProcedureContactPairs {
+        pairs: Vec<ProcedureContactPair>,
+    },
+    CollisionExitWithoutSceneTransition {
+        contacts: Vec<ContactFact>,
+    },
     ContactChangesWithoutSemanticTransition {
         changes: Vec<ContactChangeWithoutTransition>,
     },
@@ -142,13 +146,13 @@ impl OpenQuestionCampaign {
                     .filter_map(|pair| {
                         let before = &pair[0];
                         let after = &pair[1];
-                        (before.state == after.state && before.contact != after.contact).then(|| {
-                            ContactChangeWithoutTransition {
+                        (before.state == after.state && before.contact != after.contact).then(
+                            || ContactChangeWithoutTransition {
                                 unchanged_state: before.state.clone(),
                                 before: before.contact.clone(),
                                 after: after.contact.clone(),
-                            }
-                        })
+                            },
+                        )
                     })
                     .collect::<Vec<_>>();
                 if changes.is_empty() {
