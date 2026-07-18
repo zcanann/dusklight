@@ -20,3 +20,4 @@ pub mod q_search;
 pub mod rainbow;
 pub mod reward_shaping;
 pub mod training_guard;
+pub mod training_lineage;
