@@ -90,6 +90,15 @@ pub struct FlagState {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SemanticStateCombination {
+    pub state: SemanticState,
+    pub event: EventFact,
+    pub contact: Option<ContactState>,
+    pub actor_relationships: Option<ActorRelationshipState>,
+    pub flags: FlagState,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct KinematicExtrema {
     pub position_bin_world_units: u32,
     pub velocity_bin_world_units_numerator: u32,
@@ -118,6 +127,7 @@ pub struct SemanticNoveltyDescriptor {
     pub contact_sequence: Vec<ContactState>,
     pub actor_relationship_sequence: Vec<ActorRelationshipState>,
     pub flag_sequence: Vec<FlagState>,
+    pub state_combinations: Vec<SemanticStateCombination>,
     pub kinematic_extrema: Option<KinematicExtrema>,
     pub boundary_fingerprints: Vec<BoundaryFingerprintFact>,
 }
@@ -130,6 +140,7 @@ pub struct SemanticNoveltyAxisIdentities {
     pub contacts: Option<String>,
     pub actor_relationships: Option<String>,
     pub flags: Option<String>,
+    pub state_combinations: Option<String>,
     pub kinematic_extrema: Option<String>,
     pub boundary_fingerprints: Option<String>,
 }
@@ -159,22 +170,40 @@ impl SemanticNoveltyDescriptor {
             contact_sequence: Vec::new(),
             actor_relationship_sequence: Vec::new(),
             flag_sequence: Vec::new(),
+            state_combinations: Vec::new(),
             kinematic_extrema: kinematic_extrema(&trace.records)?,
             boundary_fingerprints,
         };
         let mut previous_state = None;
         for record in &trace.records {
-            push_changed(&mut descriptor.procedure_sequence, record.player_proc_id)?;
-            push_changed(&mut descriptor.event_sequence, event_fact(record))?;
-            if let Some(contact) = contact_state(record) {
-                push_changed(&mut descriptor.contact_sequence, contact)?;
-            }
-            if let Some(relationships) = actor_relationship_state(record)? {
-                push_changed(&mut descriptor.actor_relationship_sequence, relationships)?;
-            }
-            push_changed(&mut descriptor.flag_sequence, flag_state(record))?;
-
             let state = semantic_state(record);
+            let event = event_fact(record);
+            let contact = contact_state(record);
+            let relationships = actor_relationship_state(record)?;
+            let flags = flag_state(record);
+            push_changed(&mut descriptor.procedure_sequence, record.player_proc_id)?;
+            push_changed(&mut descriptor.event_sequence, event.clone())?;
+            if let Some(contact) = contact.as_ref() {
+                push_changed(&mut descriptor.contact_sequence, contact.clone())?;
+            }
+            if let Some(relationships) = relationships.as_ref() {
+                push_changed(
+                    &mut descriptor.actor_relationship_sequence,
+                    relationships.clone(),
+                )?;
+            }
+            push_changed(&mut descriptor.flag_sequence, flags.clone())?;
+            push_changed(
+                &mut descriptor.state_combinations,
+                SemanticStateCombination {
+                    state: state.clone(),
+                    event,
+                    contact,
+                    actor_relationships: relationships,
+                    flags,
+                },
+            )?;
+
             if let Some(from) = previous_state.replace(state.clone()) {
                 if from != state {
                     push_bounded(
@@ -202,6 +231,10 @@ impl SemanticNoveltyDescriptor {
                 &self.actor_relationship_sequence,
             ),
             flags: nonempty_identity(b"flags/v1", &self.flag_sequence),
+            state_combinations: nonempty_identity(
+                b"state-combinations/v1",
+                &self.state_combinations,
+            ),
             kinematic_extrema: self
                 .kinematic_extrema
                 .as_ref()
