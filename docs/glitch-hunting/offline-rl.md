@@ -661,13 +661,18 @@ exploitation over observed actions, ensemble-disagreement probes, structured
 least-supported counterfactuals, rare behavior-context archive probes, and
 blind coverage that interleaves seeded random with Latin-hypercube probes.
 Equal shares are used when possible; remainder shares rotate by generation, so
-small budgets do not permanently starve the same lane. Proposed one-, two-, and
-four-frame action windows become normal candidates and cannot bypass cold
-replay, predicate proof, or determinism checks. Ensemble disagreement is
-recorded as a sampling heuristic, never a calibrated confidence estimate.
+small budgets do not permanently starve the same lane. Available lanes then
+emit in generation-rotated round-robin order rather than proposer-sized blocks.
+The report retains that exact `collection_schedule`, making the alternation
+auditable even when duplicate candidates or an empty learned lane are skipped.
+Proposed one-, two-, and four-frame action windows become normal candidates and
+cannot bypass cold replay, predicate proof, or determinism checks. Ensemble
+disagreement is recorded as a sampling heuristic, never a calibrated confidence
+estimate.
 
 The generation-local `q-proposals.json` reports requested, available, and
-generated counts per proposer, the generation's cycle offset, plus coverage by
+generated counts per proposer, the generation's cycle offset and actual lane
+schedule, plus coverage by
 stage/room, spatial cell, player procedure, option, parameter/action bin,
 duration, goal phase, terminal outcome,
 and observed action support. Its collapse audit reports unique parents and
