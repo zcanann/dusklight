@@ -97,6 +97,7 @@ impl RainbowAblationReport {
             &QComponentConfig {
                 critic: config.critic.clone(),
                 component: QComponent::DuelingHead,
+                ..QComponentConfig::default()
             },
         )?;
         let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;

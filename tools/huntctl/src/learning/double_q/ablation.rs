@@ -15,12 +15,16 @@ use serde::Serialize;
 pub enum QComponent {
     Baseline,
     DuelingHead,
+    DistributionalValues,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct QComponentConfig {
     pub critic: DoubleQConfig,
     pub component: QComponent,
+    pub distribution_atoms: usize,
+    pub distribution_value_minimum: f64,
+    pub distribution_value_maximum: f64,
 }
 
 impl Default for QComponentConfig {
@@ -28,6 +32,9 @@ impl Default for QComponentConfig {
         Self {
             critic: DoubleQConfig::default(),
             component: QComponent::Baseline,
+            distribution_atoms: 51,
+            distribution_value_minimum: -100.0,
+            distribution_value_maximum: 100.0,
         }
     }
 }
@@ -60,6 +67,17 @@ impl QComponentModel {
                 "episode-group count must match transition count",
             ));
         }
+        if config.component == QComponent::DistributionalValues
+            && (config.distribution_atoms < 3
+                || config.distribution_atoms > 201
+                || !config.distribution_value_minimum.is_finite()
+                || !config.distribution_value_maximum.is_finite()
+                || config.distribution_value_minimum >= config.distribution_value_maximum)
+        {
+            return Err(DoubleQError::InvalidConfig(
+                "distributional support requires 3..=201 atoms and finite increasing bounds",
+            ));
+        }
         let mut actions = actions.to_vec();
         actions.sort_unstable();
         let (feature_mean, feature_inverse_stddev) = normalization(feature_width, transitions);
@@ -83,6 +101,7 @@ impl QComponentModel {
             feature_width,
             config.critic.hidden_width,
             actions.len(),
+            config,
             &mut rng,
         );
         let mut critic_b = ComponentCritic::initialized(
@@ -90,6 +109,7 @@ impl QComponentModel {
             feature_width,
             config.critic.hidden_width,
             actions.len(),
+            config,
             &mut rng,
         );
         let parameters_per_critic = critic_a.parameter_count();
@@ -107,31 +127,48 @@ impl QComponentModel {
                     .binary_search(&transition.action)
                     .expect("transition actions were validated");
                 let update_a = (epoch + position) % 2 == 0;
-                let target = if transition.terminal {
-                    f64::from(transition.reward)
-                } else {
-                    let selector = if update_a { &critic_a } else { &critic_b };
-                    let evaluator = if update_a { &target_b } else { &target_a };
-                    let next_action = selector.best_action(&next_states[row]);
-                    f64::from(transition.reward)
-                        + config.critic.discount.powf(f64::from(transition.duration))
-                            * evaluator.value(&next_states[row], next_action)
-                };
-                if !target.is_finite() {
-                    return Err(DoubleQError::NonFiniteTarget { epoch, row });
-                }
+                let selector = if update_a { &critic_a } else { &critic_b };
+                let evaluator = if update_a { &target_b } else { &target_a };
+                let next_action =
+                    (!transition.terminal).then(|| selector.best_action(&next_states[row]));
                 let critic = if update_a {
                     &mut critic_a
                 } else {
                     &mut critic_b
                 };
-                critic.update(
-                    &states[row],
-                    action,
-                    target,
-                    config.critic.learning_rate,
-                    config.critic.gradient_clip,
-                )?;
+                if config.component == QComponent::DistributionalValues {
+                    let target_distribution = evaluator.projected_distribution(
+                        &next_states[row],
+                        next_action,
+                        f64::from(transition.reward),
+                        config.critic.discount.powf(f64::from(transition.duration)),
+                    );
+                    critic.update_distribution(
+                        &states[row],
+                        action,
+                        &target_distribution,
+                        config.critic.learning_rate,
+                        config.critic.gradient_clip,
+                    )?;
+                } else {
+                    let target = if let Some(next_action) = next_action {
+                        f64::from(transition.reward)
+                            + config.critic.discount.powf(f64::from(transition.duration))
+                                * evaluator.value(&next_states[row], next_action)
+                    } else {
+                        f64::from(transition.reward)
+                    };
+                    if !target.is_finite() {
+                        return Err(DoubleQError::NonFiniteTarget { epoch, row });
+                    }
+                    critic.update(
+                        &states[row],
+                        action,
+                        target,
+                        config.critic.learning_rate,
+                        config.critic.gradient_clip,
+                    )?;
+                }
                 gradient_updates += 1;
                 if gradient_updates % config.critic.target_sync_steps as u64 == 0 {
                     target_a = critic_a.clone();
@@ -201,6 +238,19 @@ impl QComponentModel {
         Ok(ranking)
     }
 
+    pub fn value_distribution(
+        &self,
+        state: &[f32],
+        action: u32,
+    ) -> Result<Option<Vec<f64>>, DoubleQError> {
+        let state = self.normalized_state(state)?;
+        let action = self
+            .actions
+            .binary_search(&action)
+            .map_err(|_| DoubleQError::UnknownAction(action))?;
+        Ok(self.critic_a.distribution(&state, action))
+    }
+
     fn normalized_state(&self, state: &[f32]) -> Result<Vec<f64>, DoubleQError> {
         if state.len() != self.feature_width {
             return Err(DoubleQError::FeatureWidth {
@@ -236,6 +286,7 @@ impl QComponentModel {
 enum ComponentCritic {
     Standard(Critic),
     Dueling(DuelingCritic),
+    Distributional(DistributionalCritic),
 }
 
 impl ComponentCritic {
@@ -244,6 +295,7 @@ impl ComponentCritic {
         feature_width: usize,
         hidden_width: usize,
         action_count: usize,
+        config: &QComponentConfig,
         rng: &mut DeterministicRng,
     ) -> Self {
         match component {
@@ -259,6 +311,17 @@ impl ComponentCritic {
                 action_count,
                 rng,
             )),
+            QComponent::DistributionalValues => {
+                Self::Distributional(DistributionalCritic::initialized(
+                    feature_width,
+                    hidden_width,
+                    action_count,
+                    config.distribution_atoms,
+                    config.distribution_value_minimum,
+                    config.distribution_value_maximum,
+                    rng,
+                ))
+            }
         }
     }
 
@@ -266,6 +329,7 @@ impl ComponentCritic {
         match self {
             Self::Standard(critic) => critic.value(state, action),
             Self::Dueling(critic) => critic.value(state, action),
+            Self::Distributional(critic) => critic.value(state, action),
         }
     }
 
@@ -273,6 +337,7 @@ impl ComponentCritic {
         match self {
             Self::Standard(critic) => critic.best_action(state),
             Self::Dueling(critic) => critic.best_action(state),
+            Self::Distributional(critic) => critic.best_action(state),
         }
     }
 
@@ -297,6 +362,49 @@ impl ComponentCritic {
             Self::Dueling(critic) => {
                 critic.update(state, action, target, learning_rate, gradient_clip)
             }
+            Self::Distributional(_) => Err(DoubleQError::InvalidConfig(
+                "distributional critic requires a categorical target",
+            )),
+        }
+    }
+
+    fn update_distribution(
+        &mut self,
+        state: &[f64],
+        action: usize,
+        target: &[f64],
+        learning_rate: f64,
+        gradient_clip: f64,
+    ) -> Result<(), DoubleQError> {
+        match self {
+            Self::Distributional(critic) => {
+                critic.update(state, action, target, learning_rate, gradient_clip)
+            }
+            _ => Err(DoubleQError::InvalidConfig(
+                "scalar critic cannot consume a categorical target",
+            )),
+        }
+    }
+
+    fn projected_distribution(
+        &self,
+        next_state: &[f64],
+        next_action: Option<usize>,
+        reward: f64,
+        discount: f64,
+    ) -> Vec<f64> {
+        match self {
+            Self::Distributional(critic) => {
+                critic.projected_distribution(next_state, next_action, reward, discount)
+            }
+            _ => unreachable!("projection is requested only for a distributional component"),
+        }
+    }
+
+    fn distribution(&self, state: &[f64], action: usize) -> Option<Vec<f64>> {
+        match self {
+            Self::Distributional(critic) => Some(critic.distribution(state, action)),
+            _ => None,
         }
     }
 
@@ -309,7 +417,233 @@ impl ComponentCritic {
                     + critic.output_bias.len()
             }
             Self::Dueling(critic) => critic.parameter_count(),
+            Self::Distributional(critic) => critic.parameter_count(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DistributionalCritic {
+    feature_width: usize,
+    hidden_width: usize,
+    action_count: usize,
+    atom_count: usize,
+    value_minimum: f64,
+    value_maximum: f64,
+    input_weights: Vec<f64>,
+    hidden_bias: Vec<f64>,
+    output_weights: Vec<f64>,
+    output_bias: Vec<f64>,
+}
+
+impl DistributionalCritic {
+    fn initialized(
+        feature_width: usize,
+        hidden_width: usize,
+        action_count: usize,
+        atom_count: usize,
+        value_minimum: f64,
+        value_maximum: f64,
+        rng: &mut DeterministicRng,
+    ) -> Self {
+        let input_scale = (6.0 / (feature_width + hidden_width) as f64).sqrt();
+        let output_width = action_count * atom_count;
+        let output_scale = (6.0 / (hidden_width + output_width) as f64).sqrt();
+        Self {
+            feature_width,
+            hidden_width,
+            action_count,
+            atom_count,
+            value_minimum,
+            value_maximum,
+            input_weights: (0..feature_width * hidden_width)
+                .map(|_| rng.symmetric(input_scale))
+                .collect(),
+            hidden_bias: vec![0.0; hidden_width],
+            output_weights: (0..hidden_width * output_width)
+                .map(|_| rng.symmetric(output_scale))
+                .collect(),
+            output_bias: vec![0.0; output_width],
+        }
+    }
+
+    fn hidden(&self, state: &[f64]) -> (Vec<f64>, Vec<bool>) {
+        let mut hidden = vec![0.0; self.hidden_width];
+        let mut active = vec![false; self.hidden_width];
+        for hidden_index in 0..self.hidden_width {
+            let offset = hidden_index * self.feature_width;
+            let mut value = self.hidden_bias[hidden_index];
+            for feature in 0..self.feature_width {
+                value += self.input_weights[offset + feature] * state[feature];
+            }
+            if value > 0.0 {
+                hidden[hidden_index] = value;
+                active[hidden_index] = true;
+            }
+        }
+        (hidden, active)
+    }
+
+    fn support(&self, atom: usize) -> f64 {
+        self.value_minimum
+            + atom as f64 * (self.value_maximum - self.value_minimum) / (self.atom_count - 1) as f64
+    }
+
+    fn distribution_from_hidden(&self, hidden: &[f64], action: usize) -> Vec<f64> {
+        let base = action * self.atom_count;
+        let logits = (0..self.atom_count)
+            .map(|atom| {
+                let output = base + atom;
+                let offset = output * self.hidden_width;
+                self.output_bias[output]
+                    + hidden
+                        .iter()
+                        .enumerate()
+                        .map(|(index, hidden)| self.output_weights[offset + index] * hidden)
+                        .sum::<f64>()
+            })
+            .collect::<Vec<_>>();
+        let maximum = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let mut probabilities = logits
+            .iter()
+            .map(|logit| (logit - maximum).exp())
+            .collect::<Vec<_>>();
+        let sum = probabilities.iter().sum::<f64>();
+        for probability in &mut probabilities {
+            *probability /= sum;
+        }
+        probabilities
+    }
+
+    fn distribution(&self, state: &[f64], action: usize) -> Vec<f64> {
+        let (hidden, _) = self.hidden(state);
+        self.distribution_from_hidden(&hidden, action)
+    }
+
+    fn value(&self, state: &[f64], action: usize) -> f64 {
+        self.distribution(state, action)
+            .into_iter()
+            .enumerate()
+            .map(|(atom, probability)| self.support(atom) * probability)
+            .sum()
+    }
+
+    fn best_action(&self, state: &[f64]) -> usize {
+        (0..self.action_count)
+            .map(|action| (action, self.value(state, action)))
+            .max_by(|(left_index, left), (right_index, right)| {
+                left.total_cmp(right)
+                    .then_with(|| right_index.cmp(left_index))
+            })
+            .map(|(action, _)| action)
+            .expect("action count is validated as nonzero")
+    }
+
+    fn projected_distribution(
+        &self,
+        next_state: &[f64],
+        next_action: Option<usize>,
+        reward: f64,
+        discount: f64,
+    ) -> Vec<f64> {
+        let source = next_action
+            .map(|action| self.distribution(next_state, action))
+            .unwrap_or_else(|| {
+                let mut point = vec![0.0; self.atom_count];
+                point[0] = 1.0;
+                point
+            });
+        let delta = (self.value_maximum - self.value_minimum) / (self.atom_count - 1) as f64;
+        let mut projected = vec![0.0; self.atom_count];
+        for (atom, probability) in source.into_iter().enumerate() {
+            let shifted = if next_action.is_some() {
+                reward + discount * self.support(atom)
+            } else {
+                reward
+            }
+            .clamp(self.value_minimum, self.value_maximum);
+            let location = (shifted - self.value_minimum) / delta;
+            let lower = location.floor() as usize;
+            let upper = location.ceil() as usize;
+            if lower == upper {
+                projected[lower] += probability;
+            } else {
+                projected[lower] += probability * (upper as f64 - location);
+                projected[upper] += probability * (location - lower as f64);
+            }
+        }
+        projected
+    }
+
+    fn update(
+        &mut self,
+        state: &[f64],
+        action: usize,
+        target: &[f64],
+        learning_rate: f64,
+        gradient_clip: f64,
+    ) -> Result<(), DoubleQError> {
+        if target.len() != self.atom_count
+            || target.iter().any(|probability| !probability.is_finite())
+        {
+            return Err(DoubleQError::InvalidConfig(
+                "invalid categorical target distribution",
+            ));
+        }
+        let (hidden, active) = self.hidden(state);
+        let probabilities = self.distribution_from_hidden(&hidden, action);
+        let prior_output_weights = self.output_weights.clone();
+        let base = action * self.atom_count;
+        let gradients = probabilities
+            .iter()
+            .zip(target)
+            .map(|(probability, target)| {
+                (probability - target).clamp(-gradient_clip, gradient_clip)
+            })
+            .collect::<Vec<_>>();
+        for (atom, gradient) in gradients.iter().copied().enumerate() {
+            let output = base + atom;
+            self.output_bias[output] -= learning_rate * gradient;
+            let offset = output * self.hidden_width;
+            for hidden_index in 0..self.hidden_width {
+                self.output_weights[offset + hidden_index] -= learning_rate
+                    * (gradient * hidden[hidden_index]).clamp(-gradient_clip, gradient_clip);
+            }
+        }
+        for hidden_index in 0..self.hidden_width {
+            if active[hidden_index] {
+                let hidden_gradient = gradients
+                    .iter()
+                    .enumerate()
+                    .map(|(atom, gradient)| {
+                        gradient
+                            * prior_output_weights[(base + atom) * self.hidden_width + hidden_index]
+                    })
+                    .sum::<f64>()
+                    .clamp(-gradient_clip, gradient_clip);
+                self.hidden_bias[hidden_index] -= learning_rate * hidden_gradient;
+                let offset = hidden_index * self.feature_width;
+                for feature in 0..self.feature_width {
+                    self.input_weights[offset + feature] -= learning_rate
+                        * (hidden_gradient * state[feature]).clamp(-gradient_clip, gradient_clip);
+                }
+            }
+        }
+        if self.output_bias.iter().any(|value| !value.is_finite())
+            || self.input_weights.iter().any(|value| !value.is_finite())
+            || self.hidden_bias.iter().any(|value| !value.is_finite())
+            || self.output_weights.iter().any(|value| !value.is_finite())
+        {
+            return Err(DoubleQError::Diverged);
+        }
+        Ok(())
+    }
+
+    fn parameter_count(&self) -> usize {
+        self.input_weights.len()
+            + self.hidden_bias.len()
+            + self.output_weights.len()
+            + self.output_bias.len()
     }
 }
 
@@ -537,6 +871,7 @@ mod tests {
                 ..DoubleQConfig::default()
             },
             component,
+            ..QComponentConfig::default()
         }
     }
 
@@ -585,5 +920,38 @@ mod tests {
         assert_eq!(first.rank_actions(&[0.5]).unwrap()[0].action, ADVANCE);
         assert_eq!(first.gradient_updates(), 1024);
         assert!(first.parameters_per_critic() > 0);
+    }
+
+    #[test]
+    fn distributional_values_are_normalized_seeded_and_rank_terminal_returns() {
+        let transitions = fixture();
+        let config = QComponentConfig {
+            component: QComponent::DistributionalValues,
+            critic: DoubleQConfig {
+                epochs: 256,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 3,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+            distribution_atoms: 21,
+            distribution_value_minimum: -5.0,
+            distribution_value_maximum: 5.0,
+        };
+        let first = QComponentModel::fit(1, &[WAIT, ADVANCE], &transitions, &[0, 0, 1, 1], &config)
+            .unwrap();
+        let second =
+            QComponentModel::fit(1, &[WAIT, ADVANCE], &transitions, &[0, 0, 1, 1], &config)
+                .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        let distribution = first.value_distribution(&[0.0], ADVANCE).unwrap().unwrap();
+        assert_eq!(distribution.len(), 21);
+        assert!((distribution.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert_eq!(first.rank_actions(&[0.5]).unwrap()[0].action, ADVANCE);
+        assert_eq!(first.gradient_updates(), 1024);
     }
 }
