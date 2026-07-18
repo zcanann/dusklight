@@ -248,6 +248,18 @@ The resulting `dusklight-dyna-mixture-report/v1` is research-only. Held-out
 evaluation remains real-only, recursive rollouts stay disabled, and neither
 selected model rows nor the report carry promotion authority.
 
+`learning/latent_model_admission.rs` keeps memory-backed state as the explicit
+sample-efficient default. Latent visual/world-model research is eligible only
+when an objective-required signal is absent from memory but has an authenticated
+alternate observation source, or when at least 512 console samples show a
+memory-baseline fidelity mismatch of 5% or more. Missing signals without an
+alternate source and weak console-transfer evidence fail closed.
+
+An eligible latent model may supplement unavailable information; it may never
+replace memory fields that already exist. The admission report binds the
+objective, complete signal inventory, and console gap evidence, and has no
+promotion authority.
+
 ### Deterministic discrete Double-Q baseline
 
 Train the bounded twin-critic baseline on the same immutable training split:

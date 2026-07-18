@@ -897,7 +897,7 @@ simple random baseline.
   on contacts, procedures, RNG-sensitive branches, and actor interaction.
 - [x] Investigate Dyna-style real/model rollout mixtures with strict uncertainty
   cutoffs.
-- [ ] Consider latent visual/world models only for observations unavailable from
+- [x] Consider latent visual/world models only for observations unavailable from
   memory or for console-transfer fidelity; memory-backed state should remain the
   sample-efficient default.
 - [ ] Research multi-task and transfer learning across compatible maps, tactics,
