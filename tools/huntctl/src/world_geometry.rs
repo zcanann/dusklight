@@ -77,9 +77,9 @@ impl Vec3 {
 #[serde(deny_unknown_fields)]
 pub struct PointTriangleQuery {
     pub point: Vec3,
-    pub signed_plane_distance: f32,
+    pub signed_plane_distance: f64,
     pub closest_point: Vec3,
-    pub distance: f32,
+    pub distance: f64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -447,6 +447,17 @@ pub fn query_prism_point(
     prism: &KclPrismInspection,
     point: Vec3,
 ) -> Result<PointTriangleQuery, WorldGeometryError> {
+    query_triangle_point(prism.plane, prism.triangle, point)
+}
+
+/// Measures a point against immutable reconstructed triangle data. This is the
+/// shared primitive used by both one-prism inspection and the offline spatial
+/// index; it performs no live/gameplay collision query.
+pub fn query_triangle_point(
+    plane: CollisionPlane,
+    triangle: [Vec3; 3],
+    point: Vec3,
+) -> Result<PointTriangleQuery, WorldGeometryError> {
     if !point.finite() {
         return Err(WorldGeometryError::new(
             "point query contains a non-finite component",
@@ -454,7 +465,7 @@ pub fn query_prism_point(
     }
 
     let point64 = Vec3d::from(point);
-    let normal = Vec3d::from(prism.plane.normal);
+    let normal = Vec3d::from(plane.normal);
     let normal_length = normal.length_squared().sqrt();
     if !normal_length.is_finite() || normal_length <= f64::EPSILON {
         return Err(WorldGeometryError::new(
@@ -463,15 +474,14 @@ pub fn query_prism_point(
     }
     // The anchor form avoids cancellation from the serialized f32 plane D and
     // guarantees that querying the source anchor reports exactly zero.
-    let signed_plane_distance =
-        normal.dot(point64 - Vec3d::from(prism.plane.anchor)) / normal_length;
-    let closest = closest_point_on_triangle(point64, prism.triangle.map(Vec3d::from));
+    let signed_plane_distance = normal.dot(point64 - Vec3d::from(plane.anchor)) / normal_length;
+    let closest = closest_point_on_triangle(point64, triangle.map(Vec3d::from));
     let distance = (point64 - closest).length_squared().sqrt();
     let result = PointTriangleQuery {
         point,
-        signed_plane_distance: signed_plane_distance as f32,
+        signed_plane_distance,
         closest_point: closest.to_vec3(),
-        distance: distance as f32,
+        distance,
     };
     if !result.signed_plane_distance.is_finite()
         || !result.closest_point.finite()
@@ -1440,7 +1450,7 @@ mod tests {
                 z: 30.5,
             }
         );
-        assert!((outside.distance - 8.5_f32.sqrt()).abs() < 1.0e-6);
+        assert!((outside.distance - 8.5_f64.sqrt()).abs() < 1.0e-6);
     }
 
     #[test]

@@ -78,7 +78,9 @@ copied into every frame or fed wholesale to a model.
 ## Current limits
 
 Version 1 recognizes the placement, spawn, SCLS, KCL, and PLC slices required
-for the first Ordon route. Paths, rails, water volumes, cameras, event tables,
-switch semantics, spatial indices, coordinate queries, and broader stage
-formats still need explicit decoders. Unknown DZS/DZR chunks remain listed in
-the chunk inventory rather than guessed at or silently presented as decoded.
+for the first Ordon route. A separate content-addressed per-room spatial index
+now provides nearest-surface, AABB broad-phase, and finite-ray inspection over
+these triangles. Paths, rails, water/trigger volumes, cameras, event tables,
+switch semantics, region containment, and broader stage formats still need
+explicit decoders. Unknown DZS/DZR chunks remain listed in the chunk inventory
+rather than guessed at or silently presented as decoded.

@@ -35,6 +35,10 @@ use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transport::ProcessTransport;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
 use huntctl::world_inventory::WorldInventory;
+use huntctl::world_spatial::{
+    Aabb3, WorldAabbQueryRequest, WorldPointQueryRequest, WorldRayQueryRequest, WorldSpatialIndex,
+    WorldSurfaceFilter,
+};
 use huntctl::{BuildIdentity, Digest};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -173,6 +177,38 @@ fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("spatial-index") => {
+            let stage_dir = required_path(&args[1..], "--stage-dir")?;
+            let stage = option(&args[1..], "--stage").ok_or("missing required --stage ID")?;
+            let output = required_path(&args[1..], "--output")?;
+            let inventory = WorldInventory::build(&stage_dir, &stage)?;
+            let index = WorldSpatialIndex::build(&inventory)?;
+            let bytes = index.artifact().canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": index.artifact().schema,
+                    "stage": inventory.stage,
+                    "inventory_sha256": inventory.digest()?,
+                    "spatial_index_sha256": index.artifact_digest()?,
+                    "bytes": bytes.len(),
+                    "rooms": index.artifact().rooms.len(),
+                    "indexed_surfaces": index.artifact().rooms.iter()
+                        .map(|room| room.primitive_ids.len()).sum::<usize>(),
+                    "excluded_surfaces": index.artifact().excluded.len(),
+                    "output": output,
+                }))?
+            );
+            Ok(())
+        }
+        Some("query") => command_world_query(&args[1..]),
         Some("kcl") => {
             let prism_index: u16 = option(&args[1..], "--prism")
                 .ok_or("missing required --prism INDEX")?
@@ -233,10 +269,105 @@ fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn command_world_query(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let operation = args
+        .first()
+        .map(String::as_str)
+        .ok_or("world query requires point, aabb, or ray as its operation")?;
+    let query_args = &args[1..];
+    let stage_dir = required_path(query_args, "--stage-dir")?;
+    let stage = option(query_args, "--stage").ok_or("missing required --stage ID")?;
+    let room: i8 = option(query_args, "--room")
+        .ok_or("missing required --room N (coordinates are room-scoped)")?
+        .parse()?;
+    let limit = usize_option(query_args, "--limit", 8)?;
+    let filter = WorldSurfaceFilter {
+        room,
+        load_triggers_only: flag(query_args, "--load-triggers-only"),
+        trigger_stable_id: option(query_args, "--trigger-id"),
+        destination_stage: option(query_args, "--destination-stage"),
+        destination_room: option(query_args, "--destination-room")
+            .map(|value| value.parse())
+            .transpose()?,
+        destination_point: option(query_args, "--destination-point")
+            .map(|value| value.parse())
+            .transpose()?,
+    };
+    let inventory = WorldInventory::build(&stage_dir, &stage)?;
+    let index = WorldSpatialIndex::build(&inventory)?;
+    match operation {
+        "point" => {
+            let point = parse_world_vec3(
+                &option(query_args, "--point").ok_or("missing required --point X,Y,Z")?,
+                "--point",
+            )?;
+            let max_distance = option(query_args, "--max-distance")
+                .map(|value| value.parse())
+                .transpose()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&index.point_query(WorldPointQueryRequest {
+                    point,
+                    max_distance,
+                    limit,
+                    filter,
+                })?)?
+            );
+        }
+        "aabb" => {
+            let min = parse_world_vec3(
+                &option(query_args, "--min").ok_or("missing required --min X,Y,Z")?,
+                "--min",
+            )?;
+            let max = parse_world_vec3(
+                &option(query_args, "--max").ok_or("missing required --max X,Y,Z")?,
+                "--max",
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&index.aabb_query(WorldAabbQueryRequest {
+                    bounds: Aabb3::new(min, max)?,
+                    limit,
+                    filter,
+                })?)?
+            );
+        }
+        "ray" => {
+            let origin = parse_world_vec3(
+                &option(query_args, "--origin").ok_or("missing required --origin X,Y,Z")?,
+                "--origin",
+            )?;
+            let direction = parse_world_vec3(
+                &option(query_args, "--direction").ok_or("missing required --direction X,Y,Z")?,
+                "--direction",
+            )?;
+            let max_distance: f32 = option(query_args, "--max-distance")
+                .ok_or("missing required --max-distance DISTANCE")?
+                .parse()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&index.ray_query(WorldRayQueryRequest {
+                    origin,
+                    direction,
+                    max_distance,
+                    limit,
+                    filter,
+                })?)?
+            );
+        }
+        _ => return Err("world query operation must be point, aabb, or ray".into()),
+    }
+    Ok(())
+}
+
 fn parse_world_point(value: &str) -> Result<Vec3, Box<dyn Error>> {
+    parse_world_vec3(value, "--point")
+}
+
+fn parse_world_vec3(value: &str, option_name: &str) -> Result<Vec3, Box<dyn Error>> {
     let components = value.split(',').collect::<Vec<_>>();
     if components.len() != 3 {
-        return Err("--point must be exactly X,Y,Z".into());
+        return Err(format!("{option_name} must be exactly X,Y,Z").into());
     }
     let point = Vec3 {
         x: components[0].parse()?,
@@ -244,7 +375,7 @@ fn parse_world_point(value: &str) -> Result<Vec3, Box<dyn Error>> {
         z: components[2].parse()?,
     };
     if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
-        return Err("--point components must be finite".into());
+        return Err(format!("{option_name} components must be finite").into());
     }
     Ok(point)
 }
@@ -1953,6 +2084,10 @@ fn option(args: &[String], name: &str) -> Option<String> {
         .map(|pair| pair[1].clone())
 }
 
+fn flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|argument| argument == name)
+}
+
 fn repeated_option(args: &[String], name: &str) -> Vec<String> {
     args.windows(2)
         .filter(|pair| pair[0] == name)
@@ -2022,7 +2157,7 @@ fn print_usage() {
         "\nObservation views:\n  huntctl observe spec movement-state/v2 [--output SPEC.json]\n  huntctl observe inspect SPEC.json\n\nNative fitted Q:\n  huntctl learn benchmark\n  huntctl learn extract-trace --trace INPUT.trace --tape INPUT.tape --start-frame N --end-frame N --output BATCH.dtcz [--view movement-state/v1|movement-state/v2] [--terminal]\n  huntctl learn inspect --input BATCH.dtcz\n  huntctl learn fit --input BATCH.dtcz [--input MORE.dtcz] [--query-transition N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--seed N] [--all-continuous | --categorical-feature N ...]"
     );
     eprintln!(
-        "\nOffline world geometry:\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
+        "\nOffline world geometry:\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json\n  huntctl world spatial-index --stage-dir STAGE_DIR --stage STAGE_ID --output INDEX.json\n  huntctl world query point --stage-dir STAGE_DIR --stage STAGE_ID --room N --point X,Y,Z [--max-distance D] [--limit K] [FILTERS]\n  huntctl world query aabb --stage-dir STAGE_DIR --stage STAGE_ID --room N --min X,Y,Z --max X,Y,Z [--limit K] [FILTERS]\n  huntctl world query ray --stage-dir STAGE_DIR --stage STAGE_ID --room N --origin X,Y,Z --direction X,Y,Z --max-distance D [--limit K] [FILTERS]\n  FILTERS: [--load-triggers-only] [--trigger-id ID] [--destination-stage ID] [--destination-room N] [--destination-point N]\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"
     );
 }
 

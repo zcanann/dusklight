@@ -347,6 +347,10 @@ all be copied into every per-frame neural observation.
 - [ ] Return immutable snapshots; never expose a live pointer over IPC.
 - [ ] Support bounded selection, filtering, sorting, nearest-K, aggregation,
   spatial predicates, and explicit truncation metadata.
+- [x] Implement the offline static-geometry slice of that contract: mandatory
+  room scope, pre-ranking exact trigger/destination filters, stable nearest-K,
+  AABB broad-phase and finite double-sided rays, 1..=256 result bounds, explicit
+  truncation, and node/triangle accounting. This is not the live query service.
 - [ ] Compile declarative query specifications ahead of a run. Do not parse a
   general query language or allocate dynamically in the per-tick hot path.
 - [ ] Hash the exact query/observation specification into traces and models.
@@ -410,10 +414,18 @@ all be copied into every per-frame neural observation.
   content-addressed map artifact. Retail degeneracy is retained, never skipped.
 - [ ] Build spatial indices for nearest polygon, region containment, ray/sweep,
   route/load trigger, ledge, clearance, and local neighborhood queries.
+- [x] Build the first content-addressed per-room spatial slice: canonical
+  median-AABB BVHs over every reconstructed KCL triangle, retained degeneracy
+  exclusions, nearest point queries, AABB neighborhood candidates, finite rays,
+  and exact load-trigger/destination filtering. Region, sweep, ledge, and
+  clearance semantics remain open.
 - [ ] Generate semantic tags where the game data provides them; keep inferred
   tags explicitly marked as inferred.
 - [ ] Add an inspector that can answer “what is this object/polygon/trigger?”
   from a world coordinate and show the source record.
+- [x] Add the collision-surface portion of that inspector through `huntctl world
+  query point|aabb|ray`, returning stable source identity, raw PLC facts,
+  geometry, distances/intersections, and optional SCLS trigger metadata.
 
 ### P0: collision and local geometry
 
@@ -440,9 +452,9 @@ all be copied into every per-frame neural observation.
 - [ ] Join collision exit polygons to static triangle/region geometry so a
   controller can optimize signed distance and approach direction before the
   transition fires, without issuing a fresh gameplay collision query. The
-  offline inventory now joins every resolvable F_SP103 KCL/PLC exit surface to
-  same-room SCLS metadata and reconstructs its triangle. The remaining work is
-  spatial indexing plus compiling bounded static features into a task-local
+  offline inventory and per-room BVH now join and spatially query every
+  reconstructable F_SP103 KCL/PLC exit surface against same-room SCLS metadata.
+  The remaining work is compiling bounded static features into a task-local
   controller/model observation rather than querying the game.
 - [ ] Surface ground, wall, ceiling, water, actor, attack, and push contacts with
   subject IDs, polygon IDs, normals, penetration, relative velocity, material,

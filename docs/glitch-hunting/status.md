@@ -191,6 +191,17 @@ failures. The content-golden test independently proves that room-1 prism 2217,
 PLC attribute 19 and exit 1 join room-1 SCLS record 1 and `F_SP104` room 1.
 This path is offline and read-only; no native or gameplay file participates.
 
+The inventory now feeds a canonical per-room median-AABB BVH and bounded
+coordinate inspector. The checked F_SP103 spatial artifact contains 10,790
+reconstructed triangles and four explicit degeneracy exclusions; its SHA-256
+is `2ad975eee45193b4325bb420a7ba5a78d533bed80cbcfeace29dcc5418e73834`.
+`huntctl world query point|aabb|ray` requires an authored room coordinate scope,
+applies exact trigger/destination filters before ranking, returns stable source
+facts, and reports truncation plus traversal cost. Real goldens prove the live
+transition coordinate and a filtered ray resolve prism 2217 / `F_SP104`, while
+an unfiltered point deliberately resolves nearer prism 2187. The service is
+offline Rust only and introduces no native or gameplay changes.
+
 ## Known gaps
 
 - `OSAlarm` dispatch, the separate SDK `__OSGetSystemTime`, and non-SDK host

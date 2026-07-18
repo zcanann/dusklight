@@ -61,6 +61,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   behavior.
 - [Offline world inventory](world-inventory.md) documents the content-addressed
   RARC/DZS/DZR/KCL/PLC reader and its checked F_SP103 acceptance fixture.
+- [Offline world spatial queries](world-spatial.md) documents the per-room
+  deterministic BVH, bounded coordinate inspector, and Ordon route goldens.
 - [Implementation status](status.md) records working commands, tests, and
   current fidelity/validation limits.
 - [Testing and visual TAS playback](testing.md) documents the VS Code selector,
