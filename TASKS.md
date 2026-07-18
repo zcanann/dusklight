@@ -937,7 +937,7 @@ improvements are independently proved absolute tapes.
   to avoid rediscovering the same symptom endlessly.
 - [x] Minimize novel artifacts while preserving the novelty predicate and replay
   boundary.
-- [ ] Automatically replay promising headless discoveries headfully, attach a
+- [x] Automatically replay promising headless discoveries headfully, attach a
   terminal thumbnail/video when useful, and request human classification.
 - [ ] Feed human labels back as corpus metadata, never as a silent rewrite of
   prior objective definitions.

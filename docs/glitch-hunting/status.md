@@ -113,6 +113,9 @@ roadmap documents describe the larger target.
   boundary before bounded tape deletion. No reduction replaces the artifact
   unless at least two cold replays agree on the semantic evidence, simulation
   tick, tape frame, and fingerprint; every attempt remains auditable.
+- Headful review requests automatically queue promising headless artifacts into
+  an exact headful fidelity, require terminal thumbnails and symptom-appropriate
+  short videos, then emit an attachment-bound pending human classification.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable

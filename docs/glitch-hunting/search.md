@@ -502,6 +502,16 @@ simulation tick, tape frame, and canonical fingerprint. The report records the
 repetition contract and every attempted range, before/after frame counts,
 acceptance, and precise rejection reason.
 
+Promising headless artifacts cross an explicit
+`dusklight-headful-replay-request/v1` queue into a separately identified
+headful fidelity partition. Evidence rank and the bounded proposal signal gate
+automatic enqueueing; artifact identity deduplicates pending work. Every replay
+requires a content-addressed terminal PNG, while hangs, OOB routes, corruptions,
+and event-timing symptoms also require a short video. Validated attachments and
+the replay boundary are bound into a pending
+`dusklight-human-classification-request/v1` with a fixed classification choice
+set. Incomplete evidence leaves the replay pending so capture can be retried.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots
