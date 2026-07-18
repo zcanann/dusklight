@@ -1,0 +1,44 @@
+{
+  "schema": "dusklight-objective-conformance-suite/v1",
+  "cases": [
+    {
+      "id": "stage-ready-f-sp103",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "scenario_fixture": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective_program": {
+        "path": "tests/fixtures/automation/stage_ready.milestones",
+        "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
+      },
+      "required_query_facts": [
+        "event.id/v1",
+        "event.running/v1",
+        "player.exists/v1",
+        "player.is_link/v1",
+        "stage.name/v1",
+        "stage.room/v1",
+        "stage.spawn/v1"
+      ],
+      "seed": {
+        "kind": "tape",
+        "artifact": {
+          "path": "tests/fixtures/automation/stage_ready_neutral.tas",
+          "sha256": "9ef2ff4f56a50208d133a6ff0ddeb61408100de2b75cc99cb599016bf0cca855"
+        }
+      },
+      "budget": {
+        "logical_ticks": 30,
+        "host_timeout_seconds": 30
+      },
+      "expected_terminal": "reached"
+    }
+  ]
+}

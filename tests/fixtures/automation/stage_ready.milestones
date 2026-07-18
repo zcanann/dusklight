@@ -1,0 +1,10 @@
+milestones 1.1
+
+# Stage readiness is a stable post-simulation fact, not the completion of a
+# loading call. No controller action is needed to satisfy this objective.
+milestone stage_ready {
+  phase post_sim
+  stable 3
+  when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 &&
+       player.exists && player.is_link && !event.running && event.id == -1
+}

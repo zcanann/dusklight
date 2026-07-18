@@ -1,0 +1,11 @@
+dusktape 1
+boot stage F_SP103 1 1 3
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+# The tape owns the ports but never applies a button, stick, or trigger input.
+# Its only purpose is to retain enough post-simulation ticks to prove that the
+# direct-stage boot reached the declared stable readiness state.
+repeat 30 neutral
