@@ -939,7 +939,7 @@ improvements are independently proved absolute tapes.
   boundary.
 - [x] Automatically replay promising headless discoveries headfully, attach a
   terminal thumbnail/video when useful, and request human classification.
-- [ ] Feed human labels back as corpus metadata, never as a silent rewrite of
+- [x] Feed human labels back as corpus metadata, never as a silent rewrite of
   prior objective definitions.
 - [ ] Support campaigns that ask open questions such as “produce an unseen
   procedure/contact pair” or “cross collision without a transition.”

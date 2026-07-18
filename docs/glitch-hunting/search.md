@@ -512,6 +512,15 @@ the replay boundary are bound into a pending
 `dusklight-human-classification-request/v1` with a fixed classification choice
 set. Incomplete evidence leaves the replay pending so capture can be retried.
 
+Completed reviews append `dusklight-human-discovery-label/v1` records. Each
+record binds the immutable request, headful replay, replay boundary, source
+artifact, reviewer, and the original objective ID/SHA-256. A correction must
+name the latest label it supersedes; the prior record remains in sequence.
+`dusklight-corpus-human-label-metadata/v1` exports that history beside matching
+corpus artifacts with `replay_authority=false` and
+`objective_rewrite_authority=false`. Objective disagreement is rejected rather
+than being reconciled by changing the earlier definition.
+
 This is a bounded MAP-Elites policy: each exact descriptor cell retains its
 best native lexicographic result, with frame count and candidate ID as stable
 tie-breakers. Farthest-first novelty selection then reserves population slots

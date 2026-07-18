@@ -116,6 +116,9 @@ roadmap documents describe the larger target.
 - Headful review requests automatically queue promising headless artifacts into
   an exact headful fidelity, require terminal thumbnails and symptom-appropriate
   short videos, then emit an attachment-bound pending human classification.
+- Human discovery labels v1 are append-only, support explicit supersession, and
+  export as non-authoritative corpus metadata bound to the original objective
+  definition. Labels cannot silently rewrite objectives or replay evidence.
 - Semantic oracle schema v1 classifies reached/avoided stage, room, region,
   procedure/mode, animation, indexed flag, placed-actor state, and event
   targets. Avoidance requires complete known coverage; truncated or unavailable
