@@ -840,7 +840,7 @@ simple random baseline.
 
 ### P1: action hierarchy and goal conditioning
 
-- [ ] Train option-level values before per-frame neural control; keep raw actions
+- [x] Train option-level values before per-frame neural control; keep raw actions
   for last-mile frame golf.
 - [ ] Factor tactic, heading, magnitude, duration, target, and button overlay so
   sparse combinations can share statistical strength.
