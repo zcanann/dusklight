@@ -2,6 +2,7 @@
 //!
 //! This artifact is deliberately unrelated to `DUSKTAPE` and `DUSKCTRL`.
 
+pub mod evidence;
 pub mod experiment;
 pub mod parameter_search;
 #[cfg(feature = "experimental-interventions")]
