@@ -376,6 +376,16 @@ shortcut. It supplies model inputs, not evidence that a proposed action reaches
 the selected objective; native predicate evaluation and cold replay remain the
 promotion gates.
 
+Hindsight relabeling is behind the compiled-predicate semantic gate
+`dusklight-hindsight-relabel-decision/v1`. The only admitted class is a
+single-snapshot, post-simulation predicate with one-tick stability. Pre-input
+predicates, multi-tick stability, ordered sequences/windows, value projections,
+and tape-frame or boundary-position comparisons are rejected with typed reasons.
+Actor, flag, region, plane, and ordinary state-field predicates remain eligible
+when they satisfy those history-free constraints. Admission also fixes
+`copied_reward_allowed` to false: reward and shaping must be recomputed from the
+authenticated pre/post observations under the relabeled compiled predicate.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical

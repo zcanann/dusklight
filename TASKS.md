@@ -846,7 +846,7 @@ simple random baseline.
   sparse combinations can share statistical strength.
 - [x] Add goal-conditioned value/policy inputs using a compiled objective vector
   rather than a model hard-coded to one segment.
-- [ ] Evaluate hindsight relabeling only for predicates whose semantics make the
+- [x] Evaluate hindsight relabeling only for predicates whose semantics make the
   relabeled transition valid.
 - [ ] Support a high-level option policy with a deterministic low-level tactic
   executor and realized-tape proof.
