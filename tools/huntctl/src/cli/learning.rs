@@ -7,6 +7,7 @@ use huntctl::double_q::prioritized::{PrioritizedDoubleQ, PrioritizedDoubleQConfi
 use huntctl::iql::{ImplicitQ, IqlConfig};
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::ensemble_q::{BootstrappedQConfig, BootstrappedQEnsemble};
+use huntctl::learning::rainbow::{RainbowAblationConfig, RainbowAblationReport};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -14,6 +15,243 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_LEARN_INPUT_CORPORA: usize = 64;
+
+pub fn command_q_ablation(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
+    let component = option(learn_args, "--component")
+        .ok_or("learn ablate-q requires --component dueling-heads|n-step|distributional-values|noisy-exploration")?;
+    let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
+    let explicit_training = repeated_option(learn_args, "--training");
+    let explicit_held_out = repeated_option(learn_args, "--held-out");
+    if let Some(path) = &dataset_path {
+        if !explicit_training.is_empty() || !explicit_held_out.is_empty() {
+            return Err(
+                "learn ablate-q accepts either --dataset or explicit --training/--held-out corpora"
+                    .into(),
+            );
+        }
+        if !path.exists() {
+            return Err(format!("ablation dataset does not exist: {}", path.display()).into());
+        }
+    } else if explicit_training.is_empty() || explicit_held_out.is_empty() {
+        return Err(
+            "learn ablate-q requires either --dataset or both --training and --held-out corpora"
+                .into(),
+        );
+    }
+
+    let mut dataset_identity = None;
+    let mut held_out_split = None;
+    let mut expected_digests = None;
+    let (training_paths, held_out_paths) = if let Some(path) = &dataset_path {
+        let manifest: DatasetManifest = serde_json::from_slice(&fs::read(path)?)?;
+        manifest.validate()?;
+        let split = match option(learn_args, "--split")
+            .unwrap_or_else(|| "test".into())
+            .as_str()
+        {
+            "validation" => DatasetSplit::Validation,
+            "test" => DatasetSplit::Test,
+            "withheld" => DatasetSplit::Withheld,
+            _ => return Err("--split must be validation, test, or withheld".into()),
+        };
+        let training = manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.split == DatasetSplit::Train)
+            .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let held_out = manifest
+            .entries
+            .iter()
+            .filter(|entry| entry.split == split)
+            .map(|entry| entry.transition_corpus.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        expected_digests = Some((
+            manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.split == DatasetSplit::Train)
+                .map(|entry| entry.corpus_sha256)
+                .collect::<Vec<_>>(),
+            manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.split == split)
+                .map(|entry| entry.corpus_sha256)
+                .collect::<Vec<_>>(),
+        ));
+        dataset_identity = Some(manifest.dataset_sha256);
+        held_out_split = Some(split);
+        (training, held_out)
+    } else {
+        (explicit_training, explicit_held_out)
+    };
+
+    let training_files = training_paths
+        .iter()
+        .map(fs::canonicalize)
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let held_out_files = held_out_paths
+        .iter()
+        .map(fs::canonicalize)
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if !training_files.is_disjoint(&held_out_files) {
+        return Err("training and held-out ablation files overlap".into());
+    }
+    let training = load_fqi_batch(
+        &training_paths,
+        "Q component ablation training",
+        MAX_LEARN_INPUT_CORPORA,
+    )?;
+    let held_out = load_fqi_batch(
+        &held_out_paths,
+        "Q component ablation held-out",
+        MAX_LEARN_INPUT_CORPORA,
+    )?;
+    if expected_digests
+        .as_ref()
+        .is_some_and(|(expected_training, expected_held_out)| {
+            expected_training != &training.corpus_digests
+                || expected_held_out != &held_out.corpus_digests
+        })
+    {
+        return Err("ablation corpus content differs from dataset manifest".into());
+    }
+    if training.feature_schema != held_out.feature_schema
+        || training.action_schema != held_out.action_schema
+        || training.feature_count != held_out.feature_count
+        || !training
+            .corpus_digests
+            .iter()
+            .all(|digest| !held_out.corpus_digests.contains(digest))
+    {
+        return Err(
+            "ablation requires compatible schemas and content-disjoint held-out corpora".into(),
+        );
+    }
+    let actions = training
+        .transitions
+        .iter()
+        .map(|transition| transition.action)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let defaults = RainbowAblationConfig::default();
+    let config = RainbowAblationConfig {
+        critic: DoubleQConfig {
+            epochs: usize_option(learn_args, "--epochs", defaults.critic.epochs)?,
+            hidden_width: usize_option(learn_args, "--hidden-width", defaults.critic.hidden_width)?,
+            learning_rate: f64_option(
+                learn_args,
+                "--learning-rate",
+                defaults.critic.learning_rate,
+            )?,
+            discount: f64_option(learn_args, "--discount", defaults.critic.discount)?,
+            target_sync_steps: usize_option(
+                learn_args,
+                "--target-sync-steps",
+                defaults.critic.target_sync_steps,
+            )?,
+            gradient_clip: f64_option(
+                learn_args,
+                "--gradient-clip",
+                defaults.critic.gradient_clip,
+            )?,
+            seed: u64_option(learn_args, "--seed", defaults.critic.seed)?,
+        },
+        n_step: usize_option(learn_args, "--n-step", defaults.n_step)?,
+        distribution_atoms: usize_option(
+            learn_args,
+            "--distribution-atoms",
+            defaults.distribution_atoms,
+        )?,
+        distribution_value_minimum: f64_option(
+            learn_args,
+            "--distribution-min",
+            defaults.distribution_value_minimum,
+        )?,
+        distribution_value_maximum: f64_option(
+            learn_args,
+            "--distribution-max",
+            defaults.distribution_value_maximum,
+        )?,
+        noisy_initial_stddev: f64_option(
+            learn_args,
+            "--noisy-stddev",
+            defaults.noisy_initial_stddev,
+        )?,
+    };
+    let ablation = match component.as_str() {
+        "dueling-heads" => RainbowAblationReport::evaluate_dueling_heads(
+            training.feature_count,
+            &actions,
+            &training.transitions,
+            &training.episode_groups,
+            &held_out.transitions,
+            &config,
+        )?,
+        "n-step" => RainbowAblationReport::evaluate_n_step(
+            training.feature_count,
+            &actions,
+            &training.transitions,
+            &training.episode_groups,
+            &held_out.transitions,
+            &config,
+        )?,
+        "distributional-values" => RainbowAblationReport::evaluate_distributional_values(
+            training.feature_count,
+            &actions,
+            &training.transitions,
+            &training.episode_groups,
+            &held_out.transitions,
+            &config,
+        )?,
+        "noisy-exploration" => RainbowAblationReport::evaluate_noisy_exploration(
+            training.feature_count,
+            &actions,
+            &training.transitions,
+            &training.episode_groups,
+            &held_out.transitions,
+            &config,
+        )?,
+        _ => {
+            return Err("--component must be dueling-heads, n-step, distributional-values, or noisy-exploration".into());
+        }
+    };
+    let output = option(learn_args, "--output")
+        .map(PathBuf::from)
+        .ok_or("learn ablate-q requires --output REPORT.json")?;
+    if output.exists() {
+        return Err(format!("ablation output already exists: {}", output.display()).into());
+    }
+    let report = json!({
+        "schema": "dusklight-q-component-ablation-run/v1",
+        "component": component,
+        "dataset": dataset_path,
+        "dataset_sha256": dataset_identity,
+        "held_out_split": held_out_split,
+        "training_corpora": training_paths,
+        "training_corpus_sha256": training.corpus_digests,
+        "held_out_corpora": held_out_paths,
+        "held_out_corpus_sha256": held_out.corpus_digests,
+        "feature_schema": training.feature_schema,
+        "action_schema": training.action_schema,
+        "training_episode_groups": training.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+        "held_out_episode_groups": held_out.episode_groups.iter().copied().collect::<BTreeSet<_>>().len(),
+        "config": config,
+        "ablation": ablation,
+    });
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let bytes = serde_json::to_vec_pretty(&report)?;
+    fs::write(&output, &bytes)?;
+    println!("{}", String::from_utf8(bytes)?);
+    Ok(())
+}
 
 pub fn command_iql(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");

@@ -730,3 +730,141 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn q_component_ablation_cli_runs_only_one_equal_budget_treatment() {
+    const WAIT: u32 = 0;
+    const ADVANCE: u32 = 1;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-ablate-q-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let training_path = root.join("training.dtcz");
+    let held_out_path = root.join("held-out.dtcz");
+    TransitionCorpus::new(
+        Digest([0x31; 32]),
+        Digest([0x32; 32]),
+        1,
+        vec![
+            transition(0.0, WAIT, -1.0, 1.0, true),
+            transition(0.0, ADVANCE, 3.0, 1.0, true),
+            transition(1.0, WAIT, -1.0, 2.0, true),
+            transition(1.0, ADVANCE, 3.0, 2.0, true),
+        ],
+    )
+    .unwrap()
+    .write_zstd_file(&training_path, 1)
+    .unwrap();
+    TransitionCorpus::new(
+        Digest([0x31; 32]),
+        Digest([0x32; 32]),
+        1,
+        vec![
+            transition(0.0, WAIT, -0.5, 1.0, true),
+            transition(0.0, ADVANCE, 2.5, 1.0, true),
+            transition(1.0, WAIT, -0.5, 2.0, true),
+            transition(1.0, ADVANCE, 2.5, 2.0, true),
+        ],
+    )
+    .unwrap()
+    .write_zstd_file(&held_out_path, 1)
+    .unwrap();
+
+    for (component, serialized_component) in [
+        ("dueling-heads", "dueling_heads"),
+        ("n-step", "n_step_returns"),
+        ("distributional-values", "distributional_values"),
+        ("noisy-exploration", "noisy_exploration"),
+    ] {
+        let output_path = root.join(format!("{component}.json"));
+        let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+            .args(["learn", "ablate-q", "--component", component, "--training"])
+            .arg(&training_path)
+            .arg("--held-out")
+            .arg(&held_out_path)
+            .arg("--output")
+            .arg(&output_path)
+            .args([
+                "--epochs",
+                "8",
+                "--hidden-width",
+                "4",
+                "--learning-rate",
+                "0.01",
+                "--target-sync-steps",
+                "4",
+                "--seed",
+                "7",
+                "--n-step",
+                "2",
+                "--distribution-atoms",
+                "11",
+                "--distribution-min",
+                "-5",
+                "--distribution-max",
+                "5",
+                "--noisy-stddev",
+                "0.25",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{component}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["schema"], "dusklight-q-component-ablation-run/v1");
+        assert_eq!(
+            report["ablation"]["evaluation"]["component"],
+            serialized_component
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["baseline_gradient_updates"],
+            32
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["treatment_gradient_updates"],
+            32
+        );
+        assert_eq!(
+            report["ablation"]["evaluation"]["equal_gradient_update_budget"],
+            true
+        );
+        assert_eq!(report["ablation"]["combined_rainbow_configuration"], false);
+        assert_eq!(report["ablation"]["promotion_authority"], false);
+        if component == "noisy-exploration" {
+            assert_eq!(
+                report["ablation"]["evaluation"]["treatment_noise_resamples"],
+                128
+            );
+        } else {
+            assert!(report["ablation"]["evaluation"]["treatment_noise_resamples"].is_null());
+        }
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output_path).unwrap()).unwrap();
+        assert_eq!(stored, report);
+    }
+
+    let overlap = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args([
+            "learn",
+            "ablate-q",
+            "--component",
+            "dueling-heads",
+            "--training",
+        ])
+        .arg(&training_path)
+        .arg("--held-out")
+        .arg(&training_path)
+        .arg("--output")
+        .arg(root.join("overlap.json"))
+        .output()
+        .unwrap();
+    assert!(!overlap.status.success());
+    assert!(String::from_utf8_lossy(&overlap.stderr).contains("files overlap"));
+
+    fs::remove_dir_all(root).unwrap();
+}
