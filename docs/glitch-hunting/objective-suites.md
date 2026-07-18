@@ -83,6 +83,16 @@ authored movement seed to the documented Ordon ranch region near
 bounded AABB for five post-simulation ticks, and its observation view retains
 the stage, player identity, and exact position features used by that contract.
 
+The native query seam needed by the remaining interaction cases now exists.
+Player-action channel v2 records the realized A-button status, exact placed
+talk partner, and exact placed grabbed actor at the post-simulation boundary.
+Milestone language 1.5 exposes those fields under
+`player.interaction.do_status`, `player.interaction.talk_partner.*`, and
+`player.interaction.grabbed_actor.*`. A talk objective can therefore require an
+event edge and the correct partner identity; a carry objective can use an
+ordered absent-to-present sequence and the correct object identity. Session
+process IDs are retained for diagnostics but are not objective selector facts.
+
 The talk-to-NPC, negative-control, and pick-up-object cases do not exist yet,
 and `huntctl` does not yet execute an entire suite. Those are separate active
 tasks so authored-contract validation is not mistaken for native conformance

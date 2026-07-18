@@ -90,7 +90,7 @@ an independently replayable tape.
   flags, events, and named value projections.
 - [x] Evaluate objective facts at one immutable post-simulation boundary and
   retain first-hit evidence plus objective progress in the gameplay trace.
-- [ ] Add typed facts required by the conformance suite for interaction
+- [x] Add typed facts required by the conformance suite for interaction
   availability, dialogue/event start, carried/held actor identity, and object
   ownership changes.
 - [ ] Define objective programs separately from reward shaping and proposer
