@@ -2,11 +2,15 @@
 
 use crate::artifact::Digest;
 use crate::fqi::{MAX_FQI_ACTIONS, MAX_FQI_TRANSITIONS, Transition};
+use crate::learning::prioritized_replay::{
+    PrioritizedReplay, PrioritizedReplayConfig, PrioritizedReplayDiagnostics,
+};
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
 
 pub const IQL_MODEL_SCHEMA_V1: &str = "dusklight-discrete-iql-model/v1";
+pub const PRIORITIZED_IQL_MODEL_SCHEMA_V1: &str = "dusklight-prioritized-iql-model/v1";
 pub const MAX_IQL_EPOCHS: usize = 256;
 pub const MAX_IQL_HIDDEN_WIDTH: usize = 128;
 
@@ -41,6 +45,21 @@ impl Default for IqlConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PrioritizedIqlConfig {
+    pub iql: IqlConfig,
+    pub replay: PrioritizedReplayConfig,
+}
+
+impl Default for PrioritizedIqlConfig {
+    fn default() -> Self {
+        Self {
+            iql: IqlConfig::default(),
+            replay: PrioritizedReplayConfig::default(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct IqlActionEstimate {
     pub action: u32,
@@ -65,6 +84,8 @@ pub struct ImplicitQ {
     target_synchronizations: u64,
     mean_advantage_weight: f64,
     clipped_advantage_weights: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prioritized_replay: Option<PrioritizedReplayDiagnostics>,
 }
 
 impl ImplicitQ {
@@ -73,6 +94,31 @@ impl ImplicitQ {
         actions: &[u32],
         transitions: &[Transition],
         config: &IqlConfig,
+    ) -> Result<Self, IqlError> {
+        Self::fit_internal(feature_width, actions, transitions, config, None)
+    }
+
+    pub fn fit_prioritized(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        config: &PrioritizedIqlConfig,
+    ) -> Result<Self, IqlError> {
+        Self::fit_internal(
+            feature_width,
+            actions,
+            transitions,
+            &config.iql,
+            Some(&config.replay),
+        )
+    }
+
+    fn fit_internal(
+        feature_width: usize,
+        actions: &[u32],
+        transitions: &[Transition],
+        config: &IqlConfig,
+        replay_config: Option<&PrioritizedReplayConfig>,
     ) -> Result<Self, IqlError> {
         validate(feature_width, actions, transitions, config)?;
         let mut actions = actions.to_vec();
@@ -107,10 +153,31 @@ impl ImplicitQ {
         let mut target_synchronizations = 0_u64;
         let mut advantage_weight_sum = 0.0;
         let mut clipped_advantage_weights = 0_u64;
+        let mut replay = replay_config
+            .map(|replay_config| {
+                PrioritizedReplay::new(
+                    &vec![1.0; transitions.len()],
+                    replay_config.clone(),
+                    config.seed ^ 0x5052_494f_5249_5459,
+                )
+            })
+            .transpose()
+            .map_err(|error| IqlError::Replay(error.to_string()))?;
 
         for epoch in 0..config.epochs {
-            rng.shuffle(&mut order);
-            for row in order.iter().copied() {
+            let sampled = if let Some(replay) = replay.as_mut() {
+                (0..transitions.len())
+                    .map(|_| replay.sample())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| IqlError::Replay(error.to_string()))?
+                    .into_iter()
+                    .map(|sample| (sample.index, sample.importance_weight))
+                    .collect::<Vec<_>>()
+            } else {
+                rng.shuffle(&mut order);
+                order.iter().copied().map(|row| (row, 1.0)).collect()
+            };
+            for (row, importance_weight) in sampled {
                 let transition = &transitions[row];
                 let action = actions
                     .binary_search(&transition.action)
@@ -129,7 +196,7 @@ impl ImplicitQ {
                 value.update(
                     &states[row],
                     &[expectile_weight * (value_prediction - target_q)],
-                    config.learning_rate,
+                    config.learning_rate * importance_weight,
                     config.gradient_clip,
                 )?;
 
@@ -146,7 +213,7 @@ impl ImplicitQ {
                     critic.update(
                         &states[row],
                         &gradient,
-                        config.learning_rate,
+                        config.learning_rate * importance_weight,
                         config.gradient_clip,
                     )?;
                 }
@@ -172,9 +239,17 @@ impl ImplicitQ {
                 policy.update(
                     &states[row],
                     &policy_gradient,
-                    config.learning_rate,
+                    config.learning_rate * importance_weight,
                     config.gradient_clip,
                 )?;
+                if let Some(replay) = replay.as_mut() {
+                    let post_q = critic_a
+                        .value(&states[row], action)
+                        .min(critic_b.value(&states[row], action));
+                    replay
+                        .update_td_error(row, (post_q - q_target).abs())
+                        .map_err(|error| IqlError::Replay(error.to_string()))?;
+                }
 
                 gradient_updates += 1;
                 if gradient_updates % config.target_sync_steps as u64 == 0 {
@@ -192,6 +267,7 @@ impl ImplicitQ {
             }
         }
 
+        let prioritized_replay = replay.as_ref().map(PrioritizedReplay::diagnostics);
         Ok(Self {
             feature_width,
             actions,
@@ -205,6 +281,7 @@ impl ImplicitQ {
             target_synchronizations,
             mean_advantage_weight: advantage_weight_sum / gradient_updates as f64,
             clipped_advantage_weights,
+            prioritized_replay,
         })
     }
 
@@ -256,6 +333,10 @@ impl ImplicitQ {
         self.clipped_advantage_weights
     }
 
+    pub fn prioritized_replay(&self) -> Option<&PrioritizedReplayDiagnostics> {
+        self.prioritized_replay.as_ref()
+    }
+
     pub fn artifact_bytes(
         &self,
         feature_schema: Digest,
@@ -266,6 +347,25 @@ impl ImplicitQ {
     ) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(&IqlArtifact {
             schema: IQL_MODEL_SCHEMA_V1,
+            feature_schema,
+            action_schema,
+            training_dataset_sha256,
+            training_corpus_sha256,
+            config,
+            model: self,
+        })
+    }
+
+    pub fn prioritized_artifact_bytes(
+        &self,
+        feature_schema: Digest,
+        action_schema: Digest,
+        training_dataset_sha256: Option<Digest>,
+        training_corpus_sha256: &[Digest],
+        config: &PrioritizedIqlConfig,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&PrioritizedIqlArtifact {
+            schema: PRIORITIZED_IQL_MODEL_SCHEMA_V1,
             feature_schema,
             action_schema,
             training_dataset_sha256,
@@ -301,6 +401,17 @@ struct IqlArtifact<'a> {
     training_dataset_sha256: Option<Digest>,
     training_corpus_sha256: &'a [Digest],
     config: &'a IqlConfig,
+    model: &'a ImplicitQ,
+}
+
+#[derive(Serialize)]
+struct PrioritizedIqlArtifact<'a> {
+    schema: &'static str,
+    feature_schema: Digest,
+    action_schema: Digest,
+    training_dataset_sha256: Option<Digest>,
+    training_corpus_sha256: &'a [Digest],
+    config: &'a PrioritizedIqlConfig,
     model: &'a ImplicitQ,
 }
 
@@ -559,6 +670,7 @@ pub enum IqlError {
     NonFiniteData,
     InvalidConfig(&'static str),
     Diverged { epoch: usize },
+    Replay(String),
 }
 
 impl fmt::Display for IqlError {
@@ -577,6 +689,7 @@ impl fmt::Display for IqlError {
             Self::NonFiniteData => formatter.write_str("IQL data and durations must be valid"),
             Self::InvalidConfig(message) => write!(formatter, "invalid IQL config: {message}"),
             Self::Diverged { epoch } => write!(formatter, "IQL diverged at epoch {epoch}"),
+            Self::Replay(message) => write!(formatter, "IQL prioritized replay failed: {message}"),
         }
     }
 }
@@ -677,5 +790,44 @@ mod tests {
                 Err(IqlError::InvalidConfig(_))
             ));
         }
+    }
+
+    #[test]
+    fn prioritized_iql_applies_bounded_weights_and_updates_td_priorities() {
+        let transitions = vec![
+            transition(-1.0, WAIT, 0.0),
+            transition(-1.0, WAIT, 0.0),
+            transition(1.0, ADVANCE, 8.0),
+            transition(1.0, ADVANCE, 8.0),
+        ];
+        let config = PrioritizedIqlConfig {
+            iql: IqlConfig {
+                epochs: 32,
+                hidden_width: 8,
+                learning_rate: 0.005,
+                target_sync_steps: 8,
+                seed: 17,
+                ..IqlConfig::default()
+            },
+            replay: PrioritizedReplayConfig {
+                alpha: 0.7,
+                beta: 0.5,
+                priority_epsilon: 0.001,
+                maximum_importance_weight: 2.0,
+            },
+        };
+        let first = ImplicitQ::fit_prioritized(1, &[WAIT, ADVANCE], &transitions, &config).unwrap();
+        let second =
+            ImplicitQ::fit_prioritized(1, &[WAIT, ADVANCE], &transitions, &config).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        let diagnostics = first.prioritized_replay().unwrap();
+        assert_eq!(diagnostics.samples, 128);
+        assert_eq!(diagnostics.priority_updates, 128);
+        assert!(diagnostics.maximum_observed_importance_weight <= 2.0);
+        assert!(diagnostics.effective_sample_size.unwrap() <= 128.0);
+        assert_eq!(first.rank_actions(&[1.0]).unwrap()[0].action, ADVANCE);
     }
 }
