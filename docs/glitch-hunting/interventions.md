@@ -159,3 +159,15 @@ If treatment runs cross the fence and controls do not, we have evidence that
 the collision mechanism permits it. The next search objective is to replace the
 intervention with achievable enemy manipulation and produce an ordinary cold-
 replayable input tape.
+
+## Evidence strength
+
+`intervention::evidence` enforces that distinction in serialized claims. A
+validated intervention pair may create only `existence` evidence or `mechanism`
+evidence with an explicit bounded mechanism summary; it cannot directly claim
+normal-input reproduction. Promotion requires an absolute input tape with
+gameplay writes, intervention artifacts, and mutation audits all absent. The
+normal run must keep the source build, scenario, parent boundary, observation,
+and oracle identities, reproduce the setup on at least two cold replays, and
+retain the replay bundle, trace, and oracle report. The natural tape itself may
+differ because discovering that replacement input is the point of promotion.

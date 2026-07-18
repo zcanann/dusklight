@@ -143,6 +143,10 @@ roadmap documents describe the larger target.
   components, facing, health, and timers with deterministic canonical proposals.
   Predicate-preserving minimization reduces those axes toward neutral values
   while retaining the exact resulting `DUSKINTR` and evaluation count.
+- Intervention findings are typed as existence or mechanism evidence and
+  cannot claim normal-input reproduction directly. Promotion requires repeated
+  write-free cold replay under matching setup identities plus retained absolute
+  tape, replay-bundle, trace, and oracle proof.
 - Intervention execution requires compile-time capability, explicit runtime
   write opt-in, experimental fidelity, exact phase/preconditions, and a
   mandatory complete before/write/after audit. Normal builds reject admission.
