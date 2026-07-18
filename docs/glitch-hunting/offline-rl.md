@@ -181,6 +181,12 @@ sample. The complete normalization, category tables, widths, and ordering rules
 produce one representation digest; reordered source actors/surfaces encode to
 the same tensor.
 
+The geometry handoff is enforced, not conventional: a model input accepts at
+most 32 consistent point-query results from the spatial service and emits four
+nearest slots. Zero-limit, over-limit, count-mismatched, non-finite, or
+mesh-sized inputs fail before encoding. Raw inventories, BVHs, and triangle
+meshes are not representation inputs.
+
 `learning/history_critics.rs` tests whether that fixed representation still
 aliases different return targets at byte-identical current states. It compares
 a single-frame ridge critic, an episode-boundary-masked short stack, and a

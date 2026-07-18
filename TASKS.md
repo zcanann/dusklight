@@ -872,7 +872,7 @@ simple random baseline.
   and the corpus is large enough.
 - [x] Evaluate graph encoders for actor relationships and local collision graphs
   only against simpler representations under equal sample budgets.
-- [ ] Keep static map geometry in a spatial service or local encoder; never feed
+- [x] Keep static map geometry in a spatial service or local encoder; never feed
   the complete raw mesh to an MLP every tick.
 
 ### P1: model ownership and deployment
