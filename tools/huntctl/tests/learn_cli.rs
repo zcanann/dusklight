@@ -261,6 +261,68 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         .unwrap()
     );
 
+    let iql_path = root.join("iql-model.json");
+    let iql = Command::new(executable)
+        .args(["learn", "iql", "--input"])
+        .arg(&path)
+        .arg("--model-output")
+        .arg(&iql_path)
+        .args([
+            "--query-transition",
+            "0",
+            "--epochs",
+            "128",
+            "--hidden-width",
+            "8",
+            "--learning-rate",
+            "0.01",
+            "--target-sync-steps",
+            "16",
+            "--expectile",
+            "0.7",
+            "--advantage-beta",
+            "3",
+            "--max-advantage-weight",
+            "20",
+            "--seed",
+            "7",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        iql.status.success(),
+        "{}",
+        String::from_utf8_lossy(&iql.stderr)
+    );
+    let iql: serde_json::Value = serde_json::from_slice(&iql.stdout).unwrap();
+    assert_eq!(iql["schema"], "dusklight-discrete-iql-ranking/v1");
+    assert_eq!(iql["ranking"][0]["action"], ADVANCE);
+    assert_eq!(iql["gradient_updates"], 512);
+    assert_eq!(iql["target_synchronizations"], 32);
+    assert_eq!(iql["promotion_authority"], false);
+    assert!(iql["mean_advantage_weight"].as_f64().unwrap().is_finite());
+    let probability_sum = iql["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["policy_probability"].as_f64().unwrap())
+        .sum::<f64>();
+    assert!((probability_sum - 1.0).abs() < 1e-9);
+    let iql_model: serde_json::Value =
+        serde_json::from_slice(&fs::read(&iql_path).unwrap()).unwrap();
+    assert_eq!(iql_model["schema"], "dusklight-discrete-iql-model/v1");
+    assert_eq!(iql_model["config"]["expectile"], 0.7);
+    let iql_blob = &iql["model_content_blob"];
+    assert_eq!(iql_blob["kind"], "model");
+    assert_eq!(
+        fs::read(&iql_path).unwrap(),
+        fs::read(
+            root.join("content")
+                .join(iql_blob["relative_path"].as_str().unwrap())
+        )
+        .unwrap()
+    );
+
     let held_out_path = root.join("held-out.dtcz");
     TransitionCorpus::new(
         Digest([0x11; 32]),

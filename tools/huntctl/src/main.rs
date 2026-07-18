@@ -16,7 +16,6 @@ use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
-use huntctl::iql::{ImplicitQ, IqlConfig};
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
@@ -90,6 +89,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const MAX_LEARN_INPUT_CORPORA: usize = 64;
+
+mod cli;
 
 fn main() {
     if let Err(error) = run() {
@@ -873,6 +874,7 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
 fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("cql") => command_conservative_q(&args[1..]),
+        Some("iql") => cli::learning::command_iql(&args[1..]),
         Some("diff-episodes") => {
             let learn_args = &args[1..];
             let success_trace_path = required_path(learn_args, "--success-trace")?;
@@ -4612,6 +4614,9 @@ fn print_usage() {
     );
     eprintln!(
         "  huntctl learn cql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--conservative-weight A] [--temperature T] [--gradient-clip V] [--seed N] [--discount D]"
+    );
+    eprintln!(
+        "  huntctl learn iql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--discount D] [--expectile T] [--advantage-beta B] [--max-advantage-weight W] [--target-sync-steps N] [--gradient-clip G] [--seed N]"
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"

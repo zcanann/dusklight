@@ -212,6 +212,31 @@ gap is an objective diagnostic, not a calibrated OOD probability. CQL reduces
 unsupported-action optimism but does not establish that an action is safe,
 valid, or feasible; native rollout and cold replay remain mandatory.
 
+### Implicit Q-Learning and advantage-weighted cloning
+
+Train the dataset-constrained policy alternative with:
+
+```text
+huntctl learn iql --dataset build/dataset.json \
+  --expectile 0.7 --advantage-beta 3 --max-advantage-weight 100 \
+  --model-output build/iql-model.json --seed 1
+```
+
+Two Q critics learn only logged actions from duration-discounted targets. A
+separate value network fits the upper expectile of the smaller target critic,
+and the policy performs behavior cloning only on the logged action label,
+weighted by `exp(beta * (min(Q1,Q2) - V))`. The weight is bounded before the
+policy update. No maximization over unobserved actions enters the Q target or
+creates a synthetic policy label.
+
+The authenticated artifact records critic, value, and policy networks plus the
+expectile, inverse temperature, weight cap, target synchronization, optimizer,
+seed, dataset, and corpus identities. Rankings are ordered by the learned
+behavior-policy probability and report Q, V, advantage, critic disagreement,
+global support, mean weight, and clipped-weight count. Function approximation
+can still generalize across states, and neither probabilities nor disagreement
+are safety estimates; every proposal retains the native proof gates.
+
 ### Nearest-neighbor and tabular return baselines
 
 For small objective-specific state spaces, compare FQI against empirical
