@@ -34,6 +34,7 @@ pub struct RainbowAblationConfig {
     pub distribution_atoms: usize,
     pub distribution_value_minimum: f64,
     pub distribution_value_maximum: f64,
+    pub noisy_initial_stddev: f64,
 }
 
 impl Default for RainbowAblationConfig {
@@ -44,6 +45,7 @@ impl Default for RainbowAblationConfig {
             distribution_atoms: 51,
             distribution_value_minimum: -100.0,
             distribution_value_maximum: 100.0,
+            noisy_initial_stddev: 0.5,
         }
     }
 }
@@ -63,6 +65,10 @@ pub struct ComponentEvaluation {
     pub baseline: HeldOutMetrics,
     pub treatment: HeldOutMetrics,
     pub mean_absolute_td_error_delta: f64,
+    pub baseline_gradient_updates: u64,
+    pub treatment_gradient_updates: u64,
+    pub equal_gradient_update_budget: bool,
+    pub treatment_noise_resamples: Option<u64>,
     pub adopted: bool,
     pub decision: &'static str,
 }
@@ -115,6 +121,9 @@ impl RainbowAblationReport {
             vec!["critic_output_head"],
             baseline_metrics,
             treatment_metrics,
+            baseline.gradient_updates(),
+            treatment.gradient_updates(),
+            None,
         ))
     }
 
@@ -157,6 +166,52 @@ impl RainbowAblationReport {
             vec!["critic_output_distribution", "categorical_value_support"],
             baseline_metrics,
             treatment_metrics,
+            baseline.gradient_updates(),
+            treatment.gradient_updates(),
+            None,
+        ))
+    }
+
+    /// Evaluate learned parameter noise as the sole training-time change.
+    pub fn evaluate_noisy_exploration(
+        feature_width: usize,
+        actions: &[u32],
+        training: &[Transition],
+        training_episode_groups: &[u64],
+        held_out: &[Transition],
+        config: &RainbowAblationConfig,
+    ) -> Result<Self, RainbowAblationError> {
+        validate_common(training, held_out, config)?;
+        if training_episode_groups.len() != training.len() {
+            return Err(RainbowAblationError::Invalid(
+                "training episode groups must match training transitions",
+            ));
+        }
+        let baseline = DoubleQ::fit(feature_width, actions, training, &config.critic)?;
+        let treatment = QComponentModel::fit(
+            feature_width,
+            actions,
+            training,
+            training_episode_groups,
+            &QComponentConfig {
+                critic: config.critic.clone(),
+                component: QComponent::NoisyExploration,
+                noisy_initial_stddev: config.noisy_initial_stddev,
+                ..QComponentConfig::default()
+            },
+        )?;
+        let baseline_metrics = evaluate_model(&baseline, held_out, config.critic.discount)?;
+        let treatment_metrics = evaluate_model(&treatment, held_out, config.critic.discount)?;
+        Ok(Self::single_component(
+            training.len(),
+            held_out.len(),
+            RainbowComponent::NoisyExploration,
+            vec!["critic_output_parameter_noise"],
+            baseline_metrics,
+            treatment_metrics,
+            baseline.gradient_updates(),
+            treatment.gradient_updates(),
+            Some(treatment.noise_resamples()),
         ))
     }
 
@@ -197,6 +252,9 @@ impl RainbowAblationReport {
             vec!["bellman_backup_horizon"],
             baseline_metrics,
             treatment_metrics,
+            baseline.gradient_updates(),
+            treatment.gradient_updates(),
+            None,
         ))
     }
 
@@ -207,6 +265,9 @@ impl RainbowAblationReport {
         changed_parameters: Vec<&'static str>,
         baseline: HeldOutMetrics,
         treatment: HeldOutMetrics,
+        baseline_gradient_updates: u64,
+        treatment_gradient_updates: u64,
+        treatment_noise_resamples: Option<u64>,
     ) -> Self {
         let delta = treatment.mean_absolute_td_error - baseline.mean_absolute_td_error;
         Self {
@@ -219,6 +280,11 @@ impl RainbowAblationReport {
                 baseline,
                 treatment,
                 mean_absolute_td_error_delta: delta,
+                baseline_gradient_updates,
+                treatment_gradient_updates,
+                equal_gradient_update_budget: baseline_gradient_updates
+                    == treatment_gradient_updates,
+                treatment_noise_resamples,
                 adopted: false,
                 decision: "experimental_only_pending_real_corpus_equal_budget_evidence",
             },
@@ -421,6 +487,7 @@ mod tests {
         assert!(!first.evaluation.adopted);
         assert!(!first.combined_rainbow_configuration);
         assert_eq!(first.evaluation.baseline.transitions, training.len());
+        assert!(first.evaluation.equal_gradient_update_budget);
     }
 
     #[test]
@@ -458,6 +525,7 @@ mod tests {
         assert_eq!(report.evaluation.treatment.transitions, training.len());
         assert!(!report.evaluation.adopted);
         assert!(!report.combined_rainbow_configuration);
+        assert!(report.evaluation.equal_gradient_update_budget);
     }
 
     #[test]
@@ -501,5 +569,104 @@ mod tests {
         );
         assert!(!report.evaluation.adopted);
         assert!(!report.combined_rainbow_configuration);
+        assert!(report.evaluation.equal_gradient_update_budget);
+    }
+
+    #[test]
+    fn noisy_exploration_is_reported_as_the_only_changed_component() {
+        let training = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 5.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, true),
+        ];
+        let config = RainbowAblationConfig {
+            critic: DoubleQConfig {
+                epochs: 12,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 4,
+                seed: 7,
+                ..DoubleQConfig::default()
+            },
+            noisy_initial_stddev: 0.25,
+            ..RainbowAblationConfig::default()
+        };
+        let report = RainbowAblationReport::evaluate_noisy_exploration(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(
+            report.evaluation.component,
+            RainbowComponent::NoisyExploration
+        );
+        assert_eq!(
+            report.evaluation.changed_parameters,
+            ["critic_output_parameter_noise"]
+        );
+        assert!(report.evaluation.equal_gradient_update_budget);
+        assert_eq!(
+            report.evaluation.treatment_noise_resamples,
+            Some(report.evaluation.treatment_gradient_updates * 4)
+        );
+        assert!(!report.evaluation.adopted);
+        assert!(!report.combined_rainbow_configuration);
+    }
+
+    #[test]
+    fn noisy_exploration_is_reported_as_the_only_changed_component() {
+        let training = vec![
+            transition(0.0, ADVANCE, 0.0, 1.0, false),
+            transition(1.0, ADVANCE, 5.0, 2.0, true),
+            transition(0.0, WAIT, -1.0, 0.0, false),
+            transition(1.0, WAIT, -1.0, 1.0, true),
+        ];
+        let config = RainbowAblationConfig {
+            critic: DoubleQConfig {
+                epochs: 24,
+                hidden_width: 8,
+                learning_rate: 0.01,
+                target_sync_steps: 4,
+                seed: 23,
+                ..DoubleQConfig::default()
+            },
+            noisy_initial_stddev: 0.25,
+            ..RainbowAblationConfig::default()
+        };
+        let first = RainbowAblationReport::evaluate_noisy_exploration(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        let second = RainbowAblationReport::evaluate_noisy_exploration(
+            1,
+            &[WAIT, ADVANCE],
+            &training,
+            &[10, 10, 20, 20],
+            &training,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(
+            first.evaluation.component,
+            RainbowComponent::NoisyExploration
+        );
+        assert_eq!(
+            first.evaluation.changed_parameters,
+            ["critic_output_parameter_noise"]
+        );
+        assert!(first.evaluation.noise_resamples.unwrap() > 0);
+        assert!(!first.evaluation.adopted);
+        assert!(!first.combined_rainbow_configuration);
     }
 }
