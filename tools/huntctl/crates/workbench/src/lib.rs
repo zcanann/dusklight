@@ -19,6 +19,7 @@ pub use dusklight_search::search;
 
 mod graph_projection;
 mod inventory_catalog;
+mod native_reveal;
 mod project_catalog;
 mod server;
 mod stage_catalog;
@@ -30,6 +31,7 @@ pub use graph_projection::{
 pub use server::serve;
 
 use graph_projection::*;
+use native_reveal::*;
 use project_catalog::*;
 use subgraph_store::*;
 
@@ -797,6 +799,23 @@ pub struct BrowserMilestoneProgramUpdateRequest {
     pub owner: String,
     pub expected_revision_sha256: String,
     pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserGoalPredicateCreateRequest {
+    pub owner: String,
+    pub create_on_segment: String,
+    pub predicate: String,
+    pub expected_revision_sha256: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum BrowserMilestoneProgramEditRequest {
+    Create(BrowserGoalPredicateCreateRequest),
+    Update(BrowserMilestoneProgramUpdateRequest),
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -632,3 +632,320 @@ pub(super) fn update_milestone_program(
         goal_predicate_program_projection(timeline, root, &request.owner).map_err(Into::into)
     }
 }
+
+fn validate_new_predicate_identifier(value: &str, kind: &str) -> Result<(), WorkbenchError> {
+    if value.is_empty()
+        || value.len() > 96
+        || !value.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_lowercase() || byte == b'_' || (index > 0 && byte.is_ascii_digit())
+        })
+        || !value.as_bytes()[0].is_ascii_lowercase()
+    {
+        return Err(WorkbenchError::new(format!(
+            "{kind} must start with a lowercase letter and contain only lowercase letters, digits, and underscores (96 characters maximum)"
+        )));
+    }
+    Ok(())
+}
+
+fn new_goal_source_relative_path(
+    timeline_path: &Path,
+    predicate: &str,
+) -> Result<PathBuf, WorkbenchError> {
+    let stem = timeline_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| WorkbenchError::new("timeline filename is not UTF-8"))?;
+    if stem.is_empty()
+        || !stem
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(WorkbenchError::new(
+            "timeline filename must use letters, digits, underscores, or hyphens to create owned predicates",
+        ));
+    }
+    Ok(PathBuf::from(stem)
+        .join("predicates")
+        .join(format!("{predicate}.milestones")))
+}
+
+fn prepare_owned_predicate_parent(root: &Path, relative: &Path) -> Result<PathBuf, WorkbenchError> {
+    let root = fs::canonicalize(root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve predicate source root {}: {error}",
+            root.display()
+        ))
+    })?;
+    let parent = relative
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("owned predicate source has no parent"))?;
+    let mut candidate = root.clone();
+    for component in parent.components() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(WorkbenchError::new(
+                "owned predicate source is not a contained relative path",
+            ));
+        };
+        candidate.push(component);
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(WorkbenchError::new(format!(
+                    "owned predicate directory {} is a symbolic link",
+                    candidate.display()
+                )));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(WorkbenchError::new(format!(
+                    "owned predicate directory {} is not a directory",
+                    candidate.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&candidate).map_err(|error| {
+                    WorkbenchError::new(format!(
+                        "cannot create owned predicate directory {}: {error}",
+                        candidate.display()
+                    ))
+                })?;
+            }
+            Err(error) => {
+                return Err(WorkbenchError::new(format!(
+                    "cannot inspect owned predicate directory {}: {error}",
+                    candidate.display()
+                )));
+            }
+        }
+    }
+    let resolved = fs::canonicalize(&candidate).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve owned predicate directory {}: {error}",
+            candidate.display()
+        ))
+    })?;
+    if !resolved.starts_with(root) {
+        return Err(WorkbenchError::new(
+            "owned predicate directory escapes the timeline root",
+        ));
+    }
+    Ok(resolved)
+}
+
+fn append_goal_declaration(
+    source: &str,
+    goal: &str,
+    segment: &str,
+    predicate: &str,
+    relative: &Path,
+) -> Result<String, WorkbenchError> {
+    let relative = relative
+        .iter()
+        .map(|component| component.to_str())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| WorkbenchError::new("owned predicate path is not UTF-8"))?
+        .join("/");
+    let mut replacement = source.to_owned();
+    if !replacement.ends_with('\n') {
+        replacement.push('\n');
+    }
+    replacement.push_str(&format!(
+        "goal {goal} on {segment} predicate {predicate} source {relative}\n"
+    ));
+    Ok(replacement)
+}
+
+/// Create the first goal for a segment as two Git-visible artifacts: one goal
+/// declaration in the authoritative timeline and one source file owned only by
+/// that goal. No proof is synthesized; a proof must still come from observation.
+pub(super) fn create_goal_predicate(
+    timeline_path: &Path,
+    root: &Path,
+    request: &BrowserGoalPredicateCreateRequest,
+) -> Result<GraphPredicateProgram, MilestoneProgramUpdateError> {
+    let segment_id = request.create_on_segment.as_str();
+    let predicate = request.predicate.as_str();
+    if !request.expected_revision_sha256.is_empty() {
+        return Err(WorkbenchError::new(
+            "new goal edits must begin from the explicit empty revision",
+        )
+        .into());
+    }
+    validate_new_predicate_identifier(&request.owner, "goal ID")?;
+    validate_new_predicate_identifier(predicate, "predicate name")?;
+
+    let program = milestone_dsl::parse(&request.source)
+        .map_err(|error| WorkbenchError::new(format!("invalid milestone program: {error}")))?;
+    if program.definitions.len() != 1 || program.definitions[0].name != predicate {
+        return Err(WorkbenchError::new(format!(
+            "owned predicate source must define exactly {predicate:?}"
+        ))
+        .into());
+    }
+    milestone_dsl::compile(&program).map_err(|error| {
+        WorkbenchError::new(format!("cannot compile milestone program: {error}"))
+    })?;
+
+    let _predicate_edit = milestone_program_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("milestone program edit lock is poisoned"))?;
+    let _timeline_edit = timeline_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("timeline edit lock is poisoned"))?;
+    let timeline_path = fs::canonicalize(timeline_path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve timeline {}: {error}",
+            timeline_path.display()
+        ))
+    })?;
+    let root = fs::canonicalize(root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve timeline root {}: {error}",
+            root.display()
+        ))
+    })?;
+    if timeline_path.parent() != Some(root.as_path()) {
+        return Err(WorkbenchError::new("timeline is outside its configured artifact root").into());
+    }
+    let original = fs::read(&timeline_path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read timeline {}: {error}",
+            timeline_path.display()
+        ))
+    })?;
+    let timeline_source = String::from_utf8(original.clone())
+        .map_err(|_| WorkbenchError::new("timeline source is not UTF-8"))?;
+    let timeline = Timeline::parse(&timeline_source)
+        .map_err(|error| WorkbenchError::new(error.to_string()))?;
+    if !timeline.segments.contains_key(segment_id) {
+        return Err(WorkbenchError::new(format!("unknown segment {segment_id:?}")).into());
+    }
+    if timeline
+        .goals
+        .values()
+        .any(|goal| goal.segment == segment_id)
+    {
+        return Err(WorkbenchError::new(
+            "segment already has an authored goal; reload and edit that predicate",
+        )
+        .into());
+    }
+    if timeline.goals.contains_key(&request.owner) {
+        return Err(WorkbenchError::new(format!("goal {:?} already exists", request.owner)).into());
+    }
+    if timeline
+        .goals
+        .values()
+        .any(|goal| goal.predicate == predicate)
+        || timeline
+            .origin
+            .as_ref()
+            .is_some_and(|origin| origin.predicate == predicate)
+    {
+        return Err(WorkbenchError::new(format!(
+            "predicate {predicate:?} is already owned by another route node"
+        ))
+        .into());
+    }
+
+    let relative = new_goal_source_relative_path(&timeline_path, predicate)?;
+    let replacement = append_goal_declaration(
+        &timeline_source,
+        &request.owner,
+        segment_id,
+        predicate,
+        &relative,
+    )?;
+    let replacement_timeline =
+        Timeline::parse(&replacement).map_err(|error| WorkbenchError::new(error.to_string()))?;
+    replacement_timeline
+        .inspect()
+        .map_err(|error| WorkbenchError::new(error.to_string()))?;
+
+    let parent = prepare_owned_predicate_parent(&root, &relative)?;
+    let filename = relative
+        .file_name()
+        .ok_or_else(|| WorkbenchError::new("owned predicate source has no filename"))?;
+    let target = parent.join(filename);
+    if target.exists() {
+        return Err(WorkbenchError::new(format!(
+            "owned predicate source {} already exists",
+            target.display()
+        ))
+        .into());
+    }
+    let nonce = random_session_token()?;
+    let temporary = parent.join(format!(".{predicate}.{nonce}.tmp"));
+    let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot create owned predicate temporary file {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    file.write_all(request.source.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot flush owned predicate source {}: {error}",
+                temporary.display()
+            ))
+        })?;
+    drop(file);
+    fs::rename(&temporary, &target).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot install owned predicate source {}: {error}",
+            target.display()
+        ))
+    })?;
+    temporary_cleanup.0 = None;
+
+    let timeline_result = (|| {
+        if fs::read(&timeline_path).ok().as_deref() != Some(original.as_slice()) {
+            return Err(WorkbenchError::new(
+                "timeline changed while preparing predicate creation; reload and retry",
+            ));
+        }
+        let filename = timeline_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| WorkbenchError::new("timeline filename is not UTF-8"))?;
+        let temporary = root.join(format!(".{filename}.{nonce}.tmp"));
+        let backup = root.join(format!(".{filename}.{nonce}.rollback"));
+        let mut temporary_cleanup = RemoveFileOnDrop(Some(temporary.clone()));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                WorkbenchError::new(format!("cannot create timeline edit: {error}"))
+            })?;
+        file.write_all(replacement.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| WorkbenchError::new(format!("cannot flush timeline edit: {error}")))?;
+        drop(file);
+        fs::rename(&timeline_path, &backup).map_err(|error| {
+            WorkbenchError::new(format!("cannot stage timeline backup: {error}"))
+        })?;
+        if let Err(error) = fs::rename(&temporary, &timeline_path) {
+            let _ = fs::rename(&backup, &timeline_path);
+            return Err(WorkbenchError::new(format!(
+                "cannot install timeline edit: {error}"
+            )));
+        }
+        temporary_cleanup.0 = None;
+        let _ = fs::remove_file(backup);
+        Ok(())
+    })();
+    if let Err(error) = timeline_result {
+        let _ = fs::remove_file(&target);
+        return Err(error.into());
+    }
+
+    goal_predicate_program_projection(&replacement_timeline, &root, &request.owner)
+        .map_err(Into::into)
+}

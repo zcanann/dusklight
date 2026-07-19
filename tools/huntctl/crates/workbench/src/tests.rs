@@ -938,6 +938,156 @@ fn origin_policy_is_same_origin_or_non_browser() {
     assert!(!origin_allowed(Some("https://hostile.example"), address));
 }
 
+fn reveal_test_config(root: &Path) -> WorkbenchConfig {
+    let routes = root.join("routes");
+    fs::create_dir_all(&routes).unwrap();
+    write_tape(&routes, "first.tape", &[1, 2]);
+    let timeline_path = routes.join("test.timeline");
+    fs::write(
+        &timeline_path,
+        r#"timeline test
+segment first root profile boot_to_fsp103 uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+subgraph menu root entry first exit first
+subgraph_member menu segment first
+"#,
+    )
+    .unwrap();
+    WorkbenchConfig {
+        timeline_path,
+        repository_root: root.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        game: root.join("game"),
+        dvd: root.join("dvd"),
+        state_root: root.join("state"),
+    }
+}
+
+#[test]
+fn native_reveal_resolves_only_authoritative_entity_ids() {
+    let root = temporary_root("native-reveal-resolve");
+    let config = reveal_test_config(&root);
+    let expected_tape = fs::canonicalize(root.join("routes/first.tape")).unwrap();
+    let expected_timeline = fs::canonicalize(root.join("routes/test.timeline")).unwrap();
+    let expected_routes = fs::canonicalize(root.join("routes")).unwrap();
+
+    let segment = resolve_reveal_target(
+        &config,
+        &BrowserRevealTarget::Segment { id: "first".into() },
+    )
+    .unwrap();
+    assert_eq!(segment.kind, NativeRevealKind::File);
+    assert_eq!(segment.path, expected_tape);
+
+    let subgraph = resolve_reveal_target(
+        &config,
+        &BrowserRevealTarget::Subgraph { id: "menu".into() },
+    )
+    .unwrap();
+    assert_eq!(subgraph.kind, NativeRevealKind::Folder);
+    assert_eq!(subgraph.path, expected_routes);
+
+    let project = resolve_reveal_target(
+        &config,
+        &BrowserRevealTarget::Project {
+            id: "routes/test".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(project.path, expected_timeline);
+
+    let folder = resolve_reveal_target(
+        &config,
+        &BrowserRevealTarget::Folder {
+            id: "routes".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(folder.kind, NativeRevealKind::Folder);
+    assert_eq!(folder.path, expected_routes);
+
+    for target in [
+        BrowserRevealTarget::Segment {
+            id: "../first".into(),
+        },
+        BrowserRevealTarget::Subgraph { id: "..".into() },
+        BrowserRevealTarget::Project {
+            id: "../outside".into(),
+        },
+        BrowserRevealTarget::Folder { id: "..".into() },
+        BrowserRevealTarget::Draft {
+            id: "../draft".into(),
+        },
+    ] {
+        assert!(resolve_reveal_target(&config, &target).is_err());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_reveal_resolves_validated_draft_directory() {
+    let root = temporary_root("native-reveal-draft");
+    write_tape(&root, "first.tape", &[1, 2, 3, 4]);
+    write_tape(&root, "second.tape", &[5, 6, 7]);
+    let config = reveal_test_config(&root);
+    let draft = install_ready_draft(&root, &config.state_root, "draft-reveal", &[8]);
+    let target =
+        resolve_reveal_target(&config, &BrowserRevealTarget::Draft { id: draft.id }).unwrap();
+    assert_eq!(target.kind, NativeRevealKind::Folder);
+    assert_eq!(
+        target.path,
+        fs::canonicalize(config.state_root.join("drafts/draft-reveal")).unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_reveal_http_rejects_path_smuggling_and_unknown_fields() {
+    let root = temporary_root("native-reveal-http");
+    let config = reveal_test_config(&root);
+    for body in [
+        serde_json::json!({"target":{"kind":"project","id":"../outside"}}),
+        serde_json::json!({"target":{"kind":"folder","id":"routes","path":"C:/Windows"}}),
+        serde_json::json!({"target":{"kind":"file","id":"routes/test"}}),
+    ] {
+        let response = call_http(
+            &config,
+            "POST",
+            "/api/reveal",
+            &serde_json::to_vec(&body).unwrap(),
+        );
+        assert_eq!(response.status, 400);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_reveal_command_passes_paths_as_process_arguments() {
+    let target = NativeRevealTarget {
+        kind: NativeRevealKind::File,
+        path: PathBuf::from(r#"C:\route files\tape & notes.tape"#),
+    };
+    let command = native_reveal_command(&target);
+    let args = command.get_args().collect::<Vec<_>>();
+    #[cfg(target_os = "windows")]
+    {
+        assert_eq!(command.get_program(), "explorer.exe");
+        assert_eq!(
+            args,
+            [std::ffi::OsStr::new("/select,"), target.path.as_os_str()]
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(args, [std::ffi::OsStr::new("-R"), target.path.as_os_str()]);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        assert_eq!(command.get_program(), "xdg-open");
+        assert_eq!(args, [Path::new(r#"C:\route files"#).as_os_str()]);
+    }
+}
+
 #[test]
 fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     let html = include_str!("../../../assets/route_workbench.html");
@@ -966,6 +1116,12 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "</span>${projectBootIcon(project)}<span class=\"project-label\">",
         "workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null",
         "This predicate source belongs only to this goal",
+        "No predicate is authored for this segment yet.",
+        "data-create-predicate",
+        "id=\"predicateIdentity\"",
+        "id=\"predicateGoal\"",
+        "id=\"predicateName\"",
+        "create_on_segment",
         "data-capture-kind=\"project\"",
         "data-select-kind",
         "renderPlayableSegmentNode",
@@ -974,6 +1130,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "id=\"workspaceNewTape\"",
         "id=\"workspaceNewFolder\"",
         "id=\"workspaceClone\"",
+        "id=\"workspaceReveal\"",
         "id=\"workspaceMove\"",
         "id=\"workspaceMoveDialog\"",
         "id=\"workspaceMoveDestination\"",
@@ -985,6 +1142,12 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/workspace/folders/create",
         "/api/workspace/move",
         "/api/workspace/delete",
+        "/api/reveal",
+        "data-reveal-kind=\"segment\"",
+        "data-reveal-kind=\"subgraph\"",
+        "data-reveal-kind=\"draft\"",
+        "data-reveal-kind=\"project\"",
+        "revealWorkspaceSelection",
         "id=\"bootEditor\"",
         "/api/workspace/boot",
         "id=\"bootStageChoice\"",
@@ -1397,6 +1560,162 @@ continue main with child after root@one
 }
 
 #[test]
+fn empty_segment_can_create_one_git_owned_goal_predicate() {
+    let root = temporary_root("owned-milestone-create");
+    let timeline_path = root.join("route.timeline");
+    fs::write(
+        &timeline_path,
+        r#"timeline owned_create
+segment first root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+continuation main starts root@clean
+continue main with first after root@clean
+"#,
+    )
+    .unwrap();
+    let source =
+        "milestones 1.3\nmilestone first_reached {\n  phase post_sim\n  when player.exists\n}\n";
+    let created = create_goal_predicate(
+        &timeline_path,
+        &root,
+        &BrowserGoalPredicateCreateRequest {
+            owner: "first_goal".into(),
+            create_on_segment: "first".into(),
+            predicate: "first_reached".into(),
+            expected_revision_sha256: String::new(),
+            source: source.into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(created.definitions.len(), 1);
+    assert_eq!(created.definitions[0].name, "first_reached");
+    assert_eq!(
+        fs::read_to_string(root.join("route/predicates/first_reached.milestones")).unwrap(),
+        source
+    );
+    let timeline_source = fs::read_to_string(&timeline_path).unwrap();
+    assert!(timeline_source.contains(
+        "goal first_goal on first predicate first_reached source route/predicates/first_reached.milestones"
+    ));
+    assert!(!timeline_source.contains("proof "));
+    let timeline = load_authoritative_timeline(&timeline_path).unwrap();
+    assert_eq!(timeline.goals["first_goal"].segment, "first");
+    assert!(timeline.proofs.is_empty());
+    let graph = graph_from_timeline(&timeline, &root).unwrap();
+    assert_eq!(graph.goals.len(), 1);
+    assert_eq!(graph.goals[0].predicate_program.source, source);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn goal_creation_rejects_shared_sources_and_nonempty_segments_without_writing() {
+    let root = temporary_root("owned-milestone-create-reject");
+    let timeline_path = root.join("route.timeline");
+    let timeline_source = r#"timeline owned_create
+segment first root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+continuation main starts root@clean
+continue main with first after root@clean
+"#;
+    fs::write(&timeline_path, timeline_source).unwrap();
+    let shared = "milestones 1.3\nmilestone first_reached { phase post_sim when player.exists }\nmilestone historical { phase post_sim when event.running }\n";
+    let error = create_goal_predicate(
+        &timeline_path,
+        &root,
+        &BrowserGoalPredicateCreateRequest {
+            owner: "first_goal".into(),
+            create_on_segment: "first".into(),
+            predicate: "first_reached".into(),
+            expected_revision_sha256: String::new(),
+            source: shared.into(),
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("define exactly"));
+    assert_eq!(fs::read_to_string(&timeline_path).unwrap(), timeline_source);
+    assert!(
+        !root
+            .join("route/predicates/first_reached.milestones")
+            .exists()
+    );
+
+    let source = "milestones 1.3\nmilestone first_reached { phase post_sim when player.exists }\n";
+    create_goal_predicate(
+        &timeline_path,
+        &root,
+        &BrowserGoalPredicateCreateRequest {
+            owner: "first_goal".into(),
+            create_on_segment: "first".into(),
+            predicate: "first_reached".into(),
+            expected_revision_sha256: String::new(),
+            source: source.into(),
+        },
+    )
+    .unwrap();
+    let error = create_goal_predicate(
+        &timeline_path,
+        &root,
+        &BrowserGoalPredicateCreateRequest {
+            owner: "second_goal".into(),
+            create_on_segment: "first".into(),
+            predicate: "second_reached".into(),
+            expected_revision_sha256: String::new(),
+            source:
+                "milestones 1.3\nmilestone second_reached { phase post_sim when event.running }\n"
+                    .into(),
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("already has an authored goal"));
+    assert!(
+        !root
+            .join("route/predicates/second_reached.milestones")
+            .exists()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn milestone_program_http_creates_a_predicate_from_the_explicit_empty_state() {
+    let root = temporary_root("owned-milestone-create-http");
+    let timeline_path = root.join("route.timeline");
+    fs::write(
+        &timeline_path,
+        r#"timeline owned_create_http
+segment first root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+continuation main starts root@clean
+continue main with first after root@clean
+"#,
+    )
+    .unwrap();
+    let config = WorkbenchConfig {
+        timeline_path: timeline_path.clone(),
+        repository_root: root.clone(),
+        working_directory: root.clone(),
+        game: root.join("unused-game"),
+        dvd: root.join("unused-dvd"),
+        state_root: root.join("state"),
+    };
+    let source = "milestones 1.3\nmilestone first_reached { phase post_sim when player.exists }\n";
+    let body = serde_json::to_vec(&serde_json::json!({
+        "owner": "first_goal",
+        "create_on_segment": "first",
+        "predicate": "first_reached",
+        "expected_revision_sha256": "",
+        "source": source,
+    }))
+    .unwrap();
+    let response = call_http(&config, "POST", "/api/milestone-program", &body);
+    assert_eq!(response.status, 200);
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(payload["definitions"][0]["name"], "first_reached");
+    assert!(timeline_path.exists());
+    assert_eq!(
+        fs::read_to_string(root.join("route/predicates/first_reached.milestones")).unwrap(),
+        source
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn accelerated_resume_hides_the_complete_boot_rooted_tape_even_for_root_nodes() {
     assert_eq!(
         playback_fast_forward_frames(
@@ -1649,13 +1968,8 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         first_local_frame.tape.frames.last(),
         continuation.frames.first()
     );
-    let root_playback = materialize_segment_playback(
-        &route,
-        artifact_root,
-        "tolink_title_ready",
-        None,
-    )
-    .unwrap();
+    let root_playback =
+        materialize_segment_playback(&route, artifact_root, "tolink_title_ready", None).unwrap();
     assert!(
         segment_parent_frame_count(
             &route,

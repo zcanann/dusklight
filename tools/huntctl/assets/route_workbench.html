@@ -107,13 +107,14 @@
     .advanced summary { cursor:pointer; }
     .advanced .predicate { margin-top:8px; }
     .actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:20px; }
-    .play,.record,.rename,.delete,.edit-predicate,.capture { padding:7px 10px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
+    .play,.record,.rename,.delete,.edit-predicate,.capture,.reveal { padding:7px 10px; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
     .play { border:1px solid rgba(109,216,203,.5); background:rgba(109,216,203,.08); color:var(--cyan); }
     .record { border:1px solid rgba(231,189,104,.5); background:rgba(231,189,104,.08); color:var(--amber); }
     .rename,.edit-predicate { border:1px solid rgba(134,174,251,.5); background:rgba(134,174,251,.08); color:var(--blue); }
     .capture { border:1px solid rgba(134,174,251,.5); background:rgba(134,174,251,.08); color:var(--blue); }
+    .reveal { border:1px solid #46556a; background:#19212c; color:#c6d0df; }
     .delete { border:1px solid rgba(241,120,140,.5); background:rgba(241,120,140,.07); color:var(--red); }
-    .play:disabled,.record:disabled,.rename:disabled,.delete:disabled,.capture:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
+    .play:disabled,.record:disabled,.rename:disabled,.delete:disabled,.capture:disabled,.reveal:disabled { border-color:var(--line); color:#667286; background:#151a22; cursor:not-allowed; }
     .detail-thumbnail { display:block; width:min(320px,100%); aspect-ratio:4/3; margin-top:14px; object-fit:cover; border:1px solid var(--line); border-radius:7px; background:#080b10; }
     .gameplay-overlay { position:relative; width:min(320px,100%); aspect-ratio:4/3; margin-top:14px; overflow:hidden; border:1px solid var(--line); border-radius:7px; background:#080b10; }
     .gameplay-overlay .detail-thumbnail { width:100%; height:100%; margin:0; border:0; border-radius:0; }
@@ -262,7 +263,7 @@
         <div class="pane-title"><span>Workspace</span></div>
         <div id="workspaceCommandbar" class="workspace-commandbar">
           <div class="workspace-menu-wrap"><button id="workspaceNew" class="workspace-command" type="button" aria-expanded="false">＋ New</button><div id="workspaceNewMenu" class="workspace-menu" hidden><button id="workspaceNewTape" type="button">New tape</button><button id="workspaceNewFolder" type="button">New folder</button></div></div>
-          <div class="workspace-menu-wrap"><button id="workspaceActions" class="workspace-command" type="button" aria-expanded="false">••• Actions</button><div id="workspaceActionsMenu" class="workspace-menu right" hidden><button id="workspaceClone" type="button">Clone tape</button><button id="workspaceMove" type="button">Move…</button><button id="workspaceDelete" type="button">Delete…</button></div></div>
+          <div class="workspace-menu-wrap"><button id="workspaceActions" class="workspace-command" type="button" aria-expanded="false">••• Actions</button><div id="workspaceActionsMenu" class="workspace-menu right" hidden><button id="workspaceReveal" type="button">View folder</button><button id="workspaceClone" type="button">Clone tape</button><button id="workspaceMove" type="button">Move…</button><button id="workspaceDelete" type="button">Delete…</button></div></div>
         </div>
         <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
       </aside>
@@ -280,6 +281,10 @@
     <form id="predicateForm" class="editor" method="dialog">
       <h2 id="predicateTitle">Edit goal predicates</h2>
       <p>This predicate source belongs only to this goal. Editing it cannot invalidate predicates or proofs owned by other segments.</p>
+      <div id="predicateIdentity" class="boot-grid" hidden>
+        <label class="boot-field"><span>Goal ID</span><input id="predicateGoal" spellcheck="false" aria-label="Goal ID"></label>
+        <label class="boot-field"><span>Predicate name</span><input id="predicateName" spellcheck="false" aria-label="Predicate name"></label>
+      </div>
       <textarea id="predicateSource" spellcheck="false" aria-label="Goal predicate DSL source"></textarea>
       <div id="predicateError" class="editor-error" role="alert"></div>
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="savePredicate" class="save" value="default" type="button">Validate &amp; save</button></div>
@@ -433,6 +438,7 @@
     function updateWorkspaceTools() {
       const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===WORKSPACE_ROOT;
       const project=workspaceNodeSelection.kind==='project'?graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id):null;
+      $('workspaceReveal').textContent=project?'View file':'View folder';
       $('workspaceClone').disabled=!project||project.kind==='timeline';
       $('workspaceMove').disabled=rootSelected;
       $('workspaceDelete').disabled=rootSelected||project?.active===true;
@@ -540,6 +546,12 @@
         workspaceNodeSelection={kind:'folder',id:WORKSPACE_ROOT};
         renderProjects();
       }
+    }
+    async function revealWorkspaceSelection() {
+      closeWorkspaceMenus();
+      const target={...workspaceNodeSelection};
+      if(!target.id)return;
+      await revealNative(target);
     }
     const NODE_WIDTH=220;
     const NODE_HEIGHT=68;
@@ -826,7 +838,7 @@
     function goalDetail(segmentId,proofs=[]) {
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
-      if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">This segment has no parity metadata.</div></div>`;
+      if(!goals.length)return `<div class="detail-section"><h3>Goal</h3><div class="fields">${field('Predicate','None')}</div><div class="empty">No predicate is authored for this segment yet.</div><div class="actions"><button class="edit-predicate" type="button" data-create-predicate="${escapeHtml(segmentId)}">Add predicate…</button></div></div>`;
       return goals.map(goal=>{const predicate=predicateFor(goal);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.id)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function taggedName(value) {
@@ -899,7 +911,7 @@
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
       const hasSiblings=segment.parent&&(graph.segments.some(item=>item.id!==segment.id&&item.parent===segment.parent)||graph.drafts.some(item=>item.parent?.kind==='segment'&&item.parent.id===segment.parent));
       const siblingDelete=hasSiblings?`<button class="delete" type="button" data-delete-siblings="${escapeHtml(segment.id)}">Keep this; delete siblings…</button>`:'';
-      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button>${siblingDelete}<button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
+      return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${records}${capture}<button class="reveal" type="button" data-reveal-kind="segment" data-id="${escapeHtml(segment.id)}">View file</button><button class="rename" type="button" data-rename-segment="${escapeHtml(segment.id)}">Rename…</button>${siblingDelete}<button class="delete" type="button" data-delete-segment="${escapeHtml(segment.id)}">Delete subtree…</button></div>`;
     }
     function renderDetail() {
       let html='';
@@ -920,27 +932,28 @@
           const anchor=(exit?.record_anchors||[])[0];
           const plays=exit?.playable?`<button class="play" type="button" data-play-kind="segment" data-play-mode="playback" data-id="${escapeHtml(exit.id)}">Playback</button><button class="play" type="button" data-play-kind="segment" data-play-mode="resume_accelerated" data-id="${escapeHtml(exit.id)}">Resume (accelerated)</button>`:'<button class="play" type="button" disabled>Playback unavailable</button>';
           const records=anchor?`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(exit.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child</button>`:'';
-          html=`<section class="property-summary"><div class="detail-kicker">Subgraph</div><div class="detail-title">${escapeHtml(group.name)}</div><div class="detail-subtitle">A nested view of ${escapeHtml((group.recursive_segments||[]).length)} unchanged segments.</div>${exit?gameplayThumbnail(exit):''}<div class="badges"><span class="badge">${escapeHtml(group.frame_count??'—')} frames</span>${score!=null?`<span class="badge score">${escapeHtml(score)} tick terminal score</span>`:''}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Entry',entry?segmentName(entry.id):group.entry_segment)}${field('Exit',exit?segmentName(exit.id):group.exit_segment)}${entry?field('Input',entry.start_fingerprint,true):''}${exit?field('Output',exit.boundary_fingerprint,true):''}</div><div class="actions">${plays}${records}${exit?`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(exit.id)}" ${exit.playable?'':'disabled'}>${exit.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`:''}<button type="button" data-open-subgraph-detail="${escapeHtml(group.id)}">Open subgraph</button><button class="rename" type="button" data-rename-subgraph="${escapeHtml(group.id)}">Rename…</button><button class="delete" type="button" data-ungroup-subgraph="${escapeHtml(group.id)}">Ungroup…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(group.entry_segment)}">Delete branch…</button></div></div>${exit?goalDetail(exit.id,exit.goal_proofs||[]):''}</div>`;
+          html=`<section class="property-summary"><div class="detail-kicker">Subgraph</div><div class="detail-title">${escapeHtml(group.name)}</div><div class="detail-subtitle">A nested view of ${escapeHtml((group.recursive_segments||[]).length)} unchanged segments.</div>${exit?gameplayThumbnail(exit):''}<div class="badges"><span class="badge">${escapeHtml(group.frame_count??'—')} frames</span>${score!=null?`<span class="badge score">${escapeHtml(score)} tick terminal score</span>`:''}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Entry',entry?segmentName(entry.id):group.entry_segment)}${field('Exit',exit?segmentName(exit.id):group.exit_segment)}${entry?field('Input',entry.start_fingerprint,true):''}${exit?field('Output',exit.boundary_fingerprint,true):''}</div><div class="actions">${plays}${records}${exit?`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(exit.id)}" ${exit.playable?'':'disabled'}>${exit.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`:''}<button class="reveal" type="button" data-reveal-kind="subgraph" data-id="${escapeHtml(group.id)}">View folder</button><button type="button" data-open-subgraph-detail="${escapeHtml(group.id)}">Open subgraph</button><button class="rename" type="button" data-rename-subgraph="${escapeHtml(group.id)}">Rename…</button><button class="delete" type="button" data-ungroup-subgraph="${escapeHtml(group.id)}">Ungroup…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(group.entry_segment)}">Delete branch…</button></div></div>${exit?goalDetail(exit.id,exit.goal_proofs||[]):''}</div>`;
         }
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
         if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
-        if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
+        if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="reveal" type="button" data-reveal-kind="draft" data-id="${escapeHtml(draft.id)}">View folder</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='project') {
         const project=graph.projects.entries.find(item=>item.id===selection.id);
         if(project){
           const artifact=project.artifact||{},stored=project.boot||{kind:'process'},override=project.boot_override;
           const effective=override?.enabled?override.boot:stored;
           const storedSection=override?.enabled?`<div class="detail-section"><h3>Stored in tape · Not used</h3><div class="fields">${bootFields(stored)}</div></div>`:'';
-          html=`<section class="property-summary"><div class="detail-kicker">Tape</div><div class="detail-title">${escapeHtml(project.label)}</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${escapeHtml(bootSummary(effective,override?.enabled))}</span></div>${project.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(project.thumbnail)}" alt="Terminal frame">`:''}</section><div class="property-content"><div class="detail-section"><h3>Playback starts here</h3><div class="fields">${bootFields(effective)}</div></div>${storedSection}<div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button><button class="capture" type="button" data-capture-kind="project" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>${project.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button></div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;
+          html=`<section class="property-summary"><div class="detail-kicker">Tape</div><div class="detail-title">${escapeHtml(project.label)}</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${escapeHtml(bootSummary(effective,override?.enabled))}</span></div>${project.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(project.thumbnail)}" alt="Terminal frame">`:''}</section><div class="property-content"><div class="detail-section"><h3>Playback starts here</h3><div class="fields">${bootFields(effective)}</div></div>${storedSection}<div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button><button class="capture" type="button" data-capture-kind="project" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>${project.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="reveal" type="button" data-reveal-kind="project" data-id="${escapeHtml(project.id)}">View file</button></div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;
         }
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
     }
     function bindActions(root) {
+      root.querySelectorAll('[data-reveal-kind]').forEach(button=>button.addEventListener('click',()=>revealNative({kind:button.dataset.revealKind,id:button.dataset.id},button)));
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
@@ -953,6 +966,7 @@
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
       root.querySelectorAll('[data-capture-kind]').forEach(button=>button.addEventListener('click',()=>captureThumbnail(button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
+      root.querySelectorAll('[data-create-predicate]').forEach(button=>button.addEventListener('click',()=>createPredicate(button.dataset.createPredicate)));
       root.querySelectorAll('[data-edit-boot]').forEach(button=>button.addEventListener('click',()=>editBoot(button.dataset.editBoot)));
     }
     function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'tape tree':'single tape'}`:`${graph.timeline} · tape tree`;renderProjects();renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
@@ -962,6 +976,15 @@
       ['inventoryInheritAll','inventoryDefaultAll','inventoryClearAll'].forEach(id=>$(id).disabled=!enabled);
       $('inventoryDisabled').hidden=enabled;
       $('inventoryGrid').hidden=!enabled;
+    }
+    async function revealNative(target,button=null) {
+      if(button)button.disabled=true;
+      try {
+        const response=await fetch('/api/reveal',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({target})});
+        const body=await response.json(); if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        toast(body.kind==='folder'?'Opened folder in the native file browser.':'Revealed file in the native file browser.');
+      } catch(error) { toast(error.message,true); }
+      finally { if(button)button.disabled=false; }
     }
     function fixtureFromEditor() {
       const source=$('bootFixture').value.trim();
@@ -1137,9 +1160,29 @@
     function editPredicate(id) {
       const goal=graph.goals.find(item=>item.id===id);if(!goal?.predicate_program)return;
       $('predicateTitle').textContent=`Edit objective · ${label(goal.id)}`;
+      $('predicateIdentity').hidden=true;
       $('predicateSource').value=goal.predicate_program.source;
       predicateEditRevision=goal.predicate_program.revision_sha256;
       predicateEditOwner=goal.id;
+      $('predicateError').textContent='';
+      $('predicateEditor').showModal();
+      $('predicateSource').focus();
+    }
+    function predicateIdentifier(value) {
+      let identifier=String(value||'').toLowerCase().replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'');
+      if(!/^[a-z]/.test(identifier))identifier=`goal_${identifier}`;
+      return identifier.slice(0,96)||'segment_reached';
+    }
+    function createPredicate(segmentId) {
+      const base=predicateIdentifier(segmentId);
+      const predicate=`${base}_reached`.slice(0,96);
+      $('predicateTitle').textContent=`Add objective · ${segmentName(segmentId)}`;
+      $('predicateIdentity').hidden=false;
+      $('predicateGoal').value=`${base}_goal`.slice(0,96);
+      $('predicateName').value=predicate;
+      $('predicateSource').value=`milestones 1.3\n\n# Replace this deliberately unreachable placeholder with the observed boundary.\nmilestone ${predicate} {\n  phase post_sim\n  when tape.frame == 4294967295\n}\n`;
+      predicateEditRevision='';
+      predicateEditOwner={segment:segmentId};
       $('predicateError').textContent='';
       $('predicateEditor').showModal();
       $('predicateSource').focus();
@@ -1149,7 +1192,9 @@
       const button=$('savePredicate'); button.disabled=true; button.textContent='Compiling…';
       $('predicateError').textContent='';
       try {
-        const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({owner:predicateEditOwner,expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value})});
+        const creating=typeof predicateEditOwner==='object';
+        const payload=creating?{owner:$('predicateGoal').value.trim(),create_on_segment:predicateEditOwner.segment,predicate:$('predicateName').value.trim(),expected_revision_sha256:'',source:$('predicateSource').value}:{owner:predicateEditOwner,expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value};
+        const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         predicateEditRevision=null;
@@ -1413,6 +1458,7 @@
     $('workspaceNewTape').addEventListener('click',createWorkspaceTape);
     $('workspaceNewFolder').addEventListener('click',createWorkspaceFolder);
     $('workspaceClone').addEventListener('click',cloneWorkspaceTape);
+    $('workspaceReveal').addEventListener('click',revealWorkspaceSelection);
     $('workspaceMove').addEventListener('click',moveWorkspaceSelection);
     $('confirmWorkspaceMove').addEventListener('click',confirmWorkspaceMove);
     $('workspaceDelete').addEventListener('click',deleteWorkspaceSelection);

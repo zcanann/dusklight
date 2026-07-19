@@ -149,6 +149,19 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/reveal") => {
+                    let result = serde_json::from_slice::<BrowserRevealRequest>(&request.body)
+                        .map_err(|error| {
+                            WorkbenchError::new(format!("invalid reveal request: {error}"))
+                        })
+                        .and_then(|reveal_request| reveal_entity(config, &reveal_request));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/thumbnails/capture") => {
                     let result =
                         serde_json::from_slice::<BrowserThumbnailCaptureRequest>(&request.body)
@@ -362,29 +375,50 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/subgraphs/create") => {
-                    let result = serde_json::from_slice::<BrowserSubgraphCreateRequest>(&request.body)
-                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph create request: {error}")))
-                        .and_then(|edit| create_subgraph(&config.timeline_path, &edit));
+                    let result =
+                        serde_json::from_slice::<BrowserSubgraphCreateRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid subgraph create request: {error}"
+                                ))
+                            })
+                            .and_then(|edit| create_subgraph(&config.timeline_path, &edit));
                     match result {
-                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
                 ("POST", "/api/subgraphs/rename") => {
-                    let result = serde_json::from_slice::<BrowserSubgraphRenameRequest>(&request.body)
-                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph rename request: {error}")))
-                        .and_then(|edit| rename_subgraph(&config.timeline_path, &edit));
+                    let result =
+                        serde_json::from_slice::<BrowserSubgraphRenameRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid subgraph rename request: {error}"
+                                ))
+                            })
+                            .and_then(|edit| rename_subgraph(&config.timeline_path, &edit));
                     match result {
-                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
                 ("POST", "/api/subgraphs/ungroup") => {
-                    let result = serde_json::from_slice::<BrowserSubgraphUngroupRequest>(&request.body)
-                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph ungroup request: {error}")))
-                        .and_then(|edit| ungroup_subgraph(&config.timeline_path, &edit));
+                    let result =
+                        serde_json::from_slice::<BrowserSubgraphUngroupRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid subgraph ungroup request: {error}"
+                                ))
+                            })
+                            .and_then(|edit| ungroup_subgraph(&config.timeline_path, &edit));
                     match result {
-                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
@@ -520,21 +554,35 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/milestone-program") => {
-                    let result = serde_json::from_slice::<BrowserMilestoneProgramUpdateRequest>(
-                        &request.body,
-                    )
-                    .map_err(|error| {
-                        MilestoneProgramUpdateError::Invalid(WorkbenchError::new(format!(
-                            "invalid milestone program update request: {error}"
-                        )))
-                    })
-                    .and_then(|update_request| {
-                        let timeline = load_authoritative_timeline(&config.timeline_path)
-                            .map_err(MilestoneProgramUpdateError::Invalid)?;
-                        let artifact_root = configured_artifact_root(config)
-                            .map_err(MilestoneProgramUpdateError::Invalid)?;
-                        update_milestone_program(&timeline, &artifact_root, &update_request)
-                    });
+                    let result =
+                        serde_json::from_slice::<BrowserMilestoneProgramEditRequest>(&request.body)
+                            .map_err(|error| {
+                                MilestoneProgramUpdateError::Invalid(WorkbenchError::new(format!(
+                                    "invalid milestone program update request: {error}"
+                                )))
+                            })
+                            .and_then(|edit_request| {
+                                let timeline = load_authoritative_timeline(&config.timeline_path)
+                                    .map_err(MilestoneProgramUpdateError::Invalid)?;
+                                let artifact_root = configured_artifact_root(config)
+                                    .map_err(MilestoneProgramUpdateError::Invalid)?;
+                                match edit_request {
+                                    BrowserMilestoneProgramEditRequest::Create(create_request) => {
+                                        create_goal_predicate(
+                                            &config.timeline_path,
+                                            &artifact_root,
+                                            &create_request,
+                                        )
+                                    }
+                                    BrowserMilestoneProgramEditRequest::Update(update_request) => {
+                                        update_milestone_program(
+                                            &timeline,
+                                            &artifact_root,
+                                            &update_request,
+                                        )
+                                    }
+                                }
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())
