@@ -7,13 +7,14 @@ description = "Control plane for deterministic Dusklight glitch-hunting workers"
 
 [features]
 default = []
-experimental-interventions = []
+experimental-interventions = ["dusklight-interventions/experimental-interventions"]
 
 [dependencies]
 dusklight-automation-contracts = { path = "crates/contracts" }
 dusklight-control = { path = "crates/control" }
 dusklight-evidence = { path = "crates/evidence" }
 dusklight-harness-contracts = { path = "crates/harness-contracts" }
+dusklight-interventions = { path = "crates/interventions" }
 dusklight-learning = { path = "crates/learning" }
 dusklight-objectives = { path = "crates/objectives" }
 dusklight-oracles = { path = "crates/oracles" }
@@ -49,6 +50,7 @@ members = [
     "crates/control",
     "crates/evidence",
     "crates/harness-contracts",
+    "crates/interventions",
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
@@ -64,6 +66,7 @@ default-members = [
     "crates/control",
     "crates/evidence",
     "crates/harness-contracts",
+    "crates/interventions",
     "crates/learning",
     "crates/objectives",
     "crates/oracles",

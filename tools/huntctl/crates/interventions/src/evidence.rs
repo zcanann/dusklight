@@ -197,7 +197,7 @@ fn evidence_error(message: impl Into<String>) -> InterventionEvidenceError {
 mod tests {
     use super::*;
     use crate::artifact::BuildIdentity;
-    use crate::intervention::experiment::{
+    use crate::experiment::{
         INTERVENTION_EXPERIMENT_PAIR_SCHEMA, INTERVENTION_EXPERIMENT_PLAN_SCHEMA,
         InterventionExperimentRole, InterventionExperimentRunArtifact,
     };

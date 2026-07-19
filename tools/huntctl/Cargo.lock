@@ -277,6 +277,7 @@ dependencies = [
  "dusklight-control",
  "dusklight-evidence",
  "dusklight-harness-contracts",
+ "dusklight-interventions",
  "dusklight-learning",
  "dusklight-objectives",
  "dusklight-oracles",
@@ -289,6 +290,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "zstd",
+]
+
+[[package]]
+name = "dusklight-interventions"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

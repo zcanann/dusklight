@@ -16,6 +16,7 @@ EXPECTED_MEMBERS = {
     "crates/control",
     "crates/evidence",
     "crates/harness-contracts",
+    "crates/interventions",
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
@@ -39,6 +40,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-control",
         "dusklight-objectives",
     },
+    "dusklight-interventions": {"dusklight-automation-contracts"},
     "dusklight-learning": {
         "dusklight-automation-contracts",
         "dusklight-control",
@@ -71,6 +73,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-control",
         "dusklight-evidence",
         "dusklight-harness-contracts",
+        "dusklight-interventions",
         "dusklight-learning",
         "dusklight-objectives",
         "dusklight-oracles",

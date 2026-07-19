@@ -8,6 +8,10 @@ pub mod parameter_search;
 #[cfg(feature = "experimental-interventions")]
 pub mod runtime;
 
+// These shared artifact formats remain owned by contracts; intervention code
+// consumes them without acquiring a dependency on root orchestration.
+pub use dusklight_automation_contracts::{actor_identity, artifact, controller_program, tape};
+
 use crate::actor_identity::PlacedActorSelector;
 use serde::Serialize;
 use std::error::Error;

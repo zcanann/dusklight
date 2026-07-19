@@ -5,7 +5,6 @@ pub mod behavior_archive;
 pub mod benchmark;
 pub mod corpus_ops;
 pub mod harness;
-pub mod intervention;
 pub mod learning;
 pub mod motion_path_golf;
 pub mod option_golf;
@@ -29,6 +28,7 @@ pub use dusklight_control::{
 pub use dusklight_evidence::{
     content_store, corpus, episode, transition_corpus, transition_evidence,
 };
+pub use dusklight_interventions as intervention;
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
 pub use dusklight_search::{bayesian_search, continuous_search, search};

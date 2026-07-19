@@ -47,6 +47,15 @@ objective compilation. It cannot launch native processes, schedule campaigns,
 rank candidates, train models, or parse CLI commands. Root adapters execute
 these contracts but cannot redefine them.
 
+## `dusklight-interventions`
+
+Owns the typed intervention timeline/DSL, bounded parameter search, explicitly
+gated runtime write-audit contract, and control/treatment evidence formats. It
+may depend only on portable automation contracts. It cannot execute the game,
+rank candidates, inspect route state, train models, or parse CLI commands. The
+experimental runtime remains disabled unless the root forwards the matching
+feature explicitly.
+
 ## `dusklight-control`
 
 Owns tape authoring/editing/composition, static controller compilation, typed
