@@ -16,7 +16,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_LEARN_INPUT_CORPORA: usize = 64;
+use super::MAX_LEARN_INPUT_CORPORA;
 
 pub fn command_option_values(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let input = option(learn_args, "--input")

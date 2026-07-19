@@ -22,6 +22,16 @@ EXPECTED_ROOT_MODULE_DIRECTORIES = {
     "cli",
 }
 
+# The executable is an adapter, not a domain-owner escape hatch. These are
+# ratchets: lower them as commands move into their domain modules, and never
+# raise them to accommodate another flat implementation.
+ROOT_FILE_LINE_BUDGETS = {
+    "corpus_ops.rs": 1_000,
+    "lib.rs": 200,
+    "main.rs": 4_250,
+}
+ROOT_MODULE_FILE_LINE_BUDGET = 2_000
+
 EXPECTED_MEMBERS = {
     ".",
     "crates/contracts",
@@ -180,6 +190,21 @@ assert root_module_directories == EXPECTED_ROOT_MODULE_DIRECTORIES, (
     "huntctl root module directories changed without an explicit ownership decision: "
     f"{sorted(root_module_directories)}"
 )
+
+for name, budget in ROOT_FILE_LINE_BUDGETS.items():
+    path = ROOT_SOURCE / name
+    lines = len(path.read_text().splitlines())
+    assert lines <= budget, (
+        f"huntctl root adapter {name} grew past its {budget}-line architecture budget: {lines}"
+    )
+
+for directory in EXPECTED_ROOT_MODULE_DIRECTORIES:
+    for path in (ROOT_SOURCE / directory).rglob("*.rs"):
+        lines = len(path.read_text().splitlines())
+        assert lines <= ROOT_MODULE_FILE_LINE_BUDGET, (
+            f"huntctl CLI adapter {path.relative_to(ROOT_SOURCE)} grew past its "
+            f"{ROOT_MODULE_FILE_LINE_BUDGET}-line architecture budget: {lines}"
+        )
 
 seen = set()
 for package_id in metadata["workspace_members"]:

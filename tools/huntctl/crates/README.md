@@ -3,6 +3,13 @@
 These crates exist to make domain ownership a compiler rule. A folder name is
 not an architectural boundary if any sibling module can import through it.
 
+The root package is only the executable adapter and compatibility facade.
+Command implementations are grouped below `src/cli/` by domain; reusable
+behavior belongs in one of the crates below. The crate-boundary test also
+ratchets the root adapter and each CLI module by line count, so a large command
+cannot quietly turn `main.rs` or a replacement file back into a flat dumping
+ground. The budgets are ceilings to lower during extraction, not targets.
+
 ```text
 dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
