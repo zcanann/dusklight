@@ -283,3 +283,13 @@ predeclared worker lane or introduce an unplanned or duplicate trial identity.
 
 **Done when:** evaluator execution can consume a portable prelaunch plan but
 cannot redefine worker assignment or validation policy in its coordination file.
+
+## 17. Authenticated specialized bounded search
+
+- [x] Carry one authenticated run-request template through every beam,
+  CEM/CMA-ES, and Bayesian native evaluation batch.
+- [x] Expose the same sole-authority CLI contract as ordinary search, reject
+  mixed legacy/run-request inputs, and retain authenticated attempt evidence.
+
+**Done when:** these bounded optimizers cannot drop an explicitly supplied core
+harness authority between proposal generation and native ranking.

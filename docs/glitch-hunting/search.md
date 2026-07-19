@@ -274,6 +274,13 @@ coordinated moves that require a temporarily later goal tick.
 Both boot proof tools require at least two repetitions; `--repetitions 1` is
 rejected rather than silently weakening determinism into a single observation.
 
+The beam, CEM/CMA-ES, and Bayesian commands below also accept
+`--run-request REQUEST.json --repository-root ROOT` in place of `--game` and
+`--dvd`. The request is the sole execution authority and is retained through
+every generated batch; executable, game-data, working-directory, game-argument,
+or timeout overrides cannot be mixed with it. Each attempt then retains and
+authenticates its derived harness request and result.
+
 ## Discrete beam search and terminal branch bounds
 
 For a finite catalog of typed `MacroAction` JSON values, run bounded beam

@@ -978,9 +978,37 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         schema: CANDIDATE_SCHEMA.into(),
         segment: SegmentProfile::BootToFsp103,
         boot: huntctl::tape::TapeBoot::Process,
-        actions: vec![MacroAction::Neutral { frames: 1 }],
+        actions: vec![MacroAction::Move {
+            angle_degrees: 0,
+            magnitude: 64,
+            frames: 1,
+        }],
         ancestry: Ancestry::default(),
     };
+    let optimizer_seed = root.join("optimizer-seed.json");
+    fs::write(&optimizer_seed, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let beam_options = root.join("beam-options.json");
+    fs::write(
+        &beam_options,
+        serde_json::to_vec_pretty(&vec![MacroAction::Neutral { frames: 1 }]).unwrap(),
+    )
+    .unwrap();
+    let continuous_axes = root.join("continuous-axes.json");
+    fs::write(
+        &continuous_axes,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "dusklight-continuous-axes/v1",
+            "axes": [{
+                "name": "heading",
+                "action_index": 0,
+                "parameter": { "kind": "move_heading_degrees" },
+                "minimum": -90.0,
+                "maximum": 90.0
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let seed_id = seed.id().unwrap();
     let learned = Candidate {
         actions: vec![MacroAction::Neutral { frames: 2 }],
@@ -1150,6 +1178,153 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
                 .all(|attempt| attempt["harness_terminal"] == "reached")
         );
     }
+
+    let beam_root = root.join("authenticated-beam");
+    let beam = Command::new(executable)
+        .args(["search", "beam", "--candidate"])
+        .arg(&optimizer_seed)
+        .arg("--options")
+        .arg(&beam_options)
+        .arg("--output")
+        .arg(&beam_root)
+        .args([
+            "--beam-width",
+            "1",
+            "--maximum-depth",
+            "1",
+            "--candidate-budget",
+            "1",
+            "--workers",
+            "1",
+            "--repetitions",
+            "2",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        beam.status.success(),
+        "{}",
+        String::from_utf8_lossy(&beam.stderr)
+    );
+
+    let continuous_root = root.join("authenticated-continuous");
+    let continuous = Command::new(executable)
+        .args(["search", "continuous", "--method", "cem", "--candidate"])
+        .arg(&optimizer_seed)
+        .arg("--axes")
+        .arg(&continuous_axes)
+        .arg("--output")
+        .arg(&continuous_root)
+        .args([
+            "--generations",
+            "1",
+            "--population",
+            "4",
+            "--elites",
+            "1",
+            "--candidate-budget",
+            "4",
+            "--rng-seed",
+            "7",
+            "--workers",
+            "1",
+            "--repetitions",
+            "2",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        continuous.status.success(),
+        "{}",
+        String::from_utf8_lossy(&continuous.stderr)
+    );
+
+    let bayesian_root = root.join("authenticated-bayesian");
+    let bayesian = Command::new(executable)
+        .args(["search", "bayesian", "--candidate"])
+        .arg(&optimizer_seed)
+        .arg("--axes")
+        .arg(&continuous_axes)
+        .arg("--output")
+        .arg(&bayesian_root)
+        .args([
+            "--generations",
+            "1",
+            "--batch-size",
+            "2",
+            "--initial-samples",
+            "2",
+            "--acquisition-pool",
+            "16",
+            "--candidate-budget",
+            "2",
+            "--rng-seed",
+            "7",
+            "--workers",
+            "1",
+            "--repetitions",
+            "2",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        bayesian.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bayesian.stderr)
+    );
+
+    for evaluation_path in [
+        beam_root.join("d000/evaluations/evaluation.json"),
+        continuous_root.join("g000/evaluations/evaluation.json"),
+        bayesian_root.join("g000/evaluations/evaluation.json"),
+    ] {
+        let evaluation: Value =
+            serde_json::from_slice(&fs::read(evaluation_path).unwrap()).unwrap();
+        for attempt in evaluation["attempts"].as_array().unwrap() {
+            assert_eq!(attempt["harness_terminal"], "reached");
+            let request_path = PathBuf::from(attempt["harness_request"].as_str().unwrap());
+            let result_path = PathBuf::from(attempt["harness_result"].as_str().unwrap());
+            let request: HarnessRunRequest =
+                serde_json::from_slice(&fs::read(request_path).unwrap()).unwrap();
+            let result: HarnessRunResult =
+                serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+            result
+                .validate_files(&request, result_path.parent().unwrap())
+                .unwrap();
+        }
+    }
+
+    let conflicting_beam = Command::new(executable)
+        .args(["search", "beam", "--candidate"])
+        .arg(&optimizer_seed)
+        .arg("--options")
+        .arg(&beam_options)
+        .arg("--output")
+        .arg(root.join("conflicting-beam"))
+        .arg("--run-request")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .arg("--game")
+        .arg(root.join("inputs/dusklight"))
+        .output()
+        .unwrap();
+    assert!(!conflicting_beam.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting_beam.stderr).contains("sole execution authority")
+    );
 
     let tournament_definition = root.join("tournament.json");
     fs::write(

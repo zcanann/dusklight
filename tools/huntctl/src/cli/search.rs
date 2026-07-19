@@ -347,24 +347,24 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                         })
                 })
                 .transpose()?;
+            let execution = search_execution_config(search_args)?;
             let summary = run_beam_search(&BeamSearchConfig {
                 segment: seed_candidate.segment,
                 seed_candidate,
                 options,
                 q_priors,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 beam_width: usize_option(search_args, "--beam-width", 8)?,
                 maximum_depth: u32_option(search_args, "--maximum-depth", 8)?,
                 candidate_budget: usize_option(search_args, "--candidate-budget", 1_000)?,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -380,17 +380,16 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("missing required --method cem|cma-es")?
                 .parse()?;
             let population_size = usize_option(search_args, "--population", 32)?;
+            let execution = search_execution_config(search_args)?;
             let summary = run_continuous_search(&ContinuousSearchRunConfig {
                 method,
                 seed_candidate,
                 axes,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 generations: u32_option(search_args, "--generations", 10)?,
                 population_size,
                 elite_count: usize_option(search_args, "--elites", (population_size / 4).max(1))?,
@@ -402,7 +401,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 rng_seed: u64_option(search_args, "--rng-seed", 1)?,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -420,16 +420,15 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .transpose()?
                     .unwrap_or(default))
             };
+            let execution = search_execution_config(search_args)?;
             let summary = run_bayesian_search(&BayesianSearchRunConfig {
                 seed_candidate,
                 axes,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 generations: u32_option(search_args, "--generations", 20)?,
                 batch_size: usize_option(search_args, "--batch-size", 4)?,
                 initial_samples: usize_option(search_args, "--initial-samples", 8)?,
@@ -441,7 +440,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 rng_seed: u64_option(search_args, "--rng-seed", 1)?,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())

@@ -72,6 +72,7 @@ pub struct BeamSearchConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -119,6 +120,7 @@ pub struct ContinuousSearchRunConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -166,6 +168,7 @@ pub struct BayesianSearchRunConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -377,7 +380,7 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
-            harness: None,
+            harness: config.harness.clone(),
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -611,7 +614,7 @@ pub fn run_continuous_search(
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
-            harness: None,
+            harness: config.harness.clone(),
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
@@ -803,7 +806,7 @@ pub fn run_bayesian_search(
             workers: config.workers,
             repetitions: config.repetitions,
             timeout: config.timeout,
-            harness: None,
+            harness: config.harness.clone(),
         })?;
         let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
         let leaderboard = rank_population(&manifest, &results)?;
