@@ -44,6 +44,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "orchestration/src/finalist_reduction/boot.rs": 1_000,
     "orchestration/src/finalist_reduction/mod.rs": 250,
     "orchestration/src/finalist_reduction/route.rs": 1_250,
+    "orchestration/src/harness_authority.rs": 125,
     "orchestration/src/search_drivers.rs": 1_000,
     "orchestration/src/tournament.rs": 900,
 }
@@ -69,6 +70,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "harness/campaign.rs",
         "harness/conformance.rs",
         "harness/mod.rs",
+        "harness_authority.rs",
         "lib.rs",
         "search_drivers.rs",
         "tournament.rs",

@@ -323,3 +323,13 @@ an explicitly supplied core-harness authority.
 
 **Done when:** a fair anchored tournament can use the core harness without
 conflating or weakening either authenticated identity.
+
+## 21. Exact authority for anchored route search
+
+- [x] Require `run-route --run-request` to bind the timeline-selected goal,
+  compiled milestone program, and movement action schema exactly.
+- [x] Share that validation across route search, reduction, and tournaments so
+  anchored identity rules cannot drift between orchestration entry points.
+
+**Done when:** accepting a sealed request cannot make an anchored route command
+execute a different objective than the one it reports and ranks.

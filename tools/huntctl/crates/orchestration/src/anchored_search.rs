@@ -1,6 +1,7 @@
 //! Multi-generation anchored route policy over authenticated native evaluation.
 
 use crate::search_drivers::SearchRunConfig;
+use crate::harness_authority::validate_anchored_harness_request;
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::candidate_envelope::{
     CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
@@ -157,8 +158,13 @@ pub fn run_anchored_search(
         ));
     }
     seed.validate()?;
-    validate_anchored_execution(&config.objective, search)?;
     let prepared = prepare_anchored_evaluator(&config.objective)?;
+    validate_anchored_execution(&config.objective, search)?;
+    validate_anchored_harness_request(
+        search.harness.as_ref(),
+        prepared.identity(),
+        "anchored route search",
+    )?;
     fs::create_dir_all(&search.output_root)?;
     let mut population_root = search.output_root.join("g000");
     let mut manifest = write_seed_population(

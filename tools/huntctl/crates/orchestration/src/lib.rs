@@ -3,6 +3,7 @@
 mod anchored_search;
 pub mod harness;
 pub mod finalist_reduction;
+mod harness_authority;
 mod search_drivers;
 mod tournament;
 

@@ -32,7 +32,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
@@ -1693,6 +1693,47 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
             .unwrap()
             .identity()
             .clone();
+    let anchored_search_root = root.join("authenticated-anchored-search");
+    let anchored_search = huntctl::search_evaluator::run_anchored_search(
+        &huntctl::search_evaluator::AnchoredSearchRunConfig {
+            search: huntctl::search_evaluator::SearchRunConfig {
+                segment: SegmentProfile::Fsp103ToFsp104,
+                seed_candidate: Some(anchored_candidate.clone()),
+                game: root.join(&sealed_anchored_request.executable.path),
+                dvd: root.join(&sealed_anchored_request.game_data.path),
+                output_root: anchored_search_root.clone(),
+                working_directory: root.clone(),
+                game_args_prefix: Vec::new(),
+                generations: 1,
+                population_size: 1,
+                elite_count: 1,
+                workers: 1,
+                repetitions: 2,
+                timeout: Duration::from_secs(30),
+                rng_seed: 1,
+                harness: Some(huntctl::search_evaluator::HarnessEvaluateConfig {
+                    repository_root: root.clone(),
+                    request_template: sealed_anchored_request.clone(),
+                }),
+            },
+            objective: anchored_objective_config.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(anchored_search.objective, anchored_identity);
+    let anchored_search_evaluation: Value = serde_json::from_slice(
+        &fs::read(anchored_search_root.join("g000/evaluations/evaluation.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        anchored_search_evaluation["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|attempt| attempt["harness_terminal"] == "reached"
+                && attempt["harness_request_sha256"].is_string()
+                && attempt["harness_result_sha256"].is_string())
+    );
     let anchored_envelope_objective = NamedDigest::new(
         anchored_identity.goal_milestone.clone(),
         anchored_identity.digest.parse().unwrap(),

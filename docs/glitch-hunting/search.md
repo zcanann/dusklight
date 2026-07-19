@@ -130,6 +130,13 @@ or `--goal` explicitly:
 
     huntctl search run-route --timeline routes/intro.timeline --lineage main --segment to_ordon_spring_human150 --source-goal link_control --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
+The loose executable inputs may be replaced with `--run-request REQUEST.json`
+and `--repository-root ROOT`. The sealed request must bind the exact
+timeline-selected goal, compiled milestone-program digest, and
+`movement-action/v2` schema. Route search, anchored tournaments, and anchored
+reduction share this validation, so none can report one anchored objective
+while executing another.
+
 It refuses a timeline segment that is not immediately after the requested
 lineage prefix. The compiled DMSP and materialized prefix are retained in the
 sibling `build/search/tunnel.objective/` directory; attempt and champion

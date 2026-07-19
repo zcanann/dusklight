@@ -1,6 +1,7 @@
 //! Exact anchored-route reduction through repeated clean-boot evaluation.
 
 use super::*;
+use crate::harness_authority::validate_anchored_harness_request;
 
 #[derive(Clone)]
 struct ProvenRouteCandidate {
@@ -79,7 +80,11 @@ pub fn minimize_anchored_route(
     }
     let prepared = prepare_anchored_evaluator(&config.objective)?;
     let objective = prepared.identity().clone();
-    validate_anchored_harness(config.harness.as_ref(), &objective)?;
+    validate_anchored_harness_request(
+        config.harness.as_ref(),
+        &objective,
+        "anchored route minimization",
+    )?;
     fs::create_dir_all(&config.output_root)?;
 
     let source_id = config.candidate.id()?;
@@ -658,29 +663,6 @@ fn checkpoint_harness_is_valid(
         }
         _ => false,
     }
-}
-
-fn validate_anchored_harness(
-    harness: Option<&HarnessEvaluateConfig>,
-    objective: &AnchoredObjectiveIdentity,
-) -> Result<(), EvaluateError> {
-    let Some(harness) = harness else {
-        return Ok(());
-    };
-    if harness.request_template.objective.goal != objective.goal_milestone
-        || harness
-            .request_template
-            .objective
-            .program_sha256
-            .to_string()
-            != objective.milestone_program_sha256
-    {
-        return Err(EvaluateError::InvalidConfig(
-            "anchored route minimization run request must bind the exact goal and milestone program"
-                .into(),
-        ));
-    }
-    Ok(())
 }
 
 fn fresh_evidence_root(
