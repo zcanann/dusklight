@@ -2,7 +2,6 @@
 
 mod anchored_search;
 pub mod harness;
-mod search_drivers;
 mod tournament;
 
 pub use dusklight_evaluation::*;
@@ -10,11 +9,7 @@ pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,
 };
 pub use dusklight_finalist_reduction::*;
-pub use search_drivers::{
-    BayesianSearchRunConfig, BayesianSearchRunSummary, BeamSearchConfig, BeamSearchSummary,
-    ContinuousSearchRunConfig, ContinuousSearchRunSummary, SearchRunConfig, SearchRunSummary,
-    SEARCH_RUN_SCHEMA, run_bayesian_search, run_beam_search, run_continuous_search, run_search,
-};
+pub use dusklight_bounded_search::*;
 pub use tournament::{
     ProposerReplayVerdict, ProposerTournamentConfig, ProposerTournamentRow,
     ProposerTournamentSummary, TournamentBudgetUnit, TournamentDefinition, TournamentProposer,

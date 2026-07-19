@@ -343,3 +343,13 @@ execute a different objective than the one it reports and ranks.
 
 **Done when:** finalist reduction cannot regain unrelated campaign, novelty, or
 learning dependencies without an explicit architecture-policy change.
+
+## 23. Dedicated bounded-search crate
+
+- [x] Extract ordinary, beam, continuous, and Bayesian native search drivers
+  from broad orchestration into a dedicated dependency-bounded crate.
+- [x] Preserve anchored-search composition and the public CLI facade while
+  ratcheting the new crate's exact inventory and dependency allowlist.
+
+**Done when:** bounded optimizer loops cannot acquire campaign, novelty,
+finalist-reduction, route, or workbench ownership by sibling-module imports.

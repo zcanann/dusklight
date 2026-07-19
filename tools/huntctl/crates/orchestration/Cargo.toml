@@ -7,6 +7,7 @@ description = "Native execution, evaluation, campaigns, and proposal orchestrati
 
 [dependencies]
 dusklight-automation-contracts = { path = "../contracts" }
+dusklight-bounded-search = { path = "../bounded-search" }
 dusklight-control = { path = "../control" }
 dusklight-evidence = { path = "../evidence" }
 dusklight-evaluation = { path = "../evaluation" }

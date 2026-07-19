@@ -13,12 +13,16 @@ ceilings as well; large test suites live in sibling `tests.rs` modules instead
 of obscuring production ownership. The budgets are ceilings to lower during
 extraction, not targets. The current policy caps the executable adapter and
 crate entry points at 2,500 lines and every non-test implementation module at
-3,000 lines. Evaluation, finalist reduction, harness runtime, orchestration,
-proposal, and workbench source inventories are closed lists: adding a sibling
-module requires an explicit ownership-policy change.
+3,000 lines. Bounded search, evaluation, finalist reduction, harness runtime,
+orchestration, proposal, and workbench source inventories are closed lists:
+adding a sibling module requires an explicit ownership-policy change.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)
+├── dusklight-bounded-search ─────────┤
+│   ├── dusklight-evaluation ──────────┤
+│   ├── dusklight-learning ────────────┤
+│   └── dusklight-search ──────────────┤
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-evaluation-plan ────────┤
@@ -48,6 +52,7 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-oracles ────────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-orchestration ──────────┤
+│   ├── dusklight-bounded-search ──────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-evaluation ──────────┤
 │   ├── dusklight-finalist-reduction ──┤
@@ -92,6 +97,15 @@ mutation, worker processes, or the CLI. This prevents evidence truth from
 acquiring algorithm-specific authority. Exact trace/evidence comparison also
 lives here because it consumes only immutable artifacts and has no execution or
 proposal authority.
+
+## `dusklight-bounded-search`
+
+Owns ordinary evolutionary, beam, continuous CEM/CMA-ES, and Bayesian driver
+loops whose rankings come exclusively from authenticated native evaluation. It
+may consume portable contracts, evaluation, learned Q priors, and pure search
+algorithms. It cannot own campaigns, anchored-generation learning admission,
+novelty archives, finalist reduction, route/workbench state, harness runtime
+internals, or CLI parsing.
 
 ## `dusklight-evaluation`
 

@@ -39,13 +39,13 @@ CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
 # dependency surfaces; growth beyond these limits requires another ownership
 # split, not a larger generic allowance.
 COORDINATION_FILE_LINE_BUDGETS = {
+    "bounded-search/src/lib.rs": 950,
     "evaluation/src/search_evaluator.rs": 1_375,
     "evaluation/src/harness_authority.rs": 125,
     "finalist-reduction/src/boot.rs": 1_000,
     "finalist-reduction/src/lib.rs": 250,
     "finalist-reduction/src/route.rs": 1_250,
     "orchestration/src/anchored_search.rs": 800,
-    "orchestration/src/search_drivers.rs": 1_000,
     "orchestration/src/tournament.rs": 900,
 }
 
@@ -53,6 +53,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
 # new sibling module requires an explicit ownership-policy edit instead of
 # quietly recreating a general-purpose dumping ground.
 EXPECTED_COORDINATION_SOURCE_FILES = {
+    "bounded-search": {"lib.rs"},
     "evaluation": {
         "harness_authority.rs",
         "lib.rs",
@@ -70,7 +71,6 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "harness/conformance.rs",
         "harness/mod.rs",
         "lib.rs",
-        "search_drivers.rs",
         "tournament.rs",
     },
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
@@ -87,6 +87,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
 
 EXPECTED_MEMBERS = {
     ".",
+    "crates/bounded-search",
     "crates/contracts",
     "crates/control",
     "crates/evidence",
@@ -112,6 +113,12 @@ EXPECTED_MEMBERS = {
 
 ALLOWED_INTERNAL_DEPENDENCIES = {
     "dusklight-automation-contracts": set(),
+    "dusklight-bounded-search": {
+        "dusklight-automation-contracts",
+        "dusklight-evaluation",
+        "dusklight-learning",
+        "dusklight-search",
+    },
     "dusklight-control": {"dusklight-automation-contracts"},
     "dusklight-evidence": {
         "dusklight-automation-contracts",
@@ -171,6 +178,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
     },
     "dusklight-orchestration": {
         "dusklight-automation-contracts",
+        "dusklight-bounded-search",
         "dusklight-control",
         "dusklight-evidence",
         "dusklight-evaluation",

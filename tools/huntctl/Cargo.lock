@@ -232,6 +232,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dusklight-bounded-search"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-evaluation",
+ "dusklight-learning",
+ "dusklight-search",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dusklight-control"
 version = "0.1.0"
 dependencies = [
@@ -406,6 +418,7 @@ name = "dusklight-orchestration"
 version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
+ "dusklight-bounded-search",
  "dusklight-control",
  "dusklight-evaluation",
  "dusklight-evidence",

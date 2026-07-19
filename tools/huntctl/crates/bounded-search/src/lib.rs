@@ -1,3 +1,5 @@
+//! Bounded optimizer loops whose ranking authority is authenticated native evaluation.
+
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_evaluation::*;
 use dusklight_search::bayesian_search::{
