@@ -360,4 +360,22 @@ mod tests {
         assert_eq!(response.entries[8].status, TypedFactStatus::Truncated);
         assert_eq!(response.entries[9].value, None);
     }
+
+    #[test]
+    fn sampled_player_absence_is_a_present_exists_fact() {
+        let mut record = record();
+        record.flags = 0;
+        record
+            .channel_status
+            .insert(TraceChannel::PlayerMotion, TraceChannelStatus::Absent);
+        let response = typed_facts_from_trace_record(&record);
+        response.validate().unwrap();
+        assert_eq!(response.entries[3].status, TypedFactStatus::Present);
+        assert_eq!(
+            response.entries[3].value,
+            Some(TypedFactValue::Boolean(false))
+        );
+        assert_eq!(response.entries[4].status, TypedFactStatus::Absent);
+        assert_eq!(response.entries[5].status, TypedFactStatus::Absent);
+    }
 }
