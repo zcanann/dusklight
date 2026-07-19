@@ -75,20 +75,49 @@ authority.
 Successful validation emits a small machine-readable report with suite identity
 and positive/negative case counts.
 
+## Campaign dry run
+
+Resolve one checked-in case before spending simulator budget:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  campaign \
+  --suite tests/fixtures/automation/objective_conformance_suite.json \
+  --case reach-point-ordon-ranch \
+  --output build/harness/reach-point-campaign \
+  --proposer scripted \
+  --proposer structured \
+  --dry-run
+```
+
+The `dusklight-campaign-plan/v1` JSON resolves the suite, scenario, objective,
+observation view, and seed paths; prints their bound identities; lists exact
+required facts and capabilities; expands repetition and proposer budgets; and
+shows the request, episode, finalist, replay, and report destinations. Campaign
+outputs must be canonical repository-relative paths beneath ignored `build/`.
+Dry runs validate every suite artifact but create no directories or files.
+
+This is the stable planning surface for the eventual executing campaign
+command. It does not yet run proposers, rank results, or cold-replay finalists.
+
 ## Current boundary
 
-The schema, validator, and sealer exist, including unit and CLI integration
-coverage. `tests/fixtures/automation/objective_conformance_suite.json` contains
-the first case: a fixture-bound direct `F_SP103` boot, a 30-tick authored tape
-whose compiled frames are all neutral, a stable three-tick `stage_ready`
-objective, and a minimal authenticated observation view. The suite validator
-authenticates and compiles all of those inputs.
+The schema, validator, sealer, and read-only campaign resolver exist, including
+unit and CLI integration coverage.
+`tests/fixtures/automation/objective_conformance_suite.json` contains a
+fixture-bound direct `F_SP103` boot, a 30-tick authored tape whose compiled
+frames are all neutral, a stable three-tick `stage_ready` objective, and a
+minimal authenticated observation view. A wrong-stage neutral negative control
+uses the same objective and budget and must end in `objective_miss`. The suite
+validator authenticates and compiles all of those inputs.
 
 The second case starts from an `F_SP104` point-0 fixture and binds a 799-tick
 authored movement seed to the documented Ordon ranch region near
 `(-1600, 200, -9050)`. Its semantic objective requires Link to remain inside a
 bounded AABB for five post-simulation ticks, and its observation view retains
 the stage, player identity, and exact position features used by that contract.
+Its same-boot neutral negative control proves that stage readiness and spawn
+proximity alone cannot satisfy the region objective.
 
 The native query seam needed by the remaining interaction cases now exists.
 Player-action channel v2 records the realized A-button status, exact placed
@@ -100,7 +129,7 @@ event edge and the correct partner identity; a carry objective can use an
 ordered absent-to-present sequence and the correct object identity. Session
 process IDs are retained for diagnostics but are not objective selector facts.
 
-The talk-to-NPC, negative-control, and pick-up-object cases do not exist yet,
-and `huntctl` does not yet execute an entire suite. Those are separate active
-tasks so authored-contract validation is not mistaken for native conformance
-evidence.
+The talk-to-NPC and pick-up-object positive/control pairs do not exist yet, and
+`huntctl campaign` does not yet execute a campaign. Those are separate active
+tasks so authored-contract validation and dry-run planning are not mistaken for
+native conformance evidence.

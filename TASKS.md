@@ -148,7 +148,7 @@ not a learner score, controller claim, or lucky filename.
   comparison, and replay boundaries.
 - [ ] Add one top-level command that resolves a suite case, runs selected
   proposers, ranks results, cold-replays finalists, and writes the report.
-- [ ] Support a dry run showing resolved paths, identities, required facts,
+- [x] Support a dry run showing resolved paths, identities, required facts,
   capabilities, budgets, and output locations.
 - [ ] Keep generated evidence under an ignored build root and print the first
   unsupported or mismatched fact with its artifact path.
