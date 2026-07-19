@@ -47,8 +47,8 @@ pub fn minimize_anchored_route(
                 .into(),
         ));
     }
-    let prepared = prepare_anchored_objective(&config.objective, PathBuf::new())?;
-    let objective = prepared.identity.clone();
+    let prepared = prepare_anchored_evaluator(&config.objective)?;
+    let objective = prepared.identity().clone();
     fs::create_dir_all(&config.output_root)?;
 
     let source_id = config.candidate.id()?;
@@ -283,7 +283,7 @@ pub fn minimize_anchored_route(
 
 fn evaluate_route_batch(
     config: &AnchoredRouteMinimizeConfig,
-    prepared: &PreparedAnchoredObjective,
+    prepared: &PreparedAnchoredEvaluator,
     candidates: Vec<Candidate>,
     root: &Path,
     generation: u32,
@@ -295,7 +295,7 @@ fn evaluate_route_batch(
         generation,
         candidates.clone(),
     )?;
-    let (report, results) = evaluate_anchored_population_internal(&AnchoredEvaluateConfig {
+    let (report, results) = evaluate_prepared_anchored_population(&AnchoredEvaluateConfig {
         evaluation: EvaluateConfig {
             population_path: population_root.join("manifest.json"),
             game: config.objective.game.clone(),
@@ -310,8 +310,8 @@ fn evaluate_route_batch(
             harness: None,
         },
         objective: config.objective.clone(),
-    }, Some(prepared))?;
-    if results.objective != prepared.identity {
+    }, prepared)?;
+    if &results.objective != prepared.identity() {
         return Err(EvaluateError::InvalidResult(
             "anchored route minimization changed objective identity".into(),
         ));

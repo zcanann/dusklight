@@ -115,36 +115,6 @@ fn attempt_outcomes_keep_all_terminal_classes_distinct() {
     );
 }
 
-fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
-    let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
-    ProvenBootCandidate {
-        tape: candidate.compile().unwrap(),
-        candidate,
-        sim_tick,
-        tape_frame,
-        boundary_fingerprint: BoundaryFingerprint {
-            schema: "dusklight.milestone-boundary/v1".into(),
-            algorithm: "xxh3-128".into(),
-            canonical_encoding: "little-endian-fixed-v1".into(),
-            digest: digest.into(),
-        },
-    }
-}
-
-#[test]
-fn boot_reduction_target_rejects_later_or_different_proof() {
-    let source = proven(439, 439, &"a".repeat(32));
-    let target = BootReductionTarget {
-        sim_tick: source.sim_tick,
-        tape_frame: source.tape_frame,
-        boundary_fingerprint: source.boundary_fingerprint.clone(),
-    };
-    assert!(target.accepts(&source));
-    assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
-    assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
-    assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
-}
-
 #[test]
 fn anchored_parser_requires_exact_program_source_and_crawl_evidence() {
     assert!(validate_anchored_game_args(&["--stage".into(), "F_SP103,1,1,3".into()]).is_err());
@@ -356,6 +326,29 @@ milestone tunnel_crawl_start {
         serde_json::Value::String("c".repeat(32));
     fs::write(&result_path, serde_json::to_vec_pretty(&wrong).unwrap()).unwrap();
     assert!(parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).is_err());
+
+    let mut mismatched_objective = prepared.config.clone();
+    mismatched_objective.goal_milestone = "different_goal".into();
+    let mismatch = evaluate_prepared_anchored_population(
+        &AnchoredEvaluateConfig {
+            evaluation: EvaluateConfig {
+                population_path: population_root.join("manifest.json"),
+                game: prepared.config.game.clone(),
+                dvd: prepared.config.dvd.clone(),
+                output_root: root.join("mismatch-evidence"),
+                results_path: root.join("mismatch-results.json"),
+                working_directory: root.clone(),
+                game_args_prefix: Vec::new(),
+                workers: 1,
+                repetitions: 2,
+                timeout: Duration::from_secs(1),
+                harness: None,
+            },
+            objective: mismatched_objective,
+        },
+        &prepared,
+    );
+    assert!(matches!(mismatch, Err(EvaluateError::InvalidConfig(_))));
     fs::remove_dir_all(root).unwrap();
 }
 

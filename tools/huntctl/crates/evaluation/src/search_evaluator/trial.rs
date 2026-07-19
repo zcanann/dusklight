@@ -122,7 +122,7 @@ pub(super) fn build_anchored_trials(
     population_root: &Path,
     output_root: &Path,
     repetitions: u32,
-    objective: &PreparedAnchoredObjective,
+    objective: &PreparedAnchoredEvaluator,
 ) -> Result<Vec<Trial>, EvaluateError> {
     let mut trials = Vec::with_capacity(manifest.members.len() * repetitions as usize);
     for member in &manifest.members {
@@ -214,7 +214,7 @@ pub(super) fn run_trial(
     trial: &Trial,
     worker_id: &str,
     global_cancel: &AtomicBool,
-    anchored: Option<&PreparedAnchoredObjective>,
+    anchored: Option<&PreparedAnchoredEvaluator>,
 ) -> AttemptEvidence {
     let started = Instant::now();
     let mut evidence = AttemptEvidence {
@@ -474,7 +474,7 @@ fn run_harness_trial(
     segment: SegmentProfile,
     trial: &Trial,
     global_cancel: &AtomicBool,
-    anchored: Option<&PreparedAnchoredObjective>,
+    anchored: Option<&PreparedAnchoredEvaluator>,
     evidence: &mut AttemptEvidence,
 ) -> Result<TrialScore, EvaluateError> {
     if global_cancel.load(Ordering::Acquire) {
@@ -668,7 +668,7 @@ type ExtractedTrialTransitionCorpus = (PathBuf, PathBuf, PathBuf, Option<PathBuf
 fn extract_trial_transition_corpus(
     trial: &Trial,
     evidence: &AttemptEvidence,
-    objective: &PreparedAnchoredObjective,
+    objective: &PreparedAnchoredEvaluator,
 ) -> Result<ExtractedTrialTransitionCorpus, String> {
     let trace_path = evidence
         .gameplay_trace

@@ -42,6 +42,7 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-oracles ────────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-orchestration ──────────┤
+│   ├── dusklight-control ─────────────┤
 │   ├── dusklight-evaluation ──────────┤
 │   ├── dusklight-harness-runtime ─────┤
 │   └── dusklight-search ──────────────┤
@@ -90,7 +91,10 @@ Owns authenticated population evaluation, bounded search runs, tournament
 scoring, trial evidence extraction, and native-result admission. It may execute
 already-materialized candidates through the harness runtime and consume
 proposal policies, but it cannot define harness request truth, train models,
-author proposal policy, or schedule top-level objective campaigns.
+author proposal policy, schedule top-level objective campaigns, or choose how
+finalists are reduced. A prepared anchored evaluator exposes repeated proof
+against one authenticated objective without granting reducer policy access to
+evaluation internals.
 
 ## `dusklight-harness-contracts`
 
@@ -168,10 +172,12 @@ systems that consume them.
 
 ## `dusklight-orchestration`
 
-Owns top-level objective campaign planning, scheduling, cold replay, and final
-reporting. It composes evaluation and the native harness runtime, but nothing
-below it may depend on orchestration or the huntctl executable. It is no longer
-a general-purpose home for execution, evaluation, learning, or proposal code.
+Owns top-level objective campaign planning, scheduling, cold replay, final
+reporting, and finalist-reduction policy. Boot and anchored-route reducers
+compose portable candidate/control transforms with the authenticated evaluator;
+evaluation cannot depend back on them. Nothing below orchestration may depend
+on it or the huntctl executable. It is not a general-purpose home for native
+execution, evaluation truth, learning, or proposal code.
 
 ## `dusklight-proposals`
 

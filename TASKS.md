@@ -182,3 +182,15 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 
 **Done when:** route and glitch finalists can be reduced without launching a
 general search or silently changing the successful terminal state.
+
+## 8. Compiler-enforced finalist-reduction ownership
+
+- [x] Move boot and anchored-route minimization policy out of
+  `dusklight-evaluation` and into `dusklight-orchestration`; the reducer may
+  depend on authenticated evaluation, but evaluation must not depend back on
+  reducer policy.
+- [x] Preserve the public CLI surface through compatibility re-exports, ratchet
+  the closed crate inventories, and pass the full workspace test suite.
+
+**Done when:** adding another finalist reducer cannot grow the evaluator crate
+or acquire a second native proof path by mere module placement.

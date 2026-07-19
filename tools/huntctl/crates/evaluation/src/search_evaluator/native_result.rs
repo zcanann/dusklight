@@ -18,7 +18,7 @@ pub(super) fn score_harness_result(
     objective_result: &Path,
     expected_boot: &TapeBoot,
     segment: SegmentProfile,
-    anchored: Option<&PreparedAnchoredObjective>,
+    anchored: Option<&PreparedAnchoredEvaluator>,
 ) -> Result<TrialScore, EvaluateError> {
     let native: NativeMilestoneResult = serde_json::from_slice(&fs::read(objective_result)?)?;
     if native.schema.name != "dusklight.automation.milestones"
@@ -119,7 +119,7 @@ pub(super) fn score_harness_result(
     })
 }
 
-pub(super) fn anchored_source_score(objective: &PreparedAnchoredObjective) -> TrialScore {
+pub(super) fn anchored_source_score(objective: &PreparedAnchoredEvaluator) -> TrialScore {
     TrialScore {
         depth: 1,
         deepest: objective.identity.source_milestone.clone(),
@@ -238,7 +238,7 @@ struct NativePlayerEvidence {
 
 pub(super) fn parse_anchored_milestones(
     path: &Path,
-    objective: &PreparedAnchoredObjective,
+    objective: &PreparedAnchoredEvaluator,
     expected_boot: &TapeBoot,
 ) -> Result<TrialScore, EvaluateError> {
     let native: NativeMilestoneResult =

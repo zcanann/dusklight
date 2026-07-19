@@ -1,14 +1,5 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
-mod boot_optimization;
-mod route_optimization;
-
-pub use boot_optimization::{golf_boot, minimize_boot};
-pub use route_optimization::minimize_anchored_route;
-
-#[cfg(test)]
-use boot_optimization::{BootReductionTarget, ProvenBootCandidate};
-
 use crate::artifact::Digest as ArtifactDigest;
 use crate::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
@@ -60,7 +51,7 @@ use crate::semantic_novelty::proposal_signal::{
     SemanticNoveltyProposalSignal, SemanticNoveltyProposalSignalConfig,
 };
 use crate::semantic_novelty::{BoundaryFingerprintFact, SemanticNoveltyDescriptor};
-use crate::tape::{InputTape, RawPadState, TapeBoot};
+use crate::tape::{InputTape, TapeBoot};
 use crate::tape_chain::{ChainSegment, concatenate};
 use crate::transition_corpus::{StateReference, StateReferenceKind, TransitionCorpus};
 use crate::transition_evidence::{
@@ -98,7 +89,7 @@ fn is_anchored_profile(profile: SegmentProfile) -> bool {
 /// Immutable proof inputs for a clean-boot suffix search. The prefix is an
 /// absolute compact tape, compiled DMSP, game executable, and DVD image;
 /// callers may materialize the route inputs through any management UX.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AnchoredObjectiveConfig {
     pub segment: SegmentProfile,
     pub prefix_tape: PathBuf,
@@ -799,7 +790,8 @@ struct AuthoredDefinitionExpectation {
 }
 
 #[derive(Clone, Debug)]
-struct PreparedAnchoredObjective {
+pub struct PreparedAnchoredEvaluator {
+    config: AnchoredObjectiveConfig,
     identity: AnchoredObjectiveIdentity,
     prefix: InputTape,
     program_bytes: Vec<u8>,
@@ -817,10 +809,24 @@ pub fn anchored_objective_identity(
     Ok(prepare_anchored_objective(config, PathBuf::new())?.identity)
 }
 
+/// Prepare and authenticate immutable anchored-objective inputs once for a
+/// caller that will evaluate several populations against the same contract.
+pub fn prepare_anchored_evaluator(
+    config: &AnchoredObjectiveConfig,
+) -> Result<PreparedAnchoredEvaluator, EvaluateError> {
+    prepare_anchored_objective(config, PathBuf::new())
+}
+
+impl PreparedAnchoredEvaluator {
+    pub fn identity(&self) -> &AnchoredObjectiveIdentity {
+        &self.identity
+    }
+}
+
 fn prepare_anchored_objective(
     config: &AnchoredObjectiveConfig,
     runtime_program: PathBuf,
-) -> Result<PreparedAnchoredObjective, EvaluateError> {
+) -> Result<PreparedAnchoredEvaluator, EvaluateError> {
     if !is_anchored_profile(config.segment) {
         return Err(EvaluateError::InvalidConfig(format!(
             "anchored objective requires a movement segment, got {}",
@@ -967,7 +973,8 @@ fn prepare_anchored_objective(
         goal_milestone: config.goal_milestone.clone(),
         goal_definition_sha256: goal.digest.clone(),
     };
-    Ok(PreparedAnchoredObjective {
+    Ok(PreparedAnchoredEvaluator {
+        config: config.clone(),
         identity,
         prefix,
         program_bytes,
@@ -1164,9 +1171,25 @@ pub fn evaluate_anchored_population(
     evaluate_anchored_population_internal(config, None)
 }
 
+/// Evaluate a suffix population through an already-authenticated anchored
+/// objective. The prepared identity is rechecked against the requested
+/// objective before any candidate can be admitted.
+pub fn evaluate_prepared_anchored_population(
+    config: &AnchoredEvaluateConfig,
+    prepared: &PreparedAnchoredEvaluator,
+) -> Result<(EvaluationReport, AnchoredSearchResults), EvaluateError> {
+    if config.objective != prepared.config {
+        return Err(EvaluateError::InvalidConfig(
+            "prepared anchored evaluator does not match the requested objective configuration"
+                .into(),
+        ));
+    }
+    evaluate_anchored_population_internal(config, Some(prepared))
+}
+
 fn evaluate_anchored_population_internal(
     config: &AnchoredEvaluateConfig,
-    prepared: Option<&PreparedAnchoredObjective>,
+    prepared: Option<&PreparedAnchoredEvaluator>,
 ) -> Result<(EvaluationReport, AnchoredSearchResults), EvaluateError> {
     let base = normalize_evaluate_config(&config.evaluation)?;
     validate_evaluate_config(&base)?;

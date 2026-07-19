@@ -655,3 +655,38 @@ fn evaluate_boot_batch_with_report(
     );
     Ok((proven, report))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
+        let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
+        ProvenBootCandidate {
+            tape: candidate.compile().unwrap(),
+            candidate,
+            sim_tick,
+            tape_frame,
+            boundary_fingerprint: BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v1".into(),
+                digest: digest.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn target_rejects_later_or_different_proof() {
+        let source = proven(439, 439, &"a".repeat(32));
+        let target = BootReductionTarget {
+            sim_tick: source.sim_tick,
+            tape_frame: source.tape_frame,
+            boundary_fingerprint: source.boundary_fingerprint.clone(),
+        };
+        assert!(target.accepts(&source));
+        assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
+        assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
+        assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
+    }
+}

@@ -13,7 +13,6 @@ pub use dusklight_control::{
     controller_compilation, game_tactic, motion_path, option_diagnostics, option_execution,
     roll_option, tactic_tests, tape_chain, tape_dsl, tape_edit, tape_program,
 };
-pub use dusklight_evaluation as search_evaluator;
 pub use dusklight_evidence::{
     content_store, corpus, episode, trace_diff, transition_corpus, transition_evidence,
 };
@@ -21,6 +20,7 @@ pub use dusklight_interventions as intervention;
 pub use dusklight_learning as learning;
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
+pub use dusklight_orchestration as search_evaluator;
 pub use dusklight_orchestration::harness;
 pub use dusklight_proposals::behavior_archive;
 pub use dusklight_route_workbench as route_workbench;

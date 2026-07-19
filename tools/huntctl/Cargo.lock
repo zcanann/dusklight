@@ -383,6 +383,7 @@ name = "dusklight-orchestration"
 version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
+ "dusklight-control",
  "dusklight-evaluation",
  "dusklight-harness-contracts",
  "dusklight-harness-runtime",

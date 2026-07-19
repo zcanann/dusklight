@@ -41,7 +41,6 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
     "evaluation": {
         "lib.rs",
         "search_evaluator.rs",
-        "search_evaluator/boot_optimization.rs",
         "search_evaluator/native_result.rs",
         "search_evaluator/search_runs.rs",
         "search_evaluator/tests.rs",
@@ -50,6 +49,9 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
     },
     "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
     "orchestration": {
+        "finalist_reduction/boot.rs",
+        "finalist_reduction/mod.rs",
+        "finalist_reduction/route.rs",
         "harness/campaign.rs",
         "harness/conformance.rs",
         "harness/mod.rs",
@@ -143,6 +145,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
     },
     "dusklight-orchestration": {
         "dusklight-automation-contracts",
+        "dusklight-control",
         "dusklight-evaluation",
         "dusklight-harness-contracts",
         "dusklight-harness-runtime",

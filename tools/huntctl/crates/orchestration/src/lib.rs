@@ -1,9 +1,12 @@
 //! Executable-facing composition of objective campaigns.
 
 pub mod harness;
-pub use dusklight_evaluation as search_evaluator;
+pub mod finalist_reduction;
 
-// Campaign is the only implementation left here. These compatibility names
-// serve that adapter without restoring ownership of the underlying domains.
+pub use dusklight_evaluation::*;
+pub use finalist_reduction::{golf_boot, minimize_anchored_route, minimize_boot};
+
+// Compatibility names serve executable-facing composition without restoring
+// ownership of the underlying portable domains.
 pub use dusklight_automation_contracts::{artifact, compatibility};
 pub use dusklight_search::search;
