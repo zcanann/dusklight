@@ -1073,8 +1073,7 @@ InputControllerStepResponse InputControllerProgram::respond(
         response.error = InputControllerStepError::InvalidPhase;
         return response;
     }
-    if (request.facts.majorVersion != kTypedFactResponseMajorVersion ||
-        request.facts.minorVersion != kTypedFactResponseMinorVersion ||
+    if (!validate_typed_fact_response(request.facts) ||
         request.facts.phase != TypedFactPhase::PreInput ||
         request.facts.simulationTick != request.simulationTick ||
         request.facts.tapeFrame != request.inputFrame) {

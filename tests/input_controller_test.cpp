@@ -878,6 +878,9 @@ void testVersionedPreInputStepContract() {
     invalid.facts.phase = TypedFactPhase::PostSimulation;
     REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFacts);
     invalid = request;
+    invalid.facts.count = 0;
+    REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFacts);
+    invalid = request;
     invalid.controllerFrame = program.duration();
     REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFrame);
 }

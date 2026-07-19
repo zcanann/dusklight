@@ -75,6 +75,10 @@ void test_missingness_is_not_false() {
     REQUIRE(response.find(TypedFactId::EventRunning)->status == TypedFactStatus::Unavailable);
     REQUIRE(response.find(TypedFactId::TalkPartner)->status == TypedFactStatus::Truncated);
     REQUIRE(response.find(TypedFactId::GrabbedActor)->status == TypedFactStatus::Truncated);
+    REQUIRE(response.find(TypedFactId::StageName)->status == TypedFactStatus::Absent);
+    REQUIRE(response.find(TypedFactId::StageRoom)->status == TypedFactStatus::Absent);
+    REQUIRE(response.find(TypedFactId::StageSpawn)->status == TypedFactStatus::Absent);
+    REQUIRE(validate_typed_fact_response(response));
 }
 
 }  // namespace

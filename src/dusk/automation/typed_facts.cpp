@@ -3,6 +3,7 @@
 #include "dusk/automation/input_controller.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace dusk::automation {
@@ -142,6 +143,72 @@ TypedFactResponse build_typed_fact_response(const ControllerObservation& observa
         }
     }
     return response;
+}
+
+bool validate_typed_fact_response(const TypedFactResponse& response) {
+    constexpr std::array expectedIds{
+        TypedFactId::StageName,
+        TypedFactId::StageRoom,
+        TypedFactId::StageSpawn,
+        TypedFactId::PlayerExists,
+        TypedFactId::PlayerIsLink,
+        TypedFactId::PlayerPosition,
+        TypedFactId::EventRunning,
+        TypedFactId::EventId,
+        TypedFactId::PlayerDoStatus,
+        TypedFactId::TalkPartner,
+        TypedFactId::GrabbedActor,
+    };
+    constexpr std::array expectedTypes{
+        TypedFactValueType::StageCode,
+        TypedFactValueType::I32,
+        TypedFactValueType::I32,
+        TypedFactValueType::Boolean,
+        TypedFactValueType::Boolean,
+        TypedFactValueType::Vec3F32,
+        TypedFactValueType::Boolean,
+        TypedFactValueType::I32,
+        TypedFactValueType::U32,
+        TypedFactValueType::ActorIdentity,
+        TypedFactValueType::ActorIdentity,
+    };
+    if (response.majorVersion != kTypedFactResponseMajorVersion ||
+        response.minorVersion != kTypedFactResponseMinorVersion ||
+        response.count != expectedIds.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < expectedIds.size(); ++index) {
+        const auto& entry = response.entries[index];
+        if (entry.id != expectedIds[index] || entry.type != expectedTypes[index] ||
+            entry.status < TypedFactStatus::Present || entry.status > TypedFactStatus::Invalid) {
+            return false;
+        }
+        if (entry.status != TypedFactStatus::Present) continue;
+        if (entry.type == TypedFactValueType::Vec3F32 &&
+            !std::ranges::all_of(entry.value.vec3, [](const float value) {
+                return std::isfinite(value);
+            })) {
+            return false;
+        }
+        if (entry.type == TypedFactValueType::StageCode) {
+            bool sawCharacter = false;
+            bool sawTerminator = false;
+            for (const char value : entry.value.stageCode) {
+                if (value == '\0') {
+                    sawTerminator = true;
+                } else if (sawTerminator ||
+                           !(value == '_' || (value >= '0' && value <= '9') ||
+                               (value >= 'A' && value <= 'Z') ||
+                               (value >= 'a' && value <= 'z'))) {
+                    return false;
+                } else {
+                    sawCharacter = true;
+                }
+            }
+            if (!sawCharacter) return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace dusk::automation

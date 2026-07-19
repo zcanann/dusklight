@@ -108,4 +108,6 @@ struct TypedFactResponse {
     std::uint64_t simulationTick,
     std::optional<std::uint64_t> tapeFrame);
 
+[[nodiscard]] bool validate_typed_fact_response(const TypedFactResponse& response);
+
 }  // namespace dusk::automation
