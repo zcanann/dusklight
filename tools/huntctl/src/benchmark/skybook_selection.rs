@@ -180,15 +180,19 @@ fn selection_error(message: impl Into<String>) -> SkybookSelectionError {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn manifest() -> SkybookManifest {
+        static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "skybook-selection-{}",
+            "skybook-selection-{}-{}-{}",
+            std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir_all(root.join("_posts")).unwrap();
         for slug in ["alpha", "beta", "delta", "gamma"] {
