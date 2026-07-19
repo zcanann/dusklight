@@ -1,37 +1,5 @@
-//! Offline-learning domain: immutable datasets, learners, calibration, and proposals.
+//! Root adapter between the extracted learning domain and search candidates.
 
-pub mod actor_set_representation;
-pub mod batch;
-pub mod calibration;
-pub mod dataset;
-pub mod double_q;
-pub mod dyna_mixture;
-pub mod ensemble_q;
-pub mod evaluation_isolation;
-pub mod factorized_actions;
-pub mod fqi;
-pub mod frozen_inference;
-pub mod goal_conditioning;
-pub mod graph_representation;
-pub mod hindsight;
-pub mod history_critics;
-pub mod inference_conformance;
-pub mod inference_placement;
-pub mod iql;
-pub mod latent_model_admission;
-pub mod local_dynamics;
-pub mod low_data_baselines;
-pub mod model_ownership;
-pub mod model_representation;
-pub mod offline_rl;
-pub mod online_lineage;
-pub mod option_policy;
-pub mod option_values;
-pub mod planning_priors;
-pub mod prioritized_replay;
+pub use dusklight_learning::*;
+
 pub mod q_search;
-pub mod rainbow;
-pub mod reward_shaping;
-pub mod rl_readiness;
-pub mod training_guard;
-pub mod transfer_learning;

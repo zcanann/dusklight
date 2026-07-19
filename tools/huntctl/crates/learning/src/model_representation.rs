@@ -573,7 +573,7 @@ impl Error for ModelRepresentationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learning::goal_conditioning::CompiledObjectiveVector;
+    use crate::goal_conditioning::CompiledObjectiveVector;
     use crate::milestone_dsl::compile_source;
     use crate::observation_view::movement_state_v2_spec;
     use crate::trace::TraceSelectedActor;

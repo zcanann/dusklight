@@ -4,8 +4,8 @@ use crate::artifact::Digest;
 use crate::episode::{
     EpisodeLineage, EpisodeManifest, EpisodeObjectiveIdentity, EpisodeOutcomeClass,
 };
-use crate::harness::run_contract::HarnessTerminalReason;
 use crate::option_execution::OptionExecution;
+use crate::run_terminal::HarnessTerminalReason;
 use crate::tape::{InputFrame, InputTape};
 use crate::trace::{
     DecodedTrace, TraceChannel, TraceChannelStatus, TracePhase, TraceRecord, TraceSelectedActor,

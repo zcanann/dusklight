@@ -8,6 +8,12 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-harness-contracts ──────┤
+├── dusklight-learning ───────────────┤
+│   ├── dusklight-control ────────────┤
+│   ├── dusklight-evidence ───────────┤
+│   ├── dusklight-objectives ─────────┤
+│   ├── dusklight-trace ──────────────┤
+│   └── dusklight-world ──────────────┤
 ├── dusklight-objectives ─────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-oracles ────────────────┤
@@ -27,9 +33,10 @@ control, search, learning, route, workbench, or native-runtime dependency.
 ## `dusklight-evidence`
 
 Owns immutable evidence and storage: content-addressed blobs, recorded tape
-corpora, transition corpora, episode manifests, and repetition ledgers. It may
-depend on contracts. It cannot depend on proposers, learners, search ranking,
-route mutation, worker processes, or the CLI. This prevents evidence truth from
+corpora, transition corpora, exact phase/provenance joins, episode manifests,
+and repetition ledgers. It may depend on contracts, control formats, and trace
+decoding. It cannot depend on proposers, learners, search ranking, route
+mutation, worker processes, or the CLI. This prevents evidence truth from
 acquiring algorithm-specific authority.
 
 ## `dusklight-harness-contracts`
@@ -46,6 +53,16 @@ Owns tape authoring/editing/composition, static controller compilation, typed
 option evidence, and bounded roll/path/tactic realization. It may depend on
 contracts. It cannot depend on objective truth, evidence, search, learning,
 routes, workers, native process execution, or CLI parsing.
+
+## `dusklight-learning`
+
+Owns immutable dataset construction, deterministic learner implementations,
+model identity and lineage, calibration, readiness gates, and bounded model
+artifacts. It may consume contracts, control descriptions, immutable evidence,
+objectives, traces, and read-only world representations. It cannot depend on
+search candidates or ranking, native execution, route/workbench state, or CLI
+parsing. The root `learning::q_search` module is intentionally a thin adapter:
+it is where search candidates and learned proposal models are allowed to meet.
 
 ## `dusklight-worker-protocol`
 
@@ -89,8 +106,7 @@ preserve the existing public module paths while callers migrate; they do not
 restore reverse dependencies into the smaller crates.
 
 The next crate extractions should be driven by dependency direction, not file
-size alone. Candidate and proposer envelopes now have a lower-level owner;
-search and learning must finish adopting that contract before either becomes a
-crate. Native harness execution should remain an adapter around the extracted
-contracts until its process boundary is independently coherent. Do not create
-a crate that depends back on `dusklight-huntctl`.
+size alone. Native harness execution should remain an adapter around the
+extracted contracts until its process boundary is independently coherent. Do
+not create a crate that depends back on `dusklight-huntctl`; orchestration
+adapters belong in the root instead of weakening a lower-level crate.

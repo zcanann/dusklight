@@ -10,7 +10,6 @@ pub mod harness;
 pub mod intervention;
 pub mod learning;
 pub mod motion_path_golf;
-pub mod option_diagnostics;
 pub mod option_golf;
 pub mod route_store;
 pub mod route_workbench;
@@ -20,7 +19,6 @@ pub mod semantic_novelty;
 pub mod tactic_tests;
 pub mod timeline;
 pub mod trace_diff;
-pub mod transition_evidence;
 
 // Compatibility re-exports keep existing callers stable while the physical
 // source tree migrates behind compiler-enforced crate boundaries.
@@ -29,10 +27,12 @@ pub use dusklight_automation_contracts::{
     observation_view, scenario_fixture, tape,
 };
 pub use dusklight_control::{
-    controller_compilation, game_tactic, motion_path, option_execution, roll_option, tape_chain,
-    tape_dsl, tape_edit, tape_program,
+    controller_compilation, game_tactic, motion_path, option_diagnostics, option_execution,
+    roll_option, tape_chain, tape_dsl, tape_edit, tape_program,
 };
-pub use dusklight_evidence::{content_store, corpus, episode, transition_corpus};
+pub use dusklight_evidence::{
+    content_store, corpus, episode, transition_corpus, transition_evidence,
+};
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
 pub use dusklight_trace::{trace, trace_typed_facts};

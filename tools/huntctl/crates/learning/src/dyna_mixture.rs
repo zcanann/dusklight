@@ -277,9 +277,7 @@ impl Error for DynaMixtureError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learning::local_dynamics::{
-        DynamicsProbeDomain, LocalDynamicsGateConfig, LocalDynamicsProbe,
-    };
+    use crate::local_dynamics::{DynamicsProbeDomain, LocalDynamicsGateConfig, LocalDynamicsProbe};
 
     fn error_report() -> LocalDynamicsErrorReport {
         let probes = [

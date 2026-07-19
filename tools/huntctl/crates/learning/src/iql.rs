@@ -2,7 +2,7 @@
 
 use crate::artifact::Digest;
 use crate::fqi::{MAX_FQI_ACTIONS, MAX_FQI_TRANSITIONS, Transition};
-use crate::learning::prioritized_replay::{
+use crate::prioritized_replay::{
     PrioritizedReplay, PrioritizedReplayConfig, PrioritizedReplayDiagnostics,
 };
 use serde::Serialize;

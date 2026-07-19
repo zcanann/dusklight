@@ -8,12 +8,10 @@ mod n_step;
 
 pub use n_step::{NStepError, aggregate_n_step};
 
+use crate::calibration::{DiscreteQCalibrationReport, DiscreteQEstimator, calibrate_discrete_q};
 use crate::double_q::ablation::{QComponent, QComponentConfig, QComponentModel};
 use crate::double_q::{DoubleQ, DoubleQConfig, DoubleQError, DoubleQEstimate};
 use crate::fqi::Transition;
-use crate::learning::calibration::{
-    DiscreteQCalibrationReport, DiscreteQEstimator, calibrate_discrete_q,
-};
 use crate::low_data_baselines::{ReturnSample, empirical_return_samples};
 use serde::Serialize;
 use std::error::Error;

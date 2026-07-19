@@ -221,7 +221,7 @@ impl From<FrozenInferenceError> for InferenceConformanceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learning::frozen_inference::{FrozenActivation, FrozenDenseLayer};
+    use crate::frozen_inference::{FrozenActivation, FrozenDenseLayer};
 
     fn model() -> FrozenInferenceModel {
         FrozenInferenceModel::new(

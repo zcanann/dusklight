@@ -246,6 +246,8 @@ name = "dusklight-evidence"
 version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-trace",
  "serde",
  "serde_json",
  "sha2",
@@ -275,6 +277,7 @@ dependencies = [
  "dusklight-control",
  "dusklight-evidence",
  "dusklight-harness-contracts",
+ "dusklight-learning",
  "dusklight-objectives",
  "dusklight-oracles",
  "dusklight-trace",
@@ -284,6 +287,21 @@ dependencies = [
  "serde_json",
  "sha2",
  "zstd",
+]
+
+[[package]]
+name = "dusklight-learning"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-evidence",
+ "dusklight-objectives",
+ "dusklight-trace",
+ "dusklight-world",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

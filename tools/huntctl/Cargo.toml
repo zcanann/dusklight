@@ -14,6 +14,7 @@ dusklight-automation-contracts = { path = "crates/contracts" }
 dusklight-control = { path = "crates/control" }
 dusklight-evidence = { path = "crates/evidence" }
 dusklight-harness-contracts = { path = "crates/harness-contracts" }
+dusklight-learning = { path = "crates/learning" }
 dusklight-objectives = { path = "crates/objectives" }
 dusklight-oracles = { path = "crates/oracles" }
 dusklight-trace = { path = "crates/trace" }
@@ -46,6 +47,7 @@ members = [
     "crates/control",
     "crates/evidence",
     "crates/harness-contracts",
+    "crates/learning",
     "crates/objectives",
     "crates/oracles",
     "crates/trace",
@@ -58,6 +60,7 @@ default-members = [
     "crates/control",
     "crates/evidence",
     "crates/harness-contracts",
+    "crates/learning",
     "crates/objectives",
     "crates/oracles",
     "crates/trace",

@@ -1,15 +1,18 @@
 [package]
-name = "dusklight-evidence"
+name = "dusklight-learning"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Immutable episode, corpus, and content-addressed Dusklight evidence"
+description = "Bounded, deterministic learning primitives for Dusklight automation"
 
 [dependencies]
 dusklight-automation-contracts = { path = "../contracts" }
 dusklight-control = { path = "../control" }
+dusklight-evidence = { path = "../evidence" }
+dusklight-objectives = { path = "../objectives" }
 dusklight-trace = { path = "../trace" }
+dusklight-world = { path = "../world" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-zstd = "0.13"
+
