@@ -98,6 +98,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Authenticated cold-process throughput](throughput.md) defines the sealed
   process-per-run baseline that future persistent/reset workers must beat
   without changing native proof.
+- [Engine-session reuse boundary](engine-sessions.md) defines the typed reuse
+  refusal and exact reset guarantees required before one process may run a
+  second authenticated stage-boot request.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.

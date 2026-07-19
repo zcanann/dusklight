@@ -1,5 +1,5 @@
 use crate::transport::Transport;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
 use std::fmt;
@@ -7,6 +7,7 @@ use std::fmt;
 pub const CONTROL_PROTOCOL_NAME: &str = "dusklight-automation";
 pub const CONTROL_PROTOCOL_VERSION: u64 = 2;
 pub const MAX_CONTROL_LINE_BYTES: usize = 1024 * 1024;
+pub const ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1: &str = "dusklight-engine-session-reuse-audit/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct WorkerBuildIdentity {
@@ -106,6 +107,73 @@ pub struct WorkerCapabilities {
 pub struct HelloResponse {
     pub build: WorkerBuildIdentity,
     pub capabilities: WorkerCapabilities,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionReuseBlocker {
+    pub code: String,
+    pub subsystem: String,
+    pub required_guarantee: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionReuseAudit {
+    pub schema: String,
+    pub reusable: bool,
+    pub evaluated_boundary: String,
+    pub target_boundary: String,
+    pub blockers: Vec<SessionReuseBlocker>,
+}
+
+impl SessionReuseAudit {
+    fn validate(&self) -> Result<(), ClientError> {
+        if self.schema != ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1 {
+            return Err(ClientError::InvalidSessionAudit(
+                "unsupported audit schema".into(),
+            ));
+        }
+        if self.evaluated_boundary != "pre_engine_boot"
+            || self.target_boundary != "post_authenticated_run"
+        {
+            return Err(ClientError::InvalidSessionAudit(
+                "audit lifecycle boundaries are not canonical".into(),
+            ));
+        }
+        if self.reusable != self.blockers.is_empty() {
+            return Err(ClientError::InvalidSessionAudit(
+                "reusable status contradicts the blocker inventory".into(),
+            ));
+        }
+        if !self
+            .blockers
+            .windows(2)
+            .all(|pair| pair[0].code < pair[1].code)
+        {
+            return Err(ClientError::InvalidSessionAudit(
+                "blockers must be unique and code-sorted".into(),
+            ));
+        }
+        for blocker in &self.blockers {
+            if !canonical_identifier(&blocker.code)
+                || !canonical_identifier(&blocker.subsystem)
+                || blocker.required_guarantee.trim().is_empty()
+            {
+                return Err(ClientError::InvalidSessionAudit(
+                    "blocker identity or required guarantee is invalid".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn canonical_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -259,6 +327,7 @@ struct Envelope {
     id: Option<u64>,
     build: Option<WorkerBuildIdentity>,
     capabilities: Option<WorkerCapabilities>,
+    audit: Option<SessionReuseAudit>,
     error: Option<WorkerErrorBody>,
 }
 
@@ -283,6 +352,7 @@ pub enum ClientError {
         field: &'static str,
         message: String,
     },
+    InvalidSessionAudit(String),
     Worker {
         code: String,
         message: String,
@@ -311,6 +381,9 @@ impl fmt::Display for ClientError {
             Self::MissingField(field) => write!(f, "worker response is missing {field}"),
             Self::InvalidBuildIdentity { field, message } => {
                 write!(f, "invalid worker build identity {field}: {message}")
+            }
+            Self::InvalidSessionAudit(message) => {
+                write!(f, "invalid engine-session reuse audit: {message}")
             }
             Self::Worker { code, message } => write!(f, "worker error {code}: {message}"),
         }
@@ -365,6 +438,14 @@ impl<T: Transport> WorkerClient<T> {
 
     pub fn ping(&mut self) -> Result<(), ClientError> {
         self.command("ping", "pong").map(drop)
+    }
+    pub fn session_audit(&mut self) -> Result<SessionReuseAudit, ClientError> {
+        let audit = self
+            .command("session_audit", "session_audit")?
+            .audit
+            .ok_or(ClientError::MissingField("audit"))?;
+        audit.validate()?;
+        Ok(audit)
     }
     pub fn shutdown(&mut self) -> Result<(), ClientError> {
         self.command("shutdown", "shutdown").map(drop)
@@ -443,6 +524,20 @@ mod tests {
         }
     }
 
+    fn valid_session_reuse_audit() -> SessionReuseAudit {
+        SessionReuseAudit {
+            schema: ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1.into(),
+            reusable: false,
+            evaluated_boundary: "pre_engine_boot".into(),
+            target_boundary: "post_authenticated_run".into(),
+            blockers: vec![SessionReuseBlocker {
+                code: "game_global_reconstruction".into(),
+                subsystem: "game_state".into(),
+                required_guarantee: "game globals reconstruct from a clean origin".into(),
+            }],
+        }
+    }
+
     #[test]
     fn complete_build_identity_is_accepted() {
         valid_build_identity().validate().unwrap();
@@ -473,5 +568,26 @@ mod tests {
         let error = identity.validate().unwrap_err().to_string();
         assert!(error.contains("build.fidelity_profile"));
         assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn canonical_session_reuse_refusal_is_accepted() {
+        valid_session_reuse_audit().validate().unwrap();
+    }
+
+    #[test]
+    fn reusable_session_cannot_retain_blockers() {
+        let mut audit = valid_session_reuse_audit();
+        audit.reusable = true;
+        let error = audit.validate().unwrap_err().to_string();
+        assert!(error.contains("contradicts the blocker inventory"));
+    }
+
+    #[test]
+    fn session_blockers_must_be_unique_and_sorted() {
+        let mut audit = valid_session_reuse_audit();
+        audit.blockers.push(audit.blockers[0].clone());
+        let error = audit.validate().unwrap_err().to_string();
+        assert!(error.contains("unique and code-sorted"));
     }
 }

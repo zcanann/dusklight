@@ -130,6 +130,19 @@ pub(crate) fn command_ping(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+pub(crate) fn command_session(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) != Some("audit") {
+        return Err("session command: audit --worker PATH [--worker-arg ARG]...".into());
+    }
+    let (program, worker_args) = worker_spec(&args[1..])?;
+    let mut client = WorkerClient::new(ProcessTransport::spawn(program, &worker_args)?);
+    client.handshake()?;
+    let audit = client.session_audit()?;
+    client.shutdown()?;
+    println!("{}", serde_json::to_string_pretty(&audit)?);
+    Ok(())
+}
+
 pub(crate) fn command_not_ready(command: &str, args: &[String]) -> Result<(), Box<dyn Error>> {
     let (program, worker_args) = worker_spec(args)?;
     let mut client = WorkerClient::new(ProcessTransport::spawn(program, &worker_args)?);

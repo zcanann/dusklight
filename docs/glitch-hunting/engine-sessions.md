@@ -1,0 +1,38 @@
+# Engine-session reuse boundary
+
+The first persistent-session target is deliberately narrower than a general
+checkpoint worker: keep one native process, Aurora, the opened game image, and
+process services alive while sequential stage-boot requests continue to use
+the authenticated harness request/result path.
+
+Query the current executable before attempting reuse:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  session audit \
+  --worker build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight \
+  --worker-arg --automation-worker
+```
+
+`dusklight-engine-session-reuse-audit/v1` is a typed refusal, not a claim that
+the engine has been initialized. Its evaluated boundary is `pre_engine_boot`;
+its target is the unimplemented `post_authenticated_run` reuse boundary. The
+blocker list is unique and code-sorted so orchestration can name the first
+unproved subsystem instead of treating `engine_session=false` as an opaque
+feature flag.
+
+The current blockers and required evidence are:
+
+| Code | Required guarantee |
+| --- | --- |
+| `automation_state_reset` | All paths, flags, players, recorders, observers, and timers return to declared per-run defaults. |
+| `dolphin_thread_join` | DVD, memory-card, audio, and OS worker threads join at quiescence and can be recreated. |
+| `game_global_reconstruction` | Game context, process lists, reset data, and static managers reconstruct from a clean origin. |
+| `heap_recreation` | JFW/JKR heaps and ARAM contain no live references at destruction and can be recreated from a valid arena. |
+| `mod_lifecycle` | Native hooks and registrations survive the retained process or repeat initialization without duplication. |
+| `process_run_lifecycle_partition` | Aurora, DVD hosting, logging, and process services are separated from game-run teardown. |
+
+Reuse remains refused until every blocker is discharged in code and an A/B/A
+sequence produces cold-identical terminal, tick, boundary, tape, trace, and
+objective evidence. Removing a blocker because a second call happens not to
+crash is insufficient.

@@ -30,6 +30,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     match command {
         "hello" => cli::worker::command_hello(&args[1..]),
         "ping" => cli::worker::command_ping(&args[1..]),
+        "session" => cli::worker::command_session(&args[1..]),
         "pool" => cli::worker::command_pool(&args[1..]),
         "benchmark" => cli::benchmark::command_benchmark(&args[1..]),
         "campaign" => cli::harness::command_campaign(&args[1..]),
@@ -123,6 +124,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!("Trace typed facts:\n  huntctl trace facts INPUT.trace [--boundary-index N]\n");
+    eprintln!("Engine sessions:\n  huntctl session audit --worker PATH [--worker-arg ARG]...\n");
     eprintln!(
         "Objective campaigns:\n  huntctl conformance --suite SUITE.json --executable DUSKLIGHT --game-data GAME.iso --output build/DIR [--repository-root DIR] [--fidelity headless|unpaced-headful|realtime-headful]\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --dry-run [--repository-root DIR] [--proposer scripted|random|structured|learned]...\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --run-request REQUEST.json --definition TOURNAMENT.json [--repository-root DIR] [--workers N]\n"
     );
@@ -233,10 +235,25 @@ fn mock_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "capabilities": {
                     "persistent_control": true, "engine_session": false, "headless": false,
                     "scenario_load": false, "input_tape": false, "batch_run": false,
-                    "commands": ["hello", "ping", "shutdown"]
+                    "commands": ["hello", "ping", "session_audit", "shutdown"]
                 }
             }),
             "ping" => success_response("pong"),
+            "session_audit" => json!({
+                "protocol": {"name": CONTROL_PROTOCOL_NAME, "version": CONTROL_PROTOCOL_VERSION},
+                "type": "session_audit", "ok": true,
+                "audit": {
+                    "schema": "dusklight-engine-session-reuse-audit/v1",
+                    "reusable": false,
+                    "evaluated_boundary": "pre_engine_boot",
+                    "target_boundary": "post_authenticated_run",
+                    "blockers": [{
+                        "code": "game_global_reconstruction",
+                        "subsystem": "game_state",
+                        "required_guarantee": "global game state reconstructs from a clean origin"
+                    }]
+                }
+            }),
             "shutdown" => success_response("shutdown"),
             _ => json!({
                 "protocol": {"name": CONTROL_PROTOCOL_NAME, "version": CONTROL_PROTOCOL_VERSION},

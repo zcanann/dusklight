@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "dusk/automation/build_identity.hpp"
+#include "dusk/automation/engine_session.hpp"
 
 namespace dusk::automation {
 namespace {
@@ -97,7 +98,7 @@ json hello_response(const std::string_view fidelityProfile) {
         {"scenario_load", false},
         {"input_tape", true},
         {"batch_run", false},
-        {"commands", {"hello", "ping", "shutdown"}},
+        {"commands", {"hello", "ping", "session_audit", "shutdown"}},
     };
     return response;
 }
@@ -112,6 +113,25 @@ void copy_request_id(const json& request, json& response) {
 json error_response(std::string_view code, std::string_view message) {
     json response = protocol_fields("error", false);
     response["error"] = {{"code", code}, {"message", message}};
+    return response;
+}
+
+json session_audit_response() {
+    json response = protocol_fields("session_audit", true);
+    response["audit"] = {
+        {"schema", EngineSessionReuseAuditSchema},
+        {"reusable", false},
+        {"evaluated_boundary", "pre_engine_boot"},
+        {"target_boundary", "post_authenticated_run"},
+        {"blockers", json::array()},
+    };
+    for (const auto& blocker : engine_session_reuse_blockers()) {
+        response["audit"]["blockers"].push_back({
+            {"code", blocker.code},
+            {"subsystem", blocker.subsystem},
+            {"required_guarantee", blocker.requiredGuarantee},
+        });
+    }
     return response;
 }
 
@@ -151,6 +171,10 @@ int run_worker(const std::string_view fidelityProfile) {
             write_response(response);
         } else if (command == "ping") {
             json response = protocol_fields("pong", true);
+            copy_request_id(request, response);
+            write_response(response);
+        } else if (command == "session_audit") {
+            json response = session_audit_response();
             copy_request_id(request, response);
             write_response(response);
         } else if (command == "shutdown") {

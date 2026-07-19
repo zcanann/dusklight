@@ -1427,6 +1427,8 @@ set(DUSK_FILES
         src/dusk/automation/build_identity.cpp
         include/dusk/automation/actor_catalog.hpp
         src/dusk/automation/actor_catalog.cpp
+        include/dusk/automation/engine_session.hpp
+        src/dusk/automation/engine_session.cpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_pad.cpp
         src/dusk/automation/input_tape.cpp
