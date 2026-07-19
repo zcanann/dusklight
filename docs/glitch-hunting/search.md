@@ -168,6 +168,16 @@ attempt evidence, and `minimize.summary.json`. The candidate budget covers
 reduction proposals; source and independent final proofs are always additional
 and both require at least two repetitions.
 
+Each completed reduction round also writes an immutable checkpoint below
+`checkpoints/`. Resume an interrupted, incomplete output root by repeating the
+same command with `--resume`. Resume re-hashes and re-authenticates the complete
+objective, re-proves both the original source and the checkpoint's retained
+candidate in fresh clean processes, and only then spends the remaining proposal
+budget. It rejects changed inputs, source identity, terminal contract, candidate
+budget, malformed history, or a completed output root. New proof and round
+evidence uses fresh suffixed directories, so evidence left by the interrupted
+process is retained rather than overwritten.
+
 ## Native evaluation
 
 Both the game executable and disc image are explicit. There is no saved-config

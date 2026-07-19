@@ -660,10 +660,11 @@ pub struct AnchoredRouteMinimizeConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub candidate_budget: usize,
+    pub resume: bool,
     pub timeout: Duration,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AnchoredRouteMinimizeRound {
     pub round: u32,
     pub operation: String,

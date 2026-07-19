@@ -217,3 +217,15 @@ or hide portable candidate logic inside native-execution policy.
 
 **Done when:** tournament policy depends one-way on authenticated evaluation,
 while evaluator admission remains independent of tournament coordination.
+
+## 11. Recoverable exact route minimization
+
+- [x] Checkpoint `minimize-route` after every completed reduction round and add
+  `--resume` for an interrupted output root. Re-authenticate the objective and
+  reprove both the source and retained candidate before spending new proposals.
+- [x] Refuse stale or tampered checkpoints, never overwrite partial evidence,
+  preserve the original candidate budget and exact terminal contract, and test
+  the resume state machine.
+
+**Done when:** interrupting a long route reduction no longer discards completed
+proposal work or weakens its clean-process proof requirements.

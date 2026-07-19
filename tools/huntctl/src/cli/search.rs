@@ -610,6 +610,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
                 candidate_budget: usize_option(search_args, "--candidate-budget", 256)?,
+                resume: flag(search_args, "--resume"),
                 timeout: execution.timeout,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);

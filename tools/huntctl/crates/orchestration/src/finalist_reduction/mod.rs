@@ -15,10 +15,10 @@ use dusklight_search::search::{
     Ancestry, Candidate, InterventionRange, MacroAction, SegmentProfile,
     tape_input_complexity, write_explicit_population,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
