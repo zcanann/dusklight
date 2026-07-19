@@ -18,9 +18,10 @@ use crate::episode::EpisodeOutcomeClass;
 use crate::fqi::{
     FITTED_Q_MODEL_SCHEMA_V2, FittedQ, FqiConfig, QEstimate, Transition as FqiTransition,
 };
+use crate::observation_view::movement_state_v2_spec;
 use crate::offline_rl::{
-    MOVEMENT_ACTION_COUNT_V2, MOVEMENT_CATEGORICAL_FEATURES_V1, canonical_movement_pad_v2,
-    movement_action_id_v2, movement_action_schema_digest_v2, movement_feature_schema_digest_v1,
+    MOVEMENT_ACTION_COUNT_V2, canonical_movement_pad_v2, movement_action_id_v2,
+    movement_action_schema_digest_v2,
 };
 use crate::search::{Ancestry, Candidate, InterventionRange};
 use crate::transition_corpus::TransitionCorpus;
@@ -234,7 +235,10 @@ fn propose_q_candidates_internal(
             "Q proposals require training corpora, aligned parent episodes, and a nonzero budget",
         ));
     }
-    let feature_schema = movement_feature_schema_digest_v1();
+    let observation_spec = movement_state_v2_spec();
+    let feature_schema = observation_spec
+        .digest()
+        .map_err(|error| QSearchError::new(error.to_string()))?;
     let action_schema = movement_action_schema_digest_v2();
     let mut transitions = Vec::new();
     let mut episode_groups = Vec::new();
@@ -312,7 +316,7 @@ fn propose_q_candidates_internal(
         trees_per_action: config.trees_per_action,
         max_tree_depth: 8,
         seed: config.seed,
-        categorical_features: MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec(),
+        categorical_features: observation_spec.categorical_features(),
         ..FqiConfig::default()
     };
     let model = proposal_gate
@@ -1112,6 +1116,8 @@ mod tests {
     }
 
     fn corpus_for(candidate: &Candidate) -> TransitionCorpus {
+        let observation_spec = movement_state_v2_spec();
+        let feature_count = observation_spec.feature_count();
         let tape = candidate.compile().unwrap();
         let transitions = tape
             .frames
@@ -1119,7 +1125,7 @@ mod tests {
             .enumerate()
             .map(|(index, frame)| {
                 let action_id = movement_action_id_v2(frame.pads[0]).unwrap();
-                let mut state = vec![0.0; 49];
+                let mut state = vec![0.0; feature_count as usize];
                 state[17] = index as f32;
                 let mut next_state = state.clone();
                 next_state[17] += 1.0;
@@ -1150,9 +1156,9 @@ mod tests {
             })
             .collect();
         TransitionCorpus::new(
-            movement_feature_schema_digest_v1(),
+            observation_spec.digest().unwrap(),
             movement_action_schema_digest_v2(),
-            49,
+            feature_count,
             transitions,
         )
         .unwrap()
