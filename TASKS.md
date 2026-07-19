@@ -113,7 +113,7 @@ the authored target.
 - [ ] Collect successes, ordinary failures, and near misses for one cheap
   objective, keeping evaluation episodes out of training until evaluation
   closes.
-- [ ] Compare the baseline against scripted/random/structured proposals under
+- [x] Compare the baseline against scripted/random/structured proposals under
   the same native objective and simulator budget.
 - [x] Stop or fall back to structured proposals when required facts, action
   support, determinism, or basic held-out performance are inadequate.
@@ -163,7 +163,7 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 1. [x] Finish the talk-to-NPC and pick-up-object facts and fixtures.
 2. [x] Route search and learned candidates through the authenticated executor.
 3. [x] Seal the shared episode artifact and pre-input observation/action turn.
-4. [ ] Run scripted, random, structured, and one simple learned proposer on one
+4. [x] Run scripted, random, structured, and one simple learned proposer on one
    cheap objective under the same budget.
 5. [ ] Rank, minimize, and cold-replay the finalists.
 6. [x] Publish one conformance/tournament report and use its measured friction

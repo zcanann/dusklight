@@ -1017,6 +1017,19 @@ pub fn write_explicit_population(
     generation: u32,
     candidates: Vec<Candidate>,
 ) -> Result<PopulationManifest, SearchError> {
+    write_explicit_population_with_seed(output, segment, generation, 0, candidates)
+}
+
+/// Writes an exact caller-supplied population while retaining the proposal
+/// seed authenticated by its candidate envelopes. Tournament lanes use this
+/// form so extracting a subset cannot silently rewrite proposer lineage.
+pub fn write_explicit_population_with_seed(
+    output: &Path,
+    segment: SegmentProfile,
+    generation: u32,
+    rng_seed: u64,
+    candidates: Vec<Candidate>,
+) -> Result<PopulationManifest, SearchError> {
     if candidates.is_empty() {
         return Err(SearchError::InvalidPopulation);
     }
@@ -1027,7 +1040,7 @@ pub fn write_explicit_population(
             return Err(SearchError::InvalidPopulation);
         }
     }
-    write_population(output, segment, generation, 0, candidates)
+    write_population(output, segment, generation, rng_seed, candidates)
 }
 
 pub fn evolve_population(

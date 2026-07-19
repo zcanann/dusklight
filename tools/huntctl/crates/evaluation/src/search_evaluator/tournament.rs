@@ -7,6 +7,12 @@ pub fn run_proposer_tournament(
     config: &ProposerTournamentConfig,
 ) -> Result<ProposerTournamentSummary, EvaluateError> {
     let definition = &config.definition;
+    if config.harness.is_some() && config.anchored.is_some() {
+        return Err(EvaluateError::InvalidConfig(
+            "tournament execution cannot combine a harness request with an anchored objective"
+                .into(),
+        ));
+    }
     if definition.schema != "dusklight-proposer-tournament-definition/v2"
         || definition.budget_per_proposer == 0
         || definition.proposers.len() < 2
@@ -285,6 +291,28 @@ pub fn run_proposer_tournament(
             ));
         }
     }
+    let prepared_anchored = config
+        .anchored
+        .as_ref()
+        .map(|anchored| prepare_anchored_objective(anchored, PathBuf::new()))
+        .transpose()?;
+    if let Some(prepared) = &prepared_anchored {
+        let identity = &prepared.identity;
+        let expected_objective = NamedDigest::new(
+            identity.goal_milestone.clone(),
+            identity.digest.parse().map_err(|error| {
+                EvaluateError::InvalidResult(format!("invalid anchored objective digest: {error}"))
+            })?,
+        );
+        let expected_action_schema =
+            NamedDigest::new("movement-action/v2", movement_action_schema_digest_v2());
+        if objective != expected_objective || action_schema != expected_action_schema {
+            return Err(EvaluateError::InvalidManifest(
+                "tournament proposal envelopes do not match the anchored objective and action schema"
+                    .into(),
+            ));
+        }
+    }
     fs::create_dir_all(&config.output_root)?;
     let population_root = config.output_root.join("population");
     let candidates_by_id = union.clone();
@@ -297,7 +325,7 @@ pub fn run_proposer_tournament(
     }
     let results_path = config.output_root.join("results.json");
     let started = Instant::now();
-    let report = evaluate_population(&EvaluateConfig {
+    let evaluation = EvaluateConfig {
         population_path: population_root.join("manifest.json"),
         game: config.game.clone(),
         dvd: config.dvd.clone(),
@@ -309,12 +337,25 @@ pub fn run_proposer_tournament(
         repetitions: config.repetitions,
         timeout: config.timeout,
         harness: config.harness.clone(),
-    })?;
+    };
+    let (report, results) = if let Some(objective) = &config.anchored {
+        let (report, results) = evaluate_anchored_population_internal(
+            &AnchoredEvaluateConfig {
+                evaluation,
+                objective: objective.clone(),
+            },
+            prepared_anchored.as_ref(),
+        )?;
+        (report, results.results)
+    } else {
+        let report = evaluate_population(&evaluation)?;
+        let results: SearchResults = serde_json::from_slice(&fs::read(&results_path)?)?;
+        (report, results)
+    };
     if let Some(harness) = &config.harness {
         validate_tournament_attempt_compatibility(&report, harness)?;
     }
     let evaluation_wall_millis = started.elapsed().as_millis();
-    let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
     let leaderboard = rank_population(&manifest, &results)?;
     write_json(&config.output_root.join("leaderboard.json"), &leaderboard)?;
     let scores = leaderboard
@@ -385,21 +426,34 @@ pub fn run_proposer_tournament(
             .iter()
             .filter(|attempt| proposer.candidate_ids.contains(&attempt.candidate_id))
             .map(|attempt| {
-                attempt
-                    .first_hit_tick
-                    .map(|tick| tick.saturating_add(1))
-                    .unwrap_or(frame_counts[attempt.candidate_id.as_str()])
+                observed_attempt_ticks(attempt, frame_counts[attempt.candidate_id.as_str()])
             })
             .sum();
         let (replay_verdict, best_proved_tape, best_proved_tape_sha256) =
             if best.score.goal_feasible {
-                let candidate = candidates_by_id.get(&best.candidate_id).ok_or_else(|| {
-                    EvaluateError::InvalidResult(format!(
-                        "best candidate {} is absent from the evaluated population",
-                        best.candidate_id
-                    ))
-                })?;
-                let tape_bytes = candidate.compile()?.encode()?;
+                let tape_bytes = if config.anchored.is_some() {
+                    let attempt = report
+                        .attempts
+                        .iter()
+                        .find(|attempt| {
+                            attempt.candidate_id == best.candidate_id && attempt.goal_reached
+                        })
+                        .ok_or_else(|| {
+                            EvaluateError::InvalidResult(format!(
+                                "best anchored candidate {} has no proved replay attempt",
+                                best.candidate_id
+                            ))
+                        })?;
+                    fs::read(&attempt.tape)?
+                } else {
+                    let candidate = candidates_by_id.get(&best.candidate_id).ok_or_else(|| {
+                        EvaluateError::InvalidResult(format!(
+                            "best candidate {} is absent from the evaluated population",
+                            best.candidate_id
+                        ))
+                    })?;
+                    candidate.compile()?.encode()?
+                };
                 let tape_sha256 = ArtifactDigest(Sha256::digest(&tape_bytes).into());
                 let tape_path = finalists_root.join(format!("{tape_sha256}.tape"));
                 if !tape_path.exists() {
@@ -453,12 +507,7 @@ pub fn run_proposer_tournament(
     let physical_simulator_ticks = report
         .attempts
         .iter()
-        .map(|attempt| {
-            attempt
-                .first_hit_tick
-                .map(|tick| tick.saturating_add(1))
-                .unwrap_or(frame_counts[attempt.candidate_id.as_str()])
-        })
+        .map(|attempt| observed_attempt_ticks(attempt, frame_counts[attempt.candidate_id.as_str()]))
         .sum();
     let summary = ProposerTournamentSummary {
         schema: "dusklight-proposer-tournament/v3",
@@ -485,6 +534,43 @@ pub fn run_proposer_tournament(
         &summary,
     )?;
     Ok(summary)
+}
+
+fn observed_attempt_ticks(attempt: &AttemptEvidence, candidate_ticks: u64) -> u64 {
+    observed_simulator_ticks(
+        attempt.goal_reached,
+        attempt.first_hit_tick,
+        candidate_ticks,
+    )
+}
+
+fn observed_simulator_ticks(
+    goal_reached: bool,
+    first_hit_tick: Option<u64>,
+    candidate_ticks: u64,
+) -> u64 {
+    if goal_reached {
+        first_hit_tick
+            .map(|tick| tick.saturating_add(1))
+            .unwrap_or(candidate_ticks)
+    } else {
+        // A source or intermediate milestone hit is ranking progress, not an
+        // early-stop objective hit. A miss consumes the candidate's full
+        // logical simulator budget.
+        candidate_ticks
+    }
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::observed_simulator_ticks;
+
+    #[test]
+    fn intermediate_progress_does_not_undercharge_an_objective_miss() {
+        assert_eq!(observed_simulator_ticks(false, Some(0), 144), 144);
+        assert_eq!(observed_simulator_ticks(true, Some(138), 144), 139);
+        assert_eq!(observed_simulator_ticks(true, None, 144), 144);
+    }
 }
 
 fn validate_tournament_attempt_compatibility(

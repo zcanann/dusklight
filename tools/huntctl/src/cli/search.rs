@@ -457,6 +457,31 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .ok_or("tournament definition has no parent directory")?,
             )?;
             let execution = search_execution_config(search_args)?;
+            let anchored = if let Some(prefix) = option(search_args, "--anchored-prefix") {
+                if execution.harness.is_some() {
+                    return Err("--anchored-prefix cannot be combined with --run-request".into());
+                }
+                Some(AnchoredObjectiveConfig {
+                    segment: option(search_args, "--segment")
+                        .ok_or("anchored tournament requires --segment ID")?
+                        .parse()?,
+                    prefix_tape: PathBuf::from(prefix),
+                    milestone_program: required_path(search_args, "--milestones")?,
+                    game: execution.game.clone(),
+                    dvd: execution.dvd.clone(),
+                    source_milestone: option(search_args, "--source-milestone")
+                        .ok_or("anchored tournament requires --source-milestone NAME")?,
+                    source_boundary_fingerprint: option(
+                        search_args,
+                        "--source-boundary-fingerprint",
+                    )
+                    .ok_or("anchored tournament requires --source-boundary-fingerprint VALUE")?,
+                    goal_milestone: option(search_args, "--goal-milestone")
+                        .ok_or("anchored tournament requires --goal-milestone NAME")?,
+                })
+            } else {
+                None
+            };
             let summary = run_proposer_tournament(&ProposerTournamentConfig {
                 definition,
                 definition_directory,
@@ -469,8 +494,85 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
                 timeout: execution.timeout,
                 harness: execution.harness,
+                anchored,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        Some("prepare-tournament-lane") => {
+            let search_args = &args[1..];
+            let candidate_path = required_path(search_args, "--candidate")?;
+            let candidate: Candidate = serde_json::from_slice(&fs::read(&candidate_path)?)?;
+            candidate.validate()?;
+            let envelope_path = required_path(search_args, "--proposal-envelopes")?;
+            let envelope_value: Value = serde_json::from_slice(&fs::read(&envelope_path)?)?;
+            let source_set = if envelope_value.get("schema").and_then(Value::as_str)
+                == Some("dusklight-candidate-envelope-set/v1")
+            {
+                serde_json::from_value::<CandidateEnvelopeSet>(envelope_value)?
+            } else {
+                let envelopes = serde_json::from_value::<Vec<CandidateEnvelope>>(
+                    envelope_value
+                        .get("envelopes")
+                        .cloned()
+                        .ok_or("proposal artifact has no envelopes array")?,
+                )?;
+                CandidateEnvelopeSet::build(envelopes)?
+            };
+            source_set.validate()?;
+            let candidate_sha256 = candidate.id()?.parse()?;
+            let matches = source_set
+                .envelopes
+                .iter()
+                .filter(|envelope| envelope.candidate_sha256 == candidate_sha256)
+                .cloned()
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(format!(
+                    "proposal artifact must contain exactly one envelope for candidate {candidate_sha256}, found {}",
+                    matches.len()
+                )
+                .into());
+            }
+            let envelope_set = CandidateEnvelopeSet::build(matches)?;
+            let envelope = &envelope_set.envelopes[0];
+            let output = required_path(search_args, "--output")?;
+            if output.is_file()
+                || output
+                    .read_dir()
+                    .ok()
+                    .is_some_and(|mut entries| entries.next().is_some())
+            {
+                return Err(format!(
+                    "prepared tournament lane output must be new or empty: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let manifest = write_explicit_population_with_seed(
+                &output,
+                candidate.segment,
+                candidate.ancestry.generation,
+                envelope.seed,
+                vec![candidate],
+            )?;
+            fs::write(
+                output.join("proposal-envelopes.json"),
+                serde_json::to_vec_pretty(&envelope_set)?,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-prepared-tournament-lane/v1",
+                    "manifest": output.join("manifest.json"),
+                    "proposal_envelopes": output.join("proposal-envelopes.json"),
+                    "candidate_id": manifest.members[0].candidate_id,
+                    "proposer": envelope.proposer,
+                    "objective": envelope.objective,
+                    "action_schema": envelope.action_schema,
+                    "charged_candidate_ticks_per_repetition": manifest.members[0].frame_count,
+                }))?
+            );
             Ok(())
         }
         Some("minimize-boot") => {

@@ -426,6 +426,7 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
             repository_root: repository_root.clone(),
             request_template: request.clone(),
         }),
+        anchored: None,
     })
     .map_err(|error| plan_error(format!("campaign tournament failed: {error}")))?;
 

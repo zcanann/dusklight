@@ -339,6 +339,27 @@ fidelity, timeout, and protocol capabilities; combining it with `--game`,
 `--dvd`, `--game-arg`, a working directory, or timeout override is rejected.
 Every tournament attempt then retains its derived request/result identities.
 
+Prefix-anchored route suffixes use the same tournament boundary by supplying
+`--anchored-prefix`, the compiled `--milestones` program, `--segment`, source
+milestone and fingerprint, and goal milestone beside `--game` and `--dvd`.
+Those inputs are content-bound as one anchored objective before native spend.
+Successful finalists are the clean-boot prefix-plus-suffix tapes actually
+replayed, never an unbootable suffix presented as proof.
+
+To extract one authenticated candidate from a search population or
+`q-proposals.json` into a tournament lane without rewriting its generation or
+seed:
+
+```text
+huntctl search prepare-tournament-lane \
+  --candidate build/search/g002/CANDIDATE.candidate.json \
+  --proposal-envelopes build/search/g001/q-proposals.json \
+  --output build/tournament/random
+```
+
+The command writes a one-candidate population and an exact one-envelope set;
+it rejects absent, duplicate, or mismatched candidate provenance.
+
 The definition uses schema `dusklight-proposer-tournament-definition/v2`, one
 `episodes` or `candidate_ticks` cap per proposer, and 2–16 named entries. Every
 entry supplies both its population and a content-authenticated

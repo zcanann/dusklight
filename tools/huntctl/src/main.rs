@@ -1,6 +1,7 @@
 use huntctl::benchmark::skybook::SkybookManifest;
 use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDisposition};
 use huntctl::calibration::calibrate_fitted_q;
+use huntctl::candidate_envelope::{CandidateEnvelope, CandidateEnvelopeSet};
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
 use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
 use huntctl::content_store::{ContentKind, ContentStore};
@@ -51,7 +52,7 @@ use huntctl::scenario_fixture::ScenarioFixture;
 use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
-    rank_population, write_seed_population,
+    rank_population, write_explicit_population_with_seed, write_seed_population,
 };
 use huntctl::search_evaluator::{
     AnchoredObjectiveConfig, AnchoredSearchRunConfig, BayesianSearchRunConfig, BeamSearchConfig,
@@ -2010,7 +2011,8 @@ fn print_usage() {
         "  huntctl search beam --candidate SEED.json --options OPTIONS.json [--q-priors PRIORS.json] --game PATH --dvd PATH --output DIR [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n",
         "  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n",
         "  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n",
-        "  huntctl search tournament --definition TOURNAMENT.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--workers N] [--repetitions N]\n",
+        "  huntctl search tournament --definition TOURNAMENT.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--anchored-prefix PREFIX.tape --milestones PROGRAM.dmsp --segment ID --source-milestone NAME --source-boundary-fingerprint VALUE --goal-milestone NAME] [--workers N] [--repetitions N]\n",
+        "  huntctl search prepare-tournament-lane --candidate CANDIDATE.json --proposal-envelopes ENVELOPES.json --output DIR\n",
         "  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n",

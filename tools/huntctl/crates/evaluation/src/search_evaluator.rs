@@ -421,6 +421,10 @@ pub struct ProposerTournamentConfig {
     pub repetitions: u32,
     pub timeout: Duration,
     pub harness: Option<HarnessEvaluateConfig>,
+    /// Optional clean-boot prefix objective. This is mutually exclusive with
+    /// the core-harness request mode and keeps route suffixes on the same fair
+    /// tournament boundary as directly bootable candidates.
+    pub anchored: Option<AnchoredObjectiveConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]

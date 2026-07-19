@@ -141,6 +141,29 @@ end-to-end regression reached control at tick 439, the first exit trigger at
 with the existing movement tail; it is not a claim that the movement tail is
 golfed.
 
+## Four-lane harness comparison
+
+The July 18, 2026 anchored tournament compared one authenticated scripted,
+blind-random, structured-counterfactual, and tree-FQI-disagreement proposal
+under the same `ordon_spring_load_committed` objective, 500 candidate-tick cap,
+and three clean-boot repetitions per lane. The retained machine report is
+`build/harness/ordon-spring-four-lane-v2/tournament.summary.json`.
+
+Scripted and learned both proved the goal 3/3 at suffix tick 138. Structured
+proved it 3/3 at tick 142. Random missed 3/3 and consumed its full 144-tick
+suffix budget. The learned proposal therefore tied, but did not improve on,
+the scripted incumbent; the following generation's held-out gate correctly
+disabled learned proposals and fell back to structured, archive, and blind
+collection. Each successful tournament finalist is a content-addressed
+579- or 584-frame clean-boot tape copied from an actual replay attempt.
+
+The generation-zero outcome seal contains successes and near misses but no
+ordinary failures, so the three-stratum collection task remains open. Because
+the immutable source milestone is necessarily depth one, anchored collection
+needs an authored intermediate progress milestone (or an equivalent explicit
+progress contract) before source-only misses can be distinguished honestly
+from route near misses.
+
 ## Baseline and scoring
 
 One checked cold matrix on July 13, 2026 completed `intro-cutscene` 10/10 times
