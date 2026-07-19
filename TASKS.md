@@ -273,3 +273,13 @@ and worker count cannot change evidence worker identities due to host timing.
 
 **Done when:** native attempt evidence cannot silently disagree with its
 predeclared worker lane or introduce an unplanned or duplicate trial identity.
+
+## 16. Compiler-enforced evaluation-plan ownership
+
+- [x] Move deterministic trial scheduling, lane iteration, schedule hashing,
+  and completed-claim validation into a dependency-minimal crate.
+- [x] Make native evaluation consume the exact declared schedule when launching
+  lanes, ratchet the evaluator line budget, and pass the full workspace suite.
+
+**Done when:** evaluator execution can consume a portable prelaunch plan but
+cannot redefine worker assignment or validation policy in its coordination file.

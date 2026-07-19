@@ -3,12 +3,13 @@ name = "dusklight-evaluation"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Authenticated candidate evaluation and search-run orchestration for Dusklight"
+description = "Authenticated native candidate evaluation and evidence admission for Dusklight"
 
 [dependencies]
 dusklight-automation-contracts = { path = "../contracts" }
 dusklight-control = { path = "../control" }
 dusklight-evidence = { path = "../evidence" }
+dusklight-evaluation-plan = { path = "../evaluation-plan" }
 dusklight-harness-contracts = { path = "../harness-contracts" }
 dusklight-harness-runtime = { path = "../harness-runtime" }
 dusklight-learning = { path = "../learning" }

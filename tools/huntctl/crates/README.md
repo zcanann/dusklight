@@ -21,7 +21,9 @@ an explicit ownership-policy change.
 dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
+├── dusklight-evaluation-plan ────────┤
 ├── dusklight-evaluation ─────────────┤
+│   ├── dusklight-evaluation-plan ────┤
 │   ├── dusklight-harness-runtime ────┤
 │   ├── dusklight-proposals ──────────┤
 │   └── dusklight-search ─────────────┤
@@ -97,6 +99,14 @@ schedule general optimizer loops or top-level objective campaigns, or choose
 how finalists are reduced. A prepared anchored evaluator exposes repeated proof
 against one authenticated objective without granting orchestration access to
 evaluation internals.
+
+## `dusklight-evaluation-plan`
+
+Owns the deterministic prelaunch mapping from declared trial identities to
+worker lanes, its portable JSON contract and digest, and validation of completed
+worker claims. It may depend only on portable automation contracts. It cannot
+execute trials, interpret objectives, rank candidates, schedule optimizer loops,
+or parse CLI commands.
 
 ## `dusklight-harness-contracts`
 

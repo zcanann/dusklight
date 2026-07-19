@@ -247,6 +247,7 @@ version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
  "dusklight-control",
+ "dusklight-evaluation-plan",
  "dusklight-evidence",
  "dusklight-harness-contracts",
  "dusklight-harness-runtime",
@@ -256,6 +257,16 @@ dependencies = [
  "dusklight-search",
  "dusklight-semantic-novelty",
  "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-evaluation-plan"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
  "serde",
  "serde_json",
  "sha2",

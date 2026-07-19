@@ -30,6 +30,9 @@ use crate::transition_evidence::{
     ImmutableEpisodeArtifact, ImmutableEpisodeBuild, TerminalReasonEvidence,
     TransitionEvidenceBuild, TransitionEvidenceBundle,
 };
+pub use dusklight_evaluation_plan::{
+    EvaluationWorkerSchedule, PlannedWorkerAssignment, WORKER_SCHEDULE_SCHEMA,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -47,21 +50,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v5";
 pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v5";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
-pub const WORKER_SCHEDULE_SCHEMA: &str = "dusklight-evaluation-worker-schedule/v1";
 const NATIVE_GOAL_MISS_EXIT_CODE: i32 = 2;
-
-fn stable_trial_indices(
-    trial_count: usize,
-    worker_count: usize,
-    worker_index: usize,
-) -> std::iter::StepBy<std::ops::Range<usize>> {
-    assert!(worker_count > 0 && worker_index < worker_count);
-    (worker_index..trial_count).step_by(worker_count)
-}
-
-fn planned_worker_id(trial_index: usize, worker_count: usize) -> String {
-    format!("evaluation/worker-{}", trial_index % worker_count)
-}
 
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
@@ -199,24 +188,6 @@ pub struct EvaluationReport {
     pub attempts: Vec<AttemptEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective: Option<AnchoredObjectiveIdentity>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlannedWorkerAssignment {
-    pub trial_index: usize,
-    pub candidate_id: String,
-    pub attempt: u32,
-    pub worker_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct EvaluationWorkerSchedule {
-    pub schema: String,
-    pub worker_lanes: usize,
-    pub planned_attempts: usize,
-    pub assignments: Vec<PlannedWorkerAssignment>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -598,142 +569,19 @@ fn validate_lower_hex(value: &str, length: usize, label: &str) -> Result<(), Eva
     Ok(())
 }
 
-fn build_worker_schedule(
-    trials: &[Trial],
-    worker_count: usize,
-) -> Result<EvaluationWorkerSchedule, EvaluateError> {
-    let schedule = EvaluationWorkerSchedule {
-        schema: WORKER_SCHEDULE_SCHEMA.into(),
-        worker_lanes: worker_count,
-        planned_attempts: trials.len(),
-        assignments: trials
-            .iter()
-            .enumerate()
-            .map(|(trial_index, trial)| PlannedWorkerAssignment {
-                trial_index,
-                candidate_id: trial.candidate_id.clone(),
-                attempt: trial.attempt,
-                worker_id: planned_worker_id(trial_index, worker_count),
-            })
-            .collect(),
-    };
-    validate_worker_schedule_definition(&schedule)?;
-    Ok(schedule)
-}
-
-fn worker_schedule_sha256(
-    schedule: &EvaluationWorkerSchedule,
-) -> Result<ArtifactDigest, EvaluateError> {
-    Ok(ArtifactDigest(
-        Sha256::digest(serde_json::to_vec_pretty(schedule)?).into(),
-    ))
-}
-
-fn validate_worker_schedule_definition(
-    schedule: &EvaluationWorkerSchedule,
-) -> Result<(), EvaluateError> {
-    if schedule.schema != WORKER_SCHEDULE_SCHEMA {
-        return Err(EvaluateError::InvalidResult(format!(
-            "worker schedule schema must be {WORKER_SCHEDULE_SCHEMA}"
-        )));
-    }
-    if schedule.worker_lanes == 0 {
-        return Err(EvaluateError::InvalidResult(
-            "worker schedule must contain at least one lane".into(),
-        ));
-    }
-    if schedule.planned_attempts != schedule.assignments.len() {
-        return Err(EvaluateError::InvalidResult(format!(
-            "worker schedule declares {} attempts but contains {} assignments",
-            schedule.planned_attempts,
-            schedule.assignments.len()
-        )));
-    }
-
-    let mut identities = HashSet::with_capacity(schedule.assignments.len());
-    for (trial_index, assignment) in schedule.assignments.iter().enumerate() {
-        if assignment.trial_index != trial_index {
-            return Err(EvaluateError::InvalidResult(format!(
-                "worker schedule assignment {trial_index} claims trial index {}",
-                assignment.trial_index
-            )));
-        }
-        if assignment.candidate_id.is_empty() || assignment.attempt == 0 {
-            return Err(EvaluateError::InvalidResult(format!(
-                "worker schedule assignment {trial_index} has an invalid trial identity"
-            )));
-        }
-        let expected_worker = planned_worker_id(trial_index, schedule.worker_lanes);
-        if assignment.worker_id != expected_worker {
-            return Err(EvaluateError::InvalidResult(format!(
-                "worker schedule assignment {trial_index} names {} instead of {expected_worker}",
-                assignment.worker_id
-            )));
-        }
-        if !identities.insert((&assignment.candidate_id, assignment.attempt)) {
-            return Err(EvaluateError::InvalidResult(format!(
-                "worker schedule repeats candidate {} attempt {}",
-                assignment.candidate_id, assignment.attempt
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn validate_attempt_worker_assignments(
     schedule: &EvaluationWorkerSchedule,
     attempts: &[AttemptEvidence],
 ) -> Result<(), EvaluateError> {
-    validate_completed_worker_claims(
-        schedule,
-        attempts.iter().map(|attempt| {
+    schedule
+        .validate_completed_claims(attempts.iter().map(|attempt| {
             (
                 attempt.candidate_id.as_str(),
                 attempt.attempt,
                 attempt.worker_id.as_str(),
             )
-        }),
-    )
-}
-
-fn validate_completed_worker_claims<'a>(
-    schedule: &EvaluationWorkerSchedule,
-    claims: impl IntoIterator<Item = (&'a str, u32, &'a str)>,
-) -> Result<(), EvaluateError> {
-    validate_worker_schedule_definition(schedule)?;
-    let planned = schedule
-        .assignments
-        .iter()
-        .map(|assignment| {
-            (
-                (assignment.candidate_id.as_str(), assignment.attempt),
-                assignment.worker_id.as_str(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut completed = HashSet::new();
-    for (candidate_id, attempt, worker_id) in claims {
-        let identity = (candidate_id, attempt);
-        if !completed.insert(identity) {
-            return Err(EvaluateError::InvalidResult(format!(
-                "completed evidence repeats candidate {} attempt {}",
-                candidate_id, attempt
-            )));
-        }
-        let expected_worker = planned.get(&identity).ok_or_else(|| {
-            EvaluateError::InvalidResult(format!(
-                "completed evidence for candidate {} attempt {} is absent from the worker schedule",
-                candidate_id, attempt
-            ))
-        })?;
-        if worker_id != *expected_worker {
-            return Err(EvaluateError::InvalidResult(format!(
-                "completed evidence for candidate {} attempt {} names worker {} instead of {}",
-                candidate_id, attempt, worker_id, expected_worker
-            )));
-        }
-    }
-    Ok(())
+        }))
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))
 }
 
 pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, EvaluateError> {
@@ -780,8 +628,16 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     )?;
 
     let worker_count = config.workers.min(trials.len()).max(1);
-    let worker_schedule = build_worker_schedule(&trials, worker_count)?;
-    let worker_schedule_sha256 = worker_schedule_sha256(&worker_schedule)?;
+    let worker_schedule = EvaluationWorkerSchedule::build(
+        worker_count,
+        trials
+            .iter()
+            .map(|trial| (trial.candidate_id.clone(), trial.attempt)),
+    )
+    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    let worker_schedule_sha256 = worker_schedule
+        .sha256()
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
     let worker_schedule_path = config.output_root.join("worker-schedule.json");
     write_json(&worker_schedule_path, &worker_schedule)?;
     let trials = Arc::new(trials);
@@ -792,20 +648,25 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
         let config = &config;
         let segment = manifest.segment;
         for worker_index in 0..worker_count {
+            let worker_schedule = &worker_schedule;
             let trials = Arc::clone(&trials);
             let cancelled = Arc::clone(&cancelled);
             let outcomes = Arc::clone(&outcomes);
             scope.spawn(move || {
-                for index in stable_trial_indices(trials.len(), worker_count, worker_index) {
+                let assignments = worker_schedule
+                    .assignments_for_lane(worker_index)
+                    .expect("validated schedule contains every launched worker lane");
+                for assignment in assignments {
                     if cancelled.load(Ordering::Acquire) {
                         break;
                     }
+                    let index = assignment.trial_index;
                     let trial = &trials[index];
                     let mut evidence = run_trial(
                         config,
                         segment,
                         trial,
-                        &planned_worker_id(index, worker_count),
+                        &assignment.worker_id,
                         &cancelled,
                         None,
                     );
@@ -953,8 +814,16 @@ fn evaluate_anchored_population_internal(
     )?;
 
     let worker_count = base.workers.min(trials.len()).max(1);
-    let worker_schedule = build_worker_schedule(&trials, worker_count)?;
-    let worker_schedule_sha256 = worker_schedule_sha256(&worker_schedule)?;
+    let worker_schedule = EvaluationWorkerSchedule::build(
+        worker_count,
+        trials
+            .iter()
+            .map(|trial| (trial.candidate_id.clone(), trial.attempt)),
+    )
+    .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    let worker_schedule_sha256 = worker_schedule
+        .sha256()
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
     let worker_schedule_path = base.output_root.join("worker-schedule.json");
     write_json(&worker_schedule_path, &worker_schedule)?;
     let trials = Arc::new(trials);
@@ -964,22 +833,27 @@ fn evaluate_anchored_population_internal(
     let segment = manifest.segment;
     thread::scope(|scope| {
         for worker_index in 0..worker_count {
+            let worker_schedule = &worker_schedule;
             let trials = Arc::clone(&trials);
             let objective = Arc::clone(&objective);
             let cancelled = Arc::clone(&cancelled);
             let outcomes = Arc::clone(&outcomes);
             let base = &base;
             scope.spawn(move || {
-                for index in stable_trial_indices(trials.len(), worker_count, worker_index) {
+                let assignments = worker_schedule
+                    .assignments_for_lane(worker_index)
+                    .expect("validated schedule contains every launched worker lane");
+                for assignment in assignments {
                     if cancelled.load(Ordering::Acquire) {
                         break;
                     }
+                    let index = assignment.trial_index;
                     let trial = &trials[index];
                     let mut evidence = run_trial(
                         base,
                         segment,
                         trial,
-                        &planned_worker_id(index, worker_count),
+                        &assignment.worker_id,
                         &cancelled,
                         Some(&objective),
                     );
