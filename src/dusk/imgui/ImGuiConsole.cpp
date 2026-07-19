@@ -4,6 +4,8 @@
 #include <string_view>
 #include <chrono>
 
+#include <aurora/aurora.h>
+
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
 #include <imgui_internal.h>
@@ -265,7 +267,11 @@ namespace dusk {
             JUTGamePad::C3ButtonReset::sResetSwitchPushing = true;
         }
 
-        if (ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_F1)) {
+        // During automation F1 is routed only to this host-side overlay; it is
+        // never delivered to RmlUi or the game. Outside automation, retain the
+        // usual Shift+F1 shortcut so plain F1 can keep opening the main menu.
+        if (ImGui::IsKeyPressed(ImGuiKey_F1) &&
+            (ImGui::GetIO().KeyShift || aurora_get_automation_input_quarantine())) {
             if (getSettings().backend.enableAdvancedSettings) {
                 m_isHidden = !m_isHidden;
             } else {

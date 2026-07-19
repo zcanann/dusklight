@@ -504,6 +504,15 @@ add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
 target_include_directories(dusk_game_clock_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(dusk_game_clock_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_automation_input_policy_test EXCLUDE_FROM_ALL
+    tests/automation_input_policy_test.cpp
+)
+target_include_directories(dusk_automation_input_policy_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/extern/aurora/lib
+)
+target_link_libraries(dusk_automation_input_policy_test PRIVATE ${AURORA_SDL3_TARGET})
+set_target_properties(dusk_automation_input_policy_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_name_entry_observer_test EXCLUDE_FROM_ALL
     tests/name_entry_observer_test.cpp
     src/dusk/automation/name_entry_observer.cpp
