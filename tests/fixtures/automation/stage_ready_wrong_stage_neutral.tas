@@ -1,0 +1,10 @@
+dusktape 1
+boot stage F_SP104 1 0 -1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+# Negative control: a neutral direct boot into F_SP104 cannot satisfy the
+# stage_ready predicate authored specifically for F_SP103 room 1 point 1.
+repeat 30 neutral

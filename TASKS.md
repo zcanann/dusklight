@@ -40,7 +40,7 @@ whole-game work lives in [`TASKS_DEFERRED.md`](TASKS_DEFERRED.md).
   of the expected dialogue or event edge.
 - [ ] Check in a pick-up-object case with an exact placed-object selector and
   proof that Link carries or owns that object.
-- [ ] Add a cheap negative control beside each positive case so nearby
+- [x] Add a cheap negative control beside each positive case so nearby
   position, wrong target, or missed interaction cannot satisfy the objective.
 - [ ] Run the four cases twice through one public macOS command and retain one
   machine-readable conformance report.

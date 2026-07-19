@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-objective-suite/v2",
-  "content_sha256": "b6c7ad681e5b81a6de5e18b207fd0fd00327c531401c6cc679414bcc6de5b065",
+  "content_sha256": "45991f8101967e02deea4c7a61dc91e53f07a1dfe3411a0c5d28b99eba6937b9",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
@@ -69,6 +69,73 @@
       "host_timeout_seconds": 60,
       "repetitions": 2,
       "expected_terminal": "reached"
+    },
+    {
+      "id": "reach-point-ordon-ranch-neutral",
+      "description": "The same Ordon ranch boot without movement must not satisfy the bounded target objective.",
+      "role": "negative_control",
+      "control_for": "reach-point-ordon-ranch",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP104",
+        "room": 1,
+        "point": 0,
+        "layer": -1
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/basic_human.fixture.json",
+        "sha256": "f2d565f61140d914a53d6040f2cefb94559fcbfee5e5edbc5919285908852f65"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/reach_point_ordon.milestones",
+          "sha256": "3be51f5b167ba0bc094b632964ee596f6151b50f2fa68140a201fb1047db5280"
+        },
+        "program_sha256": "05c586902adeff1bcd06151002e496ff7a1024795bef18fd347f7b40ca4e5fe2",
+        "goal": "reach_point_ordon"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/reach_point_ordon.observation.json",
+          "sha256": "3d4aec2591e00e4aba72423b75d325da73fafbeb391ebc9ee43a862b7aacb2b1"
+        },
+        "schema_sha256": "615f1d5bbc3bb617193b0a22fb5ef1025d09f504c904e35dac3b50a1eb75dc4f"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "player.exists",
+          "player.in_aabb",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
+      "seed": {
+        "kind": "tape_source",
+        "artifact": {
+          "path": "tests/fixtures/automation/reach_point_ordon_neutral.tas",
+          "sha256": "082b9a3b70717677dd9b5c44be024acfcb32c854c52f62ae4d3c024ce25fa22f"
+        }
+      },
+      "logical_tick_budget": 799,
+      "host_timeout_seconds": 60,
+      "repetitions": 2,
+      "expected_terminal": "objective_miss"
     },
     {
       "id": "stage-ready-f-sp103",
@@ -141,6 +208,79 @@
       "host_timeout_seconds": 30,
       "repetitions": 2,
       "expected_terminal": "reached"
+    },
+    {
+      "id": "stage-ready-f-sp103-wrong-stage",
+      "description": "Neutral readiness on F_SP104 must not satisfy the exact F_SP103 room and spawn objective.",
+      "role": "negative_control",
+      "control_for": "stage-ready-f-sp103",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP104",
+        "room": 1,
+        "point": 0,
+        "layer": -1
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/stage_ready.milestones",
+          "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
+        },
+        "program_sha256": "64ce2d4774823c3ee8d562ff54cf7d251bd321c8a8dd453ece80f2106287cfed",
+        "goal": "stage_ready"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/stage_ready.observation.json",
+          "sha256": "cdee8bc6285d06273f2b97552354eb7452e2688d7184402376caa7564fbd999a"
+        },
+        "schema_sha256": "27e58a81c51a1d7b0ab8bb1557b12e1db923f3aaa5df146eb6d5a51f388c069f"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "event",
+            "minimum_version": 1
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "event.id",
+          "event.running",
+          "player.exists",
+          "player.is_link",
+          "stage.name",
+          "stage.room",
+          "stage.spawn"
+        ]
+      },
+      "seed": {
+        "kind": "tape_source",
+        "artifact": {
+          "path": "tests/fixtures/automation/stage_ready_wrong_stage_neutral.tas",
+          "sha256": "b4645ab97cd77741f7af66dc257e019dc04fce816439f3f931b03fec5c0b8419"
+        }
+      },
+      "logical_tick_budget": 30,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
+      "expected_terminal": "objective_miss"
     }
   ]
 }

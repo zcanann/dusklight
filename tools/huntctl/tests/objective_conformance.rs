@@ -1,5 +1,6 @@
 use huntctl::harness::objective_suite::{
-    ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot, ObjectiveSeed, ObjectiveSuite,
+    ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot, ObjectiveCaseRole,
+    ObjectiveSeed, ObjectiveSuite,
 };
 use huntctl::learning::offline_rl::movement_action_schema_digest_v2;
 use huntctl::milestone_dsl;
@@ -17,8 +18,9 @@ fn checked_suite() -> (PathBuf, ObjectiveSuite) {
     .unwrap();
     assert_eq!(suite.schema, OBJECTIVE_SUITE_SCHEMA_V2);
     let report = suite.validate_files(&repository).unwrap();
-    assert_eq!(report.case_count, 2);
+    assert_eq!(report.case_count, 4);
     assert_eq!(report.positive_count, 2);
+    assert_eq!(report.negative_control_count, 2);
     (repository, suite)
 }
 
@@ -145,4 +147,51 @@ fn checked_in_reach_point_case_moves_to_a_stable_bounded_region() {
             .iter()
             .any(|frame| { frame.pads[0].stick_x != 0 || frame.pads[0].stick_y != 0 })
     );
+}
+
+#[test]
+fn every_positive_has_a_cheap_neutral_negative_control() {
+    let (repository, suite) = checked_suite();
+    for (positive_id, control_id) in [
+        ("reach-point-ordon-ranch", "reach-point-ordon-ranch-neutral"),
+        ("stage-ready-f-sp103", "stage-ready-f-sp103-wrong-stage"),
+    ] {
+        let positive = suite
+            .cases
+            .iter()
+            .find(|case| case.id == positive_id)
+            .unwrap();
+        let control = suite
+            .cases
+            .iter()
+            .find(|case| case.id == control_id)
+            .unwrap();
+        assert_eq!(positive.role, ObjectiveCaseRole::Positive);
+        assert_eq!(control.role, ObjectiveCaseRole::NegativeControl);
+        assert_eq!(control.control_for.as_deref(), Some(positive_id));
+        assert_eq!(
+            control.expected_terminal,
+            ExpectedTerminalClass::ObjectiveMiss
+        );
+        assert_eq!(control.objective, positive.objective);
+        assert_eq!(control.action_schema, positive.action_schema);
+        assert_eq!(
+            control.observation_requirements,
+            positive.observation_requirements
+        );
+        assert_eq!(control.logical_tick_budget, positive.logical_tick_budget);
+        assert_eq!(control.repetitions, positive.repetitions);
+
+        let ObjectiveSeed::TapeSource { artifact } = &control.seed else {
+            panic!("negative control must use an inspectable tape source");
+        };
+        let source = fs::read_to_string(repository.join(&artifact.path)).unwrap();
+        let tape = tape_dsl::parse(&source).unwrap().compile().unwrap().tape;
+        assert_eq!(tape.frames.len(), control.logical_tick_budget as usize);
+        assert!(
+            tape.frames
+                .iter()
+                .all(|frame| { frame.pads.iter().all(|pad| *pad == RawPadState::default()) })
+        );
+    }
 }

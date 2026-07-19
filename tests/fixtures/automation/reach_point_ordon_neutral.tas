@@ -1,0 +1,11 @@
+dusktape 1
+boot stage F_SP104 1 0 -1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+# Negative control: the same boot and tick budget as the positive movement
+# case, but no input. Mere stage readiness or spawn proximity must not satisfy
+# the bounded ranch target.
+repeat 799 neutral
