@@ -508,3 +508,17 @@ silently change which names another production domain receives.
 
 **Done when:** a future persistent worker or reset optimization can be compared
 against a reproducible process-per-run baseline without weakening run proof.
+
+## 38. Compiler-enforced objective-language internals
+
+- [x] Split the objective language's flat production module into closed
+  syntax/validation, formatting, canonical compilation, binary-codec, and
+  recorded-trace evaluation owners without changing its public API or wire
+  identities.
+- [x] Freeze the objective crate's exact source inventory, impose tighter
+  per-module line budgets, and pass its focused tests plus every workspace
+  architecture, format, lint, and test gate.
+
+**Done when:** objective-language changes have an obvious internal owner and
+cannot recreate a multi-thousand-line dumping ground without an explicit
+architecture-policy change.

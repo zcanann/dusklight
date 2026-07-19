@@ -1,4 +1,5 @@
 use super::*;
+use std::format;
 
 const SOURCE: &str = r#"
 milestones 1.0

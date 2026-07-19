@@ -298,6 +298,9 @@ executable-facing composition belongs in `dusklight-orchestration` instead of
 weakening a lower-level crate.
 
 The boundary test freezes both the root module inventory and the inventories of
-the integration-heavy crates. Adding another root file, root module directory,
-or coordination sibling requires an explicit ownership-policy change, so new
-domains cannot silently accumulate beside the adapters.
+the integration-heavy crates. It also freezes the objective language's private
+syntax/validation, formatting, compilation, codec, and recorded-trace modules
+with tighter file budgets. Adding another root file, root module directory,
+coordination sibling, or objective-language owner requires an explicit
+ownership-policy change, so new domains cannot silently accumulate beside the
+adapters.

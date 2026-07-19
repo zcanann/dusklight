@@ -1,5 +1,7 @@
 use super::*;
+use std::format;
 
+/// Parse, validate, and compile source in one operation.
 pub fn compile_source(source: &str) -> Result<CompiledMilestones, DslError> {
     let program = parse(source)?;
     compile(&program).map_err(|error| DslError {
