@@ -729,6 +729,7 @@ fn evaluate_route_batch(
                 game: config.objective.game.clone(),
                 dvd: config.objective.dvd.clone(),
                 output_root: root.join("evidence"),
+                episode_store: None,
                 results_path: root.join("results.json"),
                 working_directory: config.working_directory.clone(),
                 game_args_prefix: config.game_args_prefix.clone(),

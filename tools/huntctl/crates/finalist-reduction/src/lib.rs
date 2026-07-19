@@ -7,14 +7,14 @@ pub use boot::{golf_boot, minimize_boot};
 pub use route::minimize_anchored_route;
 
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
-use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 #[cfg(test)]
 use dusklight_automation_contracts::tape::TapeBoot;
+use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_control::tape_chain::{ChainSegment, concatenate};
 use dusklight_evaluation::*;
 use dusklight_search::search::{
-    Ancestry, Candidate, InterventionRange, MacroAction, SegmentProfile,
-    tape_input_complexity, write_explicit_population,
+    Ancestry, Candidate, InterventionRange, MacroAction, SegmentProfile, tape_input_complexity,
+    write_explicit_population,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

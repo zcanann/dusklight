@@ -363,3 +363,18 @@ finalist-reduction, route, or workbench ownership by sibling-module imports.
 
 **Done when:** tournament policy cannot absorb campaign, objective-suite,
 novelty, route, workbench, or CLI ownership through flat sibling imports.
+
+## 25. Shared immutable episode store
+
+- [x] Add one evidence-owned episode bundle index keyed by authenticated
+  episode identity. Verify the manifest against its transition corpus and
+  content-address the tape, trace, corpus, transition evidence, and manifest
+  before publishing an immutable entry.
+- [x] Let native population evaluation target an explicit shared episode-store
+  root, retain per-run evidence paths for diagnosis, and prove two independent
+  evaluation roots deduplicate the same bundle without accepting tampering.
+- [x] Document the operator path, ratchet crate boundaries, and pass the full
+  workspace suite.
+
+**Done when:** independent search runs can share authenticated learning
+episodes without copying mutable per-run paths or trusting a filename digest.

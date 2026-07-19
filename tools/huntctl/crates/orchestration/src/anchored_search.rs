@@ -1,12 +1,12 @@
 //! Multi-generation anchored route policy over authenticated native evaluation.
 
-use dusklight_bounded_search::SearchRunConfig;
-use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::candidate_envelope::{
     CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
 };
 use dusklight_automation_contracts::tape::InputTape;
+use dusklight_bounded_search::SearchRunConfig;
+use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_evaluation::*;
 use dusklight_evidence::transition_corpus::TransitionCorpus;
 use dusklight_harness_contracts::run_contract::HarnessTerminalReason;
@@ -26,13 +26,11 @@ use dusklight_search::search::{
     Candidate, EvolutionConfig, LexicographicScore, PopulationManifest, SegmentProfile,
     evolve_population_with_retained_and_proposals, rank_population, write_seed_population,
 };
-use dusklight_semantic_novelty::catalog::{
-    SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
-};
+use dusklight_semantic_novelty::SemanticNoveltyDescriptor;
+use dusklight_semantic_novelty::catalog::{SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig};
 use dusklight_semantic_novelty::proposal_signal::{
     SemanticNoveltyProposalSignal, SemanticNoveltyProposalSignalConfig,
 };
-use dusklight_semantic_novelty::SemanticNoveltyDescriptor;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -179,9 +177,7 @@ pub fn run_anchored_search(
         NamedDigest::new(
             prepared.identity().goal_milestone.clone(),
             prepared.identity().digest.parse().map_err(|error| {
-                EvaluateError::InvalidResult(format!(
-                    "invalid anchored objective digest: {error}"
-                ))
+                EvaluateError::InvalidResult(format!("invalid anchored objective digest: {error}"))
             })?,
         ),
         search.population_size,
@@ -203,6 +199,7 @@ pub fn run_anchored_search(
                     game: search.game.clone(),
                     dvd: search.dvd.clone(),
                     output_root: population_root.join("evaluations"),
+                    episode_store: None,
                     results_path: results_path.clone(),
                     working_directory: search.working_directory.clone(),
                     game_args_prefix: search.game_args_prefix.clone(),

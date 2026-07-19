@@ -18,7 +18,11 @@ static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentKind {
+    InputTape,
     GameplayTrace,
+    TransitionCorpus,
+    TransitionEvidence,
+    EpisodeManifest,
     WorldInventory,
     Screenshot,
     Model,
@@ -29,7 +33,11 @@ pub enum ContentKind {
 impl ContentKind {
     pub fn media_type(self) -> &'static str {
         match self {
+            Self::InputTape => "application/x-dusktape",
             Self::GameplayTrace => "application/x-dusktrace",
+            Self::TransitionCorpus => "application/x-dusklight-transition-corpus",
+            Self::TransitionEvidence => "application/vnd.dusklight.transition-evidence+json",
+            Self::EpisodeManifest => "application/vnd.dusklight.episode-manifest+json",
             Self::WorldInventory => "application/vnd.dusklight.world-inventory+json",
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
@@ -466,7 +474,11 @@ mod tests {
         let store = ContentStore::initialize(&root).unwrap();
         let bytes = b"immutable artifact";
         for kind in [
+            ContentKind::InputTape,
             ContentKind::GameplayTrace,
+            ContentKind::TransitionCorpus,
+            ContentKind::TransitionEvidence,
+            ContentKind::EpisodeManifest,
             ContentKind::WorldInventory,
             ContentKind::Screenshot,
             ContentKind::Model,

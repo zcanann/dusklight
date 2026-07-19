@@ -74,6 +74,23 @@ tape, trace, corpus, transition evidence, objective, and candidate lineage.
 seal, malformed step, noncanonical feature, broken state chain, or one-tick
 action shift before printing its compact identity summary.
 
+Native population evaluation can also publish each complete learning episode
+to a store shared by otherwise independent output roots:
+
+```sh
+huntctl search evaluate --population population.json --output build/run-a \
+  --run-request request.json --episode-store build/episode-store
+```
+
+The store writes immutable entries under `episodes/sha256/`, keyed by the
+authenticated episode identity. Each entry contains verified content-addressed
+references for the absolute tape, gameplay trace, transition corpus,
+transition evidence, and episode manifest. Ingestion decodes the tape,
+validates the episode manifest against the compact corpus, and rejects any
+artifact whose bytes do not match the manifest. Per-run paths remain in the
+evaluation report for diagnosis; the shared entry contains no mutable run
+paths, so rediscovery from a second output root deduplicates exactly.
+
 Manual `--terminal` extraction records `declared_extraction_boundary`; it does
 not invent objective proof from frame bounds. Anchored search can record
 `objective_reached` because its terminal transition is already backed by the

@@ -68,6 +68,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 game: execution.game,
                 dvd: execution.dvd,
                 output_root: output,
+                episode_store: option(search_args, "--episode-store").map(PathBuf::from),
                 results_path: results,
                 working_directory: execution.working_directory,
                 game_args_prefix: execution.game_args_prefix,

@@ -1,19 +1,19 @@
 //! Equal-budget proposer comparison through authenticated native evaluation.
 
-use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::candidate_envelope::{
     CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
 };
 use dusklight_automation_contracts::compatibility::{CompatibilityMode, ensure_compatible};
 use dusklight_automation_contracts::tape::TapeBoot;
+use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_evaluation::*;
 use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
+use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
 use dusklight_search::search::{
     Candidate, LexicographicScore, POPULATION_SCHEMA, PopulationManifest, SearchResults,
     SegmentProfile, rank_population, write_explicit_population,
 };
-use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -510,6 +510,7 @@ pub fn run_proposer_tournament(
         game: config.game.clone(),
         dvd: config.dvd.clone(),
         output_root: config.output_root.join("evaluations"),
+        episode_store: None,
         results_path: results_path.clone(),
         working_directory: config.working_directory.clone(),
         game_args_prefix: config.game_args_prefix.clone(),
@@ -741,19 +742,6 @@ fn observed_simulator_ticks(
     }
 }
 
-#[cfg(test)]
-mod accounting_tests {
-    use super::observed_simulator_ticks;
-
-    #[test]
-    fn intermediate_progress_does_not_undercharge_an_objective_miss() {
-        assert_eq!(observed_simulator_ticks(false, Some(0), 144), 144);
-        assert_eq!(observed_simulator_ticks(true, Some(138), 144), 139);
-        assert_eq!(observed_simulator_ticks(true, None, 144), 144);
-    }
-
-}
-
 fn validate_tournament_attempt_compatibility(
     report: &EvaluationReport,
     harness: &HarnessEvaluateConfig,
@@ -794,4 +782,16 @@ fn validate_tournament_attempt_compatibility(
             })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::observed_simulator_ticks;
+
+    #[test]
+    fn intermediate_progress_does_not_undercharge_an_objective_miss() {
+        assert_eq!(observed_simulator_ticks(false, Some(0), 144), 144);
+        assert_eq!(observed_simulator_ticks(true, Some(138), 144), 139);
+        assert_eq!(observed_simulator_ticks(true, None, 144), 144);
+    }
 }

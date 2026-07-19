@@ -2006,7 +2006,7 @@ fn print_usage() {
     );
     eprintln!(concat!(
         "\nNative search:\n",
-        "  huntctl search evaluate --population MANIFEST --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--results FILE] [--workers N] [--repetitions N]\n",
+        "  huntctl search evaluate --population MANIFEST --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--results FILE] [--episode-store DIR] [--workers N] [--repetitions N]\n",
         "  huntctl search run --segment ID [--candidate FILE] --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]\n",
         "  huntctl search beam --candidate SEED.json --options OPTIONS.json [--q-priors PRIORS.json] --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n",
         "  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n",

@@ -12,8 +12,8 @@ use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::search::LexicographicScore;
 use crate::search_evaluator::{HarnessEvaluateConfig, derive_candidate_request};
 use crate::{
-    ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition,
-    TournamentProposerKind, run_proposer_tournament,
+    ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition, TournamentProposerKind,
+    run_proposer_tournament,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};

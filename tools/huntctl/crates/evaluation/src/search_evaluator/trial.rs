@@ -242,6 +242,7 @@ pub(super) fn run_trial(
         transition_corpus: None,
         transition_evidence: None,
         episode_manifest: None,
+        episode_store_entry: None,
         immutable_episode: None,
         dataset_source: None,
         transition_count: None,
@@ -1038,10 +1039,12 @@ pub(super) fn write_episode_ledger(
 }
 
 pub(super) fn address_attempt_artifacts(
-    output_root: &Path,
+    store_root: &Path,
     attempts: &mut [AttemptEvidence],
 ) -> Result<(), EvaluateError> {
-    let store = ContentStore::initialize(output_root.join("content"))
+    let store = ContentStore::initialize(store_root)
+        .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+    let episode_store = EpisodeStore::initialize(store_root)
         .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
     for attempt in attempts {
         if let Some(path) = &attempt.gameplay_trace {
@@ -1083,6 +1086,24 @@ pub(super) fn address_attempt_artifacts(
                     }
                 }
             }
+        }
+        if let (Some(manifest), Some(trace), Some(corpus), Some(transition_evidence)) = (
+            attempt.episode_manifest.as_deref(),
+            attempt.gameplay_trace.as_deref(),
+            attempt.transition_corpus.as_deref(),
+            attempt.transition_evidence.as_deref(),
+        ) {
+            let absolute_tape = attempt.realized_tape.as_deref().unwrap_or(&attempt.tape);
+            let stored = episode_store
+                .ingest(EpisodeBundleSources {
+                    manifest,
+                    absolute_tape,
+                    gameplay_trace: trace,
+                    transition_corpus: corpus,
+                    transition_evidence,
+                })
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+            attempt.episode_store_entry = Some(stored.entry_path);
         }
         write_json(&attempt.artifact_root.join("attempt.json"), attempt)?;
     }

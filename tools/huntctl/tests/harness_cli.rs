@@ -1327,9 +1327,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         .output()
         .unwrap();
     assert!(!conflicting_beam.status.success());
-    assert!(
-        String::from_utf8_lossy(&conflicting_beam.stderr).contains("sole execution authority")
-    );
+    assert!(String::from_utf8_lossy(&conflicting_beam.stderr).contains("sole execution authority"));
 
     let tournament_definition = root.join("tournament.json");
     fs::write(
@@ -1556,9 +1554,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         .output()
         .unwrap();
     assert!(!conflicting_golf.status.success());
-    assert!(
-        String::from_utf8_lossy(&conflicting_golf.stderr).contains("sole execution authority")
-    );
+    assert!(String::from_utf8_lossy(&conflicting_golf.stderr).contains("sole execution authority"));
 
     let anchored_wrapper = write_mock_native_wrapper(&root, executable);
     let anchored_source = b"milestones 1.0\n\nmilestone source-ready {\n  phase post_sim\n  when boundary.reached\n}\n\nmilestone entered-f-sp104 {\n  phase post_sim\n  when boundary.reached\n}\n";
@@ -1887,15 +1883,11 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         &fs::read(route_minimize_root.join("final-proof/evidence/evaluation.json")).unwrap(),
     )
     .unwrap();
-    assert!(
-        final_evaluation["attempts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|attempt| attempt["harness_terminal"] == "reached"
-                && attempt["harness_request_sha256"].is_string()
-                && attempt["harness_result_sha256"].is_string())
-    );
+    assert!(final_evaluation["attempts"].as_array().unwrap().iter().all(
+        |attempt| attempt["harness_terminal"] == "reached"
+            && attempt["harness_request_sha256"].is_string()
+            && attempt["harness_result_sha256"].is_string()
+    ));
     let mut checkpoints = fs::read_dir(route_minimize_root.join("checkpoints"))
         .unwrap()
         .map(|entry| entry.unwrap().path())

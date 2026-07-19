@@ -10,17 +10,16 @@ use crate::episode::{
     EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
     RunBuildIdentity,
 };
+use crate::episode_store::{EpisodeBundleSources, EpisodeStore};
 pub use crate::harness::evaluation::{AnchoredObjectiveIdentity, BoundaryFingerprint};
 use crate::harness::execution::execute_request;
 use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
 use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessTerminalReason};
-use crate::offline_rl::{
-    ExploratoryExtractConfig, extract_exploratory_v2_from_bytes,
-};
+use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_v2_from_bytes};
 use crate::search::{
-    Ancestry, Candidate, CandidateResult, LeaderboardEntry, LexicographicScore,
-    POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults, SegmentProfile,
-    rank_population, tape_input_complexity,
+    Ancestry, Candidate, CandidateResult, LeaderboardEntry, LexicographicScore, POPULATION_SCHEMA,
+    PopulationManifest, RESULTS_SCHEMA, SearchResults, SegmentProfile, rank_population,
+    tape_input_complexity,
 };
 use crate::semantic_novelty::{BoundaryFingerprintFact, SemanticNoveltyDescriptor};
 use crate::tape::{InputTape, TapeBoot};
@@ -94,15 +93,14 @@ pub struct EvaluateConfig {
     pub game: PathBuf,
     pub dvd: PathBuf,
     pub output_root: PathBuf,
+    pub episode_store: Option<PathBuf>,
     pub results_path: PathBuf,
     pub working_directory: PathBuf,
     pub game_args_prefix: Vec<String>,
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
-    /// Authenticated request template used to turn each candidate into an
-    /// ordinary core-harness run. Legacy callers may omit this while they are
-    /// migrated, but new evaluator entry points should provide it.
+    /// Sole authenticated execution authority for migrated entry points.
     pub harness: Option<HarnessEvaluateConfig>,
 }
 
@@ -229,6 +227,8 @@ pub struct AttemptEvidence {
     pub transition_evidence: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episode_manifest: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub episode_store_entry: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub immutable_episode: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -693,7 +693,11 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
             .then(left.attempt.cmp(&right.attempt))
     });
     validate_attempt_worker_assignments(&worker_schedule, &attempts)?;
-    address_attempt_artifacts(&config.output_root, &mut attempts)?;
+    let episode_store = config
+        .episode_store
+        .clone()
+        .unwrap_or_else(|| config.output_root.join("content"));
+    address_attempt_artifacts(&episode_store, &mut attempts)?;
     let faults = attempts
         .iter()
         .filter(|attempt| attempt.infrastructure_error.is_some())
@@ -879,7 +883,11 @@ fn evaluate_anchored_population_internal(
             .then(left.attempt.cmp(&right.attempt))
     });
     validate_attempt_worker_assignments(&worker_schedule, &attempts)?;
-    address_attempt_artifacts(&base.output_root, &mut attempts)?;
+    let episode_store = base
+        .episode_store
+        .clone()
+        .unwrap_or_else(|| base.output_root.join("content"));
+    address_attempt_artifacts(&episode_store, &mut attempts)?;
     let faults = attempts
         .iter()
         .filter(|attempt| attempt.infrastructure_error.is_some())
@@ -988,7 +996,9 @@ fn validate_anchored_execution_paths(
 
 mod proposal_readiness;
 #[cfg(test)]
-use proposal_readiness::{learned_holdout_scores_adequate, native_terminals_support_required_facts};
+use proposal_readiness::{
+    learned_holdout_scores_adequate, native_terminals_support_required_facts,
+};
 use proposal_readiness::{learned_proposal_held_out_performance, required_native_facts_supported};
 
 /// Derive portable novelty evidence from one authenticated native attempt.
@@ -1206,6 +1216,7 @@ fn normalize_evaluate_config(config: &EvaluateConfig) -> Result<EvaluateConfig, 
         game: fs::canonicalize(&config.game)?,
         dvd: fs::canonicalize(&config.dvd)?,
         output_root,
+        episode_store: config.episode_store.as_deref().map(absolute).transpose()?,
         results_path: absolute(&config.results_path)?,
         working_directory: fs::canonicalize(&config.working_directory)?,
         game_args_prefix: config.game_args_prefix.clone(),

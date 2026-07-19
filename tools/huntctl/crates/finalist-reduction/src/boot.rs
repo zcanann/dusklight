@@ -423,12 +423,10 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     Ok(summary)
 }
 
-fn validate_boot_harness(
-    harness: Option<&HarnessEvaluateConfig>,
-) -> Result<(), EvaluateError> {
-    if harness.is_some_and(|harness| {
-        harness.request_template.objective.goal != "gameplay-ready-f-sp103"
-    }) {
+fn validate_boot_harness(harness: Option<&HarnessEvaluateConfig>) -> Result<(), EvaluateError> {
+    if harness
+        .is_some_and(|harness| harness.request_template.objective.goal != "gameplay-ready-f-sp103")
+    {
         return Err(EvaluateError::InvalidConfig(
             "boot finalist reduction requires run-request goal gameplay-ready-f-sp103".into(),
         ));
@@ -617,6 +615,7 @@ fn evaluate_boot_batch_with_report(
         game: config.game.clone(),
         dvd: config.dvd.clone(),
         output_root: root.join("evidence"),
+        episode_store: None,
         results_path: root.join("results.json"),
         working_directory: config.working_directory.clone(),
         game_args_prefix: config.game_args_prefix.clone(),

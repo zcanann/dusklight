@@ -1,7 +1,7 @@
 //! Shared validation for sealed execution authority composed with anchored goals.
 
-use dusklight_automation_contracts::candidate_envelope::NamedDigest;
 use crate::search_evaluator::{AnchoredObjectiveIdentity, EvaluateError, HarnessEvaluateConfig};
+use dusklight_automation_contracts::candidate_envelope::NamedDigest;
 use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
 
 /// Require a sealed request to name the exact objective executed by an

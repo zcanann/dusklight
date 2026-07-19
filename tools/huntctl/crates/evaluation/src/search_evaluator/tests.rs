@@ -337,6 +337,7 @@ milestone tunnel_crawl_start {
                 game: prepared.config.game.clone(),
                 dvd: prepared.config.dvd.clone(),
                 output_root: root.join("mismatch-evidence"),
+                episode_store: None,
                 results_path: root.join("mismatch-results.json"),
                 working_directory: root.clone(),
                 game_args_prefix: Vec::new(),

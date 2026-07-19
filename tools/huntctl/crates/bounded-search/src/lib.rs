@@ -2,6 +2,7 @@
 
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_evaluation::*;
+use dusklight_learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use dusklight_search::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
 };
@@ -14,7 +15,6 @@ use dusklight_search::search::{
     SearchResults, SegmentProfile, evolve_population, rank_population, tape_intervention,
     write_explicit_population, write_seed_population,
 };
-use dusklight_learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -253,6 +253,7 @@ pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, Evaluate
             game: config.game.clone(),
             dvd: config.dvd.clone(),
             output_root: population_root.join("evaluations"),
+            episode_store: None,
             results_path: results_path.clone(),
             working_directory: config.working_directory.clone(),
             game_args_prefix: config.game_args_prefix.clone(),
@@ -376,6 +377,7 @@ pub fn run_beam_search(config: &BeamSearchConfig) -> Result<BeamSearchSummary, E
             game: config.game.clone(),
             dvd: config.dvd.clone(),
             output_root: depth_root.join("evaluations"),
+            episode_store: None,
             results_path: results_path.clone(),
             working_directory: config.working_directory.clone(),
             game_args_prefix: config.game_args_prefix.clone(),
@@ -610,6 +612,7 @@ pub fn run_continuous_search(
             game: config.game.clone(),
             dvd: config.dvd.clone(),
             output_root: generation_root.join("evaluations"),
+            episode_store: None,
             results_path: results_path.clone(),
             working_directory: config.working_directory.clone(),
             game_args_prefix: config.game_args_prefix.clone(),
@@ -802,6 +805,7 @@ pub fn run_bayesian_search(
             game: config.game.clone(),
             dvd: config.dvd.clone(),
             output_root: generation_root.join("evaluations"),
+            episode_store: None,
             results_path: results_path.clone(),
             working_directory: config.working_directory.clone(),
             game_args_prefix: config.game_args_prefix.clone(),

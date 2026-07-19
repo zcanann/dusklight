@@ -124,6 +124,7 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
     let route = root.join("route-population");
     seed(&route, "fsp103_to_fsp104", "4");
     let route_artifacts = root.join("route-evaluations");
+    let shared_episode_store = root.join("shared-episode-store");
     let route_results = root.join("route-results.json");
     let output = run(&[
         "search",
@@ -144,6 +145,8 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
         route_artifacts.to_str().unwrap(),
         "--results",
         route_results.to_str().unwrap(),
+        "--episode-store",
+        shared_episode_store.to_str().unwrap(),
         "--workers",
         "2",
         "--repetitions",
@@ -201,15 +204,24 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
                     && assignment["worker_id"] == format!("evaluation/worker-{}", trial_index % 2)
             })
     );
-    assert!(report["attempts"].as_array().unwrap().iter().all(|attempt| {
-        let member_index = route_manifest
-            .members
+    assert!(
+        report["attempts"]
+            .as_array()
+            .unwrap()
             .iter()
-            .position(|member| member.candidate_id == attempt["candidate_id"].as_str().unwrap())
-            .unwrap();
-        let trial_index = member_index * 2 + attempt["attempt"].as_u64().unwrap() as usize - 1;
-        attempt["worker_id"] == format!("evaluation/worker-{}", trial_index % 2)
-    }));
+            .all(|attempt| {
+                let member_index = route_manifest
+                    .members
+                    .iter()
+                    .position(|member| {
+                        member.candidate_id == attempt["candidate_id"].as_str().unwrap()
+                    })
+                    .unwrap();
+                let trial_index =
+                    member_index * 2 + attempt["attempt"].as_u64().unwrap() as usize - 1;
+                attempt["worker_id"] == format!("evaluation/worker-{}", trial_index % 2)
+            })
+    );
     assert!(
         report["attempts"]
             .as_array()
@@ -219,18 +231,19 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
                 let learning_trace_is_correct = if attempt["attempt"] == 1 {
                     attempt["gameplay_trace_error"].is_null()
                         && Path::new(attempt["gameplay_trace"].as_str().unwrap()).is_file()
-                        && route_artifacts
-                            .join("content")
+                        && shared_episode_store
                             .join(
                                 attempt["gameplay_trace_blob"]["relative_path"]
                                     .as_str()
                                     .unwrap(),
                             )
                             .is_file()
+                        && attempt["episode_store_entry"].is_null()
                 } else {
                     attempt["gameplay_trace"].is_null()
                         && attempt["gameplay_trace_blob"].is_null()
                         && attempt["gameplay_trace_error"].is_null()
+                        && attempt["episode_store_entry"].is_null()
                 };
                 learning_trace_is_correct
                     && attempt["boundary_fingerprints"]["entered-f-sp104"].is_object()

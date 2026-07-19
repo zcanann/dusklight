@@ -29,10 +29,7 @@ fn stable_lanes_cover_every_trial_once() {
                     .unwrap()
                     .map(|assignment| assignment.trial_index)
                     .collect::<Vec<_>>();
-                assert!(
-                    lane.iter()
-                        .all(|index| index % worker_lanes == worker_lane)
-                );
+                assert!(lane.iter().all(|index| index % worker_lanes == worker_lane));
                 assigned.extend(lane);
             }
             assigned.sort_unstable();
