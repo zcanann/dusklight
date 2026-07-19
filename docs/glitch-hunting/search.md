@@ -188,6 +188,10 @@ fallback:
 Rust starts at most the requested number of isolated Dusklight processes. Every
 attempt receives its own automation state, stdout, stderr, native milestone
 result, boundary fingerprints, and attempt evidence. Timeouts kill the child.
+For a fixed population, repetition count, and worker count, planned trial index
+maps to a stable strided worker lane; thread wakeup and completion order cannot
+change the recorded worker identity. Completed evidence is sorted by candidate
+and repetition before aggregation.
 Any launch failure, timeout, missing result, malformed schema, contradictory
 milestone sequence, or evidence-write failure cancels the population and makes
 the command fail. A legitimate goal miss remains a valid partial sample.

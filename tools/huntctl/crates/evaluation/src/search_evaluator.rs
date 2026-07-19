@@ -39,7 +39,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -48,6 +48,15 @@ pub const EVALUATION_SCHEMA: &str = "dusklight-search-evaluation/v5";
 pub const ATTEMPT_SCHEMA: &str = "dusklight-search-attempt/v5";
 pub const ANCHORED_RESULTS_SCHEMA: &str = "dusklight-anchored-search-results/v2";
 const NATIVE_GOAL_MISS_EXIT_CODE: i32 = 2;
+
+fn stable_trial_indices(
+    trial_count: usize,
+    worker_count: usize,
+    worker_index: usize,
+) -> std::iter::StepBy<std::ops::Range<usize>> {
+    assert!(worker_count > 0 && worker_index < worker_count);
+    (worker_index..trial_count).step_by(worker_count)
+}
 
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
@@ -608,7 +617,6 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
     )?;
 
     let trials = Arc::new(trials);
-    let next = Arc::new(AtomicUsize::new(0));
     let cancelled = Arc::new(AtomicBool::new(false));
     let outcomes = Arc::new(Mutex::new(Vec::with_capacity(trials.len())));
     let worker_count = config.workers.min(trials.len()).max(1);
@@ -618,18 +626,14 @@ pub fn evaluate_population(config: &EvaluateConfig) -> Result<EvaluationReport, 
         let segment = manifest.segment;
         for worker_index in 0..worker_count {
             let trials = Arc::clone(&trials);
-            let next = Arc::clone(&next);
             let cancelled = Arc::clone(&cancelled);
             let outcomes = Arc::clone(&outcomes);
             scope.spawn(move || {
-                loop {
+                for index in stable_trial_indices(trials.len(), worker_count, worker_index) {
                     if cancelled.load(Ordering::Acquire) {
                         break;
                     }
-                    let index = next.fetch_add(1, Ordering::AcqRel);
-                    let Some(trial) = trials.get(index) else {
-                        break;
-                    };
+                    let trial = &trials[index];
                     let mut evidence = run_trial(
                         config,
                         segment,
@@ -780,7 +784,6 @@ fn evaluate_anchored_population_internal(
 
     let trials = Arc::new(trials);
     let objective = Arc::new(objective);
-    let next = Arc::new(AtomicUsize::new(0));
     let cancelled = Arc::new(AtomicBool::new(false));
     let outcomes = Arc::new(Mutex::new(Vec::with_capacity(trials.len())));
     let worker_count = base.workers.min(trials.len()).max(1);
@@ -789,19 +792,15 @@ fn evaluate_anchored_population_internal(
         for worker_index in 0..worker_count {
             let trials = Arc::clone(&trials);
             let objective = Arc::clone(&objective);
-            let next = Arc::clone(&next);
             let cancelled = Arc::clone(&cancelled);
             let outcomes = Arc::clone(&outcomes);
             let base = &base;
             scope.spawn(move || {
-                loop {
+                for index in stable_trial_indices(trials.len(), worker_count, worker_index) {
                     if cancelled.load(Ordering::Acquire) {
                         break;
                     }
-                    let index = next.fetch_add(1, Ordering::AcqRel);
-                    let Some(trial) = trials.get(index) else {
-                        break;
-                    };
+                    let trial = &trials[index];
                     let mut evidence = run_trial(
                         base,
                         segment,

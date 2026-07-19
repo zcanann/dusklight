@@ -253,3 +253,13 @@ authenticated evaluator crate merely to define that policy's command surface.
 
 **Done when:** `dusklight-evaluation` can authenticate and interpret a prepared
 population but cannot own a multi-generation search or learning loop.
+
+## 14. Deterministic native worker assignment
+
+- [x] Assign each planned trial to a stable worker lane independent of thread
+  wakeup and completion order for ordinary and anchored evaluation.
+- [x] Preserve parallel execution and fail-fast cancellation, prove exact lane
+  coverage without duplicates, and pass the full workspace suite.
+
+**Done when:** a healthy evaluation with the same population, repetition count,
+and worker count cannot change evidence worker identities due to host timing.

@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn stable_worker_lanes_cover_every_trial_once() {
+    for trial_count in 1..=31 {
+        for requested_workers in 1..=12 {
+            let worker_count = requested_workers.min(trial_count);
+            let mut assigned = Vec::new();
+            for worker_index in 0..worker_count {
+                let indices = stable_trial_indices(trial_count, worker_count, worker_index)
+                    .collect::<Vec<_>>();
+                assert!(
+                    indices
+                        .iter()
+                        .all(|index| index % worker_count == worker_index)
+                );
+                assigned.extend(indices);
+            }
+            assigned.sort_unstable();
+            assert_eq!(assigned, (0..trial_count).collect::<Vec<_>>());
+        }
+    }
+}
 use crate::search::write_explicit_population;
 use std::time::{SystemTime, UNIX_EPOCH};
 

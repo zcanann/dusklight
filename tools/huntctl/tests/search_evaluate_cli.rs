@@ -166,6 +166,17 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["planned_attempts"], 8);
     assert_eq!(report["infrastructure_faults"], 0);
+    let route_manifest: PopulationManifest =
+        serde_json::from_slice(&fs::read(route.join("manifest.json")).unwrap()).unwrap();
+    assert!(report["attempts"].as_array().unwrap().iter().all(|attempt| {
+        let member_index = route_manifest
+            .members
+            .iter()
+            .position(|member| member.candidate_id == attempt["candidate_id"].as_str().unwrap())
+            .unwrap();
+        let trial_index = member_index * 2 + attempt["attempt"].as_u64().unwrap() as usize - 1;
+        attempt["worker_id"] == format!("evaluation/worker-{}", trial_index % 2)
+    }));
     assert!(
         report["attempts"]
             .as_array()
