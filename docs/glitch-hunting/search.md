@@ -144,6 +144,30 @@ nodes play from their exact clean-boot tape but cannot be renamed, deleted, or
 used as recording parents until their compact suffix and proof are promoted to
 the Git-owned timeline.
 
+### Exact anchored finalist minimization
+
+Use the dedicated reducer after an anchored search or tournament produces a
+finalist whose terminal state must not drift:
+
+    huntctl search minimize-route --candidate build/search/finalist.candidate.json --anchored-prefix build/harness/prefix.tape --milestones build/harness/objective.dmsp --segment fsp103_to_fsp104 --source-milestone link_control --source-boundary-fingerprint FINGERPRINT --goal-milestone ordon_spring_load_committed --game build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight --dvd orig/GZ2E01/GZ2E01.iso --output build/search/route-minimized --workers 8 --repetitions 3 --candidate-budget 256
+
+`minimize-route` prepares one content-bound anchored objective and proves the
+source in repeated clean processes. It first truncates frames after the exact
+goal boundary, then tests deterministic action partitions and one-frame macro
+duration reductions. A proposal is eligible only when every repetition keeps
+the source proof, relative first-hit tick, absolute goal simulation tick, goal
+tape frame, and terminal boundary fingerprint exactly equal to the source.
+Every candidate still executes as the immutable prefix plus proposed suffix
+through the authenticated evaluator; the reducer has no separate or synthetic
+acceptance path.
+
+The output retains `minimized.candidate.json`, the compact
+`minimized.suffix.tape`, the full clean-boot `minimized.tape`,
+`reduction-history.json`, source and final-proof results, all intermediate
+attempt evidence, and `minimize.summary.json`. The candidate budget covers
+reduction proposals; source and independent final proofs are always additional
+and both require at least two repetitions.
+
 ## Native evaluation
 
 Both the game executable and disc image are explicit. There is no saved-config
@@ -679,3 +703,16 @@ from 115 to 114. Three clean processes agreed on goal boundary fingerprint
 learned finalist, so both successful boundary states remain in evidence rather
 than treating minimization as identity-preserving. The retained ignored summary
 is `build/search/ordon-spring-learned-finalist-min-v1/run.summary.json`.
+
+The dedicated exact anchored reducer subsequently proved and trimmed the
+original learned finalist without accepting that terminal-state drift. Across
+235 bounded proposals it reduced the suffix from 144 to 136 frames, actions
+from 81 to 77, and canonical input complexity from 115 to 111. Three source
+processes and three independent final-proof processes all reached the goal at
+relative tick 135, absolute simulation tick and tape frame 575, with the
+original boundary fingerprint `54ebb7fb2397087d9abc598202785197`. No action
+deletion or duration reduction preserved that complete contract; the accepted
+change was the exact post-goal trim. The retained ignored report is
+`build/search/ordon-spring-exact-min-v4/minimize.summary.json`, with its source
+proof, complete reduction history, final proof, compact suffix, and realized
+clean-boot tape beside it.

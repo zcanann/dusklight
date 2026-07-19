@@ -173,11 +173,11 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 
 ## 7. Exact anchored-route finalist minimization
 
-- [ ] Add `huntctl search minimize-route` for a proved anchored suffix. Reduce
+- [x] Add `huntctl search minimize-route` for a proved anchored suffix. Reduce
   actions and durations only through the authenticated clean-boot evaluator,
   preserving the exact objective identity, source boundary, goal tick, and
   terminal boundary fingerprint across repeated processes.
-- [ ] Minimize the learned Ordon Spring finalist and retain a machine-readable
+- [x] Minimize the learned Ordon Spring finalist and retain a machine-readable
   source proof, reduction history, final proof, and compact realized tape.
 
 **Done when:** route and glitch finalists can be reduced without launching a
