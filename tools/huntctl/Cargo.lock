@@ -253,6 +253,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dusklight-harness-contracts"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-objectives",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "dusklight-huntctl"
 version = "0.1.0"
 dependencies = [
@@ -262,6 +274,7 @@ dependencies = [
  "dusklight-automation-contracts",
  "dusklight-control",
  "dusklight-evidence",
+ "dusklight-harness-contracts",
  "dusklight-objectives",
  "dusklight-oracles",
  "dusklight-trace",

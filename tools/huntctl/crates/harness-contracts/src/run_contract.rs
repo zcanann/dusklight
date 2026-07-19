@@ -1019,14 +1019,14 @@ mod tests {
             observation_view,
             action_schema,
             observation_requirements: ObjectiveObservationRequirements {
-                schema: crate::harness::observation_contract::OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1
+                schema: crate::observation_contract::OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1
                     .into(),
                 families: vec![
-                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                    crate::observation_contract::ObservationFamilyRequirement {
                         id: "player_motion".into(),
                         minimum_version: 1,
                     },
-                    crate::harness::observation_contract::ObservationFamilyRequirement {
+                    crate::observation_contract::ObservationFamilyRequirement {
                         id: "stage".into(),
                         minimum_version: 1,
                     },
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn unavailable_or_truncated_objective_families_admit_only_unsupported() {
-        use crate::harness::observation_contract::{
+        use crate::observation_contract::{
             OBSERVATION_INVENTORY_SCHEMA_V1, ObservationFamilyAvailability, ObservationFamilyStatus,
         };
 

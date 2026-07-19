@@ -7,6 +7,7 @@ not an architectural boundary if any sibling module can import through it.
 dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
+├── dusklight-harness-contracts ──────┤
 ├── dusklight-objectives ─────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-oracles ────────────────┤
@@ -30,6 +31,14 @@ corpora, transition corpora, episode manifests, and repetition ledgers. It may
 depend on contracts. It cannot depend on proposers, learners, search ranking,
 route mutation, worker processes, or the CLI. This prevents evidence truth from
 acquiring algorithm-specific authority.
+
+## `dusklight-harness-contracts`
+
+Owns conformance-objective suites, observation admission, and the authenticated
+run request/result boundary. It may depend on contracts, control formats, and
+objective compilation. It cannot launch native processes, schedule campaigns,
+rank candidates, train models, or parse CLI commands. Root adapters execute
+these contracts but cannot redefine them.
 
 ## `dusklight-control`
 
@@ -82,6 +91,6 @@ restore reverse dependencies into the smaller crates.
 The next crate extractions should be driven by dependency direction, not file
 size alone. Candidate and proposer envelopes now have a lower-level owner;
 search and learning must finish adopting that contract before either becomes a
-crate. Native harness contracts and native process execution should also
-separate before extracting the harness domain. Do not create a crate that
-depends back on `dusklight-huntctl`.
+crate. Native harness execution should remain an adapter around the extracted
+contracts until its process boundary is independently coherent. Do not create
+a crate that depends back on `dusklight-huntctl`.

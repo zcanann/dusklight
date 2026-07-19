@@ -3,6 +3,5 @@
 pub mod campaign;
 pub mod execution;
 pub mod inspection;
-pub mod objective_suite;
-pub mod observation_contract;
-pub mod run_contract;
+
+pub use dusklight_harness_contracts::{objective_suite, observation_contract, run_contract};
