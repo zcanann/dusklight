@@ -47,7 +47,8 @@ pub fn minimize_anchored_route(
                 .into(),
         ));
     }
-    let objective = anchored_objective_identity(&config.objective)?;
+    let prepared = prepare_anchored_objective(&config.objective, PathBuf::new())?;
+    let objective = prepared.identity.clone();
     fs::create_dir_all(&config.output_root)?;
 
     let source_id = config.candidate.id()?;
@@ -57,6 +58,7 @@ pub fn minimize_anchored_route(
     let source_input_complexity = tape_input_complexity(&source_tape);
     let (source_candidates, source_report) = evaluate_route_batch(
         config,
+        &prepared,
         vec![config.candidate.clone()],
         &config.output_root.join("source"),
         0,
@@ -106,6 +108,7 @@ pub fn minimize_anchored_route(
         };
         let (evaluated, _) = evaluate_route_batch(
             config,
+            &prepared,
             vec![trimmed],
             &config.output_root.join("rounds").join(format!("{round:04}")),
             round,
@@ -138,6 +141,7 @@ pub fn minimize_anchored_route(
         let evaluated_count = proposals.len();
         let (evaluated, _) = evaluate_route_batch(
             config,
+            &prepared,
             proposals,
             &config.output_root.join("rounds").join(format!("{round:04}")),
             round,
@@ -183,6 +187,7 @@ pub fn minimize_anchored_route(
         let evaluated_count = proposals.len();
         let (evaluated, _) = evaluate_route_batch(
             config,
+            &prepared,
             proposals,
             &config.output_root.join("rounds").join(format!("{round:04}")),
             round,
@@ -213,6 +218,7 @@ pub fn minimize_anchored_route(
 
     let (final_candidates, final_report) = evaluate_route_batch(
         config,
+        &prepared,
         vec![current.candidate.clone()],
         &config.output_root.join("final-proof"),
         round,
@@ -276,6 +282,7 @@ pub fn minimize_anchored_route(
 
 fn evaluate_route_batch(
     config: &AnchoredRouteMinimizeConfig,
+    prepared: &PreparedAnchoredObjective,
     candidates: Vec<Candidate>,
     root: &Path,
     generation: u32,
@@ -287,7 +294,7 @@ fn evaluate_route_batch(
         generation,
         candidates.clone(),
     )?;
-    let (report, results) = evaluate_anchored_population(&AnchoredEvaluateConfig {
+    let (report, results) = evaluate_anchored_population_internal(&AnchoredEvaluateConfig {
         evaluation: EvaluateConfig {
             population_path: population_root.join("manifest.json"),
             game: config.objective.game.clone(),
@@ -302,9 +309,8 @@ fn evaluate_route_batch(
             harness: None,
         },
         objective: config.objective.clone(),
-    })?;
-    let expected_objective = anchored_objective_identity(&config.objective)?;
-    if results.objective != expected_objective {
+    }, Some(prepared))?;
+    if results.objective != prepared.identity {
         return Err(EvaluateError::InvalidResult(
             "anchored route minimization changed objective identity".into(),
         ));
