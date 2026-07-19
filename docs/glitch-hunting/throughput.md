@@ -9,7 +9,9 @@ ordinary authenticated executor sequentially, and writes
 Each attempt retains its exact request and result identities, terminal,
 objective boundary, realized-tape digest, gameplay-trace digest, objective
 evidence digest, tick counts, native-process time, end-to-end harness time, and
-the exact `dusklight-native-lifecycle-timing/v1` artifact. Native marks cover
+the exact native lifecycle artifact. Current runs emit
+`dusklight-native-lifecycle-timing/v2`, which adds the authenticated post-run
+session-reuse audit; historical v1 timing remains valid. Native marks cover
 process entry, parsed configuration, Aurora initialization, engine readiness,
 stage readiness, first/last candidate ticks, proof flush, engine shutdown, and
 exit readiness. The summary divides the parent-observed process envelope into

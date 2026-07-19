@@ -11,6 +11,10 @@ use super::observation_contract::{
 };
 use crate::artifact::{ArtifactIdentity, BuildIdentity, Digest};
 use crate::compatibility::{CompatibilityMode, ensure_compatible};
+use dusklight_automation_contracts::engine_session::POST_AUTHENTICATED_RUN_BOUNDARY;
+pub use dusklight_automation_contracts::engine_session::{
+    ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, SessionReuseAudit, SessionReuseBlocker,
+};
 pub use dusklight_automation_contracts::run_terminal::HarnessTerminalReason;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -26,6 +30,7 @@ use std::time::UNIX_EPOCH;
 pub const RUN_REQUEST_SCHEMA_V2: &str = "dusklight-harness-run-request/v2";
 pub const RUN_RESULT_SCHEMA_V2: &str = "dusklight-harness-run-result/v2";
 pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V1: &str = "dusklight-native-lifecycle-timing/v1";
+pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V2: &str = "dusklight-native-lifecycle-timing/v2";
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
 const MAX_HOST_TIMEOUT_SECONDS: u32 = 86_400;
 const MAX_FACTS: usize = 128;
@@ -175,6 +180,8 @@ pub struct HarnessNativePhaseTiming {
     pub proof_artifacts_written_micros: u64,
     pub engine_shutdown_micros: u64,
     pub exit_ready_micros: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_reuse_audit: Option<SessionReuseAudit>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -676,10 +683,32 @@ impl HarnessRunArtifacts {
 
 impl HarnessNativePhaseTiming {
     pub fn validate(&self, host_elapsed_millis: u64) -> Result<(), HarnessRunContractError> {
-        if self.schema != NATIVE_LIFECYCLE_TIMING_SCHEMA_V1 || self.clock != "steady_clock" {
+        if !matches!(
+            self.schema.as_str(),
+            NATIVE_LIFECYCLE_TIMING_SCHEMA_V1 | NATIVE_LIFECYCLE_TIMING_SCHEMA_V2
+        ) || self.clock != "steady_clock"
+        {
             return Err(contract_error(
                 "unsupported native lifecycle timing identity",
             ));
+        }
+        match (self.schema.as_str(), &self.session_reuse_audit) {
+            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V1, None) => {}
+            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V2, Some(audit)) => {
+                audit.validate().map_err(|error| {
+                    contract_error(format!("invalid native session reuse audit: {error}"))
+                })?;
+                if audit.evaluated_boundary != POST_AUTHENTICATED_RUN_BOUNDARY {
+                    return Err(contract_error(
+                        "native session reuse audit was not evaluated after the authenticated run",
+                    ));
+                }
+            }
+            _ => {
+                return Err(contract_error(
+                    "native lifecycle timing schema contradicts session reuse evidence",
+                ));
+            }
         }
         let phases = [
             self.process_entry_micros,
@@ -1392,6 +1421,53 @@ mod tests {
         let error = result.validate_against(&request).unwrap_err();
         assert!(error.to_string().contains("settings_digest"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn native_phase_timing_v2() -> HarnessNativePhaseTiming {
+        HarnessNativePhaseTiming {
+            schema: NATIVE_LIFECYCLE_TIMING_SCHEMA_V2.into(),
+            clock: "steady_clock".into(),
+            process_entry_micros: 0,
+            cli_configured_micros: 1,
+            aurora_initialized_micros: 2,
+            engine_ready_micros: 3,
+            stage_ready_micros: 4,
+            first_simulation_tick_micros: 5,
+            last_simulation_tick_micros: 6,
+            proof_artifacts_written_micros: 7,
+            engine_shutdown_micros: 8,
+            exit_ready_micros: 9,
+            session_reuse_audit: Some(SessionReuseAudit {
+                schema: ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1.into(),
+                reusable: false,
+                evaluated_boundary: POST_AUTHENTICATED_RUN_BOUNDARY.into(),
+                target_boundary: POST_AUTHENTICATED_RUN_BOUNDARY.into(),
+                blockers: vec![
+                    SessionReuseBlocker {
+                        code: "game_global_reconstruction".into(),
+                        subsystem: "game_state".into(),
+                        required_guarantee: "game state reconstructs from a clean origin".into(),
+                    },
+                ],
+            }),
+        }
+    }
+
+    #[test]
+    fn native_phase_v2_authenticates_post_run_reuse_refusal() {
+        native_phase_timing_v2().validate(1).unwrap();
+    }
+
+    #[test]
+    fn native_phase_v2_rejects_a_preboot_only_audit() {
+        let mut timing = native_phase_timing_v2();
+        timing
+            .session_reuse_audit
+            .as_mut()
+            .unwrap()
+            .evaluated_boundary = "pre_engine_boot".into();
+        let error = timing.validate(1).unwrap_err().to_string();
+        assert!(error.contains("was not evaluated after the authenticated run"));
     }
 
     #[test]

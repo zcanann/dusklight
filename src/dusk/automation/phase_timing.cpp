@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "dusk/automation/engine_session.hpp"
+
 namespace dusk::automation {
 namespace {
 
@@ -18,6 +20,7 @@ constexpr std::size_t PhaseCount = static_cast<std::size_t>(Phase::Count);
 struct Recorder {
     Clock::time_point start{};
     std::array<std::optional<std::uint64_t>, PhaseCount> microseconds{};
+    std::optional<std::string> sessionReuseBoundary;
     bool active = false;
 };
 
@@ -72,6 +75,12 @@ void update_native_lifecycle_phase(const Phase phase) {
     recorder.microseconds[index(phase)] = elapsed_microseconds();
 }
 
+void record_native_session_reuse_audit(const std::string_view evaluatedBoundary) {
+    if (recorder.active && !evaluatedBoundary.empty()) {
+        recorder.sessionReuseBoundary = evaluatedBoundary;
+    }
+}
+
 bool write_native_lifecycle_timing(const std::filesystem::path& path, std::string& error) {
     error.clear();
     if (!recorder.active || path.empty()) {
@@ -93,13 +102,32 @@ bool write_native_lifecycle_timing(const std::filesystem::path& path, std::strin
         }
         previous = *value;
     }
+    if (recorder.sessionReuseBoundary != "post_authenticated_run") {
+        error = "native lifecycle timing is missing the post-run session reuse audit";
+        return false;
+    }
 
     nlohmann::ordered_json document{
-        {"schema", "dusklight-native-lifecycle-timing/v1"},
+        {"schema", "dusklight-native-lifecycle-timing/v2"},
         {"clock", "steady_clock"},
     };
     for (std::size_t phase = 0; phase < PhaseCount; ++phase) {
         document[PhaseNames[phase]] = *recorder.microseconds[phase];
+    }
+    const auto blockers = engine_session_reuse_blockers();
+    document["session_reuse_audit"] = {
+        {"schema", EngineSessionReuseAuditSchema},
+        {"reusable", blockers.empty()},
+        {"evaluated_boundary", *recorder.sessionReuseBoundary},
+        {"target_boundary", "post_authenticated_run"},
+        {"blockers", nlohmann::ordered_json::array()},
+    };
+    for (const auto& blocker : blockers) {
+        document["session_reuse_audit"]["blockers"].push_back({
+            {"code", blocker.code},
+            {"subsystem", blocker.subsystem},
+            {"required_guarantee", blocker.requiredGuarantee},
+        });
     }
     const std::string encoded = document.dump(2) + '\n';
     auto temporary = path;

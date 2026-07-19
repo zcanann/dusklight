@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace dusk::automation {
 
@@ -24,6 +25,7 @@ enum class NativeLifecyclePhase : std::uint8_t {
 void begin_native_lifecycle_timing();
 void mark_native_lifecycle_phase(NativeLifecyclePhase phase);
 void update_native_lifecycle_phase(NativeLifecyclePhase phase);
+void record_native_session_reuse_audit(std::string_view evaluatedBoundary);
 
 [[nodiscard]] bool write_native_lifecycle_timing(
     const std::filesystem::path& path, std::string& error);

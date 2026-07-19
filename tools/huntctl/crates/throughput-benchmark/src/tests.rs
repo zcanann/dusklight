@@ -2,12 +2,13 @@ use crate::report::{comparison_issue, summarize};
 use crate::*;
 use dusklight_harness_contracts::artifact::Digest;
 use dusklight_harness_contracts::run_contract::{
-    HarnessBoundaryFingerprint, HarnessNativePhaseTiming, HarnessTerminalReason,
+    ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, HarnessBoundaryFingerprint, HarnessNativePhaseTiming,
+    HarnessTerminalReason, SessionReuseAudit, SessionReuseBlocker,
 };
 
 fn native_phases() -> HarnessNativePhaseTiming {
     HarnessNativePhaseTiming {
-        schema: "dusklight-native-lifecycle-timing/v1".into(),
+        schema: "dusklight-native-lifecycle-timing/v2".into(),
         clock: "steady_clock".into(),
         process_entry_micros: 0,
         cli_configured_micros: 500,
@@ -19,6 +20,17 @@ fn native_phases() -> HarnessNativePhaseTiming {
         proof_artifacts_written_micros: 6_000,
         engine_shutdown_micros: 7_000,
         exit_ready_micros: 8_000,
+        session_reuse_audit: Some(SessionReuseAudit {
+            schema: ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1.into(),
+            reusable: false,
+            evaluated_boundary: "post_authenticated_run".into(),
+            target_boundary: "post_authenticated_run".into(),
+            blockers: vec![SessionReuseBlocker {
+                code: "game_global_reconstruction".into(),
+                subsystem: "game_state".into(),
+                required_guarantee: "game state reconstructs from a clean origin".into(),
+            }],
+        }),
     }
 }
 
@@ -123,6 +135,19 @@ fn changed_artifact_or_incomplete_proof_is_not_comparable() {
             .unwrap()
             .contains("complete authenticated artifacts")
     );
+
+    let mut changed_audit_attempt = attempt(2, 4, 10_000);
+    let mut changed_audit = changed_audit_attempt
+        .native_phases
+        .session_reuse_audit
+        .take()
+        .unwrap();
+    changed_audit.blockers.clear();
+    changed_audit.reusable = true;
+    changed_audit_attempt.native_phases.session_reuse_audit = Some(changed_audit);
+    let changed_audit = report(vec![attempt(1, 4, 10_000), changed_audit_attempt]);
+    changed_audit.validate().unwrap();
+    assert!(!changed_audit.comparable);
 }
 
 #[test]

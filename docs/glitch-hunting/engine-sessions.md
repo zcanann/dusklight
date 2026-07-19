@@ -56,3 +56,10 @@ no world reconstruction guarantee exists. The existing shutdown order is
 preserved because moving UI, mods, logging, or threads across heap destruction
 without ownership evidence would turn the reset experiment into undefined
 lifetime behavior.
+
+Authenticated executions bind the same blocker inventory at that exact
+boundary inside `dusklight-native-lifecycle-timing/v2`. The decoded audit is
+therefore covered by the ordinary run-result identity and native timing
+artifact digest. Timing v1 remains readable for historical cold-process
+reports, but it contains no session audit and cannot prove a post-run reuse
+decision.

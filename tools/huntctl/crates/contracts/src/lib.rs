@@ -9,6 +9,7 @@ pub mod artifact;
 pub mod candidate_envelope;
 pub mod compatibility;
 pub mod controller_program;
+pub mod engine_session;
 pub mod observation_view;
 pub mod run_terminal;
 pub mod scenario_fixture;

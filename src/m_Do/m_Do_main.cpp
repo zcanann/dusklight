@@ -3620,6 +3620,8 @@ int game_main(int argc, char* argv[]) {
     main01();
 
     dusk::runtime::finish_game_run();
+    dusk::automation::record_native_session_reuse_audit(
+        dusk::runtime::lifecycle_boundary_name());
     dusk::runtime::shutdown_diagnostics();
     dusk::runtime::destroy_emulated_machine();
     dusk::runtime::shutdown_host_services();
