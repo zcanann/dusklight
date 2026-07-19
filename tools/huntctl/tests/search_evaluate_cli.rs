@@ -10,6 +10,7 @@ use huntctl::search::{
     SearchResults, SegmentProfile, write_explicit_population,
 };
 use huntctl::tape::InputTape;
+use sha2::{Digest as _, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -168,6 +169,38 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
     assert_eq!(report["infrastructure_faults"], 0);
     let route_manifest: PopulationManifest =
         serde_json::from_slice(&fs::read(route.join("manifest.json")).unwrap()).unwrap();
+    let worker_schedule_path = Path::new(report["worker_schedule"].as_str().unwrap());
+    assert_eq!(
+        worker_schedule_path,
+        route_artifacts.join("worker-schedule.json")
+    );
+    let worker_schedule_bytes = fs::read(worker_schedule_path).unwrap();
+    assert_eq!(
+        report["worker_schedule_sha256"],
+        format!("{:x}", Sha256::digest(&worker_schedule_bytes))
+    );
+    let worker_schedule: serde_json::Value =
+        serde_json::from_slice(&worker_schedule_bytes).unwrap();
+    assert_eq!(
+        worker_schedule["schema"],
+        "dusklight-evaluation-worker-schedule/v1"
+    );
+    assert_eq!(worker_schedule["worker_lanes"], 2);
+    assert_eq!(worker_schedule["planned_attempts"], 8);
+    assert!(
+        worker_schedule["assignments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .all(|(trial_index, assignment)| {
+                assignment["trial_index"] == trial_index
+                    && assignment["candidate_id"]
+                        == route_manifest.members[trial_index / 2].candidate_id
+                    && assignment["attempt"] == trial_index % 2 + 1
+                    && assignment["worker_id"] == format!("evaluation/worker-{}", trial_index % 2)
+            })
+    );
     assert!(report["attempts"].as_array().unwrap().iter().all(|attempt| {
         let member_index = route_manifest
             .members

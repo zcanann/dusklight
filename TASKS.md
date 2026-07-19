@@ -263,3 +263,13 @@ population but cannot own a multi-generation search or learning loop.
 
 **Done when:** a healthy evaluation with the same population, repetition count,
 and worker count cannot change evidence worker identities due to host timing.
+
+## 15. Authenticated native worker schedule
+
+- [x] Write a deterministic prelaunch worker schedule for ordinary and anchored
+  evaluation, and link it from the evaluation report.
+- [x] Validate completed trial identities and worker claims against that
+  schedule before aggregation, with unit, CLI, and full workspace coverage.
+
+**Done when:** native attempt evidence cannot silently disagree with its
+predeclared worker lane or introduce an unplanned or duplicate trial identity.

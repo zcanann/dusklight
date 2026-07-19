@@ -190,8 +190,12 @@ attempt receives its own automation state, stdout, stderr, native milestone
 result, boundary fingerprints, and attempt evidence. Timeouts kill the child.
 For a fixed population, repetition count, and worker count, planned trial index
 maps to a stable strided worker lane; thread wakeup and completion order cannot
-change the recorded worker identity. Completed evidence is sorted by candidate
-and repetition before aggregation.
+change the recorded worker identity. Before launch, `worker-schedule.json`
+records every planned trial, candidate, repetition, and worker lane, and the
+evaluation report links to and hashes that artifact. Completed evidence is
+sorted by candidate and repetition, then checked against the schedule before
+artifact addressing or aggregation; a missing plan entry, duplicate trial
+identity, or different worker identity fails closed.
 Any launch failure, timeout, missing result, malformed schema, contradictory
 milestone sequence, or evidence-write failure cancels the population and makes
 the command fail. A legitimate goal miss remains a valid partial sample.
