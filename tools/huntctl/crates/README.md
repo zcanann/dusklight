@@ -18,6 +18,10 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-harness-contracts ──────┤
+├── dusklight-harness-runtime ────────┤
+│   ├── dusklight-harness-contracts ──┤
+│   ├── dusklight-objectives ─────────┤
+│   └── dusklight-trace ──────────────┤
 ├── dusklight-interventions ──────────┤
 ├── dusklight-learning ───────────────┤
 │   ├── dusklight-control ────────────┤
@@ -75,6 +79,15 @@ run request/result boundary. It may depend on contracts, control formats, and
 objective compilation. It cannot launch native processes, schedule campaigns,
 rank candidates, train models, or parse CLI commands. Root adapters execute
 these contracts but cannot redefine them.
+
+## `dusklight-harness-runtime`
+
+Owns native process launch, isolated artifact capture, result sealing, and
+human-readable inspection for authenticated harness requests. It may consume
+contracts, controller input, objective compilation, and trace decoding. It
+cannot schedule campaigns, rank candidates, propose actions, train models, or
+parse CLI commands. Native execution therefore remains usable without granting
+the evaluator or campaign scheduler ownership of the process boundary.
 
 ## `dusklight-interventions`
 
@@ -135,11 +148,11 @@ systems that consume them.
 
 ## `dusklight-orchestration`
 
-Owns native harness execution, population evaluation, campaign scheduling,
-behavior archiving, and the adapter that turns learned models into search
-proposals. It may compose the lower-level domain crates, but nothing below it
-may depend on orchestration or the huntctl executable. This is the explicit
-integration layer where simulator budget and evidence contracts meet.
+Owns population evaluation, campaign scheduling, behavior archiving, and the
+adapter that turns learned models into search proposals. It composes the native
+harness runtime and lower-level domain crates, but nothing below it may depend
+on orchestration or the huntctl executable. This is the explicit integration
+layer where simulator budget and evidence contracts meet.
 
 ## `dusklight-search`
 
