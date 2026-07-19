@@ -182,11 +182,11 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
     let mut trimmed_tape = current.tape.clone();
     trimmed_tape.frames.truncate(required_frames);
     let mut trimmed = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &trimmed_tape)?;
-    trimmed.ancestry = crate::search::Ancestry {
+    trimmed.ancestry = Ancestry {
         generation: round,
         parent_id: Some(current.candidate.id()?),
         mutation: Some("trim after exact goal tape frame".into()),
-        intervention: Some(crate::search::InterventionRange {
+        intervention: Some(InterventionRange {
             start_frame: required_frames as u64,
             end_frame_exclusive: required_frames as u64,
             parent_end_frame_exclusive: current.tape.frames.len() as u64,
@@ -370,11 +370,11 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     let mut trimmed_tape = current.tape.clone();
     trimmed_tape.frames.truncate(required_frames);
     let mut trimmed = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &trimmed_tape)?;
-    trimmed.ancestry = crate::search::Ancestry {
+    trimmed.ancestry = Ancestry {
         generation: round,
         parent_id: Some(current.candidate.id()?),
         mutation: Some("trim after exact goal tape frame".into()),
-        intervention: Some(crate::search::InterventionRange {
+        intervention: Some(InterventionRange {
             start_frame: required_frames as u64,
             end_frame_exclusive: required_frames as u64,
             parent_end_frame_exclusive: current.tape.frames.len() as u64,
@@ -505,13 +505,13 @@ fn candidate_with_shifted_pulse(
     tape.frames[old_index].pads[0] = RawPadState::default();
     tape.frames[new_index].pads[0] = pad;
     let mut candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape)?;
-    candidate.ancestry = crate::search::Ancestry {
+    candidate.ancestry = Ancestry {
         generation,
         parent_id: Some(parent.candidate.id()?),
         mutation: Some(format!(
             "move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
         )),
-        intervention: Some(crate::search::InterventionRange {
+        intervention: Some(InterventionRange {
             start_frame: old_timestamp.min(new_timestamp),
             end_frame_exclusive: old_timestamp.max(new_timestamp) + 1,
             parent_end_frame_exclusive: old_timestamp.max(new_timestamp) + 1,
@@ -554,11 +554,11 @@ fn candidate_with_neutralized_ranges(
         }
     }
     let mut candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape)?;
-    candidate.ancestry = crate::search::Ancestry {
+    candidate.ancestry = Ancestry {
         generation,
         parent_id: Some(parent.candidate.id()?),
         mutation: Some(mutation.into()),
-        intervention: Some(crate::search::InterventionRange {
+        intervention: Some(InterventionRange {
             start_frame: ranges
                 .iter()
                 .map(|(start, _)| *start as u64)

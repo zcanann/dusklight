@@ -1,4 +1,4 @@
-use crate::harness_authority::validate_anchored_harness_request;
+use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::candidate_envelope::{
     CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,

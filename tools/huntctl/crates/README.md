@@ -13,9 +13,9 @@ ceilings as well; large test suites live in sibling `tests.rs` modules instead
 of obscuring production ownership. The budgets are ceilings to lower during
 extraction, not targets. The current policy caps the executable adapter and
 crate entry points at 2,500 lines and every non-test implementation module at
-3,000 lines. Evaluation, harness runtime, orchestration, proposal, and
-workbench source inventories are closed lists: adding a sibling module requires
-an explicit ownership-policy change.
+3,000 lines. Evaluation, finalist reduction, harness runtime, orchestration,
+proposal, and workbench source inventories are closed lists: adding a sibling
+module requires an explicit ownership-policy change.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)
@@ -27,6 +27,10 @@ dusklight-huntctl (CLI and domain orchestration)
 │   ├── dusklight-harness-runtime ────┤
 │   ├── dusklight-proposals ──────────┤
 │   └── dusklight-search ─────────────┤
+├── dusklight-finalist-reduction ─────┤
+│   ├── dusklight-control ─────────────┤
+│   ├── dusklight-evaluation ──────────┤
+│   └── dusklight-search ──────────────┤
 ├── dusklight-harness-contracts ──────┤
 ├── dusklight-harness-runtime ────────┤
 │   ├── dusklight-harness-contracts ──┤
@@ -46,6 +50,7 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-orchestration ──────────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-evaluation ──────────┤
+│   ├── dusklight-finalist-reduction ──┤
 │   ├── dusklight-harness-runtime ─────┤
 │   ├── dusklight-learning ─────────────┤
 │   └── dusklight-search ──────────────┤
@@ -107,6 +112,14 @@ worker lanes, its portable JSON contract and digest, and validation of completed
 worker claims. It may depend only on portable automation contracts. It cannot
 execute trials, interpret objectives, rank candidates, schedule optimizer loops,
 or parse CLI commands.
+
+## `dusklight-finalist-reduction`
+
+Owns exact bounded boot and anchored-route finalist reduction, checkpointed
+recovery, and independent final proof. It may consume contracts, control tape
+composition, authenticated evaluation, and portable search candidates. It
+cannot own campaigns, novelty archives, learning policy, general optimizer
+loops, harness runtime internals, route/workbench state, or CLI parsing.
 
 ## `dusklight-harness-contracts`
 

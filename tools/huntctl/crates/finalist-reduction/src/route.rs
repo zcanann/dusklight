@@ -1,7 +1,7 @@
 //! Exact anchored-route reduction through repeated clean-boot evaluation.
 
 use super::*;
-use crate::harness_authority::validate_anchored_harness_request;
+use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 
 #[derive(Clone)]
 struct ProvenRouteCandidate {
@@ -996,7 +996,7 @@ fn round_record_with_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::SearchPadState;
+    use dusklight_search::search::SearchPadState;
 
     fn candidate() -> Candidate {
         Candidate {

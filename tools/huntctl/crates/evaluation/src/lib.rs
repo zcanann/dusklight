@@ -19,5 +19,6 @@ pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_trace::trace;
 
 pub mod search_evaluator;
+pub mod harness_authority;
 
 pub use search_evaluator::*;

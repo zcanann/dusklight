@@ -286,6 +286,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dusklight-finalist-reduction"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-evaluation",
+ "dusklight-search",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dusklight-harness-contracts"
 version = "0.1.0"
 dependencies = [
@@ -397,6 +409,7 @@ dependencies = [
  "dusklight-control",
  "dusklight-evaluation",
  "dusklight-evidence",
+ "dusklight-finalist-reduction",
  "dusklight-harness-contracts",
  "dusklight-harness-runtime",
  "dusklight-learning",

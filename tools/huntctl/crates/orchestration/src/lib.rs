@@ -2,8 +2,6 @@
 
 mod anchored_search;
 pub mod harness;
-pub mod finalist_reduction;
-mod harness_authority;
 mod search_drivers;
 mod tournament;
 
@@ -11,11 +9,7 @@ pub use dusklight_evaluation::*;
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,
 };
-pub use finalist_reduction::{
-    AnchoredRouteMinimizeConfig, AnchoredRouteMinimizeRound, AnchoredRouteMinimizeSummary,
-    BootGolfConfig, BootGolfSummary, BootMinimizeConfig, BootMinimizeSummary, golf_boot,
-    minimize_anchored_route, minimize_boot,
-};
+pub use dusklight_finalist_reduction::*;
 pub use search_drivers::{
     BayesianSearchRunConfig, BayesianSearchRunSummary, BeamSearchConfig, BeamSearchSummary,
     ContinuousSearchRunConfig, ContinuousSearchRunSummary, SearchRunConfig, SearchRunSummary,

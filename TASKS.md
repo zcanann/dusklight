@@ -333,3 +333,13 @@ conflating or weakening either authenticated identity.
 
 **Done when:** accepting a sealed request cannot make an anchored route command
 execute a different objective than the one it reports and ranks.
+
+## 22. Dedicated finalist-reduction crate
+
+- [x] Extract boot and anchored-route finalist reduction from the broad
+  orchestration crate into a dedicated dependency-bounded crate.
+- [x] Keep shared anchored request validation below orchestration, preserve the
+  public API, and ratchet the new crate's exact source inventory and line caps.
+
+**Done when:** finalist reduction cannot regain unrelated campaign, novelty, or
+learning dependencies without an explicit architecture-policy change.

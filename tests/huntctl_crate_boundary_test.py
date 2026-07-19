@@ -40,11 +40,11 @@ CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
 # split, not a larger generic allowance.
 COORDINATION_FILE_LINE_BUDGETS = {
     "evaluation/src/search_evaluator.rs": 1_375,
+    "evaluation/src/harness_authority.rs": 125,
+    "finalist-reduction/src/boot.rs": 1_000,
+    "finalist-reduction/src/lib.rs": 250,
+    "finalist-reduction/src/route.rs": 1_250,
     "orchestration/src/anchored_search.rs": 800,
-    "orchestration/src/finalist_reduction/boot.rs": 1_000,
-    "orchestration/src/finalist_reduction/mod.rs": 250,
-    "orchestration/src/finalist_reduction/route.rs": 1_250,
-    "orchestration/src/harness_authority.rs": 125,
     "orchestration/src/search_drivers.rs": 1_000,
     "orchestration/src/tournament.rs": 900,
 }
@@ -54,6 +54,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
 # quietly recreating a general-purpose dumping ground.
 EXPECTED_COORDINATION_SOURCE_FILES = {
     "evaluation": {
+        "harness_authority.rs",
         "lib.rs",
         "search_evaluator.rs",
         "search_evaluator/native_result.rs",
@@ -61,16 +62,13 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "search_evaluator/tests.rs",
         "search_evaluator/trial.rs",
     },
+    "finalist-reduction": {"boot.rs", "lib.rs", "route.rs"},
     "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
     "orchestration": {
         "anchored_search.rs",
-        "finalist_reduction/boot.rs",
-        "finalist_reduction/mod.rs",
-        "finalist_reduction/route.rs",
         "harness/campaign.rs",
         "harness/conformance.rs",
         "harness/mod.rs",
-        "harness_authority.rs",
         "lib.rs",
         "search_drivers.rs",
         "tournament.rs",
@@ -94,6 +92,7 @@ EXPECTED_MEMBERS = {
     "crates/evidence",
     "crates/evaluation",
     "crates/evaluation-plan",
+    "crates/finalist-reduction",
     "crates/harness-contracts",
     "crates/harness-runtime",
     "crates/interventions",
@@ -134,6 +133,12 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-trace",
     },
     "dusklight-evaluation-plan": {"dusklight-automation-contracts"},
+    "dusklight-finalist-reduction": {
+        "dusklight-automation-contracts",
+        "dusklight-control",
+        "dusklight-evaluation",
+        "dusklight-search",
+    },
     "dusklight-harness-contracts": {
         "dusklight-automation-contracts",
         "dusklight-control",
@@ -169,6 +174,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-control",
         "dusklight-evidence",
         "dusklight-evaluation",
+        "dusklight-finalist-reduction",
         "dusklight-harness-contracts",
         "dusklight-harness-runtime",
         "dusklight-learning",
