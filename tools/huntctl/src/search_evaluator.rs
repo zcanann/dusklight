@@ -5,7 +5,9 @@ use crate::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
 };
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
-use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
+use crate::candidate_envelope::{
+    CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
+};
 use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
@@ -22,7 +24,10 @@ use crate::episode::{
 use crate::harness::execution::execute_request;
 use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
 use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessTerminalReason};
-use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
+use crate::learning::evaluation_isolation::{
+    EvaluationAttemptInput, EvaluationGenerationSeal, EvaluationOutcomeCollection,
+    EvaluationOutcomeInput,
+};
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use crate::offline_rl::{
@@ -386,12 +391,24 @@ pub enum TournamentProposerKind {
     Learned,
 }
 
+impl TournamentProposerKind {
+    const fn envelope_kind(self) -> ProposerKind {
+        match self {
+            Self::IncumbentMutation => ProposerKind::Scripted,
+            Self::BlindExploration => ProposerKind::Random,
+            Self::Structured => ProposerKind::StructuredSearch,
+            Self::Learned => ProposerKind::Learned,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TournamentProposer {
     pub name: String,
     pub kind: TournamentProposerKind,
     pub population: PathBuf,
+    pub proposal_envelopes: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -422,6 +439,8 @@ pub struct ProposerTournamentConfig {
 pub struct ProposerTournamentRow {
     pub name: String,
     pub kind: TournamentProposerKind,
+    pub proposer: ProposerIdentity,
+    pub proposal_envelope_set_sha256: ArtifactDigest,
     pub selected_candidates: usize,
     pub charged_episodes: u64,
     pub charged_candidate_ticks: u64,
@@ -457,6 +476,8 @@ pub struct ProposerTournamentSummary {
     pub schema: &'static str,
     pub segment: SegmentProfile,
     pub boot: TapeBoot,
+    pub objective: NamedDigest,
+    pub action_schema: NamedDigest,
     pub budget_unit: TournamentBudgetUnit,
     pub budget_per_proposer: u64,
     pub repetitions: u32,
@@ -1982,7 +2003,7 @@ pub fn run_proposer_tournament(
     config: &ProposerTournamentConfig,
 ) -> Result<ProposerTournamentSummary, EvaluateError> {
     let definition = &config.definition;
-    if definition.schema != "dusklight-proposer-tournament-definition/v1"
+    if definition.schema != "dusklight-proposer-tournament-definition/v2"
         || definition.budget_per_proposer == 0
         || definition.proposers.len() < 2
         || definition.proposers.len() > 16
@@ -1996,7 +2017,7 @@ pub fn run_proposer_tournament(
         || directory_is_nonempty(&config.output_root)?
     {
         return Err(EvaluateError::InvalidConfig(
-            "tournaments require a bounded v1 definition, 2..=16 proposers, native inputs, at least two repetitions, and a new output root"
+            "tournaments require a bounded v2 definition with authenticated proposal envelopes, 2..=16 proposers, native inputs, at least two repetitions, and a new output root"
                 .into(),
         ));
     }
@@ -2039,6 +2060,8 @@ pub fn run_proposer_tournament(
     struct SelectedProposer {
         name: String,
         kind: TournamentProposerKind,
+        proposer: ProposerIdentity,
+        proposal_envelope_set_sha256: ArtifactDigest,
         candidate_ids: Vec<String>,
         candidate_ticks: u64,
     }
@@ -2046,6 +2069,8 @@ pub fn run_proposer_tournament(
     let mut names = HashSet::new();
     let mut segment = None;
     let mut boot = None;
+    let mut objective = None;
+    let mut action_schema = None;
     let mut selected = Vec::new();
     let mut union = BTreeMap::<String, Candidate>::new();
     for proposer in &definition.proposers {
@@ -2069,6 +2094,60 @@ pub fn run_proposer_tournament(
         let population_path = fs::canonicalize(population_path)?;
         let manifest: PopulationManifest = serde_json::from_slice(&fs::read(&population_path)?)?;
         validate_manifest(&manifest, &population_path)?;
+        let proposal_envelopes_path = if proposer.proposal_envelopes.is_absolute() {
+            proposer.proposal_envelopes.clone()
+        } else {
+            config
+                .definition_directory
+                .join(&proposer.proposal_envelopes)
+        };
+        let proposal_envelopes_path = fs::canonicalize(proposal_envelopes_path)?;
+        let envelope_set: CandidateEnvelopeSet =
+            serde_json::from_slice(&fs::read(&proposal_envelopes_path)?)?;
+        envelope_set.validate().map_err(|error| {
+            EvaluateError::InvalidManifest(format!(
+                "proposer {:?} has an invalid candidate-envelope set: {error}",
+                proposer.name
+            ))
+        })?;
+        let proposer_identity = envelope_set.envelopes[0].proposer.clone();
+        if envelope_set
+            .envelopes
+            .iter()
+            .any(|envelope| envelope.proposer != proposer_identity)
+        {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "tournament proposer {:?} mixes authenticated proposer identities",
+                proposer.name
+            )));
+        }
+        let proposer_objective = envelope_set.envelopes[0].objective.clone();
+        let proposer_action_schema = envelope_set.envelopes[0].action_schema.clone();
+        if proposer_identity.kind != proposer.kind.envelope_kind() {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "proposer {:?} declares {:?} but its authenticated envelope kind is {:?}",
+                proposer.name, proposer.kind, proposer_identity.kind
+            )));
+        }
+        if objective
+            .as_ref()
+            .is_some_and(|value| value != &proposer_objective)
+            || action_schema
+                .as_ref()
+                .is_some_and(|value| value != &proposer_action_schema)
+        {
+            return Err(EvaluateError::InvalidManifest(
+                "tournament proposal envelopes must share one exact objective and action schema"
+                    .into(),
+            ));
+        }
+        objective.get_or_insert_with(|| proposer_objective.clone());
+        action_schema.get_or_insert_with(|| proposer_action_schema.clone());
+        let envelopes_by_candidate = envelope_set
+            .envelopes
+            .iter()
+            .map(|envelope| (envelope.candidate_sha256, envelope))
+            .collect::<BTreeMap<_, _>>();
         if segment.is_some_and(|value| value != manifest.segment)
             || boot.as_ref().is_some_and(|value| *value != manifest.boot)
         {
@@ -2081,6 +2160,7 @@ pub fn run_proposer_tournament(
         let population_root = canonical_parent(&population_path)?;
         let mut ids = Vec::new();
         let mut candidate_ticks = 0_u64;
+        let mut manifest_candidate_digests = BTreeSet::new();
         for member in &manifest.members {
             let candidate_path = fs::canonicalize(population_root.join(&member.candidate_file))?;
             if !candidate_path.starts_with(&population_root) {
@@ -2091,13 +2171,43 @@ pub fn run_proposer_tournament(
             let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
             candidate.validate()?;
             let id = candidate.id()?;
+            let candidate_sha256 = id.parse().map_err(|error| {
+                EvaluateError::InvalidManifest(format!(
+                    "proposer {:?} has an invalid candidate digest: {error}",
+                    proposer.name
+                ))
+            })?;
+            manifest_candidate_digests.insert(candidate_sha256);
+            let envelope = envelopes_by_candidate
+                .get(&candidate_sha256)
+                .ok_or_else(|| {
+                    EvaluateError::InvalidManifest(format!(
+                        "proposer {:?} candidate {id} has no authenticated proposal envelope",
+                        proposer.name
+                    ))
+                })?;
+            let parent_candidate_sha256 = candidate
+                .ancestry
+                .parent_id
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .map_err(|error| {
+                    EvaluateError::InvalidManifest(format!(
+                        "proposer {:?} has an invalid parent candidate digest: {error}",
+                        proposer.name
+                    ))
+                })?;
             if id != member.candidate_id
                 || candidate.segment != manifest.segment
                 || candidate.boot != manifest.boot
                 || candidate.frame_count() != member.frame_count
+                || envelope.generation != candidate.ancestry.generation
+                || envelope.parent_candidate_sha256 != parent_candidate_sha256
+                || envelope.seed != manifest.rng_seed
             {
                 return Err(EvaluateError::InvalidManifest(format!(
-                    "proposer {:?} contains a candidate/manifest identity mismatch",
+                    "proposer {:?} contains a candidate, manifest, lineage, or seed identity mismatch",
                     proposer.name
                 )));
             }
@@ -2119,9 +2229,12 @@ pub fn run_proposer_tournament(
             candidate_ticks += cost;
             ids.push(id.clone());
             union.entry(id).or_insert(candidate);
-            if episode_slots.is_some_and(|slots| ids.len() == slots) {
-                break;
-            }
+        }
+        if manifest_candidate_digests != envelopes_by_candidate.keys().copied().collect() {
+            return Err(EvaluateError::InvalidManifest(format!(
+                "proposer {:?} candidate-envelope set does not exactly cover its population",
+                proposer.name
+            )));
         }
         if ids.is_empty() || episode_slots.is_some_and(|slots| ids.len() != slots) {
             return Err(EvaluateError::InvalidConfig(format!(
@@ -2132,6 +2245,8 @@ pub fn run_proposer_tournament(
         selected.push(SelectedProposer {
             name: proposer.name.clone(),
             kind: proposer.kind,
+            proposer: proposer_identity,
+            proposal_envelope_set_sha256: envelope_set.content_sha256,
             candidate_ids: ids,
             candidate_ticks,
         });
@@ -2143,6 +2258,29 @@ pub fn run_proposer_tournament(
     }
     let segment = segment.ok_or_else(|| EvaluateError::InvalidConfig("empty tournament".into()))?;
     let boot = boot.ok_or_else(|| EvaluateError::InvalidConfig("empty tournament".into()))?;
+    let objective = objective.ok_or_else(|| {
+        EvaluateError::InvalidManifest("tournament objective identity is missing".into())
+    })?;
+    let action_schema = action_schema.ok_or_else(|| {
+        EvaluateError::InvalidManifest("tournament action schema identity is missing".into())
+    })?;
+    if let Some(harness) = &config.harness {
+        let request = &harness.request_template;
+        let expected_objective = NamedDigest::new(
+            request.objective.goal.clone(),
+            request.objective.program_sha256,
+        );
+        let expected_action_schema = NamedDigest::new(
+            request.action_schema.id.clone(),
+            request.action_schema.sha256,
+        );
+        if objective != expected_objective || action_schema != expected_action_schema {
+            return Err(EvaluateError::InvalidManifest(
+                "tournament proposal envelopes do not match the authenticated run objective and action schema"
+                    .into(),
+            ));
+        }
+    }
     fs::create_dir_all(&config.output_root)?;
     let population_root = config.output_root.join("population");
     let candidates_by_id = union.clone();
@@ -2274,6 +2412,8 @@ pub fn run_proposer_tournament(
         rows.push(ProposerTournamentRow {
             name: proposer.name,
             kind: proposer.kind,
+            proposer: proposer.proposer,
+            proposal_envelope_set_sha256: proposer.proposal_envelope_set_sha256,
             selected_candidates: proposer.candidate_ids.len(),
             charged_episodes: proposer.candidate_ids.len() as u64 * u64::from(config.repetitions),
             charged_candidate_ticks: proposer.candidate_ticks,
@@ -2317,9 +2457,11 @@ pub fn run_proposer_tournament(
         })
         .sum();
     let summary = ProposerTournamentSummary {
-        schema: "dusklight-proposer-tournament/v2",
+        schema: "dusklight-proposer-tournament/v3",
         segment,
         boot,
+        objective,
+        action_schema,
         budget_unit: definition.budget_unit,
         budget_per_proposer: definition.budget_per_proposer,
         repetitions: config.repetitions,
@@ -2568,6 +2710,7 @@ pub fn run_anchored_search(
             BTreeMap::<String, (u32, SemanticNoveltyDescriptor, BehaviorContext)>::new();
         let mut generation_outcomes = BTreeMap::new();
         let mut evaluation_attempts = Vec::with_capacity(report.attempts.len());
+        let mut evaluation_outcomes = Vec::with_capacity(report.attempts.len());
         let mut quarantined_corpora = BTreeMap::<String, TransitionCorpus>::new();
         let mut quarantined_digests = BTreeSet::<ArtifactDigest>::new();
         for attempt in &report.attempts {
@@ -2607,6 +2750,14 @@ pub fn run_anchored_search(
                 candidate_id: attempt.candidate_id.clone(),
                 attempt: attempt.attempt,
                 worker_id: attempt.worker_id.clone(),
+                transition_corpus_sha256,
+            });
+            evaluation_outcomes.push(EvaluationOutcomeInput {
+                candidate_id: attempt.candidate_id.clone(),
+                attempt: attempt.attempt,
+                outcome: attempt.outcome.class,
+                milestone_depth: attempt.milestone_depth,
+                goal_reached: attempt.goal_reached,
                 transition_corpus_sha256,
             });
         }
@@ -2673,6 +2824,13 @@ pub fn run_anchored_search(
         write_json(
             &population_root.join("evaluation-generation-seal.json"),
             &evaluation_seal,
+        )?;
+        let outcome_collection =
+            EvaluationOutcomeCollection::build(&evaluation_seal, &evaluation_outcomes)
+                .map_err(|error| EvaluateError::InvalidResult(error.to_string()))?;
+        write_json(
+            &population_root.join("evaluation-outcomes.json"),
+            &outcome_collection,
         )?;
         if generation + 1 < search.generations {
             evaluation_seal
@@ -2999,13 +3157,9 @@ fn write_initial_proposal_envelopes(
             .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?,
         );
     }
-    write_json(
-        &population_root.join("proposal-envelopes.json"),
-        &serde_json::json!({
-            "schema": "dusklight-candidate-envelope-set/v1",
-            "envelopes": envelopes,
-        }),
-    )
+    let set = CandidateEnvelopeSet::build(envelopes)
+        .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?;
+    write_json(&population_root.join("proposal-envelopes.json"), &set)
 }
 
 #[derive(Clone)]

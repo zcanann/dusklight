@@ -1,9 +1,13 @@
+use huntctl::Digest;
+use huntctl::candidate_envelope::{
+    CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
+};
 use huntctl::continuous_search::{
     CONTINUOUS_AXES_SCHEMA_V1, ContinuousAxes, ContinuousAxis, ContinuousParameter,
 };
 use huntctl::search::{
-    Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, SearchResults,
-    SegmentProfile,
+    Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, PopulationManifest,
+    SearchResults, SegmentProfile, write_explicit_population,
 };
 use huntctl::tape::InputTape;
 use std::fs;
@@ -36,6 +40,72 @@ fn seed(root: &Path, segment: &str, size: &str) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn write_proposal_envelopes(population_root: &Path, kind: ProposerKind, proposer_id: &str) {
+    let manifest: PopulationManifest =
+        serde_json::from_slice(&fs::read(population_root.join("manifest.json")).unwrap()).unwrap();
+    let configuration_byte = match kind {
+        ProposerKind::Scripted => 1,
+        ProposerKind::Random => 2,
+        ProposerKind::StructuredSearch => 3,
+        ProposerKind::Learned => 4,
+    };
+    let proposer = ProposerIdentity {
+        kind,
+        id: proposer_id.into(),
+        version: "test-v1".into(),
+        configuration_sha256: Digest([configuration_byte; 32]),
+    };
+    let envelopes = manifest
+        .members
+        .iter()
+        .map(|member| {
+            CandidateEnvelope::build(
+                member.candidate_id.parse().unwrap(),
+                member
+                    .ancestry
+                    .parent_id
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .unwrap(),
+                member.ancestry.generation,
+                NamedDigest::new("mock-objective", Digest([0x31; 32])),
+                NamedDigest::new("mock-action/v1", Digest([0x32; 32])),
+                manifest.rng_seed,
+                proposer.clone(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let set = CandidateEnvelopeSet::build(envelopes).unwrap();
+    fs::write(
+        population_root.join("proposal-envelopes.json"),
+        serde_json::to_vec_pretty(&set).unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_derived_population(root: &Path, mutation_prefix: &str, generation: u32) {
+    let parent = Candidate::baseline(SegmentProfile::BootToFsp103);
+    let parent_id = parent.id().unwrap();
+    let candidates = (1..=3)
+        .map(|index| {
+            let mut candidate = parent.clone();
+            candidate
+                .actions
+                .push(MacroAction::Neutral { frames: index });
+            candidate.ancestry = Ancestry {
+                generation: 1,
+                parent_id: Some(parent_id.clone()),
+                mutation: Some(format!("{mutation_prefix}-{index}")),
+                intervention: None,
+            };
+            candidate
+        })
+        .collect();
+    write_explicit_population(root, SegmentProfile::BootToFsp103, generation, candidates).unwrap();
 }
 
 #[test]
@@ -939,6 +1009,8 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
     fs::write(&dvd, b"mock disc").unwrap();
     let incumbent = root.join("incumbent");
     let blind = root.join("blind");
+    let structured = root.join("structured");
+    let learned = root.join("learned");
     seed(&incumbent, "boot_to_fsp103", "3");
     let blind_output = run(&[
         "search",
@@ -957,23 +1029,47 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         "{}",
         String::from_utf8_lossy(&blind_output.stderr)
     );
+    write_proposal_envelopes(&incumbent, ProposerKind::Scripted, "scripted.incumbent");
+    write_proposal_envelopes(&blind, ProposerKind::Random, "random.blind");
+    write_derived_population(&structured, "structured-grid", 1);
+    write_derived_population(&learned, "learned-tree-fqi", 1);
+    write_proposal_envelopes(
+        &structured,
+        ProposerKind::StructuredSearch,
+        "structured.grid",
+    );
+    write_proposal_envelopes(&learned, ProposerKind::Learned, "learned.tree-fqi");
     let definition = root.join("tournament.json");
     fs::write(
         &definition,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema": "dusklight-proposer-tournament-definition/v1",
+            "schema": "dusklight-proposer-tournament-definition/v2",
             "budget_unit": "episodes",
             "budget_per_proposer": 4,
             "proposers": [
                 {
                     "name": "incumbent",
                     "kind": "incumbent_mutation",
-                    "population": "incumbent/manifest.json"
+                    "population": "incumbent/manifest.json",
+                    "proposal_envelopes": "incumbent/proposal-envelopes.json"
                 },
                 {
                     "name": "blind",
                     "kind": "blind_exploration",
-                    "population": "blind/manifest.json"
+                    "population": "blind/manifest.json",
+                    "proposal_envelopes": "blind/proposal-envelopes.json"
+                },
+                {
+                    "name": "structured",
+                    "kind": "structured",
+                    "population": "structured/manifest.json",
+                    "proposal_envelopes": "structured/proposal-envelopes.json"
+                },
+                {
+                    "name": "learned",
+                    "kind": "learned",
+                    "population": "learned/manifest.json",
+                    "proposal_envelopes": "learned/proposal-envelopes.json"
                 }
             ]
         }))
@@ -1008,8 +1104,10 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         String::from_utf8_lossy(&output.stderr)
     );
     let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(summary["schema"], "dusklight-proposer-tournament/v2");
-    assert_eq!(summary["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(summary["schema"], "dusklight-proposer-tournament/v3");
+    assert_eq!(summary["objective"]["id"], "mock-objective");
+    assert_eq!(summary["action_schema"]["id"], "mock-action/v1");
+    assert_eq!(summary["rows"].as_array().unwrap().len(), 4);
     for row in summary["rows"].as_array().unwrap() {
         assert_eq!(row["selected_candidates"], 2);
         assert_eq!(row["charged_episodes"], 4);
@@ -1017,9 +1115,11 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         assert_eq!(row["misses"], 2);
         assert_eq!(row["replay_verdict"], "objective_miss");
         assert_eq!(row["best_proved_tape"], serde_json::Value::Null);
+        assert!(row["proposer"]["kind"].is_string());
+        assert!(row["proposal_envelope_set_sha256"].is_string());
     }
     let physical_candidates = summary["physical_candidates"].as_u64().unwrap();
-    assert!(physical_candidates <= 4);
+    assert!(physical_candidates <= 8);
     assert_eq!(
         summary["physical_episodes"].as_u64().unwrap(),
         physical_candidates * 2
@@ -1054,7 +1154,7 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         String::from_utf8_lossy(&proved.stderr)
     );
     let proved_summary: serde_json::Value = serde_json::from_slice(&proved.stdout).unwrap();
-    assert_eq!(proved_summary["schema"], "dusklight-proposer-tournament/v2");
+    assert_eq!(proved_summary["schema"], "dusklight-proposer-tournament/v3");
     for row in proved_summary["rows"].as_array().unwrap() {
         assert_eq!(row["charged_episodes"], 4);
         assert_eq!(row["predicate_hits"], 2);
@@ -1082,5 +1182,22 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         );
         InputTape::decode(&fs::read(tape_path).unwrap()).unwrap();
     }
+    write_proposal_envelopes(&blind, ProposerKind::Scripted, "scripted.forged-random");
+    let rejected_root = root.join("rejected-kind");
+    let rejected = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["search", "tournament", "--definition"])
+        .arg(&definition)
+        .args(["--game", env!("CARGO_BIN_EXE_huntctl")])
+        .args(["--game-arg", "mock-search-worker"])
+        .args(["--dvd"])
+        .arg(&dvd)
+        .args(["--output"])
+        .arg(&rejected_root)
+        .args(["--workers", "2", "--repetitions", "2"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("authenticated envelope kind"));
+    assert!(!rejected_root.exists());
     fs::remove_dir_all(root).unwrap();
 }

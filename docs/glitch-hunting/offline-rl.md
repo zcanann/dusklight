@@ -787,6 +787,16 @@ present, or a later proof repetition carries a corpus. The admitted digests have
 current evaluation cannot train on its own observations, and no proof repetition
 can become a training episode.
 
+The same generation writes `evaluation-outcomes.json`
+(`dusklight-evaluation-outcome-collection/v1`). It classifies every repeated
+attempt as success, near miss (ordinary failure with nonzero milestone
+progress), ordinary failure (zero progress), or another explicit terminal. The
+artifact binds the evaluation-seal digest and marks only an admitted attempt-1
+corpus as eligible after the seal's minimum training generation. It also
+reports `required_mix_complete`; proof repetitions always carry neither a
+corpus nor training eligibility. This makes mixed collection inspectable
+without weakening the generation barrier.
+
 Large immutable outputs use `dusklight-content-blob/v1` references. Gameplay
 traces are streamed into `content/blobs/sha256/<prefix>/<suffix>` and every
 attempt reports the digest, exact byte count, media type, and relative blob

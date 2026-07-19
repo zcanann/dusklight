@@ -7,8 +7,10 @@ use std::error::Error;
 use std::fmt;
 
 pub const CANDIDATE_ENVELOPE_SCHEMA_V1: &str = "dusklight-candidate-envelope/v1";
+pub const CANDIDATE_ENVELOPE_SET_SCHEMA_V1: &str = "dusklight-candidate-envelope-set/v1";
 const MAX_ID_BYTES: usize = 96;
 const MAX_VERSION_BYTES: usize = 64;
+const MAX_ENVELOPES: usize = 10_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +41,14 @@ pub struct ProposerIdentity {
     pub id: String,
     pub version: String,
     pub configuration_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateEnvelopeSet {
+    pub schema: String,
+    pub content_sha256: Digest,
+    pub envelopes: Vec<CandidateEnvelope>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -117,6 +127,64 @@ impl CandidateEnvelope {
         })?;
         let mut hasher = Sha256::new();
         hasher.update(b"dusklight.candidate-envelope/v1\0");
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+impl CandidateEnvelopeSet {
+    pub fn build(envelopes: Vec<CandidateEnvelope>) -> Result<Self, CandidateEnvelopeError> {
+        let mut set = Self {
+            schema: CANDIDATE_ENVELOPE_SET_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            envelopes,
+        };
+        set.content_sha256 = set.compute_content_sha256()?;
+        set.validate()?;
+        Ok(set)
+    }
+
+    pub fn validate(&self) -> Result<(), CandidateEnvelopeError> {
+        if self.schema != CANDIDATE_ENVELOPE_SET_SCHEMA_V1
+            || self.envelopes.is_empty()
+            || self.envelopes.len() > MAX_ENVELOPES
+        {
+            return Err(envelope_error(
+                "candidate-envelope set is empty, oversized, or unsupported",
+            ));
+        }
+        let first = &self.envelopes[0];
+        let mut candidates = std::collections::BTreeSet::new();
+        for envelope in &self.envelopes {
+            envelope.validate()?;
+            if !candidates.insert(envelope.candidate_sha256)
+                || envelope.objective != first.objective
+                || envelope.action_schema != first.action_schema
+            {
+                return Err(envelope_error(
+                    "candidate-envelope set must contain unique candidates from one objective and action schema",
+                ));
+            }
+        }
+        if self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.compute_content_sha256()?
+        {
+            return Err(envelope_error(
+                "candidate-envelope set content identity is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_content_sha256(&self) -> Result<Digest, CandidateEnvelopeError> {
+        let mut unsigned = self.clone();
+        unsigned.content_sha256 = Digest::ZERO;
+        let bytes = serde_json::to_vec(&unsigned).map_err(|error| {
+            envelope_error(format!("cannot encode candidate-envelope set: {error}"))
+        })?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight.candidate-envelope-set/v1\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -274,5 +342,35 @@ mod tests {
         let mut zero_action = root;
         zero_action.action_schema.sha256 = Digest::ZERO;
         assert!(zero_action.validate().is_err());
+    }
+
+    #[test]
+    fn envelope_sets_bind_objective_action_and_unique_population() {
+        let first = envelope(ProposerKind::Learned);
+        let mut second = CandidateEnvelope::build(
+            Digest([0x12; 32]),
+            Some(Digest([0x22; 32])),
+            3,
+            first.objective.clone(),
+            first.action_schema.clone(),
+            43,
+            first.proposer.clone(),
+        )
+        .unwrap();
+        let set = CandidateEnvelopeSet::build(vec![first.clone(), second.clone()]).unwrap();
+        set.validate().unwrap();
+
+        second = CandidateEnvelope::build(
+            Digest([0x12; 32]),
+            Some(Digest([0x22; 32])),
+            3,
+            first.objective.clone(),
+            first.action_schema.clone(),
+            43,
+            proposer(ProposerKind::StructuredSearch),
+        )
+        .unwrap();
+        CandidateEnvelopeSet::build(vec![first.clone(), second]).unwrap();
+        assert!(CandidateEnvelopeSet::build(vec![first.clone(), first]).is_err());
     }
 }

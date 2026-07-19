@@ -1,5 +1,8 @@
 use huntctl::Digest;
 use huntctl::artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity};
+use huntctl::candidate_envelope::{
+    CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
+};
 use huntctl::controller_program::ControllerProgram;
 use huntctl::harness::objective_suite::{
     ArtifactReference, ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot,
@@ -20,7 +23,8 @@ use huntctl::milestone_dsl;
 use huntctl::observation_view::movement_state_v2_spec;
 use huntctl::scenario_fixture::{SCENARIO_FIXTURE_SCHEMA, ScenarioFixture};
 use huntctl::search::{
-    Ancestry, CANDIDATE_SCHEMA, Candidate, MacroAction, SegmentProfile, write_explicit_population,
+    Ancestry, CANDIDATE_SCHEMA, Candidate, MacroAction, PopulationManifest, SegmentProfile,
+    write_explicit_population,
 };
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -34,6 +38,63 @@ static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 fn digest(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
+}
+
+fn write_proposal_envelopes(
+    population_root: &Path,
+    file_name: &str,
+    kind: ProposerKind,
+    proposer_id: &str,
+    request: &HarnessRunRequest,
+) {
+    let manifest: PopulationManifest =
+        serde_json::from_slice(&fs::read(population_root.join("manifest.json")).unwrap()).unwrap();
+    let configuration_byte = match kind {
+        ProposerKind::Scripted => 1,
+        ProposerKind::Random => 2,
+        ProposerKind::StructuredSearch => 3,
+        ProposerKind::Learned => 4,
+    };
+    let proposer = ProposerIdentity {
+        kind,
+        id: proposer_id.into(),
+        version: "test-v1".into(),
+        configuration_sha256: Digest([configuration_byte; 32]),
+    };
+    let envelopes = manifest
+        .members
+        .iter()
+        .map(|member| {
+            CandidateEnvelope::build(
+                member.candidate_id.parse().unwrap(),
+                member
+                    .ancestry
+                    .parent_id
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .unwrap(),
+                member.ancestry.generation,
+                NamedDigest::new(
+                    request.objective.goal.clone(),
+                    request.objective.program_sha256,
+                ),
+                NamedDigest::new(
+                    request.action_schema.id.clone(),
+                    request.action_schema.sha256,
+                ),
+                manifest.rng_seed,
+                proposer.clone(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let set = CandidateEnvelopeSet::build(envelopes).unwrap();
+    fs::write(
+        population_root.join(file_name),
+        serde_json::to_vec_pretty(&set).unwrap(),
+    )
+    .unwrap();
 }
 
 fn artifact(path: &str, bytes: &[u8]) -> ArtifactReference {
@@ -939,6 +1000,20 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         vec![seed, learned],
     )
     .unwrap();
+    write_proposal_envelopes(
+        &population,
+        "scripted-envelopes.json",
+        ProposerKind::Scripted,
+        "scripted.fixture",
+        &request,
+    );
+    write_proposal_envelopes(
+        &population,
+        "random-envelopes.json",
+        ProposerKind::Random,
+        "random.uniform",
+        &request,
+    );
 
     let output = root.join("search-evaluation");
     let evaluated = Command::new(executable)
@@ -1080,19 +1155,21 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     fs::write(
         &tournament_definition,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema": "dusklight-proposer-tournament-definition/v1",
+            "schema": "dusklight-proposer-tournament-definition/v2",
             "budget_unit": "episodes",
             "budget_per_proposer": 2,
             "proposers": [
                 {
                     "name": "scripted",
                     "kind": "incumbent_mutation",
-                    "population": "population/manifest.json"
+                    "population": "population/manifest.json",
+                    "proposal_envelopes": "population/scripted-envelopes.json"
                 },
                 {
-                    "name": "learned",
+                    "name": "random",
                     "kind": "blind_exploration",
-                    "population": "population/manifest.json"
+                    "population": "population/manifest.json",
+                    "proposal_envelopes": "population/random-envelopes.json"
                 }
             ]
         }))
@@ -1119,7 +1196,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     let tournament_summary: Value = serde_json::from_slice(&tournament.stdout).unwrap();
     assert_eq!(
         tournament_summary["schema"],
-        "dusklight-proposer-tournament/v2"
+        "dusklight-proposer-tournament/v3"
     );
     assert_eq!(tournament_summary["rows"].as_array().unwrap().len(), 2);
     let tournament_evaluation: Value = serde_json::from_slice(
@@ -1216,23 +1293,41 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         ancestry: Ancestry::default(),
     };
     write_explicit_population(&population, SegmentProfile::Fsp103ToFsp104, 0, vec![seed]).unwrap();
+    let tournament_request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    write_proposal_envelopes(
+        &population,
+        "scripted-envelopes.json",
+        ProposerKind::Scripted,
+        "scripted.fixture",
+        &tournament_request,
+    );
+    write_proposal_envelopes(
+        &population,
+        "random-envelopes.json",
+        ProposerKind::Random,
+        "random.uniform",
+        &tournament_request,
+    );
     let definition_path = root.join("tournament.json");
     fs::write(
         &definition_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "schema": "dusklight-proposer-tournament-definition/v1",
+            "schema": "dusklight-proposer-tournament-definition/v2",
             "budget_unit": "episodes",
             "budget_per_proposer": 2,
             "proposers": [
                 {
                     "name": "scripted",
                     "kind": "incumbent_mutation",
-                    "population": "population/manifest.json"
+                    "population": "population/manifest.json",
+                    "proposal_envelopes": "population/scripted-envelopes.json"
                 },
                 {
                     "name": "random",
                     "kind": "blind_exploration",
-                    "population": "population/manifest.json"
+                    "population": "population/manifest.json",
+                    "proposal_envelopes": "population/random-envelopes.json"
                 }
             ]
         }))
@@ -1311,6 +1406,23 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
     suite.cases[0].observation_requirements = unsupported_requirements;
     suite.refresh_content_sha256().unwrap();
     fs::write(&suite_path, suite.to_pretty_json().unwrap()).unwrap();
+    let mut unsupported_request = tournament_request.clone();
+    unsupported_request.objective = suite.cases[0].objective.clone();
+    unsupported_request.action_schema = suite.cases[0].action_schema.clone();
+    write_proposal_envelopes(
+        &population,
+        "scripted-envelopes.json",
+        ProposerKind::Scripted,
+        "scripted.fixture",
+        &unsupported_request,
+    );
+    write_proposal_envelopes(
+        &population,
+        "random-envelopes.json",
+        ProposerKind::Random,
+        "random.uniform",
+        &unsupported_request,
+    );
     let unsupported_campaign = Command::new(executable)
         .current_dir(&root)
         .args(["campaign", "--suite"])

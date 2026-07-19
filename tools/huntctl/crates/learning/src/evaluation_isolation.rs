@@ -1,6 +1,7 @@
 //! Generation seals that keep evaluation repetitions out of online training.
 
 use crate::artifact::Digest;
+use crate::episode::EpisodeOutcomeClass;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,6 +9,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const EVALUATION_GENERATION_SEAL_SCHEMA_V1: &str = "dusklight-evaluation-generation-seal/v1";
+pub const EVALUATION_OUTCOME_COLLECTION_SCHEMA_V1: &str =
+    "dusklight-evaluation-outcome-collection/v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EvaluationAttemptInput {
@@ -16,6 +19,58 @@ pub struct EvaluationAttemptInput {
     pub worker_id: String,
     /// Present only for the one collection episode retained from evaluation.
     pub transition_corpus_sha256: Option<Digest>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvaluationOutcomeInput {
+    pub candidate_id: String,
+    pub attempt: u32,
+    pub outcome: EpisodeOutcomeClass,
+    pub milestone_depth: u16,
+    pub goal_reached: bool,
+    pub transition_corpus_sha256: Option<Digest>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationOutcomeStratum {
+    Success,
+    NearMiss,
+    OrdinaryFailure,
+    OtherTerminal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SealedEvaluationOutcome {
+    pub candidate_id: String,
+    pub attempt: u32,
+    pub stratum: EvaluationOutcomeStratum,
+    pub outcome: EpisodeOutcomeClass,
+    pub milestone_depth: u16,
+    pub goal_reached: bool,
+    pub training_eligible_after_seal: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_corpus_sha256: Option<Digest>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct EvaluationOutcomeCounts {
+    pub successes: usize,
+    pub near_misses: usize,
+    pub ordinary_failures: usize,
+    pub other_terminals: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct EvaluationOutcomeCollection {
+    pub schema: &'static str,
+    pub evaluation_generation: u32,
+    pub evaluation_seal_sha256: Digest,
+    pub minimum_training_generation: u32,
+    pub proof_repetitions_training_eligible: bool,
+    pub required_mix_complete: bool,
+    pub counts: EvaluationOutcomeCounts,
+    pub outcomes: Vec<SealedEvaluationOutcome>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -184,6 +239,119 @@ impl EvaluationGenerationSeal {
     }
 }
 
+impl EvaluationOutcomeCollection {
+    pub fn build(
+        seal: &EvaluationGenerationSeal,
+        inputs: &[EvaluationOutcomeInput],
+    ) -> Result<Self, EvaluationIsolationError> {
+        let admitted_digests = seal
+            .admitted_corpora
+            .iter()
+            .map(|corpus| corpus.transition_corpus_sha256)
+            .collect::<BTreeSet<_>>();
+        seal.admit_training_generation(seal.minimum_training_generation, &admitted_digests)?;
+        if inputs.len() != seal.planned_attempts {
+            return Err(EvaluationIsolationError::SealMismatch);
+        }
+        let admitted_by_candidate = seal
+            .admitted_corpora
+            .iter()
+            .map(|corpus| {
+                (
+                    corpus.candidate_id.as_str(),
+                    corpus.transition_corpus_sha256,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut grouped = BTreeMap::<String, Vec<&EvaluationOutcomeInput>>::new();
+        for input in inputs {
+            if !valid_id(&input.candidate_id) {
+                return Err(EvaluationIsolationError::InvalidAttemptIdentity);
+            }
+            grouped
+                .entry(input.candidate_id.clone())
+                .or_default()
+                .push(input);
+        }
+        if grouped.is_empty()
+            || grouped
+                .len()
+                .checked_mul(seal.repetitions_per_candidate as usize)
+                != Some(inputs.len())
+        {
+            return Err(EvaluationIsolationError::SealMismatch);
+        }
+
+        let mut counts = EvaluationOutcomeCounts::default();
+        let mut outcomes = Vec::with_capacity(inputs.len());
+        for (candidate_id, candidate_inputs) in &mut grouped {
+            candidate_inputs.sort_by_key(|input| input.attempt);
+            if candidate_inputs.len() != seal.repetitions_per_candidate as usize
+                || candidate_inputs
+                    .iter()
+                    .enumerate()
+                    .any(|(index, input)| input.attempt != index as u32 + 1)
+            {
+                return Err(EvaluationIsolationError::SealMismatch);
+            }
+            for input in candidate_inputs {
+                let admitted = admitted_by_candidate.get(candidate_id.as_str()).copied();
+                if input.attempt != 1 && input.transition_corpus_sha256.is_some() {
+                    return Err(EvaluationIsolationError::ProofRepetitionLeak);
+                }
+                if input.attempt == 1 && input.transition_corpus_sha256 != admitted {
+                    return Err(EvaluationIsolationError::SealMismatch);
+                }
+                let stratum = match (input.outcome, input.goal_reached, input.milestone_depth) {
+                    (EpisodeOutcomeClass::Successful, true, _) => {
+                        counts.successes += 1;
+                        EvaluationOutcomeStratum::Success
+                    }
+                    (EpisodeOutcomeClass::Failed, false, 1..) => {
+                        counts.near_misses += 1;
+                        EvaluationOutcomeStratum::NearMiss
+                    }
+                    (EpisodeOutcomeClass::Failed, false, 0) => {
+                        counts.ordinary_failures += 1;
+                        EvaluationOutcomeStratum::OrdinaryFailure
+                    }
+                    (EpisodeOutcomeClass::Successful, false, _)
+                    | (EpisodeOutcomeClass::Failed, true, _) => {
+                        return Err(EvaluationIsolationError::InvalidOutcome);
+                    }
+                    (_, true, _) => return Err(EvaluationIsolationError::InvalidOutcome),
+                    (_, false, _) => {
+                        counts.other_terminals += 1;
+                        EvaluationOutcomeStratum::OtherTerminal
+                    }
+                };
+                outcomes.push(SealedEvaluationOutcome {
+                    candidate_id: candidate_id.clone(),
+                    attempt: input.attempt,
+                    stratum,
+                    outcome: input.outcome,
+                    milestone_depth: input.milestone_depth,
+                    goal_reached: input.goal_reached,
+                    training_eligible_after_seal: input.attempt == 1 && admitted.is_some(),
+                    transition_corpus_sha256: input.transition_corpus_sha256,
+                });
+            }
+        }
+        let required_mix_complete =
+            counts.successes > 0 && counts.near_misses > 0 && counts.ordinary_failures > 0;
+        Ok(Self {
+            schema: EVALUATION_OUTCOME_COLLECTION_SCHEMA_V1,
+            evaluation_generation: seal.evaluation_generation,
+            evaluation_seal_sha256: seal.seal_sha256,
+            minimum_training_generation: seal.minimum_training_generation,
+            proof_repetitions_training_eligible: false,
+            required_mix_complete,
+            counts,
+            outcomes,
+        })
+    }
+}
+
 fn valid_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 192
@@ -201,6 +369,8 @@ pub enum EvaluationIsolationError {
     GenerationOverflow,
     TrainingBeforeSeal,
     UnsealedCorpus,
+    SealMismatch,
+    InvalidOutcome,
 }
 
 impl fmt::Display for EvaluationIsolationError {
@@ -251,6 +421,66 @@ mod tests {
         assert_eq!(
             EvaluationGenerationSeal::build(0, 2, 2, 2, 0, &attempts(true)),
             Err(EvaluationIsolationError::ProofRepetitionLeak)
+        );
+    }
+
+    #[test]
+    fn outcome_collection_retains_all_three_strata_without_proof_repetition_leakage() {
+        let candidate_ids = ["success", "near-miss", "ordinary-failure"];
+        let attempt_inputs = candidate_ids
+            .iter()
+            .flat_map(|candidate_id| {
+                (1..=2).map(move |attempt| EvaluationAttemptInput {
+                    candidate_id: (*candidate_id).into(),
+                    attempt,
+                    worker_id: format!("evaluation/worker-{attempt}"),
+                    transition_corpus_sha256: (attempt == 1)
+                        .then_some(Digest([candidate_id.as_bytes()[0]; 32])),
+                })
+            })
+            .collect::<Vec<_>>();
+        let seal = EvaluationGenerationSeal::build(7, 2, 6, 6, 0, &attempt_inputs).unwrap();
+        let outcome_inputs = candidate_ids
+            .iter()
+            .flat_map(|candidate_id| {
+                (1..=2).map(move |attempt| {
+                    let (outcome, milestone_depth, goal_reached) = match *candidate_id {
+                        "success" => (EpisodeOutcomeClass::Successful, 2, true),
+                        "near-miss" => (EpisodeOutcomeClass::Failed, 1, false),
+                        _ => (EpisodeOutcomeClass::Failed, 0, false),
+                    };
+                    EvaluationOutcomeInput {
+                        candidate_id: (*candidate_id).into(),
+                        attempt,
+                        outcome,
+                        milestone_depth,
+                        goal_reached,
+                        transition_corpus_sha256: (attempt == 1)
+                            .then_some(Digest([candidate_id.as_bytes()[0]; 32])),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let collection = EvaluationOutcomeCollection::build(&seal, &outcome_inputs).unwrap();
+        assert!(collection.required_mix_complete);
+        assert_eq!(collection.counts.successes, 2);
+        assert_eq!(collection.counts.near_misses, 2);
+        assert_eq!(collection.counts.ordinary_failures, 2);
+        assert_eq!(
+            collection
+                .outcomes
+                .iter()
+                .filter(|outcome| outcome.training_eligible_after_seal)
+                .count(),
+            3
+        );
+        assert!(
+            collection
+                .outcomes
+                .iter()
+                .filter(|outcome| outcome.attempt > 1)
+                .all(|outcome| !outcome.training_eligible_after_seal
+                    && outcome.transition_corpus_sha256.is_none())
         );
     }
 }

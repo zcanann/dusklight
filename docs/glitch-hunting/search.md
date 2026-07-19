@@ -339,32 +339,42 @@ fidelity, timeout, and protocol capabilities; combining it with `--game`,
 `--dvd`, `--game-arg`, a working directory, or timeout override is rejected.
 Every tournament attempt then retains its derived request/result identities.
 
-The definition uses schema `dusklight-proposer-tournament-definition/v1`, one
-`episodes` or `candidate_ticks` cap per proposer, and 2–16 named entries:
+The definition uses schema `dusklight-proposer-tournament-definition/v2`, one
+`episodes` or `candidate_ticks` cap per proposer, and 2–16 named entries. Every
+entry supplies both its population and a content-authenticated
+`dusklight-candidate-envelope-set/v1`:
 
 ```json
 {
-  "schema": "dusklight-proposer-tournament-definition/v1",
+  "schema": "dusklight-proposer-tournament-definition/v2",
   "budget_unit": "episodes",
   "budget_per_proposer": 48,
   "proposers": [
-    { "name": "incumbent", "kind": "incumbent_mutation", "population": "incumbent/manifest.json" },
-    { "name": "blind", "kind": "blind_exploration", "population": "blind/manifest.json" },
-    { "name": "cma", "kind": "structured", "population": "cma/manifest.json" },
-    { "name": "fqi", "kind": "learned", "population": "fqi/manifest.json" }
+    { "name": "incumbent", "kind": "incumbent_mutation", "population": "incumbent/manifest.json", "proposal_envelopes": "incumbent/proposal-envelopes.json" },
+    { "name": "blind", "kind": "blind_exploration", "population": "blind/manifest.json", "proposal_envelopes": "blind/proposal-envelopes.json" },
+    { "name": "cma", "kind": "structured", "population": "cma/manifest.json", "proposal_envelopes": "cma/proposal-envelopes.json" },
+    { "name": "fqi", "kind": "learned", "population": "fqi/manifest.json", "proposal_envelopes": "fqi/proposal-envelopes.json" }
   ]
 }
 ```
 
-All populations must carry the same segment and boot origin. Episode caps must
-be exact multiples of the repetition count; candidate-tick caps charge compiled
-tape frames times repetitions. The runner refuses definitions without both an
-incumbent-mutation lane and a blind-exploration lane, selects every lane under
-the same declared cap, and deduplicates candidate IDs globally before launching
-the combined population. A shared tape is evaluated once but credited to every
-proposer that supplied it.
+All populations must carry the same segment and boot origin. An envelope set
+must exactly cover its population and bind every candidate digest, parent,
+generation, seed, objective, action schema, and proposer configuration. The
+declared lane kind must match the authenticated proposer kind; all lanes must
+share one objective and action schema. Under `--run-request`, those identities
+must also match the authenticated request before output creation or simulator
+spend. Episode caps must be exact multiples of the repetition count;
+candidate-tick caps charge compiled tape frames times repetitions. The runner
+refuses definitions without both an incumbent-mutation lane and a
+blind-exploration lane, selects every lane under the same declared cap, and
+deduplicates candidate IDs globally before launching the combined population.
+A shared candidate is evaluated once but credited to every proposer that
+supplied it.
 
-`tournament.summary.json` (`dusklight-proposer-tournament/v2`) attributes shared
+`tournament.summary.json` (`dusklight-proposer-tournament/v3`) retains the
+shared objective/action identities, each exact proposer identity and envelope
+set digest, and attributes shared
 duplicates, native predicate hits and misses, improvements over the incumbent
 champion, frame wins, distinct authenticated boundaries and their sorted
 fingerprint digests, repeated cold-replay passes, charged and physical
