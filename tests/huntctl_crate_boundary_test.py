@@ -49,7 +49,12 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "search_evaluator/trial.rs",
     },
     "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
-    "orchestration": {"harness/campaign.rs", "harness/mod.rs", "lib.rs"},
+    "orchestration": {
+        "harness/campaign.rs",
+        "harness/conformance.rs",
+        "harness/mod.rs",
+        "lib.rs",
+    },
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {
         "draft_store.rs",
@@ -141,7 +146,9 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-evaluation",
         "dusklight-harness-contracts",
         "dusklight-harness-runtime",
+        "dusklight-objectives",
         "dusklight-search",
+        "dusklight-trace",
     },
     "dusklight-proposals": {
         "dusklight-automation-contracts",

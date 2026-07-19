@@ -428,12 +428,8 @@ fn prepare_native_input(
                     execution_error(format!("cannot decode seed controller: {error}"))
                 })?;
             let duration_ticks = u64::from(program.duration_frames);
-            let stage_boot_tape = matches!(boot, TapeBoot::Stage { .. }).then(|| {
-                Box::new(InputTape {
-                    boot: boot.clone(),
-                    ..InputTape::default()
-                })
-            });
+            let stage_boot_tape = matches!(boot, TapeBoot::Stage { .. })
+                .then(|| Box::new(stage_boot_carrier_tape(boot.clone())));
             Ok(PreparedNativeInput::Controller {
                 artifact: artifact_path,
                 boot,
@@ -464,6 +460,20 @@ fn prepare_native_input(
             }
             Ok(PreparedNativeInput::Tape { tape })
         }
+    }
+}
+
+fn stage_boot_carrier_tape(boot: TapeBoot) -> InputTape {
+    InputTape {
+        boot,
+        // The native tape reader rejects an empty tape before the controller
+        // transport takes ownership of input. Keep one neutral carrier frame;
+        // the controller replaces input beginning at the following boundary.
+        frames: vec![InputFrame {
+            owned_ports: 0x0f,
+            ..InputFrame::default()
+        }],
+        ..InputTape::default()
     }
 }
 
@@ -1057,5 +1067,26 @@ mod tests {
         );
         assert_eq!(outcome.terminal, HarnessTerminalReason::HostTimeout);
         assert!(outcome.unsupported_detail.is_none());
+    }
+
+    #[test]
+    fn controller_stage_boot_uses_a_valid_neutral_carrier_tape() {
+        let boot = TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 0,
+            point: 0,
+            layer: -1,
+            save_slot: None,
+            fixture: None,
+        };
+        let tape = stage_boot_carrier_tape(boot.clone());
+
+        assert_eq!(tape.boot, boot);
+        assert_eq!(tape.frames.len(), 1);
+        assert_eq!(tape.frames[0].owned_ports, 0x0f);
+        assert_eq!(
+            tape.frames[0].pads,
+            [crate::tape::RawPadState::default(); 4]
+        );
     }
 }

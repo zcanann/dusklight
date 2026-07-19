@@ -14,10 +14,14 @@ use crate::compatibility::{CompatibilityMode, ensure_compatible};
 pub use dusklight_automation_contracts::run_terminal::HarnessTerminalReason;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 pub const RUN_REQUEST_SCHEMA_V2: &str = "dusklight-harness-run-request/v2";
 pub const RUN_RESULT_SCHEMA_V2: &str = "dusklight-harness-run-result/v2";
@@ -660,7 +664,7 @@ fn read_artifact(
     reference: &ArtifactReference,
     label: &str,
     allow_canonical_escape: bool,
-) -> Result<Vec<u8>, HarnessRunContractError> {
+) -> Result<(), HarnessRunContractError> {
     let path = root.join(&reference.path);
     let canonical = path.canonicalize().map_err(|error| {
         contract_error(format!(
@@ -673,16 +677,106 @@ fn read_artifact(
             "{label} escapes the validation root or is not a file"
         )));
     }
-    let bytes = fs::read(&canonical).map_err(|error| {
+    if sha256_artifact_file(&canonical)? != reference.sha256 {
+        return Err(contract_error(format!("{label} digest is stale")));
+    }
+    Ok(())
+}
+
+/// Stream an artifact SHA-256 and retain a bounded metadata-keyed digest for
+/// large immutable inputs such as disc images. Repeated requests in one
+/// process avoid rereading gigabytes while size or mtime changes invalidate the
+/// cached value.
+pub fn sha256_artifact_file(path: &Path) -> Result<Digest, HarnessRunContractError> {
+    let canonical = path.canonicalize().map_err(|error| {
         contract_error(format!(
-            "cannot read {label} {}: {error}",
+            "cannot resolve artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    let metadata = canonical.metadata().map_err(|error| {
+        contract_error(format!(
+            "cannot inspect artifact {}: {error}",
             canonical.display()
         ))
     })?;
-    if Digest(Sha256::digest(&bytes).into()) != reference.sha256 {
-        return Err(contract_error(format!("{label} digest is stale")));
+    if !metadata.is_file() {
+        return Err(contract_error("artifact is not a file"));
     }
-    Ok(bytes)
+    let cache_key = (metadata.len() >= LARGE_ARTIFACT_CACHE_THRESHOLD_BYTES)
+        .then(|| ArtifactDigestCacheKey::new(&canonical, &metadata))
+        .transpose()?;
+    if let Some(digest) = cache_key.as_ref().and_then(cached_artifact_digest) {
+        return Ok(digest);
+    }
+    let mut file = fs::File::open(&canonical).map_err(|error| {
+        contract_error(format!(
+            "cannot read artifact {}: {error}",
+            canonical.display()
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| {
+            contract_error(format!(
+                "cannot hash artifact {}: {error}",
+                canonical.display()
+            ))
+        })?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let digest = Digest(hasher.finalize().into());
+    if let Some(cache_key) = cache_key {
+        remember_artifact_digest(cache_key, digest);
+    }
+    Ok(digest)
+}
+
+const LARGE_ARTIFACT_CACHE_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ARTIFACT_DIGEST_CACHE_ENTRIES: usize = 32;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ArtifactDigestCacheKey {
+    path: PathBuf,
+    length: u64,
+    modified_nanos: u128,
+}
+
+impl ArtifactDigestCacheKey {
+    fn new(path: &Path, metadata: &fs::Metadata) -> Result<Self, HarnessRunContractError> {
+        let modified_nanos = metadata
+            .modified()
+            .map_err(|error| contract_error(format!("cannot inspect artifact mtime: {error}")))?
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| contract_error("artifact mtime predates the Unix epoch"))?
+            .as_nanos();
+        Ok(Self {
+            path: path.to_path_buf(),
+            length: metadata.len(),
+            modified_nanos,
+        })
+    }
+}
+
+fn artifact_digest_cache() -> &'static Mutex<BTreeMap<ArtifactDigestCacheKey, Digest>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<ArtifactDigestCacheKey, Digest>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn cached_artifact_digest(key: &ArtifactDigestCacheKey) -> Option<Digest> {
+    artifact_digest_cache().lock().unwrap().get(key).copied()
+}
+
+fn remember_artifact_digest(key: ArtifactDigestCacheKey, digest: Digest) {
+    let mut cache = artifact_digest_cache().lock().unwrap();
+    cache.insert(key, digest);
+    while cache.len() > MAX_ARTIFACT_DIGEST_CACHE_ENTRIES {
+        cache.pop_first();
+    }
 }
 
 fn validate_relative_path(label: &str, value: &str) -> Result<(), HarnessRunContractError> {

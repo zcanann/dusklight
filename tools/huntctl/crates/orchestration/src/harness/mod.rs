@@ -1,6 +1,7 @@
 //! Campaign orchestration over the native harness runtime and shared contracts.
 
 pub mod campaign;
+pub mod conformance;
 
 pub use dusklight_harness_runtime::{execution, inspection};
 

@@ -753,7 +753,9 @@ fn seed_artifact(seed: &ObjectiveSeed) -> Option<&super::objective_suite::Artifa
     }
 }
 
-fn required_capabilities(case: &super::objective_suite::ObjectiveSuiteCase) -> Vec<String> {
+pub(super) fn required_capabilities(
+    case: &super::objective_suite::ObjectiveSuiteCase,
+) -> Vec<String> {
     let mut capabilities = BTreeSet::from([
         "gameplay-trace-v5".to_string(),
         "milestone-program-v1.5".to_string(),
