@@ -236,6 +236,8 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
 /// a stochastic search: a move may be retained without improving the goal tick
 /// when its earlier timestamp can expose a coordinated improvement on a later
 /// pass.
+const BOOT_GOLF_EVALUATION_BATCH_SIZE: usize = 32;
+
 pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateError> {
     if config.candidate.segment != SegmentProfile::BootToFsp103 {
         return Err(EvaluateError::InvalidConfig(
@@ -329,21 +331,39 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
         evaluated_candidates = evaluated_candidates
             .checked_add(candidates.len())
             .ok_or_else(|| EvaluateError::InvalidResult("candidate count overflowed".into()))?;
-        let mut proven = evaluate_boot_batch(
-            &evaluation,
-            candidates,
-            &config
-                .output_root
-                .join("rounds")
-                .join(format!("{round:04}")),
-            round,
-        )?;
-        proven.retain(|candidate| {
-            candidate.boundary_fingerprint == source_fingerprint
-                && candidate.sim_tick <= current.sim_tick
-                && boot_golf_cmp(candidate, &current).is_lt()
-        });
-        let Some(best) = proven.into_iter().min_by(boot_golf_cmp) else {
+        // Keep native evidence sets bounded. A full boot coordinate round can
+        // contain hundreds of candidates and thousands of trace artifacts;
+        // aggregating that as one population needlessly makes controller
+        // memory scale with the whole round.
+        let mut best: Option<ProvenBootCandidate> = None;
+        for (batch_index, batch) in candidates
+            .chunks(BOOT_GOLF_EVALUATION_BATCH_SIZE)
+            .enumerate()
+        {
+            let proven = evaluate_boot_batch(
+                &evaluation,
+                batch.to_vec(),
+                &config
+                    .output_root
+                    .join("rounds")
+                    .join(format!("{round:04}"))
+                    .join(format!("batch-{batch_index:04}")),
+                round,
+            )?;
+            for candidate in proven.into_iter().filter(|candidate| {
+                candidate.boundary_fingerprint == source_fingerprint
+                    && candidate.sim_tick <= current.sim_tick
+                    && boot_golf_cmp(candidate, &current).is_lt()
+            }) {
+                if best
+                    .as_ref()
+                    .is_none_or(|incumbent| boot_golf_cmp(&candidate, incumbent).is_lt())
+                {
+                    best = Some(candidate);
+                }
+            }
+        }
+        let Some(best) = best else {
             break;
         };
         current = best;
