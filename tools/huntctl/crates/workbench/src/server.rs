@@ -376,6 +376,26 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/workspace/stage-options") => {
+                    let result = serde_json::from_slice::<BrowserStageBootOptionsRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid stage-options request: {error}"))
+                    })
+                    .and_then(|request| {
+                        crate::stage_catalog::stage_boot_options(
+                            &config.repository_root,
+                            &request.stage,
+                        )
+                    });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/workspace/folders/create") => {
                     let result = serde_json::from_slice::<BrowserWorkspaceFolderCreateRequest>(
                         &request.body,
