@@ -25,6 +25,7 @@ pub mod tactic_tests;
 pub mod timeline;
 pub mod trace;
 pub mod trace_diff;
+pub mod trace_typed_facts;
 pub mod transition_evidence;
 
 // Compatibility re-exports keep existing callers stable while the physical
