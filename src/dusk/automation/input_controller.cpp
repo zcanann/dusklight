@@ -223,7 +223,9 @@ StickValue seek(const InputControllerLayer& layer, const ControllerObservation& 
     const double worldAngle = std::atan2(deltaX, deltaZ);
     const double relativeAngle = worldAngle - observation.cameraYawRadians;
     return {
-        .x = rounded_stick_component(std::sin(relativeAngle), layer.magnitude),
+        // The native PAD X axis is opposite the world/camera-space right axis:
+        // negative raw X steers toward world +X when camera yaw is zero.
+        .x = rounded_stick_component(-std::sin(relativeAngle), layer.magnitude),
         .y = rounded_stick_component(std::cos(relativeAngle), layer.magnitude),
     };
 }
@@ -237,7 +239,7 @@ StickValue world_heading_stick(const InputControllerLayer& layer,
     }
     const double relativeAngle = worldHeading - observation.cameraYawRadians;
     return {
-        .x = rounded_stick_component(std::sin(relativeAngle), layer.magnitude),
+        .x = rounded_stick_component(-std::sin(relativeAngle), layer.magnitude),
         .y = rounded_stick_component(std::cos(relativeAngle), layer.magnitude),
     };
 }

@@ -306,13 +306,13 @@ void testRustGoldenMoveTargets() {
         .playerYawPresent = true,
         .cameraPresent = true,
     };
-    REQUIRE(program.evaluate(0, observation).stickX == 10);
+    REQUIRE(program.evaluate(0, observation).stickX == -10);
     REQUIRE(program.evaluate(0, observation).stickY == 100);
     REQUIRE(program.evaluate(1, observation).stickX == 0);
     REQUIRE(program.evaluate(1, observation).stickY == 90);
-    REQUIRE(program.evaluate(2, observation).stickX == 80);
+    REQUIRE(program.evaluate(2, observation).stickX == -80);
     REQUIRE(program.evaluate(2, observation).stickY == 8);
-    REQUIRE(program.evaluate(3, observation).stickX == -2);
+    REQUIRE(program.evaluate(3, observation).stickX == 2);
     REQUIRE(program.evaluate(3, observation).stickY == 70);
     REQUIRE(program.evaluate(0, observation).substickX == 90);
     REQUIRE(program.evaluate(0, observation).substickY == -60);
@@ -354,7 +354,8 @@ void testPointSeekAndStopRadius() {
         .cameraPresent = true,
         .cameraYawRadians = 0.0F,
     };
-    REQUIRE(program.evaluate(0, observation).stickX == 127);
+    // Native PAD X is mirrored relative to world/camera right.
+    REQUIRE(program.evaluate(0, observation).stickX == -127);
     REQUIRE(program.evaluate(0, observation).stickY == 0);
 
     observation.playerX = 9.5F;
@@ -384,7 +385,7 @@ void testActorSelectionIsStableAndPure() {
     const RawPadState first = program.evaluate(0, observation);
     const RawPadState second = program.evaluate(0, observation);
     REQUIRE(first == second);
-    REQUIRE(first.stickX == -100);
+    REQUIRE(first.stickX == 100);
     REQUIRE(first.stickY == 0);
     REQUIRE(actors[0].actorName == before[0].actorName);
     REQUIRE(actors[0].stableId == before[0].stableId);
@@ -414,7 +415,7 @@ void testVersion10ActorCompatibility() {
         .cameraPresent = true,
         .actors = actors,
     };
-    REQUIRE(program.evaluate(0, observation).stickX == -100);
+    REQUIRE(program.evaluate(0, observation).stickX == 100);
     ControllerObservation missing{
         .playerPresent = true,
         .cameraPresent = true,
@@ -440,7 +441,7 @@ void testExactProcessActorSelectionNeverFallsBack() {
         .cameraPresent = true,
         .actors = actors,
     };
-    REQUIRE(program.evaluate(0, observation).stickX == 100);
+    REQUIRE(program.evaluate(0, observation).stickX == -100);
 
     // The exact ID still requires the declared actor type and cannot fall back
     // to the nearer actor when that guard fails.
@@ -482,7 +483,7 @@ void testPlacedActorSelectionRequiresExactStageAndPlacement() {
         .stageName = stageName("F_SP103"),
         .actors = actors,
     };
-    REQUIRE(program.evaluate(0, observation).stickX == -100);
+    REQUIRE(program.evaluate(0, observation).stickX == 100);
 
     // A placed selector is the full stage/type/set/room tuple. It never
     // falls back to a nearby actor when any part of that tuple differs.
@@ -540,7 +541,7 @@ void testFramedCoordinatesPlanesAndResolvedTargets() {
     };
     REQUIRE(program.evaluate(0, observation).stickX == 0);
     REQUIRE(program.evaluate(0, observation).stickY == 100);
-    REQUIRE(program.evaluate(1, observation).stickX == 90);
+    REQUIRE(program.evaluate(1, observation).stickX == -90);
     REQUIRE(program.evaluate(1, observation).stickY == 0);
 
     observation.cameraYawRadians = HalfPi;
@@ -549,7 +550,7 @@ void testFramedCoordinatesPlanesAndResolvedTargets() {
     observation.cameraYawRadians = 0.0F;
     REQUIRE(program.evaluate(3, observation).stickX == 0);
     REQUIRE(program.evaluate(3, observation).stickY == 70);
-    REQUIRE(program.evaluate(4, observation).stickX == 60);
+    REQUIRE(program.evaluate(4, observation).stickX == -60);
     REQUIRE(program.evaluate(4, observation).stickY == 0);
     REQUIRE(program.evaluate(5, observation).stickX == 0);
     REQUIRE(program.evaluate(5, observation).stickY == 50);
@@ -621,12 +622,12 @@ void testVersion13MotionControls() {
     REQUIRE(program.evaluate(1, observation).stickY == 0);
     REQUIRE(program.evaluate(2, observation).stickX == 0);
     REQUIRE(program.evaluate(2, observation).stickY == -50);
-    REQUIRE(program.evaluate(3, observation).stickX == 60);
+    REQUIRE(program.evaluate(3, observation).stickX == -60);
     REQUIRE(program.evaluate(3, observation).stickY == 0);
     observation.playerYawRadians = HalfPi;
     REQUIRE(program.evaluate(3, observation) == RawPadState{});
     observation.playerYawRadians = 0.0F;
-    REQUIRE(program.evaluate(4, observation).stickX == 70);
+    REQUIRE(program.evaluate(4, observation).stickX == -70);
     REQUIRE(program.evaluate(4, observation).stickY == 0);
     REQUIRE(program.evaluate(5, observation).stickX == 0);
     REQUIRE(program.evaluate(5, observation).stickY == 80);

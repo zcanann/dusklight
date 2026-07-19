@@ -146,6 +146,10 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
             identity.setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor));
             identity.homeRoom = actor->home.roomNo;
             identity.currentRoom = actor->current.roomNo;
+            identity.homePositionPresent = true;
+            identity.homePositionX = actor->home.pos.x;
+            identity.homePositionY = actor->home.pos.y;
+            identity.homePositionZ = actor->home.pos.z;
         }
         return identity;
     };
