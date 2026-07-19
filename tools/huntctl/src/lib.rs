@@ -19,7 +19,10 @@ pub use dusklight_evidence::{
 pub use dusklight_interventions as intervention;
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
-pub use dusklight_orchestration::{behavior_archive, harness, learning, search_evaluator};
+pub use dusklight_evaluation as search_evaluator;
+pub use dusklight_learning as learning;
+pub use dusklight_orchestration::harness;
+pub use dusklight_proposals::behavior_archive;
 pub use dusklight_route_workbench as route_workbench;
 pub use dusklight_routes::{route_store, timeline};
 pub use dusklight_search::{
@@ -30,10 +33,11 @@ pub use dusklight_trace::{trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};
 
-pub use dusklight_orchestration::learning::{
+pub use dusklight_learning::{
     action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines, offline_rl,
-    q_search, reward_shaping,
+    reward_shaping,
 };
+pub use dusklight_proposals::q_search;
 
 pub use artifact::{
     ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, ArtifactIdentityError, BuildIdentity, Digest,

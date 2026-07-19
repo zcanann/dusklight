@@ -13,12 +13,14 @@ experimental-interventions = ["dusklight-interventions/experimental-intervention
 dusklight-automation-contracts = { path = "crates/contracts" }
 dusklight-control = { path = "crates/control" }
 dusklight-evidence = { path = "crates/evidence" }
+dusklight-evaluation = { path = "crates/evaluation" }
 dusklight-harness-contracts = { path = "crates/harness-contracts" }
 dusklight-interventions = { path = "crates/interventions" }
 dusklight-learning = { path = "crates/learning" }
 dusklight-objectives = { path = "crates/objectives" }
 dusklight-oracles = { path = "crates/oracles" }
 dusklight-orchestration = { path = "crates/orchestration" }
+dusklight-proposals = { path = "crates/proposals" }
 dusklight-routes = { path = "crates/routes" }
 dusklight-route-workbench = { path = "crates/workbench" }
 dusklight-search = { path = "crates/search" }
@@ -52,6 +54,7 @@ members = [
     "crates/contracts",
     "crates/control",
     "crates/evidence",
+    "crates/evaluation",
     "crates/harness-contracts",
     "crates/harness-runtime",
     "crates/interventions",
@@ -73,6 +76,7 @@ default-members = [
     "crates/contracts",
     "crates/control",
     "crates/evidence",
+    "crates/evaluation",
     "crates/harness-contracts",
     "crates/harness-runtime",
     "crates/interventions",

@@ -17,6 +17,10 @@ extraction, not targets.
 dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
+├── dusklight-evaluation ─────────────┤
+│   ├── dusklight-harness-runtime ────┤
+│   ├── dusklight-proposals ──────────┤
+│   └── dusklight-search ─────────────┤
 ├── dusklight-harness-contracts ──────┤
 ├── dusklight-harness-runtime ────────┤
 │   ├── dusklight-harness-contracts ──┤
@@ -34,8 +38,8 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-oracles ────────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-orchestration ──────────┤
-│   ├── dusklight-harness-contracts ───┤
-│   ├── dusklight-learning ────────────┤
+│   ├── dusklight-evaluation ──────────┤
+│   ├── dusklight-harness-runtime ─────┤
 │   └── dusklight-search ──────────────┤
 ├── dusklight-proposals ──────────────┤
 │   ├── dusklight-evidence ───────────┤
@@ -75,6 +79,14 @@ mutation, worker processes, or the CLI. This prevents evidence truth from
 acquiring algorithm-specific authority. Exact trace/evidence comparison also
 lives here because it consumes only immutable artifacts and has no execution or
 proposal authority.
+
+## `dusklight-evaluation`
+
+Owns authenticated population evaluation, bounded search runs, tournament
+scoring, trial evidence extraction, and native-result admission. It may execute
+already-materialized candidates through the harness runtime and consume
+proposal policies, but it cannot define harness request truth, train models,
+author proposal policy, or schedule top-level objective campaigns.
 
 ## `dusklight-harness-contracts`
 
@@ -152,10 +164,10 @@ systems that consume them.
 
 ## `dusklight-orchestration`
 
-Owns population evaluation and campaign scheduling. It composes the native
-harness runtime, proposal policies, and lower-level domain crates, but nothing
-below it may depend on orchestration or the huntctl executable. This is the
-explicit integration layer where simulator budget and evidence contracts meet.
+Owns top-level objective campaign planning, scheduling, cold replay, and final
+reporting. It composes evaluation and the native harness runtime, but nothing
+below it may depend on orchestration or the huntctl executable. It is no longer
+a general-purpose home for execution, evaluation, learning, or proposal code.
 
 ## `dusklight-proposals`
 
