@@ -7,6 +7,7 @@ use std::fmt;
 
 pub const ONLINE_TRAINING_HEALTH_SCHEMA_V1: &str = "dusklight-online-training-health/v1";
 pub const ONLINE_COVERAGE_GATE_SCHEMA_V1: &str = "dusklight-online-coverage-gate/v1";
+pub const LEARNED_PROPOSAL_GATE_SCHEMA_V1: &str = "dusklight-learned-proposal-gate/v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CoverageGuardConfig {
@@ -89,6 +90,77 @@ impl OnlineCoverageGate {
             fallback_policy: (!learned_policy_enabled).then_some("structured_archive_blind_only"),
             disposition,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LearnedProposalBlocker {
+    RequiredFactsUnsupported,
+    InsufficientActionSupport,
+    InsufficientStateCoverage,
+    DeterminismUnproved,
+    HeldOutPerformanceInadequate,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct LearnedProposalGate {
+    pub schema: &'static str,
+    pub required_facts_supported: bool,
+    pub action_support_adequate: bool,
+    pub state_coverage_adequate: bool,
+    pub determinism_proved: bool,
+    pub held_out_performance_adequate: bool,
+    pub learned_policy_enabled: bool,
+    pub fallback_policy: Option<&'static str>,
+    pub blockers: Vec<LearnedProposalBlocker>,
+}
+
+impl LearnedProposalGate {
+    pub fn evaluate(
+        coverage: &OnlineCoverageGate,
+        required_facts_supported: bool,
+        determinism_proved: bool,
+        held_out_performance_adequate: bool,
+    ) -> Self {
+        let action_support_adequate = matches!(
+            coverage.disposition,
+            CoverageDisposition::LearningReady
+                | CoverageDisposition::FallbackInsufficientStateCoverage
+        );
+        let state_coverage_adequate = matches!(
+            coverage.disposition,
+            CoverageDisposition::LearningReady
+                | CoverageDisposition::FallbackInsufficientActionSupport
+        );
+        let mut blockers = Vec::new();
+        if !required_facts_supported {
+            blockers.push(LearnedProposalBlocker::RequiredFactsUnsupported);
+        }
+        if !action_support_adequate {
+            blockers.push(LearnedProposalBlocker::InsufficientActionSupport);
+        }
+        if !state_coverage_adequate {
+            blockers.push(LearnedProposalBlocker::InsufficientStateCoverage);
+        }
+        if !determinism_proved {
+            blockers.push(LearnedProposalBlocker::DeterminismUnproved);
+        }
+        if !held_out_performance_adequate {
+            blockers.push(LearnedProposalBlocker::HeldOutPerformanceInadequate);
+        }
+        let learned_policy_enabled = blockers.is_empty();
+        Self {
+            schema: LEARNED_PROPOSAL_GATE_SCHEMA_V1,
+            required_facts_supported,
+            action_support_adequate,
+            state_coverage_adequate,
+            determinism_proved,
+            held_out_performance_adequate,
+            learned_policy_enabled,
+            fallback_policy: (!learned_policy_enabled).then_some("structured_archive_blind_only"),
+            blockers,
+        }
     }
 }
 
@@ -328,5 +400,44 @@ mod tests {
             state_fallback.disposition,
             CoverageDisposition::FallbackInsufficientStateCoverage
         );
+    }
+
+    #[test]
+    fn learned_gate_accumulates_every_fail_closed_reason() {
+        let coverage = OnlineCoverageGate::evaluate(
+            4,
+            &BTreeMap::from([(0, 4)]),
+            1,
+            CoverageGuardConfig::default(),
+        )
+        .unwrap();
+        let blocked = LearnedProposalGate::evaluate(&coverage, false, false, false);
+        assert!(!blocked.learned_policy_enabled);
+        assert_eq!(
+            blocked.blockers,
+            [
+                LearnedProposalBlocker::RequiredFactsUnsupported,
+                LearnedProposalBlocker::InsufficientActionSupport,
+                LearnedProposalBlocker::InsufficientStateCoverage,
+                LearnedProposalBlocker::DeterminismUnproved,
+                LearnedProposalBlocker::HeldOutPerformanceInadequate,
+            ]
+        );
+        assert_eq!(
+            blocked.fallback_policy,
+            Some("structured_archive_blind_only")
+        );
+
+        let ready_coverage = OnlineCoverageGate::evaluate(
+            4,
+            &BTreeMap::from([(0, 2), (1, 2)]),
+            4,
+            CoverageGuardConfig::default(),
+        )
+        .unwrap();
+        let ready = LearnedProposalGate::evaluate(&ready_coverage, true, true, true);
+        assert!(ready.learned_policy_enabled);
+        assert!(ready.blockers.is_empty());
+        assert_eq!(ready.fallback_policy, None);
     }
 }
