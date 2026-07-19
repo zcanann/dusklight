@@ -616,8 +616,24 @@ pub(super) fn graph_node_thumbnail_key(
             })?;
             Ok(thumbnail_key("draft", identity))
         }
-        BrowserSelection::Project { .. } => {
-            Err(WorkbenchError::new("project thumbnails are not supported"))
+        BrowserSelection::Project { id } => {
+            let project = graph
+                .projects
+                .entries
+                .iter()
+                .find(|project| project.id == *id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown workspace tape {id:?}")))?;
+            if !project.playable || project.kind == "timeline" {
+                return Err(WorkbenchError::new(format!(
+                    "workspace tape {id:?} is not playable"
+                )));
+            }
+            let identity = project.materialization_sha256.as_deref().ok_or_else(|| {
+                WorkbenchError::new(format!(
+                    "workspace tape {id:?} has no materialization identity"
+                ))
+            })?;
+            Ok(thumbnail_key("project", identity))
         }
     }
 }
@@ -654,6 +670,13 @@ pub(super) fn reachable_thumbnail_keys(graph: &WorkbenchGraph) -> BTreeSet<Strin
     for draft in &graph.drafts {
         if let Some(identity) = draft.result_tape_sha256.as_deref() {
             keys.insert(thumbnail_key("draft", identity));
+        }
+    }
+    for project in &graph.projects.entries {
+        if project.kind != "timeline"
+            && let Some(identity) = project.materialization_sha256.as_deref()
+        {
+            keys.insert(thumbnail_key("project", identity));
         }
     }
     keys
@@ -824,6 +847,7 @@ pub fn prune_thumbnails(
         .parent()
         .ok_or_else(|| WorkbenchError::new("timeline has no artifact root"))?;
     let mut graph = graph_with_drafts(timeline, artifact_root, state_root)?;
+    graph.projects = project_catalog_projection(&repository_root, &timeline_path)?;
     append_generated_search_segments(
         &mut graph,
         timeline,
@@ -856,6 +880,17 @@ pub(super) fn decorate_graph_thumbnails(
             draft.thumbnail = Some(thumbnail_url(&key));
         }
     }
+    for project in &mut graph.projects.entries {
+        let Some(identity) = project.materialization_sha256.as_deref() else {
+            continue;
+        };
+        let key = thumbnail_key("project", identity);
+        let path = thumbnail_cache_path(&config.state_root, &key);
+        if thumbnail_file_is_valid(&path) {
+            content_address_thumbnail(config, &path)?;
+            project.thumbnail = Some(thumbnail_url(&key));
+        }
+    }
     Ok(())
 }
 
@@ -875,7 +910,8 @@ pub(super) fn prepare_missing_playback_thumbnail(
     selection: &BrowserSelection,
 ) -> Result<Option<PlaybackThumbnailCapture>, WorkbenchError> {
     let artifact_root = configured_artifact_root(config)?;
-    let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    let mut graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    graph.projects = project_catalog_projection(&config.repository_root, &config.timeline_path)?;
     let key = graph_node_thumbnail_key(&graph, selection)?;
     let path = thumbnail_cache_path(&config.state_root, &key);
     if thumbnail_file_is_valid(&path) {

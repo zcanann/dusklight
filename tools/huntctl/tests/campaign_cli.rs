@@ -99,10 +99,9 @@ fn dry_run_resolves_a_content_bound_case_without_writing() {
         absolute_output.join("report.json").to_str().unwrap()
     );
     assert!(
-        plan["resolved_paths"]["objective"]
-            .as_str()
-            .unwrap()
-            .ends_with("tests/fixtures/automation/reach_point_ordon.milestones")
+        PathBuf::from(plan["resolved_paths"]["objective"].as_str().unwrap()).ends_with(
+            PathBuf::from("routes/samples/maps/reach_point_ordon.milestones")
+        )
     );
     assert_eq!(
         plan["identities"]["objective_program_sha256"],

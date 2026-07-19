@@ -196,9 +196,19 @@ pub fn play(
 pub(super) fn launch_materialized(
     timeline: &Timeline,
     config: &WorkbenchConfig,
-    materialized: MaterializedPlayback,
+    mut materialized: MaterializedPlayback,
     options: MaterializedLaunchOptions,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
+    if !materialized
+        .segment
+        .as_deref()
+        .is_some_and(|segment| segment.starts_with("project:"))
+        && let Some(configuration) =
+            active_timeline_boot_override(&config.repository_root, &config.timeline_path)?
+        && configuration.enabled
+    {
+        materialized.tape.boot = configuration.boot;
+    }
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
     fs::create_dir_all(&config.state_root).map_err(|error| {
@@ -291,7 +301,8 @@ pub(super) fn capture_thumbnail(
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
     let artifact_root = configured_artifact_root(config)?;
-    let graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    let mut graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
+    graph.projects = project_catalog_projection(&config.repository_root, &config.timeline_path)?;
     let key = graph_node_thumbnail_key(&graph, &request.selection)?;
     let materialized = match &request.selection {
         BrowserSelection::Segment { id } => {
@@ -300,8 +311,8 @@ pub(super) fn capture_thumbnail(
         BrowserSelection::Draft { id } => {
             materialize_draft(timeline, &artifact_root, &config.state_root, id)?
         }
-        BrowserSelection::Project { .. } => {
-            return Err(WorkbenchError::new("project thumbnails are not supported"));
+        BrowserSelection::Project { id } => {
+            project_materialized_playback(&config.repository_root, id)?
         }
     };
 
@@ -455,6 +466,13 @@ pub(super) fn play_project(
     let materialized = project_materialized_playback(&config.repository_root, project_id)?;
     let fast_forward_frames =
         playback_fast_forward_frames(playback, materialized.tape.frames.len() as u64);
+    let thumbnail = prepare_missing_playback_thumbnail(
+        timeline,
+        config,
+        &BrowserSelection::Project {
+            id: project_id.into(),
+        },
+    )?;
     launch_materialized(
         timeline,
         config,
@@ -463,7 +481,7 @@ pub(super) fn play_project(
             takeover: handoff,
             origin: PlaybackOrigin::Boot,
             fast_forward_frames,
-            thumbnail: None,
+            thumbnail,
             playback,
         },
     )
@@ -699,11 +717,11 @@ pub(super) fn record_continuation(
         validate_draft_label(&request.label)?
     };
     let (
-        materialized,
+        mut materialized,
         parent,
         expected_start_milestone,
         expected_start_fingerprint,
-        record_from_boot,
+        mut record_from_boot,
     ) = match request.parent {
         BrowserRecordParent::Origin { id } => {
             let graph = graph_from_timeline(timeline, &artifact_root)?;
@@ -802,6 +820,18 @@ pub(super) fn record_continuation(
             )
         }
     };
+    if let Some(configuration) =
+        active_timeline_boot_override(&config.repository_root, &config.timeline_path)?
+        && configuration.enabled
+    {
+        materialized.tape.boot = configuration.boot;
+        if !matches!(materialized.tape.boot, TapeBoot::Process) {
+            // A configured stage/loadout boot is carried by the zero-frame
+            // playback prefix. Native recording then begins at that exact
+            // configured origin instead of silently falling back to process boot.
+            record_from_boot = false;
+        }
+    }
     let parent_tape_sha256 = tape_digest(&materialized.tape)?;
     let root = drafts_root(&config.state_root)?;
     let nonce = SystemTime::now()

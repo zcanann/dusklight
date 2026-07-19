@@ -35,12 +35,15 @@ pacing is configured separately and begins only after the same exact fast
 handoff. These are host-pacing controls only: all modes use absolute 30 Hz
 input frames and own all controller ports until handoff.
 
-The Projects sidebar is the checked standalone test selector. Its Git-owned
-`projects/workbench.projects` catalog groups QA, canary, glitch, route, and map
-boot tapes. Every checked `.tas`/`.tape` fixture under
-`tests/fixtures/automation` must be cataloged; a Rust test enforces coverage and
-compiles every entry. Stage boot entries expose map, room, spawn, layer, save,
-and optional fixture/loadout configuration in Properties.
+The Workspace sidebar is a direct view of the Git-owned `routes/` directory.
+Folders group route timelines and standalone QA, canary, sample, glitch, and map
+boot tapes without a second catalog to maintain. A directory with the same stem
+as a `.timeline` is that route's private segment storage and is folded into the
+route graph rather than duplicated as standalone entries. Rust tests scan and
+compile every visible `.tas`/`.tape` entry. Boot Properties expose an explicit,
+opt-in override for process or stage boot, including map, room, spawn, layer,
+save slot, and optional fixture/loadout data; disabling it preserves the
+artifact's authored boot unchanged.
 
 See [Route segment trees and Git](timelines.md) for lineage semantics.
 

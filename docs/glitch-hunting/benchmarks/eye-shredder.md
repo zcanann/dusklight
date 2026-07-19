@@ -179,7 +179,7 @@ cross-platform tape runner:
 
 ```sh
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
-  tests/fixtures/automation/eye_shredder.tas build/eye-shredder.tape
+  routes/qa/glitches/eye_shredder.tas build/eye-shredder.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape inspect \
   build/eye-shredder.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape run \

@@ -403,7 +403,7 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- controller inspect \
 
 # Build and inspect the boot authoring smoke tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape compile \
-  tests/fixtures/automation/boot_start_smoke.tas build/boot-start-smoke.tape
+  routes/canary/boot/boot_start_smoke.tas build/boot-start-smoke.tape
 cargo run --manifest-path tools/huntctl/Cargo.toml -- tape inspect \
   build/boot-start-smoke.tape
 

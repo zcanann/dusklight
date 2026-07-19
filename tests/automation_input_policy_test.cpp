@@ -25,21 +25,25 @@ void require(const bool condition, const char* expression, const int line) {
 }  // namespace
 
 int main() {
-    using aurora::window::is_automation_debug_ui_key_event;
+    using aurora::window::is_automation_debug_ui_event;
 
-    REQUIRE(is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_F1)));
-    REQUIRE(is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_UP, SDLK_F1)));
-    REQUIRE(is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_LSHIFT)));
-    REQUIRE(is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_UP, SDLK_RSHIFT)));
+    REQUIRE(is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_F1)));
+    REQUIRE(is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_UP, SDLK_F1)));
+    REQUIRE(is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_LSHIFT)));
+    REQUIRE(is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_UP, SDLK_RSHIFT)));
 
-    REQUIRE(!is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_F2)));
-    REQUIRE(!is_automation_debug_ui_key_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_A)));
+    REQUIRE(!is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_F2)));
+    REQUIRE(!is_automation_debug_ui_event(key_event(SDL_EVENT_KEY_DOWN, SDLK_A)));
 
     SDL_Event mouse_event{};
     mouse_event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    REQUIRE(!is_automation_debug_ui_key_event(mouse_event));
+    REQUIRE(is_automation_debug_ui_event(mouse_event));
+    mouse_event.type = SDL_EVENT_MOUSE_MOTION;
+    REQUIRE(is_automation_debug_ui_event(mouse_event));
+    mouse_event.type = SDL_EVENT_MOUSE_WHEEL;
+    REQUIRE(is_automation_debug_ui_event(mouse_event));
 
     SDL_Event gamepad_event{};
     gamepad_event.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
-    REQUIRE(!is_automation_debug_ui_key_event(gamepad_event));
+    REQUIRE(!is_automation_debug_ui_event(gamepad_event));
 }

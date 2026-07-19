@@ -79,7 +79,10 @@ pub(super) fn handle_http(
                         let artifact_root = configured_artifact_root(config)?;
                         let mut graph =
                             graph_with_drafts(&timeline, &artifact_root, &config.state_root)?;
-                        graph.projects = project_catalog_projection(&config.repository_root)?;
+                        graph.projects = project_catalog_projection(
+                            &config.repository_root,
+                            &config.timeline_path,
+                        )?;
                         append_generated_search_segments(
                             &mut graph,
                             &timeline,
@@ -355,6 +358,79 @@ pub(super) fn handle_http(
                         Err(error @ SegmentRenameError::Conflict(_)) => {
                             json_error(409, "Conflict", &error.to_string())
                         }
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/workspace/boot") => {
+                    let result = serde_json::from_slice::<BrowserBootOverrideUpdateRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid boot override request: {error}"))
+                    })
+                    .and_then(|update| update_boot_override(&config.repository_root, &update));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/workspace/folders/create") => {
+                    let result = serde_json::from_slice::<BrowserWorkspaceFolderCreateRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid create-folder request: {error}"))
+                    })
+                    .and_then(|create| create_workspace_folder(&config.repository_root, &create));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/workspace/move") => {
+                    let result = serde_json::from_slice::<BrowserWorkspaceMoveRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid workspace-move request: {error}"))
+                    })
+                    .and_then(|move_request| {
+                        move_workspace_node(
+                            &config.repository_root,
+                            &config.timeline_path,
+                            &move_request,
+                        )
+                    });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/workspace/delete") => {
+                    let result = serde_json::from_slice::<BrowserWorkspaceDeleteRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid workspace-delete request: {error}"))
+                    })
+                    .and_then(|delete_request| {
+                        delete_workspace_node(
+                            &config.repository_root,
+                            &config.timeline_path,
+                            &config.state_root,
+                            &delete_request,
+                        )
+                    });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }

@@ -38,7 +38,7 @@
     "expected_tape_completion_frame": 650
   },
   "positive_case": {
-    "tape_path": "tests/fixtures/automation/eye_shredder.tas",
+    "tape_path": "routes/qa/glitches/eye_shredder.tas",
     "tape_sha256": "e2b4d8ce4654b76440757ce6bf043825591b8f174db213e4ff4e09af7c551893",
     "expected_oracle_status": "passed",
     "required_stages": ["memory", "renderer", "gameplay", "tape"]

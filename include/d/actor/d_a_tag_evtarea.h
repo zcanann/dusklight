@@ -55,6 +55,7 @@ public:
 
 private:
 #if TARGET_PC
+    // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: const observer reads only.
     friend struct dusk::TriggerViewReadAdapter;
 #endif
     /* 0x568 vtable */

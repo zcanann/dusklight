@@ -1997,7 +1997,7 @@ int game_main(int argc, char* argv[]) {
             ("milestone-program", "Load a compiled read-only DMSP milestone predicate program", cxxopts::value<std::string>())
             ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
             ("milestone-result", "Write versioned memory-backed milestone results as JSON", cxxopts::value<std::string>())
-            ("cursor-breakout-shadow", "Use retail Cursor Breakout behavior (enabled by default)", cxxopts::value<bool>()->default_value("true")->implicit_value("true"))
+            ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
             ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
             ("automation-oracle-continue-on-pass", "Keep playing after an automation oracle passes; failures still stop immediately", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -2143,6 +2143,11 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
 #endif
+    if (cursorBreakoutShadow && !hasNameEntryTrace) {
+        fprintf(stderr,
+                "Name Entry Error: --cursor-breakout-shadow requires --name-entry-trace PATH\n");
+        return 1;
+    }
     if (hasNameEntryTrace) {
         const std::string tracePath = parsed_arg_options["name-entry-trace"].as<std::string>();
         if (tracePath.empty()) {

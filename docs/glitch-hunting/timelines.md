@@ -210,13 +210,14 @@ root nodes. The real renderer remains active so render-side game state can
 resume; it is not Aurora's irreversible null backend. None of these controls
 change logical game time.
 
-Standalone entries are declared in `projects/workbench.projects`. Group IDs use
-slash-separated parents; each project points at checked TAS source or a compact
-tape and may attach a checked scenario fixture. The compiled tape remains the
-authority for boot type. Process boot starts from a clean process; stage boot
-records its map, room, spawn point, layer, optional save slot, inventory,
-equipment, flags, settings, and RNG fixture directly in the tape launched by the
-workbench.
+Standalone entries and timelines coexist in the `routes/` filesystem tree.
+Folders are the workbench groups, and adjacent sidecars such as
+`name.fixture.json` and `name.boot.json` move with their tape as one Git unit.
+The compiled tape remains the authority for boot type unless its checked,
+explicitly enabled boot-override sidecar is active. Process boot starts from a
+clean process; stage boot records its map, room, spawn point, layer, optional
+save slot, inventory, equipment, flags, settings, and RNG fixture directly in
+the tape launched by the workbench.
 
 ## Route store
 

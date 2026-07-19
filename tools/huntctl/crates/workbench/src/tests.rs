@@ -873,7 +873,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     let html = include_str!("../../../assets/route_workbench.html");
     for required in [
         "aria-label=\"Route graph\"",
-        "aria-label=\"Projects\"",
+        "aria-label=\"Workspace\"",
         "id=\"projects\"",
         "id=\"tree\"",
         "id=\"detail\"",
@@ -883,9 +883,20 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "bindGraphPan",
         "Detached / invalid",
         "grid-template-rows",
-        "let collapsed = new Set()",
+        "workspaceIcon",
+        "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
         "data-select-kind",
         "renderPlayableSegmentNode",
+        "standaloneWorkspaceEntry",
+        "id=\"workspaceNewFolder\"",
+        "id=\"workspaceMove\"",
+        "id=\"workspaceDelete\"",
+        "/api/workspace/folders/create",
+        "/api/workspace/move",
+        "/api/workspace/delete",
+        "id=\"bootEditor\"",
+        "/api/workspace/boot",
+        "projectOccurrence",
         "childSegments",
         "segment.parent==null",
         "segmentActions",
@@ -948,6 +959,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
             "legacy info-dump UI remains: {removed_dump:?}"
         );
     }
+    assert!(!html.contains("data-expand"));
+    assert!(!html.contains("let collapsed = new Set()"));
     assert!(!html.contains("?ready=${Date.now()}"));
     assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));
     assert!(!html.contains("${segmentActions(segment)}</section>"));

@@ -3,7 +3,7 @@
   "entries": [
     {
       "id": "fsp103-room1-point1-layer3",
-      "source": "tests/fixtures/automation/fsp103_next_map_seed.tas",
+      "source": "routes/samples/maps/fsp103_next_map_seed.tas",
       "boot": {
         "kind": "stage",
         "stage": "F_SP103",

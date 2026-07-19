@@ -169,9 +169,9 @@ V3.2 can embed one canonical, self-contained scenario descriptor in a stage-boot
 the checked JSON descriptor alongside the TAS source:
 
 ```console
-huntctl tape compile tests/fixtures/automation/fsp103_next_map_seed.tas \
+huntctl tape compile routes/samples/maps/fsp103_next_map_seed.tas \
   build/fsp103-practice.tape \
-  --fixture tests/fixtures/automation/fsp103_practice.fixture.json
+  --fixture routes/samples/maps/fsp103_next_map_seed.fixture.json
 ```
 
 The `dusklight-scenario-fixture/v1` JSON schema supports form, current/maximum health, both exact

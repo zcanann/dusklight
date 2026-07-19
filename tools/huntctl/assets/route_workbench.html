@@ -8,7 +8,7 @@
     :root { color-scheme: dark; --bg:#0b0e13; --panel:#121720; --panel2:#171e29; --line:#293241; --text:#e8edf5; --muted:#8c98aa; --cyan:#6dd8cb; --blue:#86aefb; --amber:#e7bd68; --red:#f1788c; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
     * { box-sizing:border-box; }
     body { margin:0; height:100vh; overflow:hidden; background:var(--bg); color:var(--text); }
-    button,select,textarea { font:inherit; }
+    button,input,select,textarea { font:inherit; }
     header { height:48px; display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--line); background:#0d1117; }
     .mark { width:24px; height:24px; display:grid; place-items:center; border-radius:5px; background:var(--cyan); color:#07100f; font-size:12px; font-weight:900; }
     .title strong { display:block; font-size:13px; }
@@ -23,13 +23,19 @@
     main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
     .workarea { min-width:0; min-height:0; display:grid; grid-template-columns:230px minmax(0,1fr); }
     .projects { min-width:0; min-height:0; overflow:auto; border-right:1px solid var(--line); background:#0f141c; }
-    .projects .pane-title { position:sticky; top:0; z-index:3; }
+    .projects .pane-title { position:sticky; top:0; z-index:3; gap:4px; }
+    .workspace-tools { display:flex; gap:3px; margin-left:auto; }
+    .workspace-tools button { height:22px; padding:0 6px; border:1px solid var(--line); border-radius:4px; background:#151b24; color:#96a3b6; cursor:pointer; font-size:9px; font-weight:650; letter-spacing:0; text-transform:none; }
+    .workspace-tools button:hover { border-color:#46556a; color:var(--text); }
+    .workspace-tools button:disabled { opacity:.4; cursor:not-allowed; }
     .project-tree { padding:7px 6px 18px; font-size:11px; }
     .project-row { width:100%; min-height:27px; display:flex; align-items:center; gap:5px; padding:4px 7px; border:0; border-radius:4px; background:transparent; color:#bcc6d5; text-align:left; cursor:pointer; }
     .project-row:hover { background:#171e29; color:var(--text); }
     .project-row.selected { background:#1c2b40; color:#fff; }
     .project-row.group { color:#8f9caf; font-weight:700; }
     .project-row .arrow { width:12px; flex:0 0 12px; color:#68768a; font-size:9px; }
+    .workspace-icon { width:14px; height:14px; flex:0 0 14px; color:#8290a4; }
+    .workspace-icon.custom { color:var(--amber); }
     .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .project-row .project-frames { color:#657287; font-size:9px; }
     .project-indent { margin-left:13px; }
@@ -46,12 +52,9 @@
     .graph-canvas { position:absolute; left:0; top:0; transform-origin:0 0; will-change:transform; }
     .graph-edges { position:absolute; inset:0; overflow:visible; pointer-events:none; }
     .graph-edge { fill:none; stroke:#344154; stroke-width:1.5; vector-effect:non-scaling-stroke; }
-    .graph-node { position:absolute; width:220px; height:68px; display:flex; align-items:center; gap:6px; padding:5px 8px 5px 3px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
+    .graph-node { position:absolute; width:220px; height:68px; display:flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
     .graph-node:hover { border-color:#485970; background:#19212c; }
     .graph-node.selected { border-color:#638ac5; background:#1c2b40; color:#fff; box-shadow:0 0 0 1px rgba(134,174,251,.16),0 7px 22px rgba(0,0,0,.3); }
-    .disclosure { width:18px; height:22px; padding:0; border:0; background:transparent; color:#738096; cursor:pointer; line-height:1; }
-    .disclosure.open { transform:rotate(90deg); }
-    .disclosure.empty { visibility:hidden; }
     .node-copy { min-width:0; flex:1; }
     .node-thumbnail { width:72px; height:54px; flex:0 0 auto; object-fit:cover; border:1px solid #303b4b; border-radius:5px; background:#080b10; }
     .tree-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:650; }
@@ -146,6 +149,13 @@
     .editor-actions { display:flex; justify-content:flex-end; gap:7px; }
     .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
     .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
+    .boot-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .boot-field { display:grid; gap:5px; color:var(--muted); font-size:10px; }
+    .boot-field.wide { grid-column:1/-1; }
+    .boot-field input,.boot-field select { width:100%; padding:7px 8px; border:1px solid var(--line); border-radius:5px; background:#090d13; color:var(--text); }
+    .boot-field textarea { min-height:170px; }
+    .boot-toggle { display:flex; align-items:flex-start; gap:9px; padding:10px; border:1px solid rgba(231,189,104,.4); border-radius:6px; color:var(--amber); font-size:11px; line-height:1.45; }
+    .boot-toggle input { margin-top:2px; }
     @media (max-width:900px) { .detail-body{grid-template-columns:1fr}.property-content{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))} }
     @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.workarea{grid-template-columns:170px minmax(0,1fr)}.detail-body{padding:16px}.property-content{grid-template-columns:1fr}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
   </style>
@@ -217,9 +227,9 @@
   </header>
   <main>
     <section class="workarea">
-      <aside class="projects" aria-label="Projects">
-        <div class="pane-title">Projects</div>
-        <div id="projects" class="project-tree" role="tree"><div class="empty">Loading projects...</div></div>
+      <aside class="projects" aria-label="Workspace">
+        <div class="pane-title"><span>Workspace</span><span class="workspace-tools"><button id="workspaceNewFolder" type="button" title="Create a folder">New folder</button><button id="workspaceMove" type="button" title="Move the selected folder or tape">Move</button><button id="workspaceDelete" type="button" title="Delete the selected folder or tape">Delete</button></span></div>
+        <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
       </aside>
       <section class="browser" aria-label="Route graph">
         <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · wheel to zoom</span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
@@ -240,6 +250,25 @@
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="savePredicate" class="save" value="default" type="button">Validate &amp; save</button></div>
     </form>
   </dialog>
+  <dialog id="bootEditor">
+    <form id="bootForm" class="editor" method="dialog">
+      <h2>Edit boot configuration</h2>
+      <p>This is explicit workspace launch metadata. Leave the override disabled for the tape's authored, cheat-free boot.</p>
+      <label class="boot-toggle"><input id="bootOverrideEnabled" type="checkbox"><span>Enable boot override for this route or standalone tape. Playback will replace the artifact's authored boot configuration.</span></label>
+      <div class="boot-grid">
+        <label class="boot-field"><span>Boot type</span><select id="bootKind"><option value="process">Process boot</option><option value="stage">Stage boot</option></select></label>
+        <label class="boot-field"><span>Stage</span><input id="bootStage" list="knownStages" value="F_SP103" maxlength="8"></label>
+        <label class="boot-field"><span>Room</span><input id="bootRoom" type="number" min="-128" max="127" value="1"></label>
+        <label class="boot-field"><span>Spawn point</span><input id="bootPoint" type="number" min="-32768" max="32767" value="1"></label>
+        <label class="boot-field"><span>Layer</span><input id="bootLayer" type="number" min="-128" max="127" value="-1"></label>
+        <label class="boot-field"><span>Load save slot</span><select id="bootSaveSlot"><option value="">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+        <label class="boot-field wide"><span>Loadout / inventory fixture JSON (blank for none)</span><textarea id="bootFixture" spellcheck="false" placeholder='{"schema":"dusklight-scenario-fixture/v1", ...}'></textarea></label>
+      </div>
+      <datalist id="knownStages"><option value="F_SP103"><option value="F_SP104"><option value="F_SP108"></datalist>
+      <div id="bootError" class="editor-error" role="alert"></div>
+      <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="saveBoot" class="save" value="default" type="button">Save boot configuration</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script>
   (() => {
@@ -247,8 +276,10 @@
     const $ = id => document.getElementById(id);
     let graph = null;
     let predicateEditRevision = null;
+    let bootEditProject = null;
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
-    let collapsed = new Set();
+    let workspaceSelection = null;
+    let workspaceNodeSelection = {kind:'folder',id:'routes'};
     let projectCollapsed = new Set();
     let occurrenceIndex = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
@@ -307,6 +338,11 @@
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
     const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
+    const workspaceEntry = () => graph?.projects?.entries?.find(item=>item.id===workspaceSelection)||null;
+    const standaloneWorkspaceEntry = () => { const entry=workspaceEntry(); return entry&&entry.kind!=='timeline'?entry:null; };
+    const workspaceIcon=(kind,custom=false)=>kind==='folder'
+      ? '<svg class="workspace-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.5 3.2h5l1.2 1.4h6.8v8.2H1.5z"/><path fill="none" stroke="currentColor" d="M1.5 4.7h13"/></svg>'
+      : `<svg class="workspace-icon${custom?' custom':''}" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor"/><circle cx="5" cy="8" r="1.7" fill="none" stroke="currentColor"/><circle cx="11" cy="8" r="1.7" fill="none" stroke="currentColor"/><path d="M5 11.5h6" stroke="currentColor"/></svg>`;
     function renderProjects() {
       const root=$('projects');
       const groups=graph.projects.groups||[];
@@ -317,12 +353,53 @@
         const children=groupChildren(group.id),projects=projectChildren(group.id);
         const open=!projectCollapsed.has(group.id);
         const nested=open?[...children.map(child=>groupHtml(child,depth+1)),...projects.map(project=>projectHtml(project,depth+1))].join(''):'';
-        return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span><span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
+        return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group${workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===group.id?' selected':''}" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span>${workspaceIcon('folder')}<span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
       };
-      const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${selection.kind==='project'&&selection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span><span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.frame_count??'—'}f</span></button></div>`;
-      root.innerHTML=groupChildren(null).map(group=>groupHtml(group,0)).join('')||'<div class="empty">No project tapes.</div>';
-      root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();}));
-      root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId;selection={kind:'project',id,occurrence:`project:${id}`,chain:[]};renderProjects();renderTree();renderDetail();}));
+      const projectHtml=(project,depth)=>{const custom=project.boot_override?.enabled||project.boot?.kind==='stage';return `<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span>${workspaceIcon('tape',custom)}<span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;};
+      const workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null;
+      root.innerHTML=[...groupChildren(workspaceRoot).map(group=>groupHtml(group,0)),...projectChildren(workspaceRoot).map(project=>projectHtml(project,0))].join('')||'<div class="empty">No project tapes.</div>';
+      root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;workspaceNodeSelection={kind:'folder',id};projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();updateWorkspaceTools();}));
+      root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId,entry=graph.projects.entries.find(item=>item.id===id);if(!entry)return;workspaceSelection=id;workspaceNodeSelection={kind:'project',id};selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:['origin:boot']};graphCamera={x:0,y:0,zoom:1};render();}));
+      updateWorkspaceTools();
+    }
+    function updateWorkspaceTools() {
+      const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id==='routes';
+      $('workspaceMove').disabled=rootSelected;
+      $('workspaceDelete').disabled=rootSelected;
+    }
+    async function mutateWorkspace(endpoint,body,success) {
+      $('status').textContent='Updating workspace…'; $('status').className='status';
+      try {
+        const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+        const result=await response.json(); if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
+        toast(success); await load(); return true;
+      } catch(error) { $('status').textContent='Workspace update failed'; $('status').className='status error'; toast(error.message,true); return false; }
+    }
+    function selectedWorkspaceParent() {
+      if(workspaceNodeSelection.kind==='folder')return workspaceNodeSelection.id;
+      return graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id)?.group||'routes';
+    }
+    async function createWorkspaceFolder() {
+      const parent=selectedWorkspaceParent();
+      const name=window.prompt(`New folder under ${parent}\nUse lowercase letters, digits, dashes, or underscores:`,'new_folder');
+      if(name===null)return;
+      if(await mutateWorkspace('/api/workspace/folders/create',{parent,name},`Created ${parent}/${name}`)) { workspaceNodeSelection={kind:'folder',id:`${parent}/${name}`}; renderProjects(); }
+    }
+    async function moveWorkspaceSelection() {
+      const destination=window.prompt('Move to folder (for example routes/qa):',selectedWorkspaceParent());
+      if(destination===null)return;
+      const current={...workspaceNodeSelection};
+      if(await mutateWorkspace('/api/workspace/move',{...current,destination},`Moved ${current.id}`)) { workspaceNodeSelection={kind:'folder',id:destination}; renderProjects(); }
+    }
+    async function deleteWorkspaceSelection() {
+      const current={...workspaceNodeSelection};
+      if(current.kind==='folder'&&current.id==='routes')return;
+      if(!window.confirm(`Delete ${current.id}${current.kind==='folder'?' and everything beneath it':''}?\n\nThe workbench moves it to recoverable local trash; Git remains the source of history.`))return;
+      if(await mutateWorkspace('/api/workspace/delete',current,`Deleted ${current.id}`)) {
+        if(current.kind==='project'&&workspaceSelection===current.id)workspaceSelection=null;
+        workspaceNodeSelection={kind:'folder',id:'routes'};
+        renderProjects();
+      }
     }
     const NODE_WIDTH=220;
     const NODE_HEIGHT=68;
@@ -337,7 +414,6 @@
     let renderedEntities = new Set();
     let graphCamera = {x:0,y:0,zoom:1};
     let graphSize = {width:1,height:1};
-    const isExpanded = key => !collapsed.has(key);
     const clampGraphZoom = zoom => Math.min(MAX_GRAPH_ZOOM,Math.max(MIN_GRAPH_ZOOM,zoom));
     function zoomCameraAt(camera,nextZoom,anchor) {
       const zoom=clampGraphZoom(nextZoom);
@@ -368,10 +444,9 @@
       applyGraphCamera();
     }
     function treeRow(node) {
-      const open=isExpanded(node.key);
       const selectionData=node.selectable===false?'':`tabindex="0" data-select-kind="${escapeHtml(node.kind)}" data-select-id="${escapeHtml(node.id)}" data-select-occurrence="${escapeHtml(node.occurrence)}"`;
       const thumbnail=node.thumbnail?`<img class="node-thumbnail" src="${escapeHtml(node.thumbnail)}" alt="" loading="lazy">`:'';
-      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}><button class="disclosure${node.hasChildren?'':' empty'}${open?' open':''}" type="button" data-expand="${escapeHtml(node.key)}" aria-label="${open?'Collapse':'Expand'}">▶</button>${thumbnail}<span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
+      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}>${thumbnail}<span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
     }
     function renderDraftNode(draft,path=new Set(),chain=[]) {
       const canonical=entityKey('draft',draft.id);
@@ -383,7 +458,7 @@
       const key=`route:${nextChain.join('/')}`;
       occurrenceIndex.set(key,{kind:'draft',id:draft.id,chain:nextChain});
       const state=draft.playable?'ok':draft.error?'bad':'warn';
-      return {kind:'draft',id:draft.id,occurrence:key,key,name:draft.label||draft.id,thumbnail:draft.thumbnail,tail:`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${state}"></span>`,hasChildren:children.length>0,children:isExpanded(key)?children.map(child=>renderDraftNode(child,next,nextChain)).filter(Boolean):[]};
+      return {kind:'draft',id:draft.id,occurrence:key,key,name:draft.label||draft.id,thumbnail:draft.thumbnail,tail:`<span>${escapeHtml(draft.frame_count??0)}f</span><span class="dot ${state}"></span>`,hasChildren:children.length>0,children:children.map(child=>renderDraftNode(child,next,nextChain)).filter(Boolean)};
     }
     function renderPlayableSegmentNode(segment,path=new Set(),chain=[]) {
       const canonical=entityKey('segment',segment.id);
@@ -397,7 +472,7 @@
       const drafts=draftsUnder('segment',segment.id);
       const score=segment.first_hit_tick??segment.ticks;
       const state=(segment.error||segment.option_diagnostic_error)?'bad':segment.playable?'ok':'warn';
-      const children=isExpanded(occurrence)?[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean):[];
+      const children=[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean);
       const optionCount=(segment.option_visualization||[]).length;
       return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}${optionCount?`<span>${optionCount} opt</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
     }
@@ -439,15 +514,30 @@
       const viewport=$('tree');
       occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:['origin:boot']});
       renderedEntities=new Set();
+      const standalone=standaloneWorkspaceEntry();
+      if(standalone) {
+        const projectOccurrence=`project:${standalone.id}`;
+        occurrenceIndex.set(projectOccurrence,{kind:'project',id:standalone.id,chain:['origin:boot',projectOccurrence]});
+        const projectNode={kind:'project',id:standalone.id,occurrence:projectOccurrence,key:projectOccurrence,name:standalone.label,thumbnail:standalone.thumbnail,tail:`<span>${standalone.frame_count??0}f</span><span class="dot ${standalone.playable?'ok':'bad'}"></span>`,hasChildren:false,children:[]};
+        const boot={kind:'origin',id:'boot',occurrence:'origin:boot',key:'origin:boot',name:'Boot',tail:'<span>frame 0</span><span class="dot ok"></span>',hasChildren:true,children:[projectNode]};
+        measureGraphNode(boot);
+        const nodes=[],edges=[];placeGraphNode(boot,0,GRAPH_PADDING_Y,nodes,edges);
+        const width=GRAPH_PADDING_X+nodes.reduce((max,node)=>Math.max(max,node.x+NODE_WIDTH),0);
+        const height=GRAPH_PADDING_Y+nodes.reduce((max,node)=>Math.max(max,node.y+NODE_HEIGHT),0);
+        graphSize={width,height};
+        const paths=edges.map(edge=>{const x1=edge.from.x+NODE_WIDTH,y1=edge.from.y+NODE_HEIGHT/2,x2=edge.to.x,y2=edge.to.y+NODE_HEIGHT/2,curve=Math.max(32,(x2-x1)*.48);return `<path class="graph-edge" d="M ${x1} ${y1} C ${x1+curve} ${y1}, ${x2-curve} ${y2}, ${x2} ${y2}"/>`;}).join('');
+        viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
+        applyGraphCamera();bindRenderedGraph(viewport);return;
+      }
       const roots=graph.segments.filter(segment=>segment.parent==null).sort((a,b)=>a.id.localeCompare(b.id));
       const bootDrafts=graph.drafts.filter(draft=>draft.parent?.kind==='milestone'||(draft.parent?.kind==='origin'&&draft.parent.id===graph.origin?.id)).sort(compareDrafts);
       const reachable=new Set();
       roots.forEach(segment=>collectReachable('segment',segment.id,reachable));
       bootDrafts.forEach(draft=>collectReachable('draft',draft.id,reachable));
-      const bootChildren=isExpanded('origin:boot')?[...roots.map(segment=>renderPlayableSegmentNode(segment,new Set(),['origin:boot'])),...bootDrafts.map(draft=>renderDraftNode(draft,new Set(),['origin:boot']))].filter(Boolean):[];
+      const bootChildren=[...roots.map(segment=>renderPlayableSegmentNode(segment,new Set(),['origin:boot'])),...bootDrafts.map(draft=>renderDraftNode(draft,new Set(),['origin:boot']))].filter(Boolean);
       const boot={kind:'origin',id:'boot',occurrence:'origin:boot',key:'origin:boot',name:'Boot',tail:'<span>frame 0</span><span class="dot ok"></span>',hasChildren:roots.length>0||bootDrafts.length>0,children:bootChildren};
       const detached=detachedRoots(reachable);
-      const detachedChildren=isExpanded('synthetic:detached')?detached.map(([kind,id])=>kind==='segment'?renderPlayableSegmentNode(graph.segments.find(item=>item.id===id),new Set(),['synthetic:detached']):renderDraftNode(graph.drafts.find(item=>item.id===id),new Set(),['synthetic:detached'])).filter(Boolean):[];
+      const detachedChildren=detached.map(([kind,id])=>kind==='segment'?renderPlayableSegmentNode(graph.segments.find(item=>item.id===id),new Set(),['synthetic:detached']):renderDraftNode(graph.drafts.find(item=>item.id===id),new Set(),['synthetic:detached'])).filter(Boolean);
       const forest=[boot];
       if(detached.length)forest.push({kind:'synthetic',id:'detached',occurrence:'synthetic:detached',key:'synthetic:detached',name:'Detached / invalid',tail:`<span>${detached.length} component${detached.length===1?'':'s'}</span><span class="dot bad"></span>`,selectable:false,hasChildren:true,children:detachedChildren});
       const root={kind:'synthetic',id:'workspace',occurrence:'synthetic:workspace',key:'synthetic:workspace',name:'Workspace',tail:'',selectable:false,hasChildren:true,children:forest};
@@ -461,8 +551,10 @@
       const paths=edges.map(edge=>{const x1=edge.from.x+NODE_WIDTH,y1=edge.from.y+NODE_HEIGHT/2,x2=edge.to.x,y2=edge.to.y+NODE_HEIGHT/2,curve=Math.max(32,(x2-x1)*.48);return `<path class="graph-edge" d="M ${x1} ${y1} C ${x1+curve} ${y1}, ${x2-curve} ${y2}, ${x2} ${y2}"/>`;}).join('');
       viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
       applyGraphCamera();
+      bindRenderedGraph(viewport);
+    }
+    function bindRenderedGraph(viewport) {
       viewport.querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
-      viewport.querySelectorAll('[data-expand]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const key=button.dataset.expand;collapsed.has(key)?collapsed.delete(key):collapsed.add(key);renderTree();}));
     }
     function bindGraphPan() {
       const viewport=$('tree');
@@ -579,9 +671,13 @@
     function renderDetail() {
       let html='';
       if(selection.kind==='origin'&&selection.id==='boot') {
-        const boot=graph.origin?.recordable_from_boot?graph.origin:null;
-        const configurations=graph.origin?.configurations||[{kind:'process'}];
-        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button></div>`:''}</section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>Configuration${configurations.length>1?` ${index+1}`:''}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}</div>`;
+        const standalone=standaloneWorkspaceEntry();
+        const workspace=workspaceEntry();
+        const override=workspace?.boot_override;
+        const boot=standalone?null:(graph.origin?.recordable_from_boot?graph.origin:null);
+        const authored=standalone?[standalone.boot||{kind:'process'}]:(graph.origin?.configurations||[{kind:'process'}]);
+        const configurations=override?.enabled?[override.boot]:authored;
+        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${override?.enabled?'override enabled':'authored boot'}</span></div><div class="actions">${boot?`<button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button>`:''}<button class="rename" type="button" data-edit-boot="${escapeHtml(workspace?.id||'')}">Edit boot…</button></div></section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>${override?.enabled?'Effective override':`Authored configuration${configurations.length>1?` ${index+1}`:''}`}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}</div>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
         if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
@@ -590,7 +686,7 @@
         if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='project') {
         const project=graph.projects.entries.find(item=>item.id===selection.id);
-        if(project){const artifact=project.artifact||{};html=`<section class="property-summary"><div class="detail-kicker">Project tape</div><div class="detail-title">${escapeHtml(project.label)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button></div></section><div class="property-content"><div class="detail-section"><h3>Boot configuration</h3><div class="fields">${project.boot?bootFields(project.boot):field('Status','Invalid')}</div></div><div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;}
+        if(project){const artifact=project.artifact||{};html=`<section class="property-summary"><div class="detail-kicker">Tape</div><div class="detail-title">${escapeHtml(project.label)}</div>${project.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(project.thumbnail)}" alt="Terminal frame">`:''}</section><div class="property-content"><div class="detail-section"><h3>Boot configuration</h3><div class="fields">${project.boot?bootFields(project.boot):field('Status','Invalid')}</div></div><div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button><button class="capture" type="button" data-capture-kind="project" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>${project.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button></div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;}
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
@@ -605,8 +701,51 @@
       root.querySelectorAll('[data-delete-draft]').forEach(button=>button.addEventListener('click',()=>deleteDraft(button.dataset.deleteDraft,button)));
       root.querySelectorAll('[data-capture-kind]').forEach(button=>button.addEventListener('click',()=>captureThumbnail(button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
+      root.querySelectorAll('[data-edit-boot]').forEach(button=>button.addEventListener('click',()=>editBoot(button.dataset.editBoot)));
     }
-    function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderProjects();renderTree();if(selection.kind!=='project'&&!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
+    function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'route graph':'standalone tape'}`:`${graph.timeline} · Git timeline`;renderProjects();renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
+    function setBootStageFieldsEnabled() {
+      const enabled=$('bootKind').value==='stage';
+      ['bootStage','bootRoom','bootPoint','bootLayer','bootSaveSlot','bootFixture'].forEach(id=>$(id).disabled=!enabled);
+    }
+    function editBoot(projectId) {
+      const project=graph.projects.entries.find(item=>item.id===projectId);if(!project)return;
+      bootEditProject=project.id;
+      const authored=project.kind==='timeline'?(graph.origin?.configurations||[{kind:'process'}])[0]:(project.boot||{kind:'process'});
+      const configuration=project.boot_override?.boot||authored||{kind:'process'};
+      $('bootOverrideEnabled').checked=project.boot_override?.enabled===true;
+      $('bootKind').value=configuration.kind==='stage'?'stage':'process';
+      $('bootStage').value=configuration.stage||'F_SP103';
+      $('bootRoom').value=String(configuration.room??1);
+      $('bootPoint').value=String(configuration.point??1);
+      $('bootLayer').value=String(configuration.layer??-1);
+      $('bootSaveSlot').value=configuration.save_slot==null?'':String(configuration.save_slot);
+      $('bootFixture').value=configuration.fixture?JSON.stringify(configuration.fixture,null,2):'';
+      $('bootError').textContent='';setBootStageFieldsEnabled();$('bootEditor').showModal();
+    }
+    function boundedInteger(id,min,max) {
+      const value=Number($(id).value);
+      if(!Number.isInteger(value)||value<min||value>max)throw new Error(`${id.replace('boot','')} must be an integer from ${min} to ${max}.`);
+      return value;
+    }
+    async function saveBoot() {
+      if(!bootEditProject)return;
+      const button=$('saveBoot');button.disabled=true;button.textContent='Saving…';$('bootError').textContent='';
+      try {
+        let boot={kind:'process'};
+        if($('bootKind').value==='stage') {
+          const fixtureSource=$('bootFixture').value.trim();
+          const fixture=fixtureSource?JSON.parse(fixtureSource):null;
+          boot={kind:'stage',stage:$('bootStage').value.trim(),room:boundedInteger('bootRoom',-128,127),point:boundedInteger('bootPoint',-32768,32767),layer:boundedInteger('bootLayer',-128,127)};
+          if($('bootSaveSlot').value)boot.save_slot=Number($('bootSaveSlot').value);
+          if(fixture)boot.fixture=fixture;
+        }
+        const response=await fetch('/api/workspace/boot',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project:bootEditProject,enabled:$('bootOverrideEnabled').checked,boot})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('bootEditor').close();toast(body.enabled?'Boot override enabled. Playback will use the declared stage/loadout.':'Boot override saved but disabled. Playback remains on the authored boot.');await load();
+      } catch(error) { $('bootError').textContent=error.message; }
+      finally { button.disabled=false;button.textContent='Save boot configuration'; }
+    }
     function editPredicate(id) {
       if(!graph.predicate_program)return;
       $('predicateTitle').textContent=`Edit objective · ${label(id)}`;
@@ -839,7 +978,7 @@
         const response=await fetch('/api/graph',{cache:'no-store'});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        graph=normalize(body); render(); $('status').textContent='Ready'; $('status').className='status ok';
+        graph=normalize(body); if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
         clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status)))load.poll=setTimeout(load,2500);
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
@@ -848,6 +987,9 @@
       }
     }
     $('reload').addEventListener('click',load);
+    $('workspaceNewFolder').addEventListener('click',createWorkspaceFolder);
+    $('workspaceMove').addEventListener('click',moveWorkspaceSelection);
+    $('workspaceDelete').addEventListener('click',deleteWorkspaceSelection);
     bindGraphPan();
     $('recordCountdown').value=String(loadRecordingCountdown());
     $('recordingSpeed').value=String(loadStoredSpeed(RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
@@ -856,6 +998,9 @@
     $('recordingSpeed').addEventListener('change',()=>saveSpeed('recordingSpeed',RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
     $('playbackSpeed').addEventListener('change',()=>saveSpeed('playbackSpeed',PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
     $('savePredicate').addEventListener('click',savePredicate);
+    $('saveBoot').addEventListener('click',saveBoot);
+    $('bootKind').addEventListener('change',setBootStageFieldsEnabled);
+    $('bootEditor').addEventListener('close',()=>bootEditProject=null);
     $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
     load();
   })();

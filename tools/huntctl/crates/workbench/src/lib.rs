@@ -55,8 +55,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v9";
-const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.projects.v1";
-const PROJECT_CATALOG_PATH: &str = "projects/workbench.projects";
+const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
+const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -122,6 +122,11 @@ pub struct WorkbenchGraph {
     pub predicate_program: Option<GraphPredicateProgram>,
 }
 
+fn workspace_edits() -> &'static Mutex<()> {
+    static EDITS: OnceLock<Mutex<()>> = OnceLock::new();
+    EDITS.get_or_init(|| Mutex::new(()))
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct GraphProjectCatalog {
     pub schema: String,
@@ -142,16 +147,78 @@ pub struct GraphProject {
     pub id: String,
     pub label: String,
     pub group: String,
+    pub kind: String,
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot_override: Option<GraphBootOverride>,
     pub artifact: GraphArtifact,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot: Option<TapeBoot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub materialization_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
     pub playable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fixture_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphBootOverride {
+    pub enabled: bool,
+    pub boot: TapeBoot,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserBootOverrideUpdateRequest {
+    pub project: String,
+    pub enabled: bool,
+    pub boot: TapeBoot,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceNodeKind {
+    Folder,
+    Project,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWorkspaceFolderCreateRequest {
+    pub parent: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWorkspaceMoveRequest {
+    pub id: String,
+    pub kind: WorkspaceNodeKind,
+    pub destination: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWorkspaceDeleteRequest {
+    pub id: String,
+    pub kind: WorkspaceNodeKind,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WorkspaceMutationResult {
+    pub operation: String,
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trash: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]

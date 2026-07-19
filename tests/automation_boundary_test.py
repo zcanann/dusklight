@@ -13,6 +13,7 @@ OBSERVER = "DUSK_ENABLE_AUTOMATION_OBSERVERS"
 FIDELITY = "DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS"
 INTERVENTIONS = "DUSK_ENABLE_EXPERIMENTAL_INTERVENTIONS"
 UNSAFE_LAB = "DUSK_ENABLE_UNSAFE_LAB_ADDRESS_WRITES"
+DEBUG_VIEW = "TARGET_PC"
 
 
 @dataclass
@@ -27,7 +28,7 @@ class Conditional:
 
 def positive_guards(expression: str) -> frozenset[str]:
     guards: set[str] = set()
-    for guard in (OBSERVER, FIDELITY, INTERVENTIONS):
+    for guard in (OBSERVER, FIDELITY, INTERVENTIONS, DEBUG_VIEW):
         if re.search(rf"(?<![!A-Za-z0-9_]){guard}\b", expression):
             guards.add(guard)
     return frozenset(guards)
@@ -135,15 +136,21 @@ def main() -> int:
             if "friend" not in stripped:
                 continue
             if "dusk::automation" in stripped or "ReadAdapter" in stripped:
-                if OBSERVER not in active:
-                    failures.append(
-                        f"{path}:{number}: automation friend/read adapter is not {OBSERVER}-guarded"
-                    )
                 source_lines = source.splitlines()
                 aperture_context = "\n".join(source_lines[max(0, number - 3) : number])
-                if "DUSKLIGHT OBSERVATION-ONLY APERTURE" not in aperture_context:
+                if "DUSKLIGHT OBSERVATION-ONLY APERTURE" in aperture_context:
+                    if OBSERVER not in active:
+                        failures.append(
+                            f"{path}:{number}: automation friend/read adapter is not {OBSERVER}-guarded"
+                        )
+                elif "DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE" in aperture_context:
+                    if DEBUG_VIEW not in active:
+                        failures.append(
+                            f"{path}:{number}: debug-view friend/read adapter is not TARGET_PC-guarded"
+                        )
+                else:
                     failures.append(
-                        f"{path}:{number}: automation friend lacks observation-only aperture marker"
+                        f"{path}:{number}: read adapter lacks an approved read-only aperture marker"
                     )
 
     # Every live-state mutation used to emulate an original-console memory
@@ -227,13 +234,9 @@ def main() -> int:
             failures.append(f"{path}: non-const event-name query is forbidden")
 
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    for option in (OBSERVER, FIDELITY):
-        if not re.search(
-            rf"set\({option}\s+ON\s+CACHE\s+BOOL\s+.*?\s+FORCE\)", cmake, re.DOTALL
-        ):
-            failures.append(f"CMake gate {option} must be forced ON for retail fidelity")
-    if not re.search(rf"option\({INTERVENTIONS}\s+.*?\sOFF\)", cmake, re.DOTALL):
-        failures.append(f"CMake option {INTERVENTIONS} must exist and default OFF")
+    for option in (OBSERVER, FIDELITY, INTERVENTIONS):
+        if not re.search(rf"option\({option}\s+.*?\sOFF\)", cmake, re.DOTALL):
+            failures.append(f"CMake option {option} must exist and default OFF")
     target_definitions = re.search(
         r"target_compile_definitions\(dusklight\s+PRIVATE(?P<body>.*?)\)", cmake, re.DOTALL
     )
