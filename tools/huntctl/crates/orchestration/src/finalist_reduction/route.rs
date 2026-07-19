@@ -34,6 +34,8 @@ enum RouteMinimizePhase {
 struct RouteMinimizeCheckpoint {
     schema: String,
     objective: AnchoredObjectiveIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    harness_request_sha256: Option<ArtifactDigest>,
     source_candidate_id: String,
     candidate_budget: usize,
     target: RouteReductionTarget,
@@ -77,6 +79,7 @@ pub fn minimize_anchored_route(
     }
     let prepared = prepare_anchored_evaluator(&config.objective)?;
     let objective = prepared.identity().clone();
+    validate_anchored_harness(config.harness.as_ref(), &objective)?;
     fs::create_dir_all(&config.output_root)?;
 
     let source_id = config.candidate.id()?;
@@ -480,8 +483,12 @@ fn write_checkpoint(
     phase: &RouteMinimizePhase,
 ) -> Result<(), EvaluateError> {
     let checkpoint = RouteMinimizeCheckpoint {
-        schema: "dusklight-anchored-route-minimization-checkpoint/v1".into(),
+        schema: "dusklight-anchored-route-minimization-checkpoint/v2".into(),
         objective: objective.clone(),
+        harness_request_sha256: config
+            .harness
+            .as_ref()
+            .map(|harness| harness.request_template.content_sha256),
         source_candidate_id: source_candidate_id.into(),
         candidate_budget: config.candidate_budget,
         target: target.clone(),
@@ -609,8 +616,15 @@ fn validate_checkpoint(
             history_phases_are_ordered.is_some()
         }
     };
-    if checkpoint.schema != "dusklight-anchored-route-minimization-checkpoint/v1"
-        || &checkpoint.objective != objective
+    let expected_harness_request = config
+        .harness
+        .as_ref()
+        .map(|harness| harness.request_template.content_sha256);
+    if !checkpoint_harness_is_valid(
+        &checkpoint.schema,
+        checkpoint.harness_request_sha256,
+        expected_harness_request,
+    ) || &checkpoint.objective != objective
         || checkpoint.source_candidate_id != source_candidate_id
         || checkpoint.candidate_budget != config.candidate_budget
         || &checkpoint.target != target
@@ -625,6 +639,45 @@ fn validate_checkpoint(
     {
         return Err(EvaluateError::InvalidResult(
             "route minimization checkpoint is stale, inconsistent, or tampered".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn checkpoint_harness_is_valid(
+    schema: &str,
+    checkpoint_request: Option<ArtifactDigest>,
+    expected_request: Option<ArtifactDigest>,
+) -> bool {
+    match schema {
+        "dusklight-anchored-route-minimization-checkpoint/v2" => {
+            checkpoint_request == expected_request
+        }
+        "dusklight-anchored-route-minimization-checkpoint/v1" => {
+            checkpoint_request.is_none() && expected_request.is_none()
+        }
+        _ => false,
+    }
+}
+
+fn validate_anchored_harness(
+    harness: Option<&HarnessEvaluateConfig>,
+    objective: &AnchoredObjectiveIdentity,
+) -> Result<(), EvaluateError> {
+    let Some(harness) = harness else {
+        return Ok(());
+    };
+    if harness.request_template.objective.goal != objective.goal_milestone
+        || harness
+            .request_template
+            .objective
+            .program_sha256
+            .to_string()
+            != objective.milestone_program_sha256
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored route minimization run request must bind the exact goal and milestone program"
+                .into(),
         ));
     }
     Ok(())
@@ -700,7 +753,7 @@ fn evaluate_route_batch(
                 workers: config.workers,
                 repetitions: config.repetitions,
                 timeout: config.timeout,
-                harness: None,
+                harness: config.harness.clone(),
             },
             objective: config.objective.clone(),
         },
@@ -1037,6 +1090,7 @@ mod tests {
             candidate_budget: 10,
             resume: true,
             timeout: std::time::Duration::from_secs(1),
+            harness: None,
         }
     }
 
@@ -1111,6 +1165,7 @@ mod tests {
         let checkpoint = RouteMinimizeCheckpoint {
             schema: "dusklight-anchored-route-minimization-checkpoint/v1".into(),
             objective: objective.clone(),
+            harness_request_sha256: None,
             source_candidate_id: source_id.clone(),
             candidate_budget: 10,
             target: target.clone(),
@@ -1160,5 +1215,31 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn checkpoint_authority_rejects_legacy_or_changed_run_requests() {
+        let request = ArtifactDigest([1; 32]);
+        let changed = ArtifactDigest([2; 32]);
+        assert!(checkpoint_harness_is_valid(
+            "dusklight-anchored-route-minimization-checkpoint/v1",
+            None,
+            None,
+        ));
+        assert!(!checkpoint_harness_is_valid(
+            "dusklight-anchored-route-minimization-checkpoint/v1",
+            None,
+            Some(request),
+        ));
+        assert!(checkpoint_harness_is_valid(
+            "dusklight-anchored-route-minimization-checkpoint/v2",
+            Some(request),
+            Some(request),
+        ));
+        assert!(!checkpoint_harness_is_valid(
+            "dusklight-anchored-route-minimization-checkpoint/v2",
+            Some(request),
+            Some(changed),
+        ));
     }
 }

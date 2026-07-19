@@ -581,9 +581,6 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
             candidate.validate()?;
             let execution = search_execution_config(search_args)?;
-            if execution.harness.is_some() {
-                return Err("anchored route minimization does not accept --run-request".into());
-            }
             let objective = AnchoredObjectiveConfig {
                 segment: option(search_args, "--segment")
                     .ok_or("route minimization requires --segment ID")?
@@ -612,6 +609,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 candidate_budget: usize_option(search_args, "--candidate-budget", 256)?,
                 resume: flag(search_args, "--resume"),
                 timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())

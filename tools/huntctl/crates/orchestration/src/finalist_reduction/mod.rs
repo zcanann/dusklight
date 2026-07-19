@@ -6,6 +6,7 @@ mod route;
 pub use boot::{golf_boot, minimize_boot};
 pub use route::minimize_anchored_route;
 
+use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 #[cfg(test)]
 use dusklight_automation_contracts::tape::TapeBoot;
@@ -33,6 +34,7 @@ pub struct AnchoredRouteMinimizeConfig {
     pub candidate_budget: usize,
     pub resume: bool,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

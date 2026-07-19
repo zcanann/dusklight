@@ -161,6 +161,13 @@ Every candidate still executes as the immutable prefix plus proposed suffix
 through the authenticated evaluator; the reducer has no separate or synthetic
 acceptance path.
 
+The execution authority may instead be supplied with `--run-request
+REQUEST.json` and `--repository-root DIR`. The request must name the exact goal
+milestone and bind the exact compiled milestone-program digest used by the
+anchored objective; `--game`, `--dvd`, and other legacy execution inputs cannot
+be mixed with it. That same sealed request is used for the source proof, every
+reduction round, resume proof, and final proof.
+
 The output retains `minimized.candidate.json`, the compact
 `minimized.suffix.tape`, the full clean-boot `minimized.tape`,
 `reduction-history.json`, source and final-proof results, all intermediate
@@ -177,6 +184,9 @@ budget. It rejects changed inputs, source identity, terminal contract, candidate
 budget, malformed history, or a completed output root. New proof and round
 evidence uses fresh suffixed directories, so evidence left by the interrupted
 process is retained rather than overwritten.
+Authenticated runs write v2 checkpoints containing the sealed request digest,
+and resume rejects a missing or changed authority. Legacy v1 checkpoints remain
+resumable only through the legacy execution path.
 
 ## Native evaluation
 

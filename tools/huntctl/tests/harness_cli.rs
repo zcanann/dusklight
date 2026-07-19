@@ -1554,6 +1554,196 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     assert!(
         String::from_utf8_lossy(&conflicting_golf.stderr).contains("sole execution authority")
     );
+
+    let anchored_wrapper = write_mock_native_wrapper(&root, executable);
+    let anchored_source = b"milestones 1.0\n\nmilestone source-ready {\n  phase post_sim\n  when boundary.reached\n}\n\nmilestone entered-f-sp104 {\n  phase post_sim\n  when boundary.reached\n}\n";
+    let anchored_program =
+        milestone_dsl::compile_source(std::str::from_utf8(anchored_source).unwrap()).unwrap();
+    fs::write(
+        root.join("inputs/anchored-objective.milestones"),
+        anchored_source,
+    )
+    .unwrap();
+    let anchored_program_path = root.join("anchored-objective.dmsp");
+    fs::write(&anchored_program_path, &anchored_program.bytes).unwrap();
+    let disconnected_pad = huntctl::tape::RawPadState {
+        connected: false,
+        error: -1,
+        ..huntctl::tape::RawPadState::default()
+    };
+    let mut prefix_frame = huntctl::tape::InputFrame {
+        owned_ports: 0x01,
+        pads: [disconnected_pad; 4],
+        ..huntctl::tape::InputFrame::default()
+    };
+    prefix_frame.pads[0] = huntctl::tape::RawPadState::default();
+    let prefix = huntctl::tape::InputTape {
+        boot: huntctl::tape::TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: None,
+            fixture: None,
+        },
+        frames: vec![prefix_frame],
+        ..huntctl::tape::InputTape::default()
+    };
+    let prefix_path = root.join("anchored-prefix.tape");
+    fs::write(&prefix_path, prefix.encode().unwrap()).unwrap();
+
+    let mut anchored_request = request.clone();
+    anchored_request.executable = artifact("inputs/dusklight", anchored_wrapper.as_bytes());
+    anchored_request.boot = ObjectiveBoot::Stage {
+        stage: "F_SP103".into(),
+        room: 1,
+        point: 1,
+        layer: 3,
+        save_slot: None,
+    };
+    anchored_request.objective = ObjectiveProgramReference {
+        source: artifact("inputs/anchored-objective.milestones", anchored_source),
+        program_sha256: Digest(anchored_program.program_sha256),
+        goal: "entered-f-sp104".into(),
+    };
+    anchored_request.identity.predicate_program_digest = anchored_request.objective.program_sha256;
+    let mut anchored_observation = observation;
+    anchored_observation.objective.id = anchored_request.objective.goal.clone();
+    let anchored_observation_bytes = serde_json::to_vec_pretty(&anchored_observation).unwrap();
+    fs::write(
+        root.join("inputs/anchored-observation.json"),
+        &anchored_observation_bytes,
+    )
+    .unwrap();
+    anchored_request.observation_view =
+        huntctl::harness::objective_suite::ObservationViewReference {
+            source: artifact(
+                "inputs/anchored-observation.json",
+                &anchored_observation_bytes,
+            ),
+            schema_sha256: anchored_observation.digest().unwrap(),
+        };
+    anchored_request.identity.observation_schema_digest =
+        anchored_request.observation_view.schema_sha256;
+    anchored_request.logical_tick_budget = 1_000;
+    anchored_request.content_sha256 = Digest::ZERO;
+    let anchored_request_draft = root.join("anchored-request.draft.json");
+    let anchored_request_path = root.join("anchored-request.json");
+    fs::write(
+        &anchored_request_draft,
+        serde_json::to_vec_pretty(&anchored_request).unwrap(),
+    )
+    .unwrap();
+    let sealed_anchored = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&anchored_request_draft)
+        .arg("--output")
+        .arg(&anchored_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed_anchored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed_anchored.stderr)
+    );
+    let sealed_anchored_request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&anchored_request_path).unwrap()).unwrap();
+
+    let anchored_candidate = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::Fsp103ToFsp104,
+        boot: huntctl::tape::TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: None,
+            fixture: None,
+        },
+        actions: vec![MacroAction::PadRun {
+            pad: huntctl::tape::RawPadState::default().into(),
+            frames: 700,
+        }],
+        ancestry: Ancestry::default(),
+    };
+    let anchored_candidate_path = root.join("anchored-candidate.json");
+    fs::write(
+        &anchored_candidate_path,
+        serde_json::to_vec_pretty(&anchored_candidate).unwrap(),
+    )
+    .unwrap();
+    let route_minimize_root = root.join("authenticated-route-minimize");
+    let route_minimized = Command::new(executable)
+        .args(["search", "minimize-route", "--candidate"])
+        .arg(&anchored_candidate_path)
+        .arg("--anchored-prefix")
+        .arg(&prefix_path)
+        .arg("--milestones")
+        .arg(&anchored_program_path)
+        .args([
+            "--segment",
+            "fsp103_to_fsp104",
+            "--source-milestone",
+            "source-ready",
+            "--source-boundary-fingerprint",
+            "11111111111111111111111111111111",
+            "--goal-milestone",
+            "entered-f-sp104",
+            "--candidate-budget",
+            "1",
+            "--workers",
+            "1",
+            "--repetitions",
+            "2",
+            "--output",
+        ])
+        .arg(&route_minimize_root)
+        .arg("--run-request")
+        .arg(&anchored_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        route_minimized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&route_minimized.stderr)
+    );
+    let route_summary: Value = serde_json::from_slice(&route_minimized.stdout).unwrap();
+    assert_eq!(
+        route_summary["schema"],
+        "dusklight-anchored-route-minimization/v1"
+    );
+    let final_evaluation: Value = serde_json::from_slice(
+        &fs::read(route_minimize_root.join("final-proof/evidence/evaluation.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        final_evaluation["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|attempt| attempt["harness_terminal"] == "reached"
+                && attempt["harness_request_sha256"].is_string()
+                && attempt["harness_result_sha256"].is_string())
+    );
+    let mut checkpoints = fs::read_dir(route_minimize_root.join("checkpoints"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    checkpoints.sort();
+    let checkpoint: Value =
+        serde_json::from_slice(&fs::read(checkpoints.last().unwrap()).unwrap()).unwrap();
+    assert_eq!(
+        checkpoint["schema"],
+        "dusklight-anchored-route-minimization-checkpoint/v2"
+    );
+    assert_eq!(
+        checkpoint["harness_request_sha256"],
+        sealed_anchored_request.content_sha256.to_string()
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

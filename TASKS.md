@@ -303,3 +303,13 @@ harness authority between proposal generation and native ranking.
 
 **Done when:** boot finalist tools cannot silently return to the legacy native
 path after accepting a core-harness authority.
+
+## 19. Authenticated anchored-route minimization
+
+- [x] Require an optional run-request template to bind the exact anchored goal
+  and milestone program, then retain it through every reduction and proof.
+- [x] Bind that authority into resumable checkpoints, preserve legacy v1 resume
+  only for legacy execution, and reject mixed or changed authority.
+
+**Done when:** exact anchored finalist reduction and resume cannot drop or swap
+an explicitly supplied core-harness authority.
