@@ -128,8 +128,8 @@ same proof in 20/20 independent cold boots. Generated populations and evidence
 remain ignored under `build/`. The exact 440-frame input is checked in as nine
 editable TAS shards under
 `routes/Glitch Exhibition/intro/segments/tolink/`; their concatenation is
-byte-identical to the proved compact tape. The workbench collapses those shards
-into the `ToLink` structural subgraph by default.
+byte-identical to the proved compact tape. The workbench presents those shards
+as the `ToLink` compound subgraph node in its parent graph.
 
 An exhaustive timing pass then evaluated every legal earlier timestamp for
 each surviving pulse. The locally minimal timestamp vector is

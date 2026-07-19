@@ -65,11 +65,11 @@ for a named route such as `main`?
 
 ## Structural subgraphs
 
-Subgraphs are collapsible views over a connected, single-entry/single-exit
-region of ordinary segments. They do not own inputs, add playback edges, or
-change fingerprints. Collapsing a subgraph shows one node whose frame count is
-the sum of its contained segments; playback and recording at that node use its
-exit segment, so the exact Boot-rooted chain remains authoritative.
+Subgraphs are nested views over a connected, single-entry/single-exit region of
+ordinary segments. They do not own inputs, add playback edges, or change
+fingerprints. In its parent graph a subgraph is one compound node whose frame
+count is the sum of its contained segments; playback and recording at that node
+use its exit segment, so the exact Boot-rooted chain remains authoritative.
 
 Double-click a subgraph to open it and use the breadcrumb to move back out.
 Ctrl/Command-click or Shift-click selects several visible segments/subgraphs;
@@ -177,28 +177,32 @@ The line-oriented format describes the same model directly:
 timeline intro
 origin boot predicate process_boot source intro/predicates/process_boot.milestones
 
-segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces LINK_STATE
-label golf439 "Boot to Link control"
-segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human420.tape starts LINK_STATE produces CRAWL_STATE_A
+segment title_ready root profile boot_to_fsp103 uses tas intro/segments/tolink/01-title-ready.tas starts process-clean-v1 produces TITLE_STATE
+label title_ready "Title ready"
+segment link_control after title_ready profile boot_to_fsp103 uses tas intro/segments/tolink/02-to-link.tas starts TITLE_STATE produces LINK_STATE
+label link_control "Link control"
+segment human420 after link_control profile link_control_to_tunnel_crawl_start uses tape intro/segments/human420.tape starts LINK_STATE produces CRAWL_STATE_A
 label human420 "Link control to tunnel crawl"
-segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
+segment human_alt420 after link_control profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
 
-subgraph intro_menu root entry golf439 exit golf439
+subgraph intro_menu root entry title_ready exit link_control
 subgraph_label intro_menu "Boot to Link"
-subgraph_member intro_menu segment golf439
+subgraph_member intro_menu segment title_ready
+subgraph_member intro_menu segment link_control
 
-goal link_control on golf439 predicate link_control source intro/predicates/link_control.milestones
+goal link_control on link_control predicate link_control source intro/predicates/link_control.milestones
 goal tunnel_crawl_start on human420 predicate tunnel_crawl_start source intro/predicates/tunnel_crawl_start.milestones
 
-proof golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
+proof link_control satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 proof human420 satisfies tunnel_crawl_start program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 420
 proof human_alt420 satisfies tunnel_crawl_start program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 420
 
 continuation main starts root@process-clean-v1
-continue main with golf439 after root@process-clean-v1
-continue main with human420 after golf439@LINK_STATE
-branch experiment from main after golf439
-continue experiment with human_alt420 after golf439@LINK_STATE
+continue main with title_ready after root@process-clean-v1
+continue main with link_control after title_ready@TITLE_STATE
+continue main with human420 after link_control@LINK_STATE
+branch experiment from main after link_control
+continue experiment with human_alt420 after link_control@LINK_STATE
 ```
 
 Artifact forms are `uses candidate`, `uses tas`, `uses tape`, and generated
