@@ -115,7 +115,7 @@ the authored target.
   closes.
 - [x] Compare the baseline against scripted/random/structured proposals under
   the same native objective and simulator budget.
-- [ ] Demonstrate on fixed seeds that the learned proposer improves native
+- [x] Demonstrate on fixed seeds that the learned proposer improves native
   proposal ordering over the best non-learned lane.
 - [x] Stop or fall back to structured proposals when required facts, action
   support, determinism, or basic held-out performance are inadequate.

@@ -658,3 +658,15 @@ the learned layer can discover a useful non-obvious local action, not evidence
 that it dominates deterministic roll-spacing or waypoint search in general.
 Generation-local `behavior-archive.json` records which alternate routes were
 retained and why.
+
+After correcting the route critic's terminal projection, a fixed seed-2
+12-candidate run produced a guided FQI edit at frames 106..108. A fresh
+four-lane tournament then charged exactly one candidate and three native
+episodes to every proposer. The learned edit reached the current authored goal
+at 135/135/135 ticks, the strongest fixed-seed structured proposal reached it
+at 137/137/137, the scripted incumbent at 138/138/138, and blind exploration
+missed. The learned, structured, and scripted lanes all reported a cold-replay
+pass rate of 1.0. The retained ignored report is
+`build/harness/ordon-spring-learned-win-v1/run/tournament.summary.json`; it
+binds the current anchored-objective digest, movement-action schema, proposal
+envelopes, seeds, budgets, and exact candidate identities.
