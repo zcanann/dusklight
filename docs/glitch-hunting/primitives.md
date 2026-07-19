@@ -111,6 +111,8 @@ For a map-local test, the direct tape workflow is:
 huntctl tape compile test.tas test.tape
 huntctl tape run test.tape --game ./dusklight --dvd game.iso --state-root build/test-state \
   --milestone-goal arbitrary-map-goal --gameplay-trace build/test.trace
+huntctl tape prove test.tape --game ./dusklight --dvd game.iso \
+  --state-root build/proof-state --milestone-goal arbitrary-map-goal --repetitions 2
 huntctl tape minimize test.tape minimized.tape --game ./dusklight --dvd game.iso \
   --state-root build/minimize-state --milestone-goal arbitrary-map-goal --repetitions 2
 huntctl tape slice test.tape room-only.tape --start 120 --frames 300
@@ -118,6 +120,15 @@ huntctl tape layer room-only.tape correction.tape layered.tape --start 45
 huntctl tape resample authored-60hz.tape canonical-30hz.tape
 huntctl tape diff room-only.tape layered.tape
 ```
+
+`tape prove` cold-replays one already-realized absolute tape at least twice. It
+rejects reactive waits and replay-owned launch overrides, so no controller,
+model, alternate tape, or altered proof target can enter the loop. Every
+repetition must agree on goal reachability, simulation tick, tape frame, and
+the complete terminal boundary fingerprint. The resulting
+`dusklight-cold-replay-proof/v1` artifact binds the tape, executable, game data,
+optional milestone program, boot origin, launch arguments, and retained trial
+directory by path and content digest.
 
 `tape minimize` treats the requested milestone goal as the run's semantic
 success oracle. It first neutralizes contiguous chunks of active input with

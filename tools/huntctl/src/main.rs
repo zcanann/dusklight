@@ -4227,6 +4227,7 @@ fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         Some("run") if args.len() >= 2 => command_tape_run(&args[1..]),
+        Some("prove") if args.len() >= 2 => command_tape_prove(&args[1..]),
         Some("record") if args.len() >= 3 => command_tape_record(&args[1..]),
         Some("minimize") if args.len() >= 3 => command_tape_minimize(&args[1..]),
         Some("concat") if args.len() >= 4 => {
@@ -4495,6 +4496,133 @@ struct TapeMinimizeProof {
     sim_tick: u64,
     tape_frame: u64,
     fingerprint: BoundaryFingerprint,
+}
+
+fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = PathBuf::from(args.first().ok_or("tape prove requires INPUT.tape")?);
+    let game = required_path(args, "--game")?;
+    let dvd = required_path(args, "--dvd")?;
+    let work_root = required_path(args, "--state-root")?;
+    let goal = option(args, "--milestone-goal").ok_or("tape prove requires --milestone-goal ID")?;
+    let milestone_program = option(args, "--milestone-program").map(PathBuf::from);
+    let repetitions = u32_option(args, "--repetitions", 2)?;
+    if repetitions < 2 {
+        return Err("tape prove requires at least two repetitions".into());
+    }
+    if work_root.exists() && fs::read_dir(&work_root)?.next().is_some() {
+        return Err(format!(
+            "tape prove --state-root must be new or empty: {}",
+            work_root.display()
+        )
+        .into());
+    }
+    let proof_path = option(args, "--proof")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| work_root.join("cold-replay.proof.json"));
+    if proof_path.exists() {
+        return Err(format!("cold-replay proof already exists: {}", proof_path.display()).into());
+    }
+
+    let tape_bytes = fs::read(&input)?;
+    let tape = InputTape::decode(&tape_bytes)?.tape;
+    if tape.frames.is_empty() {
+        return Err("tape prove requires at least one frame".into());
+    }
+    if tape.tick_rate_numerator != 30 || tape.tick_rate_denominator != 1 {
+        return Err("tape prove requires a canonical 30/1 input tape".into());
+    }
+    if tape
+        .frames
+        .iter()
+        .any(|frame| frame.wait_condition != huntctl::tape::WaitCondition::None)
+    {
+        return Err("tape prove requires absolute input without reactive waits".into());
+    }
+
+    let game_args = repeated_option(args, "--game-arg");
+    validate_cold_replay_game_args(&game_args)?;
+    fs::create_dir_all(&work_root)?;
+    if let Some(parent) = proof_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let timeout = timeout_option(args)?;
+    let mut evaluation_index = 0_u64;
+    let proof = evaluate_minimize_tape(
+        &tape,
+        &game,
+        &dvd,
+        &work_root,
+        &goal,
+        milestone_program.as_deref(),
+        &game_args,
+        repetitions,
+        timeout,
+        &mut evaluation_index,
+    )?
+    .ok_or("cold replay did not reach the requested milestone goal")?;
+    let summary = json!({
+        "schema": "dusklight-cold-replay-proof/v1",
+        "input_tape": input,
+        "input_tape_sha256": Digest(Sha256::digest(&tape_bytes).into()),
+        "boot": tape.boot,
+        "goal": goal,
+        "milestone_program": milestone_program,
+        "milestone_program_sha256": milestone_program
+            .as_deref()
+            .map(fs::read)
+            .transpose()?
+            .map(|bytes| Digest(Sha256::digest(bytes).into())),
+        "game": game,
+        "game_sha256": Digest(Sha256::digest(fs::read(&game)?).into()),
+        "dvd": dvd,
+        "dvd_sha256": Digest(Sha256::digest(fs::read(&dvd)?).into()),
+        "game_args": game_args,
+        "repetitions": repetitions,
+        "controller_in_loop": false,
+        "model_in_loop": false,
+        "proof": {
+            "sim_tick": proof.sim_tick,
+            "tape_frame": proof.tape_frame,
+            "boundary_fingerprint": proof.fingerprint,
+        },
+        "evidence_root": work_root,
+    });
+    fs::write(&proof_path, serde_json::to_vec_pretty(&summary)?)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+fn validate_cold_replay_game_args(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    const OWNED_OPTIONS: &[&str] = &[
+        "--automation-data-root",
+        "--automation-tick-budget",
+        "--dvd",
+        "--exit-after-tape",
+        "--fixed-step",
+        "--headless",
+        "--input-controller",
+        "--input-tape",
+        "--input-tape-end",
+        "--milestone-goal",
+        "--milestone-program",
+        "--milestone-result",
+        "--milestones",
+        "--renderer-cache-root",
+    ];
+    if let Some(argument) = arguments.iter().find(|argument| {
+        OWNED_OPTIONS
+            .iter()
+            .any(|option| argument == option || argument.starts_with(&format!("{option}=")))
+    }) {
+        return Err(format!(
+            "tape prove owns replay option {argument}; a controller, alternate tape, or proof override cannot enter the cold-replay launch"
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -5087,7 +5215,7 @@ fn print_usage() {
         "Campaign planning:\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --dry-run [--repository-root DIR] [--proposer scripted|random|structured|learned]...\n"
     );
     eprintln!(
-        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
+        "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape prove INPUT.tape --game PATH --dvd PATH --state-root DIR --milestone-goal ID [--milestone-program FILE] [--proof FILE] [--repetitions N] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"
     );
     eprintln!(
         "\nBenchmark metadata:\n  huntctl benchmark import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  huntctl benchmark validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json"
@@ -5268,7 +5396,7 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             Ok(Digest(milestone_dsl::decode(&fs::read(path)?)?.program_sha256).to_string())
         })
         .transpose()?;
-    let second_attempt = state_root.contains("attempt-002");
+    let second_attempt = state_root.contains("attempt-002") || state_root.contains("repeat-002");
     let unstable_miss = mode == "unstable-goal" && second_attempt;
     let coordinate_golf_tick = if mode == "coordinate-golf" {
         let pulse_timestamps: Vec<_> = input_tape

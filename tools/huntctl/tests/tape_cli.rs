@@ -152,6 +152,108 @@ frame neutral
     assert_eq!(run_summary["exit_code"], 0);
     assert!(state_root.join("milestones.json").is_file());
 
+    let proof_root = directory.join("proof-state");
+    let prove = Command::new(executable)
+        .args([
+            "tape",
+            "prove",
+            absolute_path.to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            proof_root.to_str().unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+            "--repetitions",
+            "2",
+            "--timeout-seconds",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        prove.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prove.stderr)
+    );
+    let proof: serde_json::Value = serde_json::from_slice(&prove.stdout).unwrap();
+    assert_eq!(proof["schema"], "dusklight-cold-replay-proof/v1");
+    assert_eq!(proof["boot"]["kind"], "stage");
+    assert_eq!(proof["repetitions"], 2);
+    assert_eq!(proof["controller_in_loop"], false);
+    assert_eq!(proof["model_in_loop"], false);
+    assert_eq!(proof["proof"]["sim_tick"], 0);
+    assert_eq!(
+        proof["proof"]["boundary_fingerprint"]["digest"],
+        "0".repeat(32)
+    );
+    assert!(proof_root.join("cold-replay.proof.json").is_file());
+    assert!(proof_root.join("candidate-000000/repeat-001").is_dir());
+    assert!(proof_root.join("candidate-000000/repeat-002").is_dir());
+
+    let controller_override = Command::new(executable)
+        .args([
+            "tape",
+            "prove",
+            absolute_path.to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--game-arg",
+            "--input-controller=untrusted.bin",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            directory.join("invalid-proof-state").to_str().unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+        ])
+        .output()
+        .unwrap();
+    assert!(!controller_override.status.success());
+    assert!(
+        String::from_utf8_lossy(&controller_override.stderr)
+            .contains("tape prove owns replay option --input-controller")
+    );
+
+    let contradictory = Command::new(executable)
+        .args([
+            "tape",
+            "prove",
+            absolute_path.to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--game-arg",
+            "--mock-mode",
+            "--game-arg",
+            "unstable-fingerprint",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            directory
+                .join("contradictory-proof-state")
+                .to_str()
+                .unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+            "--repetitions",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(!contradictory.status.success());
+    assert!(
+        String::from_utf8_lossy(&contradictory.stderr)
+            .contains("repetitions produced contradictory exact proofs")
+    );
+
     let minimized_path = directory.join("minimized.tape");
     let minimize = Command::new(executable)
         .args([
