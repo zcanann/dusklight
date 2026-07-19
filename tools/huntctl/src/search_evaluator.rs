@@ -6,6 +6,7 @@ use crate::bayesian_search::{
 };
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
 use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
+use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
     ContinuousAxes, ContinuousMethod, ContinuousOptimizer, ContinuousOptimizerConfig,
@@ -2164,6 +2165,9 @@ pub fn run_proposer_tournament(
         timeout: config.timeout,
         harness: config.harness.clone(),
     })?;
+    if let Some(harness) = &config.harness {
+        validate_tournament_attempt_compatibility(&report, harness)?;
+    }
     let evaluation_wall_millis = started.elapsed().as_millis();
     let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
     let leaderboard = rank_population(&manifest, &results)?;
@@ -2332,6 +2336,48 @@ pub fn run_proposer_tournament(
         &summary,
     )?;
     Ok(summary)
+}
+
+fn validate_tournament_attempt_compatibility(
+    report: &EvaluationReport,
+    harness: &HarnessEvaluateConfig,
+) -> Result<(), EvaluateError> {
+    for attempt in &report.attempts {
+        let request_path = attempt.harness_request.as_ref().ok_or_else(|| {
+            EvaluateError::InvalidResult(format!(
+                "tournament attempt {} omitted its authenticated request",
+                attempt.candidate_id
+            ))
+        })?;
+        let result_path = attempt.harness_result.as_ref().ok_or_else(|| {
+            EvaluateError::InvalidResult(format!(
+                "tournament attempt {} omitted its authenticated result",
+                attempt.candidate_id
+            ))
+        })?;
+        let request: HarnessRunRequest = serde_json::from_slice(&fs::read(request_path)?)?;
+        let result: HarnessRunResult = serde_json::from_slice(&fs::read(result_path)?)?;
+        ensure_compatible(
+            CompatibilityMode::CrossBuildComparison,
+            &harness.request_template.identity,
+            &request.identity,
+        )
+        .map_err(|error| {
+            EvaluateError::InvalidResult(format!(
+                "tournament attempt {} is comparison-incompatible: {error}",
+                attempt.candidate_id
+            ))
+        })?;
+        result
+            .validate_files(&request, &attempt.artifact_root)
+            .map_err(|error| {
+                EvaluateError::InvalidResult(format!(
+                    "tournament attempt {} is replay-incompatible: {error}",
+                    attempt.candidate_id
+                ))
+            })?;
+    }
+    Ok(())
 }
 
 fn tape_intervention(parent: &InputTape, child: &InputTape) -> Option<InterventionRange> {

@@ -8,6 +8,7 @@ use super::run_contract::{
     HarnessBoundaryFingerprint, HarnessRunRequest, HarnessRunResult, HarnessTerminalReason,
 };
 use crate::artifact::Digest;
+use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::search::LexicographicScore;
 use crate::search_evaluator::{
     HarnessEvaluateConfig, ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition,
@@ -487,6 +488,14 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
                         .map_err(|error| {
                             plan_error(format!("campaign cold replay failed: {error}"))
                         })?;
+                ensure_compatible(
+                    CompatibilityMode::Replay,
+                    &request.identity,
+                    &result.identity,
+                )
+                .map_err(|error| {
+                    plan_error(format!("campaign cold replay is incompatible: {error}"))
+                })?;
                 replay_results.push(artifact_root.join("result.json"));
                 proofs.push(ReplayProof::from_result(&result));
             }
