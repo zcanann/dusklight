@@ -1,4 +1,4 @@
-milestones 1.5
+milestones 1.6
 
 milestone stage_ready_parity {
   phase post_sim
@@ -23,7 +23,10 @@ milestone talk_exact_npc_parity {
        player.interaction.talk_partner.actor_name == 42 &&
        player.interaction.talk_partner.set_id == 7 &&
        player.interaction.talk_partner.home_room == 1 &&
-       player.interaction.talk_partner.current_room == 1
+       player.interaction.talk_partner.current_room == 1 &&
+       player.interaction.talk_partner.home_position.x == 10.0 &&
+       player.interaction.talk_partner.home_position.y == 20.0 &&
+       player.interaction.talk_partner.home_position.z == 30.0
   then stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
        event.running && event.id == 17
   within 3
@@ -38,6 +41,9 @@ milestone carry_exact_object_parity {
        player.interaction.grabbed_actor.actor_name == 43 &&
        player.interaction.grabbed_actor.set_id == 8 &&
        player.interaction.grabbed_actor.home_room == 1 &&
-       player.interaction.grabbed_actor.current_room == 1
+       player.interaction.grabbed_actor.current_room == 1 &&
+       player.interaction.grabbed_actor.home_position.x == 40.0 &&
+       player.interaction.grabbed_actor.home_position.y == 50.0 &&
+       player.interaction.grabbed_actor.home_position.z == 60.0
   within 4
 }

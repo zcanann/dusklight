@@ -242,6 +242,7 @@ fn actor_entry(id: TypedFactId, actor: Option<&TraceActorIdentity>) -> TypedFact
                 set_id: actor.set_id,
                 home_room: actor.home_room,
                 current_room: actor.current_room,
+                home_position: actor.home_position,
             })),
         ),
         None => missing(
@@ -305,6 +306,7 @@ mod tests {
                     set_id: 8,
                     home_room: 2,
                     current_room: 2,
+                    home_position: Some([10.0, 20.0, 30.0]),
                 }),
                 grabbed_actor: None,
             }),

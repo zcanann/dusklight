@@ -175,6 +175,7 @@ void testPlayerInteractionLayout(const std::filesystem::path& path) {
         .setId = 7,
         .homeRoom = 1,
         .currentRoom = 2,
+        .homePosition = {10.0F, 20.0F, 30.0F},
     };
     value.playerAction.grabbedActor = {
         .sessionProcessId = 12,
@@ -182,6 +183,7 @@ void testPlayerInteractionLayout(const std::filesystem::path& path) {
         .setId = 8,
         .homeRoom = 3,
         .currentRoom = 4,
+        .homePosition = {40.0F, 50.0F, 60.0F},
     };
     recorder.record(value);
     recorder.stop();
@@ -189,10 +191,10 @@ void testPlayerInteractionLayout(const std::filesystem::path& path) {
     std::string error;
     REQUIRE(write_gameplay_trace(path, recorder, error));
     const auto bytes = readFile(path);
-    REQUIRE(bytes.size() == 426);
+    REQUIRE(bytes.size() == 450);
     REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 8);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 2);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 136);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 3);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 200) == 160);
     constexpr std::size_t payload = 290;
     REQUIRE(readLittle<std::uint32_t>(bytes, payload + 104) == value.playerAction.flags);
     REQUIRE(bytes[payload + 108] == 0x15);
@@ -200,8 +202,14 @@ void testPlayerInteractionLayout(const std::filesystem::path& path) {
     REQUIRE(readLittle<std::int16_t>(bytes, payload + 116) == 42);
     REQUIRE(readLittle<std::uint16_t>(bytes, payload + 118) == 7);
     REQUIRE(readLittle<std::int8_t>(bytes, payload + 120) == 1);
-    REQUIRE(readLittle<std::uint32_t>(bytes, payload + 124) == 12);
-    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 130) == 8);
+    REQUIRE(readFloat(bytes, payload + 124) == 10.0F);
+    REQUIRE(readFloat(bytes, payload + 128) == 20.0F);
+    REQUIRE(readFloat(bytes, payload + 132) == 30.0F);
+    REQUIRE(readLittle<std::uint32_t>(bytes, payload + 136) == 12);
+    REQUIRE(readLittle<std::uint16_t>(bytes, payload + 142) == 8);
+    REQUIRE(readFloat(bytes, payload + 148) == 40.0F);
+    REQUIRE(readFloat(bytes, payload + 152) == 50.0F);
+    REQUIRE(readFloat(bytes, payload + 156) == 60.0F);
 }
 
 void testCollisionSurfaceLayout(const std::filesystem::path& path) {

@@ -17,8 +17,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 4] = *b"DMSP";
-pub const WIRE_VERSION: (u16, u16) = (1, 5);
-pub const LANGUAGE_VERSION: (u16, u16) = (1, 5);
+pub const WIRE_VERSION: (u16, u16) = (1, 6);
+pub const LANGUAGE_VERSION: (u16, u16) = (1, 6);
 pub const MAX_DEFINITIONS: usize = 256;
 pub const MAX_NAME_BYTES: usize = 96;
 pub const MAX_SYMBOL_BYTES: usize = 64;
@@ -289,6 +289,12 @@ pub enum Field {
     GrabbedActorSetId = 67,
     GrabbedActorHomeRoom = 68,
     GrabbedActorCurrentRoom = 69,
+    TalkPartnerHomePositionX = 70,
+    TalkPartnerHomePositionY = 71,
+    TalkPartnerHomePositionZ = 72,
+    GrabbedActorHomePositionX = 73,
+    GrabbedActorHomePositionY = 74,
+    GrabbedActorHomePositionZ = 75,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -480,6 +486,12 @@ impl Field {
             Self::GrabbedActorSetId => "player.interaction.grabbed_actor.set_id",
             Self::GrabbedActorHomeRoom => "player.interaction.grabbed_actor.home_room",
             Self::GrabbedActorCurrentRoom => "player.interaction.grabbed_actor.current_room",
+            Self::TalkPartnerHomePositionX => "player.interaction.talk_partner.home_position.x",
+            Self::TalkPartnerHomePositionY => "player.interaction.talk_partner.home_position.y",
+            Self::TalkPartnerHomePositionZ => "player.interaction.talk_partner.home_position.z",
+            Self::GrabbedActorHomePositionX => "player.interaction.grabbed_actor.home_position.x",
+            Self::GrabbedActorHomePositionY => "player.interaction.grabbed_actor.home_position.y",
+            Self::GrabbedActorHomePositionZ => "player.interaction.grabbed_actor.home_position.z",
         }
     }
 
@@ -550,13 +562,19 @@ impl Field {
             | Self::CollisionGroundHeight
             | Self::CollisionRoofHeight
             | Self::CollisionGroundClearance => FieldType::F32,
+            Self::TalkPartnerHomePositionX
+            | Self::TalkPartnerHomePositionY
+            | Self::TalkPartnerHomePositionZ
+            | Self::GrabbedActorHomePositionX
+            | Self::GrabbedActorHomePositionY
+            | Self::GrabbedActorHomePositionZ => FieldType::F32,
             Self::PlayerProcedure => FieldType::Procedure,
             Self::EventId => FieldType::I32,
         }
     }
 
     fn parse(path: &str) -> Option<Self> {
-        (1..=69).find_map(|id| {
+        (1..=75).find_map(|id| {
             let field = Self::from_id(id)?;
             (field.path() == path).then_some(field)
         })
@@ -633,6 +651,12 @@ impl Field {
             67 => Self::GrabbedActorSetId,
             68 => Self::GrabbedActorHomeRoom,
             69 => Self::GrabbedActorCurrentRoom,
+            70 => Self::TalkPartnerHomePositionX,
+            71 => Self::TalkPartnerHomePositionY,
+            72 => Self::TalkPartnerHomePositionZ,
+            73 => Self::GrabbedActorHomePositionX,
+            74 => Self::GrabbedActorHomePositionY,
+            75 => Self::GrabbedActorHomePositionZ,
             _ => return None,
         })
     }
@@ -922,10 +946,11 @@ impl Parser {
             TokenKind::Number(value) if value == "1.3" => LanguageVersion { major: 1, minor: 3 },
             TokenKind::Number(value) if value == "1.4" => LanguageVersion { major: 1, minor: 4 },
             TokenKind::Number(value) if value == "1.5" => LanguageVersion { major: 1, minor: 5 },
+            TokenKind::Number(value) if value == "1.6" => LanguageVersion { major: 1, minor: 6 },
             _ => {
                 return Err(self.at_error(
                     &version_token,
-                    "unsupported or missing language version; expected 1.0 through 1.5",
+                    "unsupported or missing language version; expected 1.0 through 1.6",
                 ));
             }
         };
@@ -1956,6 +1981,12 @@ fn validate_expression(
                     field.path()
                 ));
             }
+            if language_minor < 6 && (*field as u8) >= Field::TalkPartnerHomePositionX as u8 {
+                return Err(format!(
+                    "field {} requires milestone language 1.6",
+                    field.path()
+                ));
+            }
             validate_comparison(*field, *operator, value)?;
             *operations += 3;
         }
@@ -2645,6 +2676,24 @@ fn trace_field(
                 .current_room
                 .into(),
         ),
+        Field::TalkPartnerHomePositionX => {
+            Value::F32(typed_actor(facts, TypedFactId::TalkPartner)?.home_position?[0])
+        }
+        Field::TalkPartnerHomePositionY => {
+            Value::F32(typed_actor(facts, TypedFactId::TalkPartner)?.home_position?[1])
+        }
+        Field::TalkPartnerHomePositionZ => {
+            Value::F32(typed_actor(facts, TypedFactId::TalkPartner)?.home_position?[2])
+        }
+        Field::GrabbedActorHomePositionX => {
+            Value::F32(typed_actor(facts, TypedFactId::GrabbedActor)?.home_position?[0])
+        }
+        Field::GrabbedActorHomePositionY => {
+            Value::F32(typed_actor(facts, TypedFactId::GrabbedActor)?.home_position?[1])
+        }
+        Field::GrabbedActorHomePositionZ => {
+            Value::F32(typed_actor(facts, TypedFactId::GrabbedActor)?.home_position?[2])
+        }
         _ => return None,
     })
 }
@@ -3947,8 +3996,8 @@ milestone exact_next_tick_transition {
     }
 
     #[test]
-    fn language_1_5_interaction_identity_facts_round_trip_and_evaluate_offline() {
-        let source = r#"milestones 1.5
+    fn language_1_6_interaction_identity_facts_round_trip_and_evaluate_offline() {
+        let source = r#"milestones 1.6
 
 milestone exact_interaction {
   phase post_sim
@@ -3958,19 +4007,25 @@ milestone exact_interaction {
        player.interaction.talk_partner.set_id == 7 &&
        player.interaction.talk_partner.home_room == 1 &&
        player.interaction.talk_partner.current_room == 2 &&
+       player.interaction.talk_partner.home_position.x between 9.5 and 10.5 &&
+       player.interaction.talk_partner.home_position.y == 20.0 &&
+       player.interaction.talk_partner.home_position.z == 30.0 &&
        player.interaction.grabbed_actor.exists &&
        player.interaction.grabbed_actor.actor_name == 43 &&
        player.interaction.grabbed_actor.set_id == 8 &&
        player.interaction.grabbed_actor.home_room == 3 &&
-       player.interaction.grabbed_actor.current_room == 4
+       player.interaction.grabbed_actor.current_room == 4 &&
+       player.interaction.grabbed_actor.home_position.x == 40.0 &&
+       player.interaction.grabbed_actor.home_position.y == 50.0 &&
+       player.interaction.grabbed_actor.home_position.z == 60.0
 }
 "#;
         let program = parse(source).unwrap();
         assert_eq!(parse(&format(&program).unwrap()).unwrap(), program);
         let compiled = compile(&program).unwrap();
-        assert_eq!(&compiled.bytes[4..12], &[1, 0, 5, 0, 1, 0, 5, 0]);
+        assert_eq!(&compiled.bytes[4..12], &[1, 0, 6, 0, 1, 0, 6, 0]);
         assert_eq!(decode(&compiled.bytes).unwrap().program, program);
-        assert!(parse(&source.replace("milestones 1.5", "milestones 1.4")).is_err());
+        assert!(parse(&source.replace("milestones 1.6", "milestones 1.5")).is_err());
 
         let mut record = crate::trace::TraceRecord {
             boundary_index: 1,
@@ -4007,6 +4062,7 @@ milestone exact_interaction {
                 set_id: 7,
                 home_room: 1,
                 current_room: 2,
+                home_position: Some([10.0, 20.0, 30.0]),
             }),
             grabbed_actor: Some(crate::trace::TraceActorIdentity {
                 session_process_id: 101,
@@ -4014,6 +4070,7 @@ milestone exact_interaction {
                 set_id: 8,
                 home_room: 3,
                 current_room: 4,
+                home_position: Some([40.0, 50.0, 60.0]),
             }),
         });
         let trace = crate::trace::DecodedTrace {

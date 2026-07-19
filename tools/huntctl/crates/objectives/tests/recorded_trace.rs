@@ -57,6 +57,7 @@ struct InteractionActor {
     set_id: u16,
     home_room: i8,
     current_room: i8,
+    home_position: [f32; 3],
 }
 
 #[test]
@@ -153,7 +154,7 @@ fn build_interaction_trace(boundaries: &[InteractionBoundary]) -> Vec<u8> {
             (TraceChannel::Stage, 1, 32, stage),
             (TraceChannel::PlayerMotion, 1, 52, player),
             (TraceChannel::Event, 1, 16, event),
-            (TraceChannel::PlayerAction, 2, 136, action),
+            (TraceChannel::PlayerAction, 3, 160, action),
         ],
     )
 }
@@ -265,15 +266,15 @@ fn interaction_event_payload(boundary: &InteractionBoundary) -> [u8; 16] {
     payload
 }
 
-fn interaction_action_payload(boundary: &InteractionBoundary) -> [u8; 136] {
-    let mut payload = [0; 136];
+fn interaction_action_payload(boundary: &InteractionBoundary) -> [u8; 160] {
+    let mut payload = [0; 160];
     payload[0..2].copy_from_slice(&u16::MAX.to_le_bytes());
     let flags = ((boundary.talk_partner.is_some() as u32) * TALK_PARTNER_PRESENT)
         | ((boundary.grabbed_actor.is_some() as u32) * GRABBED_ACTOR_PRESENT);
     payload[104..108].copy_from_slice(&flags.to_le_bytes());
     payload[108] = boundary.do_status;
-    encode_interaction_actor(&mut payload[112..124], boundary.talk_partner.as_ref());
-    encode_interaction_actor(&mut payload[124..136], boundary.grabbed_actor.as_ref());
+    encode_interaction_actor(&mut payload[112..136], boundary.talk_partner.as_ref());
+    encode_interaction_actor(&mut payload[136..160], boundary.grabbed_actor.as_ref());
     payload
 }
 
@@ -293,6 +294,11 @@ fn encode_interaction_actor(payload: &mut [u8], actor: Option<&InteractionActor>
     payload[6..8].copy_from_slice(&set_id.to_le_bytes());
     payload[8] = home_room as u8;
     payload[9] = current_room as u8;
+    if let Some(actor) = actor {
+        for (index, value) in actor.home_position.into_iter().enumerate() {
+            write_f32(payload, 12 + index * 4, value);
+        }
+    }
 }
 
 fn build_trace(extra_channels: Vec<(TraceChannel, Vec<u8>)>) -> Vec<u8> {

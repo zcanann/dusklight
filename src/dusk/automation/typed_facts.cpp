@@ -25,6 +25,8 @@ TypedFactStatus dependent_status(TypedFactStatus source, bool present) {
                : source;
 }
 
+float canonical_float(float value);
+
 TypedFactActorIdentity actor_identity(const MilestoneObservation::ActorIdentity& actor) {
     return {
         .runtimeGeneration = actor.runtimeGeneration,
@@ -32,6 +34,9 @@ TypedFactActorIdentity actor_identity(const MilestoneObservation::ActorIdentity&
         .setId = actor.setId,
         .homeRoom = actor.homeRoom,
         .currentRoom = actor.currentRoom,
+        .homePositionPresent = actor.homePositionPresent,
+        .homePosition = {canonical_float(actor.homePositionX), canonical_float(actor.homePositionY),
+            canonical_float(actor.homePositionZ)},
     };
 }
 
@@ -212,6 +217,17 @@ bool validate_typed_fact_response(const TypedFactResponse& response) {
                 }
             }
             if (!sawCharacter) return false;
+        }
+        if (entry.type == TypedFactValueType::ActorIdentity) {
+            const bool canonicalHomePosition = std::ranges::all_of(
+                entry.value.actor.homePosition, [](const float value) {
+                    return std::isfinite(value) && !(value == 0.0F && std::signbit(value));
+                });
+            if (entry.value.actor.homePositionPresent ? !canonicalHomePosition :
+                                                        entry.value.actor.homePosition !=
+                                                            std::array<float, 3>{}) {
+                return false;
+            }
         }
     }
     return true;

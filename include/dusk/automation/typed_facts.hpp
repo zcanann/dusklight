@@ -12,7 +12,7 @@ namespace dusk::automation {
 struct ControllerObservation;
 
 inline constexpr std::uint16_t kTypedFactResponseMajorVersion = 1;
-inline constexpr std::uint16_t kTypedFactResponseMinorVersion = 0;
+inline constexpr std::uint16_t kTypedFactResponseMinorVersion = 1;
 inline constexpr std::size_t kTypedFactMaximumEntries = 16;
 inline constexpr std::uint64_t kTypedFactNoTapeFrame = ~std::uint64_t{0};
 
@@ -58,6 +58,8 @@ struct TypedFactActorIdentity {
     std::uint16_t setId = 0xffff;
     std::int8_t homeRoom = -1;
     std::int8_t currentRoom = -1;
+    bool homePositionPresent = false;
+    std::array<float, 3> homePosition{};
 };
 
 struct TypedFactValue {

@@ -6,7 +6,7 @@ use std::fmt;
 
 pub const TYPED_FACT_RESPONSE_SCHEMA_V1: &str = "dusklight-typed-fact-response/v1";
 pub const TYPED_FACT_RESPONSE_MAJOR_VERSION: u16 = 1;
-pub const TYPED_FACT_RESPONSE_MINOR_VERSION: u16 = 0;
+pub const TYPED_FACT_RESPONSE_MINOR_VERSION: u16 = 1;
 pub const TYPED_FACT_MAXIMUM_ENTRIES: usize = 16;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -53,7 +53,7 @@ pub enum TypedFactValueType {
     ActorIdentity,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TypedFactActorIdentity {
     pub runtime_generation: u32,
@@ -61,6 +61,8 @@ pub struct TypedFactActorIdentity {
     pub set_id: u16,
     pub home_room: i8,
     pub current_room: i8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_position: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -103,6 +105,11 @@ impl TypedFactValue {
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
             }
+            Self::ActorIdentity(identity) => identity.home_position.is_none_or(|values| {
+                values
+                    .iter()
+                    .all(|value| value.is_finite() && value.to_bits() != (-0.0_f32).to_bits())
+            }),
             _ => true,
         }
     }
@@ -183,7 +190,7 @@ mod tests {
         TypedFactResponse {
             schema: TYPED_FACT_RESPONSE_SCHEMA_V1.into(),
             major_version: 1,
-            minor_version: 0,
+            minor_version: TYPED_FACT_RESPONSE_MINOR_VERSION,
             phase: TypedFactPhase::PreInput,
             simulation_tick: 12,
             tape_frame: Some(11),
@@ -223,6 +230,7 @@ mod tests {
             set_id: 3,
             home_room: 4,
             current_room: 4,
+            home_position: Some([1.0, 2.0, 3.0]),
         }));
         assert!(response.validate().is_err());
     }

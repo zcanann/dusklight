@@ -259,7 +259,8 @@ std::optional<ValueType> field_type(const std::uint8_t field) {
     case 24: case 28: case 29: case 30: case 31: case 32: case 33: case 35: case 36:
     case 43: case 44: case 45: case 47: case 48: case 49: case 61: case 63: case 64:
     case 66: case 68: case 69: return ValueType::I32;
-    case 25: case 26: case 27: case 56: case 57: case 58: return ValueType::F32;
+    case 25: case 26: case 27: case 56: case 57: case 58: case 70: case 71: case 72:
+    case 73: case 74: case 75: return ValueType::F32;
     case 41: case 51: case 52: case 53: case 54: case 55: case 60: case 65:
         return ValueType::Bool;
     case 46: case 50: return ValueType::U64;
@@ -556,6 +557,44 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
                 observation.grabbedActor.setId, observation.grabbedActor.homeRoom,
                 observation.grabbedActor.currentRoom};
             value.bits = static_cast<std::uint32_t>(values[field - 66]);
+        }
+        break;
+    case 70:
+    case 71:
+    case 72:
+        if (context.facts != nullptr) {
+            const auto* entry =
+                present_fact(TypedFactId::TalkPartner, TypedFactValueType::ActorIdentity);
+            value.available = entry != nullptr && entry->value.actor.homePositionPresent;
+            if (value.available) {
+                value.bits = std::bit_cast<std::uint32_t>(
+                    entry->value.actor.homePosition[field - 70]);
+            }
+        } else {
+            value.available = observation.talkPartner.present &&
+                              observation.talkPartner.homePositionPresent;
+            const float values[] = {observation.talkPartner.homePositionX,
+                observation.talkPartner.homePositionY, observation.talkPartner.homePositionZ};
+            value.bits = std::bit_cast<std::uint32_t>(values[field - 70]);
+        }
+        break;
+    case 73:
+    case 74:
+    case 75:
+        if (context.facts != nullptr) {
+            const auto* entry =
+                present_fact(TypedFactId::GrabbedActor, TypedFactValueType::ActorIdentity);
+            value.available = entry != nullptr && entry->value.actor.homePositionPresent;
+            if (value.available) {
+                value.bits = std::bit_cast<std::uint32_t>(
+                    entry->value.actor.homePosition[field - 73]);
+            }
+        } else {
+            value.available = observation.grabbedActor.present &&
+                              observation.grabbedActor.homePositionPresent;
+            const float values[] = {observation.grabbedActor.homePositionX,
+                observation.grabbedActor.homePositionY, observation.grabbedActor.homePositionZ};
+            value.bits = std::bit_cast<std::uint32_t>(values[field - 73]);
         }
         break;
     default: value.available = false; break;
@@ -1015,6 +1054,8 @@ MilestoneProgramError decode_milestone_program(const std::span<const std::uint8_
                 if (languageMinor == 0 && instruction.field > 22)
                     return MilestoneProgramError::InvalidField;
                 if (languageMinor < 5 && instruction.field >= 59)
+                    return MilestoneProgramError::InvalidField;
+                if (languageMinor < 6 && instruction.field >= 70)
                     return MilestoneProgramError::InvalidField;
                 const auto type = field_type(instruction.field);
                 if (!type.has_value()) return MilestoneProgramError::InvalidField;

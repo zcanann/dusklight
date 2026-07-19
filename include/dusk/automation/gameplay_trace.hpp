@@ -394,7 +394,7 @@ struct GameplayTraceAnimationLane {
 };
 
 // Portable placement identity plus a diagnostic session-local process ID. The
-// process ID is never sufficient evidence by itself; actorName/setId/homeRoom
+// process ID is never sufficient evidence by itself; actorName/setId/homeRoom/homePosition
 // are the stable selector used by objectives and offline comparison.
 struct GameplayTraceActorIdentitySample {
     std::uint32_t sessionProcessId = 0xffffffffu;
@@ -402,6 +402,7 @@ struct GameplayTraceActorIdentitySample {
     std::uint16_t setId = 0xffff;
     std::int8_t homeRoom = -1;
     std::int8_t currentRoom = -1;
+    std::array<float, 3> homePosition{};
 };
 
 struct GameplayTracePlayerActionSample {

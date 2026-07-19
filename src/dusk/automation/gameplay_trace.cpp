@@ -35,7 +35,7 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::SceneExit, 2, 88, false},
     ChannelDefinition{GameplayTraceChannel::Rng, 1, 64, false},
     ChannelDefinition{GameplayTraceChannel::Camera, 1, 48, false},
-    ChannelDefinition{GameplayTraceChannel::PlayerAction, 2, 136, false},
+    ChannelDefinition{GameplayTraceChannel::PlayerAction, 3, 160, false},
     ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
     ChannelDefinition{GameplayTraceChannel::PlayerCollisionSurfaces, 1, 496, false},
     ChannelDefinition{GameplayTraceChannel::GoalProgress, 1, 32, false},
@@ -282,6 +282,8 @@ void write_actor_identity(
     write_integer(stream, sample.homeRoom);
     write_integer(stream, sample.currentRoom);
     write_integer<std::uint16_t>(stream, 0);
+    for (const float value : sample.homePosition)
+        write_float(stream, value);
 }
 
 void write_player_action(std::ostream& stream, const GameplayTracePlayerActionSample& sample) {
@@ -522,7 +524,8 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
         }
         const auto absentActorIdentity = [](const GameplayTraceActorIdentitySample& actor) {
             return actor.sessionProcessId == 0xffffffffu && actor.actorName == -1 &&
-                   actor.setId == 0xffff && actor.homeRoom == -1 && actor.currentRoom == -1;
+                   actor.setId == 0xffff && actor.homeRoom == -1 && actor.currentRoom == -1 &&
+                   actor.homePosition == std::array<float, 3>{};
         };
         const bool talkPartnerPresent =
             (sample.playerAction.flags & GameplayTraceTalkPartnerPresent) != 0;
@@ -532,6 +535,16 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
             grabbedActorPresent == absentActorIdentity(sample.playerAction.grabbedActor))
         {
             error = "gameplay trace player-action actor identity is noncanonical";
+            return false;
+        }
+        const auto validActorHome = [](const GameplayTraceActorIdentitySample& actor) {
+            return std::ranges::all_of(actor.homePosition, [](const float value) {
+                return std::isfinite(value) && !(value == 0.0F && std::signbit(value));
+            });
+        };
+        if ((talkPartnerPresent && !validActorHome(sample.playerAction.talkPartner)) ||
+            (grabbedActorPresent && !validActorHome(sample.playerAction.grabbedActor))) {
+            error = "gameplay trace player-action actor home position is noncanonical";
             return false;
         }
         for (const ChannelDefinition& definition : kChannels) {

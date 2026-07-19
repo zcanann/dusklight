@@ -32,6 +32,10 @@ struct MilestoneObservation {
         std::uint16_t setId = 0xffff;
         std::int8_t homeRoom = -1;
         std::int8_t currentRoom = -1;
+        bool homePositionPresent = false;
+        float homePositionX = 0.0f;
+        float homePositionY = 0.0f;
+        float homePositionZ = 0.0f;
     };
 
     const char* stageName = nullptr;

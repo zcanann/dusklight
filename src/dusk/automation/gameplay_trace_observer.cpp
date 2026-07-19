@@ -308,6 +308,7 @@ GameplayTraceActorIdentitySample capture_actor_identity(const fopAc_ac_c* actor)
         .setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor)),
         .homeRoom = actor->home.roomNo,
         .currentRoom = actor->current.roomNo,
+        .homePosition = {actor->home.pos.x, actor->home.pos.y, actor->home.pos.z},
     };
 }
 

@@ -37,12 +37,16 @@ void test_exact_interaction_snapshot() {
         .setId = 8,
         .homeRoom = 1,
         .currentRoom = 2,
+        .homePositionPresent = true,
+        .homePositionX = -0.0F,
+        .homePositionY = 20.0F,
+        .homePositionZ = 30.0F,
     };
 
     const auto response = build_typed_fact_response(
         observation, TypedFactPhase::PreInput, 12, 11);
     REQUIRE(response.majorVersion == 1);
-    REQUIRE(response.minorVersion == 0);
+    REQUIRE(response.minorVersion == 1);
     REQUIRE(response.phase == TypedFactPhase::PreInput);
     REQUIRE(response.simulationTick == 12);
     REQUIRE(response.tapeFrame == 11);
@@ -62,10 +66,19 @@ void test_exact_interaction_snapshot() {
     REQUIRE(talk->value.actor.homeRoom == 1);
     REQUIRE(talk->value.actor.currentRoom == 2);
     REQUIRE(talk->value.actor.runtimeGeneration == 99);
+    REQUIRE(talk->value.actor.homePositionPresent);
+    REQUIRE(talk->value.actor.homePosition[0] == 0.0F);
+    REQUIRE(talk->value.actor.homePosition[1] == 20.0F);
+    REQUIRE(talk->value.actor.homePosition[2] == 30.0F);
+    REQUIRE(!std::signbit(talk->value.actor.homePosition[0]));
     REQUIRE(response.find(TypedFactId::GrabbedActor)->status == TypedFactStatus::Absent);
 
     auto invalid = response;
     invalid.entries[5].value.vec3[0] = -0.0F;
+    REQUIRE(!validate_typed_fact_response(invalid));
+
+    invalid = response;
+    invalid.entries[9].value.actor.homePositionPresent = false;
     REQUIRE(!validate_typed_fact_response(invalid));
 }
 

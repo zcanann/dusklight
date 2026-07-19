@@ -251,13 +251,15 @@ pub struct TraceAnimationLane {
     pub rate: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TraceActorIdentity {
     pub session_process_id: u32,
     pub actor_name: i16,
     pub set_id: u16,
     pub home_room: i8,
     pub current_room: i8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_position: Option<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -704,6 +706,7 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
         (TraceChannel::Camera, 1) => 48,
         (TraceChannel::PlayerAction, 1) => 104,
         (TraceChannel::PlayerAction, 2) => 136,
+        (TraceChannel::PlayerAction, 3) => 160,
         (TraceChannel::PlayerBackgroundCollision, 1) => 128,
         (TraceChannel::PlayerCollisionSurfaces, 1) => 496,
         (TraceChannel::GoalProgress, 1) => 32,
@@ -1533,9 +1536,16 @@ fn decode_v2_channel(
                     set_id: u16_at(bytes, offset + 6),
                     home_room: bytes[offset + 8] as i8,
                     current_room: bytes[offset + 9] as i8,
+                    home_position: (version >= 3).then(|| {
+                        [
+                            f32_at(bytes, offset + 12),
+                            f32_at(bytes, offset + 16),
+                            f32_at(bytes, offset + 20),
+                        ]
+                    }),
                 })
             };
-            let (do_status, talk_partner, grabbed_actor) = if version == 2 {
+            let (do_status, talk_partner, grabbed_actor) = if version >= 2 {
                 let flags = u32_at(bytes, 104);
                 if flags & !PLAYER_ACTION_KNOWN_FLAGS != 0
                     || bytes[109..112].iter().any(|value| *value != 0)
@@ -1544,14 +1554,18 @@ fn decode_v2_channel(
                         "invalid gameplay trace player-action interaction metadata".into(),
                     ));
                 }
+                let identity_stride = if version >= 3 { 24 } else { 12 };
                 let talk = decode_identity(112)?;
-                let grabbed = decode_identity(124)?;
+                let grabbed = decode_identity(112 + identity_stride)?;
                 let absent_is_canonical = |identity: &TraceActorIdentity| {
                     identity.session_process_id == u32::MAX
                         && identity.actor_name == -1
                         && identity.set_id == u16::MAX
                         && identity.home_room == -1
                         && identity.current_room == -1
+                        && identity
+                            .home_position
+                            .is_none_or(|position| position == [0.0; 3])
                 };
                 if flags & TALK_PARTNER_PRESENT == 0 && !absent_is_canonical(&talk)
                     || flags & GRABBED_ACTOR_PRESENT == 0 && !absent_is_canonical(&grabbed)
@@ -1559,6 +1573,17 @@ fn decode_v2_channel(
                     return Err(TraceError(
                         "noncanonical absent gameplay trace actor identity".into(),
                     ));
+                }
+                for identity in [&talk, &grabbed] {
+                    if identity.home_position.is_some_and(|position| {
+                        position.iter().any(|value| {
+                            !value.is_finite() || (value.to_bits() == (-0.0_f32).to_bits())
+                        })
+                    }) {
+                        return Err(TraceError(
+                            "noncanonical gameplay trace actor home position".into(),
+                        ));
+                    }
                 }
                 (
                     bytes[108],
@@ -3476,6 +3501,10 @@ mod tests {
         assert_eq!(player_action.do_status, 0x15);
         assert_eq!(player_action.talk_partner.as_ref().unwrap().actor_name, 42);
         assert_eq!(player_action.talk_partner.as_ref().unwrap().set_id, 7);
+        assert_eq!(
+            player_action.talk_partner.as_ref().unwrap().home_position,
+            None
+        );
         assert_eq!(player_action.grabbed_actor.as_ref().unwrap().actor_name, 43);
         assert_eq!(player_action.grabbed_actor.as_ref().unwrap().home_room, 3);
 
@@ -3488,6 +3517,57 @@ mod tests {
         )]))
         .unwrap_err();
         assert!(error.to_string().contains("noncanonical absent"));
+    }
+
+    #[test]
+    fn v3_decodes_actor_home_positions_and_rejects_noncanonical_values() {
+        let mut action = vec![0; 160];
+        action[104..108].copy_from_slice(&TALK_PARTNER_PRESENT.to_le_bytes());
+        action[112..116].copy_from_slice(&11_u32.to_le_bytes());
+        action[116..118].copy_from_slice(&42_i16.to_le_bytes());
+        action[118..120].copy_from_slice(&7_u16.to_le_bytes());
+        action[120] = 1;
+        action[121] = 2;
+        for (index, value) in [10.0_f32, 20.0, 30.0].into_iter().enumerate() {
+            action[124 + index * 4..128 + index * 4].copy_from_slice(&value.to_le_bytes());
+        }
+        action[136..140].copy_from_slice(&u32::MAX.to_le_bytes());
+        action[140..142].copy_from_slice(&(-1_i16).to_le_bytes());
+        action[142..144].copy_from_slice(&u16::MAX.to_le_bytes());
+        action[144] = u8::MAX;
+        action[145] = u8::MAX;
+
+        let decoded = decode(&build_v2_trace(vec![(
+            TraceChannel::PlayerAction,
+            3,
+            TraceChannelStatus::Present,
+            action.clone(),
+        )]))
+        .unwrap();
+        assert_eq!(
+            decoded.records[0]
+                .player_action
+                .as_ref()
+                .unwrap()
+                .talk_partner
+                .as_ref()
+                .unwrap()
+                .home_position,
+            Some([10.0, 20.0, 30.0])
+        );
+
+        action[124..128].copy_from_slice(&(-0.0_f32).to_le_bytes());
+        assert!(
+            decode(&build_v2_trace(vec![(
+                TraceChannel::PlayerAction,
+                3,
+                TraceChannelStatus::Present,
+                action,
+            )]))
+            .unwrap_err()
+            .to_string()
+            .contains("home position")
+        );
     }
 
     #[test]

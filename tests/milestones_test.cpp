@@ -525,7 +525,7 @@ void testCheckedInteractionProgramHasExactNativeOfflineFirstHitParity() {
     MilestoneProgram program;
     REQUIRE(decode_milestone_program(bytes, noSymbols, program) == MilestoneProgramError::None);
     REQUIRE(program.digest() ==
-            "0759313cdc63acad7826b04daa4a106dfb3745fdc7dcdf2c98488cefd8c16cf8");
+            "fa128677db7305715963cbd88f4462836f71c685813192218e61613d7040b0b4");
 
     std::vector<std::string> requested;
     for (const auto& [name, _] : fixture["expected_first_hits"].items()) {
@@ -544,6 +544,10 @@ void testCheckedInteractionProgramHasExactNativeOfflineFirstHitParity() {
         identity.setId = value["set_id"].get<std::uint16_t>();
         identity.homeRoom = value["home_room"].get<std::int8_t>();
         identity.currentRoom = value["current_room"].get<std::int8_t>();
+        identity.homePositionPresent = true;
+        identity.homePositionX = value["home_position"][0].get<float>();
+        identity.homePositionY = value["home_position"][1].get<float>();
+        identity.homePositionZ = value["home_position"][2].get<float>();
         return identity;
     };
     for (const auto& boundary : fixture["boundaries"]) {

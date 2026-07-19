@@ -102,11 +102,12 @@ roadmap documents describe the larger target.
   `TargetLost` before emitting the missing-target tick. Incomplete bounded actor
   snapshots never assert false loss, and exact selectors never fall back to a
   nearest actor.
-- Player-action trace channel v2 appends the realized A-button status and the
+- Player-action trace channel v3 appends the realized A-button status and the
   current talk partner and grabbed actor. Each relationship carries portable
-  actor name/set/home-room identity plus current room; the process ID remains
-  diagnostic only. Milestone language 1.5 exposes the same facts to native and
-  offline predicates, while old player-action v1 traces remain readable.
+  actor name/set/home-room identity, immutable home position, and current room;
+  the process ID remains diagnostic only. Milestone language 1.6 exposes the
+  same facts to native and offline predicates, while old player-action v1/v2
+  traces remain readable and fail closed for unavailable home positions.
 - Authored milestone language 1.2 preserves 1.0/1.1 decode compatibility while
   adding exact placed-actor facts, finite player-distance geometry, and bounded
   event/temporary/dungeon/current-room switch queries. Native evaluation uses

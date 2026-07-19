@@ -174,14 +174,18 @@ Its same-boot neutral negative control proves that stage readiness and spawn
 proximity alone cannot satisfy the region objective.
 
 The native query seam needed by the remaining interaction cases now exists.
-Player-action channel v2 records the realized A-button status, exact placed
+Player-action channel v3 records the realized A-button status, exact placed
 talk partner, and exact placed grabbed actor at the post-simulation boundary.
-Milestone language 1.5 exposes those fields under
+Each relationship includes the actor's immutable home position so same-type,
+same-room placements such as the five `F_SP103` stones remain distinguishable.
+Milestone language 1.6 exposes those fields under
 `player.interaction.do_status`, `player.interaction.talk_partner.*`, and
 `player.interaction.grabbed_actor.*`. A talk objective can therefore require an
 event edge and the correct partner identity; a carry objective can use an
 ordered absent-to-present sequence and the correct object identity. Session
 process IDs are retained for diagnostics but are not objective selector facts.
+Older player-action v1/v2 traces remain readable; their unavailable home
+position predicates fail closed.
 
 `objective_interaction_parity.{json,milestones,dmsp}` is the game-data-free
 cross-runtime regression fixture for this surface. Rust recompiles the source,
