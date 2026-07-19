@@ -888,7 +888,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "Detached / invalid",
         "grid-template-rows",
         "projectBootIcon",
-        "🫠",
+        "🗺️",
         "</span>${projectBootIcon(project)}<span class=\"project-label\">",
         "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
         "This predicate source belongs only to this goal",
@@ -911,6 +911,13 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/workspace/boot",
         "id=\"bootStageChoice\"",
         "id=\"bootRoomChoice\"",
+        "id=\"bootCoordinateStatus\"",
+        "bootCoordinateWarning",
+        "adoptKnownRoom",
+        "Saved override off",
+        "Playback starts from tape",
+        "Stored in tape · Not used",
+        "room.spawn_points?.[0]??0",
         "id=\"bootTabInventory\"",
         "id=\"inventoryGrid\"",
         "inventory_items",
@@ -980,6 +987,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         );
     }
     assert!(!html.contains("data-expand"));
+    assert!(!html.to_ascii_lowercase().contains("authored boot"));
     assert!(!html.contains("let collapsed = new Set()"));
     assert!(!html.contains("?ready=${Date.now()}"));
     assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));

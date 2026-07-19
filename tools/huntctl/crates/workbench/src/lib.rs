@@ -165,6 +165,7 @@ pub struct GraphStageBootOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub friendly_name: Option<String>,
     pub inventory_indexed: bool,
+    pub spawn_points_indexed: bool,
     pub rooms: Vec<GraphStageRoomBootOptions>,
 }
 

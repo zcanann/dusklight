@@ -4,6 +4,7 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 const STAGE_ROOT: &str = "orig/GZ2E01/files/res/Stage";
+const MAP_LOADER_DEFINITIONS: &str = "include/dusk/map_loader_definitions.h";
 
 pub(super) fn stage_summaries(repository_root: &Path) -> Vec<GraphStageSummary> {
     let root = repository_root.join(STAGE_ROOT);
@@ -51,6 +52,12 @@ pub(super) fn stage_boot_options(
         rooms.entry(room).or_default();
     }
 
+    let known_spawns = known_map_loader_spawns(repository_root, stage)?;
+    let mut spawn_points_indexed = !known_spawns.is_empty();
+    for (room, points) in known_spawns {
+        rooms.entry(room).or_default().spawn_points.extend(points);
+    }
+
     let inventory_path = repository_root
         .join("build/world")
         .join(format!("{stage}.inventory.json"));
@@ -75,6 +82,7 @@ pub(super) fn stage_boot_options(
             };
             let choices = rooms.entry(room).or_default();
             choices.spawn_points.insert(spawn.angle[2]);
+            spawn_points_indexed = true;
             if let Some(layer) = spawn.layer {
                 choices.layers.insert(layer);
             }
@@ -88,6 +96,7 @@ pub(super) fn stage_boot_options(
         stage: stage.to_owned(),
         friendly_name: friendly_stage_name(stage).map(str::to_owned),
         inventory_indexed: inventory.is_some(),
+        spawn_points_indexed,
         rooms: rooms
             .into_iter()
             .map(|(id, mut choices)| {
@@ -100,6 +109,133 @@ pub(super) fn stage_boot_options(
             })
             .collect(),
     })
+}
+
+fn known_map_loader_spawns(
+    repository_root: &Path,
+    stage: &str,
+) -> Result<BTreeMap<i8, BTreeSet<i16>>, WorkbenchError> {
+    let path = repository_root.join(MAP_LOADER_DEFINITIONS);
+    if !path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|error| WorkbenchError::new(format!("cannot read {}: {error}", path.display())))?;
+    Ok(parse_map_loader_spawns(&source, stage))
+}
+
+fn parse_map_loader_spawns(source: &str, stage: &str) -> BTreeMap<i8, BTreeSet<i16>> {
+    let mut result = BTreeMap::<i8, BTreeSet<i16>>::new();
+    let mut cursor = 0;
+    while let Some(offset) = source[cursor..].find("MapEntry(") {
+        let open = cursor + offset + "MapEntry".len();
+        let Some(close) = matching_delimiter(source, open, b'(', b')') else {
+            break;
+        };
+        let entry = &source[open + 1..close];
+        let strings = quoted_ranges(entry);
+        if strings.get(1).map(|range| &entry[range.clone()]) == Some(stage)
+            && let Some(second_quote) = strings.get(1)
+            && let Some(room_offset) = entry[second_quote.end + 1..].find('{')
+        {
+            let room_open = second_quote.end + 1 + room_offset;
+            if let Some(room_close) = matching_delimiter(entry, room_open, b'{', b'}') {
+                parse_room_initializer(&entry[room_open..=room_close], &mut result);
+            }
+        }
+        cursor = close + 1;
+    }
+    result
+}
+
+fn quoted_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = source.as_bytes();
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor] != b'"' {
+            cursor += 1;
+            continue;
+        }
+        let start = cursor + 1;
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor] != b'"' {
+            cursor += if bytes[cursor] == b'\\' { 2 } else { 1 };
+        }
+        if cursor <= bytes.len() {
+            ranges.push(start..cursor);
+        }
+        cursor += 1;
+    }
+    ranges
+}
+
+fn matching_delimiter(source: &str, open: usize, left: u8, right: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(open) != Some(&left) {
+        return None;
+    }
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut cursor = open;
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if quoted {
+            if byte == b'\\' {
+                cursor += 2;
+                continue;
+            }
+            quoted = byte != b'"';
+        } else if byte == b'"' {
+            quoted = true;
+        } else if byte == left {
+            depth += 1;
+        } else if byte == right {
+            depth -= 1;
+            if depth == 0 {
+                return Some(cursor);
+            }
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn parse_room_initializer(source: &str, result: &mut BTreeMap<i8, BTreeSet<i16>>) {
+    let bytes = source.as_bytes();
+    let mut depth = 0;
+    let mut room_start = None;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if byte == b'{' {
+            depth += 1;
+            if depth == 2 {
+                room_start = Some(index);
+            }
+        } else if byte == b'}' {
+            if depth == 2
+                && let Some(start) = room_start.take()
+            {
+                let values = signed_integers(&source[start..=index]);
+                if let Some((&room, points)) = values.split_first()
+                    && let Ok(room) = i8::try_from(room)
+                {
+                    result
+                        .entry(room)
+                        .or_default()
+                        .extend(points.iter().filter_map(|point| i16::try_from(*point).ok()));
+                }
+            }
+            depth -= 1;
+        }
+    }
+}
+
+fn signed_integers(source: &str) -> Vec<i32> {
+    source
+        .split(|character: char| !character.is_ascii_digit() && character != '-')
+        .filter(|token| !token.is_empty() && *token != "-")
+        .filter_map(|token| token.parse().ok())
+        .collect()
 }
 
 #[derive(Default)]
@@ -278,6 +414,7 @@ mod tests {
         assert_eq!(summaries[0].friendly_name.as_deref(), Some("Ordon Village"));
         let options = stage_boot_options(&root, "F_SP103").unwrap();
         assert!(options.inventory_indexed);
+        assert!(options.spawn_points_indexed);
         assert_eq!(
             options.rooms.iter().map(|room| room.id).collect::<Vec<_>>(),
             [0, 1]
@@ -286,5 +423,19 @@ mod tests {
         assert_eq!(options.rooms[1].layers, [-1, 3]);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checked_in_map_loader_supplies_sacred_grove_spawn_choices() {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .canonicalize()
+            .unwrap();
+        let source = fs::read_to_string(repository.join(MAP_LOADER_DEFINITIONS)).unwrap();
+        let spawns = parse_map_loader_spawns(&source, "F_SP117");
+        assert!(spawns[&1].contains(&1));
+        assert!(!spawns[&1].contains(&0));
+        assert!(spawns[&2].contains(&0));
+        assert!(spawns[&3].contains(&0));
     }
 }

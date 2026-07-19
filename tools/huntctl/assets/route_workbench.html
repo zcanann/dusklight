@@ -162,6 +162,7 @@
     .boot-field input,.boot-field select { width:100%; padding:7px 8px; border:1px solid var(--line); border-radius:5px; background:#090d13; color:var(--text); }
     .boot-choice { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(76px,.65fr); gap:5px; }
     .boot-source { color:#697689; font-size:9px; line-height:1.35; }
+    .boot-source.warn { color:var(--amber); }
     .boot-field textarea { min-height:170px; }
     .boot-toggle { display:flex; align-items:flex-start; gap:9px; padding:10px; border:1px solid rgba(231,189,104,.4); border-radius:6px; color:var(--amber); font-size:11px; line-height:1.45; }
     .boot-toggle input { margin-top:2px; }
@@ -279,8 +280,9 @@
   <dialog id="bootEditor">
     <form id="bootForm" class="editor" method="dialog">
       <h2>Edit boot configuration</h2>
-      <p>This is explicit workspace launch metadata. Leave the override disabled for the tape's authored, cheat-free boot.</p>
-      <label class="boot-toggle"><input id="bootOverrideEnabled" type="checkbox"><span>Enable boot override for this route or standalone tape. Playback will replace the artifact's authored boot configuration.</span></label>
+      <p>Leave the override disabled to use the starting point stored with this tape.</p>
+      <label class="boot-toggle"><input id="bootOverrideEnabled" type="checkbox"><span>Use a different starting point for playback in this workspace.</span></label>
+      <div id="bootEditStatus" class="boot-source"></div>
       <div class="boot-tabs" role="tablist"><button id="bootTabLocation" class="boot-tab active" type="button" role="tab">Location</button><button id="bootTabInventory" class="boot-tab" type="button" role="tab">Inventory</button><button id="bootTabAdvanced" class="boot-tab" type="button" role="tab">Advanced fixture</button></div>
       <div id="bootPanelLocation" class="boot-panel boot-grid" role="tabpanel">
         <label class="boot-field"><span>Boot type</span><select id="bootKind"><option value="process">Process boot</option><option value="stage">Stage boot</option></select></label>
@@ -289,6 +291,7 @@
         <label class="boot-field"><span>Spawn point</span><span class="boot-choice"><select id="bootPointChoice" aria-label="Known spawn point"><option value="">Custom...</option></select><input id="bootPoint" type="number" min="-32768" max="32767" value="1" aria-label="Editable spawn point"></span></label>
         <label class="boot-field"><span>Layer</span><span class="boot-choice"><select id="bootLayerChoice" aria-label="Known layer"><option value="">Custom...</option></select><input id="bootLayer" type="number" min="-128" max="127" value="-1" aria-label="Editable layer"></span></label>
         <label class="boot-field"><span>Load save slot</span><select id="bootSaveSlot"><option value="">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+        <span id="bootCoordinateStatus" class="boot-field wide boot-source"></span>
       </div>
       <div id="bootPanelInventory" class="boot-panel" role="tabpanel" hidden>
         <div class="inventory-head"><p>Choose which slots stage boot initializes. “Inherit” leaves the loaded state untouched.</p><button id="inventoryInheritAll" type="button">Inherit all</button><button id="inventoryDefaultAll" type="button">Default all</button><button id="inventoryClearAll" type="button">Clear all</button></div>
@@ -313,6 +316,7 @@
     let predicateEditRevision = null;
     let predicateEditOwner = null;
     let bootEditProject = null;
+    let bootEditTapeBoot = null;
     let bootStageMetadata = null;
     let bootStageRequest = 0;
     let bootFixtureDraft = null;
@@ -381,8 +385,11 @@
     const workspaceEntry = () => graph?.projects?.entries?.find(item=>item.id===workspaceSelection)||null;
     const standaloneWorkspaceEntry = () => { const entry=workspaceEntry(); return entry&&entry.kind!=='timeline'?entry:null; };
     const projectBootIcon=project=>{
-      const custom=project.boot_override?.enabled||project.boot?.kind==='stage';
-      return custom?'<span class="project-icon" title="Custom boot" aria-label="Custom boot">🫠</span>':'<span class="project-icon" title="Normal process boot" aria-label="Normal process boot">💿</span>';
+      const overridden=project.boot_override?.enabled===true;
+      const boot=overridden?project.boot_override.boot:project.boot;
+      const source=overridden?'workspace override':'stored in tape';
+      if(boot?.kind==='stage')return `<span class="project-icon" title="Starts in ${escapeHtml(boot.stage||'a stage')} (${source})" aria-label="Tape stage boot">🗺️</span>`;
+      return '<span class="project-icon" title="Tape starts from game startup" aria-label="Tape process boot">💿</span>';
     };
     function renderProjects() {
       const root=$('projects');
@@ -661,6 +668,11 @@
       const fixture=boot.fixture;
       return field('Type','Stage boot')+field('Map',boot.stage,true)+field('Room',boot.room)+field('Spawn point',boot.point)+field('Layer',boot.layer)+field('Save slot',boot.save_slot??'None')+(fixture?field('Loadout',fixture.name||'Fixture')+field('Form',fixture.form||'Default')+field('Inventory entries',(fixture.inventory||[]).length)+field('Equipment entries',(fixture.equipment||[]).length)+field('Flags',(fixture.flags||[]).length)+field('RNG streams',(fixture.rng||[]).length):field('Loadout','Default'));
     }
+    function bootSummary(boot,overridden=false) {
+      const prefix=overridden?'Saved override · ':'Tape · ';
+      if(!boot||boot.kind==='process')return `${prefix}Game startup`;
+      return `${prefix}${boot.stage||'Unknown map'} · room ${boot.room??'—'} · spawn ${boot.point??'—'}`;
+    }
     function goalDetail(segmentId,proofs=[]) {
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
@@ -748,7 +760,8 @@
         const boot=standalone?null:(graph.origin?.recordable_from_boot?graph.origin:null);
         const authored=standalone?[standalone.boot||{kind:'process'}]:(graph.origin?.configurations||[{kind:'process'}]);
         const configurations=override?.enabled?[override.boot]:authored;
-        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${override?.enabled?'override enabled':'authored boot'}</span></div><div class="actions">${boot?`<button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button>`:''}<button class="rename" type="button" data-edit-boot="${escapeHtml(workspace?.id||'')}">Edit boot…</button></div></section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>${override?.enabled?'Effective override':`Authored configuration${configurations.length>1?` ${index+1}`:''}`}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}</div>`;
+        const inactiveOverride=override&&!override.enabled?`<div class="detail-section"><h3>Saved override · Off</h3><div class="fields">${bootFields(override.boot)}</div></div>`:'';
+        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${escapeHtml(bootSummary(configurations[0],override?.enabled))}</span>${override&&!override.enabled?'<span class="badge">Saved override off</span>':''}</div><div class="actions">${boot?`<button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button>`:''}<button class="rename" type="button" data-edit-boot="${escapeHtml(workspace?.id||'')}">Edit boot…</button></div></section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>${override?.enabled?'Playback starts from saved override':`Playback starts from tape${configurations.length>1?` · option ${index+1}`:''}`}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}${inactiveOverride}</div>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
         if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
@@ -757,7 +770,12 @@
         if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='project') {
         const project=graph.projects.entries.find(item=>item.id===selection.id);
-        if(project){const artifact=project.artifact||{};html=`<section class="property-summary"><div class="detail-kicker">Tape</div><div class="detail-title">${escapeHtml(project.label)}</div>${project.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(project.thumbnail)}" alt="Terminal frame">`:''}</section><div class="property-content"><div class="detail-section"><h3>Boot configuration</h3><div class="fields">${project.boot?bootFields(project.boot):field('Status','Invalid')}</div></div><div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button><button class="capture" type="button" data-capture-kind="project" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>${project.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button></div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;}
+        if(project){
+          const artifact=project.artifact||{},stored=project.boot||{kind:'process'},override=project.boot_override;
+          const effective=override?.enabled?override.boot:stored;
+          const storedSection=override?.enabled?`<div class="detail-section"><h3>Stored in tape · Not used</h3><div class="fields">${bootFields(stored)}</div></div>`:'';
+          html=`<section class="property-summary"><div class="detail-kicker">Tape</div><div class="detail-title">${escapeHtml(project.label)}</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${escapeHtml(bootSummary(effective,override?.enabled))}</span></div>${project.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(project.thumbnail)}" alt="Terminal frame">`:''}</section><div class="property-content"><div class="detail-section"><h3>Playback starts here</h3><div class="fields">${bootFields(effective)}</div></div>${storedSection}<div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button><button class="capture" type="button" data-capture-kind="project" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>${project.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button></div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;
+        }
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
@@ -861,9 +879,35 @@
       const room=rooms.find(candidate=>String(candidate.id)===String(roomValue));
       fillBootChoice('bootPointChoice',room?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`);
       fillBootChoice('bootLayerChoice',room?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`);
+      updateBootCoordinateStatus();
     }
-    async function refreshStageChoices() {
+    function adoptKnownRoom(room) {
+      if(!room)return;
+      $('bootRoom').value=String(room.id);
+      $('bootPoint').value=String(room.spawn_points?.[0]??0);
+      $('bootLayer').value=String(room.layers?.includes(-1)?-1:(room.layers?.[0]??-1));
+      applyStageRoomChoices();
+    }
+    function bootCoordinateWarning() {
+      if($('bootKind').value!=='stage'||!bootStageMetadata)return '';
+      const room=(bootStageMetadata.rooms||[]).find(candidate=>String(candidate.id)===$('bootRoom').value);
+      if(!room)return `Room ${$('bootRoom').value} is not indexed for ${$('bootStage').value}.`;
+      if(room.spawn_points?.length&&!room.spawn_points.map(String).includes($('bootPoint').value))return `Spawn ${$('bootPoint').value} is not indexed for ${$('bootStage').value} room ${room.id}.`;
+      if(room.layers?.length&&!room.layers.map(String).includes($('bootLayer').value))return `Layer ${$('bootLayer').value} is not indexed for ${$('bootStage').value} room ${room.id}.`;
+      return '';
+    }
+    function updateBootCoordinateStatus() {
+      const warning=bootCoordinateWarning(),element=$('bootCoordinateStatus');
+      element.textContent=warning?`${warning} Raw values are allowed, but may crash the native stage loader.`:(bootStageMetadata?'Known indexed stage coordinates.':'');
+      element.classList.toggle('warn',Boolean(warning));
+    }
+    async function refreshStageChoices(adoptDefaults=false) {
       const stage=$('bootStage').value.trim(),request=++bootStageRequest;
+      if(adoptDefaults) {
+        $('bootRoom').value='0';
+        $('bootPoint').value='0';
+        $('bootLayer').value='-1';
+      }
       populateStageChoices(stage);bootStageMetadata=null;applyStageRoomChoices();
       if(!(graph.projects.stages||[]).some(candidate=>candidate.id===stage)) {
         $('bootStageSource').textContent='Custom raw stage ID; room, spawn, and layer remain manually editable.';
@@ -874,8 +918,9 @@
         const response=await fetch('/api/workspace/stage-options',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({stage})});
         const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         if(request!==bootStageRequest)return;
-        bootStageMetadata=body;applyStageRoomChoices();
-        $('bootStageSource').textContent=body.inventory_indexed?'Rooms from extracted disc; spawn points and layers from the read-only world index.':'Rooms from extracted disc; spawn and layer stay manual until this stage has a world index.';
+        bootStageMetadata=body;
+        if(adoptDefaults)adoptKnownRoom(body.rooms?.[0]);else applyStageRoomChoices();
+        $('bootStageSource').textContent=body.inventory_indexed?'Rooms from extracted disc; spawn points and layers from the read-only world index.':body.spawn_points_indexed?'Rooms from extracted disc; spawn points from Dusklight’s checked-in map list; layer defaults to automatic.':'Rooms from extracted disc; spawn stays manual because no known point list is available.';
       } catch(error) {
         if(request!==bootStageRequest)return;
         $('bootStageSource').textContent=`Could not read known choices: ${error.message}`;
@@ -885,6 +930,7 @@
       const project=graph.projects.entries.find(item=>item.id===projectId);if(!project)return;
       bootEditProject=project.id;
       const authored=project.kind==='timeline'?(graph.origin?.configurations||[{kind:'process'}])[0]:(project.boot||{kind:'process'});
+      bootEditTapeBoot=authored||{kind:'process'};
       const configuration=project.boot_override?.boot||authored||{kind:'process'};
       $('bootOverrideEnabled').checked=project.boot_override?.enabled===true;
       $('bootKind').value=configuration.kind==='stage'?'stage':'process';
@@ -895,7 +941,11 @@
       $('bootSaveSlot').value=configuration.save_slot==null?'':String(configuration.save_slot);
       bootFixtureDraft=configuration.fixture?JSON.parse(JSON.stringify(configuration.fixture)):null;
       syncFixtureEditor();
-      $('bootError').textContent='';selectBootTab('location');setBootStageFieldsEnabled();populateStageChoices($('bootStage').value);renderInventoryEditor();$('bootEditor').showModal();void refreshStageChoices();
+      $('bootError').textContent='';updateBootEditStatus();selectBootTab('location');setBootStageFieldsEnabled();populateStageChoices($('bootStage').value);renderInventoryEditor();$('bootEditor').showModal();void refreshStageChoices();
+    }
+    function updateBootEditStatus() {
+      const active=$('bootOverrideEnabled').checked;
+      $('bootEditStatus').textContent=active?`Playback will use the fields below. ${bootSummary(bootEditTapeBoot)} remains unchanged.`:`Playback will use ${bootSummary(bootEditTapeBoot)}. The fields below are only a saved override.`;
     }
     function boundedInteger(id,min,max) {
       const value=Number($(id).value);
@@ -910,12 +960,14 @@
         if($('bootKind').value==='stage') {
           const fixture=bootActiveTab==='advanced'?fixtureFromEditor():bootFixtureDraft;
           boot={kind:'stage',stage:$('bootStage').value.trim(),room:boundedInteger('bootRoom',-128,127),point:boundedInteger('bootPoint',-32768,32767),layer:boundedInteger('bootLayer',-128,127)};
+          const coordinateWarning=bootCoordinateWarning();
+          if(coordinateWarning&&!window.confirm(`${coordinateWarning}\n\nThis raw combination may crash the native stage loader. Save it anyway?`))return;
           if($('bootSaveSlot').value)boot.save_slot=Number($('bootSaveSlot').value);
           if(fixture)boot.fixture=fixture;
         }
         const response=await fetch('/api/workspace/boot',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({project:bootEditProject,enabled:$('bootOverrideEnabled').checked,boot})});
         const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        $('bootEditor').close();toast(body.enabled?'Boot override enabled. Playback will use the declared stage/loadout.':'Boot override saved but disabled. Playback remains on the authored boot.');await load();
+        $('bootEditor').close();toast(body.enabled?'Playback will use the workspace starting-point override.':'Playback will use the starting point stored with the tape.');await load();
       } catch(error) { $('bootError').textContent=error.message; }
       finally { button.disabled=false;button.textContent='Save boot configuration'; }
     }
@@ -1179,22 +1231,23 @@
     $('playbackSpeed').addEventListener('change',()=>saveSpeed('playbackSpeed',PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
     $('savePredicate').addEventListener('click',savePredicate);
     $('saveBoot').addEventListener('click',saveBoot);
-    $('bootKind').addEventListener('change',()=>{setBootStageFieldsEnabled();renderInventoryEditor();});
+    $('bootOverrideEnabled').addEventListener('change',updateBootEditStatus);
+    $('bootKind').addEventListener('change',()=>{setBootStageFieldsEnabled();renderInventoryEditor();updateBootCoordinateStatus();});
     $('bootTabLocation').addEventListener('click',()=>selectBootTab('location'));
     $('bootTabInventory').addEventListener('click',()=>selectBootTab('inventory'));
     $('bootTabAdvanced').addEventListener('click',()=>selectBootTab('advanced'));
     $('inventoryInheritAll').addEventListener('click',()=>setInventoryAll('inherit'));
     $('inventoryDefaultAll').addEventListener('click',()=>setInventoryAll('default'));
     $('inventoryClearAll').addEventListener('click',()=>setInventoryAll('clear'));
-    $('bootStageChoice').addEventListener('change',()=>{if($('bootStageChoice').value)$('bootStage').value=$('bootStageChoice').value;void refreshStageChoices();});
-    $('bootStage').addEventListener('change',refreshStageChoices);
-    $('bootRoomChoice').addEventListener('change',()=>{if($('bootRoomChoice').value)$('bootRoom').value=$('bootRoomChoice').value;applyStageRoomChoices();});
-    $('bootRoom').addEventListener('change',applyStageRoomChoices);
-    $('bootPointChoice').addEventListener('change',()=>{if($('bootPointChoice').value)$('bootPoint').value=$('bootPointChoice').value;});
-    $('bootPoint').addEventListener('change',()=>fillBootChoice('bootPointChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`));
-    $('bootLayerChoice').addEventListener('change',()=>{if($('bootLayerChoice').value)$('bootLayer').value=$('bootLayerChoice').value;});
-    $('bootLayer').addEventListener('change',()=>fillBootChoice('bootLayerChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`));
-    $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootStageMetadata=null;bootFixtureDraft=null;bootActiveTab='location';bootStageRequest+=1;});
+    $('bootStageChoice').addEventListener('change',()=>{if($('bootStageChoice').value)$('bootStage').value=$('bootStageChoice').value;void refreshStageChoices(true);});
+    $('bootStage').addEventListener('change',()=>void refreshStageChoices(true));
+    $('bootRoomChoice').addEventListener('change',()=>{const room=(bootStageMetadata?.rooms||[]).find(candidate=>String(candidate.id)===$('bootRoomChoice').value);if(room)adoptKnownRoom(room);});
+    $('bootRoom').addEventListener('change',()=>{const room=(bootStageMetadata?.rooms||[]).find(candidate=>String(candidate.id)===$('bootRoom').value);if(room)adoptKnownRoom(room);else{$('bootPoint').value='0';$('bootLayer').value='-1';applyStageRoomChoices();}});
+    $('bootPointChoice').addEventListener('change',()=>{if($('bootPointChoice').value)$('bootPoint').value=$('bootPointChoice').value;updateBootCoordinateStatus();});
+    $('bootPoint').addEventListener('change',()=>{fillBootChoice('bootPointChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`);updateBootCoordinateStatus();});
+    $('bootLayerChoice').addEventListener('change',()=>{if($('bootLayerChoice').value)$('bootLayer').value=$('bootLayerChoice').value;updateBootCoordinateStatus();});
+    $('bootLayer').addEventListener('change',()=>{fillBootChoice('bootLayerChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`);updateBootCoordinateStatus();});
+    $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootEditTapeBoot=null;bootStageMetadata=null;bootFixtureDraft=null;bootActiveTab='location';bootStageRequest+=1;});
     $('predicateEditor').addEventListener('close',()=>{predicateEditRevision=null;predicateEditOwner=null;});
     load();
   })();
