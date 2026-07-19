@@ -254,8 +254,10 @@ frame neutral
         String::from_utf8_lossy(&contradictory.stderr)
             .contains("repetitions produced contradictory exact proofs")
     );
-    let quarantine_path =
-        directory.join("contradictory-proof-state/candidate-000000/quarantine.json");
+    let quarantine_path = directory
+        .join("contradictory-proof-state")
+        .join("candidate-000000")
+        .join("quarantine.json");
     assert!(
         String::from_utf8_lossy(&contradictory.stderr).contains(quarantine_path.to_str().unwrap())
     );
