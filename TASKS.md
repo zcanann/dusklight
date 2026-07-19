@@ -134,7 +134,7 @@ one cheap objective without receiving a separate execution or proof path.
   in the loop before calling it a winner.
 - [x] Keep contradictory replays and quarantine that candidate/build/scenario
   combination instead of averaging the contradiction away.
-- [ ] Emit a compact report comparing budget, objective hits, useful boundary
+- [x] Emit a compact report comparing budget, objective hits, useful boundary
   states, replay verdict, and best proved tape per proposer.
 
 **Done when:** the reported winner is a minimized, repeated, replayable tape,
