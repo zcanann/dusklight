@@ -560,7 +560,27 @@ pub(super) fn tape_intervention(
 }
 
 pub(super) fn required_native_facts_supported(attempts: &[AttemptEvidence]) -> bool {
-    native_terminals_support_required_facts(attempts.iter().map(|attempt| attempt.harness_terminal))
+    if attempts
+        .iter()
+        .any(|attempt| attempt.harness_terminal.is_some())
+    {
+        return native_terminals_support_required_facts(
+            attempts.iter().map(|attempt| attempt.harness_terminal),
+        );
+    }
+
+    // Anchored route evaluation predates HarnessRunResult, but its first
+    // repetition extracts the same authenticated observation view into a
+    // sealed transition corpus. That successful extraction is direct evidence
+    // that the required native facts and channel ABI were available. Later
+    // repetitions intentionally omit traces and must not negate it.
+    !attempts.is_empty()
+        && attempts
+            .iter()
+            .all(|attempt| attempt.infrastructure_error.is_none())
+        && attempts
+            .iter()
+            .any(|attempt| attempt.transition_corpus.is_some())
 }
 
 pub(super) fn native_terminals_support_required_facts(
