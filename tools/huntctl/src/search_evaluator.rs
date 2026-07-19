@@ -2411,15 +2411,43 @@ fn tape_intervention(parent: &InputTape, child: &InputTape) -> Option<Interventi
 }
 
 fn required_native_facts_supported(attempts: &[AttemptEvidence]) -> bool {
-    !attempts.is_empty()
-        && attempts.iter().all(|attempt| {
-            !matches!(
-                attempt.harness_terminal,
-                None | Some(
-                    HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch
-                )
+    native_terminals_support_required_facts(attempts.iter().map(|attempt| attempt.harness_terminal))
+}
+
+fn native_terminals_support_required_facts(
+    terminals: impl IntoIterator<Item = Option<HarnessTerminalReason>>,
+) -> bool {
+    let mut observed = false;
+    for terminal in terminals {
+        observed = true;
+        if matches!(
+            terminal,
+            None | Some(
+                HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch
             )
-        })
+        ) {
+            return false;
+        }
+    }
+    observed
+}
+
+fn learned_holdout_scores_adequate(
+    rows: impl IntoIterator<Item = (bool, LexicographicScore)>,
+) -> bool {
+    let mut best_learned: Option<LexicographicScore> = None;
+    let mut best_baseline: Option<LexicographicScore> = None;
+    for (learned, score) in rows {
+        let best = if learned {
+            &mut best_learned
+        } else {
+            &mut best_baseline
+        };
+        if best.as_ref().is_none_or(|incumbent| score > *incumbent) {
+            *best = Some(score);
+        }
+    }
+    matches!((best_learned, best_baseline), (Some(learned), Some(baseline)) if learned >= baseline)
 }
 
 fn learned_proposal_held_out_performance(
@@ -2431,25 +2459,13 @@ fn learned_proposal_held_out_performance(
         .iter()
         .map(|member| (member.candidate_id.as_str(), member))
         .collect::<BTreeMap<_, _>>();
-    let mut best_learned: Option<LexicographicScore> = None;
-    let mut best_baseline: Option<LexicographicScore> = None;
-    for row in leaderboard {
-        let Some(member) = member_by_id.get(row.candidate_id.as_str()) else {
-            continue;
-        };
+    learned_holdout_scores_adequate(leaderboard.iter().filter_map(|row| {
+        let member = member_by_id.get(row.candidate_id.as_str())?;
         let learned = member.ancestry.mutation.as_deref().is_some_and(|mutation| {
             mutation.starts_with("q_guided") || mutation.starts_with("q_disagreement_heuristic")
         });
-        let best = if learned {
-            &mut best_learned
-        } else {
-            &mut best_baseline
-        };
-        if best.as_ref().is_none_or(|score| row.score > *score) {
-            *best = Some(row.score.clone());
-        }
-    }
-    matches!((best_learned, best_baseline), (Some(learned), Some(baseline)) if learned >= baseline)
+        Some((learned, row.score))
+    }))
 }
 
 pub fn run_anchored_search(
@@ -2519,6 +2535,7 @@ pub fn run_anchored_search(
     let mut training_corpora = BTreeMap::<String, TransitionCorpus>::new();
     let mut previous_dataset_generation: Option<OnlineDatasetGeneration> = None;
     let mut previous_model_lineage: Option<OnlineModelLineage> = None;
+    let mut initial_learned_trial_consumed = false;
     let mut behavior_archive = BehaviorArchive::default();
     let mut semantic_novelty_catalog = SemanticNoveltyCatalog::default();
     for generation in 0..search.generations {
@@ -2781,7 +2798,7 @@ pub fn run_anchored_search(
                     .then_with(|| left_id.cmp(&right_id))
             });
             let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
-            let initial_bounded_trial = previous_model_lineage.is_none();
+            let initial_bounded_trial = !initial_learned_trial_consumed;
             let readiness = QProposalReadinessEvidence {
                 required_facts_supported: required_native_facts_supported(&report.attempts),
                 determinism_proved: report.repetitions >= 2
@@ -2817,6 +2834,16 @@ pub fn run_anchored_search(
             };
             let q_candidates = match q_result {
                 Ok(batch) => {
+                    if batch.summary.proposal_gate.initial_bounded_trial
+                        && batch.summary.proposal_gate.learned_policy_enabled
+                        && batch
+                            .summary
+                            .collection_schedule
+                            .iter()
+                            .any(|lane| matches!(*lane, "guided_exploit" | "ensemble_disagreement"))
+                    {
+                        initial_learned_trial_consumed = true;
+                    }
                     if let Some(lineage) = batch.summary.model_lineage.as_ref() {
                         write_json(&population_root.join("online-model-lineage.json"), lineage)?;
                         previous_model_lineage = Some(lineage.clone());
@@ -5923,6 +5950,61 @@ impl From<crate::bayesian_search::BayesianError> for EvaluateError {
 mod minimize_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn heldout_score(first_hit_tick: u64) -> LexicographicScore {
+        LexicographicScore {
+            goal_feasible: true,
+            milestone_depth: 2,
+            successes: 2,
+            attempts: 2,
+            median_first_hit_tick: first_hit_tick,
+            best_first_hit_tick: first_hit_tick,
+            tape_frames: 8,
+            input_complexity: 2,
+            risk_events: Some(0),
+            boundary_compatibility: crate::search::BoundaryCompatibility::Exact,
+        }
+    }
+
+    #[test]
+    fn proposal_readiness_requires_observed_supported_native_terminals() {
+        assert!(!native_terminals_support_required_facts([]));
+        assert!(native_terminals_support_required_facts([
+            Some(HarnessTerminalReason::Reached),
+            Some(HarnessTerminalReason::Exhausted),
+        ]));
+        assert!(!native_terminals_support_required_facts([None]));
+        assert!(!native_terminals_support_required_facts([Some(
+            HarnessTerminalReason::Unsupported,
+        )]));
+        assert!(!native_terminals_support_required_facts([Some(
+            HarnessTerminalReason::CapabilityMismatch,
+        )]));
+    }
+
+    #[test]
+    fn learned_holdout_must_match_or_beat_a_native_baseline() {
+        assert!(!learned_holdout_scores_adequate([(
+            false,
+            heldout_score(10)
+        ),]));
+        assert!(!learned_holdout_scores_adequate([(
+            true,
+            heldout_score(10)
+        ),]));
+        assert!(learned_holdout_scores_adequate([
+            (false, heldout_score(10)),
+            (true, heldout_score(10)),
+        ]));
+        assert!(learned_holdout_scores_adequate([
+            (false, heldout_score(10)),
+            (true, heldout_score(5)),
+        ]));
+        assert!(!learned_holdout_scores_adequate([
+            (false, heldout_score(10)),
+            (true, heldout_score(20)),
+        ]));
+    }
 
     #[test]
     fn attempt_outcomes_keep_all_terminal_classes_distinct() {
