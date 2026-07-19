@@ -164,6 +164,7 @@ pub fn minimize_anchored_route(
                 &current,
                 accepted_id,
             )?);
+            round += 1;
             break;
         } else {
             granularity = (partitions * 2).min(current.candidate.actions.len());
