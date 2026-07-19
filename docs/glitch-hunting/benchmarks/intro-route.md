@@ -120,7 +120,7 @@ and must be rescored.
 
 The current curated boot frontier reaches durable control at simulation/tape
 frame 439 with boundary fingerprint
-`bae78db89b3e5e4e5b9ae61c4ca43867` under the v2 fingerprint contract. It was
+`cb138869f3fbbb433046e39218d3b0a4` under the v4 fingerprint contract. It was
 obtained by reducing an 800-frame
 alternating A/Start baseline while holding that tick and fingerprint immutable.
 The resulting absolute tape has eight non-neutral frames and reproduced the
