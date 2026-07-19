@@ -8,14 +8,12 @@ use huntctl::content_store::{ContentKind, ContentStore};
 use huntctl::continuous_search::{ContinuousAxes, ContinuousMethod};
 use huntctl::controller_compilation::{ControllerObservationProvenance, compile_static_controller};
 use huntctl::controller_program::ControllerProgram;
-use huntctl::corpus::Corpus;
 use huntctl::dataset::{
     DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
     DatasetSplit,
 };
 use huntctl::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
 use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
-use huntctl::episode_store::EpisodeStore;
 use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
@@ -73,7 +71,6 @@ use huntctl::tape_edit::{diff as diff_tapes, layer_at, resample_to_canonical};
 use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
 use huntctl::timeline::Timeline;
 use huntctl::trace_diff::SiblingTraceDiff;
-use huntctl::transition_corpus::TransitionCorpus;
 use huntctl::transition_evidence::{
     ImmutableEpisodeArtifact, TerminalReasonEvidence, TransitionEvidenceBuild,
     TransitionEvidenceBundle,
@@ -85,7 +82,7 @@ use huntctl::world_spatial::{
     Aabb3, WorldAabbQueryRequest, WorldPointQueryRequest, WorldRayQueryRequest, WorldSpatialIndex,
     WorldSurfaceFilter,
 };
-use huntctl::{ArtifactIdentity, BuildIdentity, CompatibilityMode, Digest, ensure_compatible};
+use huntctl::{ArtifactIdentity, CompatibilityMode, Digest, ensure_compatible};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,7 +119,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "conformance" => cli::conformance::command_conformance(&args[1..]),
         "harness" => command_harness(&args[1..]),
         "identity" => command_identity(&args[1..]),
-        "corpus" => command_corpus(&args[1..]),
+        "corpus" => cli::corpus::command_corpus(&args[1..]),
         "controller" => command_controller(&args[1..]),
         "milestone" => command_milestone(&args[1..]),
         "fixture" => command_fixture(&args[1..]),
@@ -1441,250 +1438,6 @@ fn timeline_selections(args: &[String]) -> Result<BTreeMap<String, String>, Box<
         }
     }
     Ok(output)
-}
-
-fn command_corpus(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("init") if args.len() == 2 => {
-            let corpus = Corpus::initialize(&args[1])?;
-            println!("initialized {}", corpus.root().display());
-            Ok(())
-        }
-        Some("ingest") if args.len() >= 2 => {
-            let corpus = Corpus::open(&args[1])?;
-            let tape_path = required_path(args, "--tape")?;
-            let build_path = required_path(args, "--build")?;
-            let scenario = option(args, "--scenario").ok_or("missing required --scenario ID")?;
-            let build: BuildIdentity = serde_json::from_slice(&fs::read(build_path)?)?;
-            let metadata = if let Some(path) = option(args, "--scenario-json") {
-                serde_json::from_slice(&fs::read(path)?)?
-            } else {
-                json!({})
-            };
-            let result = corpus.ingest(&fs::read(tape_path)?, build, scenario, metadata)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "artifact_id": result.artifact_id,
-                    "tape_digest": result.tape_digest,
-                    "created": result.created
-                }))?
-            );
-            Ok(())
-        }
-        Some("list") if args.len() == 2 => {
-            let artifacts: Vec<Value> = Corpus::open(&args[1])?
-                .list()?
-                .into_iter()
-                .map(|artifact| {
-                    json!({
-                        "artifact_id": artifact.artifact_id,
-                        "scenario": artifact.manifest.scenario.id,
-                        "frame_count": artifact.manifest.frame_count,
-                        "tape_digest": artifact.manifest.tape.digest
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&artifacts)?);
-            Ok(())
-        }
-        Some("show") if args.len() == 3 => {
-            let artifact_id: Digest = args[2].parse()?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&Corpus::open(&args[1])?.show(artifact_id)?)?
-            );
-            Ok(())
-        }
-        Some("verify") if args.len() == 2 => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&Corpus::open(&args[1])?.verify()?)?
-            );
-            Ok(())
-        }
-        Some("query") => {
-            let inputs = repeated_option(&args[1..], "--input")
-                .into_iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
-            let action = option(&args[1..], "--action")
-                .map(|value| value.parse())
-                .transpose()?;
-            let terminal = option(&args[1..], "--terminal")
-                .map(|value| value.parse::<bool>())
-                .transpose()?;
-            let minimum_reward = option(&args[1..], "--minimum-reward")
-                .map(|value| value.parse::<f32>())
-                .transpose()?;
-            let rows = huntctl::corpus_ops::query(
-                &inputs,
-                action,
-                terminal,
-                minimum_reward,
-                usize_option(&args[1..], "--limit", 1000)?,
-            )?;
-            println!("{}", serde_json::to_string_pretty(&rows)?);
-            Ok(())
-        }
-        Some("compare") => {
-            let report = huntctl::corpus_ops::compare(
-                &required_path(&args[1..], "--left")?,
-                &required_path(&args[1..], "--right")?,
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("merge" | "compact") => {
-            let inputs = repeated_option(&args[1..], "--input")
-                .into_iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
-            let output = required_path(&args[1..], "--output")?;
-            let level = if args[0] == "compact" { 19 } else { 3 };
-            let report = huntctl::corpus_ops::merge(&inputs, &output, level)?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("shard") => {
-            let report = huntctl::corpus_ops::shard(
-                &required_path(&args[1..], "--input")?,
-                &required_path(&args[1..], "--output-directory")?,
-                usize_option(&args[1..], "--maximum-transitions", 100_000)?,
-                3,
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("refeature") => {
-            let descriptor = huntctl::corpus_ops::refeature(
-                &required_path(&args[1..], "--source")?,
-                &required_path(&args[1..], "--output")?,
-                &option(&args[1..], "--view").unwrap_or_else(|| MOVEMENT_STATE_V2_ID.into()),
-            )?;
-            println!("{}", serde_json::to_string_pretty(&descriptor)?);
-            Ok(())
-        }
-        Some("validate-transitions") => {
-            let inputs = repeated_option(&args[1..], "--input");
-            let mut reports = Vec::new();
-            for input in inputs {
-                let corpus = TransitionCorpus::read_zstd_file(&input)?;
-                reports.push(json!({
-                    "input": input,
-                    "content_sha256": corpus.content_digest()?,
-                    "feature_schema": corpus.feature_schema,
-                    "action_schema": corpus.action_schema,
-                    "transitions": corpus.transitions.len(),
-                }));
-            }
-            println!("{}", serde_json::to_string_pretty(&reports)?);
-            Ok(())
-        }
-        Some("quarantine") => {
-            let inputs = repeated_option(&args[1..], "--input")
-                .into_iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
-            let report = huntctl::corpus_ops::quarantine_invalid(
-                &inputs,
-                &required_path(&args[1..], "--quarantine-root")?,
-                !args[1..].iter().any(|argument| argument == "--apply"),
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("gc-content") => {
-            let corpus_args = &args[1..];
-            let store_root = required_path(corpus_args, "--store")?;
-            let trash_root = required_path(corpus_args, "--trash-root")?;
-            let mut referenced = BTreeSet::new();
-            for value in repeated_option(corpus_args, "--reference") {
-                referenced.insert(value.parse::<Digest>()?);
-            }
-            let manifests = repeated_option(corpus_args, "--manifest");
-            if manifests.is_empty() && referenced.is_empty() {
-                return Err(
-                    "corpus gc-content requires at least one --manifest or --reference".into(),
-                );
-            }
-            for manifest in manifests {
-                let bytes = fs::read(&manifest)?;
-                referenced.insert(Digest(Sha256::digest(&bytes).into()));
-                collect_json_digests(&serde_json::from_slice(&bytes)?, &mut referenced);
-            }
-            let report = ContentStore::initialize(store_root)?.garbage_collect(
-                &referenced,
-                &trash_root,
-                !flag(corpus_args, "--apply"),
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("verify-episodes") => {
-            let corpus_args = &args[1..];
-            let report =
-                EpisodeStore::open(required_path(corpus_args, "--store")?)?.verify_all()?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("gc-episodes") => {
-            let corpus_args = &args[1..];
-            let store = EpisodeStore::open(required_path(corpus_args, "--store")?)?;
-            let trash_root = required_path(corpus_args, "--trash-root")?;
-            let retained = repeated_option(corpus_args, "--retain-episode")
-                .into_iter()
-                .map(|value| value.parse::<Digest>())
-                .collect::<Result<BTreeSet<_>, _>>()?;
-            let additionally_referenced = repeated_option(corpus_args, "--reference")
-                .into_iter()
-                .map(|value| value.parse::<Digest>())
-                .collect::<Result<BTreeSet<_>, _>>()?;
-            let report = store.garbage_collect(
-                &retained,
-                &additionally_referenced,
-                &trash_root,
-                !flag(corpus_args, "--apply"),
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        Some("export-arrow") => {
-            let corpus_args = &args[1..];
-            let inputs = repeated_option(corpus_args, "--input")
-                .into_iter()
-                .map(PathBuf::from)
-                .collect::<Vec<_>>();
-            let report = huntctl::corpus_ops::export_arrow(
-                &inputs,
-                &required_path(corpus_args, "--output")?,
-            )?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
-        }
-        _ => usage_error(),
-    }
-}
-
-fn collect_json_digests(value: &Value, output: &mut BTreeSet<Digest>) {
-    match value {
-        Value::String(value) => {
-            if let Ok(digest) = value.parse() {
-                output.insert(digest);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                collect_json_digests(value, output);
-            }
-        }
-        Value::Object(values) => {
-            for value in values.values() {
-                collect_json_digests(value, output);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
 }
 
 fn command_pool(args: &[String]) -> Result<(), Box<dyn Error>> {

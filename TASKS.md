@@ -416,3 +416,13 @@ at an exact boundary.
 
 **Done when:** adding trace tooling cannot silently regrow the root Rust binary
 as a flat implementation module.
+
+## 29. Domain-owned corpus CLI adapter
+
+- [x] Move tape-corpus operations plus content/episode-store lifecycle commands
+  out of the root binary into one corpus CLI domain.
+- [x] Ratchet the reduced root binary and pass corpus lifecycle, lint, and
+  architecture gates without changing the public command surface.
+
+**Done when:** corpus and immutable-store lifecycle growth cannot silently
+accumulate in the root Rust binary.
