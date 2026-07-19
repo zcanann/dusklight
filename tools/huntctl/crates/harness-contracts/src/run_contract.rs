@@ -10,6 +10,7 @@ use super::observation_contract::{
     ObservationInventory,
 };
 use crate::artifact::{ArtifactIdentity, BuildIdentity, Digest};
+use crate::compatibility::{CompatibilityMode, ensure_compatible};
 pub use dusklight_automation_contracts::run_terminal::HarnessTerminalReason;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -352,11 +353,17 @@ impl HarnessRunResult {
         if self.schema != RUN_RESULT_SCHEMA_V2
             || self.request_id != request.id
             || self.request_sha256 != request.content_sha256
-            || self.identity != request.identity
             || self.attempt == 0
         {
             return Err(contract_error(
                 "run result does not bind the declared request",
+            ));
+        }
+        ensure_compatible(CompatibilityMode::Replay, &request.identity, &self.identity)
+            .map_err(|error| contract_error(error.to_string()))?;
+        if self.identity != request.identity {
+            return Err(contract_error(
+                "run result changed the request payload identity",
             ));
         }
         self.worker.validate()?;
@@ -1215,7 +1222,8 @@ mod tests {
 
         result.identity.settings_digest = Digest([98; 32]);
         result.refresh_content_sha256().unwrap();
-        assert!(result.validate_against(&request).is_err());
+        let error = result.validate_against(&request).unwrap_err();
+        assert!(error.to_string().contains("settings_digest"));
         fs::remove_dir_all(root).unwrap();
     }
 
