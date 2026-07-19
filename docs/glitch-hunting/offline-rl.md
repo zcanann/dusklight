@@ -690,11 +690,17 @@ event state, nearest-exit diagnostics, and finite-horizon time.
 `movement-state/v2` is a canonical objective-specific observation artifact,
 not another undocumented fixed vector. Its serialized specification includes
 the F_SP103-to-F_SP104 objective and target tuple, post-simulation phase, exact
-Trace v2 channel versions and strides, per-channel status policy, and 98
+channel versions and strides, per-channel status policy, and 98
 ordered features with stable field IDs, types, units, coordinate spaces,
 transforms, categorical flags, and missingness rules. Changing the objective,
 target, channel contract, or any feature metadata changes the SHA-256 feature
 schema stored by the transition corpus.
+
+Trace container versions 2 through 5 are admitted because later containers add
+authenticated boot and retention metadata outside the observation payload.
+The channel ABI remains exact: the current view binds player-action v3 and its
+canonical feature-schema digest is
+`4bc4cc410fbe8747bca7564661759239884a49ee6658dd1e7d332f6302069218`.
 
 The view consumes stage and pending-transition state, Link motion/procedure,
 applied input, event state, exact scene-exit geometry, collision correction,

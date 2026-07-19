@@ -1208,7 +1208,7 @@ pub fn movement_state_v2_spec() -> ObservationSpec {
             channel("scene_exit", 2, 88, PresentOrAbsent),
             channel("rng", 1, 64, Present),
             channel("camera", 1, 48, Present),
-            channel("player_action", 1, 104, Present),
+            channel("player_action", 3, 160, Present),
             channel("player_background_collision", 1, 128, Present),
             channel("player_collision_surfaces", 1, 496, Present),
         ],
@@ -1231,7 +1231,7 @@ mod tests {
         );
         assert_eq!(
             spec.digest().unwrap().to_string(),
-            "9c9055d7fc8d92b91191799fe5ad11cd620ea3f3acc420d44a7575b341e504dd"
+            "4bc4cc410fbe8747bca7564661759239884a49ee6658dd1e7d332f6302069218"
         );
         assert_eq!(spec.features.first().unwrap().name, "stage.byte0");
         assert_eq!(spec.features.last().unwrap().name, "window.remaining");

@@ -328,7 +328,11 @@ pub(super) fn run_trial(
             .arg("--milestone-result")
             .arg(&trial.milestones);
         if let Some(gameplay_trace) = &trial.gameplay_trace {
-            command.arg("--gameplay-trace").arg(gameplay_trace);
+            command
+                .arg("--gameplay-trace")
+                .arg(gameplay_trace)
+                .arg("--gameplay-trace-channels")
+                .arg("all");
         }
         command
             .arg("--cvar")

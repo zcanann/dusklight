@@ -588,7 +588,9 @@ fn validate_movement_trace_format_v2(
     trace: &DecodedTrace,
     spec: &ObservationSpec,
 ) -> Result<(), OfflineRlError> {
-    if trace.version != 2 {
+    // Container versions 3+ add authenticated boot/retention metadata while
+    // the per-channel version and stride below remain the observation ABI.
+    if trace.version < 2 {
         return Err(OfflineRlError::UnsupportedTraceVersion {
             expected: 2,
             actual: trace.version,
@@ -1550,7 +1552,7 @@ mod tests {
 
     fn fixture_v2() -> (DecodedTrace, InputTape) {
         let (mut trace, tape) = fixture();
-        trace.version = 2;
+        trace.version = 5;
         trace.requested_channels = TraceChannel::ALL
             .into_iter()
             .fold(0, |mask, channel| mask | channel.bit());
@@ -1563,7 +1565,7 @@ mod tests {
             (TraceChannel::SceneExit, 2, 88),
             (TraceChannel::Rng, 1, 64),
             (TraceChannel::Camera, 1, 48),
-            (TraceChannel::PlayerAction, 1, 104),
+            (TraceChannel::PlayerAction, 3, 160),
             (TraceChannel::PlayerBackgroundCollision, 1, 128),
             (TraceChannel::PlayerCollisionSurfaces, 1, 496),
         ]
