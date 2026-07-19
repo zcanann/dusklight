@@ -1,3 +1,4 @@
+use huntctl::controller_program::{ControllerProgram, Operation};
 use huntctl::harness::objective_suite::{
     ExpectedTerminalClass, OBJECTIVE_SUITE_SCHEMA_V2, ObjectiveBoot, ObjectiveCaseRole,
     ObjectiveSeed, ObjectiveSuite,
@@ -18,9 +19,9 @@ fn checked_suite() -> (PathBuf, ObjectiveSuite) {
     .unwrap();
     assert_eq!(suite.schema, OBJECTIVE_SUITE_SCHEMA_V2);
     let report = suite.validate_files(&repository).unwrap();
-    assert_eq!(report.case_count, 4);
-    assert_eq!(report.positive_count, 2);
-    assert_eq!(report.negative_control_count, 2);
+    assert_eq!(report.case_count, 8);
+    assert_eq!(report.positive_count, 4);
+    assert_eq!(report.negative_control_count, 4);
     (repository, suite)
 }
 
@@ -150,11 +151,13 @@ fn checked_in_reach_point_case_moves_to_a_stable_bounded_region() {
 }
 
 #[test]
-fn every_positive_has_a_cheap_neutral_negative_control() {
+fn every_positive_has_a_cheap_negative_control() {
     let (repository, suite) = checked_suite();
     for (positive_id, control_id) in [
         ("reach-point-ordon-ranch", "reach-point-ordon-ranch-neutral"),
         ("stage-ready-f-sp103", "stage-ready-f-sp103-wrong-stage"),
+        ("talk-to-aru", "talk-to-aru-no-interaction"),
+        ("pick-up-stone", "pick-up-stone-no-interaction"),
     ] {
         let positive = suite
             .cases
@@ -182,16 +185,97 @@ fn every_positive_has_a_cheap_neutral_negative_control() {
         assert_eq!(control.logical_tick_budget, positive.logical_tick_budget);
         assert_eq!(control.repetitions, positive.repetitions);
 
-        let ObjectiveSeed::TapeSource { artifact } = &control.seed else {
-            panic!("negative control must use an inspectable tape source");
-        };
-        let source = fs::read_to_string(repository.join(&artifact.path)).unwrap();
-        let tape = tape_dsl::parse(&source).unwrap().compile().unwrap().tape;
-        assert_eq!(tape.frames.len(), control.logical_tick_budget as usize);
+        match (&positive.seed, &control.seed) {
+            (ObjectiveSeed::TapeSource { .. }, ObjectiveSeed::TapeSource { artifact }) => {
+                let source = fs::read_to_string(repository.join(&artifact.path)).unwrap();
+                let tape = tape_dsl::parse(&source).unwrap().compile().unwrap().tape;
+                assert_eq!(tape.frames.len(), control.logical_tick_budget as usize);
+                assert!(
+                    tape.frames.iter().all(|frame| {
+                        frame.pads.iter().all(|pad| *pad == RawPadState::default())
+                    })
+                );
+            }
+            (
+                ObjectiveSeed::Controller {
+                    artifact: positive_artifact,
+                },
+                ObjectiveSeed::Controller {
+                    artifact: control_artifact,
+                },
+            ) => {
+                let positive_program = ControllerProgram::decode(
+                    &fs::read(repository.join(&positive_artifact.path)).unwrap(),
+                )
+                .unwrap();
+                let control_program = ControllerProgram::decode(
+                    &fs::read(repository.join(&control_artifact.path)).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    u64::from(positive_program.duration_frames),
+                    positive.logical_tick_budget
+                );
+                assert_eq!(
+                    u64::from(control_program.duration_frames),
+                    control.logical_tick_budget
+                );
+                assert!(
+                    positive_program
+                        .layers
+                        .iter()
+                        .any(|layer| matches!(layer.operation, Operation::Buttons { .. }))
+                );
+                assert!(
+                    control_program
+                        .layers
+                        .iter()
+                        .all(|layer| !matches!(layer.operation, Operation::Buttons { .. }))
+                );
+            }
+            _ => panic!("positive and control seeds must use the same input representation"),
+        }
+    }
+}
+
+#[test]
+fn interaction_cases_bind_exact_real_placements_and_player_action_v3() {
+    let (repository, suite) = checked_suite();
+    for (case_id, goal, identity_fragments) in [
+        (
+            "talk-to-aru",
+            "talk_to_aru",
+            [
+                "talk_partner.actor_name == 579",
+                "talk_partner.set_id == 65535",
+                "talk_partner.home_position.x between 448.79 and 448.80",
+            ],
+        ),
+        (
+            "pick-up-stone",
+            "pick_up_stone",
+            [
+                "grabbed_actor.actor_name == 765",
+                "grabbed_actor.set_id == 65535",
+                "grabbed_actor.home_position.x between 1073.22 and 1073.24",
+            ],
+        ),
+    ] {
+        let case = suite.cases.iter().find(|case| case.id == case_id).unwrap();
+        assert_eq!(case.objective.goal, goal);
+        assert_eq!(case.expected_terminal, ExpectedTerminalClass::Reached);
         assert!(
-            tape.frames
+            case.observation_requirements
+                .families
                 .iter()
-                .all(|frame| { frame.pads.iter().all(|pad| *pad == RawPadState::default()) })
+                .any(|family| { family.id == "player_action" && family.minimum_version == 3 })
         );
+        let source = fs::read_to_string(repository.join(&case.objective.source.path)).unwrap();
+        for fragment in identity_fragments {
+            assert!(
+                source.contains(fragment),
+                "{case_id} is missing {fragment:?}"
+            );
+        }
     }
 }

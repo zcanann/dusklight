@@ -1,0 +1,20 @@
+milestones 1.6
+
+# Require the real Speak prompt before the dialogue edge, then prove that the
+# event partner is the exact Aru placement rather than merely a nearby NPC.
+milestone talk_to_aru {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.interaction.do_status == 28 && !event.running
+  then stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       event.running && event.id == 267 &&
+       player.interaction.talk_partner.exists &&
+       player.interaction.talk_partner.actor_name == 579 &&
+       player.interaction.talk_partner.set_id == 65535 &&
+       player.interaction.talk_partner.home_room == 1 &&
+       player.interaction.talk_partner.current_room == 1 &&
+       player.interaction.talk_partner.home_position.x between 448.79 and 448.80 &&
+       player.interaction.talk_partner.home_position.y between 799.99 and 800.01 &&
+       player.interaction.talk_partner.home_position.z between -1848.11 and -1848.09
+  within 5
+}

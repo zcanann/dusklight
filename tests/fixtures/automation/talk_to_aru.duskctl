@@ -1,0 +1,7 @@
+duskcontrol 1
+frames 180
+
+# Aru uses the native unsigned set sentinel, which is still an exact placed
+# selector when combined with stage, room, and actor type.
+seek actor replace from 0 for 180 actor 579 set 65535 room 1 stage F_SP103 offset 0 0 0 magnitude 127 stop 100
+buttons from 105 for 1 A

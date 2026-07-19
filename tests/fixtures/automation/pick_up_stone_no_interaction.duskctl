@@ -1,0 +1,5 @@
+duskcontrol 1
+frames 230
+
+# Reach the same stone prompt but never press A.
+seek point replace from 0 for 230 target 1073.2289 800 -2751.3557 offset 0 0 0 magnitude 80 stop 50

@@ -1,0 +1,7 @@
+duskcontrol 1
+frames 230
+
+# Five same-type stones share the stage/set/room tuple. The immutable home
+# position used here and in the objective distinguishes the intended stone.
+seek point replace from 0 for 230 target 1073.2289 800 -2751.3557 offset 0 0 0 magnitude 80 stop 50
+buttons from 150 for 1 A

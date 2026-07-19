@@ -1,0 +1,252 @@
+{
+  "schema": "dusklight-observation-spec/v1",
+  "id": "talk-to-aru/v1",
+  "objective": {
+    "id": "talk_to_aru",
+    "source": {
+      "stage": "F_SP103",
+      "room": 1,
+      "layer": 3,
+      "point": 1
+    },
+    "target": {
+      "stage": "F_SP103",
+      "room": 1,
+      "layer": 3,
+      "point": 1
+    }
+  },
+  "phase": "post_simulation",
+  "channels": [
+    {
+      "channel": "stage",
+      "version": 1,
+      "stride": 32,
+      "status": "present"
+    },
+    {
+      "channel": "player_motion",
+      "version": 1,
+      "stride": 52,
+      "status": "present"
+    },
+    {
+      "channel": "event",
+      "version": 1,
+      "stride": 16,
+      "status": "present"
+    },
+    {
+      "channel": "player_action",
+      "version": 3,
+      "stride": 160,
+      "status": "present"
+    }
+  ],
+  "features": [
+    {
+      "field_id": 1,
+      "name": "stage.byte0",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 2,
+      "name": "stage.byte1",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 3,
+      "name": "stage.byte2",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 4,
+      "name": "stage.byte3",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 5,
+      "name": "stage.byte4",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 6,
+      "name": "stage.byte5",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 7,
+      "name": "stage.byte6",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 8,
+      "name": "stage.byte7",
+      "value_type": "unsigned_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "divide",
+        "divisor": 255
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 9,
+      "name": "stage.room",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 10,
+      "name": "stage.point",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 11,
+      "name": "player.present",
+      "value_type": "boolean",
+      "units": "none",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 12,
+      "name": "player.is_link",
+      "value_type": "boolean",
+      "units": "none",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 13,
+      "name": "event.running",
+      "value_type": "boolean",
+      "units": "none",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    },
+    {
+      "field_id": 14,
+      "name": "event.id",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": {
+        "kind": "identity"
+      },
+      "categorical": true,
+      "missingness": {
+        "kind": "required"
+      }
+    }
+  ]
+}

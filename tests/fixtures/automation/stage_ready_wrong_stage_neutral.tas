@@ -7,4 +7,4 @@ state neutral {}
 
 # Negative control: a neutral direct boot into F_SP104 cannot satisfy the
 # stage_ready predicate authored specifically for F_SP103 room 1 point 1.
-repeat 30 neutral
+repeat 60 neutral

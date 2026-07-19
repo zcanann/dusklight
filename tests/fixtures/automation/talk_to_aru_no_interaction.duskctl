@@ -1,0 +1,5 @@
+duskcontrol 1
+frames 180
+
+# Reach the identical Speak prompt but never initiate the event.
+seek actor replace from 0 for 180 actor 579 set 65535 room 1 stage F_SP103 offset 0 0 0 magnitude 127 stop 100

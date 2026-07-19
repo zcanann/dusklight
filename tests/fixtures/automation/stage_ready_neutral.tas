@@ -8,4 +8,4 @@ state neutral {}
 # The tape owns the ports but never applies a button, stick, or trigger input.
 # Its only purpose is to retain enough post-simulation ticks to prove that the
 # direct-stage boot reached the declared stable readiness state.
-repeat 30 neutral
+repeat 60 neutral

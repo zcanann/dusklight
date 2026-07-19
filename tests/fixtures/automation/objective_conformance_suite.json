@@ -1,9 +1,166 @@
 {
   "schema": "dusklight-objective-suite/v2",
-  "content_sha256": "45991f8101967e02deea4c7a61dc91e53f07a1dfe3411a0c5d28b99eba6937b9",
+  "content_sha256": "96bf56a771716957f1d6c0a856a297b99cd7dc546e87a196e4aad16c4e952429",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
+    {
+      "id": "pick-up-stone",
+      "description": "A direct F_SP103 boot reaches one measured stone and proves the prompt-to-carry edge with that stone's exact immutable placement identity.",
+      "role": "positive",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/pick_up_stone.milestones",
+          "sha256": "cbf8414987bae7f3bcc64cd7ea92c39f92f370802b56a448a1e76ac2e0a38abe"
+        },
+        "program_sha256": "50695f5035c14760d708f7a7200287987d74e3970fdc0db25988b2593d77a068",
+        "goal": "pick_up_stone"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/pick_up_stone.observation.json",
+          "sha256": "71c1f4eeda5939ab86eeb6febe0be5e4b014e75df399b591085eb4ab483ead73"
+        },
+        "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "player_action",
+            "minimum_version": 3
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "player.exists",
+          "player.interaction.do_status",
+          "player.interaction.grabbed_actor.actor_name",
+          "player.interaction.grabbed_actor.current_room",
+          "player.interaction.grabbed_actor.exists",
+          "player.interaction.grabbed_actor.home_position.x",
+          "player.interaction.grabbed_actor.home_position.y",
+          "player.interaction.grabbed_actor.home_position.z",
+          "player.interaction.grabbed_actor.home_room",
+          "player.interaction.grabbed_actor.set_id",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
+      "seed": {
+        "kind": "controller",
+        "artifact": {
+          "path": "tests/fixtures/automation/pick_up_stone.dctl",
+          "sha256": "103c0d6478ea07af3f13e8ac9b7d8c12f29aad6aa490a43888d95433809620b1"
+        }
+      },
+      "logical_tick_budget": 230,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
+      "expected_terminal": "reached"
+    },
+    {
+      "id": "pick-up-stone-no-interaction",
+      "description": "Reaching the same measured stone without pressing A must not produce the exact carried-object relationship.",
+      "role": "negative_control",
+      "control_for": "pick-up-stone",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/pick_up_stone.milestones",
+          "sha256": "cbf8414987bae7f3bcc64cd7ea92c39f92f370802b56a448a1e76ac2e0a38abe"
+        },
+        "program_sha256": "50695f5035c14760d708f7a7200287987d74e3970fdc0db25988b2593d77a068",
+        "goal": "pick_up_stone"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/pick_up_stone.observation.json",
+          "sha256": "71c1f4eeda5939ab86eeb6febe0be5e4b014e75df399b591085eb4ab483ead73"
+        },
+        "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "player_action",
+            "minimum_version": 3
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "player.exists",
+          "player.interaction.do_status",
+          "player.interaction.grabbed_actor.actor_name",
+          "player.interaction.grabbed_actor.current_room",
+          "player.interaction.grabbed_actor.exists",
+          "player.interaction.grabbed_actor.home_position.x",
+          "player.interaction.grabbed_actor.home_position.y",
+          "player.interaction.grabbed_actor.home_position.z",
+          "player.interaction.grabbed_actor.home_room",
+          "player.interaction.grabbed_actor.set_id",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
+      "seed": {
+        "kind": "controller",
+        "artifact": {
+          "path": "tests/fixtures/automation/pick_up_stone_no_interaction.dctl",
+          "sha256": "eeaa82b302671b37736be604e221bd27319355b502ab000f4e0c0a31edc4dc43"
+        }
+      },
+      "logical_tick_budget": 230,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
+      "expected_terminal": "objective_miss"
+    },
     {
       "id": "reach-point-ordon-ranch",
       "description": "A direct F_SP104 boot moves Link into the measured Ordon ranch target region and remains there for five ticks.",
@@ -201,10 +358,10 @@
         "kind": "tape_source",
         "artifact": {
           "path": "tests/fixtures/automation/stage_ready_neutral.tas",
-          "sha256": "9ef2ff4f56a50208d133a6ff0ddeb61408100de2b75cc99cb599016bf0cca855"
+          "sha256": "46dc1e598b1809cf68503da5f6e87f905bc38b7c255e8a54c78eaf9c7608e659"
         }
       },
-      "logical_tick_budget": 30,
+      "logical_tick_budget": 60,
       "host_timeout_seconds": 30,
       "repetitions": 2,
       "expected_terminal": "reached"
@@ -274,10 +431,179 @@
         "kind": "tape_source",
         "artifact": {
           "path": "tests/fixtures/automation/stage_ready_wrong_stage_neutral.tas",
-          "sha256": "b4645ab97cd77741f7af66dc257e019dc04fce816439f3f931b03fec5c0b8419"
+          "sha256": "c7f183abae99d47501e7b238af4bd327f2217699067037821b7b877bdb623aa8"
         }
       },
-      "logical_tick_budget": 30,
+      "logical_tick_budget": 60,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
+      "expected_terminal": "objective_miss"
+    },
+    {
+      "id": "talk-to-aru",
+      "description": "A direct F_SP103 boot follows the exact placed Aru selector and proves the Speak-prompt to event-267 edge with Aru's immutable placement identity.",
+      "role": "positive",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/talk_to_aru.milestones",
+          "sha256": "59368a7849ef2fee775d7656a97453dbe3e7a2823a3a8e0f00beb026ae30a63a"
+        },
+        "program_sha256": "209a78676d57e0f5c42939c27db1a5c19b8b7f2f60ce377eb2877c21a7e73c71",
+        "goal": "talk_to_aru"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/talk_to_aru.observation.json",
+          "sha256": "5ed6ee20d676223b2a6ff3c0dee361c268aadb997275896007aa682edc44f526"
+        },
+        "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "event",
+            "minimum_version": 1
+          },
+          {
+            "id": "player_action",
+            "minimum_version": 3
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "event.id",
+          "event.running",
+          "player.exists",
+          "player.interaction.do_status",
+          "player.interaction.talk_partner.actor_name",
+          "player.interaction.talk_partner.current_room",
+          "player.interaction.talk_partner.exists",
+          "player.interaction.talk_partner.home_position.x",
+          "player.interaction.talk_partner.home_position.y",
+          "player.interaction.talk_partner.home_position.z",
+          "player.interaction.talk_partner.home_room",
+          "player.interaction.talk_partner.set_id",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
+      "seed": {
+        "kind": "controller",
+        "artifact": {
+          "path": "tests/fixtures/automation/talk_to_aru.dctl",
+          "sha256": "4fb3829b927c9249f9a5be92f0b797c04cc6bf006f1027c3482a22331316b9c6"
+        }
+      },
+      "logical_tick_budget": 180,
+      "host_timeout_seconds": 30,
+      "repetitions": 2,
+      "expected_terminal": "reached"
+    },
+    {
+      "id": "talk-to-aru-no-interaction",
+      "description": "Following the same exact Aru placement without pressing A must reach the Speak prompt but never satisfy the dialogue edge.",
+      "role": "negative_control",
+      "control_for": "talk-to-aru",
+      "boot": {
+        "kind": "stage",
+        "stage": "F_SP103",
+        "room": 1,
+        "point": 1,
+        "layer": 3
+      },
+      "scenario": {
+        "path": "tests/fixtures/automation/fsp103_practice.fixture.json",
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
+      },
+      "objective": {
+        "source": {
+          "path": "tests/fixtures/automation/talk_to_aru.milestones",
+          "sha256": "59368a7849ef2fee775d7656a97453dbe3e7a2823a3a8e0f00beb026ae30a63a"
+        },
+        "program_sha256": "209a78676d57e0f5c42939c27db1a5c19b8b7f2f60ce377eb2877c21a7e73c71",
+        "goal": "talk_to_aru"
+      },
+      "observation_view": {
+        "source": {
+          "path": "tests/fixtures/automation/talk_to_aru.observation.json",
+          "sha256": "5ed6ee20d676223b2a6ff3c0dee361c268aadb997275896007aa682edc44f526"
+        },
+        "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
+      },
+      "action_schema": {
+        "id": "movement-pad-frame/v2",
+        "sha256": "2c77150cebbd831a2c642a735ce2a0836975d61b12367fc43df5809e05461f58"
+      },
+      "observation_requirements": {
+        "schema": "dusklight-objective-observation-requirements/v1",
+        "families": [
+          {
+            "id": "event",
+            "minimum_version": 1
+          },
+          {
+            "id": "player_action",
+            "minimum_version": 3
+          },
+          {
+            "id": "player_motion",
+            "minimum_version": 1
+          },
+          {
+            "id": "stage",
+            "minimum_version": 1
+          }
+        ],
+        "facts": [
+          "event.id",
+          "event.running",
+          "player.exists",
+          "player.interaction.do_status",
+          "player.interaction.talk_partner.actor_name",
+          "player.interaction.talk_partner.current_room",
+          "player.interaction.talk_partner.exists",
+          "player.interaction.talk_partner.home_position.x",
+          "player.interaction.talk_partner.home_position.y",
+          "player.interaction.talk_partner.home_position.z",
+          "player.interaction.talk_partner.home_room",
+          "player.interaction.talk_partner.set_id",
+          "player.is_link",
+          "stage.name",
+          "stage.room"
+        ]
+      },
+      "seed": {
+        "kind": "controller",
+        "artifact": {
+          "path": "tests/fixtures/automation/talk_to_aru_no_interaction.dctl",
+          "sha256": "629c6e8b0c2cf58aee3047da061e3348d43bcd40706aa561e7d1082c6b8a2861"
+        }
+      },
+      "logical_tick_budget": 180,
       "host_timeout_seconds": 30,
       "repetitions": 2,
       "expected_terminal": "objective_miss"

@@ -1,0 +1,20 @@
+milestones 1.6
+
+# The prompt value is retained as an observed precondition; success authority
+# comes from the absent-to-present exact carried-object relationship.
+milestone pick_up_stone {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.interaction.do_status == 31 &&
+       !player.interaction.grabbed_actor.exists
+  then stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.interaction.grabbed_actor.exists &&
+       player.interaction.grabbed_actor.actor_name == 765 &&
+       player.interaction.grabbed_actor.set_id == 65535 &&
+       player.interaction.grabbed_actor.home_room == 1 &&
+       player.interaction.grabbed_actor.current_room == 1 &&
+       player.interaction.grabbed_actor.home_position.x between 1073.22 and 1073.24 &&
+       player.interaction.grabbed_actor.home_position.y between 799.99 and 800.01 &&
+       player.interaction.grabbed_actor.home_position.z between -2751.36 and -2751.35
+  within 4
+}
