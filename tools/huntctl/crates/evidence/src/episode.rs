@@ -1,6 +1,6 @@
 //! Complete, reproducible identities for collected transition episodes.
 
-use crate::artifact::Digest;
+use crate::artifact::{ArtifactIdentity, Digest};
 use crate::tape::TapeBoot;
 use crate::transition_corpus::{StateReferenceKind, TransitionCorpus};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ pub const EPISODE_LEDGER_SCHEMA_V1: &str = "dusklight-episode-ledger/v1";
 #[serde(deny_unknown_fields)]
 pub struct EpisodeContext {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_identity: Option<ArtifactIdentity>,
     pub run_build: RunBuildIdentity,
     pub objective: EpisodeObjectiveIdentity,
     pub producer: EpisodeProducerIdentity,
@@ -165,6 +167,8 @@ pub struct EpisodeManifest {
     pub schema: String,
     pub input_identity_sha256: Digest,
     pub episode_sha256: Digest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_identity: Option<ArtifactIdentity>,
     pub scenario: EpisodeScenarioIdentity,
     pub parent_boundary: EpisodeBoundaryIdentity,
     pub artifacts: EpisodeArtifactIdentity,
@@ -225,6 +229,11 @@ pub struct EpisodeManifestBuild<'a> {
 
 impl EpisodeContext {
     pub fn validate(&self) -> Result<(), EpisodeError> {
+        if let Some(identity) = &self.run_identity {
+            identity
+                .validate()
+                .map_err(|error| EpisodeError::new(error.to_string()))?;
+        }
         if self.schema != EPISODE_CONTEXT_SCHEMA_V1
             || self.run_build.executable_sha256 == Digest::ZERO
             || self.objective.digest == Digest::ZERO
@@ -314,6 +323,7 @@ impl EpisodeManifest {
             schema: EPISODE_MANIFEST_SCHEMA_V1.into(),
             input_identity_sha256: Digest::ZERO,
             episode_sha256: Digest::ZERO,
+            run_identity: input.context.run_identity.clone(),
             scenario,
             parent_boundary,
             artifacts,
@@ -366,6 +376,7 @@ impl EpisodeManifest {
         }
         let context = EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+            run_identity: self.run_identity.clone(),
             run_build: self.run_build.clone(),
             objective: self.objective.clone(),
             producer: self.producer.clone(),
@@ -392,6 +403,7 @@ impl EpisodeManifest {
         canonical_digest(
             b"dusklight.episode-input-identity/v1\0",
             &(
+                &self.run_identity,
                 &self.scenario,
                 &self.parent_boundary,
                 self.artifacts.absolute_tape_sha256,
@@ -635,6 +647,7 @@ mod tests {
     fn context(worker: &str) -> EpisodeContext {
         EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+            run_identity: None,
             run_build: RunBuildIdentity {
                 executable_sha256: Digest([5; 32]),
                 dusklight_commit: Some("abc123".into()),

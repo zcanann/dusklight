@@ -875,6 +875,7 @@ mod tests {
         evidence.validate(&corpus).unwrap();
         let context = EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+            run_identity: None,
             run_build: RunBuildIdentity {
                 executable_sha256: Digest([0x55; 32]),
                 dusklight_commit: None,

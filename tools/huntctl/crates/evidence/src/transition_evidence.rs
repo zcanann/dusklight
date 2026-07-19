@@ -1075,6 +1075,7 @@ mod tests {
     fn manifest(corpus: &TransitionCorpus, evidence_sha256: Digest) -> EpisodeManifest {
         let context = EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+            run_identity: None,
             run_build: RunBuildIdentity {
                 executable_sha256: Digest([0x77; 32]),
                 dusklight_commit: Some("abc123".into()),

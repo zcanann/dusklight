@@ -275,6 +275,7 @@ pub fn refeature(
     fs::write(&evidence_path, &evidence_bytes)?;
     let context = EpisodeContext {
         schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+        run_identity: source.episode.run_identity.clone(),
         run_build: source.episode.run_build.clone(),
         objective: source.episode.objective.clone(),
         producer: source.episode.producer.clone(),

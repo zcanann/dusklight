@@ -4467,6 +4467,7 @@ fn extract_trial_transition_corpus(
     };
     let context = EpisodeContext {
         schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
+        run_identity: None,
         run_build: RunBuildIdentity {
             executable_sha256: objective
                 .identity
