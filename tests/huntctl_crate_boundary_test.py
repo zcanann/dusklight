@@ -84,6 +84,11 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "throughput-benchmark/src/lib.rs": 100,
     "throughput-benchmark/src/report.rs": 400,
     "throughput-benchmark/src/runner.rs": 350,
+    "trace/src/trace/columnar.rs": 1_700,
+    "trace/src/trace/decode.rs": 325,
+    "trace/src/trace/mod.rs": 775,
+    "trace/src/trace/summary.rs": 140,
+    "trace/src/trace/wire.rs": 100,
 }
 
 # These integration-heavy crates are deliberately closed inventories. Adding a
@@ -138,6 +143,16 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
     },
     "proposer-tournament": {"lib.rs"},
     "throughput-benchmark": {"lib.rs", "report.rs", "runner.rs", "tests.rs"},
+    "trace": {
+        "lib.rs",
+        "trace/columnar.rs",
+        "trace/decode.rs",
+        "trace/mod.rs",
+        "trace/summary.rs",
+        "trace/tests.rs",
+        "trace/wire.rs",
+        "trace_typed_facts.rs",
+    },
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {
         "draft_store.rs",

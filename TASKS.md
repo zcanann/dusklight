@@ -535,3 +535,16 @@ architecture-policy change.
 **Done when:** controller syntax, semantic validation, and binary compatibility
 cannot grow as one flat cross-domain implementation without an explicit
 architecture-policy change.
+
+## 40. Compiler-enforced gameplay-trace internals
+
+- [x] Split the gameplay-trace flat decoder into closed schema, legacy/header,
+  columnar-channel, summary, and bounded-wire owners without changing the
+  public API or accepted trace bytes.
+- [x] Freeze the trace crate's exact source inventory, impose tight budgets on
+  each trace owner, and pass focused decoder corruption tests plus every
+  workspace architecture, format, lint, and test gate.
+
+**Done when:** trace schema evolution, channel decoding, and reporting have
+distinct physical owners and cannot collapse back into a single decoder file
+without an explicit architecture-policy change.
