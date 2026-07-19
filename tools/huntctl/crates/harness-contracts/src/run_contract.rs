@@ -863,7 +863,9 @@ pub fn sha256_artifact_file(path: &Path) -> Result<Digest, HarnessRunContractErr
         ))
     })?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    // The Windows CLI thread has a 1 MiB stack. Keeping the whole read buffer
+    // there made a successful cold replay crash while hashing its disc artifact.
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let count = file.read(&mut buffer).map_err(|error| {
             contract_error(format!(

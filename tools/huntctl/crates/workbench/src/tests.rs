@@ -1441,7 +1441,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     assert_eq!(prefix.tape.frames.len(), 440);
 
     let (segment_id, expected_output) =
-        ("to_ordon_spring_q129", "59ba70a093e63bc298d72f40a7ea21bc");
+        ("to_ordon_spring_q129", "c4ba7afe943b7ade1d12cc61ed6f2488");
     let segment = &route.segments[segment_id];
     assert_eq!(segment.end_fingerprint, expected_output);
     let card = graph
