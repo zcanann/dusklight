@@ -476,3 +476,13 @@ mixed root-module implementation ownership.
 
 **Done when:** the core authenticated execution path has explicit CLI ownership
 and the root binary cannot absorb harness policy implementation.
+
+## 35. Domain-owned worker-control CLI adapter
+
+- [x] Move worker hello/ping, deterministic pool health, and unavailable
+  engine-session capability reporting out of the root binary.
+- [x] Ratchet the reduced root binary and pass worker/pool integration, lint,
+  and architecture gates without changing protocol behavior.
+
+**Done when:** persistent-control bootstrap has explicit CLI ownership and
+`main.rs` contains no production command implementation.
