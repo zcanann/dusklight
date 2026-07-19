@@ -706,6 +706,8 @@ fn proposal_configuration_sha256(
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
 ) -> Result<Digest, QSearchError> {
     let identity = (
+        "dusklight-q-proposals/v8",
+        ACTION_GUIDANCE_SCHEMA_V2,
         config.generation,
         config.max_proposals,
         config.iterations,
@@ -721,7 +723,7 @@ fn proposal_configuration_sha256(
     let bytes =
         serde_json::to_vec(&identity).map_err(|error| QSearchError::new(error.to_string()))?;
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight.q-proposer-configuration/v1\0");
+    hasher.update(b"dusklight.q-proposer-configuration/v2\0");
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
     Ok(Digest(hasher.finalize().into()))
