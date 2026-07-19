@@ -2,6 +2,7 @@
 
 use super::super::super::*;
 use super::MAX_LEARN_INPUT_CORPORA;
+use huntctl::content_store::{ContentKind, ContentStore};
 use huntctl::transition_corpus::TransitionCorpus;
 
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {

@@ -426,3 +426,13 @@ as a flat implementation module.
 
 **Done when:** corpus and immutable-store lifecycle growth cannot silently
 accumulate in the root Rust binary.
+
+## 30. Domain-owned world CLI adapter
+
+- [x] Move world inventory, spatial indexing/query, and KCL/PLC inspection out
+  of the root binary beside the existing world domain crate.
+- [x] Ratchet the reduced root binary and pass real-fixture spatial, lint, and
+  architecture gates without changing the public command surface.
+
+**Done when:** static-world tooling can grow without turning the root binary
+back into a cross-domain implementation file.
