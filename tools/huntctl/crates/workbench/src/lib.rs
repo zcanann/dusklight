@@ -5,14 +5,26 @@
 //! continuations, and offers revision-checked edits for labels, segment subtrees, and the
 //! timeline-configured milestone program. Segment input artifacts remain independent Git objects.
 
+// Keep the implementation's domain vocabulary explicit while its public API migrates out of the
+// historical root crate. These are dependencies, not callbacks into the huntctl executable.
+pub use dusklight_automation_contracts::{artifact, tape};
+pub use dusklight_control::{
+    option_diagnostics, option_execution, tape_chain, tape_dsl, tape_program,
+};
+pub use dusklight_evidence::content_store;
+pub use dusklight_harness_contracts::evaluation as search_evaluator;
+pub use dusklight_objectives::milestone_dsl;
+pub use dusklight_routes::timeline;
+pub use dusklight_search::search;
+
 use crate::content_store::{ContentKind, ContentStore};
+use crate::milestone_dsl::MilestoneProgram;
 use crate::option_diagnostics::{OptionDiagnosticBundle, OptionVisualization};
 use crate::search::{Candidate, SearchResults};
 use crate::search_evaluator::{AnchoredObjectiveIdentity, BoundaryFingerprint};
 use crate::tape::{InputTape, TapeBoot};
 use crate::tape_chain::{ChainSegment, SegmentFrames, concatenate};
 use crate::timeline::{ArtifactSource, ResolvedLineage, Segment, Timeline, tokenize};
-use crate::{milestone_dsl, milestone_dsl::MilestoneProgram};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -6427,7 +6439,9 @@ fn handle_http(
                 return json_error(403, "Forbidden", "cross-origin requests are not allowed");
             }
             match (request.method.as_str(), request.path.as_str()) {
-                ("GET", "/") => html_response(include_bytes!("../assets/route_workbench.html")),
+                ("GET", "/") => {
+                    html_response(include_bytes!("../../../assets/route_workbench.html"))
+                }
                 ("GET", "/api/graph") => load_authoritative_timeline(&config.timeline_path)
                     .and_then(|timeline| {
                         let artifact_root = configured_artifact_root(config)?;
@@ -7784,7 +7798,7 @@ continue main with tunnel.child after root@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
     #[test]
     fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
-        let html = include_str!("../assets/route_workbench.html");
+        let html = include_str!("../../../assets/route_workbench.html");
         for required in [
             "aria-label=\"Route graph\"",
             "id=\"tree\"",
@@ -8122,7 +8136,7 @@ continue main with boot_link.tas after root@clean
     #[test]
     fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .canonicalize()
             .unwrap();
         let timeline_path = repository.join("routes/intro.timeline");
@@ -8175,7 +8189,7 @@ continue main with boot_link.tas after root@clean
     #[test]
     fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .canonicalize()
             .unwrap();
         let timeline_path = repository.join("routes/intro.timeline");
@@ -8271,7 +8285,7 @@ continue main with boot_link.tas after root@clean
     #[test]
     fn authored_boot_recording_status_becomes_a_proved_root_draft() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .canonicalize()
             .unwrap();
         let timeline_path = repository.join("routes/intro.timeline");

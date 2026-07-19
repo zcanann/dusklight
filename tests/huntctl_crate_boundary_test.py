@@ -12,19 +12,14 @@ ROOT_MANIFEST = WORKSPACE / "Cargo.toml"
 ROOT_SOURCE = WORKSPACE / "src"
 
 EXPECTED_ROOT_RUST_FILES = {
-    "behavior_archive.rs",
     "corpus_ops.rs",
     "lib.rs",
     "main.rs",
-    "route_workbench.rs",
-    "search_evaluator.rs",
 }
 
 EXPECTED_ROOT_MODULE_DIRECTORIES = {
     "benchmark",
     "cli",
-    "harness",
-    "learning",
 }
 
 EXPECTED_MEMBERS = {
@@ -37,7 +32,9 @@ EXPECTED_MEMBERS = {
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
+    "crates/orchestration",
     "crates/routes",
+    "crates/workbench",
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
@@ -57,6 +54,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-automation-contracts",
         "dusklight-control",
         "dusklight-objectives",
+        "dusklight-search",
     },
     "dusklight-interventions": {"dusklight-automation-contracts"},
     "dusklight-learning": {
@@ -75,10 +73,30 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-automation-contracts",
         "dusklight-trace",
     },
+    "dusklight-orchestration": {
+        "dusklight-automation-contracts",
+        "dusklight-control",
+        "dusklight-evidence",
+        "dusklight-harness-contracts",
+        "dusklight-learning",
+        "dusklight-objectives",
+        "dusklight-search",
+        "dusklight-semantic-novelty",
+        "dusklight-trace",
+    },
     "dusklight-routes": {
         "dusklight-automation-contracts",
         "dusklight-control",
         "dusklight-objectives",
+        "dusklight-search",
+    },
+    "dusklight-route-workbench": {
+        "dusklight-automation-contracts",
+        "dusklight-control",
+        "dusklight-evidence",
+        "dusklight-harness-contracts",
+        "dusklight-objectives",
+        "dusklight-routes",
         "dusklight-search",
     },
     "dusklight-search": {
@@ -101,7 +119,9 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-learning",
         "dusklight-objectives",
         "dusklight-oracles",
+        "dusklight-orchestration",
         "dusklight-routes",
+        "dusklight-route-workbench",
         "dusklight-search",
         "dusklight-semantic-novelty",
         "dusklight-trace",

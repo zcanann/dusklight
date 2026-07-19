@@ -19,10 +19,18 @@ dusklight-huntctl (CLI and domain orchestration)
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-oracles ────────────────┤
 │   └── dusklight-trace ──────────────┤
+├── dusklight-orchestration ──────────┤
+│   ├── dusklight-harness-contracts ───┤
+│   ├── dusklight-learning ────────────┤
+│   └── dusklight-search ──────────────┤
 ├── dusklight-routes ─────────────────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-objectives ──────────┤
 │   └── dusklight-search ──────────────┤
+├── dusklight-route-workbench ─────────┤
+│   ├── dusklight-evidence ─────────────┤
+│   ├── dusklight-harness-contracts ────┤
+│   └── dusklight-routes ───────────────┤
 ├── dusklight-search ─────────────────┤
 │   └── dusklight-control ─────────────┤
 ├── dusklight-semantic-novelty ───────┤
@@ -115,13 +123,21 @@ launch the game, rank or mutate candidates, train models, own route state, or
 parse CLI commands. Oracle verdicts therefore remain independent of the search
 systems that consume them.
 
+## `dusklight-orchestration`
+
+Owns native harness execution, population evaluation, campaign scheduling,
+behavior archiving, and the adapter that turns learned models into search
+proposals. It may compose the lower-level domain crates, but nothing below it
+may depend on orchestration or the huntctl executable. This is the explicit
+integration layer where simulator budget and evidence contracts meet.
+
 ## `dusklight-search`
 
 Owns portable search candidates, lexicographic ranking, mutation, typed local
 refinement, and bounded continuous and Bayesian optimizers. It may depend on
 contracts and control formats. It cannot execute native runs, inspect evidence,
-train models, mutate route/workbench state, or parse CLI commands. Root adapters
-are responsible for feeding it authenticated outcomes and enforcing simulator
+train models, mutate route/workbench state, or parse CLI commands. The
+orchestration crate feeds it authenticated outcomes and enforces simulator
 budgets.
 
 ## `dusklight-routes`
@@ -130,8 +146,16 @@ Owns authored timeline syntax, route validation, immutable lineages, route
 objects, and named-head persistence. It may depend on contracts, control
 formats, objective compilation, and portable search candidates. It cannot run
 the simulator, evaluate native evidence, own interactive workbench state,
-train models, or parse CLI commands. The root workbench is therefore an adapter
-over route truth instead of its owner.
+train models or parse CLI commands.
+
+## `dusklight-route-workbench`
+
+Owns interactive graph projection, draft editing, playback, recording,
+thumbnail storage, and the local HTTP surface. It may compose route, control,
+evidence, objective, search, and evaluation identity contracts, but it cannot
+depend on the huntctl executable or native search orchestration. This keeps the
+interactive application behind a compiler-enforced boundary instead of
+letting it grow as another root module.
 
 ## `dusklight-semantic-novelty`
 
@@ -150,15 +174,14 @@ depend on search, learning, evidence, route, workbench, or CLI code.
 
 ## Root `dusklight-huntctl`
 
-Owns composition and the executable-facing adapters. Compatibility re-exports
-preserve the existing public module paths while callers migrate; they do not
-restore reverse dependencies into the smaller crates.
+Owns CLI parsing and the few command-specific adapters that remain.
+Compatibility re-exports preserve existing public module paths while callers
+migrate; they do not restore reverse dependencies into the smaller crates.
 
 The next crate extractions should be driven by dependency direction, not file
-size alone. Native harness execution should remain an adapter around the
-extracted contracts until its process boundary is independently coherent. Do
-not create a crate that depends back on `dusklight-huntctl`; orchestration
-adapters belong in the root instead of weakening a lower-level crate.
+size alone. Do not create a crate that depends back on `dusklight-huntctl`;
+executable-facing composition belongs in `dusklight-orchestration` instead of
+weakening a lower-level crate.
 
 The boundary test also freezes the root module inventory. Adding another root
 file or module directory requires an explicit ownership-policy change, so new

@@ -21,6 +21,7 @@ use crate::episode::{
     EpisodeOutcomeClass, EpisodeProducerIdentity, EpisodeProducerKind, EpisodeSeed,
     RunBuildIdentity,
 };
+pub use crate::harness::evaluation::{AnchoredObjectiveIdentity, BoundaryFingerprint};
 use crate::harness::execution::execute_request;
 use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
 use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessTerminalReason};
@@ -110,26 +111,6 @@ pub struct AnchoredEvaluateConfig {
 pub struct AnchoredSearchRunConfig {
     pub search: SearchRunConfig,
     pub objective: AnchoredObjectiveConfig,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AnchoredObjectiveIdentity {
-    pub schema: String,
-    pub segment: SegmentProfile,
-    pub digest: String,
-    pub prefix_sha256: String,
-    pub prefix_frames: u64,
-    pub milestone_program_sha256: String,
-    pub game_sha256: String,
-    pub dvd_sha256: String,
-    pub source_milestone: String,
-    pub source_definition_sha256: String,
-    pub source_boundary_fingerprint: String,
-    pub source_tape_frame: u64,
-    pub source_boundary_index: u64,
-    pub goal_milestone: String,
-    pub goal_definition_sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -607,14 +588,6 @@ pub struct MilestoneObservation {
     pub definition_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub program_digest: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct BoundaryFingerprint {
-    pub schema: String,
-    pub algorithm: String,
-    pub canonical_encoding: String,
-    pub digest: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -6357,8 +6330,8 @@ milestone tunnel_crawl_start {
         assert_eq!(score.depth, 2);
         assert_eq!(score.score_tick, Some(0));
 
-        let suffix_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../routes/intro/segments/human420.tape");
+        let suffix_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../routes/intro/segments/human420.tape");
         let suffix = InputTape::decode(&fs::read(suffix_path).unwrap())
             .unwrap()
             .tape;

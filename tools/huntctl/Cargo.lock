@@ -261,6 +261,7 @@ dependencies = [
  "dusklight-automation-contracts",
  "dusklight-control",
  "dusklight-objectives",
+ "dusklight-search",
  "serde",
  "serde_json",
  "sha2",
@@ -281,6 +282,8 @@ dependencies = [
  "dusklight-learning",
  "dusklight-objectives",
  "dusklight-oracles",
+ "dusklight-orchestration",
+ "dusklight-route-workbench",
  "dusklight-routes",
  "dusklight-search",
  "dusklight-semantic-novelty",
@@ -334,6 +337,40 @@ version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
  "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-orchestration"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-evidence",
+ "dusklight-harness-contracts",
+ "dusklight-learning",
+ "dusklight-objectives",
+ "dusklight-search",
+ "dusklight-semantic-novelty",
+ "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-route-workbench"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
+ "dusklight-evidence",
+ "dusklight-harness-contracts",
+ "dusklight-objectives",
+ "dusklight-routes",
+ "dusklight-search",
  "serde",
  "serde_json",
  "sha2",

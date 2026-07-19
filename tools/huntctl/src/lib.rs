@@ -1,12 +1,7 @@
 //! Rust control plane primitives for persistent Dusklight simulation workers.
 
-pub mod behavior_archive;
 pub mod benchmark;
 pub mod corpus_ops;
-pub mod harness;
-pub mod learning;
-pub mod route_workbench;
-pub mod search_evaluator;
 
 // Compatibility re-exports keep existing callers stable while the physical
 // source tree migrates behind compiler-enforced crate boundaries.
@@ -24,6 +19,8 @@ pub use dusklight_evidence::{
 pub use dusklight_interventions as intervention;
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
+pub use dusklight_orchestration::{behavior_archive, harness, learning, search_evaluator};
+pub use dusklight_route_workbench as route_workbench;
 pub use dusklight_routes::{route_store, timeline};
 pub use dusklight_search::{
     bayesian_search, continuous_search, motion_path_golf, option_golf, search,
@@ -33,7 +30,7 @@ pub use dusklight_trace::{trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};
 
-pub use learning::{
+pub use dusklight_orchestration::learning::{
     action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines, offline_rl,
     q_search, reward_shaping,
 };
