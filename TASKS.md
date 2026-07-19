@@ -568,17 +568,35 @@ request used by the cold-process baseline.
 
 ## 42. Narrow persistent stage-boot session
 
-- [ ] Separate process-lifetime initialization from one authenticated game-run
-  lifecycle, retaining Aurora, DVD hosting, and process services across a
-  sequential session without adding a second request/result or proof path.
-- [ ] Define one explicit world teardown/reinitialize boundary for the checked
+- [x] Separate process-lifetime shutdown from one authenticated game-run
+  lifecycle, retain Aurora/DVD hosting through the exact post-run admission
+  boundary, and refuse a second run without adding another request/result path.
+- [x] Define one explicit world teardown/reinitialize boundary for the checked
   stage-boot case; audit managers, heaps, globals, threads, loaders, RNG, audio,
   input, observers, and automation artifacts, refusing another run whenever
   reset safety is not established.
-- [ ] Run an A/B/A request sequence in one process, compare every terminal,
-  tick, boundary, tape, trace, and evidence identity against cold executions,
-  then report phase-attributed throughput without claiming checkpoint support.
+- [x] Execute the second admission attempt in the first native process, bind
+  its `post_authenticated_run` refusal and blocker inventory into ordinary run
+  evidence, and preserve cold conformance without claiming A/B/A throughput or
+  checkpoint support when request B cannot be admitted.
 
 **Done when:** the checked stage-ready request can run repeatedly in one native
 process with cold-equivalent authenticated evidence and a measured improvement,
 or the implementation rejects reuse at a precisely documented unsafe boundary.
+
+## 43. Bind the first selected Skybook glitch pilot
+
+- [ ] Bind the imported `file-name-cursor-breakout` page revision and content
+  identity to the existing Eye Shredder boot tape, observer, semantic oracle,
+  original-layout shadow model, and renderer diagnostic without importing a
+  broader glitch backlog.
+- [ ] Define the exact native-port claim, required setup, fidelity limitations,
+  positive evidence, and negative control using the ordinary authenticated
+  request/result path.
+- [ ] Re-run the bounded pilot, retain repeatable tape/trace/oracle identities,
+  and document which original-console rendering consequence remains modeled
+  rather than reproduced.
+
+**Done when:** one human-selected Skybook glitch has a pinned source identity,
+bounded requirements, ordinary authenticated evidence, and no claim beyond the
+behavior the native harness can actually prove.

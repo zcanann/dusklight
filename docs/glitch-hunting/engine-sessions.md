@@ -63,3 +63,10 @@ therefore covered by the ordinary run-result identity and native timing
 artifact digest. Timing v1 remains readable for historical cold-process
 reports, but it contains no session audit and cannot prove a post-run reuse
 decision.
+
+The completed-run path actually performs that second admission check before
+diagnostics or host services stop. A wrong admission changes the ordered
+lifecycle, prevents timing v2 from authenticating `post_authenticated_run`, and
+then fails the teardown boundary checks. The checked result is therefore an
+executed refusal inside the first process, not a capability guess made by
+huntctl.

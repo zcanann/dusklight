@@ -3620,6 +3620,12 @@ int game_main(int argc, char* argv[]) {
     main01();
 
     dusk::runtime::finish_game_run();
+    if (dusk::runtime::begin_game_run() !=
+        dusk::runtime::GameRunAdmission::RefusedResetUnproved)
+    {
+        DuskLog.error("Second game-run admission was not refused at lifecycle boundary {}",
+                      dusk::runtime::lifecycle_boundary_name());
+    }
     dusk::automation::record_native_session_reuse_audit(
         dusk::runtime::lifecycle_boundary_name());
     dusk::runtime::shutdown_diagnostics();

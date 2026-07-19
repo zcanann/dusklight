@@ -43,8 +43,6 @@ first cheap-objective learning and winner-narrowing loop.
 
 ## Whole-corpus glitch reproduction
 
-- [ ] Select and reproduce a small Skybook pilot after the basic objective
-  conformance suite is reliable.
 - [ ] Bind selected pages to exact Skybook revision/page digests, scenarios,
   preconditions, semantic oracles, known setups, fidelity, and proof ancestry.
 - [ ] Build a selected-glitch mechanism/prerequisite graph only if a useful
