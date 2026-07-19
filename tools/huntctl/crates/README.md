@@ -8,6 +8,7 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-harness-contracts ──────┤
+├── dusklight-interventions ──────────┤
 ├── dusklight-learning ───────────────┤
 │   ├── dusklight-control ────────────┤
 │   ├── dusklight-evidence ───────────┤
@@ -17,6 +18,14 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-objectives ─────────────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-oracles ────────────────┤
+│   └── dusklight-trace ──────────────┤
+├── dusklight-routes ─────────────────┤
+│   ├── dusklight-control ─────────────┤
+│   ├── dusklight-objectives ──────────┤
+│   └── dusklight-search ──────────────┤
+├── dusklight-search ─────────────────┤
+│   └── dusklight-control ─────────────┤
+├── dusklight-semantic-novelty ───────┤
 │   └── dusklight-trace ──────────────┤
 ├── dusklight-worker-protocol ────────┤
 ├── dusklight-world ──────────────────┤
@@ -66,12 +75,13 @@ routes, workers, native process execution, or CLI parsing.
 ## `dusklight-learning`
 
 Owns immutable dataset construction, deterministic learner implementations,
-model identity and lineage, calibration, readiness gates, and bounded model
-artifacts. It may consume contracts, control descriptions, immutable evidence,
-objectives, traces, and read-only world representations. It cannot depend on
-search candidates or ranking, native execution, route/workbench state, or CLI
-parsing. The root `learning::q_search` module is intentionally a thin adapter:
-it is where search candidates and learned proposal models are allowed to meet.
+model identity and lineage, calibration, advisory action guidance, readiness
+gates, and bounded model artifacts. It may consume contracts, control
+descriptions, immutable evidence, objectives, traces, and read-only world
+representations. It cannot depend on search candidates or ranking, native
+execution, route/workbench state, or CLI parsing. The root
+`learning::q_search` module is intentionally a thin adapter: it is where search
+candidates and learned proposal models are allowed to meet.
 
 ## `dusklight-worker-protocol`
 
@@ -104,11 +114,12 @@ systems that consume them.
 
 ## `dusklight-search`
 
-Owns portable search candidates, lexicographic ranking, mutation, and bounded
-continuous and Bayesian optimizers. It may depend on contracts and control
-formats. It cannot execute native runs, inspect evidence, train models, mutate
-route/workbench state, or parse CLI commands. Root adapters are responsible
-for feeding it authenticated outcomes and enforcing simulator budgets.
+Owns portable search candidates, lexicographic ranking, mutation, typed local
+refinement, and bounded continuous and Bayesian optimizers. It may depend on
+contracts and control formats. It cannot execute native runs, inspect evidence,
+train models, mutate route/workbench state, or parse CLI commands. Root adapters
+are responsible for feeding it authenticated outcomes and enforcing simulator
+budgets.
 
 ## `dusklight-routes`
 
@@ -145,3 +156,7 @@ size alone. Native harness execution should remain an adapter around the
 extracted contracts until its process boundary is independently coherent. Do
 not create a crate that depends back on `dusklight-huntctl`; orchestration
 adapters belong in the root instead of weakening a lower-level crate.
+
+The boundary test also freezes the root module inventory. Adding another root
+file or module directory requires an explicit ownership-policy change, so new
+domains cannot silently accumulate beside the orchestration adapters.

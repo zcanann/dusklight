@@ -12,6 +12,7 @@ pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_trace::trace;
 pub use dusklight_world::world_spatial;
 
+pub mod action_guidance;
 pub mod actor_set_representation;
 pub mod batch;
 pub mod calibration;

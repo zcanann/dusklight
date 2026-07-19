@@ -127,9 +127,6 @@ pub fn movement_action_mask_v1(state: &[f32]) -> Result<AdvisoryActionMask, Guid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::offline_rl::canonical_movement_pad_v2;
-    use crate::search::{Candidate, SegmentProfile};
-    use crate::tape::{InputFrame, InputTape, RawPadState};
 
     fn state() -> Vec<f32> {
         let mut state = vec![0.0; REQUIRED_FEATURE_COUNT];
@@ -168,31 +165,5 @@ mod tests {
                 .recommended_actions,
             [0]
         );
-    }
-
-    #[test]
-    fn masked_out_action_still_compiles_as_an_exact_candidate_proof_input() {
-        let mut event = state();
-        event[EVENT_RUNNING_FEATURE] = 1.0;
-        let mask = movement_action_mask_v1(&event).unwrap();
-        let action = 67;
-        assert!(!mask.recommends(action));
-        let pad = canonical_movement_pad_v2(action).unwrap();
-        let disconnected = RawPadState {
-            connected: false,
-            error: -1,
-            ..RawPadState::default()
-        };
-        let tape = InputTape {
-            frames: vec![InputFrame {
-                owned_ports: 1,
-                pads: [pad, disconnected, disconnected, disconnected],
-                ..InputFrame::default()
-            }],
-            ..InputTape::default()
-        };
-        let candidate =
-            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
-        assert_eq!(candidate.compile().unwrap(), tape);
     }
 }

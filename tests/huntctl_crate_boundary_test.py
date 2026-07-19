@@ -9,6 +9,25 @@ import subprocess
 REPOSITORY = Path(__file__).resolve().parents[1]
 WORKSPACE = REPOSITORY / "tools" / "huntctl"
 ROOT_MANIFEST = WORKSPACE / "Cargo.toml"
+ROOT_SOURCE = WORKSPACE / "src"
+
+EXPECTED_ROOT_RUST_FILES = {
+    "behavior_archive.rs",
+    "corpus_ops.rs",
+    "lib.rs",
+    "main.rs",
+    "route_workbench.rs",
+    "search_evaluator.rs",
+    "tactic_tests.rs",
+    "trace_diff.rs",
+}
+
+EXPECTED_ROOT_MODULE_DIRECTORIES = {
+    "benchmark",
+    "cli",
+    "harness",
+    "learning",
+}
 
 EXPECTED_MEMBERS = {
     ".",
@@ -128,6 +147,21 @@ assert members == EXPECTED_MEMBERS, (
     f"huntctl workspace members changed without updating the boundary policy: {members}"
 )
 assert default_members == members, "every huntctl crate must run under default workspace tests"
+
+root_rust_files = {path.name for path in ROOT_SOURCE.glob("*.rs")}
+assert root_rust_files == EXPECTED_ROOT_RUST_FILES, (
+    "huntctl root modules changed without an explicit orchestration ownership decision: "
+    f"{sorted(root_rust_files)}"
+)
+root_module_directories = {
+    relative.parts[0]
+    for path in ROOT_SOURCE.rglob("*.rs")
+    if len((relative := path.relative_to(ROOT_SOURCE)).parts) > 1
+}
+assert root_module_directories == EXPECTED_ROOT_MODULE_DIRECTORIES, (
+    "huntctl root module directories changed without an explicit ownership decision: "
+    f"{sorted(root_module_directories)}"
+)
 
 seen = set()
 for package_id in metadata["workspace_members"]:

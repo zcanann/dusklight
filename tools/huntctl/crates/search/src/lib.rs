@@ -6,6 +6,8 @@
 
 pub mod bayesian_search;
 pub mod continuous_search;
+pub mod motion_path_golf;
+pub mod option_golf;
 pub mod search;
 
 // Keep module-local paths stable while their owners remain explicit external
