@@ -311,9 +311,20 @@ frame neutral
         String::from_utf8_lossy(&minimize.stderr)
     );
     let minimize_summary: serde_json::Value = serde_json::from_slice(&minimize.stdout).unwrap();
-    assert_eq!(minimize_summary["schema"], "huntctl-tape-minimization/v1");
+    assert_eq!(
+        minimize_summary["schema"],
+        "dusklight-tape-minimization-proof/v2"
+    );
     assert_eq!(minimize_summary["boot"]["kind"], "stage");
-    assert_eq!(minimize_summary["fidelity"], "headless_fixed_step");
+    assert_eq!(minimize_summary["source_boot"], minimize_summary["boot"]);
+    assert_eq!(
+        minimize_summary["fidelity"]["profile"],
+        "headless-fixed-step-unpaced-30hz/v1"
+    );
+    assert_eq!(minimize_summary["fidelity"]["headless"], true);
+    assert_eq!(minimize_summary["fidelity"]["fixed_step"], true);
+    assert_eq!(minimize_summary["fidelity"]["unpaced"], true);
+    assert_eq!(minimize_summary["fidelity"]["logical_hz"], 30);
     assert_eq!(
         minimize_summary["source_tape_sha256"],
         proof["input_tape_sha256"]
@@ -328,11 +339,44 @@ frame neutral
         "dusklight.milestone-boundary/v4"
     );
     assert_eq!(minimize_summary["proof"]["terminal_class"], "reached");
+    assert_eq!(
+        minimize_summary["proof"]["fidelity_profile"],
+        minimize_summary["fidelity"]["profile"]
+    );
     let minimized = InputTape::decode(&fs::read(&minimized_path).unwrap())
         .unwrap()
         .tape;
     assert_eq!(minimized.boot, absolute.boot);
     assert_eq!(minimized.frames.len(), 1);
+
+    let fidelity_override_root = directory.join("invalid-minimize-state");
+    let fidelity_override = Command::new(executable)
+        .args([
+            "tape",
+            "minimize",
+            absolute_path.to_str().unwrap(),
+            directory.join("invalid-minimized.tape").to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--game-arg",
+            "--unpaced",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            fidelity_override_root.to_str().unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+        ])
+        .output()
+        .unwrap();
+    assert!(!fidelity_override.status.success());
+    assert!(
+        String::from_utf8_lossy(&fidelity_override.stderr)
+            .contains("tape minimize owns replay option --unpaced")
+    );
+    assert!(!fidelity_override_root.exists());
 
     let recorded_path = directory.join("recorded.tape");
     let record = Command::new(executable)
