@@ -33,6 +33,7 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
         ));
     }
     config.candidate.validate()?;
+    validate_boot_harness(config.harness.as_ref())?;
     if !config.game.is_file()
         || !config.dvd.is_file()
         || !config.working_directory.is_dir()
@@ -242,6 +243,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
         ));
     }
     config.candidate.validate()?;
+    validate_boot_harness(config.harness.as_ref())?;
     if !config.game.is_file()
         || !config.dvd.is_file()
         || !config.working_directory.is_dir()
@@ -266,6 +268,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
+        harness: config.harness.clone(),
     };
     let source_id = config.candidate.id()?;
     let mut round = 0_u32;
@@ -418,6 +421,19 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     };
     write_json(&config.output_root.join("golf.summary.json"), &summary)?;
     Ok(summary)
+}
+
+fn validate_boot_harness(
+    harness: Option<&HarnessEvaluateConfig>,
+) -> Result<(), EvaluateError> {
+    if harness.is_some_and(|harness| {
+        harness.request_template.objective.goal != "gameplay-ready-f-sp103"
+    }) {
+        return Err(EvaluateError::InvalidConfig(
+            "boot finalist reduction requires run-request goal gameplay-ready-f-sp103".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
@@ -607,7 +623,7 @@ fn evaluate_boot_batch_with_report(
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
-        harness: None,
+        harness: config.harness.clone(),
     })?;
     let mut proven = Vec::new();
     for candidate in candidates {

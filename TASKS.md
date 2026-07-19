@@ -293,3 +293,13 @@ cannot redefine worker assignment or validation policy in its coordination file.
 
 **Done when:** these bounded optimizers cannot drop an explicitly supplied core
 harness authority between proposal generation and native ranking.
+
+## 18. Authenticated boot finalist reduction
+
+- [x] Carry an exact gameplay-ready run-request template through every boot
+  minimization and timing-golf reduction batch and final proof.
+- [x] Expose the shared sole-authority CLI contract, retain authenticated proof
+  attempts, and reject mixed legacy/run-request inputs.
+
+**Done when:** boot finalist tools cannot silently return to the legacy native
+path after accepting a core-harness authority.

@@ -2014,8 +2014,8 @@ fn print_usage() {
         "  huntctl search tournament --definition TOURNAMENT.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--anchored-prefix PREFIX.tape --milestones PROGRAM.dmsp --segment ID --source-milestone NAME --source-boundary-fingerprint VALUE --goal-milestone NAME] [--workers N] [--repetitions N]\n",
         "  huntctl search prepare-tournament-lane --candidate CANDIDATE.json --proposal-envelopes ENVELOPES.json --output DIR\n",
         "  huntctl search minimize-route --candidate FILE --anchored-prefix PREFIX.tape --milestones PROGRAM.dmsp --segment ID --source-milestone NAME --source-boundary-fingerprint VALUE --goal-milestone NAME --game PATH --dvd PATH --output DIR [--candidate-budget N] [--workers N] [--repetitions N] [--resume]\n",
-        "  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
-        "  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
+        "  huntctl search minimize-boot --candidate FILE --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--workers N] [--repetitions N]\n",
+        "  huntctl search golf-boot --candidate FILE --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--workers N] [--repetitions N]\n",
         "  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n",
         "  huntctl search golf-path --plan PATH.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--point-step N] [--duration-step N] [--phase-step N] [--cancellation-step N]\n",
         "  huntctl search import-tape --segment ID --tape INPUT.tape --output CANDIDATE.json"

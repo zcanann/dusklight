@@ -621,18 +621,18 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let candidate: Candidate =
                 serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
             candidate.validate()?;
+            let execution = search_execution_config(search_args)?;
             let summary = minimize_boot(&BootMinimizeConfig {
                 candidate,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -642,18 +642,18 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let candidate: Candidate =
                 serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
             candidate.validate()?;
+            let execution = search_execution_config(search_args)?;
             let summary = golf_boot(&BootGolfConfig {
                 candidate,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())

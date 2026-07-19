@@ -85,6 +85,7 @@ pub struct BootMinimizeConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -116,6 +117,7 @@ pub struct BootGolfConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]

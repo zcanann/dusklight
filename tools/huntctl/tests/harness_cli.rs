@@ -23,8 +23,8 @@ use huntctl::milestone_dsl;
 use huntctl::observation_view::movement_state_v2_spec;
 use huntctl::scenario_fixture::{SCENARIO_FIXTURE_SCHEMA, ScenarioFixture};
 use huntctl::search::{
-    Ancestry, CANDIDATE_SCHEMA, Candidate, MacroAction, PopulationManifest, SegmentProfile,
-    write_explicit_population,
+    Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, PopulationManifest,
+    SegmentProfile, write_explicit_population,
 };
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -1405,6 +1405,154 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     assert!(
         String::from_utf8_lossy(&conflicting_tournament.stderr)
             .contains("sole execution authority")
+    );
+
+    let coordinate_wrapper =
+        write_mock_native_wrapper_mode(&root, executable, Some("coordinate-golf"));
+    let boot_objective_bytes = b"milestones 1.0\n\nmilestone gameplay-ready-f-sp103 {\n  phase post_sim\n  when boundary.reached\n}\n";
+    fs::write(
+        root.join("inputs/boot-objective.milestones"),
+        boot_objective_bytes,
+    )
+    .unwrap();
+    let boot_program =
+        milestone_dsl::compile_source(std::str::from_utf8(boot_objective_bytes).unwrap()).unwrap();
+    let mut boot_request = request.clone();
+    boot_request.executable = artifact("inputs/dusklight", coordinate_wrapper.as_bytes());
+    boot_request.objective = ObjectiveProgramReference {
+        source: artifact("inputs/boot-objective.milestones", boot_objective_bytes),
+        program_sha256: Digest(boot_program.program_sha256),
+        goal: "gameplay-ready-f-sp103".into(),
+    };
+    boot_request.identity.predicate_program_digest = boot_request.objective.program_sha256;
+    let observation_path = root.join(&boot_request.observation_view.source.path);
+    let mut observation: huntctl::observation_view::ObservationSpec =
+        serde_json::from_slice(&fs::read(observation_path).unwrap()).unwrap();
+    observation.objective.id = boot_request.objective.goal.clone();
+    let observation_bytes = serde_json::to_vec_pretty(&observation).unwrap();
+    fs::write(
+        root.join("inputs/boot-observation.json"),
+        &observation_bytes,
+    )
+    .unwrap();
+    boot_request.observation_view = huntctl::harness::objective_suite::ObservationViewReference {
+        source: artifact("inputs/boot-observation.json", &observation_bytes),
+        schema_sha256: observation.digest().unwrap(),
+    };
+    boot_request.identity.observation_schema_digest = boot_request.observation_view.schema_sha256;
+    boot_request.logical_tick_budget = 1_000;
+    boot_request.content_sha256 = Digest::ZERO;
+    let boot_request_draft = root.join("boot-request.draft.json");
+    let boot_request_path = root.join("boot-request.json");
+    fs::write(
+        &boot_request_draft,
+        serde_json::to_vec_pretty(&boot_request).unwrap(),
+    )
+    .unwrap();
+    let sealed_boot = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&boot_request_draft)
+        .arg("--output")
+        .arg(&boot_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed_boot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed_boot.stderr)
+    );
+
+    let boot_candidate = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::BootToFsp103,
+        boot: huntctl::tape::TapeBoot::Process,
+        actions: vec![
+            MacroAction::Neutral { frames: 10 },
+            MacroAction::Press {
+                buttons: vec![ControllerButton::Start],
+                hold_frames: 1,
+                neutral_frames: 9,
+            },
+            MacroAction::Press {
+                buttons: vec![ControllerButton::A],
+                hold_frames: 1,
+                neutral_frames: 99,
+            },
+        ],
+        ancestry: Ancestry::default(),
+    };
+    let boot_candidate_path = root.join("boot-candidate.json");
+    fs::write(
+        &boot_candidate_path,
+        serde_json::to_vec_pretty(&boot_candidate).unwrap(),
+    )
+    .unwrap();
+
+    let minimize_root = root.join("authenticated-boot-minimize");
+    let minimized = Command::new(executable)
+        .args(["search", "minimize-boot", "--candidate"])
+        .arg(&boot_candidate_path)
+        .arg("--output")
+        .arg(&minimize_root)
+        .args(["--workers", "2", "--repetitions", "2", "--run-request"])
+        .arg(&boot_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        minimized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&minimized.stderr)
+    );
+
+    let golf_root = root.join("authenticated-boot-golf");
+    let golfed = Command::new(executable)
+        .args(["search", "golf-boot", "--candidate"])
+        .arg(&boot_candidate_path)
+        .arg("--output")
+        .arg(&golf_root)
+        .args(["--workers", "2", "--repetitions", "2", "--run-request"])
+        .arg(&boot_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        golfed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&golfed.stderr)
+    );
+    for proof_path in [
+        minimize_root.join("proof.json"),
+        golf_root.join("proof.json"),
+    ] {
+        let proof: Value = serde_json::from_slice(&fs::read(proof_path).unwrap()).unwrap();
+        assert!(proof["attempts"].as_array().unwrap().iter().all(|attempt| {
+            attempt["harness_terminal"] == "reached"
+                && attempt["harness_request_sha256"].is_string()
+                && attempt["harness_result_sha256"].is_string()
+        }));
+    }
+
+    let conflicting_golf = Command::new(executable)
+        .args(["search", "golf-boot", "--candidate"])
+        .arg(&boot_candidate_path)
+        .arg("--output")
+        .arg(root.join("conflicting-golf"))
+        .arg("--run-request")
+        .arg(&boot_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .arg("--dvd")
+        .arg(root.join("inputs/disc.iso"))
+        .output()
+        .unwrap();
+    assert!(!conflicting_golf.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting_golf.stderr).contains("sole execution authority")
     );
     fs::remove_dir_all(root).unwrap();
 }

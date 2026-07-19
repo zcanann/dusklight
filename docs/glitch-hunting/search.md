@@ -271,8 +271,12 @@ single-coordinate minimum for the fixed ordered pulse sequence; it does not
 claim a global optimum across different buttons, added/deleted pulses, or
 coordinated moves that require a temporarily later goal tick.
 
-Both boot proof tools require at least two repetitions; `--repetitions 1` is
-rejected rather than silently weakening determinism into a single observation.
+Both boot proof tools accept `--run-request REQUEST.json --repository-root
+ROOT` in place of loose executable inputs when the request's exact goal is
+`gameplay-ready-f-sp103`. That authority is retained through every reduction
+batch and final proof; mixed execution inputs are rejected. They require at
+least two repetitions, so `--repetitions 1` is rejected rather than silently
+weakening determinism into a single observation.
 
 The beam, CEM/CMA-ES, and Bayesian commands below also accept
 `--run-request REQUEST.json --repository-root ROOT` in place of `--game` and
