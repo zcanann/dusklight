@@ -58,11 +58,16 @@ json protocol_fields(std::string_view type, bool ok) {
 
 std::string_view fidelity_profile_from_command_line(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "--cursor-breakout-shadow") {
+        const std::string_view argument(argv[i]);
+        if (argument == "--cursor-breakout-shadow=false") {
+            return "observe_only";
+        }
+        if (argument == "--cursor-breakout-shadow" ||
+            argument == "--cursor-breakout-shadow=true") {
             return "cursor_breakout_shadow";
         }
     }
-    return "observe_only";
+    return "cursor_breakout_shadow";
 }
 
 json build_identity_json(const std::string_view fidelityProfile) {

@@ -227,9 +227,13 @@ def main() -> int:
             failures.append(f"{path}: non-const event-name query is forbidden")
 
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    for option in (OBSERVER, FIDELITY, INTERVENTIONS):
-        if not re.search(rf"option\({option}\s+.*?\sOFF\)", cmake, re.DOTALL):
-            failures.append(f"CMake option {option} must exist and default OFF")
+    for option in (OBSERVER, FIDELITY):
+        if not re.search(
+            rf"set\({option}\s+ON\s+CACHE\s+BOOL\s+.*?\s+FORCE\)", cmake, re.DOTALL
+        ):
+            failures.append(f"CMake gate {option} must be forced ON for retail fidelity")
+    if not re.search(rf"option\({INTERVENTIONS}\s+.*?\sOFF\)", cmake, re.DOTALL):
+        failures.append(f"CMake option {INTERVENTIONS} must exist and default OFF")
     target_definitions = re.search(
         r"target_compile_definitions\(dusklight\s+PRIVATE(?P<body>.*?)\)", cmake, re.DOTALL
     )
