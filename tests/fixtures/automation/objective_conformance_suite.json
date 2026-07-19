@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-objective-suite/v2",
-  "content_sha256": "96bf56a771716957f1d6c0a856a297b99cd7dc546e87a196e4aad16c4e952429",
+  "content_sha256": "e3ee90a941a778e6f881cd19f9f94b5a931237ecb623dd28b499e7ef8dbda869",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
@@ -30,7 +30,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.observation.json",
-          "sha256": "71c1f4eeda5939ab86eeb6febe0be5e4b014e75df399b591085eb4ab483ead73"
+          "sha256": "335f4cee588ca545b3356c3b04f9c13dc9ef5d5ca86b1dc0374ea74aea5d9363"
         },
         "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
       },
@@ -109,7 +109,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.observation.json",
-          "sha256": "71c1f4eeda5939ab86eeb6febe0be5e4b014e75df399b591085eb4ab483ead73"
+          "sha256": "335f4cee588ca545b3356c3b04f9c13dc9ef5d5ca86b1dc0374ea74aea5d9363"
         },
         "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
       },
@@ -465,7 +465,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.observation.json",
-          "sha256": "5ed6ee20d676223b2a6ff3c0dee361c268aadb997275896007aa682edc44f526"
+          "sha256": "303fc118bbcb3f19eb0d22fe13906e776877cd796fc289bc6fd2c766ae915c06"
         },
         "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
       },
@@ -550,7 +550,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.observation.json",
-          "sha256": "5ed6ee20d676223b2a6ff3c0dee361c268aadb997275896007aa682edc44f526"
+          "sha256": "303fc118bbcb3f19eb0d22fe13906e776877cd796fc289bc6fd2c766ae915c06"
         },
         "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
       },
