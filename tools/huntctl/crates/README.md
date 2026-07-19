@@ -8,7 +8,10 @@ Command implementations are grouped below `src/cli/` by domain; reusable
 behavior belongs in one of the crates below. The crate-boundary test also
 ratchets the root adapter and each CLI module by line count, so a large command
 cannot quietly turn `main.rs` or a replacement file back into a flat dumping
-ground. The budgets are ceilings to lower during extraction, not targets.
+ground. Crate entry points and non-test implementation modules have separate
+ceilings as well; large test suites live in sibling `tests.rs` modules instead
+of obscuring production ownership. The budgets are ceilings to lower during
+extraction, not targets.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)

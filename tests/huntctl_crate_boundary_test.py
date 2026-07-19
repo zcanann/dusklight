@@ -31,6 +31,8 @@ ROOT_FILE_LINE_BUDGETS = {
     "main.rs": 4_250,
 }
 ROOT_MODULE_FILE_LINE_BUDGET = 2_000
+CRATE_ENTRYPOINT_LINE_BUDGET = 6_500
+CRATE_IMPLEMENTATION_LINE_BUDGET = 6_700
 
 EXPECTED_MEMBERS = {
     ".",
@@ -204,6 +206,23 @@ for directory in EXPECTED_ROOT_MODULE_DIRECTORIES:
         assert lines <= ROOT_MODULE_FILE_LINE_BUDGET, (
             f"huntctl CLI adapter {path.relative_to(ROOT_SOURCE)} grew past its "
             f"{ROOT_MODULE_FILE_LINE_BUDGET}-line architecture budget: {lines}"
+        )
+
+for crate_source in (WORKSPACE / "crates").glob("*/src"):
+    entrypoint = crate_source / "lib.rs"
+    if entrypoint.exists():
+        lines = len(entrypoint.read_text().splitlines())
+        assert lines <= CRATE_ENTRYPOINT_LINE_BUDGET, (
+            f"crate entry point {entrypoint.relative_to(WORKSPACE)} grew past its "
+            f"{CRATE_ENTRYPOINT_LINE_BUDGET}-line architecture budget: {lines}"
+        )
+    for path in crate_source.rglob("*.rs"):
+        if path == entrypoint or path.name == "tests.rs":
+            continue
+        lines = len(path.read_text().splitlines())
+        assert lines <= CRATE_IMPLEMENTATION_LINE_BUDGET, (
+            f"crate module {path.relative_to(WORKSPACE)} grew past its "
+            f"{CRATE_IMPLEMENTATION_LINE_BUDGET}-line architecture budget: {lines}"
         )
 
 seen = set()
