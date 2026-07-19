@@ -13,6 +13,20 @@ struct ProvenRouteCandidate {
     goal_boundary_fingerprint: BoundaryFingerprint,
 }
 
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct InputGolfQuality {
+    goal_sim_tick: u64,
+    pulse_count: usize,
+    frame_count: u64,
+    timestamp_sum: u64,
+    timestamps: Vec<u64>,
+    candidate_id: String,
+}
+
+const BUTTON_A: u16 = 0x0100;
+const BUTTON_START: u16 = 0x1000;
+const MENU_BUTTONS: u16 = BUTTON_A | BUTTON_START;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct RouteReductionTarget {
     first_hit_tick: u64,
@@ -55,6 +69,202 @@ impl RouteReductionTarget {
             && candidate.goal_tape_frame == self.goal_tape_frame
             && candidate.goal_boundary_fingerprint == self.goal_boundary_fingerprint
     }
+}
+
+/// Golf a single, predicate-bounded suffix without guessing at game state.
+///
+/// Proposals are intentionally small and deterministic: remove one pure
+/// A/Start pulse, or move one such pulse to an earlier free frame while
+/// preserving pulse order. Every proposal is replayed from the immutable
+/// prefix and must produce identical predicate evidence across repetitions.
+/// The ordering is goal tick first, then fewer inputs, then an earlier/smaller
+/// tape; this permits parity-preserving repairs that unlock a later frame win.
+pub fn golf_anchored_inputs(
+    config: &AnchoredInputGolfConfig,
+) -> Result<AnchoredInputGolfSummary, EvaluateError> {
+    config.candidate.validate()?;
+    if config.candidate.segment != config.objective.segment
+        || !is_anchored_profile(config.candidate.segment)
+        || !config.working_directory.is_dir()
+        || config.workers == 0
+        || config.repetitions < 2
+        || config.candidate_budget == 0
+        || config.timeout.is_zero()
+        || directory_is_nonempty(&config.output_root)?
+    {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored input golf requires a matching suffix candidate, at least two repetitions, positive bounded execution limits, and a new/empty output root"
+                .into(),
+        ));
+    }
+    let prepared = prepare_anchored_evaluator(&config.objective)?;
+    let objective = prepared.identity().clone();
+    validate_anchored_harness_request(config.harness.as_ref(), &objective, "anchored input golf")?;
+    fs::create_dir_all(&config.output_root)?;
+
+    let source_id = config.candidate.id()?;
+    let (source_candidates, _) = evaluate_input_golf_batch(
+        config,
+        &prepared,
+        vec![config.candidate.clone()],
+        &config.output_root.join("source"),
+        0,
+    )?;
+    let source = source_candidates.into_iter().next().ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the input-golf source did not prove the authored goal in every repetition".into(),
+        )
+    })?;
+    let source_goal_tick = source.goal_sim_tick;
+    let source_pulse_timestamps = menu_pulse_timestamps(&source.tape)?;
+    if source_pulse_timestamps.is_empty() {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored input golf requires at least one pure A/Start pulse in the suffix".into(),
+        ));
+    }
+
+    let mut current = source;
+    let mut history = Vec::new();
+    let mut proposal_evaluations = 0_usize;
+    let mut accepted_edits = 0_usize;
+    let mut round = 1_u32;
+    while proposal_evaluations < config.candidate_budget {
+        let remaining = config.candidate_budget - proposal_evaluations;
+        let proposals = input_golf_proposals(&current, round, remaining)?;
+        if proposals.is_empty() {
+            break;
+        }
+        let evaluated_count = proposals.len();
+        let (proved, _) = evaluate_input_golf_batch(
+            config,
+            &prepared,
+            proposals,
+            &config
+                .output_root
+                .join("rounds")
+                .join(format!("{round:04}")),
+            round,
+        )?;
+        proposal_evaluations += evaluated_count;
+        let current_quality = input_golf_quality(&current)?;
+        let best = proved
+            .into_iter()
+            .filter_map(|candidate| {
+                input_golf_quality(&candidate)
+                    .ok()
+                    .map(|quality| (quality, candidate))
+            })
+            .filter(|(quality, _)| quality < &current_quality)
+            .min_by(|left, right| left.0.cmp(&right.0));
+        let (accepted_candidate_id, accepted_mutation) = if let Some((_, best)) = best {
+            let id = best.candidate.id()?;
+            let mutation = best.candidate.ancestry.mutation.clone();
+            current = best;
+            accepted_edits += 1;
+            (Some(id), mutation)
+        } else {
+            (None, None)
+        };
+        let pulses = menu_pulse_timestamps(&current.tape)?;
+        history.push(AnchoredInputGolfRound {
+            round,
+            evaluated_candidates: evaluated_count,
+            accepted_candidate_id,
+            accepted_mutation,
+            retained_goal_tick: current.goal_sim_tick,
+            retained_pulses: pulses.len(),
+            retained_timestamp_sum: timestamps_sum(&pulses)?,
+        });
+        round = round
+            .checked_add(1)
+            .ok_or_else(|| EvaluateError::InvalidResult("golf round overflowed".into()))?;
+        if history
+            .last()
+            .is_some_and(|item| item.accepted_candidate_id.is_none())
+        {
+            break;
+        }
+    }
+
+    // A goal predicate defines the segment boundary. Remove post-goal frames
+    // before the cold proof so downstream continuations inherit the actual win.
+    let prefix_frames = InputTape::decode(&fs::read(&config.objective.prefix_tape)?)?
+        .tape
+        .frames
+        .len() as u64;
+    let suffix_frames = current
+        .goal_tape_frame
+        .checked_add(1)
+        .and_then(|end| end.checked_sub(prefix_frames))
+        .ok_or_else(|| {
+            EvaluateError::InvalidResult(
+                "input-golf goal tape frame does not lie after its immutable prefix".into(),
+            )
+        })?;
+    if suffix_frames == 0 || suffix_frames > current.candidate.frame_count() {
+        return Err(EvaluateError::InvalidResult(
+            "input-golf goal produced an invalid suffix boundary".into(),
+        ));
+    }
+    let mut final_tape = current.tape.clone();
+    final_tape.frames.truncate(suffix_frames as usize);
+    let mut final_candidate =
+        Candidate::from_absolute_tape(current.candidate.segment, &final_tape)?;
+    final_candidate.ancestry = Ancestry {
+        generation: round,
+        parent_id: Some(current.candidate.id()?),
+        mutation: Some("trim suffix after authored goal".into()),
+        intervention: Some(InterventionRange {
+            start_frame: suffix_frames,
+            end_frame_exclusive: suffix_frames,
+            parent_end_frame_exclusive: current.candidate.frame_count(),
+        }),
+    };
+    let proof_root = config.output_root.join("proof");
+    let (proved, proof_report) =
+        evaluate_input_golf_batch(config, &prepared, vec![final_candidate], &proof_root, round)?;
+    let golfed = proved.into_iter().next().ok_or_else(|| {
+        EvaluateError::InvalidResult(
+            "the trimmed input-golf winner failed its final repeated proof".into(),
+        )
+    })?;
+
+    let candidate_path = config.output_root.join("golfed.candidate.json");
+    let suffix_path = config.output_root.join("golfed.tape");
+    let realized_path = config.output_root.join("golfed.realized.tape");
+    let proof_path = config.output_root.join("proof.json");
+    let history_path = config.output_root.join("golf.history.json");
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&golfed.candidate)?,
+    )?;
+    fs::write(&suffix_path, golfed.tape.encode()?)?;
+    fs::write(
+        &realized_path,
+        prepared.realize_suffix(golfed.tape.clone())?.encode()?,
+    )?;
+    write_json(&proof_path, &proof_report)?;
+    write_json(&history_path, &history)?;
+    let summary = AnchoredInputGolfSummary {
+        schema: "dusklight-anchored-input-golf/v1",
+        objective,
+        source_candidate_id: source_id,
+        golfed_candidate_id: golfed.candidate.id()?,
+        source_goal_tick,
+        goal_tick: golfed.goal_sim_tick,
+        source_pulse_timestamps,
+        golfed_pulse_timestamps: menu_pulse_timestamps(&golfed.tape)?,
+        evaluated_candidates: proposal_evaluations + 2,
+        accepted_edits,
+        candidate: candidate_path,
+        suffix_tape: suffix_path,
+        realized_tape: realized_path,
+        proof: proof_path,
+        history: history_path,
+        output_root: config.output_root.clone(),
+    };
+    write_json(&config.output_root.join("golf.summary.json"), &summary)?;
+    Ok(summary)
 }
 
 pub fn minimize_anchored_route(
@@ -708,6 +918,178 @@ fn fresh_round_root(output_root: &Path, round: u32) -> Result<PathBuf, EvaluateE
     ))
 }
 
+fn evaluate_input_golf_batch(
+    config: &AnchoredInputGolfConfig,
+    prepared: &PreparedAnchoredEvaluator,
+    candidates: Vec<Candidate>,
+    root: &Path,
+    generation: u32,
+) -> Result<(Vec<ProvenRouteCandidate>, EvaluationReport), EvaluateError> {
+    evaluate_route_batch(
+        &AnchoredRouteMinimizeConfig {
+            candidate: config.candidate.clone(),
+            objective: config.objective.clone(),
+            output_root: config.output_root.clone(),
+            working_directory: config.working_directory.clone(),
+            game_args_prefix: config.game_args_prefix.clone(),
+            workers: config.workers,
+            repetitions: config.repetitions,
+            candidate_budget: config.candidate_budget,
+            resume: false,
+            timeout: config.timeout,
+            harness: config.harness.clone(),
+        },
+        prepared,
+        candidates,
+        root,
+        generation,
+    )
+}
+
+fn input_golf_quality(candidate: &ProvenRouteCandidate) -> Result<InputGolfQuality, EvaluateError> {
+    let timestamps = menu_pulse_timestamps(&candidate.tape)?;
+    Ok(InputGolfQuality {
+        goal_sim_tick: candidate.goal_sim_tick,
+        pulse_count: timestamps.len(),
+        frame_count: candidate.candidate.frame_count(),
+        timestamp_sum: timestamps_sum(&timestamps)?,
+        timestamps,
+        candidate_id: candidate.candidate.id()?,
+    })
+}
+
+fn timestamps_sum(timestamps: &[u64]) -> Result<u64, EvaluateError> {
+    timestamps.iter().try_fold(0_u64, |sum, timestamp| {
+        sum.checked_add(*timestamp)
+            .ok_or_else(|| EvaluateError::InvalidResult("pulse timestamp sum overflowed".into()))
+    })
+}
+
+fn menu_pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
+    tape.frames
+        .iter()
+        .enumerate()
+        .filter(|(_, frame)| is_pure_menu_pulse(&frame.pads[0]))
+        .map(|(index, _)| {
+            u64::try_from(index).map_err(|_| {
+                EvaluateError::InvalidResult("pulse timestamp does not fit in u64".into())
+            })
+        })
+        .collect()
+}
+
+fn is_pure_menu_pulse(pad: &RawPadState) -> bool {
+    pad.buttons != 0
+        && pad.buttons & !MENU_BUTTONS == 0
+        && pad.stick_x == 0
+        && pad.stick_y == 0
+        && pad.substick_x == 0
+        && pad.substick_y == 0
+        && pad.trigger_left == 0
+        && pad.trigger_right == 0
+        && pad.analog_a == 0
+        && pad.analog_b == 0
+}
+
+fn input_golf_proposals(
+    parent: &ProvenRouteCandidate,
+    generation: u32,
+    budget: usize,
+) -> Result<Vec<Candidate>, EvaluateError> {
+    let timestamps = menu_pulse_timestamps(&parent.tape)?;
+    let mut proposals = Vec::new();
+    let mut ids = BTreeSet::new();
+
+    // Deletions come first: if a menu press is useless, simplicity should win
+    // before timing perturbations spend the bounded rollout budget.
+    for (pulse_index, timestamp) in timestamps.iter().copied().enumerate() {
+        if proposals.len() == budget {
+            return Ok(proposals);
+        }
+        let mut tape = parent.tape.clone();
+        tape.frames[timestamp as usize].pads[0] = RawPadState::default();
+        push_input_golf_candidate(
+            parent,
+            tape,
+            generation,
+            format!("delete menu pulse {pulse_index} at frame {timestamp}"),
+            timestamp,
+            timestamp + 1,
+            &mut ids,
+            &mut proposals,
+        )?;
+    }
+
+    // Search every earlier free coordinate. Last-to-first makes late menu
+    // gates available early in a bounded run; descending destinations test
+    // the smallest repair before more disruptive shifts.
+    for pulse_index in (0..timestamps.len()).rev() {
+        let old_timestamp = timestamps[pulse_index];
+        let earliest = if pulse_index == 0 {
+            0
+        } else {
+            timestamps[pulse_index - 1]
+                .checked_add(1)
+                .ok_or_else(|| EvaluateError::InvalidResult("pulse frame overflowed".into()))?
+        };
+        for new_timestamp in (earliest..old_timestamp).rev() {
+            if proposals.len() == budget {
+                return Ok(proposals);
+            }
+            let new_index = new_timestamp as usize;
+            if parent.tape.frames[new_index].pads[0] != RawPadState::default() {
+                continue;
+            }
+            let mut tape = parent.tape.clone();
+            let pad = tape.frames[old_timestamp as usize].pads[0];
+            tape.frames[old_timestamp as usize].pads[0] = RawPadState::default();
+            tape.frames[new_index].pads[0] = pad;
+            push_input_golf_candidate(
+                parent,
+                tape,
+                generation,
+                format!(
+                    "move menu pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+                ),
+                new_timestamp,
+                old_timestamp + 1,
+                &mut ids,
+                &mut proposals,
+            )?;
+        }
+    }
+    Ok(proposals)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_input_golf_candidate(
+    parent: &ProvenRouteCandidate,
+    tape: InputTape,
+    generation: u32,
+    mutation: String,
+    intervention_start: u64,
+    intervention_end: u64,
+    ids: &mut BTreeSet<String>,
+    proposals: &mut Vec<Candidate>,
+) -> Result<(), EvaluateError> {
+    let mut candidate = Candidate::from_absolute_tape(parent.candidate.segment, &tape)?;
+    candidate.ancestry = Ancestry {
+        generation,
+        parent_id: Some(parent.candidate.id()?),
+        mutation: Some(mutation),
+        intervention: Some(InterventionRange {
+            start_frame: intervention_start,
+            end_frame_exclusive: intervention_end,
+            parent_end_frame_exclusive: intervention_end,
+        }),
+    };
+    let id = candidate.id()?;
+    if ids.insert(id) {
+        proposals.push(candidate);
+    }
+    Ok(())
+}
+
 fn evaluate_route_batch(
     config: &AnchoredRouteMinimizeConfig,
     prepared: &PreparedAnchoredEvaluator,
@@ -997,6 +1379,7 @@ fn round_record_with_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_automation_contracts::tape::InputFrame;
     use dusklight_search::search::SearchPadState;
 
     fn candidate() -> Candidate {
@@ -1094,6 +1477,104 @@ mod tests {
             reductions
                 .iter()
                 .all(|candidate| candidate.frame_count() == source.frame_count() - 1)
+        );
+    }
+
+    #[test]
+    fn menu_input_golf_proposes_deletions_then_bounded_earlier_repairs() {
+        let mut tape = InputTape {
+            boot: TapeBoot::Process,
+            frames: vec![
+                InputFrame {
+                    owned_ports: 0x0f,
+                    ..InputFrame::default()
+                };
+                10
+            ],
+            ..InputTape::default()
+        };
+        tape.frames[3].pads[0].buttons = BUTTON_A;
+        tape.frames[7].pads[0].buttons = BUTTON_START;
+        // A non-menu input is deliberately outside the edit surface.
+        tape.frames[9].pads[0].buttons = 0x0200;
+        let candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape).unwrap();
+        let proven = ProvenRouteCandidate {
+            tape,
+            candidate,
+            first_hit_tick: 10,
+            goal_sim_tick: 10,
+            goal_tape_frame: 9,
+            goal_boundary_fingerprint: BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v4".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v4".into(),
+                digest: "1".repeat(32),
+            },
+        };
+
+        let proposals = input_golf_proposals(&proven, 1, 3).unwrap();
+        assert_eq!(proposals.len(), 3);
+        assert_eq!(
+            menu_pulse_timestamps(&proposals[0].compile().unwrap()).unwrap(),
+            vec![7]
+        );
+        assert_eq!(
+            menu_pulse_timestamps(&proposals[1].compile().unwrap()).unwrap(),
+            vec![3]
+        );
+        assert_eq!(
+            menu_pulse_timestamps(&proposals[2].compile().unwrap()).unwrap(),
+            vec![3, 6]
+        );
+        assert_eq!(
+            proposals[2].compile().unwrap().frames[9].pads[0].buttons,
+            0x0200
+        );
+    }
+
+    #[test]
+    fn menu_input_quality_prefers_goal_tick_then_simplicity_then_earlier_pulses() {
+        let make = |tick: u64, pulse_frames: &[usize]| {
+            let mut tape = InputTape {
+                frames: vec![
+                    InputFrame {
+                        owned_ports: 0x0f,
+                        ..InputFrame::default()
+                    };
+                    12
+                ],
+                ..InputTape::default()
+            };
+            for frame in pulse_frames {
+                tape.frames[*frame].pads[0].buttons = BUTTON_A;
+            }
+            let candidate =
+                Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape).unwrap();
+            ProvenRouteCandidate {
+                candidate,
+                tape,
+                first_hit_tick: tick,
+                goal_sim_tick: tick,
+                goal_tape_frame: 11,
+                goal_boundary_fingerprint: BoundaryFingerprint {
+                    schema: "dusklight.milestone-boundary/v4".into(),
+                    algorithm: "xxh3-128".into(),
+                    canonical_encoding: "little-endian-fixed-v4".into(),
+                    digest: "1".repeat(32),
+                },
+            }
+        };
+        assert!(
+            input_golf_quality(&make(9, &[5, 8])).unwrap()
+                < input_golf_quality(&make(10, &[1])).unwrap()
+        );
+        assert!(
+            input_golf_quality(&make(10, &[5])).unwrap()
+                < input_golf_quality(&make(10, &[2, 5])).unwrap()
+        );
+        assert!(
+            input_golf_quality(&make(10, &[4, 7])).unwrap()
+                < input_golf_quality(&make(10, &[5, 7])).unwrap()
         );
     }
 

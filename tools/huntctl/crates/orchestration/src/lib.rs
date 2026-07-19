@@ -24,9 +24,10 @@ pub use dusklight_evaluation::{
     prepare_anchored_evaluator, search_evaluator,
 };
 pub use dusklight_finalist_reduction::{
+    AnchoredInputGolfConfig, AnchoredInputGolfRound, AnchoredInputGolfSummary,
     AnchoredRouteMinimizeConfig, AnchoredRouteMinimizeRound, AnchoredRouteMinimizeSummary,
-    BootGolfConfig, BootGolfSummary, BootMinimizeConfig, BootMinimizeSummary, golf_boot,
-    minimize_anchored_route, minimize_boot,
+    BootGolfConfig, BootGolfSummary, BootMinimizeConfig, BootMinimizeSummary, golf_anchored_inputs,
+    golf_boot, minimize_anchored_route, minimize_boot,
 };
 pub use dusklight_proposer_tournament::{
     ProposerReplayVerdict, ProposerTournamentConfig, ProposerTournamentRow,

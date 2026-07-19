@@ -4,7 +4,7 @@ mod boot;
 mod route;
 
 pub use boot::{golf_boot, minimize_boot};
-pub use route::minimize_anchored_route;
+pub use route::{golf_anchored_inputs, minimize_anchored_route};
 
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 #[cfg(test)]
@@ -81,6 +81,57 @@ pub struct AnchoredRouteMinimizeSummary {
     pub output_root: PathBuf,
 }
 
+/// A deterministic, bounded coordinate search over the discrete A/Start
+/// pulses in one suffix segment. The prefix and milestone program make the
+/// segment boundary explicit; every accepted edit is replay-proved from the
+/// same clean boot.
+#[derive(Clone, Debug)]
+pub struct AnchoredInputGolfConfig {
+    pub candidate: Candidate,
+    pub objective: AnchoredObjectiveConfig,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub candidate_budget: usize,
+    pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AnchoredInputGolfRound {
+    pub round: u32,
+    pub evaluated_candidates: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_candidate_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_mutation: Option<String>,
+    pub retained_goal_tick: u64,
+    pub retained_pulses: usize,
+    pub retained_timestamp_sum: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnchoredInputGolfSummary {
+    pub schema: &'static str,
+    pub objective: AnchoredObjectiveIdentity,
+    pub source_candidate_id: String,
+    pub golfed_candidate_id: String,
+    pub source_goal_tick: u64,
+    pub goal_tick: u64,
+    pub source_pulse_timestamps: Vec<u64>,
+    pub golfed_pulse_timestamps: Vec<u64>,
+    pub evaluated_candidates: usize,
+    pub accepted_edits: usize,
+    pub candidate: PathBuf,
+    pub suffix_tape: PathBuf,
+    pub realized_tape: PathBuf,
+    pub proof: PathBuf,
+    pub history: PathBuf,
+    pub output_root: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 pub struct BootMinimizeConfig {
     pub candidate: Candidate,
@@ -149,7 +200,9 @@ pub struct BootGolfSummary {
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
         profile,
-        SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+        SegmentProfile::BootToFsp103
+            | SegmentProfile::Fsp103ToFsp104
+            | SegmentProfile::LinkControlToTunnelCrawlStart
     )
 }
 

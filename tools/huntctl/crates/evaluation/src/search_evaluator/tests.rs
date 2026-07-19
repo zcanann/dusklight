@@ -171,6 +171,11 @@ milestone tunnel_crawl_start {
         root.join("runtime.dmsp"),
     )
     .unwrap();
+    let mut menu_objective = prepared.config.clone();
+    menu_objective.segment = SegmentProfile::BootToFsp103;
+    let prepared_menu =
+        prepare_anchored_objective(&menu_objective, root.join("runtime-menu.dmsp")).unwrap();
+    assert_eq!(prepared_menu.identity.segment, SegmentProfile::BootToFsp103);
     let fingerprint = |digest: String| {
         serde_json::json!({
             "schema": "dusklight.milestone-boundary/v1",

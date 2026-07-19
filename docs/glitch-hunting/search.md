@@ -195,6 +195,40 @@ Authenticated runs write v2 checkpoints containing the sealed request digest,
 and resume rejects a missing or changed authority. Legacy v1 checkpoints remain
 resumable only through the legacy execution path.
 
+### Predicate-bounded menu input golf
+
+For short menu or dialogue segments, use the generic anchored input golfer
+instead of a stochastic optimizer:
+
+    huntctl search golf-route-inputs --timeline "routes/Glitch Exhibition/intro.timeline" --segment tolink_choose_play --game build/windows-clang-debug/dusklight.exe --dvd "orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso" --output build/search/choose-play-golf --workers 8 --repetitions 3 --candidate-budget 256
+
+The route-aware form materializes the exact parent prefix, extracts only the
+selected child suffix, and compiles the parent and child predicate sources into
+an ephemeral two-boundary objective. Predicate source files remain local to
+their own segments; the timeline does not accumulate a historical predicate
+program. If either segment exposes multiple goals, select them explicitly with
+`--source-goal` and `--goal`.
+
+The lower-level form accepts those artifacts directly:
+
+    huntctl search golf-inputs --candidate build/choose-play.candidate.json --anchored-prefix build/choose-play-prefix.tape --milestones build/tolink.dmsp --segment boot_to_fsp103 --source-milestone open_title --source-boundary-fingerprint FINGERPRINT --goal-milestone choose_play --game build/windows-clang-debug/dusklight.exe --dvd "orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso" --output build/search/choose-play-golf --workers 8 --repetitions 3 --candidate-budget 256
+
+`golf-inputs` edits only pure, zero-stick A/Start pulse frames in the candidate
+suffix. Each round tries removing one pulse, then moving a surviving pulse to
+an earlier free frame without changing pulse order. Proposals are deterministic
+and bounded by `--candidate-budget`; there is no random seed or model. Every
+candidate replays the immutable prefix from a clean process and must reach the
+selected goal predicate with identical evidence in every repetition.
+
+Selection minimizes the goal milestone's simulation tick first, then pulse
+count, suffix length, and pulse timestamps. This lets a useless press disappear
+and lets a same-tick earlier press be retained as a repair that may unlock the
+next coordinate. The goal predicate—not a hard-coded route name—defines
+success, so the same command applies to each authored ToLink section and later
+menu sequences. The winner is truncated at the goal observation and cold-proved
+again. Outputs include `golfed.candidate.json`, the compact `golfed.tape`, the
+full `golfed.realized.tape`, proof evidence, and an accepted-edit history.
+
 ## Native evaluation
 
 Both the game executable and disc image are explicit. There is no saved-config

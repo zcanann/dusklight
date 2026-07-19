@@ -54,7 +54,9 @@ const NATIVE_GOAL_MISS_EXIT_CODE: i32 = 2;
 fn is_anchored_profile(profile: SegmentProfile) -> bool {
     matches!(
         profile,
-        SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+        SegmentProfile::BootToFsp103
+            | SegmentProfile::Fsp103ToFsp104
+            | SegmentProfile::LinkControlToTunnelCrawlStart
     )
 }
 
@@ -371,7 +373,7 @@ fn prepare_anchored_objective(
 ) -> Result<PreparedAnchoredEvaluator, EvaluateError> {
     if !is_anchored_profile(config.segment) {
         return Err(EvaluateError::InvalidConfig(format!(
-            "anchored objective requires a movement segment, got {}",
+            "anchored objective requires a supported suffix segment, got {}",
             config.segment.as_str()
         )));
     }
