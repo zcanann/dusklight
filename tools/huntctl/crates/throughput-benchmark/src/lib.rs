@@ -10,14 +10,14 @@ mod runner;
 
 pub use report::{
     ColdProcessBenchmarkAttempt, ColdProcessBenchmarkHost, ColdProcessBenchmarkReport,
-    ColdProcessBenchmarkSummary,
+    ColdProcessBenchmarkSummary, ColdProcessNativePhaseBreakdown,
 };
 pub use runner::{ColdProcessBenchmarkConfig, run_cold_process_benchmark};
 
 use std::error::Error;
 use std::fmt;
 
-pub const COLD_PROCESS_BENCHMARK_SCHEMA: &str = "dusklight-cold-process-throughput/v1";
+pub const COLD_PROCESS_BENCHMARK_SCHEMA: &str = "dusklight-cold-process-throughput/v2";
 pub(crate) const COLD_PROCESS_MODE: &str = "isolated_cold_process";
 pub(crate) const MAX_REPETITIONS: u32 = 100;
 

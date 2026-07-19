@@ -4,10 +4,13 @@ use crate::{
 };
 use dusklight_harness_contracts::artifact::Digest;
 use dusklight_harness_contracts::run_contract::{
-    HarnessBoundaryFingerprint, HarnessTerminalReason,
+    HarnessBoundaryFingerprint, HarnessNativePhaseTiming, HarnessTerminalReason,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+mod native_phases;
+pub use native_phases::ColdProcessNativePhaseBreakdown;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +39,7 @@ pub struct ColdProcessBenchmarkAttempt {
     pub native_process_millis: u64,
     pub end_to_end_micros: u128,
     pub harness_outside_process_micros: u128,
+    pub native_phases: HarnessNativePhaseTiming,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -52,6 +56,9 @@ pub struct ColdProcessBenchmarkSummary {
     pub logical_ticks_per_second_millionths: u64,
     pub consumed_input_ticks_per_second_millionths: u64,
     pub native_process_time_share_millionths: u32,
+    pub total_native_lifecycle_micros: u64,
+    pub native_phase_totals_micros: ColdProcessNativePhaseBreakdown,
+    pub native_phase_shares_millionths: ColdProcessNativePhaseBreakdown,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -119,6 +126,15 @@ impl ColdProcessBenchmarkReport {
                     "cold-process benchmark attempt identity or timing is invalid",
                 ));
             }
+            attempt
+                .native_phases
+                .validate(attempt.native_process_millis)
+                .map_err(|error| {
+                    benchmark_error(format!(
+                        "cold-process attempt {} has invalid native phase timing: {error}",
+                        attempt.attempt
+                    ))
+                })?;
         }
         let issue = comparison_issue(&self.attempts);
         if self.comparable != issue.is_none() || self.comparison_issue != issue {
@@ -166,7 +182,7 @@ impl ColdProcessBenchmarkReport {
             ))
         })?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.cold-process-throughput/v1\0");
+        hasher.update(b"dusklight.cold-process-throughput/v2\0");
         hasher.update((encoded.len() as u64).to_le_bytes());
         hasher.update(encoded);
         Ok(Digest(hasher.finalize().into()))
@@ -266,6 +282,20 @@ pub(crate) fn summarize(
     let candidate_count = u64::try_from(attempts.len())
         .map_err(|_| benchmark_error("candidate count does not fit throughput summary"))?;
     let native_process_micros = u128::from(total_native_process_millis) * 1_000;
+    let mut native_phase_totals_micros = ColdProcessNativePhaseBreakdown::default();
+    for attempt in attempts {
+        native_phase_totals_micros
+            .checked_add(&ColdProcessNativePhaseBreakdown::from_attempt(attempt))
+            .ok_or_else(|| benchmark_error("native lifecycle phase totals overflowed"))?;
+    }
+    let total_native_lifecycle_micros = attempts
+        .iter()
+        .try_fold(0_u64, |total, attempt| {
+            total.checked_add(attempt.native_phases.exit_ready_micros)
+        })
+        .ok_or_else(|| benchmark_error("native lifecycle total overflowed"))?;
+    let native_phase_shares_millionths =
+        native_phase_totals_micros.shares(total_native_process_millis.saturating_mul(1_000))?;
     Ok(ColdProcessBenchmarkSummary {
         total_logical_ticks,
         total_consumed_input_ticks,
@@ -293,6 +323,9 @@ pub(crate) fn summarize(
                 / total_end_to_end_micros,
         )
         .map_err(|_| benchmark_error("native process share exceeds its fixed-point range"))?,
+        total_native_lifecycle_micros,
+        native_phase_totals_micros,
+        native_phase_shares_millionths,
     })
 }
 

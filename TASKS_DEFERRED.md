@@ -89,12 +89,10 @@ first cheap-objective learning and winner-narrowing loop.
 - [ ] Maintain emulator or console transfer cases not required by an active
   native-port objective.
 
-## Persistent engine sessions and checkpoints
+## General engine sessions and checkpoints
 
-- [ ] Replace process-per-run execution with a persistent engine-session worker
-  supporting load, reset, step, batch, cancel, capture, and health commands.
-- [ ] Prove repeated soft reset restores all relevant managers, heaps, globals,
-  threads, loaders, RNG, audio, input, and automation-owned state.
+- [ ] Expand the narrow active stage-boot session into a general worker with
+  load, step, batch, cancel, capture, and health commands.
 - [ ] Implement tiered checkpoints for route boundary, gameplay state, and full
   supported process state with relocation/fixup validation.
 - [ ] Detect unsafe in-flight asynchronous work and refuse checkpoint capture or

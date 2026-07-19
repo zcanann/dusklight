@@ -413,6 +413,25 @@ fn mock_search_worker(args: &[String]) -> Result<(), Box<dyn Error>> {
             "milestones": milestones
         }))?,
     )?;
+    if let Some(path) = option(args, "--automation-phase-timing") {
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({
+                "schema": "dusklight-native-lifecycle-timing/v1",
+                "clock": "steady_clock",
+                "process_entry_micros": 0,
+                "cli_configured_micros": 0,
+                "aurora_initialized_micros": 0,
+                "engine_ready_micros": 0,
+                "stage_ready_micros": 0,
+                "first_simulation_tick_micros": 0,
+                "last_simulation_tick_micros": 0,
+                "proof_artifacts_written_micros": 0,
+                "engine_shutdown_micros": 1,
+                "exit_ready_micros": 1
+            }))?,
+        )?;
+    }
     if mode == "miss"
         || mode == "target-lost"
         || unstable_miss

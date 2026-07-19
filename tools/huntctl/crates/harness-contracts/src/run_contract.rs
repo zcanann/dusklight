@@ -25,6 +25,7 @@ use std::time::UNIX_EPOCH;
 
 pub const RUN_REQUEST_SCHEMA_V2: &str = "dusklight-harness-run-request/v2";
 pub const RUN_RESULT_SCHEMA_V2: &str = "dusklight-harness-run-result/v2";
+pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V1: &str = "dusklight-native-lifecycle-timing/v1";
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
 const MAX_HOST_TIMEOUT_SECONDS: u32 = 86_400;
 const MAX_FACTS: usize = 128;
@@ -144,6 +145,8 @@ pub struct HarnessRunArtifacts {
     pub stdout: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stderr: Option<ArtifactReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_phase_timing: Option<ArtifactReference>,
     pub complete: bool,
 }
 
@@ -153,6 +156,25 @@ pub struct HarnessRunTiming {
     pub logical_ticks: u64,
     pub consumed_input_ticks: u64,
     pub host_elapsed_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_phases: Option<HarnessNativePhaseTiming>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarnessNativePhaseTiming {
+    pub schema: String,
+    pub clock: String,
+    pub process_entry_micros: u64,
+    pub cli_configured_micros: u64,
+    pub aurora_initialized_micros: u64,
+    pub engine_ready_micros: u64,
+    pub stage_ready_micros: u64,
+    pub first_simulation_tick_micros: u64,
+    pub last_simulation_tick_micros: u64,
+    pub proof_artifacts_written_micros: u64,
+    pub engine_shutdown_micros: u64,
+    pub exit_ready_micros: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -404,6 +426,14 @@ impl HarnessRunResult {
                 "run-result timing counters exceed request bounds",
             ));
         }
+        if self.artifacts.native_phase_timing.is_some() != self.timing.native_phases.is_some() {
+            return Err(contract_error(
+                "native phase artifact and decoded timing must be present together",
+            ));
+        }
+        if let Some(native_phases) = &self.timing.native_phases {
+            native_phases.validate(self.timing.host_elapsed_millis)?;
+        }
         if self
             .objective
             .first_hit_tick
@@ -467,6 +497,10 @@ impl HarnessRunResult {
             ("objective result", self.artifacts.objective_result.as_ref()),
             ("stdout", self.artifacts.stdout.as_ref()),
             ("stderr", self.artifacts.stderr.as_ref()),
+            (
+                "native phase timing",
+                self.artifacts.native_phase_timing.as_ref(),
+            ),
         ] {
             if let Some(reference) = reference {
                 output.push((label, reference));
@@ -617,6 +651,7 @@ impl HarnessRunArtifacts {
             ("objective result", self.objective_result.as_ref()),
             ("stdout", self.stdout.as_ref()),
             ("stderr", self.stderr.as_ref()),
+            ("native phase timing", self.native_phase_timing.as_ref()),
         ] {
             if let Some(reference) = reference {
                 validate_artifact(label, reference)?;
@@ -633,6 +668,42 @@ impl HarnessRunArtifacts {
         if terminal == HarnessTerminalReason::Reached && !self.complete {
             return Err(contract_error(
                 "reached run result requires complete replay and proof artifacts",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl HarnessNativePhaseTiming {
+    pub fn validate(&self, host_elapsed_millis: u64) -> Result<(), HarnessRunContractError> {
+        if self.schema != NATIVE_LIFECYCLE_TIMING_SCHEMA_V1 || self.clock != "steady_clock" {
+            return Err(contract_error(
+                "unsupported native lifecycle timing identity",
+            ));
+        }
+        let phases = [
+            self.process_entry_micros,
+            self.cli_configured_micros,
+            self.aurora_initialized_micros,
+            self.engine_ready_micros,
+            self.stage_ready_micros,
+            self.first_simulation_tick_micros,
+            self.last_simulation_tick_micros,
+            self.proof_artifacts_written_micros,
+            self.engine_shutdown_micros,
+            self.exit_ready_micros,
+        ];
+        if self.process_entry_micros != 0 || !phases.windows(2).all(|pair| pair[0] <= pair[1]) {
+            return Err(contract_error(
+                "native lifecycle timing phases are nonmonotonic",
+            ));
+        }
+        let host_upper_bound = host_elapsed_millis
+            .saturating_mul(1_000)
+            .saturating_add(1_000);
+        if self.exit_ready_micros > host_upper_bound {
+            return Err(contract_error(
+                "native lifecycle timing exceeds host process duration",
             ));
         }
         Ok(())
@@ -1131,12 +1202,14 @@ mod tests {
                 objective_result: Some(objective),
                 stdout: None,
                 stderr: None,
+                native_phase_timing: None,
                 complete: true,
             },
             timing: HarnessRunTiming {
                 logical_ticks: 6,
                 consumed_input_ticks: 6,
                 host_elapsed_millis: 50,
+                native_phases: None,
             },
         };
         result.refresh_content_sha256().unwrap();

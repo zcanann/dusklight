@@ -2,8 +2,25 @@ use crate::report::{comparison_issue, summarize};
 use crate::*;
 use dusklight_harness_contracts::artifact::Digest;
 use dusklight_harness_contracts::run_contract::{
-    HarnessBoundaryFingerprint, HarnessTerminalReason,
+    HarnessBoundaryFingerprint, HarnessNativePhaseTiming, HarnessTerminalReason,
 };
+
+fn native_phases() -> HarnessNativePhaseTiming {
+    HarnessNativePhaseTiming {
+        schema: "dusklight-native-lifecycle-timing/v1".into(),
+        clock: "steady_clock".into(),
+        process_entry_micros: 0,
+        cli_configured_micros: 500,
+        aurora_initialized_micros: 1_000,
+        engine_ready_micros: 2_000,
+        stage_ready_micros: 3_000,
+        first_simulation_tick_micros: 3_000,
+        last_simulation_tick_micros: 5_000,
+        proof_artifacts_written_micros: 6_000,
+        engine_shutdown_micros: 7_000,
+        exit_ready_micros: 8_000,
+    }
+}
 
 fn attempt(number: u32, trace: u8, duration: u128) -> ColdProcessBenchmarkAttempt {
     ColdProcessBenchmarkAttempt {
@@ -31,6 +48,7 @@ fn attempt(number: u32, trace: u8, duration: u128) -> ColdProcessBenchmarkAttemp
         native_process_millis: 8,
         end_to_end_micros: duration,
         harness_outside_process_micros: duration.saturating_sub(8_000),
+        native_phases: native_phases(),
     }
 }
 
@@ -105,4 +123,13 @@ fn changed_artifact_or_incomplete_proof_is_not_comparable() {
             .unwrap()
             .contains("complete authenticated artifacts")
     );
+}
+
+#[test]
+fn nonmonotonic_native_phase_evidence_is_rejected() {
+    let mut invalid = report(vec![attempt(1, 4, 10_000), attempt(2, 4, 10_000)]);
+    invalid.attempts[0]
+        .native_phases
+        .last_simulation_tick_micros = 1_000;
+    assert!(invalid.validate().is_err());
 }

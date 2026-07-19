@@ -548,3 +548,37 @@ architecture-policy change.
 **Done when:** trace schema evolution, channel decoding, and reporting have
 distinct physical owners and cannot collapse back into a single decoder file
 without an explicit architecture-policy change.
+
+## 41. Authenticated native lifecycle phase timing
+
+- [x] Emit one monotonic native timing artifact for authenticated automation
+  runs covering CLI/configuration, host initialization, engine readiness,
+  stage readiness, first/last simulation ticks, proof-artifact flush, engine
+  shutdown, and exit readiness.
+- [x] Validate and bind the exact timing artifact into the run result, aggregate
+  phase durations and shares in the cold-process benchmark, and reject missing,
+  nonmonotonic, or incomparable phase evidence.
+- [x] Measure the checked-in stage-ready request on macOS, document where its
+  native time is spent, and use that evidence to scope the first genuine
+  persistent-session/reset implementation.
+
+**Done when:** process startup, stage loading, simulation, artifact writing,
+and teardown costs are separately reproducible under the same authenticated
+request used by the cold-process baseline.
+
+## 42. Narrow persistent stage-boot session
+
+- [ ] Separate process-lifetime initialization from one authenticated game-run
+  lifecycle, retaining Aurora, DVD hosting, and process services across a
+  sequential session without adding a second request/result or proof path.
+- [ ] Define one explicit world teardown/reinitialize boundary for the checked
+  stage-boot case; audit managers, heaps, globals, threads, loaders, RNG, audio,
+  input, observers, and automation artifacts, refusing another run whenever
+  reset safety is not established.
+- [ ] Run an A/B/A request sequence in one process, compare every terminal,
+  tick, boundary, tape, trace, and evidence identity against cold executions,
+  then report phase-attributed throughput without claiming checkpoint support.
+
+**Done when:** the checked stage-ready request can run repeatedly in one native
+process with cold-equivalent authenticated evidence and a measured improvement,
+or the implementation rejects reuse at a precisely documented unsafe boundary.

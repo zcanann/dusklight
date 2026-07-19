@@ -6,9 +6,10 @@ use super::observation_contract::{
     ObservationInventory,
 };
 use super::run_contract::{
-    HarnessBoundaryFingerprint, HarnessFidelityMode, HarnessObjectiveResult, HarnessRunArtifacts,
-    HarnessRunRequest, HarnessRunResult, HarnessRunTiming, HarnessTerminalDetail,
-    HarnessTerminalReason, HarnessWorkerIdentity, RUN_RESULT_SCHEMA_V2,
+    HarnessBoundaryFingerprint, HarnessFidelityMode, HarnessNativePhaseTiming,
+    HarnessObjectiveResult, HarnessRunArtifacts, HarnessRunRequest, HarnessRunResult,
+    HarnessRunTiming, HarnessTerminalDetail, HarnessTerminalReason, HarnessWorkerIdentity,
+    RUN_RESULT_SCHEMA_V2,
 };
 use crate::artifact::Digest;
 use crate::controller_program::ControllerProgram;
@@ -143,6 +144,8 @@ fn execute_native_request(
         .arg(&paths.realized_input)
         .arg("--automation-data-root")
         .arg(&paths.state)
+        .arg("--automation-phase-timing")
+        .arg(&paths.native_phase_timing)
         .arg("--automation-tick-budget")
         .arg(request.logical_tick_budget.to_string())
         .arg("--renderer-cache-root")
@@ -242,14 +245,23 @@ fn execute_native_request(
         unsupported_detail,
         controller_planned_ticks,
     );
+    let native_phases = read_native_phase_timing(&paths.native_phase_timing, elapsed_millis)?;
+    if outcome.proof_complete && native_phases.is_none() {
+        return Err(execution_error(
+            "complete native run omitted authenticated lifecycle phase timing",
+        ));
+    }
     let result = build_result(
         request,
         attempt,
         &paths,
         &outcome,
         elapsed_millis,
-        native_goal.as_ref(),
-        realized_valid,
+        ResultEvidence {
+            native_goal: native_goal.as_ref(),
+            realized_ticks: realized_valid,
+            native_phases,
+        },
     )?;
     result
         .validate_files(request, &artifact_root)
@@ -277,6 +289,7 @@ struct ExecutionPaths {
     objective_result: PathBuf,
     stdout: PathBuf,
     stderr: PathBuf,
+    native_phase_timing: PathBuf,
     result: PathBuf,
 }
 
@@ -293,6 +306,7 @@ impl ExecutionPaths {
             objective_result: root.join("objective.json"),
             stdout: root.join("stdout.txt"),
             stderr: root.join("stderr.txt"),
+            native_phase_timing: root.join("native-timing.json"),
             result: root.join("result.json"),
         }
     }
@@ -905,28 +919,34 @@ fn classify_execution(
     }
 }
 
+struct ResultEvidence<'a> {
+    native_goal: Option<&'a NativeGoal>,
+    realized_ticks: Option<u64>,
+    native_phases: Option<HarnessNativePhaseTiming>,
+}
+
 fn build_result(
     request: &HarnessRunRequest,
     attempt: u32,
     paths: &ExecutionPaths,
     outcome: &ClassifiedExecution,
     elapsed_millis: u64,
-    native_goal: Option<&NativeGoal>,
-    realized_ticks: Option<u64>,
+    evidence: ResultEvidence<'_>,
 ) -> Result<HarnessRunResult, HarnessExecutionError> {
     let realized = artifact_if_file(&paths.root, &paths.realized_input)?;
     let trace = artifact_if_file(&paths.root, &paths.gameplay_trace)?;
     let objective = artifact_if_file(&paths.root, &paths.objective_result)?;
     let stdout = artifact_if_file(&paths.root, &paths.stdout)?;
     let stderr = artifact_if_file(&paths.root, &paths.stderr)?;
+    let native_phase_timing = artifact_if_file(&paths.root, &paths.native_phase_timing)?;
     let goal = (outcome.terminal == HarnessTerminalReason::Reached)
-        .then_some(native_goal)
+        .then_some(evidence.native_goal)
         .flatten();
-    let evidence = goal.and_then(|_| objective.clone());
+    let objective_evidence = goal.and_then(|_| objective.clone());
     let first_hit_tick = goal.and_then(|goal| goal.first_hit_tick);
     let logical_ticks = first_hit_tick
         .map(|tick| tick.saturating_add(1))
-        .or(realized_ticks)
+        .or(evidence.realized_ticks)
         .unwrap_or(0)
         .min(request.logical_tick_budget);
     let mut result = HarnessRunResult {
@@ -954,7 +974,7 @@ fn build_result(
         objective: HarnessObjectiveResult {
             reached: goal.is_some(),
             first_hit_tick,
-            evidence,
+            evidence: objective_evidence,
             boundary_fingerprint: goal.and_then(|goal| goal.fingerprint.clone()),
         },
         artifacts: HarnessRunArtifacts {
@@ -963,12 +983,14 @@ fn build_result(
             objective_result: objective,
             stdout,
             stderr,
+            native_phase_timing,
             complete: outcome.proof_complete,
         },
         timing: HarnessRunTiming {
             logical_ticks,
-            consumed_input_ticks: realized_ticks.unwrap_or(0).min(logical_ticks),
+            consumed_input_ticks: evidence.realized_ticks.unwrap_or(0).min(logical_ticks),
             host_elapsed_millis: elapsed_millis,
+            native_phases: evidence.native_phases,
         },
     };
     result
@@ -997,6 +1019,31 @@ fn artifact_if_file(
         path: relative,
         sha256: Digest(Sha256::digest(bytes).into()),
     }))
+}
+
+fn read_native_phase_timing(
+    path: &Path,
+    host_elapsed_millis: u64,
+) -> Result<Option<HarnessNativePhaseTiming>, HarnessExecutionError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path).map_err(|error| {
+        execution_error(format!(
+            "cannot read native lifecycle timing {}: {error}",
+            path.display()
+        ))
+    })?;
+    let timing: HarnessNativePhaseTiming = serde_json::from_slice(&bytes).map_err(|error| {
+        execution_error(format!(
+            "cannot decode native lifecycle timing {}: {error}",
+            path.display()
+        ))
+    })?;
+    timing
+        .validate(host_elapsed_millis)
+        .map_err(|error| execution_error(format!("invalid native lifecycle timing: {error}")))?;
+    Ok(Some(timing))
 }
 
 #[derive(Debug)]

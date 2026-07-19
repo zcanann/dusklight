@@ -338,12 +338,14 @@ fn write_run_result_draft(root: &Path, request: &HarnessRunRequest) -> (PathBuf,
             objective_result: Some(objective),
             stdout: None,
             stderr: None,
+            native_phase_timing: None,
             complete: true,
         },
         timing: HarnessRunTiming {
             logical_ticks: 6,
             consumed_input_ticks: 6,
             host_elapsed_millis: 50,
+            native_phases: None,
         },
     };
     let path = root.join("run-result.draft.json");

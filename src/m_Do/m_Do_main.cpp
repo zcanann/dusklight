@@ -76,6 +76,7 @@
 #include "dusk/automation/rng.hpp"
 #include "dusk/automation/eye_shredder_oracle.hpp"
 #include "dusk/automation/name_entry_trace.hpp"
+#include "dusk/automation/phase_timing.hpp"
 #include "dusk/automation/worker.hpp"
 #include "dusk/crash_handler.h"
 #include "dusk/crash_reporting.h"
@@ -543,6 +544,8 @@ void main01(void) {
     write_milestone_result_on_exit();
     write_realized_input_tape_on_exit();
     write_actor_catalog_on_exit();
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::ProofArtifactsWritten);
     dusk::mods::ModLoader::instance().shutdown();
     dusk::ui::shutdown();
 }
@@ -716,6 +719,7 @@ static std::optional<std::uint64_t> recordInputStartTapeFrame;
 static bool recordInputStartBoundaryMismatch;
 static bool recordInputFromBoot;
 static std::filesystem::path actorCatalogPath;
+static std::filesystem::path nativeLifecycleTimingPath;
 static bool actorCatalogWriteFailed;
 static bool actorCatalogWritten;
 static std::filesystem::path milestoneResultPath;
@@ -947,6 +951,10 @@ static bool automation_oracle_rejected_before_loop() {
 
 static void begin_automation_simulation_tick() {
     automationTapeFrame = automationPreparedInputFrame;
+    if (automationTapeFrame != dusk::automation::NameEntryNoTick) {
+        dusk::automation::mark_native_lifecycle_phase(
+            dusk::automation::NativeLifecyclePhase::FirstSimulationTick);
+    }
     dusk::automation::name_entry_observer().setTickContext(automationSimulationTick,
                                                             automationTapeFrame);
 }
@@ -1117,6 +1125,8 @@ static bool prepare_automation_pre_input_boundary() {
                      stageBootDescriptor.point, stageBootDescriptor.layer,
                      stageBootDescriptor.saveSlot);
     }
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::StageReady);
     if (record_milestone_pre_input_boundary()) return true;
     if (!recordInputFromBoot || recordInputHandoffReached) return false;
 
@@ -1599,6 +1609,8 @@ static void write_automation_oracle_result_on_exit() {
 
 static bool finish_simulation_tick() {
     if (dusk::game_clock::complete_sim_tick()) {
+        dusk::automation::update_native_lifecycle_phase(
+            dusk::automation::NativeLifecyclePhase::LastSimulationTick);
         return true;
     }
 
@@ -1915,6 +1927,8 @@ int game_main(int argc, char* argv[]) {
         return *automationResult;
     }
 
+    dusk::automation::begin_native_lifecycle_timing();
+
     bool deterministicTimeEnabled = false;
     SimpleScopeGuard deterministicTimeGuard([&deterministicTimeEnabled] {
         if (deterministicTimeEnabled) {
@@ -1971,6 +1985,7 @@ int game_main(int argc, char* argv[]) {
             ("frame-capture-width", "Frame-capture output width (default 320)", cxxopts::value<std::uint32_t>()->default_value("320"))
             ("frame-capture-height", "Frame-capture output height (default 180)", cxxopts::value<std::uint32_t>()->default_value("180"))
             ("automation-data-root", "Isolate all writable Dusklight state for this automation run", cxxopts::value<std::string>())
+            ("automation-phase-timing", "Write monotonic native lifecycle phase timing as JSON", cxxopts::value<std::string>())
             ("renderer-cache-root", "Use an explicit persistent renderer-only shader and pipeline cache", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
@@ -2153,6 +2168,27 @@ int game_main(int argc, char* argv[]) {
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     const bool hasInputController = parsed_arg_options.count("input-controller") != 0;
     const bool hasAutomationInput = hasInputTape || hasInputController;
+    if (parsed_arg_options.count("automation-phase-timing") != 0) {
+        const std::string outputPath =
+            parsed_arg_options["automation-phase-timing"].as<std::string>();
+        if (!hasAutomationInput || outputPath.empty()) {
+            fprintf(stderr,
+                    "Automation Timing Error: --automation-phase-timing requires automation input and a nonempty path\n");
+            return 1;
+        }
+        nativeLifecycleTimingPath = std::filesystem::u8path(outputPath);
+        std::error_code timingPathError;
+        if (std::filesystem::exists(nativeLifecycleTimingPath, timingPathError)) {
+            fprintf(stderr, "Automation Timing Error: output already exists: '%s'\n",
+                    dusk::io::fs_path_to_string(nativeLifecycleTimingPath).c_str());
+            return 1;
+        }
+        if (timingPathError) {
+            fprintf(stderr, "Automation Timing Error: cannot inspect output path: %s\n",
+                    timingPathError.message().c_str());
+            return 1;
+        }
+    }
     automationLogicalTickBudget = 0;
     automationLogicalTickBudgetExhausted = false;
     if (parsed_arg_options.count("automation-tick-budget") != 0) {
@@ -3057,6 +3093,9 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::CliConfigured);
+
     dusk::registerSettings();
 
     const auto startupLogLevel =
@@ -3212,6 +3251,8 @@ int game_main(int argc, char* argv[]) {
         }
         auroraInfo = aurora_initialize(argc, argv, &config);
     }
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::AuroraInitialized);
 
     aurora_dvd_set_synchronous(deterministicAutomationIo);
     if (deterministicAutomationIo) {
@@ -3569,6 +3610,9 @@ int game_main(int argc, char* argv[]) {
 
     OSReport("Starting main01 (Game Loop)...\n");
 
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::EngineReady);
+
     main01();
 
     dusk::MoviePlayerShutdown();
@@ -3590,6 +3634,8 @@ int game_main(int argc, char* argv[]) {
     dusk::texture_replacements::shutdown();
     dusk::config::shutdown();
     aurora_shutdown();
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::EngineShutdown);
 
     if (deterministicTimeEnabled) {
         AuroraDisableDeterministicTime();
@@ -3619,19 +3665,30 @@ int game_main(int argc, char* argv[]) {
     // sidecar and sets recordInputFailed before the return below.
     write_recorded_input_tape_on_exit(processFailedBeforeRecording);
 
+    int exitCode = 0;
     if (processInfrastructureFailed || recordInputFailed) {
-        return 1;
+        exitCode = 1;
+    } else if (inputControllerProtocolFailed) {
+        // A valid, exhausted search tape that misses its configured goal is a
+        // sample, not an infrastructure failure. Give orchestration an unambiguous
+        // status so it never has to infer that distinction from logs.
+        exitCode = 3;
+    } else if (milestoneGoalFailed || inputControllerTargetLost ||
+               automationLogicalTickBudgetExhausted) {
+        exitCode = 2;
     }
-    // A valid, exhausted search tape that misses its configured goal is a
-    // sample, not an infrastructure failure. Give orchestration an unambiguous
-    // status so it never has to infer that distinction from logs.
-    if (inputControllerProtocolFailed) {
-        return 3;
+
+    dusk::automation::mark_native_lifecycle_phase(
+        dusk::automation::NativeLifecyclePhase::ExitReady);
+    if (!nativeLifecycleTimingPath.empty()) {
+        std::string timingError;
+        if (!dusk::automation::write_native_lifecycle_timing(
+                nativeLifecycleTimingPath, timingError)) {
+            fprintf(stderr, "Automation Timing Error: %s\n", timingError.c_str());
+            return 1;
+        }
     }
-    return milestoneGoalFailed || inputControllerTargetLost ||
-                   automationLogicalTickBudgetExhausted
-               ? 2
-               : 0;
+    return exitCode;
 }
 
 

@@ -90,7 +90,7 @@ pub fn run_cold_process_benchmark(
             &request,
             &result,
             end_to_end_micros,
-        ));
+        )?);
     }
 
     let comparison_issue = comparison_issue(&attempts);
@@ -121,9 +121,14 @@ fn attempt_record(
     request: &HarnessRunRequest,
     result: &HarnessRunResult,
     end_to_end_micros: u128,
-) -> ColdProcessBenchmarkAttempt {
+) -> Result<ColdProcessBenchmarkAttempt, ColdProcessBenchmarkError> {
     let native_process_micros = u128::from(result.timing.host_elapsed_millis) * 1_000;
-    ColdProcessBenchmarkAttempt {
+    let native_phases = result.timing.native_phases.clone().ok_or_else(|| {
+        benchmark_error(format!(
+            "attempt {attempt} omitted authenticated native lifecycle timing"
+        ))
+    })?;
+    Ok(ColdProcessBenchmarkAttempt {
         attempt,
         request: request_path.into(),
         request_sha256: request.content_sha256,
@@ -155,7 +160,8 @@ fn attempt_record(
         native_process_millis: result.timing.host_elapsed_millis,
         end_to_end_micros,
         harness_outside_process_micros: end_to_end_micros.saturating_sub(native_process_micros),
-    }
+        native_phases,
+    })
 }
 
 fn capture_host() -> Result<ColdProcessBenchmarkHost, ColdProcessBenchmarkError> {
