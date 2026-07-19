@@ -28,7 +28,7 @@ EXPECTED_ROOT_MODULE_DIRECTORIES = {
 ROOT_FILE_LINE_BUDGETS = {
     "corpus_ops.rs": 1_000,
     "lib.rs": 200,
-    "main.rs": 1_850,
+    "main.rs": 1_500,
 }
 ROOT_MODULE_FILE_LINE_BUDGET = 2_000
 CRATE_ENTRYPOINT_LINE_BUDGET = 2_500

@@ -1,6 +1,7 @@
 //! Tape authoring, replay, proof, minimization, and recording adapters.
 
 use crate::*;
+use std::collections::BTreeMap;
 
 pub(crate) fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

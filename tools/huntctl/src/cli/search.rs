@@ -83,7 +83,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("run-route") => {
             let search_args = &args[1..];
             let timeline_path = required_path(search_args, "--timeline")?;
-            let timeline = load_timeline(&timeline_path)?;
+            let timeline =
+                huntctl::timeline::Timeline::parse(&fs::read_to_string(&timeline_path)?)?;
             let artifact_root = timeline_path
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."));

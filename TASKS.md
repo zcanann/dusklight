@@ -436,3 +436,13 @@ accumulate in the root Rust binary.
 
 **Done when:** static-world tooling can grow without turning the root binary
 back into a cross-domain implementation file.
+
+## 31. Domain-owned timeline CLI adapter
+
+- [x] Move timeline inspection/rebasing, route-store lifecycle, thumbnail
+  pruning, and workbench launch out of the root binary.
+- [x] Ratchet the reduced root binary and pass timeline/store, lint, and
+  architecture gates without changing the public command surface.
+
+**Done when:** route and workbench command growth is owned beside those domains
+instead of accumulating in the root Rust binary.

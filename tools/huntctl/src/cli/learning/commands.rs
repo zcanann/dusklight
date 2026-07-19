@@ -4,6 +4,7 @@ use super::super::super::*;
 use super::MAX_LEARN_INPUT_CORPORA;
 use huntctl::content_store::{ContentKind, ContentStore};
 use huntctl::transition_corpus::TransitionCorpus;
+use std::collections::BTreeMap;
 
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");
