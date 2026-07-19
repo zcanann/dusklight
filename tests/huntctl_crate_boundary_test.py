@@ -28,11 +28,39 @@ EXPECTED_ROOT_MODULE_DIRECTORIES = {
 ROOT_FILE_LINE_BUDGETS = {
     "corpus_ops.rs": 1_000,
     "lib.rs": 200,
-    "main.rs": 4_250,
+    "main.rs": 2_500,
 }
 ROOT_MODULE_FILE_LINE_BUDGET = 2_000
-CRATE_ENTRYPOINT_LINE_BUDGET = 5_500
-CRATE_IMPLEMENTATION_LINE_BUDGET = 6_000
+CRATE_ENTRYPOINT_LINE_BUDGET = 2_500
+CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
+
+# These integration-heavy crates are deliberately closed inventories. Adding a
+# new sibling module requires an explicit ownership-policy edit instead of
+# quietly recreating a general-purpose dumping ground.
+EXPECTED_COORDINATION_SOURCE_FILES = {
+    "evaluation": {
+        "lib.rs",
+        "search_evaluator.rs",
+        "search_evaluator/boot_optimization.rs",
+        "search_evaluator/native_result.rs",
+        "search_evaluator/search_runs.rs",
+        "search_evaluator/tests.rs",
+        "search_evaluator/tournament.rs",
+        "search_evaluator/trial.rs",
+    },
+    "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
+    "orchestration": {"harness/campaign.rs", "harness/mod.rs", "lib.rs"},
+    "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
+    "workbench": {
+        "draft_store.rs",
+        "graph_projection.rs",
+        "lib.rs",
+        "milestone_program.rs",
+        "playback.rs",
+        "server.rs",
+        "tests.rs",
+    },
+}
 
 EXPECTED_MEMBERS = {
     ".",
@@ -252,6 +280,16 @@ for crate_source in (WORKSPACE / "crates").glob("*/src"):
             f"crate module {path.relative_to(WORKSPACE)} grew past its "
             f"{CRATE_IMPLEMENTATION_LINE_BUDGET}-line architecture budget: {lines}"
         )
+
+for crate_name, expected in EXPECTED_COORDINATION_SOURCE_FILES.items():
+    source = WORKSPACE / "crates" / crate_name / "src"
+    actual = {
+        path.relative_to(source).as_posix() for path in source.rglob("*.rs")
+    }
+    assert actual == expected, (
+        f"{crate_name} source ownership changed without updating the architecture policy: "
+        f"expected {sorted(expected)}, got {sorted(actual)}"
+    )
 
 seen = set()
 for package_id in metadata["workspace_members"]:

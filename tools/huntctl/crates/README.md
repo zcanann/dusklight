@@ -11,7 +11,11 @@ cannot quietly turn `main.rs` or a replacement file back into a flat dumping
 ground. Crate entry points and non-test implementation modules have separate
 ceilings as well; large test suites live in sibling `tests.rs` modules instead
 of obscuring production ownership. The budgets are ceilings to lower during
-extraction, not targets.
+extraction, not targets. The current policy caps the executable adapter and
+crate entry points at 2,500 lines and every non-test implementation module at
+3,000 lines. Evaluation, harness runtime, orchestration, proposal, and
+workbench source inventories are closed lists: adding a sibling module requires
+an explicit ownership-policy change.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)
@@ -230,6 +234,7 @@ size alone. Do not create a crate that depends back on `dusklight-huntctl`;
 executable-facing composition belongs in `dusklight-orchestration` instead of
 weakening a lower-level crate.
 
-The boundary test also freezes the root module inventory. Adding another root
-file or module directory requires an explicit ownership-policy change, so new
-domains cannot silently accumulate beside the orchestration adapters.
+The boundary test freezes both the root module inventory and the inventories of
+the integration-heavy crates. Adding another root file, root module directory,
+or coordination sibling requires an explicit ownership-policy change, so new
+domains cannot silently accumulate beside the adapters.
