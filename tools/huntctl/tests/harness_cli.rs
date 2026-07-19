@@ -1267,6 +1267,22 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
     assert_eq!(report["passed"], true);
     assert_eq!(report["plan"]["dry_run"], false);
     assert_eq!(report["plan"]["case_id"], "stage-ready");
+    assert!(
+        PathBuf::from(report["plan"]["outputs"]["episodes"].as_str().unwrap())
+            .ends_with("build/stage-ready-campaign/evaluations")
+    );
+    assert_eq!(
+        report["observed_terminal_classes"],
+        serde_json::json!(["reached"])
+    );
+    assert_ne!(
+        report["request_template_sha256"],
+        report["materialized_request_sha256"]
+    );
+    assert!(
+        PathBuf::from(report["materialized_request"].as_str().unwrap())
+            .ends_with("build/stage-ready-campaign/requests/template.json")
+    );
     assert_eq!(report["rows"].as_array().unwrap().len(), 2);
     for row in report["rows"].as_array().unwrap() {
         assert_eq!(row["charged_episodes"], 2);

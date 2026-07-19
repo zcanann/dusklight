@@ -175,10 +175,13 @@ pub struct CampaignReport {
     pub plan: CampaignPlan,
     pub request_template: PathBuf,
     pub request_template_sha256: Digest,
+    pub materialized_request: PathBuf,
+    pub materialized_request_sha256: Digest,
     pub tournament_definition: PathBuf,
     pub tournament_definition_sha256: Digest,
     pub tournament_summary: PathBuf,
     pub tournament_summary_sha256: Digest,
+    pub observed_terminal_classes: Vec<String>,
     pub rows: Vec<CampaignReportRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub winner_proposer: Option<String>,
@@ -299,7 +302,7 @@ pub fn resolve_campaign_plan(
             root: output_root.clone(),
             available: output_available,
             requests: output_root.join("requests"),
-            episodes: output_root.join("episodes"),
+            episodes: output_root.join("evaluations"),
             finalists: output_root.join("finalists"),
             replays: output_root.join("replays"),
             report: output_root.join("report.json"),
@@ -343,6 +346,7 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
     request
         .validate_files(&repository_root)
         .map_err(|error| plan_error(format!("invalid run request template: {error}")))?;
+    let source_request_sha256 = request.content_sha256;
     request.id = format!("campaign-{}", case.id);
     request.boot = case.boot.clone();
     request.scenario = case.scenario.clone();
@@ -413,8 +417,9 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
     fs::create_dir_all(&plan.outputs.requests).map_err(|error| {
         plan_error(format!("cannot create campaign request directory: {error}"))
     })?;
+    let materialized_request_path = plan.outputs.requests.join("template.json");
     fs::write(
-        plan.outputs.requests.join("template.json"),
+        &materialized_request_path,
         request
             .to_pretty_json()
             .map_err(|error| plan_error(error.to_string()))?,
@@ -494,13 +499,30 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
             replay_results,
         });
     }
+    let evaluation_path = plan.outputs.root.join("evaluations/evaluation.json");
+    let evaluation: serde_json::Value = read_json(&evaluation_path, "campaign evaluation")?;
+    let observed_terminal_classes = evaluation["attempts"]
+        .as_array()
+        .ok_or_else(|| plan_error("campaign evaluation omitted attempts"))?
+        .iter()
+        .map(|attempt| {
+            attempt["harness_terminal"]
+                .as_str()
+                .ok_or_else(|| plan_error("campaign attempt omitted harness terminal"))
+                .map(str::to_owned)
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .into_iter()
+        .collect::<Vec<_>>();
     let passed = match case.expected_terminal {
         ExpectedTerminalClass::Reached => rows
             .iter()
             .any(|row| row.cold_replay_verdict == CampaignReplayVerdict::Proved),
-        ExpectedTerminalClass::ObjectiveMiss => rows
-            .iter()
-            .all(|row| row.cold_replay_verdict == CampaignReplayVerdict::ObjectiveMiss),
+        ExpectedTerminalClass::ObjectiveMiss => {
+            rows.iter()
+                .all(|row| row.cold_replay_verdict == CampaignReplayVerdict::ObjectiveMiss)
+                && observed_terminal_classes.as_slice() == ["exhausted"]
+        }
         ExpectedTerminalClass::Unsupported | ExpectedTerminalClass::Impossible => false,
     };
     let winner = rows
@@ -517,11 +539,14 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
         passed,
         plan,
         request_template: request_template_path,
-        request_template_sha256: request.content_sha256,
+        request_template_sha256: source_request_sha256,
+        materialized_request: materialized_request_path,
+        materialized_request_sha256: request.content_sha256,
         tournament_definition: definition_path,
         tournament_definition_sha256: Digest(Sha256::digest(&definition_bytes).into()),
         tournament_summary,
         tournament_summary_sha256: Digest(Sha256::digest(&tournament_summary_bytes).into()),
+        observed_terminal_classes,
         rows,
         winner_proposer: winner.as_ref().map(|(proposer, _)| proposer.clone()),
         winner_tape: winner.and_then(|(_, tape)| tape),
