@@ -108,7 +108,7 @@ the authored target.
 - [x] Define one candidate envelope for scripted, random, structured-search,
   and learned proposals with exact parent, objective, action schema, seed, and
   proposer identity.
-- [ ] Freeze one dataset generation, train one simple baseline, and emit only
+- [x] Freeze one dataset generation, train one simple baseline, and emit only
   bounded candidate proposals; the learner cannot launch runs or claim proof.
 - [ ] Collect successes, ordinary failures, and near misses for one cheap
   objective, keeping evaluation episodes out of training until evaluation
