@@ -406,3 +406,13 @@ manual digest scraping, permanent deletion, or path-based trust.
 **Done when:** parity and reset experiments get a cheap deterministic
 divergence alarm over the active query aperture and can escalate to trace diff
 at an exact boundary.
+
+## 28. Domain-owned trace CLI adapter
+
+- [x] Move trace inspection, typed facts, semantic hashes, timelines, and
+  comparison commands out of the root binary into the dedicated CLI domain.
+- [x] Lower the root-binary line ratchet and pass the trace integration plus
+  architecture suites without changing the public command surface.
+
+**Done when:** adding trace tooling cannot silently regrow the root Rust binary
+as a flat implementation module.

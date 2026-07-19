@@ -4,3 +4,4 @@ pub mod conformance;
 pub mod learning;
 pub mod search;
 pub mod tape;
+pub mod trace;
