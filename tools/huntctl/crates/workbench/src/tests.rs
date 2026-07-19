@@ -415,7 +415,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v10");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v11");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1495,6 +1495,41 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(to_link.parent, None);
     assert_eq!(to_link.recursive_segments.len(), 9);
     assert_eq!(to_link.frame_count, Some(440));
+    let choose_play = graph
+        .segments
+        .iter()
+        .find(|segment| segment.id == "tolink_choose_play")
+        .unwrap();
+    let continue_without_saving = graph
+        .segments
+        .iter()
+        .find(|segment| segment.id == "tolink_continue_no_save")
+        .unwrap();
+    assert_eq!(
+        choose_play.boundary_fingerprint, continue_without_saving.boundary_fingerprint,
+        "the coarse menu-state proof deliberately cannot distinguish these seams"
+    );
+    assert_ne!(
+        choose_play.materialization_sha256, continue_without_saving.materialization_sha256,
+        "exact input-chain identities must distinguish adjacent menu shards"
+    );
+    assert_ne!(
+        graph_node_thumbnail_key(
+            &graph,
+            &BrowserSelection::Segment {
+                id: choose_play.id.clone(),
+            },
+        )
+        .unwrap(),
+        graph_node_thumbnail_key(
+            &graph,
+            &BrowserSelection::Segment {
+                id: continue_without_saving.id.clone(),
+            },
+        )
+        .unwrap(),
+        "capturing one shard must never populate a sibling or descendant thumbnail"
+    );
     let serialized = serde_json::to_value(&graph).unwrap();
     let serialized_to_link = serialized["subgraphs"]
         .as_array()

@@ -63,6 +63,11 @@ pub fn graph_from_timeline(
         .values()
         .map(|segment| {
             let loaded = load_segment_tape(segment, repository_root);
+            let materialized = materialize_segment_chain(timeline, repository_root, &segment.id);
+            let materialization_sha256 = materialized
+                .as_ref()
+                .map_err(|error| WorkbenchError::new(error.to_string()))
+                .and_then(|lineage| tape_digest(&lineage.tape));
             let relevant_goals = timeline
                 .goals
                 .values()
@@ -143,7 +148,8 @@ pub fn graph_from_timeline(
             let playable = loaded.is_ok()
                 && artifact_is_canonical_payload(&segment.artifact)
                 && fingerprints_are_exact(segment)
-                && materialize_segment_chain(timeline, repository_root, &segment.id).is_ok();
+                && materialized.is_ok()
+                && materialization_sha256.is_ok();
             let (option_visualization, option_diagnostic_error) = loaded
                 .as_ref()
                 .ok()
@@ -159,6 +165,7 @@ pub fn graph_from_timeline(
                 artifact: graph_artifact(&segment.artifact),
                 start_fingerprint: segment.start_fingerprint.clone(),
                 boundary_fingerprint: segment.end_fingerprint.clone(),
+                materialization_sha256: materialization_sha256.unwrap_or_default(),
                 goal_proofs,
                 predicate_proof: predicate_proof.into(),
                 first_hit_tick,
@@ -467,6 +474,15 @@ pub(super) fn generated_search_projections(
             let Ok(suffix) = InputTape::decode(&suffix_bytes) else {
                 continue;
             };
+            let Ok(full_tape_bytes) = fs::read(&full_tape) else {
+                continue;
+            };
+            let Ok(full_tape_decoded) = InputTape::decode(&full_tape_bytes) else {
+                continue;
+            };
+            let Ok(materialization_sha256) = tape_digest(&full_tape_decoded.tape) else {
+                continue;
+            };
             let short_objective = &objective.digest[..16];
             let short_candidate = &candidate_id[..16];
             let id = format!("search-{short_objective}-{short_candidate}");
@@ -494,6 +510,7 @@ pub(super) fn generated_search_projections(
                     },
                     start_fingerprint: objective.source_boundary_fingerprint.clone(),
                     boundary_fingerprint: output_fingerprint,
+                    materialization_sha256,
                     goal_proofs,
                     predicate_proof: "verified".into(),
                     first_hit_tick: Some(tick),
@@ -633,7 +650,7 @@ pub(super) fn graph_node_thumbnail_key(
                     "segment {id:?} is not playable"
                 )));
             }
-            Ok(thumbnail_key("segment", &segment.boundary_fingerprint))
+            Ok(thumbnail_key("segment", &segment.materialization_sha256))
         }
         BrowserSelection::Draft { id } => {
             let draft = graph
@@ -698,7 +715,9 @@ pub(super) fn thumbnail_file_is_valid(path: &Path) -> bool {
 pub(super) fn reachable_thumbnail_keys(graph: &WorkbenchGraph) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
     for segment in &graph.segments {
-        keys.insert(thumbnail_key("segment", &segment.boundary_fingerprint));
+        if valid_sha256(&segment.materialization_sha256) {
+            keys.insert(thumbnail_key("segment", &segment.materialization_sha256));
+        }
     }
     for draft in &graph.drafts {
         if let Some(identity) = draft.result_tape_sha256.as_deref() {
@@ -894,9 +913,40 @@ pub(super) fn decorate_graph_thumbnails(
     graph: &mut WorkbenchGraph,
     config: &WorkbenchConfig,
 ) -> Result<(), WorkbenchError> {
+    // v10 and earlier keyed segment thumbnails by semantic boundary. Preserve a
+    // legacy image only when that boundary identifies exactly one node. A
+    // shared boundary is ambiguous (menu seams commonly share one), so it must
+    // be recaptured under the exact materialized-chain identity.
+    let boundary_counts = graph.segments.iter().fold(
+        BTreeMap::<String, usize>::new(),
+        |mut counts, segment| {
+            *counts
+                .entry(segment.boundary_fingerprint.clone())
+                .or_default() += 1;
+            counts
+        },
+    );
     for segment in &mut graph.segments {
-        let key = thumbnail_key("segment", &segment.boundary_fingerprint);
+        if !valid_sha256(&segment.materialization_sha256) {
+            continue;
+        }
+        let key = thumbnail_key("segment", &segment.materialization_sha256);
         let path = thumbnail_cache_path(&config.state_root, &key);
+        if !thumbnail_file_is_valid(&path)
+            && boundary_counts.get(&segment.boundary_fingerprint) == Some(&1)
+        {
+            let legacy_key = thumbnail_key("segment", &segment.boundary_fingerprint);
+            let legacy_path = thumbnail_cache_path(&config.state_root, &legacy_key);
+            if thumbnail_file_is_valid(&legacy_path) {
+                fs::copy(&legacy_path, &path).map_err(|error| {
+                    WorkbenchError::new(format!(
+                        "cannot migrate segment thumbnail {} to {}: {error}",
+                        legacy_path.display(),
+                        path.display()
+                    ))
+                })?;
+            }
+        }
         if thumbnail_file_is_valid(&path) {
             content_address_thumbnail(config, &path)?;
             segment.thumbnail = Some(thumbnail_url(&key));

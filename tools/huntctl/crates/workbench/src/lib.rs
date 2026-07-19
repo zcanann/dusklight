@@ -58,7 +58,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v10";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v11";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -489,6 +489,10 @@ pub struct GraphSegment {
     pub artifact: GraphArtifact,
     pub start_fingerprint: String,
     pub boundary_fingerprint: String,
+    /// SHA-256 of the exact Boot-rooted input tape materialized through this segment.
+    /// Unlike a semantic boundary fingerprint, this uniquely identifies the frame
+    /// whose thumbnail belongs to this node.
+    pub materialization_sha256: String,
     pub goal_proofs: Vec<GraphGoalProof>,
     pub predicate_proof: String,
     pub first_hit_tick: Option<u64>,
