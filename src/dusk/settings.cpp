@@ -384,6 +384,9 @@ void registerSettings() {
 static TransientSettings g_transientSettings = {
     .collisionView = {
         .enableTerrainView = false,
+        .showGround = true,
+        .showWalls = true,
+        .showCeilings = true,
         .enableWireframe = false,
         .enableCeilingExtent = false,
         .enableAtView = false,
@@ -391,9 +394,10 @@ static TransientSettings g_transientSettings = {
         .enableCoView = false,
         .terrainViewOpacity = 50.0f,
         .colliderViewOpacity = 50.0f,
-        .drawRange = 100.0f,
-        .ceilingExtentUp = 250.0f,
-        .ceilingExtentDown = 250.0f,
+        .drawRange = 1000.0f,
+        .ceilingExtentUp = 35.0f,
+        .ceilingExtentDown = 35.0f,
+        .ceilingExtentOutward = 5.0f,
     },
     .triggerView = {
         .enableSceneExitView = false,

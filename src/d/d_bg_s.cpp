@@ -15,6 +15,8 @@
 #include "d/d_bg_s_capt_poly.h"
 
 #if TARGET_PC
+#include <cmath>
+
 #include "dusk/offset_ptr.h"
 #include "dusk/settings.h"
 #endif
@@ -584,7 +586,26 @@ void dBgS_AabDraw(cM3dGAab& aab, GXColor& color) {
     dDbVw_drawCube8pOpa(points, color);
 }
 
+#if TARGET_PC
+static bool collision_view_shows_plane(const cM3dGPla* plane) {
+    const auto& settings = dusk::getTransientSettings().collisionView;
+    if (cBgW_CheckBGround(plane->mNormal.y)) {
+        return settings.showGround;
+    }
+    if (cBgW_CheckBRoof(plane->mNormal.y)) {
+        return settings.showCeilings;
+    }
+    return settings.showWalls;
+}
+#endif
+
 static int white_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
+#if TARGET_PC
+    if (!collision_view_shows_plane(plane)) {
+        return 0;
+    }
+#endif
+
     cXyz raise;
     PSVECScale(&plane->mNormal, &raise, s_InsideHio.m_raise_amount + 1.0f);
 
@@ -612,6 +633,76 @@ static int white_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, 
     return 0;
 }
 
+#if TARGET_PC
+static cXyz expand_ceiling_vertex_xz(const cXyz points[3], int index, const cM3dGPla* plane,
+                                     float extent) {
+    if (extent <= 0.0f) {
+        return points[index];
+    }
+
+    const int previous = (index + 2) % 3;
+    const int next = (index + 1) % 3;
+    const float twiceArea =
+        (points[1].x - points[0].x) * (points[2].z - points[0].z) -
+        (points[1].z - points[0].z) * (points[2].x - points[0].x);
+    const float winding = twiceArea >= 0.0f ? 1.0f : -1.0f;
+
+    const float previousEdgeX = points[index].x - points[previous].x;
+    const float previousEdgeZ = points[index].z - points[previous].z;
+    const float nextEdgeX = points[next].x - points[index].x;
+    const float nextEdgeZ = points[next].z - points[index].z;
+    const float previousLength = std::sqrt(previousEdgeX * previousEdgeX +
+                                           previousEdgeZ * previousEdgeZ);
+    const float nextLength = std::sqrt(nextEdgeX * nextEdgeX + nextEdgeZ * nextEdgeZ);
+
+    float offsetX = 0.0f;
+    float offsetZ = 0.0f;
+    if (std::abs(twiceArea) > 0.001f && previousLength > 0.001f && nextLength > 0.001f) {
+        const float previousNormalX = winding * previousEdgeZ / previousLength;
+        const float previousNormalZ = winding * -previousEdgeX / previousLength;
+        const float nextNormalX = winding * nextEdgeZ / nextLength;
+        const float nextNormalZ = winding * -nextEdgeX / nextLength;
+        const float miterX = previousNormalX + nextNormalX;
+        const float miterZ = previousNormalZ + nextNormalZ;
+        const float miterLength = std::sqrt(miterX * miterX + miterZ * miterZ);
+        if (miterLength > 0.001f) {
+            const float unitMiterX = miterX / miterLength;
+            const float unitMiterZ = miterZ / miterLength;
+            const float denominator = unitMiterX * previousNormalX +
+                                      unitMiterZ * previousNormalZ;
+            if (denominator > 0.1f) {
+                const float scale = extent / denominator;
+                offsetX = unitMiterX * scale;
+                offsetZ = unitMiterZ * scale;
+            }
+        }
+    }
+
+    // Degenerate XZ projections have no reliable edge intersection. Radial
+    // expansion still makes these uncommon triangles visible without spikes.
+    if (offsetX == 0.0f && offsetZ == 0.0f) {
+        const float centerX = (points[0].x + points[1].x + points[2].x) / 3.0f;
+        const float centerZ = (points[0].z + points[1].z + points[2].z) / 3.0f;
+        const float radialX = points[index].x - centerX;
+        const float radialZ = points[index].z - centerZ;
+        const float radialLength = std::sqrt(radialX * radialX + radialZ * radialZ);
+        if (radialLength > 0.001f) {
+            offsetX = radialX * extent / radialLength;
+            offsetZ = radialZ * extent / radialLength;
+        }
+    }
+
+    cXyz expanded = points[index];
+    expanded.x += offsetX;
+    expanded.z += offsetZ;
+    if (std::abs(plane->mNormal.y) > 0.001f) {
+        expanded.y -= (plane->mNormal.x * offsetX + plane->mNormal.z * offsetZ) /
+                      plane->mNormal.y;
+    }
+    return expanded;
+}
+#endif
+
 static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, int v2, cM3dGPla* plane) {
     UNUSED(capt);
 
@@ -622,6 +713,10 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
 
 #if TARGET_PC
     const auto& collisionViewSettings = dusk::getTransientSettings().collisionView;
+    if (!collision_view_shows_plane(plane)) {
+        return 0;
+    }
+
     f32 view_opacity = 255 * (collisionViewSettings.terrainViewOpacity / 100.0f);
     ground_color.a = view_opacity;
     roof_color.a = view_opacity;
@@ -649,16 +744,19 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
 #if TARGET_PC
             if (collisionViewSettings.enableCeilingExtent &&
                 (collisionViewSettings.ceilingExtentUp > 0.0f ||
-                 collisionViewSettings.ceilingExtentDown > 0.0f))
+                 collisionViewSettings.ceilingExtentDown > 0.0f ||
+                 collisionViewSettings.ceilingExtentOutward > 0.0f))
             {
                 // drawCube's eight-point strip becomes a triangular prism when
                 // its fourth corner is duplicated. This keeps each ceiling
                 // volume to one debug packet instead of five separate faces.
                 cXyz prism[8];
                 for (int i = 0; i < 3; ++i) {
-                    prism[i] = points[i];
+                    prism[i] = expand_ceiling_vertex_xz(
+                        points, i, plane, collisionViewSettings.ceilingExtentOutward);
                     prism[i].y += collisionViewSettings.ceilingExtentUp;
-                    prism[i + 4] = points[i];
+                    prism[i + 4] = prism[i];
+                    prism[i + 4].y -= collisionViewSettings.ceilingExtentUp;
                     prism[i + 4].y -= collisionViewSettings.ceilingExtentDown;
                 }
                 prism[3] = prism[2];

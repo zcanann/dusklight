@@ -81,17 +81,27 @@ namespace dusk {
 
             if (ImGui::BeginMenu("Collision View")) {
                 ImGui::Checkbox("Enable Terrain view", &collisionView.enableTerrainView);
+                ImGui::BeginDisabled(!collisionView.enableTerrainView);
+                ImGui::Indent();
+                ImGui::Checkbox("Ground", &collisionView.showGround);
+                ImGui::Checkbox("Walls", &collisionView.showWalls);
+                ImGui::Checkbox("Ceilings", &collisionView.showCeilings);
                 ImGui::Checkbox("Enable wireframe view", &collisionView.enableWireframe);
                 ImGui::SliderFloat("Opacity##terrain", &collisionView.terrainViewOpacity, 0.0f, 100.0f);
-                ImGui::SliderFloat("Draw Range", &collisionView.drawRange, 0.0f, 1000.0f);
+                ImGui::SliderFloat("Capture range around Link", &collisionView.drawRange, 0.0f,
+                                   5000.0f, "%.0f units");
                 ImGui::SeparatorText("Ceiling extent");
                 ImGui::Checkbox("Show ceiling volumes", &collisionView.enableCeilingExtent);
-                ImGui::BeginDisabled(!collisionView.enableCeilingExtent);
+                ImGui::BeginDisabled(!collisionView.enableCeilingExtent || !collisionView.showCeilings);
                 ImGui::DragFloat("Upward extent", &collisionView.ceilingExtentUp, 1.0f, 0.0f,
                                  10000.0f, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
                 ImGui::DragFloat("Downward extent", &collisionView.ceilingExtentDown, 1.0f, 0.0f,
                                  10000.0f, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::DragFloat("Outward extent", &collisionView.ceilingExtentOutward, 1.0f, 0.0f,
+                                 10000.0f, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
                 ImGui::TextDisabled("Rendering only; collision geometry is unchanged.");
+                ImGui::EndDisabled();
+                ImGui::Unindent();
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::Checkbox("Enable Attack Collider view", &collisionView.enableAtView);

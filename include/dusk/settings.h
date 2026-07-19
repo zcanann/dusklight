@@ -314,6 +314,9 @@ void registerSettings();
 
 struct CollisionViewSettings {
     bool enableTerrainView;
+    bool showGround;
+    bool showWalls;
+    bool showCeilings;
     bool enableWireframe;
     bool enableCeilingExtent;
     bool enableAtView;
@@ -324,6 +327,7 @@ struct CollisionViewSettings {
     float drawRange;
     float ceilingExtentUp;
     float ceilingExtentDown;
+    float ceilingExtentOutward;
 };
 
 struct TriggerViewSettings {
