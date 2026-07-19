@@ -37,6 +37,10 @@ dusklight-huntctl (CLI and domain orchestration)
 │   ├── dusklight-harness-contracts ───┤
 │   ├── dusklight-learning ────────────┤
 │   └── dusklight-search ──────────────┤
+├── dusklight-proposals ──────────────┤
+│   ├── dusklight-evidence ───────────┤
+│   ├── dusklight-learning ───────────┤
+│   └── dusklight-search ─────────────┤
 ├── dusklight-routes ─────────────────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-objectives ──────────┤
@@ -113,9 +117,9 @@ model identity and lineage, calibration, advisory action guidance, readiness
 gates, and bounded model artifacts. It may consume contracts, control
 descriptions, immutable evidence, objectives, traces, and read-only world
 representations. It cannot depend on search candidates or ranking, native
-execution, route/workbench state, or CLI parsing. The root
-`learning::q_search` module is intentionally a thin adapter: it is where search
-candidates and learned proposal models are allowed to meet.
+execution, route/workbench state, or CLI parsing. Learned models remain
+advisory values until the proposal-policy crate explicitly turns them into
+ordinary candidates.
 
 ## `dusklight-worker-protocol`
 
@@ -148,11 +152,19 @@ systems that consume them.
 
 ## `dusklight-orchestration`
 
-Owns population evaluation, campaign scheduling, behavior archiving, and the
-adapter that turns learned models into search proposals. It composes the native
-harness runtime and lower-level domain crates, but nothing below it may depend
-on orchestration or the huntctl executable. This is the explicit integration
-layer where simulator budget and evidence contracts meet.
+Owns population evaluation and campaign scheduling. It composes the native
+harness runtime, proposal policies, and lower-level domain crates, but nothing
+below it may depend on orchestration or the huntctl executable. This is the
+explicit integration layer where simulator budget and evidence contracts meet.
+
+## `dusklight-proposals`
+
+Owns learned and heuristic candidate proposal policies plus the bounded
+behavior archive used to preserve diverse evidence. It is the only lower-level
+crate allowed to combine learned model outputs, immutable episode evidence,
+and portable search candidates. It cannot execute candidates, score objective
+truth, schedule campaigns, or parse CLI commands; every proposal must pass
+through the ordinary evaluator afterward.
 
 ## `dusklight-search`
 

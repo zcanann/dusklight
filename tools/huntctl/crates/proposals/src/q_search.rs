@@ -1093,7 +1093,7 @@ mod tests {
     use super::*;
     use crate::action_guidance::{ACTION_GUIDANCE_SCHEMA_V1, movement_action_mask_v1};
     use crate::artifact::Digest;
-    use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
+    use crate::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
     use crate::search::SegmentProfile;
     use crate::tape::{InputFrame, InputTape, RawPadState};
     use crate::transition_corpus::{MacroAction, StateReference, StateReferenceKind, Transition};

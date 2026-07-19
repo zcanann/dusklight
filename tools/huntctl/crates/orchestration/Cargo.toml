@@ -13,6 +13,7 @@ dusklight-harness-contracts = { path = "../harness-contracts" }
 dusklight-harness-runtime = { path = "../harness-runtime" }
 dusklight-learning = { path = "../learning" }
 dusklight-objectives = { path = "../objectives" }
+dusklight-proposals = { path = "../proposals" }
 dusklight-search = { path = "../search" }
 dusklight-semantic-novelty = { path = "../semantic-novelty" }
 dusklight-trace = { path = "../trace" }

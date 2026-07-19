@@ -1,0 +1,16 @@
+[package]
+name = "dusklight-proposals"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Search-candidate proposal policies and bounded behavior archives for Dusklight"
+
+[dependencies]
+dusklight-automation-contracts = { path = "../contracts" }
+dusklight-control = { path = "../control" }
+dusklight-evidence = { path = "../evidence" }
+dusklight-learning = { path = "../learning" }
+dusklight-search = { path = "../search" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

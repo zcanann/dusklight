@@ -1,9 +1,10 @@
 //! Executable-facing composition of native runs, evaluators, campaigns, and proposers.
 
-pub mod behavior_archive;
 pub mod harness;
 pub mod learning;
 pub mod search_evaluator;
+
+pub use dusklight_proposals::{behavior_archive, q_search};
 
 // Compatibility vocabulary for the adapters while callers migrate to direct domain crates.
 // These remain one-way dependencies; no lower-level crate calls back into orchestration.
@@ -20,5 +21,3 @@ pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_search::{bayesian_search, continuous_search, search};
 pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_trace::trace;
-
-pub use learning::q_search;
