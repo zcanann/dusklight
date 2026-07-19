@@ -128,7 +128,7 @@ one cheap objective without receiving a separate execution or proof path.
   must remain unknown.
 - [x] Preserve materially different successful boundary states long enough to
   avoid narrowing onto a locally cheap but unusable result.
-- [ ] Minimize a finalist only while preserving objective evidence, boot,
+- [x] Minimize a finalist only while preserving objective evidence, boot,
   fidelity, and terminal boundary class.
 - [x] Cold-replay the realized tape at least twice with no controller or model
   in the loop before calling it a winner.
