@@ -132,7 +132,7 @@ one cheap objective without receiving a separate execution or proof path.
   fidelity, and terminal boundary class.
 - [x] Cold-replay the realized tape at least twice with no controller or model
   in the loop before calling it a winner.
-- [ ] Keep contradictory replays and quarantine that candidate/build/scenario
+- [x] Keep contradictory replays and quarantine that candidate/build/scenario
   combination instead of averaging the contradiction away.
 - [ ] Emit a compact report comparing budget, objective hits, useful boundary
   states, replay verdict, and best proved tape per proposer.
