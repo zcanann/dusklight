@@ -120,7 +120,10 @@ content-addressed finalist for the case repetition count, and writes
 tournament identities, charged budgets, objective hits, useful-boundary count,
 replay verdicts, exact boundary proof, best proved tape, and the selected
 winner. A missed expected terminal returns a failing exit status after writing
-the diagnostic report.
+the diagnostic report. When a run is unsupported or reports an identity or
+capability mismatch, `first_blocker` names the first exact fact, capability, or
+terminal and links its authenticated harness-result artifact; the CLI repeats
+that diagnostic and path on stderr.
 
 ## Shortest macOS operator loop
 

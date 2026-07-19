@@ -1172,6 +1172,8 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         layer: 3,
         save_slot: None,
     };
+    let unsupported_objective = suite.cases[0].objective.clone();
+    let unsupported_requirements = suite.cases[0].observation_requirements.clone();
     suite.refresh_content_sha256().unwrap();
     fs::write(&suite_path, suite.to_pretty_json().unwrap()).unwrap();
     let request_draft = write_run_request_draft(&root, &suite_path);
@@ -1267,6 +1269,7 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
     assert_eq!(report["passed"], true);
     assert_eq!(report["plan"]["dry_run"], false);
     assert_eq!(report["plan"]["case_id"], "stage-ready");
+    assert!(report.get("first_blocker").is_none());
     assert!(
         PathBuf::from(report["plan"]["outputs"]["episodes"].as_str().unwrap())
             .ends_with("build/stage-ready-campaign/evaluations")
@@ -1303,5 +1306,50 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
     assert!(output_root.join("report.json").is_file());
     assert!(output_root.join("tournament.summary.json").is_file());
     assert!(output_root.join("requests/template.json").is_file());
+
+    suite.cases[0].objective = unsupported_objective;
+    suite.cases[0].observation_requirements = unsupported_requirements;
+    suite.refresh_content_sha256().unwrap();
+    fs::write(&suite_path, suite.to_pretty_json().unwrap()).unwrap();
+    let unsupported_campaign = Command::new(executable)
+        .current_dir(&root)
+        .args(["campaign", "--suite"])
+        .arg(&suite_path)
+        .args([
+            "--case",
+            "stage-ready",
+            "--output",
+            "build/unsupported-campaign",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--definition")
+        .arg(&definition_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .args(["--workers", "1"])
+        .output()
+        .unwrap();
+    assert!(!unsupported_campaign.status.success());
+    let unsupported_report: Value = serde_json::from_slice(&unsupported_campaign.stdout).unwrap();
+    assert_eq!(unsupported_report["passed"], false);
+    assert_eq!(
+        unsupported_report["first_blocker"]["terminal"],
+        "unsupported"
+    );
+    assert_eq!(unsupported_report["first_blocker"]["kind"], "fact");
+    assert_eq!(
+        unsupported_report["first_blocker"]["value"],
+        "player.exists"
+    );
+    let blocker_artifact = PathBuf::from(
+        unsupported_report["first_blocker"]["artifact"]
+            .as_str()
+            .unwrap(),
+    );
+    assert!(blocker_artifact.is_file());
+    let stderr = String::from_utf8_lossy(&unsupported_campaign.stderr);
+    assert!(stderr.contains("first fact player.exists"));
+    assert!(stderr.contains(blocker_artifact.to_str().unwrap()));
     fs::remove_dir_all(root).unwrap();
 }

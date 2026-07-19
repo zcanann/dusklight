@@ -4,7 +4,9 @@ use super::execution::execute_request;
 use super::objective_suite::{
     ExpectedTerminalClass, ObjectiveBoot, ObjectiveCaseRole, ObjectiveSeed, ObjectiveSuite,
 };
-use super::run_contract::{HarnessBoundaryFingerprint, HarnessRunRequest, HarnessTerminalReason};
+use super::run_contract::{
+    HarnessBoundaryFingerprint, HarnessRunRequest, HarnessRunResult, HarnessTerminalReason,
+};
 use crate::artifact::Digest;
 use crate::search::LexicographicScore;
 use crate::search_evaluator::{
@@ -182,11 +184,23 @@ pub struct CampaignReport {
     pub tournament_summary: PathBuf,
     pub tournament_summary_sha256: Digest,
     pub observed_terminal_classes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_blocker: Option<CampaignBlocker>,
     pub rows: Vec<CampaignReportRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub winner_proposer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub winner_tape: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignBlocker {
+    pub terminal: HarnessTerminalReason,
+    pub kind: String,
+    pub value: String,
+    pub message: String,
+    pub artifact: PathBuf,
 }
 
 pub fn campaign_proposers_from_definition(
@@ -514,6 +528,7 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
         .collect::<Result<BTreeSet<_>, _>>()?
         .into_iter()
         .collect::<Vec<_>>();
+    let first_blocker = first_campaign_blocker(&evaluation, &plan.outputs.root)?;
     let passed = match case.expected_terminal {
         ExpectedTerminalClass::Reached => rows
             .iter()
@@ -547,6 +562,7 @@ pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, Ca
         tournament_summary,
         tournament_summary_sha256: Digest(Sha256::digest(&tournament_summary_bytes).into()),
         observed_terminal_classes,
+        first_blocker,
         rows,
         winner_proposer: winner.as_ref().map(|(proposer, _)| proposer.clone()),
         winner_tape: winner.and_then(|(_, tape)| tape),
@@ -638,6 +654,67 @@ fn read_json<T: serde::de::DeserializeOwned>(
         &fs::read(path).map_err(|error| plan_error(format!("cannot read {label}: {error}")))?,
     )
     .map_err(|error| plan_error(format!("cannot decode {label}: {error}")))
+}
+
+fn first_campaign_blocker(
+    evaluation: &serde_json::Value,
+    campaign_root: &Path,
+) -> Result<Option<CampaignBlocker>, CampaignPlanError> {
+    let attempts = evaluation["attempts"]
+        .as_array()
+        .ok_or_else(|| plan_error("campaign evaluation omitted attempts"))?;
+    let canonical_root = campaign_root
+        .canonicalize()
+        .map_err(|error| plan_error(format!("cannot resolve campaign root: {error}")))?;
+    for attempt in attempts {
+        let Some(terminal_name) = attempt["harness_terminal"].as_str() else {
+            continue;
+        };
+        if !matches!(
+            terminal_name,
+            "unsupported" | "capability_mismatch" | "identity_mismatch"
+        ) {
+            continue;
+        }
+        let artifact = attempt["harness_result"]
+            .as_str()
+            .ok_or_else(|| plan_error("blocked campaign attempt omitted harness result path"))?;
+        let artifact = PathBuf::from(artifact);
+        let canonical_artifact = artifact.canonicalize().map_err(|error| {
+            plan_error(format!(
+                "cannot resolve blocked campaign artifact {}: {error}",
+                artifact.display()
+            ))
+        })?;
+        if !canonical_artifact.starts_with(&canonical_root) || !canonical_artifact.is_file() {
+            return Err(plan_error(
+                "blocked campaign artifact escapes the campaign output root",
+            ));
+        }
+        let result: HarnessRunResult = read_json(&canonical_artifact, "blocked harness result")?;
+        if result.terminal.name() != terminal_name {
+            return Err(plan_error(
+                "campaign evaluation terminal contradicts its harness result",
+            ));
+        }
+        let (kind, value) = if let Some(fact) = result.detail.missing_query_facts.first() {
+            ("fact", fact.clone())
+        } else if let Some(capability) = result.detail.missing_capabilities.first() {
+            ("capability", capability.clone())
+        } else if let Some(issue) = result.detail.observation_issues.first() {
+            ("observation_family", issue.family.clone())
+        } else {
+            ("terminal", terminal_name.to_owned())
+        };
+        return Ok(Some(CampaignBlocker {
+            terminal: result.terminal,
+            kind: kind.into(),
+            value,
+            message: result.detail.message,
+            artifact: canonical_artifact,
+        }));
+    }
+    Ok(None)
 }
 
 fn repository_relative_string(

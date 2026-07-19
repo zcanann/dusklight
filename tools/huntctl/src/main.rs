@@ -192,9 +192,19 @@ fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         })?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if !report.passed {
+        let blocker = report.first_blocker.as_ref().map(|blocker| {
+            format!(
+                "; first {} {}: {}; artifact: {}",
+                blocker.kind,
+                blocker.value,
+                blocker.message,
+                blocker.artifact.display()
+            )
+        });
         return Err(format!(
-            "campaign did not meet expected terminal class; report: {}",
-            report.plan.outputs.report.display()
+            "campaign did not meet expected terminal class{}; report: {}",
+            blocker.as_deref().unwrap_or(""),
+            report.plan.outputs.report.display(),
         )
         .into());
     }
