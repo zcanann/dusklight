@@ -522,3 +522,16 @@ against a reproducible process-per-run baseline without weakening run proof.
 **Done when:** objective-language changes have an obvious internal owner and
 cannot recreate a multi-thousand-line dumping ground without an explicit
 architecture-policy change.
+
+## 39. Compiler-enforced controller-contract internals
+
+- [x] Split the portable controller contract's flat production module into
+  closed schema, validation, text-parser, and wire-codec owners without
+  changing its public API or canonical bytes.
+- [x] Freeze the contracts crate's exact source inventory, impose tight budgets
+  on the controller owners, and pass focused round trips plus every workspace
+  architecture, format, lint, and test gate.
+
+**Done when:** controller syntax, semantic validation, and binary compatibility
+cannot grow as one flat cross-domain implementation without an explicit
+architecture-policy change.

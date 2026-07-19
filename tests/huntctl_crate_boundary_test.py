@@ -64,6 +64,10 @@ CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
 # split, not a larger generic allowance.
 COORDINATION_FILE_LINE_BUDGETS = {
     "bounded-search/src/lib.rs": 950,
+    "contracts/src/controller_program/codec.rs": 825,
+    "contracts/src/controller_program/mod.rs": 275,
+    "contracts/src/controller_program/parser.rs": 1_175,
+    "contracts/src/controller_program/validation.rs": 425,
     "evaluation/src/search_evaluator.rs": 1_375,
     "evaluation/src/harness_authority.rs": 125,
     "finalist-reduction/src/boot.rs": 1_000,
@@ -87,6 +91,23 @@ COORDINATION_FILE_LINE_BUDGETS = {
 # quietly recreating a general-purpose dumping ground.
 EXPECTED_COORDINATION_SOURCE_FILES = {
     "bounded-search": {"lib.rs"},
+    "contracts": {
+        "actor_identity.rs",
+        "artifact.rs",
+        "candidate_envelope.rs",
+        "compatibility.rs",
+        "controller_program/codec.rs",
+        "controller_program/mod.rs",
+        "controller_program/parser.rs",
+        "controller_program/tests.rs",
+        "controller_program/validation.rs",
+        "lib.rs",
+        "observation_view.rs",
+        "run_terminal.rs",
+        "scenario_fixture.rs",
+        "tape.rs",
+        "typed_facts.rs",
+    },
     "evaluation": {
         "harness_authority.rs",
         "lib.rs",
