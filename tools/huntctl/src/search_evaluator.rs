@@ -429,6 +429,7 @@ pub struct ProposerTournamentRow {
     pub predicate_hit_rate: f64,
     pub frame_wins: usize,
     pub boundary_diversity: usize,
+    pub boundary_fingerprints: Vec<String>,
     pub cold_replay_pass_rate: f64,
     pub replay_verdict: ProposerReplayVerdict,
     pub best_candidate_id: String,
@@ -2209,8 +2210,10 @@ pub fn run_proposer_tournament(
             .iter()
             .filter(|attempt| proposer.candidate_ids.contains(&attempt.candidate_id))
             .flat_map(|attempt| attempt.boundary_fingerprints.values())
-            .map(|fingerprint| fingerprint.digest.as_str())
-            .collect::<HashSet<_>>();
+            .map(|fingerprint| fingerprint.digest.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         let improvements_over_incumbent = proposer
             .candidate_ids
             .iter()
@@ -2279,6 +2282,7 @@ pub fn run_proposer_tournament(
             predicate_hit_rate: predicate_hits as f64 / proposer.candidate_ids.len() as f64,
             frame_wins,
             boundary_diversity: boundaries.len(),
+            boundary_fingerprints: boundaries,
             cold_replay_pass_rate: predicate_hits as f64 / proposer.candidate_ids.len() as f64,
             replay_verdict,
             best_candidate_id: best.candidate_id.clone(),

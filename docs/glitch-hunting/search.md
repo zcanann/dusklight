@@ -357,14 +357,15 @@ the same declared cap, and deduplicates candidate IDs globally before launching
 the combined population. A shared tape is evaluated once but credited to every
 proposer that supplied it.
 
-`tournament.summary.json` (`dusklight-proposer-tournament/v2`) attributes shared duplicates, native predicate hits
-and misses, improvements over the incumbent champion, frame wins, distinct
-authenticated boundaries, repeated cold-replay passes, charged and physical
+`tournament.summary.json` (`dusklight-proposer-tournament/v2`) attributes shared
+duplicates, native predicate hits and misses, improvements over the incumbent
+champion, frame wins, distinct authenticated boundaries and their sorted
+fingerprint digests, repeated cold-replay passes, charged and physical
 episodes/ticks, and total evaluation wall time. Infrastructure failures remain
 hard failures; their candidate/proposer ancestry and typed crash, timeout,
-desync, or unsupported outcome stay in `evaluations/evaluation.json` rather than
-being converted into a score. No proposer supplies results or bypasses native
-predicate, determinism, and replay validation.
+desync, or unsupported outcome stay in `evaluations/evaluation.json` rather
+than being converted into a score. No proposer supplies results or bypasses
+native predicate, determinism, and replay validation.
 
 Every proposer row has an explicit `proved` or `objective_miss` replay verdict.
 Only a best candidate whose repeated native trials reached the objective and

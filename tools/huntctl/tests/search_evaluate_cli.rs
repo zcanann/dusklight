@@ -1060,6 +1060,17 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         assert_eq!(row["predicate_hits"], 2);
         assert_eq!(row["misses"], 0);
         assert!(row["boundary_diversity"].as_u64().unwrap() > 0);
+        assert_eq!(
+            row["boundary_diversity"].as_u64().unwrap() as usize,
+            row["boundary_fingerprints"].as_array().unwrap().len()
+        );
+        assert!(
+            row["boundary_fingerprints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(serde_json::Value::is_string)
+        );
         assert_eq!(row["cold_replay_pass_rate"], 1.0);
         assert_eq!(row["replay_verdict"], "proved");
         assert!(row["best_proved_tape_sha256"].is_string());
