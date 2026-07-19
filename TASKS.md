@@ -130,7 +130,7 @@ one cheap objective without receiving a separate execution or proof path.
   avoid narrowing onto a locally cheap but unusable result.
 - [ ] Minimize a finalist only while preserving objective evidence, boot,
   fidelity, and terminal boundary class.
-- [ ] Cold-replay the realized tape at least twice with no controller or model
+- [x] Cold-replay the realized tape at least twice with no controller or model
   in the loop before calling it a winner.
 - [ ] Keep contradictory replays and quarantine that candidate/build/scenario
   combination instead of averaging the contradiction away.
