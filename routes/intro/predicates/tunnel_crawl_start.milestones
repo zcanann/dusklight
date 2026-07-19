@@ -1,0 +1,8 @@
+milestones 1.3
+
+# Earliest exact entry into Link's tunnel-crawling state. crawl_move is
+# deliberately not used because it concedes later frames.
+milestone tunnel_crawl_start {
+  phase post_sim
+  when stage.name == "F_SP104" && stage.room == 1 && stage.spawn == 0 && player.exists && player.is_link && player.procedure == "crawl_start"
+}

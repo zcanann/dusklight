@@ -1,0 +1,8 @@
+milestones 1.3
+
+# Earliest committed transition from Ordon Village into Ordon Spring. Host
+# shader and filesystem latency must not advance simulation.
+milestone ordon_spring_load_committed {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && next_stage.name == "F_SP104" && next_stage.room == 1 && next_stage.spawn == 0
+}

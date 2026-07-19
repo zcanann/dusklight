@@ -139,10 +139,12 @@ selected draft subtree to recoverable trash. Active, corrupt, detached, or
 path-escaping drafts are rejected.
 
 Predicate editing is likewise separate from topology. The server exposes only
-the timeline-configured predicate program, validates optimistic revision
-hashes, recompiles the complete source, and requires all referenced predicates
-to remain defined. Editing a predicate makes matching proof hashes stale but
-does not change the segment tree or input artifacts.
+the selected goal's owned predicate source, validates optimistic revision
+hashes, and recompiles that source. Editing a predicate makes only that goal's
+matching proof hashes stale and does not change the segment tree or input
+artifacts. Runtime launches may combine owned definitions into an ephemeral
+native program; that execution detail is not a shared authorship or proof
+identity.
 
 Boot itself is an authored origin predicate at pre-input boundary zero. A Boot
 recording starts before the first emulated controller read and creates a root
@@ -158,8 +160,7 @@ The line-oriented format describes the same model directly:
 
 ```text
 timeline intro
-predicate_program intro/milestones.milestones
-origin boot predicate process_boot
+origin boot predicate process_boot source intro/predicates/process_boot.milestones
 
 segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces LINK_STATE
 label golf439 "Boot to Link control"
@@ -167,8 +168,8 @@ segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses t
 label human420 "Link control to tunnel crawl"
 segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
 
-goal link_control on golf439 predicate link_control
-goal tunnel_crawl_start on human420 predicate tunnel_crawl_start
+goal link_control on golf439 predicate link_control source intro/predicates/link_control.milestones
+goal tunnel_crawl_start on human420 predicate tunnel_crawl_start source intro/predicates/tunnel_crawl_start.milestones
 
 proof golf439 satisfies link_control program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 439
 proof human420 satisfies tunnel_crawl_start program PROGRAM_SHA256 predicate DEFINITION_SHA256 ticks 420

@@ -669,6 +669,7 @@ fn milestone_program_update_validates_parser_topology_and_stale_revision() {
         &route,
         &root,
         &BrowserMilestoneProgramUpdateRequest {
+            owner: String::new(),
             expected_revision_sha256: initial.revision_sha256.clone(),
             source: replacement.clone(),
         },
@@ -689,6 +690,7 @@ fn milestone_program_update_validates_parser_topology_and_stale_revision() {
         &route,
         &root,
         &BrowserMilestoneProgramUpdateRequest {
+            owner: String::new(),
             expected_revision_sha256: initial.revision_sha256,
             source: MILESTONE_SOURCE.into(),
         },
@@ -704,6 +706,7 @@ fn milestone_program_update_validates_parser_topology_and_stale_revision() {
             &route,
             &root,
             &BrowserMilestoneProgramUpdateRequest {
+                owner: String::new(),
                 expected_revision_sha256: updated.revision_sha256.clone(),
                 source: invalid,
             },
@@ -751,6 +754,7 @@ fn milestone_program_http_api_has_no_path_and_returns_conflict_for_stale_edits()
 
     let replacement = MILESTONE_SOURCE.replace("stable 2", "stable 4");
     let request = BrowserMilestoneProgramUpdateRequest {
+        owner: String::new(),
         expected_revision_sha256: initial_revision.clone(),
         source: replacement.clone(),
     };
@@ -885,6 +889,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "grid-template-rows",
         "workspaceIcon",
         "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
+        "This predicate source belongs only to this goal",
+        "data-capture-kind=\"project\"",
         "data-select-kind",
         "renderPlayableSegmentNode",
         "standaloneWorkspaceEntry",
@@ -1053,6 +1059,25 @@ fn thumbnail_cache_is_content_addressed_validated_and_path_safe() {
         "normal playback must not overwrite an existing valid thumbnail"
     );
 
+    fs::create_dir_all(root.join("routes/qa")).unwrap();
+    fs::write(
+        root.join("routes/qa/canary.tape"),
+        InputTape::default().encode().unwrap(),
+    )
+    .unwrap();
+    let project_selection = BrowserSelection::Project {
+        id: "routes/qa/canary".into(),
+    };
+    let project_thumbnail =
+        prepare_missing_playback_thumbnail(&timeline(), &config, &project_selection)
+            .unwrap()
+            .expect("standalone tapes use the same thumbnail preparation path");
+    assert!(
+        project_thumbnail
+            .path
+            .starts_with(state_root.join(THUMBNAIL_DIRECTORY))
+    );
+
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
     let reachable_key = graph_node_thumbnail_key(&graph, &selection).unwrap();
     let reachable_path = thumbnail_cache_path(&state_root, &reachable_key);
@@ -1206,6 +1231,56 @@ fn browser_accepts_playback_and_accelerated_resume() {
 }
 
 #[test]
+fn milestone_program_update_writes_only_the_selected_goal_source() {
+    let root = temporary_root("owned-milestone-update");
+    let first = "milestones 1.0\nmilestone first {\n  phase post_sim\n  when player.exists\n}\n";
+    let second = "milestones 1.0\nmilestone second {\n  phase post_sim\n  when event.running\n}\n";
+    fs::write(root.join("first.milestones"), first).unwrap();
+    fs::write(root.join("second.milestones"), second).unwrap();
+    let route = Timeline::parse(
+        r#"timeline owned
+segment root root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+segment child after root profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts one produces two
+goal first_goal on root predicate first source first.milestones
+goal second_goal on child predicate second source second.milestones
+continuation main starts root@clean
+continue main with root after root@clean
+continue main with child after root@one
+"#,
+    )
+    .unwrap();
+    let projected = goal_predicate_program_projection(&route, &root, "first_goal").unwrap();
+    let replacement = first.replace("when player.exists", "stable 2\n  when player.exists");
+    update_milestone_program(
+        &route,
+        &root,
+        &BrowserMilestoneProgramUpdateRequest {
+            owner: "first_goal".into(),
+            expected_revision_sha256: projected.revision_sha256,
+            source: replacement.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(root.join("first.milestones")).unwrap(), replacement);
+    assert_eq!(fs::read_to_string(root.join("second.milestones")).unwrap(), second);
+
+    let current = source_revision(replacement.as_bytes());
+    let coupled = format!("{replacement}\n{second}");
+    assert!(update_milestone_program(
+        &route,
+        &root,
+        &BrowserMilestoneProgramUpdateRequest {
+            owner: "first_goal".into(),
+            expected_revision_sha256: current,
+            source: coupled,
+        },
+    )
+    .is_err());
+    assert_eq!(fs::read_to_string(root.join("second.milestones")).unwrap(), second);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn accelerated_resume_hides_the_complete_boot_rooted_tape_even_for_root_nodes() {
     assert_eq!(
         playback_fast_forward_frames(
@@ -1260,6 +1335,16 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let timeline_path = repository.join("routes/intro.timeline");
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
+    assert!(graph.predicate_program.is_none());
+    assert_eq!(graph.goals.len(), 2);
+    assert!(graph.goals.iter().all(|goal| {
+        goal.predicate_program.definitions.len() == 1
+            && goal.predicate_program.definitions[0].name == goal.predicate
+    }));
+    assert_ne!(
+        graph.goals[0].predicate_program.program_sha256,
+        graph.goals[1].predicate_program.program_sha256
+    );
     assert_eq!(
         graph
             .segments
@@ -1400,7 +1485,7 @@ fn authored_boot_recording_status_becomes_a_proved_root_draft() {
     let timeline_path = repository.join("routes/intro.timeline");
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let artifact_root = timeline_path.parent().unwrap();
-    let program = milestone_program_projection(&route, artifact_root)
+    let program = origin_predicate_program_projection(&route, artifact_root)
         .unwrap()
         .unwrap();
     let definition = program

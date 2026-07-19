@@ -29,6 +29,8 @@ pub struct Timeline {
 pub struct Origin {
     pub id: String,
     pub predicate: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predicate_source: Option<PathBuf>,
     #[serde(skip)]
     line: usize,
 }
@@ -53,6 +55,8 @@ pub struct Goal {
     pub id: String,
     pub segment: String,
     pub predicate: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predicate_source: Option<PathBuf>,
     #[serde(skip)]
     line: usize,
 }
@@ -307,62 +311,183 @@ impl Timeline {
         })
     }
 
+    pub fn origin_predicate_source(&self) -> Option<&Path> {
+        self.origin
+            .as_ref()
+            .and_then(|origin| origin.predicate_source.as_deref())
+            .or(self.predicate_program.as_deref())
+    }
+
+    pub fn goal_predicate_source(&self, goal_id: &str) -> Option<&Path> {
+        self.goals
+            .get(goal_id)
+            .and_then(|goal| goal.predicate_source.as_deref())
+            .or(self.predicate_program.as_deref())
+    }
+
+    pub fn compile_origin_predicate(
+        &self,
+        root: &Path,
+    ) -> Result<Option<CompiledMilestones>, TimelineError> {
+        let Some(origin) = &self.origin else {
+            return Ok(None);
+        };
+        self.compile_owned_predicate(
+            root,
+            self.origin_predicate_source(),
+            &origin.predicate,
+            origin.line,
+            "origin",
+            origin.predicate_source.is_some(),
+        )
+        .map(Some)
+    }
+
+    pub fn compile_goal_predicate(
+        &self,
+        root: &Path,
+        goal_id: &str,
+    ) -> Result<CompiledMilestones, TimelineError> {
+        let goal = self.goals.get(goal_id).ok_or_else(|| {
+            TimelineError::new(format!("unknown goal {goal_id:?}"))
+        })?;
+        self.compile_owned_predicate(
+            root,
+            self.goal_predicate_source(goal_id),
+            &goal.predicate,
+            goal.line,
+            &format!("goal {}", goal.id),
+            goal.predicate_source.is_some(),
+        )
+    }
+
+    fn compile_owned_predicate(
+        &self,
+        root: &Path,
+        relative: Option<&Path>,
+        expected: &str,
+        line: usize,
+        owner: &str,
+        local: bool,
+    ) -> Result<CompiledMilestones, TimelineError> {
+        let relative = relative.ok_or_else(|| {
+            TimelineError::at(line, 1, format!("{owner} has no predicate source"))
+        })?;
+        let root = fs::canonicalize(if root.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            root
+        })
+        .map_err(|error| {
+            TimelineError::new(format!(
+                "cannot resolve timeline artifact root {}: {error}",
+                root.display()
+            ))
+        })?;
+        let unresolved = root.join(relative);
+        let path = fs::canonicalize(&unresolved).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot resolve predicate source {}: {error}",
+                unresolved.display()
+            ))
+        })?;
+        if !path.starts_with(&root) || !path.is_file() {
+            return Err(TimelineError::new(format!(
+                "predicate source {} escapes the timeline artifact root",
+                path.display()
+            )));
+        }
+        let source = fs::read_to_string(&path).map_err(|error| {
+            TimelineError::new(format!(
+                "cannot read predicate source {}: {error}",
+                path.display()
+            ))
+        })?;
+        let program = milestone_dsl::parse(&source).map_err(|error| {
+            TimelineError::new(format!("invalid predicate source {}: {error}", path.display()))
+        })?;
+        if local
+            && (program.definitions.len() != 1 || program.definitions[0].name != expected)
+        {
+            return Err(TimelineError::at(
+                line,
+                1,
+                format!(
+                    "{owner} predicate source {} must define exactly its own predicate {expected:?}",
+                    path.display()
+                ),
+            ));
+        }
+        if !program
+            .definitions
+            .iter()
+            .any(|definition| definition.name == expected)
+        {
+            return Err(TimelineError::at(
+                line,
+                1,
+                format!(
+                    "{owner} references predicate {expected:?}, but source {} does not define it",
+                    path.display()
+                ),
+            ));
+        }
+        milestone_dsl::compile(&program).map_err(|error| {
+            TimelineError::new(format!("cannot compile predicate source {}: {error}", path.display()))
+        })
+    }
+
     pub fn validate_artifacts(&self, root: Option<&Path>) -> Result<(), TimelineError> {
         self.validate_structure()?;
         let Some(root) = root else {
             return Ok(());
         };
-        if let Some(compiled) = self.compile_predicates(root)? {
+        self.compile_origin_predicate(root)?;
+        let mut compiled_goals = BTreeMap::new();
+        for goal_id in self.goals.keys() {
+            compiled_goals.insert(goal_id.as_str(), self.compile_goal_predicate(root, goal_id)?);
+        }
+        for proof in &self.proofs {
+            let goal = &self.goals[&proof.goal];
+            let compiled = &compiled_goals[goal.id.as_str()];
             let program_sha256 = compiled
                 .program_sha256
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>();
-            for proof in &self.proofs {
-                let goal = &self.goals[&proof.goal];
-                let actual = compiled
-                    .definitions
-                    .iter()
-                    .find(|definition| definition.name == goal.predicate)
-                    .expect("compile_predicates validates every referenced goal predicate");
-                let actual = actual
-                    .sha256
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>();
-                if proof.predicate_program_sha256 != program_sha256 {
-                    return Err(TimelineError::at(
-                        proof.line,
-                        1,
-                        format!(
-                            "proof for segment {} and goal {} pins stale predicate program {}; current program is {}",
-                            proof.segment,
-                            proof.goal,
-                            proof.predicate_program_sha256,
-                            program_sha256
-                        ),
-                    ));
-                }
-                if proof.predicate_definition_sha256 != actual {
-                    return Err(TimelineError::at(
-                        proof.line,
-                        1,
-                        format!(
-                            "proof for segment {} and goal {} pins stale predicate {}; current predicate is {}",
-                            proof.segment, proof.goal, proof.predicate_definition_sha256, actual
-                        ),
-                    ));
-                }
+            let actual = compiled
+                .definitions
+                .iter()
+                .find(|definition| definition.name == goal.predicate)
+                .expect("compile_goal_predicate validates the owned definition");
+            let actual = actual
+                .sha256
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            if proof.predicate_program_sha256 != program_sha256 {
+                return Err(TimelineError::at(
+                    proof.line,
+                    1,
+                    format!(
+                        "proof for segment {} and goal {} pins stale predicate source {}; current source program is {}",
+                        proof.segment,
+                        proof.goal,
+                        proof.predicate_program_sha256,
+                        program_sha256
+                    ),
+                ));
             }
-        } else if let Some(proof) = self.proofs.first() {
-            return Err(TimelineError::at(
-                proof.line,
-                1,
-                format!(
-                    "proof for segment {} and goal {} has no predicate_program declaration",
-                    proof.segment, proof.goal
-                ),
-            ));
+            if proof.predicate_definition_sha256 != actual {
+                return Err(TimelineError::at(
+                    proof.line,
+                    1,
+                    format!(
+                        "proof for segment {} and goal {} pins stale predicate {}; current predicate is {}",
+                        proof.segment, proof.goal, proof.predicate_definition_sha256, actual
+                    ),
+                ));
+            }
         }
         for segment in self.segments.values() {
             let profile = segment.profile;
@@ -722,10 +847,27 @@ impl Timeline {
         if self.name.is_empty() {
             return Err(TimelineError::new("timeline name is empty"));
         }
-        if (self.origin.is_some() || !self.goals.is_empty()) && self.predicate_program.is_none() {
-            return Err(TimelineError::new(
-                "origin and goal declarations require predicate_program",
+        if let Some(origin) = &self.origin
+            && origin.predicate_source.is_none()
+            && self.predicate_program.is_none()
+        {
+            return Err(TimelineError::at(
+                origin.line,
+                1,
+                "origin requires its own predicate source (or a legacy predicate_program)",
             ));
+        }
+        for goal in self.goals.values() {
+            if goal.predicate_source.is_none() && self.predicate_program.is_none() {
+                return Err(TimelineError::at(
+                    goal.line,
+                    1,
+                    format!(
+                        "goal {} requires its own predicate source (or a legacy predicate_program)",
+                        goal.id
+                    ),
+                ));
+            }
         }
         for segment in self.segments.values() {
             if segment.parent.as_deref() == Some(segment.id.as_str()) {
@@ -1068,30 +1210,7 @@ impl<'a> Parser<'a> {
         line: usize,
     ) -> Result<(), TimelineError> {
         exact_len(tokens, 2, line, "predicate_program PATH")?;
-        let source = &tokens[1];
-        let path = PathBuf::from(source);
-        let windows_drive = source.as_bytes().get(1) == Some(&b':')
-            && source
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphabetic);
-        let portable_components = source
-            .split(['/', '\\'])
-            .all(|component| !component.is_empty() && component != "." && component != "..");
-        if path.as_os_str().is_empty()
-            || path.is_absolute()
-            || windows_drive
-            || !portable_components
-            || path
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return Err(TimelineError::at(
-                line,
-                1,
-                "predicate program must be a contained relative path",
-            ));
-        }
+        let path = parse_contained_relative_path(&tokens[1], line, "predicate program")?;
         if self.predicate_program.replace(path).is_some() {
             return Err(TimelineError::at(
                 line,
@@ -1103,7 +1222,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_origin(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        exact_len(tokens, 4, line, "origin boot predicate PREDICATE")?;
+        if tokens.len() != 4 && tokens.len() != 6 {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "expected origin boot predicate PREDICATE [source PATH]",
+            ));
+        }
         if tokens[1] != "boot" {
             return Err(TimelineError::at(
                 line,
@@ -1112,9 +1237,20 @@ impl<'a> Parser<'a> {
             ));
         }
         expect(tokens, 2, "predicate", line)?;
+        let predicate_source = if tokens.len() == 6 {
+            expect(tokens, 4, "source", line)?;
+            Some(parse_contained_relative_path(
+                &tokens[5],
+                line,
+                "predicate source",
+            )?)
+        } else {
+            None
+        };
         let origin = Origin {
             id: tokens[1].clone(),
             predicate: tokens[3].clone(),
+            predicate_source,
             line,
         };
         if self.origin.replace(origin).is_some() {
@@ -1212,19 +1348,31 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_goal(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        exact_len(
-            tokens,
-            6,
-            line,
-            "goal GOAL_ID on SEGMENT predicate PREDICATE",
-        )?;
+        if tokens.len() != 6 && tokens.len() != 8 {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "expected goal GOAL_ID on SEGMENT predicate PREDICATE [source PATH]",
+            ));
+        }
         expect(tokens, 2, "on", line)?;
         expect(tokens, 4, "predicate", line)?;
+        let predicate_source = if tokens.len() == 8 {
+            expect(tokens, 6, "source", line)?;
+            Some(parse_contained_relative_path(
+                &tokens[7],
+                line,
+                "predicate source",
+            )?)
+        } else {
+            None
+        };
         let id = tokens[1].clone();
         let goal = Goal {
             id: id.clone(),
             segment: tokens[3].clone(),
             predicate: tokens[5].clone(),
+            predicate_source,
             line,
         };
         if self.goals.insert(id.clone(), goal).is_some() {
@@ -1350,6 +1498,37 @@ impl<'a> Parser<'a> {
         }
         Ok(())
     }
+}
+
+fn parse_contained_relative_path(
+    source: &str,
+    line: usize,
+    description: &str,
+) -> Result<PathBuf, TimelineError> {
+    let path = PathBuf::from(source);
+    let windows_drive = source.as_bytes().get(1) == Some(&b':')
+        && source
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic);
+    let portable_components = source
+        .split(['/', '\\'])
+        .all(|component| !component.is_empty() && component != "." && component != "..");
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || windows_drive
+        || !portable_components
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(TimelineError::at(
+            line,
+            1,
+            format!("{description} must be a contained relative path"),
+        ));
+    }
+    Ok(path)
 }
 
 fn parse_pin(token: &str, line: usize) -> Result<DependencyPin, TimelineError> {
@@ -1899,7 +2078,7 @@ continue main with boot after root@clean
                 .validate_artifacts(Some(&root))
                 .unwrap_err()
                 .to_string()
-                .contains("stale predicate program")
+                .contains("stale predicate source")
         );
 
         let missing = Timeline::parse(
@@ -1918,6 +2097,80 @@ continue main with boot after root@clean
                 .unwrap_err()
                 .to_string()
                 .contains("does not define")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn goal_predicate_sources_are_local_and_independently_identified() {
+        let root = std::env::temp_dir().join(format!(
+            "huntctl-timeline-owned-predicates-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("first.milestones"),
+            "milestones 1.0\nmilestone first { phase post_sim when player.exists }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("second.milestones"),
+            "milestones 1.0\nmilestone second { phase post_sim when event.running }\n",
+        )
+        .unwrap();
+        let timeline = Timeline::parse(
+            r#"timeline owned
+segment root root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+segment child after root profile fsp103_to_fsp104 uses baseline fsp103_to_fsp104 starts one produces two
+goal first_goal on root predicate first source first.milestones
+goal second_goal on child predicate second source second.milestones
+continuation main starts root@clean
+continue main with root after root@clean
+continue main with child after root@one
+"#,
+        )
+        .unwrap();
+        timeline.validate_artifacts(Some(&root)).unwrap();
+        let first_before = timeline
+            .compile_goal_predicate(&root, "first_goal")
+            .unwrap()
+            .program_sha256;
+        let second_before = timeline
+            .compile_goal_predicate(&root, "second_goal")
+            .unwrap()
+            .program_sha256;
+        fs::write(
+            root.join("second.milestones"),
+            "milestones 1.0\nmilestone second { phase post_sim stable 2 when event.running }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            timeline
+                .compile_goal_predicate(&root, "first_goal")
+                .unwrap()
+                .program_sha256,
+            first_before
+        );
+        assert_ne!(
+            timeline
+                .compile_goal_predicate(&root, "second_goal")
+                .unwrap()
+                .program_sha256,
+            second_before
+        );
+
+        fs::write(
+            root.join("second.milestones"),
+            "milestones 1.0\nmilestone second { phase post_sim when event.running }\nmilestone historical_coupling { phase post_sim when player.exists }\n",
+        )
+        .unwrap();
+        assert!(
+            timeline
+                .compile_goal_predicate(&root, "second_goal")
+                .unwrap_err()
+                .to_string()
+                .contains("exactly its own predicate")
         );
         fs::remove_dir_all(root).unwrap();
     }

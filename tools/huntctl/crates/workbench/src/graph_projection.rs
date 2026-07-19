@@ -10,21 +10,7 @@ pub fn graph_from_timeline(
         .inspect()
         .map_err(|error| WorkbenchError::new(error.to_string()))?;
     let predicate_program = milestone_program_projection(timeline, repository_root)?;
-    let predicate_digests = predicate_program
-        .as_ref()
-        .map(|program| {
-            program
-                .definitions
-                .iter()
-                .map(|definition| {
-                    (
-                        definition.name.as_str(),
-                        definition.definition_sha256.as_str(),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
+    let origin_predicate_program = origin_predicate_program_projection(timeline, repository_root)?;
     let mut boot_configurations = Vec::new();
     let mut boot_configuration_keys = BTreeSet::new();
     for segment in timeline
@@ -39,29 +25,38 @@ pub fn graph_from_timeline(
             }
         }
     }
-    let origin = timeline.origin.as_ref().map(|origin| GraphOrigin {
-        id: origin.id.clone(),
-        predicate: origin.predicate.clone(),
-        recordable_from_boot: predicate_program
+    let origin = timeline.origin.as_ref().map(|origin| {
+        let program = origin_predicate_program
             .as_ref()
-            .and_then(|program| {
-                program
-                    .definitions
-                    .iter()
-                    .find(|definition| definition.name == origin.predicate)
-            })
-            .is_some_and(is_exact_boot_boundary_predicate),
-        configurations: boot_configurations,
+            .expect("timeline origin predicate source was projected");
+        GraphOrigin {
+            id: origin.id.clone(),
+            predicate: origin.predicate.clone(),
+            predicate_program: program.clone(),
+            recordable_from_boot: program
+                .definitions
+                .iter()
+                .find(|definition| definition.name == origin.predicate)
+                .is_some_and(is_exact_boot_boundary_predicate),
+            configurations: boot_configurations,
+        }
     });
     let goals = timeline
         .goals
         .values()
-        .map(|goal| GraphGoal {
-            id: goal.id.clone(),
-            segment: goal.segment.clone(),
-            predicate: goal.predicate.clone(),
+        .map(|goal| {
+            Ok(GraphGoal {
+                id: goal.id.clone(),
+                segment: goal.segment.clone(),
+                predicate: goal.predicate.clone(),
+                predicate_program: goal_predicate_program_projection(
+                    timeline,
+                    repository_root,
+                    &goal.id,
+                )?,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, WorkbenchError>>()?;
 
     let segments = timeline
         .segments
@@ -82,22 +77,32 @@ pub fn graph_from_timeline(
             let goal_proofs = relevant_goals
                 .iter()
                 .map(|goal| {
+                    let goal_program = goals
+                        .iter()
+                        .find(|projected| projected.id == goal.id)
+                        .expect("every timeline goal was projected");
+                    let definition_digest = goal_program
+                        .predicate_program
+                        .definitions
+                        .iter()
+                        .find(|definition| definition.name == goal.predicate)
+                        .expect("owned predicate source defines the goal")
+                        .definition_sha256
+                        .as_str();
                     let proof = timeline
                         .proofs
                         .iter()
                         .find(|proof| proof.segment == segment.id && proof.goal == goal.id);
-                    let status = match (predicate_program.as_ref(), proof) {
-                        (None, _) => "not_required",
-                        (Some(_), None) => "missing",
-                        (Some(program), Some(proof))
-                            if proof.predicate_program_sha256 == program.program_sha256
-                                && predicate_digests.get(goal.predicate.as_str()).is_some_and(
-                                    |digest| *digest == proof.predicate_definition_sha256,
-                                ) =>
+                    let status = match proof {
+                        None => "missing",
+                        Some(proof)
+                            if proof.predicate_program_sha256
+                                == goal_program.predicate_program.program_sha256
+                                && definition_digest == proof.predicate_definition_sha256 =>
                         {
                             "verified"
                         }
-                        (Some(_), Some(_)) => "stale",
+                        Some(_) => "stale",
                     };
                     GraphGoalProof {
                         goal: goal.id.clone(),

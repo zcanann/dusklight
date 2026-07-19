@@ -1,0 +1,7 @@
+milestones 1.3
+
+# Boundary zero exists before the first emulated controller input is read.
+milestone process_boot {
+  phase pre_input
+  when boundary.kind == "boot" && boundary.index == 0
+}

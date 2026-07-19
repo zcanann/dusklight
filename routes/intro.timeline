@@ -1,20 +1,18 @@
 # Curated segment tree. Every playable artifact is a segment; alternatives are
 # sibling segments with the same parent. Goals and proofs are metadata only.
 timeline intro
-predicate_program intro/milestones.milestones
-
-origin boot predicate process_boot
+origin boot predicate process_boot source intro/predicates/process_boot.milestones
 
 segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces cb138869f3fbbb433046e39218d3b0a4
 label golf439 "ToLink"
 segment to_ordon_spring_q129 after golf439 profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_q129.tape starts cb138869f3fbbb433046e39218d3b0a4 produces 59ba70a093e63bc298d72f40a7ea21bc
 label to_ordon_spring_q129 "ToOrdonSprings 129f"
 
-goal link_control on golf439 predicate link_control
-goal ordon_spring_load_committed on to_ordon_spring_q129 predicate ordon_spring_load_committed
+goal link_control on golf439 predicate link_control source intro/predicates/link_control.milestones
+goal ordon_spring_load_committed on to_ordon_spring_q129 predicate ordon_spring_load_committed source intro/predicates/ordon_spring_load_committed.milestones
 
-proof golf439 satisfies link_control program 4e0a2f7e345d9af27182b198eb49d19a386bdc724a6d88b0fa184bdcfea336a2 predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
-proof to_ordon_spring_q129 satisfies ordon_spring_load_committed program 4e0a2f7e345d9af27182b198eb49d19a386bdc724a6d88b0fa184bdcfea336a2 predicate 631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57 ticks 129
+proof golf439 satisfies link_control program 9d6fbe94e5c52782d6f8a4ec5fea53af03e98f016c84d502347d2337c0b8e6eb predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
+proof to_ordon_spring_q129 satisfies ordon_spring_load_committed program 82599e2646457c2d873970f0e3ccdf78d4d7277c4b1e9159b4516dcb8a1d4a79 predicate 631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57 ticks 129
 
 continuation main starts root@process-clean-v1
 continue main with golf439 after root@process-clean-v1

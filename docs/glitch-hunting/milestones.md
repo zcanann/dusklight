@@ -330,16 +330,16 @@ predicate; it must be replayed and observed again.
 
 ## Segment goal proofs
 
-A route opts into authored predicates with a contained path relative to its
-`.timeline` file. Predicates become route goals only when explicitly attached
-to a segment; predicate definitions do not form route topology:
+A goal owns one contained predicate-source path relative to its `.timeline`
+file. The source must define exactly that goal's predicate. Predicates become
+route goals only when explicitly attached to a segment; predicate definitions
+do not form route topology or inherit through segment history:
 
 ```text
 timeline intro
-predicate_program intro/milestones.milestones
-origin boot predicate process_boot
+origin boot predicate process_boot source intro/predicates/process_boot.milestones
 segment golf439 root profile boot_to_fsp103 uses tas intro/segments/golf439.tas starts process-clean-v1 produces STATE_FINGERPRINT
-goal link_control on golf439 predicate link_control
+goal link_control on golf439 predicate link_control source intro/predicates/link_control.milestones
 ```
 
 Evidence is a separate goal-scoped declaration. A segment may have no proof,
@@ -359,9 +359,11 @@ invalidate the segment hierarchy, exact fingerprint chain, or ordinary
 playback; it prevents the segment from claiming parity, scoring against that
 goal, or using that goal for a predicate-backed recording handoff.
 
-Program and predicate pins are a pair. Supplying only one, supplying them
-without `predicate_program`, or changing the referenced definition invalidates
-the relevant goal proof rather than silently blessing old evidence.
+Program and predicate pins are a pair. Supplying only one, omitting the goal's
+predicate source, or changing that owned definition invalidates only the
+relevant goal proof. Editing a different segment's predicate source cannot
+invalidate it. Legacy timelines with one `predicate_program` still parse for
+migration, but new route metadata should use owned `source` declarations.
 
 ## Read-only guarantee
 

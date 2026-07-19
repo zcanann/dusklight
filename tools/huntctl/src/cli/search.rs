@@ -241,16 +241,6 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&objective_root)?;
             let prefix_path = objective_root.join("prefix.tape");
             fs::write(&prefix_path, prefix.tape.encode()?)?;
-            let source_path = artifact_root.join(
-                timeline
-                    .predicate_program
-                    .as_ref()
-                    .ok_or("route search requires predicate_program")?,
-            );
-            let compiled = milestone_dsl::compile_source(&fs::read_to_string(&source_path)?)?;
-            let program_path = objective_root.join("milestones.dmsp");
-            fs::write(&program_path, &compiled.bytes)?;
-
             let select_goal = |segment_id: &str,
                                requested: Option<String>,
                                option_name: &str|
@@ -295,6 +285,44 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             )?;
             let target_goal =
                 select_goal(&segment_name, option(search_args, "--goal"), "--goal GOAL")?;
+
+            let mut combined_program: Option<milestone_dsl::MilestoneProgram> = None;
+            let mut names = std::collections::BTreeSet::new();
+            for goal in [source_goal, target_goal] {
+                let relative = timeline
+                    .goal_predicate_source(&goal.id)
+                    .ok_or_else(|| format!("route goal {:?} has no predicate source", goal.id))?;
+                let mut program =
+                    milestone_dsl::parse(&fs::read_to_string(artifact_root.join(relative))?)?;
+                program
+                    .definitions
+                    .retain(|definition| definition.name == goal.predicate);
+                if program.definitions.len() != 1 {
+                    return Err(format!(
+                        "route goal {:?} predicate source does not define {:?}",
+                        goal.id, goal.predicate
+                    )
+                    .into());
+                }
+                if let Some(combined) = &mut combined_program {
+                    if combined.version != program.version {
+                        return Err("route goal predicate sources use incompatible versions".into());
+                    }
+                    for definition in program.definitions {
+                        if names.insert(definition.name.clone()) {
+                            combined.definitions.push(definition);
+                        }
+                    }
+                } else {
+                    names.insert(program.definitions[0].name.clone());
+                    combined_program = Some(program);
+                }
+            }
+            let compiled = milestone_dsl::compile(
+                &combined_program.expect("source and target goals always provide predicates"),
+            )?;
+            let program_path = objective_root.join("milestones.dmsp");
+            fs::write(&program_path, &compiled.bytes)?;
 
             let summary = run_anchored_search(&AnchoredSearchRunConfig {
                 search: SearchRunConfig {

@@ -581,16 +581,62 @@ pub(super) fn append_authored_milestone_args(
     command: &mut Command,
     additional_builtin: Option<&str>,
 ) -> Result<(), WorkbenchError> {
-    let Some(source_path) = validated_milestone_program_path(timeline, artifact_root)? else {
+    let mut source_paths = Vec::new();
+    if let Some(path) = timeline.origin_predicate_source() {
+        source_paths.push(path);
+    }
+    for goal in timeline.goals.values() {
+        if let Some(path) = timeline.goal_predicate_source(&goal.id)
+            && !source_paths.contains(&path)
+        {
+            source_paths.push(path);
+        }
+    }
+    if source_paths.is_empty() {
         return Ok(());
-    };
-    let source = fs::read_to_string(&source_path).map_err(|error| {
-        WorkbenchError::new(format!(
-            "cannot read configured milestone program {}: {error}",
-            source_path.display()
-        ))
-    })?;
-    let (_, compiled) = validate_milestone_program_source(timeline, &source)?;
+    }
+    let mut combined: Option<MilestoneProgram> = None;
+    let mut definition_names = BTreeSet::new();
+    for relative in source_paths {
+        let source_path = validated_predicate_source_path(relative, artifact_root)?;
+        let source = fs::read_to_string(&source_path).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot read configured predicate source {}: {error}",
+                source_path.display()
+            ))
+        })?;
+        let mut program = milestone_dsl::parse(&source).map_err(|error| {
+            WorkbenchError::new(format!(
+                "invalid predicate source {}: {error}",
+                source_path.display()
+            ))
+        })?;
+        if let Some(combined) = &mut combined {
+            if combined.version != program.version {
+                return Err(WorkbenchError::new(
+                    "owned predicate sources use incompatible language versions",
+                ));
+            }
+            for definition in program.definitions.drain(..) {
+                if !definition_names.insert(definition.name.clone()) {
+                    return Err(WorkbenchError::new(format!(
+                        "owned predicate sources define duplicate predicate {:?}",
+                        definition.name
+                    )));
+                }
+                combined.definitions.push(definition);
+            }
+        } else {
+            for definition in &program.definitions {
+                definition_names.insert(definition.name.clone());
+            }
+            combined = Some(program);
+        }
+    }
+    let compiled = milestone_dsl::compile(
+        &combined.expect("at least one owned predicate source was collected"),
+    )
+    .map_err(|error| WorkbenchError::new(format!("cannot compile owned predicates: {error}")))?;
     let program_path = state_root.join("route-milestones.dmsp");
     let result_path = state_root.join("route-milestones.json");
     fs::write(&program_path, &compiled.bytes).map_err(|error| {
@@ -735,9 +781,7 @@ pub(super) fn record_continuation(
                     "origin {id:?} is not the exact authored Boot boundary"
                 )));
             }
-            let program = graph
-                .predicate_program
-                .ok_or_else(|| WorkbenchError::new("Boot recording requires milestone source"))?;
+            let program = origin.predicate_program.clone();
             let definition = program
                 .definitions
                 .iter()
@@ -1821,8 +1865,8 @@ pub(super) fn materialize_draft(
                 definition_sha256,
                 boundary_fingerprint,
             } => {
-                let program = milestone_program_projection(timeline, repository_root)?
-                    .ok_or_else(|| WorkbenchError::new("Boot parent has no milestone program"))?;
+                let program = origin_predicate_program_projection(timeline, repository_root)?
+                    .ok_or_else(|| WorkbenchError::new("Boot parent has no predicate source"))?;
                 let definition = program
                     .definitions
                     .iter()

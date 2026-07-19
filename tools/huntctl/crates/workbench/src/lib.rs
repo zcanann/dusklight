@@ -20,6 +20,7 @@ pub use dusklight_search::search;
 mod graph_projection;
 mod project_catalog;
 mod server;
+mod stage_catalog;
 
 pub use graph_projection::{
     ThumbnailPruneEntry, ThumbnailPruneReport, graph_from_timeline, prune_thumbnails,
@@ -132,6 +133,30 @@ pub struct GraphProjectCatalog {
     pub schema: String,
     pub groups: Vec<GraphProjectGroup>,
     pub entries: Vec<GraphProject>,
+    pub stages: Vec<GraphStageSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphStageSummary {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub friendly_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphStageBootOptions {
+    pub stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub friendly_name: Option<String>,
+    pub inventory_indexed: bool,
+    pub rooms: Vec<GraphStageRoomBootOptions>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphStageRoomBootOptions {
+    pub id: i8,
+    pub spawn_points: Vec<i16>,
+    pub layers: Vec<i8>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -180,6 +205,12 @@ pub struct BrowserBootOverrideUpdateRequest {
     pub project: String,
     pub enabled: bool,
     pub boot: TapeBoot,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserStageBootOptionsRequest {
+    pub stage: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -372,6 +403,7 @@ struct DraftLaunch {
 pub struct GraphOrigin {
     pub id: String,
     pub predicate: String,
+    pub predicate_program: GraphPredicateProgram,
     pub recordable_from_boot: bool,
     pub configurations: Vec<TapeBoot>,
 }
@@ -452,6 +484,7 @@ pub struct GraphGoal {
     pub id: String,
     pub segment: String,
     pub predicate: String,
+    pub predicate_program: GraphPredicateProgram,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -674,6 +707,8 @@ pub struct BrowserSiblingDeleteApplyRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserMilestoneProgramUpdateRequest {
+    #[serde(default)]
+    pub owner: String,
     pub expected_revision_sha256: String,
     pub source: String,
 }

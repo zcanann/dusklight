@@ -1,0 +1,7 @@
+milestones 1.3
+
+# Strict authored equivalent of the native gameplay-ready predicate.
+milestone link_control {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 && player.exists && player.is_link && !event.running && event.id == -1
+}

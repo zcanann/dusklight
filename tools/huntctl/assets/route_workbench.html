@@ -34,9 +34,9 @@
     .project-row.selected { background:#1c2b40; color:#fff; }
     .project-row.group { color:#8f9caf; font-weight:700; }
     .project-row .arrow { width:12px; flex:0 0 12px; color:#68768a; font-size:9px; }
+    .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .workspace-icon { width:14px; height:14px; flex:0 0 14px; color:#8290a4; }
     .workspace-icon.custom { color:var(--amber); }
-    .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .project-row .project-frames { color:#657287; font-size:9px; }
     .project-indent { margin-left:13px; }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
@@ -244,7 +244,7 @@
   <dialog id="predicateEditor">
     <form id="predicateForm" class="editor" method="dialog">
       <h2 id="predicateTitle">Edit goal predicates</h2>
-      <p>Segment goals are compiled as one predicate program. Definition names and order must continue to match the timeline.</p>
+      <p>This predicate source belongs only to this goal. Editing it cannot invalidate predicates or proofs owned by other segments.</p>
       <textarea id="predicateSource" spellcheck="false" aria-label="Goal predicate DSL source"></textarea>
       <div id="predicateError" class="editor-error" role="alert"></div>
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="savePredicate" class="save" value="default" type="button">Validate &amp; save</button></div>
@@ -276,6 +276,7 @@
     const $ = id => document.getElementById(id);
     let graph = null;
     let predicateEditRevision = null;
+    let predicateEditOwner = null;
     let bootEditProject = null;
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
     let workspaceSelection = null;
@@ -332,7 +333,7 @@
       return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
-    const predicateFor = id => graph.predicate_program?.definitions?.find(item=>item.name===id);
+    const predicateFor = goal => goal.predicate_program?.definitions?.find(item=>item.name===goal.predicate);
     const goalsFor = segment => graph.goals.filter(goal=>goal.segment===segment);
     const compareDrafts = (a,b) => (a.created_unix_ms??0)-(b.created_unix_ms??0)||a.id.localeCompare(b.id);
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
@@ -594,7 +595,7 @@
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
       if(!goals.length)return `<div class="detail-section"><h3>Goals</h3><div class="empty">This segment has no parity metadata.</div></div>`;
-      return goals.map(goal=>{const predicate=predicateFor(goal.predicate);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.predicate)}">Edit predicate…</button></div></div>`;}).join('');
+      return goals.map(goal=>{const predicate=predicateFor(goal);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.id)}">Edit predicate…</button></div></div>`;}).join('');
     }
     function taggedName(value) {
       if(typeof value==='string')return label(value);
@@ -747,26 +748,27 @@
       finally { button.disabled=false;button.textContent='Save boot configuration'; }
     }
     function editPredicate(id) {
-      if(!graph.predicate_program)return;
-      $('predicateTitle').textContent=`Edit objective · ${label(id)}`;
-      $('predicateSource').value=graph.predicate_program.source;
-      predicateEditRevision=graph.predicate_program.revision_sha256;
+      const goal=graph.goals.find(item=>item.id===id);if(!goal?.predicate_program)return;
+      $('predicateTitle').textContent=`Edit objective · ${label(goal.id)}`;
+      $('predicateSource').value=goal.predicate_program.source;
+      predicateEditRevision=goal.predicate_program.revision_sha256;
+      predicateEditOwner=goal.id;
       $('predicateError').textContent='';
       $('predicateEditor').showModal();
       $('predicateSource').focus();
     }
     async function savePredicate() {
-      if(!graph.predicate_program)return;
+      if(!predicateEditOwner)return;
       const button=$('savePredicate'); button.disabled=true; button.textContent='Compiling…';
       $('predicateError').textContent='';
       try {
-        const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value})});
+        const response=await fetch('/api/milestone-program',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({owner:predicateEditOwner,expected_revision_sha256:predicateEditRevision,source:$('predicateSource').value})});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        graph.predicate_program=body;
         predicateEditRevision=null;
+        predicateEditOwner=null;
         $('predicateEditor').close();
-        toast('Goal predicates compiled and saved. Segment proof badges now reflect the new definition identities.');
+        toast('Goal predicate compiled and saved. Only proofs for this goal can become stale.');
         await load();
       } catch(error) {
         $('predicateError').textContent=error.message;
@@ -817,7 +819,7 @@
     }
     async function captureThumbnail(button) {
       const kind=button.dataset.captureKind,id=button.dataset.id;
-      const item=kind==='segment'?graph.segments.find(entry=>entry.id===id):graph.drafts.find(entry=>entry.id===id);
+      const item=kind==='segment'?graph.segments.find(entry=>entry.id===id):kind==='draft'?graph.drafts.find(entry=>entry.id===id):kind==='project'?graph.projects.entries.find(entry=>entry.id===id):null;
       if(!item)return;
       const name=item.name||item.label||id;
       const original=button.textContent;
@@ -1001,7 +1003,7 @@
     $('saveBoot').addEventListener('click',saveBoot);
     $('bootKind').addEventListener('change',setBootStageFieldsEnabled);
     $('bootEditor').addEventListener('close',()=>bootEditProject=null);
-    $('predicateEditor').addEventListener('close',()=>predicateEditRevision=null);
+    $('predicateEditor').addEventListener('close',()=>{predicateEditRevision=null;predicateEditOwner=null;});
     load();
   })();
   </script>

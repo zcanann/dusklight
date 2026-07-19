@@ -74,6 +74,12 @@ pub(super) fn load_project_catalog(
         .groups
         .insert(PROJECT_WORKSPACE_PATH.into(), "Routes".into());
     for directory in directories {
+        if private_roots
+            .iter()
+            .any(|private| directory == *private || directory.starts_with(private))
+        {
+            continue;
+        }
         let relative = directory.strip_prefix(&canonical_repository).map_err(|_| {
             WorkbenchError::new(format!(
                 "workspace directory {} escapes the repository",
@@ -250,6 +256,7 @@ pub(super) fn project_catalog_projection(
         schema: PROJECT_CATALOG_SCHEMA.into(),
         groups,
         entries,
+        stages: crate::stage_catalog::stage_summaries(repository_root),
     })
 }
 
@@ -440,7 +447,7 @@ pub(super) fn create_workspace_folder(
         .lock()
         .map_err(|_| WorkbenchError::new("workspace edit lock is poisoned"))?;
     validate_workspace_name(&request.name)?;
-    let parent = workspace_group_path(repository_root, &request.parent)?;
+    let parent = public_workspace_group_path(repository_root, &request.parent)?;
     let destination = parent.join(&request.name);
     if destination.exists() {
         return Err(WorkbenchError::new("workspace destination already exists"));
@@ -465,7 +472,7 @@ pub(super) fn move_workspace_node(
     let _guard = workspace_edits()
         .lock()
         .map_err(|_| WorkbenchError::new("workspace edit lock is poisoned"))?;
-    let destination = workspace_group_path(repository_root, &request.destination)?;
+    let destination = public_workspace_group_path(repository_root, &request.destination)?;
     let sources = workspace_node_sources(repository_root, &request.id, request.kind)?;
     reject_active_timeline_move(active_timeline, &sources)?;
     if sources
@@ -573,7 +580,7 @@ fn workspace_node_sources(
 ) -> Result<Vec<PathBuf>, WorkbenchError> {
     match kind {
         WorkspaceNodeKind::Folder => {
-            let source = workspace_group_path(repository_root, id)?;
+            let source = public_workspace_group_path(repository_root, id)?;
             if id == PROJECT_WORKSPACE_PATH {
                 return Err(WorkbenchError::new("workspace root cannot be moved or deleted"));
             }
@@ -612,6 +619,19 @@ fn workspace_node_sources(
             Ok(sources)
         }
     }
+}
+
+fn public_workspace_group_path(
+    repository_root: &Path,
+    id: &str,
+) -> Result<PathBuf, WorkbenchError> {
+    let catalog = load_project_catalog(repository_root)?;
+    if !catalog.groups.contains_key(id) {
+        return Err(WorkbenchError::new(format!(
+            "unknown or private workspace folder {id:?}"
+        )));
+    }
+    workspace_group_path(repository_root, id)
 }
 
 fn workspace_group_path(repository_root: &Path, id: &str) -> Result<PathBuf, WorkbenchError> {
@@ -833,6 +853,40 @@ mod tests {
         assert_eq!(catalog.entries["routes/intro"].kind, ProjectKind::Timeline);
         assert!(!catalog.entries.contains_key("routes/intro/segments/golf439"));
         assert!(catalog.groups.contains_key("routes"));
+        assert!(!catalog.groups.contains_key("routes/intro"));
+    }
+
+    #[test]
+    fn route_private_storage_is_hidden_and_rejected_by_workspace_crud() {
+        let repository = temporary_repository("private-route-storage");
+        fs::write(repository.join("routes/private.timeline"), "timeline private\n").unwrap();
+        fs::create_dir_all(repository.join("routes/private/segments")).unwrap();
+        fs::create_dir_all(repository.join("routes/private/variants")).unwrap();
+
+        let catalog = load_project_catalog(&repository).unwrap();
+        assert!(catalog.entries.contains_key("routes/private"));
+        assert!(!catalog.groups.contains_key("routes/private"));
+        assert!(!catalog.groups.contains_key("routes/private/segments"));
+        assert!(!catalog.groups.contains_key("routes/private/variants"));
+
+        let error = workspace_node_sources(
+            &repository,
+            "routes/private/segments",
+            WorkspaceNodeKind::Folder,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("private workspace folder"));
+        let error = create_workspace_folder(
+            &repository,
+            &BrowserWorkspaceFolderCreateRequest {
+                parent: "routes/private".into(),
+                name: "forged-child".into(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("private workspace folder"));
+
+        fs::remove_dir_all(repository).unwrap();
     }
 
     #[test]

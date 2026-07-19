@@ -77,6 +77,13 @@ pub(super) fn validated_milestone_program_path(
     let Some(relative) = &timeline.predicate_program else {
         return Ok(None);
     };
+    validated_predicate_source_path(relative, root).map(Some)
+}
+
+pub(super) fn validated_predicate_source_path(
+    relative: &Path,
+    root: &Path,
+) -> Result<PathBuf, WorkbenchError> {
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
         || relative
@@ -134,7 +141,133 @@ pub(super) fn validated_milestone_program_path(
             root.display()
         )));
     }
-    Ok(Some(resolved))
+    Ok(resolved)
+}
+
+fn owned_predicate_program_projection(
+    root: &Path,
+    relative: &Path,
+    expected: &str,
+    local: bool,
+) -> Result<GraphPredicateProgram, WorkbenchError> {
+    let path = validated_predicate_source_path(relative, root)?;
+    let bytes = fs::read(&path).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot read configured predicate source {}: {error}",
+            path.display()
+        ))
+    })?;
+    let source = String::from_utf8(bytes.clone()).map_err(|_| {
+        WorkbenchError::new(format!(
+            "configured predicate source {} is not UTF-8",
+            path.display()
+        ))
+    })?;
+    let program = milestone_dsl::parse(&source)
+        .map_err(|error| WorkbenchError::new(format!("invalid milestone program: {error}")))?;
+    if local && (program.definitions.len() != 1 || program.definitions[0].name != expected) {
+        return Err(WorkbenchError::new(format!(
+            "predicate source {} must define exactly its owned predicate {expected:?}",
+            path.display()
+        )));
+    }
+    if !program
+        .definitions
+        .iter()
+        .any(|definition| definition.name == expected)
+    {
+        return Err(WorkbenchError::new(format!(
+            "predicate source {} does not define {expected:?}",
+            path.display()
+        )));
+    }
+    let compiled = milestone_dsl::compile(&program).map_err(|error| {
+        WorkbenchError::new(format!("cannot compile milestone program: {error}"))
+    })?;
+    graph_predicate_program(source, bytes, program, compiled)
+}
+
+pub(super) fn origin_predicate_program_projection(
+    timeline: &Timeline,
+    root: &Path,
+) -> Result<Option<GraphPredicateProgram>, WorkbenchError> {
+    let Some(origin) = &timeline.origin else {
+        return Ok(None);
+    };
+    let relative = timeline
+        .origin_predicate_source()
+        .ok_or_else(|| WorkbenchError::new("origin has no predicate source"))?;
+    owned_predicate_program_projection(
+        root,
+        relative,
+        &origin.predicate,
+        origin.predicate_source.is_some(),
+    )
+    .map(Some)
+}
+
+pub(super) fn goal_predicate_program_projection(
+    timeline: &Timeline,
+    root: &Path,
+    goal_id: &str,
+) -> Result<GraphPredicateProgram, WorkbenchError> {
+    let goal = timeline
+        .goals
+        .get(goal_id)
+        .ok_or_else(|| WorkbenchError::new(format!("unknown goal {goal_id:?}")))?;
+    let relative = timeline
+        .goal_predicate_source(goal_id)
+        .ok_or_else(|| WorkbenchError::new(format!("goal {goal_id:?} has no predicate source")))?;
+    owned_predicate_program_projection(
+        root,
+        relative,
+        &goal.predicate,
+        goal.predicate_source.is_some(),
+    )
+}
+
+fn graph_predicate_program(
+    source: String,
+    bytes: Vec<u8>,
+    program: MilestoneProgram,
+    compiled: milestone_dsl::CompiledMilestones,
+) -> Result<GraphPredicateProgram, WorkbenchError> {
+    let definition_digests = compiled
+        .definitions
+        .iter()
+        .map(|definition| {
+            let digest = definition
+                .sha256
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            (definition.name.clone(), digest)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let program_sha256 = compiled
+        .program_sha256
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(GraphPredicateProgram {
+        schema: MILESTONE_PROGRAM_SCHEMA.into(),
+        source,
+        revision_sha256: source_revision(&bytes),
+        program_sha256,
+        definitions: program
+            .definitions
+            .into_iter()
+            .map(|definition| GraphPredicate {
+                definition_sha256: definition_digests[&definition.name].clone(),
+                name: definition.name,
+                phase: definition.phase,
+                stable_ticks: definition.stable_ticks,
+                expression: definition.when,
+                then: definition.then,
+                within_ticks: definition.within_ticks,
+            })
+            .collect(),
+    })
 }
 
 pub(super) fn milestone_program_projection(
@@ -302,8 +435,40 @@ pub(super) fn update_milestone_program(
     let _edit = milestone_program_edits()
         .lock()
         .map_err(|_| WorkbenchError::new("milestone program edit lock is poisoned"))?;
-    let path = validated_milestone_program_path(timeline, root)?
-        .ok_or_else(|| WorkbenchError::new("timeline has no configured milestone program"))?;
+    let (relative, expected, local) = if request.owner.is_empty() {
+        (
+            timeline
+                .predicate_program
+                .as_deref()
+                .ok_or_else(|| WorkbenchError::new("timeline has no legacy predicate program"))?,
+            None,
+            false,
+        )
+    } else if request.owner == "origin:boot" {
+        let origin = timeline
+            .origin
+            .as_ref()
+            .ok_or_else(|| WorkbenchError::new("timeline has no Boot origin"))?;
+        (
+            timeline
+                .origin_predicate_source()
+                .ok_or_else(|| WorkbenchError::new("Boot origin has no predicate source"))?,
+            Some(origin.predicate.as_str()),
+            origin.predicate_source.is_some(),
+        )
+    } else {
+        let goal = timeline.goals.get(&request.owner).ok_or_else(|| {
+            WorkbenchError::new(format!("unknown predicate owner {:?}", request.owner))
+        })?;
+        (
+            timeline
+                .goal_predicate_source(&goal.id)
+                .ok_or_else(|| WorkbenchError::new("goal has no predicate source"))?,
+            Some(goal.predicate.as_str()),
+            goal.predicate_source.is_some(),
+        )
+    };
+    let path = validated_predicate_source_path(relative, root)?;
     let current = fs::read(&path).map_err(|error| {
         WorkbenchError::new(format!(
             "cannot read configured milestone program {}: {error}",
@@ -317,7 +482,31 @@ pub(super) fn update_milestone_program(
             actual: current_revision,
         });
     }
-    validate_milestone_program_source(timeline, &request.source)?;
+    if let Some(expected) = expected {
+        let program = milestone_dsl::parse(&request.source)
+            .map_err(|error| WorkbenchError::new(format!("invalid milestone program: {error}")))?;
+        if local && (program.definitions.len() != 1 || program.definitions[0].name != expected) {
+            return Err(WorkbenchError::new(format!(
+                "owned predicate source must define exactly {expected:?}"
+            ))
+            .into());
+        }
+        if !program
+            .definitions
+            .iter()
+            .any(|definition| definition.name == expected)
+        {
+            return Err(WorkbenchError::new(format!(
+                "predicate source does not define {expected:?}"
+            ))
+            .into());
+        }
+        milestone_dsl::compile(&program).map_err(|error| {
+            WorkbenchError::new(format!("cannot compile milestone program: {error}"))
+        })?;
+    } else {
+        validate_milestone_program_source(timeline, &request.source)?;
+    }
 
     let parent = path
         .parent()
@@ -352,8 +541,7 @@ pub(super) fn update_milestone_program(
     }
     drop(temporary_file);
 
-    let revalidated = validated_milestone_program_path(timeline, root)?
-        .ok_or_else(|| WorkbenchError::new("timeline lost its configured milestone program"))?;
+    let revalidated = validated_predicate_source_path(relative, root)?;
     if revalidated != path {
         return Err(WorkbenchError::new(
             "configured milestone program path changed while preparing the edit",
@@ -432,7 +620,15 @@ pub(super) fn update_milestone_program(
     temporary_cleanup.0 = None;
     let _ = fs::remove_file(&backup);
 
-    milestone_program_projection(timeline, root)?
-        .ok_or_else(|| WorkbenchError::new("timeline lost its configured milestone program"))
-        .map_err(Into::into)
+    if request.owner.is_empty() {
+        milestone_program_projection(timeline, root)?
+            .ok_or_else(|| WorkbenchError::new("timeline lost its legacy predicate program"))
+            .map_err(Into::into)
+    } else if request.owner == "origin:boot" {
+        origin_predicate_program_projection(timeline, root)?
+            .ok_or_else(|| WorkbenchError::new("timeline lost its Boot predicate source"))
+            .map_err(Into::into)
+    } else {
+        goal_predicate_program_projection(timeline, root, &request.owner).map_err(Into::into)
+    }
 }
