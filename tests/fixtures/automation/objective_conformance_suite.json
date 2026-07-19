@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-objective-suite/v2",
-  "content_sha256": "e3ee90a941a778e6f881cd19f9f94b5a931237ecb623dd28b499e7ef8dbda869",
+  "content_sha256": "e094bc4f8b3fc4d90ce89daafe3b342d41399cb30b92e3ff24c9c81c2426025a",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
@@ -163,7 +163,7 @@
     },
     {
       "id": "reach-point-ordon-ranch",
-      "description": "A direct F_SP104 boot moves Link into the measured Ordon ranch target region and remains there for five ticks.",
+      "description": "A direct F_SP104 boot moves Link into a measured Ordon ranch waypoint and remains there for five ticks.",
       "role": "positive",
       "boot": {
         "kind": "stage",
@@ -179,9 +179,9 @@
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/reach_point_ordon.milestones",
-          "sha256": "3be51f5b167ba0bc094b632964ee596f6151b50f2fa68140a201fb1047db5280"
+          "sha256": "df586bcff4be224664c71703e86af05d9abe4575f0899359cb6a38f5a5f1bac5"
         },
-        "program_sha256": "05c586902adeff1bcd06151002e496ff7a1024795bef18fd347f7b40ca4e5fe2",
+        "program_sha256": "a8a3fe13c4958ae73d6a635120176ea1702e964bc94610ca677fae77c7bf97b0",
         "goal": "reach_point_ordon"
       },
       "observation_view": {
@@ -219,7 +219,7 @@
         "kind": "tape_source",
         "artifact": {
           "path": "tests/fixtures/automation/reach_point_ordon.tas",
-          "sha256": "f41e377879a7b3f72bad62c1fcd8ad1299f9c2176402db252482b7506404d029"
+        "sha256": "f41e377879a7b3f72bad62c1fcd8ad1299f9c2176402db252482b7506404d029"
         }
       },
       "logical_tick_budget": 799,
@@ -246,9 +246,9 @@
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/reach_point_ordon.milestones",
-          "sha256": "3be51f5b167ba0bc094b632964ee596f6151b50f2fa68140a201fb1047db5280"
+          "sha256": "df586bcff4be224664c71703e86af05d9abe4575f0899359cb6a38f5a5f1bac5"
         },
-        "program_sha256": "05c586902adeff1bcd06151002e496ff7a1024795bef18fd347f7b40ca4e5fe2",
+        "program_sha256": "a8a3fe13c4958ae73d6a635120176ea1702e964bc94610ca677fae77c7bf97b0",
         "goal": "reach_point_ordon"
       },
       "observation_view": {

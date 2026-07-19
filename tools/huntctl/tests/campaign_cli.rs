@@ -106,7 +106,7 @@ fn dry_run_resolves_a_content_bound_case_without_writing() {
     );
     assert_eq!(
         plan["identities"]["objective_program_sha256"],
-        "05c586902adeff1bcd06151002e496ff7a1024795bef18fd347f7b40ca4e5fe2"
+        "a8a3fe13c4958ae73d6a635120176ea1702e964bc94610ca677fae77c7bf97b0"
     );
 }
 

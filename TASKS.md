@@ -36,13 +36,13 @@ whole-game work lives in [`TASKS_DEFERRED.md`](TASKS_DEFERRED.md).
   player/location readiness without controller input.
 - [x] Check in a reach-point case that moves Link into a bounded region and
   proves stable arrival.
-- [ ] Check in a talk-to-NPC case with an exact placed-NPC selector and proof
+- [x] Check in a talk-to-NPC case with an exact placed-NPC selector and proof
   of the expected dialogue or event edge.
-- [ ] Check in a pick-up-object case with an exact placed-object selector and
+- [x] Check in a pick-up-object case with an exact placed-object selector and
   proof that Link carries or owns that object.
 - [x] Add a cheap negative control beside each positive case so nearby
   position, wrong target, or missed interaction cannot satisfy the objective.
-- [ ] Run the four cases twice through one public macOS command and retain one
+- [x] Run the four cases twice through one public macOS command and retain one
   machine-readable conformance report.
 
 **Done when:** these small cases exercise boot, control, query, objective, and
@@ -90,9 +90,9 @@ objective contract and produce directly comparable episode results.
 - [x] Define one versioned typed-fact response shared by live control, traces,
   objective evaluation, and offline inspection, including explicit missingness
   and source phase.
-- [ ] Finish only the player, interaction, dialogue/event, carry/ownership,
+- [x] Finish only the player, interaction, dialogue/event, carry/ownership,
   exact placed-actor, and local spatial facts required by the four cases.
-- [ ] Prove native and offline evaluation agree for every fact and objective
+- [x] Prove native and offline evaluation agree for every fact and objective
   used by those cases.
 
 **Done when:** the four objectives see the same bounded facts online and
@@ -160,11 +160,11 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 
 ## Immediate implementation order
 
-1. [ ] Finish the talk-to-NPC and pick-up-object facts and fixtures.
+1. [x] Finish the talk-to-NPC and pick-up-object facts and fixtures.
 2. [x] Route search and learned candidates through the authenticated executor.
 3. [x] Seal the shared episode artifact and pre-input observation/action turn.
 4. [ ] Run scripted, random, structured, and one simple learned proposer on one
    cheap objective under the same budget.
 5. [ ] Rank, minimize, and cold-replay the finalists.
-6. [ ] Publish one conformance/tournament report and use its measured friction
+6. [x] Publish one conformance/tournament report and use its measured friction
    to decide what, if anything, returns from `TASKS_DEFERRED.md`.

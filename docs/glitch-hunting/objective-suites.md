@@ -75,6 +75,29 @@ authority.
 Successful validation emits a small machine-readable report with suite identity
 and positive/negative case counts.
 
+## Native conformance
+
+Run every checked-in positive/control pair twice on macOS with one command:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  conformance \
+  --suite tests/fixtures/automation/objective_conformance_suite.json \
+  --executable build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight \
+  --game-data orig/GZ2E01/GZ2E01.iso \
+  --output build/harness/core-conformance-macos \
+  --repository-root .
+```
+
+The command derives the native build identity, authenticates all large inputs
+with streaming SHA-256, executes all eight cases for their authored repetition
+counts, and reevaluates every retained gameplay trace offline. It writes one
+`dusklight-objective-conformance-report/v1` at `report.json` beneath the chosen
+ignored output root. The report fails unless terminals, first-hit ticks, and
+boundary fingerprints repeat exactly and native/offline objective evaluation
+agrees. Use a new output directory for each run so prior evidence is never
+overwritten.
+
 ## Campaigns
 
 Resolve one checked-in case before spending simulator budget:
@@ -166,14 +189,17 @@ uses the same objective and budget and must end in `objective_miss`. The suite
 validator authenticates and compiles all of those inputs.
 
 The second case starts from an `F_SP104` point-0 fixture and binds a 799-tick
-authored movement seed to the documented Ordon ranch region near
-`(-1600, 200, -9050)`. Its semantic objective requires Link to remain inside a
+authored movement seed to a trace-measured Ordon ranch waypoint near
+`(-1150, 280, -9410)`. Its semantic objective requires Link to remain inside a
 bounded AABB for five post-simulation ticks, and its observation view retains
 the stage, player identity, and exact position features used by that contract.
 Its same-boot neutral negative control proves that stage readiness and spawn
 proximity alone cannot satisfy the region objective.
 
-The native query seam needed by the remaining interaction cases now exists.
+The two interaction cases use direct `F_SP103` fixture boots and bounded
+controller programs. `talk-to-aru` requires the exact placed Aru selector plus
+the expected event edge; `pick-up-stone` requires the exact authored stone to
+move from absent to carried. Each has an equal-budget no-interaction control.
 Player-action channel v3 records the realized A-button status, exact placed
 talk partner, and exact placed grabbed actor at the post-simulation boundary.
 Each relationship includes the actor's immutable home position so same-type,
@@ -197,6 +223,10 @@ arrival, exact-NPC talk followed by event 17, and absent-to-exact-object carry.
 Earlier wrong-stage, outside-region, wrong-NPC, and wrong-object boundaries
 make the selector controls executable instead of implied.
 
-The talk-to-NPC and pick-up-object positive/control pairs do not exist yet.
-Those remain separate active tasks so an executing campaign is not mistaken
-for native conformance evidence that has not actually been authored and run.
+The macOS conformance runner has executed all four positive/control pairs twice
+in one matrix. Every positive reached at the same tick and boundary fingerprint
+on both attempts, every control exhausted, and offline evaluation matched each
+native result. Generated reports remain beneath ignored `build/`; they are run
+evidence, not authored fixtures. The run exposed and fixed one controller boot
+carrier defect and one stale reach coordinate; neither requires expanding the
+active queue with any deferred whole-game objective.

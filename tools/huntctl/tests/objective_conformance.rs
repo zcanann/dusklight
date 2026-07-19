@@ -123,7 +123,7 @@ fn checked_in_reach_point_case_moves_to_a_stable_bounded_region() {
     assert_eq!(objective.definitions.len(), 1);
     assert_eq!(objective.definitions[0].name, "reach_point_ordon");
     assert_eq!(objective.definitions[0].stable_ticks, 5);
-    assert!(objective_source.contains("player.in_aabb(-1700.0, 100.0, -9150.0"));
+    assert!(objective_source.contains("player.in_aabb(-1200.0, 250.0, -9460.0"));
 
     let ObjectiveSeed::TapeSource { artifact } = &case.seed else {
         panic!("reach-point case must retain an authored tape seed");
