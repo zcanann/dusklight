@@ -87,7 +87,7 @@ objective contract and produce directly comparable episode results.
   crash, hang, target-lost, and nondeterministic terminal classes.
 - [x] Inspect objective source, compiled identity, required facts, progress,
   first hit, and missing evidence from the CLI.
-- [ ] Define one versioned typed-fact response shared by live control, traces,
+- [x] Define one versioned typed-fact response shared by live control, traces,
   objective evaluation, and offline inspection, including explicit missingness
   and source phase.
 - [ ] Finish only the player, interaction, dialogue/event, carry/ownership,
