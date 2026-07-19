@@ -10,6 +10,7 @@
 
 #include "fmt/format.h"
 #include "ImGuiConsole.hpp"
+#include "dusk/trigger_view.hpp"
 #include "ImGuiEngine.hpp"
 #include "JSystem/JUtility/JUTGamePad.h"
 #include "dusk/action_bindings.h"
@@ -250,6 +251,7 @@ namespace dusk {
         ZoneScoped;
 
         UpdateSettings();
+        draw_trigger_view();
 
         if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
             getSettings().video.enableFullscreen.setValue(!getSettings().video.enableFullscreen);

@@ -323,8 +323,15 @@ struct CollisionViewSettings {
     float drawRange;
 };
 
+struct TriggerViewSettings {
+    bool enableSceneExitView;
+    float opacity;
+    float drawRange;
+};
+
 struct TransientSettings {
     CollisionViewSettings collisionView;
+    TriggerViewSettings triggerView;
     bool skipFrameRateLimit;
     bool moveLinkActive;
     bool stateShareLoadActive;

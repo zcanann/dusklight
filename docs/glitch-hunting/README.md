@@ -115,6 +115,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   boot-tape and fidelity probe.
 - [Intro route benchmarks](benchmarks/intro-route.md) define the first-exit
   frame golf, the path to `demo01_04`, trace scoring, and route-search tools.
+- [Trigger view](trigger-view.md) documents the read-only runtime overlay for
+  collision-backed exits and realized scene-transition actors.
 - [Roadmap](roadmap.md) breaks implementation into independently verifiable
   milestones.
 

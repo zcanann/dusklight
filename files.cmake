@@ -1495,6 +1495,8 @@ set(DUSK_FILES
         include/dusk/texture_replacements.hpp
         src/dusk/texture_replacements.cpp
         src/dusk/touch_camera.cpp
+        include/dusk/trigger_view.hpp
+        src/dusk/trigger_view.cpp
         src/dusk/update_check.cpp
         src/dusk/update_check.hpp
         #src/dusk/m_Do_ext_dusk.cpp

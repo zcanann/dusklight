@@ -20,6 +20,14 @@ struct GameplayTraceCollisionReadAdapter;
 }
 #endif
 
+#if TARGET_PC
+// DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: declaration only; adapter body lives
+// outside native gameplay code and may inspect backing storage without mutation.
+namespace dusk {
+struct TriggerViewReadAdapter;
+}
+#endif
+
 struct KC_PrismData {
     /* 0x0 */ BE(f32) height;
     /* 0x4 */ BE(u16) pos_i;
@@ -128,6 +136,10 @@ private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // DUSKLIGHT OBSERVATION-ONLY APERTURE: const backing-store reads only.
     friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+#endif
+#if TARGET_PC
+    // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: const backing-store reads only.
+    friend struct dusk::TriggerViewReadAdapter;
 #endif
     /* 0x18 */ KC_Header* m_pkc_head;
     /* 0x1C */ dBgPlc m_code;

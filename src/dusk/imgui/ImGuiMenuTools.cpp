@@ -92,6 +92,15 @@ namespace dusk {
                 ImGui::EndMenu();
             }
 
+            auto& triggerView = getTransientSettings().triggerView;
+            if (ImGui::BeginMenu("Trigger View")) {
+                ImGui::Checkbox("Enable Scene Exit view", &triggerView.enableSceneExitView);
+                ImGui::SliderFloat("Opacity##triggers", &triggerView.opacity, 0.0f, 100.0f);
+                ImGui::SliderFloat("Draw Range##triggers", &triggerView.drawRange, 100.0f, 5000.0f);
+                ImGui::TextDisabled("Yellow: enabled  Orange: disabled");
+                ImGui::EndMenu();
+            }
+
             if (!dusk::IsGameLaunched) {
                 ImGui::BeginDisabled();
             }

@@ -392,6 +392,11 @@ static TransientSettings g_transientSettings = {
         .colliderViewOpacity = 50.0f,
         .drawRange = 100.0f,
     },
+    .triggerView = {
+        .enableSceneExitView = false,
+        .opacity = 80.0f,
+        .drawRange = 1000.0f,
+    },
     .skipFrameRateLimit = false,
 };
 
