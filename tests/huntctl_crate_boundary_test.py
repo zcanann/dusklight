@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import json
+import re
 import subprocess
 
 
@@ -338,6 +339,21 @@ assert cli_source_files == EXPECTED_CLI_SOURCE_FILES, (
     "huntctl CLI ownership changed without updating the architecture policy: "
     f"expected {sorted(EXPECTED_CLI_SOURCE_FILES)}, got {sorted(cli_source_files)}"
 )
+
+wildcard_import = re.compile(r"(?m)^\s*(?:pub\s+)?use\s+[^;]+::\*;\s*$")
+external_wildcard_import = re.compile(
+    r"(?m)^\s*(?:pub\s+)?use\s+dusklight_[A-Za-z0-9_]+::\*;\s*$"
+)
+for path in (ROOT_SOURCE / "cli").rglob("*.rs"):
+    assert wildcard_import.search(path.read_text()) is None, (
+        f"huntctl CLI adapter {path.relative_to(WORKSPACE)} uses an ambient wildcard import"
+    )
+for source_root in [ROOT_SOURCE, *((WORKSPACE / "crates").glob("*/src"))]:
+    for path in source_root.rglob("*.rs"):
+        assert external_wildcard_import.search(path.read_text()) is None, (
+            f"production module {path.relative_to(WORKSPACE)} imports an external crate "
+            "through a wildcard"
+        )
 
 for name, budget in ROOT_FILE_LINE_BUDGETS.items():
     path = ROOT_SOURCE / name

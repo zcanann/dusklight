@@ -1,6 +1,39 @@
 //! Search, evaluation, optimizer, and tournament command adapters.
 
-use crate::*;
+use crate::{
+    flag, option, repeated_option, required_path, timeout_option, u32_option, u64_option,
+    usage_error, usize_option,
+};
+use huntctl::candidate_envelope::{CandidateEnvelope, CandidateEnvelopeSet};
+use huntctl::continuous_search::{ContinuousAxes, ContinuousMethod};
+use huntctl::harness::run_contract::HarnessRunRequest;
+use huntctl::learning::planning_priors::QBeamPriorTable;
+use huntctl::milestone_dsl;
+use huntctl::motion_path::{MotionPathPlan, PathCancellationHit};
+use huntctl::motion_path_golf::{MotionPathGolfSteps, golf_motion_path};
+use huntctl::option_execution::OptionExecution;
+use huntctl::option_golf::{RollGolfSteps, golf_roll_option};
+use huntctl::roll_option::{RollCancellationHit, RollOptionPlan};
+use huntctl::route_workbench::{MaterializeTarget, materialize_lineage};
+use huntctl::search::{
+    Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
+    RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
+    rank_population, write_explicit_population_with_seed, write_seed_population,
+};
+use huntctl::search_evaluator::{
+    AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig, AnchoredSearchRunConfig,
+    BayesianSearchRunConfig, BeamSearchConfig, BootGolfConfig, BootMinimizeConfig,
+    ContinuousSearchRunConfig, EvaluateConfig, HarnessEvaluateConfig, ProposerTournamentConfig,
+    SearchRunConfig, TournamentDefinition, evaluate_population, golf_boot, minimize_anchored_route,
+    minimize_boot, run_anchored_search, run_bayesian_search, run_beam_search,
+    run_continuous_search, run_proposer_tournament, run_search,
+};
+use huntctl::tape::InputTape;
+use serde_json::{Value, json};
+use std::error::Error;
+use std::fs;
+use std::path::PathBuf;
+use std::time::Duration;
 
 struct SearchExecutionConfig {
     game: PathBuf,

@@ -1,10 +1,45 @@
 //! Command dispatch and artifact workflows for the core learning baselines.
 
-use super::super::super::*;
 use super::MAX_LEARN_INPUT_CORPORA;
+use crate::cli;
+use crate::{option, repeated_option, required_path, u64_option, usage_error, usize_option};
+use huntctl::Digest;
+use huntctl::calibration::calibrate_fitted_q;
 use huntctl::content_store::{ContentKind, ContentStore};
+use huntctl::dataset::{
+    DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
+    DatasetSplit,
+};
+use huntctl::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
+use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
+use huntctl::fqi::{
+    FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
+    MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
+};
+use huntctl::learning::batch::load_fqi_batch;
+use huntctl::low_data_baselines::{
+    LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
+    empirical_return_samples,
+};
+use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
+use huntctl::offline_rl::{
+    ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
+    extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
+};
+use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
+use huntctl::tape::InputTape;
+use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
-use std::collections::BTreeMap;
+use huntctl::transition_evidence::{
+    ImmutableEpisodeArtifact, TerminalReasonEvidence, TransitionEvidenceBuild,
+    TransitionEvidenceBundle,
+};
+use serde_json::json;
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");

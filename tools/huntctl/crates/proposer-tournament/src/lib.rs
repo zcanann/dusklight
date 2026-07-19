@@ -7,7 +7,11 @@ use dusklight_automation_contracts::candidate_envelope::{
 use dusklight_automation_contracts::compatibility::{CompatibilityMode, ensure_compatible};
 use dusklight_automation_contracts::tape::TapeBoot;
 use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
-use dusklight_evaluation::*;
+use dusklight_evaluation::{
+    AnchoredEvaluateConfig, AnchoredObjectiveConfig, AttemptEvidence, EvaluateConfig,
+    EvaluateError, EvaluationReport, HarnessEvaluateConfig, evaluate_population,
+    evaluate_prepared_anchored_population, prepare_anchored_evaluator,
+};
 use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
 use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
 use dusklight_search::search::{

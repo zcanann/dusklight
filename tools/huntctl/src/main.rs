@@ -1,74 +1,17 @@
 use huntctl::Digest;
-use huntctl::calibration::calibrate_fitted_q;
-use huntctl::candidate_envelope::{CandidateEnvelope, CandidateEnvelopeSet};
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION};
-use huntctl::continuous_search::{ContinuousAxes, ContinuousMethod};
 use huntctl::controller_program::ControllerProgram;
-use huntctl::dataset::{
-    DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
-    DatasetSplit,
-};
-use huntctl::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
-use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
-use huntctl::fqi::{
-    FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
-    MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
-};
-use huntctl::harness::run_contract::{HarnessRunRequest, sha256_artifact_file};
-use huntctl::learning::batch::load_fqi_batch;
-use huntctl::learning::planning_priors::QBeamPriorTable;
-use huntctl::low_data_baselines::{
-    LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
-    empirical_return_samples,
-};
 use huntctl::milestone_dsl;
-use huntctl::motion_path::{MotionPathPlan, PathCancellationHit};
-use huntctl::motion_path_golf::{MotionPathGolfSteps, golf_motion_path};
-use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
-use huntctl::offline_rl::{
-    ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
-    extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
-};
-use huntctl::option_execution::OptionExecution;
-use huntctl::option_golf::{RollGolfSteps, golf_roll_option};
-use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
-use huntctl::roll_option::{RollCancellationHit, RollOptionPlan};
-use huntctl::route_workbench::{MaterializeTarget, materialize_lineage};
-use huntctl::scenario_fixture::ScenarioFixture;
-use huntctl::search::{
-    Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
-    RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
-    rank_population, write_explicit_population_with_seed, write_seed_population,
-};
-use huntctl::search_evaluator::{
-    AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig, AnchoredSearchRunConfig,
-    BayesianSearchRunConfig, BeamSearchConfig, BootGolfConfig, BootMinimizeConfig,
-    BoundaryFingerprint, ContinuousSearchRunConfig, EvaluateConfig, HarnessEvaluateConfig,
-    ProposerTournamentConfig, SearchRunConfig, TournamentDefinition, evaluate_population,
-    golf_boot, minimize_anchored_route, minimize_boot, run_anchored_search, run_bayesian_search,
-    run_beam_search, run_continuous_search, run_proposer_tournament, run_search,
-};
 use huntctl::tape::InputTape;
-use huntctl::tape_chain::{ChainSegment, concatenate};
-use huntctl::tape_dsl;
-use huntctl::tape_edit::{diff as diff_tapes, layer_at, resample_to_canonical};
-use huntctl::tape_program::{PROGRAM_SCHEMA, TapeProgram};
-use huntctl::trace_diff::SiblingTraceDiff;
-use huntctl::transition_evidence::{
-    ImmutableEpisodeArtifact, TerminalReasonEvidence, TransitionEvidenceBuild,
-    TransitionEvidenceBundle,
-};
+use huntctl::tape_program::PROGRAM_SCHEMA;
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
-use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::path::PathBuf;
+use std::time::Duration;
 
 mod cli;
 

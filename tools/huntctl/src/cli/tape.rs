@@ -1,7 +1,26 @@
 //! Tape authoring, replay, proof, minimization, and recording adapters.
 
-use crate::*;
+use crate::{
+    flag, option, repeated_option, required_path, timeout_option, u32_option, usize_option,
+};
+use huntctl::Digest;
+use huntctl::harness::run_contract::sha256_artifact_file;
+use huntctl::scenario_fixture::ScenarioFixture;
+use huntctl::search_evaluator::BoundaryFingerprint;
+use huntctl::tape::InputTape;
+use huntctl::tape_chain::{ChainSegment, concatenate};
+use huntctl::tape_dsl;
+use huntctl::tape_edit::{diff as diff_tapes, layer_at, resample_to_canonical};
+use huntctl::tape_program::TapeProgram;
+use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub(crate) fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {

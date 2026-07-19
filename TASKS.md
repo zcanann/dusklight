@@ -486,3 +486,13 @@ and the root binary cannot absorb harness policy implementation.
 
 **Done when:** persistent-control bootstrap has explicit CLI ownership and
 `main.rs` contains no production command implementation.
+
+## 36. No ambient production wildcard dependencies
+
+- [x] Replace root-wide CLI imports and cross-crate evaluation wildcards with
+  explicit helper/type imports at each owning module.
+- [x] Reject future `crate::*` CLI imports and external-crate wildcards in the
+  architecture policy; pass full workspace, lint, and boundary gates.
+
+**Done when:** moving or deleting an unrelated root/evaluation import cannot
+silently change which names another production domain receives.

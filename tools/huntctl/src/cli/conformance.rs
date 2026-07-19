@@ -1,8 +1,11 @@
 //! Suite-wide native/offline conformance command adapter.
 
-use crate::*;
+use crate::{option, required_path};
 use huntctl::harness::conformance::{ConformanceConfig, run_conformance};
 use huntctl::harness::run_contract::HarnessFidelityMode;
+use std::env;
+use std::error::Error;
+use std::path::PathBuf;
 
 pub(crate) fn command_conformance(args: &[String]) -> Result<(), Box<dyn Error>> {
     let repository_root = option(args, "--repository-root")

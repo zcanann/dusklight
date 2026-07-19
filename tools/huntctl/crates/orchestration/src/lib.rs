@@ -6,10 +6,33 @@ pub mod harness;
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,
 };
-pub use dusklight_bounded_search::*;
-pub use dusklight_evaluation::*;
-pub use dusklight_finalist_reduction::*;
-pub use dusklight_proposer_tournament::*;
+pub use dusklight_bounded_search::{
+    BayesianSearchRunConfig, BayesianSearchRunSummary, BeamSearchConfig, BeamSearchSummary,
+    ContinuousSearchRunConfig, ContinuousSearchRunSummary, SEARCH_RUN_SCHEMA, SearchRunConfig,
+    SearchRunSummary, run_bayesian_search, run_beam_search, run_continuous_search, run_search,
+};
+pub use dusklight_evaluation::{
+    ANCHORED_RESULTS_SCHEMA, ATTEMPT_SCHEMA, AnchoredEvaluateConfig, AnchoredObjectiveConfig,
+    AnchoredObjectiveIdentity, AnchoredSearchResults, AttemptEvidence, BoundaryFingerprint,
+    EVALUATION_SCHEMA, EvaluateConfig, EvaluateError, EvaluationReport, EvaluationWorkerSchedule,
+    HarnessEvaluateConfig, MilestoneObservation, PlannedWorkerAssignment,
+    PreparedAnchoredEvaluator, ValueParityComparison, ValueProjectionEvidence,
+    WORKER_SCHEDULE_SCHEMA, anchored_objective_identity, attempt_behavior_context,
+    attempt_semantic_novelty_descriptor, attempts_support_required_native_facts,
+    compare_value_projections, derive_candidate_request, evaluate_anchored_population,
+    evaluate_population, evaluate_prepared_anchored_population, learned_proposals_pass_holdout,
+    prepare_anchored_evaluator, search_evaluator,
+};
+pub use dusklight_finalist_reduction::{
+    AnchoredRouteMinimizeConfig, AnchoredRouteMinimizeRound, AnchoredRouteMinimizeSummary,
+    BootGolfConfig, BootGolfSummary, BootMinimizeConfig, BootMinimizeSummary, golf_boot,
+    minimize_anchored_route, minimize_boot,
+};
+pub use dusklight_proposer_tournament::{
+    ProposerReplayVerdict, ProposerTournamentConfig, ProposerTournamentRow,
+    ProposerTournamentSummary, TournamentBudgetUnit, TournamentDefinition, TournamentProposer,
+    TournamentProposerKind, run_proposer_tournament,
+};
 
 // Compatibility names serve executable-facing composition without restoring
 // ownership of the underlying portable domains.

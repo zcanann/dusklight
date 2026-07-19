@@ -7,7 +7,12 @@ use dusklight_automation_contracts::candidate_envelope::{
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_bounded_search::SearchRunConfig;
 use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
-use dusklight_evaluation::*;
+use dusklight_evaluation::{
+    AnchoredEvaluateConfig, AnchoredObjectiveConfig, AnchoredObjectiveIdentity, EvaluateConfig,
+    EvaluateError, attempt_behavior_context, attempt_semantic_novelty_descriptor,
+    attempts_support_required_native_facts, evaluate_prepared_anchored_population,
+    learned_proposals_pass_holdout, prepare_anchored_evaluator,
+};
 use dusklight_evidence::transition_corpus::TransitionCorpus;
 use dusklight_harness_contracts::run_contract::HarnessTerminalReason;
 use dusklight_learning::evaluation_isolation::{

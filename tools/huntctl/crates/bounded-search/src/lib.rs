@@ -1,7 +1,9 @@
 //! Bounded optimizer loops whose ranking authority is authenticated native evaluation.
 
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
-use dusklight_evaluation::*;
+use dusklight_evaluation::{
+    EvaluateConfig, EvaluateError, HarnessEvaluateConfig, evaluate_population,
+};
 use dusklight_learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use dusklight_search::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,

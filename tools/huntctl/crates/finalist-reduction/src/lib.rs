@@ -11,7 +11,12 @@ use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
 use dusklight_automation_contracts::tape::TapeBoot;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_control::tape_chain::{ChainSegment, concatenate};
-use dusklight_evaluation::*;
+use dusklight_evaluation::{
+    AnchoredEvaluateConfig, AnchoredObjectiveConfig, AnchoredObjectiveIdentity,
+    BoundaryFingerprint, EvaluateConfig, EvaluateError, EvaluationReport, HarnessEvaluateConfig,
+    PreparedAnchoredEvaluator, evaluate_population, evaluate_prepared_anchored_population,
+    prepare_anchored_evaluator,
+};
 use dusklight_search::search::{
     Ancestry, Candidate, InterventionRange, MacroAction, SegmentProfile, tape_input_complexity,
     write_explicit_population,
