@@ -5,6 +5,7 @@ pub mod conformance;
 pub mod controller;
 pub mod corpus;
 pub mod fixture;
+pub mod harness;
 pub mod identity;
 pub mod learning;
 pub mod milestone;

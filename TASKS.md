@@ -466,3 +466,13 @@ implementation code in the root Rust binary.
 
 **Done when:** offline benchmark and compatibility tooling no longer depends on
 mixed root-module implementation ownership.
+
+## 34. Domain-owned harness and campaign CLI adapter
+
+- [x] Move authenticated suite/request/result lifecycle, execution, inspection,
+  and objective campaign dispatch out of the root binary.
+- [x] Ratchet the reduced root binary and pass harness/campaign integration,
+  lint, and architecture gates without weakening fail-closed behavior.
+
+**Done when:** the core authenticated execution path has explicit CLI ownership
+and the root binary cannot absorb harness policy implementation.
