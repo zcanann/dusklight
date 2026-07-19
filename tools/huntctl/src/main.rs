@@ -146,14 +146,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
-    if !flag(args, "--dry-run") {
-        return Err(
-            "campaign execution is not enabled yet; use --dry-run to inspect the resolved plan"
-                .into(),
-        );
-    }
     let proposer_names = repeated_option(args, "--proposer");
-    let proposers = if proposer_names.is_empty() {
+    let tournament_definition_path = option(args, "--definition").map(PathBuf::from);
+    let proposers = if proposer_names.is_empty()
+        && let Some(path) = tournament_definition_path.as_ref()
+    {
+        let definition: TournamentDefinition = serde_json::from_slice(&fs::read(path)?)?;
+        huntctl::harness::campaign::campaign_proposers_from_definition(&definition)?
+    } else if proposer_names.is_empty() {
         vec![huntctl::harness::campaign::CampaignProposer::Scripted]
     } else {
         proposer_names
@@ -167,16 +167,37 @@ fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
     let suite = required_path(args, "--suite")?;
     let case = option(args, "--case").ok_or("missing required --case ID")?;
     let output = required_path(args, "--output")?;
-    let plan = huntctl::harness::campaign::resolve_campaign_plan(
-        &huntctl::harness::campaign::CampaignPlanConfig {
-            repository_root: &repository_root,
-            suite_path: &suite,
-            case_id: &case,
-            output_root: &output,
-            proposers: &proposers,
-        },
-    )?;
-    println!("{}", serde_json::to_string_pretty(&plan)?);
+    let plan_config = huntctl::harness::campaign::CampaignPlanConfig {
+        repository_root: &repository_root,
+        suite_path: &suite,
+        case_id: &case,
+        output_root: &output,
+        proposers: &proposers,
+    };
+    if flag(args, "--dry-run") {
+        let plan = huntctl::harness::campaign::resolve_campaign_plan(&plan_config)?;
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
+    let request_template = required_path(args, "--run-request")?;
+    let tournament_definition = tournament_definition_path
+        .as_deref()
+        .ok_or("campaign execution requires --definition TOURNAMENT.json")?;
+    let report =
+        huntctl::harness::campaign::run_campaign(&huntctl::harness::campaign::CampaignRunConfig {
+            plan: plan_config,
+            request_template_path: &request_template,
+            tournament_definition_path: tournament_definition,
+            workers: usize_option(args, "--workers", 4)?,
+        })?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.passed {
+        return Err(format!(
+            "campaign did not meet expected terminal class; report: {}",
+            report.plan.outputs.report.display()
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -5368,7 +5389,7 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 fn print_usage() {
     eprintln!("Trace typed facts:\n  huntctl trace facts INPUT.trace [--boundary-index N]\n");
     eprintln!(
-        "Campaign planning:\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --dry-run [--repository-root DIR] [--proposer scripted|random|structured|learned]...\n"
+        "Objective campaigns:\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --dry-run [--repository-root DIR] [--proposer scripted|random|structured|learned]...\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --run-request REQUEST.json --definition TOURNAMENT.json [--repository-root DIR] [--workers N]\n"
     );
     eprintln!(
         "Usage:\n  huntctl hello --worker PATH [--worker-arg ARG]...\n  huntctl ping --worker PATH [--worker-arg ARG]...\n  huntctl pool health --worker PATH [--worker-arg ARG]... [--workers N] [--checks N] [--allow-mixed-builds]\n  huntctl controller compile SOURCE.duskctl OUTPUT.dctl\n  huntctl controller inspect INPUT.dctl\n  huntctl controller flatten INPUT.dctl OUTPUT.tape\n  huntctl milestone compile SOURCE.milestones OUTPUT.dmsp\n  huntctl milestone inspect INPUT.dmsp\n  huntctl milestone format SOURCE.milestones\n  huntctl tape inspect INPUT.tape [--frames]\n  huntctl tape compile PROGRAM.tas OUTPUT.tape\n  huntctl tape run INPUT.tape --game PATH --dvd PATH --state-root DIR [--milestone-program FILE] [--milestones IDS] [--milestone-goal ID] [--milestone-result FILE] [--gameplay-trace FILE] [--gameplay-trace-channels LIST] [--headful] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape prove INPUT.tape --game PATH --dvd PATH --state-root DIR --milestone-goal ID [--milestone-program FILE] [--proof FILE] [--repetitions N] [--timeout-seconds N] [--game-arg ARG]...\n  huntctl tape concat OUTPUT.tape INPUT.tape INPUT.tape...\n  huntctl trace inspect INPUT.trace\n  huntctl trace timeline INPUT.trace\n  huntctl trace compare INPUT.trace INPUT.trace...\n  huntctl timeline parse ROUTE.timeline\n  huntctl timeline inspect ROUTE.timeline\n  huntctl timeline status --timeline FILE [--continuation NAME] [--select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT]... [--output FILE]\n  huntctl timeline rebase-compatible --timeline FILE --continuation NAME --select ORIGINAL_SEGMENT=REPLACEMENT_SEGMENT --name NEW_NAME\n  huntctl timeline store init ROOT\n  huntctl timeline store import --store ROOT --timeline FILE --ref REF\n  huntctl timeline store import-evaluation --store ROOT --evaluation FILE --segment NAME --fingerprint VALUE [--ref REF]\n  huntctl timeline store fork --store ROOT --from REF --to REF [--lineage NAME]\n  huntctl timeline store append --store ROOT --ref REF --timeline FILE --continuation NAME\n  huntctl timeline store replay-repair --store ROOT --from REF --to REF --timeline FILE --continuation NAME\n  huntctl timeline store promote --store ROOT --ref REF --object ID\n  huntctl timeline store resolve|show|verify|gc ...\n  huntctl search seed --segment ID --output DIR [--candidate FILE] [--size N] [--rng-seed N]\n  huntctl search collect --population MANIFEST --input EVALUATION.json... --output RESULTS.json\n  huntctl search evolve --population MANIFEST --results RESULTS --output DIR [--size N] [--elites N] [--rng-seed N]\n  huntctl search rank --population MANIFEST --results RESULTS\n  huntctl search inspect CANDIDATE.json\n  huntctl search mock-evaluate --population MANIFEST --output RESULTS.json [--attempts N]\n  huntctl corpus init ROOT\n  huntctl corpus ingest ROOT --tape INPUT.tape --scenario ID --build BUILD.json [--scenario-json METADATA.json]\n  huntctl corpus list ROOT\n  huntctl corpus show ROOT ARTIFACT_SHA256\n  huntctl corpus verify ROOT\n  huntctl run --worker PATH\n  huntctl replay --worker PATH\n  huntctl mock-worker [--mock-revision REVISION]\n\nSearch segment IDs: boot_to_fsp103, fsp103_to_fsp104\nTAS DSL: dusktape 1 (legacy JSON schema: {PROGRAM_SCHEMA})"

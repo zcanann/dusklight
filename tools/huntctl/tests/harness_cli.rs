@@ -1156,3 +1156,136 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let mut suite: ObjectiveSuite =
+        serde_json::from_slice(&fs::read(&suite_path).unwrap()).unwrap();
+    suite.cases[0].boot = ObjectiveBoot::Stage {
+        stage: "F_SP103".into(),
+        room: 1,
+        point: 1,
+        layer: 3,
+        save_slot: None,
+    };
+    suite.refresh_content_sha256().unwrap();
+    fs::write(&suite_path, suite.to_pretty_json().unwrap()).unwrap();
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_native_execution(&root, &request_draft, executable);
+    let rewritten_request: HarnessRunRequest =
+        serde_json::from_slice(&fs::read(&request_draft).unwrap()).unwrap();
+    suite.cases[0].objective = rewritten_request.objective.clone();
+    suite.cases[0].observation_requirements = rewritten_request.observation_requirements.clone();
+    suite.refresh_content_sha256().unwrap();
+    fs::write(&suite_path, suite.to_pretty_json().unwrap()).unwrap();
+    let request_path = root.join("run-request.json");
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+
+    let population = root.join("population");
+    let seed = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::Fsp103ToFsp104,
+        boot: huntctl::tape::TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 1,
+            point: 1,
+            layer: 3,
+            save_slot: None,
+            fixture: None,
+        },
+        actions: vec![MacroAction::Neutral { frames: 1 }],
+        ancestry: Ancestry::default(),
+    };
+    write_explicit_population(&population, SegmentProfile::Fsp103ToFsp104, 0, vec![seed]).unwrap();
+    let definition_path = root.join("tournament.json");
+    fs::write(
+        &definition_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "dusklight-proposer-tournament-definition/v1",
+            "budget_unit": "episodes",
+            "budget_per_proposer": 2,
+            "proposers": [
+                {
+                    "name": "scripted",
+                    "kind": "incumbent_mutation",
+                    "population": "population/manifest.json"
+                },
+                {
+                    "name": "random",
+                    "kind": "blind_exploration",
+                    "population": "population/manifest.json"
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let campaign = Command::new(executable)
+        .current_dir(&root)
+        .args(["campaign", "--suite"])
+        .arg(&suite_path)
+        .args([
+            "--case",
+            "stage-ready",
+            "--output",
+            "build/stage-ready-campaign",
+            "--run-request",
+        ])
+        .arg(&request_path)
+        .arg("--definition")
+        .arg(&definition_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .args(["--workers", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        campaign.status.success(),
+        "{}",
+        String::from_utf8_lossy(&campaign.stderr)
+    );
+    let report: Value = serde_json::from_slice(&campaign.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-campaign-report/v1");
+    assert_eq!(report["passed"], true);
+    assert_eq!(report["plan"]["dry_run"], false);
+    assert_eq!(report["plan"]["case_id"], "stage-ready");
+    assert_eq!(report["rows"].as_array().unwrap().len(), 2);
+    for row in report["rows"].as_array().unwrap() {
+        assert_eq!(row["charged_episodes"], 2);
+        assert_eq!(row["objective_hits"], 1);
+        assert_eq!(row["tournament_replay_verdict"], "proved");
+        assert_eq!(row["cold_replay_verdict"], "proved");
+        assert_eq!(row["cold_replay_attempts"], 2);
+        assert!(row["best_candidate_id"].is_string());
+        assert_eq!(row["best_score"]["goal_feasible"], true);
+        assert!(PathBuf::from(row["best_proved_tape"].as_str().unwrap()).is_file());
+        for result in row["replay_results"].as_array().unwrap() {
+            assert!(PathBuf::from(result.as_str().unwrap()).is_file());
+        }
+    }
+    assert!(report["winner_proposer"].is_string());
+    assert!(PathBuf::from(report["winner_tape"].as_str().unwrap()).is_file());
+    let output_root = root.join("build/stage-ready-campaign");
+    assert!(output_root.join("report.json").is_file());
+    assert!(output_root.join("tournament.summary.json").is_file());
+    assert!(output_root.join("requests/template.json").is_file());
+    fs::remove_dir_all(root).unwrap();
+}

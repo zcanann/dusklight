@@ -146,7 +146,7 @@ not a learner score, controller claim, or lucky filename.
   compare` with precise incompatibility output.
 - [ ] Reject incompatible inputs automatically at the active run, episode,
   comparison, and replay boundaries.
-- [ ] Add one top-level command that resolves a suite case, runs selected
+- [x] Add one top-level command that resolves a suite case, runs selected
   proposers, ranks results, cold-replays finalists, and writes the report.
 - [x] Support a dry run showing resolved paths, identities, required facts,
   capabilities, budgets, and output locations.

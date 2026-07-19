@@ -75,7 +75,7 @@ authority.
 Successful validation emits a small machine-readable report with suite identity
 and positive/negative case counts.
 
-## Campaign dry run
+## Campaigns
 
 Resolve one checked-in case before spending simulator budget:
 
@@ -97,13 +97,35 @@ shows the request, episode, finalist, replay, and report destinations. Campaign
 outputs must be canonical repository-relative paths beneath ignored `build/`.
 Dry runs validate every suite artifact but create no directories or files.
 
-This is the stable planning surface for the eventual executing campaign
-command. It does not yet run proposers, rank results, or cold-replay finalists.
+Execute the same plan by supplying one sealed run-request template and an
+equal-budget proposer-tournament definition:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  campaign \
+  --suite tests/fixtures/automation/objective_conformance_suite.json \
+  --case stage-ready-f-sp103 \
+  --output build/harness/stage-ready-campaign \
+  --run-request build/harness/run-request.json \
+  --definition build/harness/tournament.json \
+  --workers 4
+```
+
+The suite case replaces the template's boot, scenario, objective, observation,
+action schema, seed, and budgets before the request is resealed. The tournament
+definition selects the proposer lanes and their populations. The command ranks
+the equal-budget native results, independently cold-replays every proved lane's
+content-addressed finalist for the case repetition count, and writes
+`dusklight-campaign-report/v1` to `report.json`. The report retains request and
+tournament identities, charged budgets, objective hits, useful-boundary count,
+replay verdicts, exact boundary proof, best proved tape, and the selected
+winner. A missed expected terminal returns a failing exit status after writing
+the diagnostic report.
 
 ## Current boundary
 
-The schema, validator, sealer, and read-only campaign resolver exist, including
-unit and CLI integration coverage.
+The schema, validator, sealer, campaign resolver, and executing proposer
+campaign exist, including unit and CLI integration coverage.
 `tests/fixtures/automation/objective_conformance_suite.json` contains a
 fixture-bound direct `F_SP103` boot, a 30-tick authored tape whose compiled
 frames are all neutral, a stable three-tick `stage_ready` objective, and a
@@ -129,7 +151,6 @@ event edge and the correct partner identity; a carry objective can use an
 ordered absent-to-present sequence and the correct object identity. Session
 process IDs are retained for diagnostics but are not objective selector facts.
 
-The talk-to-NPC and pick-up-object positive/control pairs do not exist yet, and
-`huntctl campaign` does not yet execute a campaign. Those are separate active
-tasks so authored-contract validation and dry-run planning are not mistaken for
-native conformance evidence.
+The talk-to-NPC and pick-up-object positive/control pairs do not exist yet.
+Those remain separate active tasks so an executing campaign is not mistaken
+for native conformance evidence that has not actually been authored and run.

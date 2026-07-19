@@ -1,16 +1,25 @@
-//! Read-only planning for the top-level objective campaign command.
+//! Planning and execution for the top-level objective campaign command.
 
+use super::execution::execute_request;
 use super::objective_suite::{
     ExpectedTerminalClass, ObjectiveBoot, ObjectiveCaseRole, ObjectiveSeed, ObjectiveSuite,
 };
+use super::run_contract::{HarnessBoundaryFingerprint, HarnessRunRequest, HarnessTerminalReason};
 use crate::artifact::Digest;
+use crate::search::LexicographicScore;
+use crate::search_evaluator::{
+    HarnessEvaluateConfig, ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition,
+    TournamentProposerKind, derive_candidate_request, run_proposer_tournament,
+};
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 pub const CAMPAIGN_PLAN_SCHEMA_V1: &str = "dusklight-campaign-plan/v1";
 
@@ -116,6 +125,83 @@ pub struct CampaignOutputs {
     pub report: PathBuf,
 }
 
+pub struct CampaignRunConfig<'a> {
+    pub plan: CampaignPlanConfig<'a>,
+    pub request_template_path: &'a Path,
+    pub tournament_definition_path: &'a Path,
+    pub workers: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CampaignReplayVerdict {
+    Proved,
+    ObjectiveMiss,
+    Failed,
+    Nondeterministic,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignReportRow {
+    pub proposer: String,
+    pub proposer_kind: CampaignProposer,
+    pub selected_candidates: usize,
+    pub charged_episodes: u64,
+    pub charged_candidate_ticks: u64,
+    pub objective_hits: usize,
+    pub useful_boundary_states: usize,
+    pub tournament_replay_verdict: ProposerReplayVerdict,
+    pub cold_replay_verdict: CampaignReplayVerdict,
+    pub cold_replay_attempts: u16,
+    pub best_candidate_id: String,
+    pub best_score: LexicographicScore,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape_sha256: Option<Digest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_hit_tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary_fingerprint: Option<HarnessBoundaryFingerprint>,
+    pub replay_results: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignReport {
+    pub schema: &'static str,
+    pub passed: bool,
+    pub plan: CampaignPlan,
+    pub request_template: PathBuf,
+    pub request_template_sha256: Digest,
+    pub tournament_definition: PathBuf,
+    pub tournament_definition_sha256: Digest,
+    pub tournament_summary: PathBuf,
+    pub tournament_summary_sha256: Digest,
+    pub rows: Vec<CampaignReportRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner_proposer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner_tape: Option<PathBuf>,
+}
+
+pub fn campaign_proposers_from_definition(
+    definition: &TournamentDefinition,
+) -> Result<Vec<CampaignProposer>, CampaignPlanError> {
+    let proposers = definition
+        .proposers
+        .iter()
+        .map(|proposer| proposer_kind(proposer.kind))
+        .collect::<BTreeSet<_>>();
+    if proposers.len() != definition.proposers.len() {
+        return Err(plan_error(
+            "campaign tournament must contain at most one lane for each proposer kind",
+        ));
+    }
+    Ok(proposers.into_iter().collect())
+}
+
 pub fn resolve_campaign_plan(
     config: &CampaignPlanConfig<'_>,
 ) -> Result<CampaignPlan, CampaignPlanError> {
@@ -219,6 +305,332 @@ pub fn resolve_campaign_plan(
             report: output_root.join("report.json"),
         },
     })
+}
+
+pub fn run_campaign(config: &CampaignRunConfig<'_>) -> Result<CampaignReport, CampaignPlanError> {
+    if config.workers == 0 {
+        return Err(plan_error("campaign workers must be greater than zero"));
+    }
+    let mut plan = resolve_campaign_plan(&config.plan)?;
+    if !plan.outputs.available {
+        return Err(plan_error(format!(
+            "campaign output already exists: {}",
+            plan.outputs.root.display()
+        )));
+    }
+    let repository_root = plan.resolved_paths.repository_root.clone();
+    let suite: ObjectiveSuite = read_json(&plan.resolved_paths.suite, "objective suite")?;
+    let case = suite
+        .cases
+        .iter()
+        .find(|case| case.id == plan.case_id)
+        .ok_or_else(|| plan_error("resolved campaign case disappeared from its suite"))?;
+    if !matches!(
+        case.expected_terminal,
+        ExpectedTerminalClass::Reached | ExpectedTerminalClass::ObjectiveMiss
+    ) {
+        return Err(plan_error(
+            "executing campaigns currently require reached or objective_miss terminal classes",
+        ));
+    }
+
+    let request_template_path = resolve_existing_file(
+        &repository_root,
+        config.request_template_path,
+        "run request template",
+    )?;
+    let mut request: HarnessRunRequest = read_json(&request_template_path, "run request template")?;
+    request
+        .validate_files(&repository_root)
+        .map_err(|error| plan_error(format!("invalid run request template: {error}")))?;
+    request.id = format!("campaign-{}", case.id);
+    request.boot = case.boot.clone();
+    request.scenario = case.scenario.clone();
+    request.objective = case.objective.clone();
+    request.observation_view = case.observation_view.clone();
+    request.action_schema = case.action_schema.clone();
+    request.observation_requirements = case.observation_requirements.clone();
+    request.input = case.seed.clone();
+    request.logical_tick_budget = case.logical_tick_budget;
+    request.host_timeout_seconds = case.host_timeout_seconds;
+    request.identity.scenario_id = case.id.clone();
+    request.identity.scenario_digest = case.scenario.sha256;
+    request.identity.predicate_program_digest = case.objective.program_sha256;
+    request.identity.observation_schema_digest = case.observation_view.schema_sha256;
+    request.identity.action_schema_digest = case.action_schema.sha256;
+    request.artifact_destination = repository_relative_string(
+        &repository_root,
+        &plan.outputs.requests.join("template"),
+        "campaign request destination",
+    )?;
+    request.content_sha256 = Digest::ZERO;
+    request
+        .refresh_content_sha256()
+        .map_err(|error| plan_error(format!("cannot seal campaign request: {error}")))?;
+    request.validate_files(&repository_root).map_err(|error| {
+        plan_error(format!("materialized campaign request is invalid: {error}"))
+    })?;
+
+    let definition_path = resolve_existing_file(
+        &repository_root,
+        config.tournament_definition_path,
+        "tournament definition",
+    )?;
+    let definition_bytes = fs::read(&definition_path)
+        .map_err(|error| plan_error(format!("cannot read tournament definition: {error}")))?;
+    let definition: TournamentDefinition = serde_json::from_slice(&definition_bytes)
+        .map_err(|error| plan_error(format!("cannot decode tournament definition: {error}")))?;
+    let definition_proposers = campaign_proposers_from_definition(&definition)?;
+    if definition_proposers != plan.proposers {
+        return Err(plan_error(
+            "campaign plan proposers do not match the tournament definition",
+        ));
+    }
+    let definition_directory = definition_path
+        .parent()
+        .ok_or_else(|| plan_error("tournament definition has no parent directory"))?
+        .to_path_buf();
+    let game = repository_root.join(&request.executable.path);
+    let dvd = repository_root.join(&request.game_data.path);
+    let tournament = run_proposer_tournament(&ProposerTournamentConfig {
+        definition,
+        definition_directory,
+        game,
+        dvd,
+        output_root: plan.outputs.root.clone(),
+        working_directory: repository_root.clone(),
+        game_args_prefix: Vec::new(),
+        workers: config.workers,
+        repetitions: u32::from(case.repetitions),
+        timeout: Duration::from_secs(u64::from(case.host_timeout_seconds)),
+        harness: Some(HarnessEvaluateConfig {
+            repository_root: repository_root.clone(),
+            request_template: request.clone(),
+        }),
+    })
+    .map_err(|error| plan_error(format!("campaign tournament failed: {error}")))?;
+
+    fs::create_dir_all(&plan.outputs.requests).map_err(|error| {
+        plan_error(format!("cannot create campaign request directory: {error}"))
+    })?;
+    fs::write(
+        plan.outputs.requests.join("template.json"),
+        request
+            .to_pretty_json()
+            .map_err(|error| plan_error(error.to_string()))?,
+    )
+    .map_err(|error| plan_error(format!("cannot write campaign request template: {error}")))?;
+
+    let mut rows = Vec::with_capacity(tournament.rows.len());
+    for tournament_row in &tournament.rows {
+        let proposer_kind = proposer_kind(tournament_row.kind);
+        let mut replay_results = Vec::new();
+        let mut proofs = Vec::new();
+        if let Some(tape_path) = tournament_row.best_proved_tape.as_ref() {
+            for repetition in 1..=case.repetitions {
+                let artifact_root = plan
+                    .outputs
+                    .replays
+                    .join(&tournament_row.name)
+                    .join(format!("attempt-{repetition:03}"));
+                let artifact_destination = repository_relative_string(
+                    &repository_root,
+                    &artifact_root,
+                    "campaign replay destination",
+                )?;
+                let replay_request = derive_candidate_request(
+                    &request,
+                    &repository_root,
+                    tape_path,
+                    &artifact_destination,
+                    request.rng_seed,
+                )
+                .map_err(|error| plan_error(format!("cannot derive replay request: {error}")))?;
+                let request_path = plan
+                    .outputs
+                    .requests
+                    .join(&tournament_row.name)
+                    .join(format!("replay-{repetition:03}.json"));
+                if let Some(parent) = request_path.parent() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        plan_error(format!("cannot create replay request directory: {error}"))
+                    })?;
+                }
+                fs::write(
+                    &request_path,
+                    replay_request
+                        .to_pretty_json()
+                        .map_err(|error| plan_error(error.to_string()))?,
+                )
+                .map_err(|error| plan_error(format!("cannot write replay request: {error}")))?;
+                let result =
+                    execute_request(&replay_request, &repository_root, u32::from(repetition))
+                        .map_err(|error| {
+                            plan_error(format!("campaign cold replay failed: {error}"))
+                        })?;
+                replay_results.push(artifact_root.join("result.json"));
+                proofs.push(ReplayProof::from_result(&result));
+            }
+        }
+        let (cold_replay_verdict, first_hit_tick, boundary_fingerprint) =
+            assess_replay_proofs(&proofs, tournament_row.replay_verdict);
+        rows.push(CampaignReportRow {
+            proposer: tournament_row.name.clone(),
+            proposer_kind,
+            selected_candidates: tournament_row.selected_candidates,
+            charged_episodes: tournament_row.charged_episodes,
+            charged_candidate_ticks: tournament_row.charged_candidate_ticks,
+            objective_hits: tournament_row.predicate_hits,
+            useful_boundary_states: tournament_row.boundary_diversity,
+            tournament_replay_verdict: tournament_row.replay_verdict,
+            cold_replay_verdict,
+            cold_replay_attempts: u16::try_from(proofs.len()).unwrap_or(u16::MAX),
+            best_candidate_id: tournament_row.best_candidate_id.clone(),
+            best_score: tournament_row.best_score,
+            best_proved_tape: tournament_row.best_proved_tape.clone(),
+            best_proved_tape_sha256: tournament_row.best_proved_tape_sha256,
+            first_hit_tick,
+            boundary_fingerprint,
+            replay_results,
+        });
+    }
+    let passed = match case.expected_terminal {
+        ExpectedTerminalClass::Reached => rows
+            .iter()
+            .any(|row| row.cold_replay_verdict == CampaignReplayVerdict::Proved),
+        ExpectedTerminalClass::ObjectiveMiss => rows
+            .iter()
+            .all(|row| row.cold_replay_verdict == CampaignReplayVerdict::ObjectiveMiss),
+        ExpectedTerminalClass::Unsupported | ExpectedTerminalClass::Impossible => false,
+    };
+    let winner = rows
+        .iter()
+        .filter(|row| row.cold_replay_verdict == CampaignReplayVerdict::Proved)
+        .max_by_key(|row| row.best_score)
+        .map(|row| (row.proposer.clone(), row.best_proved_tape.clone()));
+    let tournament_summary = plan.outputs.root.join("tournament.summary.json");
+    let tournament_summary_bytes = fs::read(&tournament_summary)
+        .map_err(|error| plan_error(format!("cannot read tournament summary: {error}")))?;
+    plan.dry_run = false;
+    let report = CampaignReport {
+        schema: "dusklight-campaign-report/v1",
+        passed,
+        plan,
+        request_template: request_template_path,
+        request_template_sha256: request.content_sha256,
+        tournament_definition: definition_path,
+        tournament_definition_sha256: Digest(Sha256::digest(&definition_bytes).into()),
+        tournament_summary,
+        tournament_summary_sha256: Digest(Sha256::digest(&tournament_summary_bytes).into()),
+        rows,
+        winner_proposer: winner.as_ref().map(|(proposer, _)| proposer.clone()),
+        winner_tape: winner.and_then(|(_, tape)| tape),
+    };
+    fs::write(
+        &report.plan.outputs.report,
+        serde_json::to_vec_pretty(&report)
+            .map_err(|error| plan_error(format!("cannot encode campaign report: {error}")))?,
+    )
+    .map_err(|error| plan_error(format!("cannot write campaign report: {error}")))?;
+    Ok(report)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReplayProof {
+    terminal: HarnessTerminalReason,
+    reached: bool,
+    first_hit_tick: Option<u64>,
+    boundary_fingerprint: Option<HarnessBoundaryFingerprint>,
+    realized_input_sha256: Option<Digest>,
+}
+
+impl ReplayProof {
+    fn from_result(result: &super::run_contract::HarnessRunResult) -> Self {
+        Self {
+            terminal: result.terminal,
+            reached: result.objective.reached,
+            first_hit_tick: result.objective.first_hit_tick,
+            boundary_fingerprint: result.objective.boundary_fingerprint.clone(),
+            realized_input_sha256: result
+                .artifacts
+                .realized_input
+                .as_ref()
+                .map(|artifact| artifact.sha256),
+        }
+    }
+}
+
+fn assess_replay_proofs(
+    proofs: &[ReplayProof],
+    tournament_verdict: ProposerReplayVerdict,
+) -> (
+    CampaignReplayVerdict,
+    Option<u64>,
+    Option<HarnessBoundaryFingerprint>,
+) {
+    if proofs.is_empty() {
+        return (
+            if tournament_verdict == ProposerReplayVerdict::ObjectiveMiss {
+                CampaignReplayVerdict::ObjectiveMiss
+            } else {
+                CampaignReplayVerdict::Failed
+            },
+            None,
+            None,
+        );
+    }
+    let reference = &proofs[0];
+    if proofs.iter().skip(1).any(|proof| proof != reference) {
+        return (CampaignReplayVerdict::Nondeterministic, None, None);
+    }
+    if reference.terminal == HarnessTerminalReason::Reached && reference.reached {
+        (
+            CampaignReplayVerdict::Proved,
+            reference.first_hit_tick,
+            reference.boundary_fingerprint.clone(),
+        )
+    } else if !reference.reached {
+        (CampaignReplayVerdict::ObjectiveMiss, None, None)
+    } else {
+        (CampaignReplayVerdict::Failed, None, None)
+    }
+}
+
+fn proposer_kind(kind: TournamentProposerKind) -> CampaignProposer {
+    match kind {
+        TournamentProposerKind::IncumbentMutation => CampaignProposer::Scripted,
+        TournamentProposerKind::BlindExploration => CampaignProposer::Random,
+        TournamentProposerKind::Structured => CampaignProposer::Structured,
+        TournamentProposerKind::Learned => CampaignProposer::Learned,
+    }
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    label: &str,
+) -> Result<T, CampaignPlanError> {
+    serde_json::from_slice(
+        &fs::read(path).map_err(|error| plan_error(format!("cannot read {label}: {error}")))?,
+    )
+    .map_err(|error| plan_error(format!("cannot decode {label}: {error}")))
+}
+
+fn repository_relative_string(
+    repository_root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<String, CampaignPlanError> {
+    let relative = path
+        .strip_prefix(repository_root)
+        .map_err(|_| plan_error(format!("{label} must remain beneath the repository root")))?;
+    let value = relative
+        .to_str()
+        .ok_or_else(|| plan_error(format!("{label} is not UTF-8")))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    if value.is_empty() {
+        return Err(plan_error(format!("{label} must not be empty")));
+    }
+    Ok(value)
 }
 
 fn seed_artifact(seed: &ObjectiveSeed) -> Option<&super::objective_suite::ArtifactReference> {
