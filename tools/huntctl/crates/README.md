@@ -46,7 +46,9 @@ corpora, transition corpora, exact phase/provenance joins, episode manifests,
 and repetition ledgers. It may depend on contracts, control formats, and trace
 decoding. It cannot depend on proposers, learners, search ranking, route
 mutation, worker processes, or the CLI. This prevents evidence truth from
-acquiring algorithm-specific authority.
+acquiring algorithm-specific authority. Exact trace/evidence comparison also
+lives here because it consumes only immutable artifacts and has no execution or
+proposal authority.
 
 ## `dusklight-harness-contracts`
 
@@ -68,9 +70,10 @@ feature explicitly.
 ## `dusklight-control`
 
 Owns tape authoring/editing/composition, static controller compilation, typed
-option evidence, and bounded roll/path/tactic realization. It may depend on
-contracts. It cannot depend on objective truth, evidence, search, learning,
-routes, workers, native process execution, or CLI parsing.
+option evidence, the reusable tactic catalog, and bounded roll/path/tactic
+realization. It may depend on contracts. It cannot depend on objective truth,
+evidence, search, learning, routes, workers, native process execution, or CLI
+parsing.
 
 ## `dusklight-learning`
 

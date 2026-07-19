@@ -12,6 +12,7 @@ pub mod motion_path;
 pub mod option_diagnostics;
 pub mod option_execution;
 pub mod roll_option;
+pub mod tactic_tests;
 pub mod tape_chain;
 pub mod tape_dsl;
 pub mod tape_edit;

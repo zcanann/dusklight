@@ -11,5 +11,6 @@ pub use dusklight_trace::trace;
 pub mod content_store;
 pub mod corpus;
 pub mod episode;
+pub mod trace_diff;
 pub mod transition_corpus;
 pub mod transition_evidence;

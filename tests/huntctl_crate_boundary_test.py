@@ -18,8 +18,6 @@ EXPECTED_ROOT_RUST_FILES = {
     "main.rs",
     "route_workbench.rs",
     "search_evaluator.rs",
-    "tactic_tests.rs",
-    "trace_diff.rs",
 }
 
 EXPECTED_ROOT_MODULE_DIRECTORIES = {

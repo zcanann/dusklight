@@ -7,8 +7,6 @@ pub mod harness;
 pub mod learning;
 pub mod route_workbench;
 pub mod search_evaluator;
-pub mod tactic_tests;
-pub mod trace_diff;
 
 // Compatibility re-exports keep existing callers stable while the physical
 // source tree migrates behind compiler-enforced crate boundaries.
@@ -18,10 +16,10 @@ pub use dusklight_automation_contracts::{
 };
 pub use dusklight_control::{
     controller_compilation, game_tactic, motion_path, option_diagnostics, option_execution,
-    roll_option, tape_chain, tape_dsl, tape_edit, tape_program,
+    roll_option, tactic_tests, tape_chain, tape_dsl, tape_edit, tape_program,
 };
 pub use dusklight_evidence::{
-    content_store, corpus, episode, transition_corpus, transition_evidence,
+    content_store, corpus, episode, trace_diff, transition_corpus, transition_evidence,
 };
 pub use dusklight_interventions as intervention;
 pub use dusklight_objectives::milestone_dsl;
