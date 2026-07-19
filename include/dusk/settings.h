@@ -326,6 +326,7 @@ struct CollisionViewSettings {
 struct TriggerViewSettings {
     bool enableSceneExitView;
     bool enableEventAreaView;
+    bool wireframeOnly;
     float opacity;
     float drawRange;
 };

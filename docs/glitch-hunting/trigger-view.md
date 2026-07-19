@@ -6,7 +6,11 @@ generic event-area volumes that the running game has actually loaded:
 
 - scene exits are yellow when enabled and orange when disabled;
 - event areas are translucent magenta when enabled and dim magenta when disabled; and
-- opacity and draw range are transient visualization settings.
+- opacity, draw range, and wireframe-only rendering are transient visualization settings.
+
+`Wireframe only` replaces filled surfaces with boundary edges and rings. It is
+intended for separating overlapping trigger volumes without accumulated alpha
+making their intersection unreadable.
 
 The scene-exit view covers both forms of scene transition used by the
 game: collision polygons with a non-sentinel exit ID and realized

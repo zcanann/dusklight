@@ -96,6 +96,7 @@ namespace dusk {
             if (ImGui::BeginMenu("Trigger View")) {
                 ImGui::Checkbox("Enable Scene Exit view", &triggerView.enableSceneExitView);
                 ImGui::Checkbox("Enable Event / Script Area view", &triggerView.enableEventAreaView);
+                ImGui::Checkbox("Wireframe only", &triggerView.wireframeOnly);
                 ImGui::SliderFloat("Opacity##triggers", &triggerView.opacity, 0.0f, 100.0f);
                 ImGui::SliderFloat("Draw Range##triggers", &triggerView.drawRange, 100.0f, 5000.0f);
                 ImGui::TextDisabled("Scene exits: yellow/orange");

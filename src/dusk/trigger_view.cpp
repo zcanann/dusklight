@@ -80,9 +80,51 @@ GXColor trigger_color(const bool enabled, const float opacity) {
     return enabled ? GXColor{0xff, 0xdc, 0x00, alpha} : GXColor{0xff, 0x80, 0x00, alpha};
 }
 
-GXColor event_area_color(const bool enabled, const float opacity) {
-    const u8 alpha = alpha_from_percent(opacity * 0.5f);
+GXColor event_area_color(const bool enabled, const float opacity, const bool wireframe) {
+    const u8 alpha = alpha_from_percent(opacity * (wireframe ? 1.0f : 0.5f));
     return enabled ? GXColor{0xff, 0x00, 0xc8, alpha} : GXColor{0x80, 0x00, 0x64, alpha};
+}
+
+void draw_triangle(cXyz* points, const GXColor& color, const bool wireframe) {
+    if (!wireframe) {
+        dDbVw_drawTriangleOpa(points, color, TRUE);
+        return;
+    }
+    dDbVw_drawLineXlu(points[0], points[1], color, TRUE, 2);
+    dDbVw_drawLineXlu(points[1], points[2], color, TRUE, 2);
+    dDbVw_drawLineXlu(points[2], points[0], color, TRUE, 2);
+}
+
+void draw_box(cXyz center, const cXyz& half_extent, const s16 angle, const GXColor& color,
+    const bool wireframe) {
+    if (!wireframe) {
+        csXyz rotation(0, angle, 0);
+        cXyz size = half_extent;
+        dDbVw_drawCubeXlu(center, size, rotation, color);
+        return;
+    }
+
+    Mtx transform;
+    cMtx_trans(transform, center.x, center.y, center.z);
+    cMtx_YrotM(transform, angle);
+    const float x = std::abs(half_extent.x);
+    const float y = std::abs(half_extent.y);
+    const float z = std::abs(half_extent.z);
+    cXyz local[8] = {
+        cXyz(-x, -y, -z), cXyz(x, -y, -z), cXyz(x, -y, z), cXyz(-x, -y, z),
+        cXyz(-x, y, -z), cXyz(x, y, -z), cXyz(x, y, z), cXyz(-x, y, z),
+    };
+    cXyz points[8];
+    for (int point = 0; point < 8; ++point) {
+        cMtx_multVec(transform, &local[point], &points[point]);
+    }
+    constexpr int edges[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+        {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+    };
+    for (const auto& edge : edges) {
+        dDbVw_drawLineXlu(points[edge[0]], points[edge[1]], color, TRUE, 2);
+    }
 }
 
 const stage_scls_info_dummy_class* loaded_scls_for_room(const int room) {
@@ -162,7 +204,8 @@ void draw_collision_exit_view(const cXyz& player, const TriggerViewSettings& set
                 points[2] += offset;
             }
             const bool enabled = collision_exit_enabled(collision.GetGrpRoomIndex(info), exit_id);
-            dDbVw_drawTriangleOpa(points, enabled ? enabled_color : disabled_color, TRUE);
+            draw_triangle(
+                points, enabled ? enabled_color : disabled_color, settings.wireframeOnly);
         }
     }
 }
@@ -201,7 +244,8 @@ struct ActorTriggerDrawContext {
     GXColor disabledColor;
 };
 
-void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const GXColor& color) {
+void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const GXColor& color,
+    const bool wireframe) {
     constexpr int kSegments = 16;
     constexpr float kFullTurn = 6.28318530717958647692f;
     Mtx transform;
@@ -233,12 +277,18 @@ void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const 
             cMtx_multVec(transform, &local_top, &top[point]);
         }
 
-        cXyz side[4] = {bottom[0], bottom[1], top[1], top[0]};
-        cXyz bottom_cap[3] = {bottom_center, bottom[1], bottom[0]};
-        cXyz top_cap[3] = {top_center, top[0], top[1]};
-        dDbVw_drawQuadXlu(side, color, TRUE);
-        dDbVw_drawTriangleXlu(bottom_cap, color, TRUE);
-        dDbVw_drawTriangleXlu(top_cap, color, TRUE);
+        if (wireframe) {
+            dDbVw_drawLineXlu(bottom[0], bottom[1], color, TRUE, 2);
+            dDbVw_drawLineXlu(top[0], top[1], color, TRUE, 2);
+            dDbVw_drawLineXlu(bottom[0], top[0], color, TRUE, 2);
+        } else {
+            cXyz side[4] = {bottom[0], bottom[1], top[1], top[0]};
+            cXyz bottom_cap[3] = {bottom_center, bottom[1], bottom[0]};
+            cXyz top_cap[3] = {top_center, top[0], top[1]};
+            dDbVw_drawQuadXlu(side, color, TRUE);
+            dDbVw_drawTriangleXlu(bottom_cap, color, TRUE);
+            dDbVw_drawTriangleXlu(top_cap, color, TRUE);
+        }
     }
 }
 
@@ -254,14 +304,13 @@ void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext&
     }
 
     const int type = TriggerViewReadAdapter::event_area_type(area);
-    const GXColor color = event_area_color(
-        TriggerViewReadAdapter::event_area_enabled(area), context.settings.opacity);
+    const GXColor color = event_area_color(TriggerViewReadAdapter::event_area_enabled(area),
+        context.settings.opacity, context.settings.wireframeOnly);
     if (type == 15 || type == 16) {
         cXyz center(area.home.pos.x, area.current.pos.y + area.scale.y * 0.5f, area.home.pos.z);
         cXyz half_extent(
             std::abs(area.scale.x), std::abs(area.scale.y) * 0.5f, std::abs(area.scale.z));
-        csXyz angle(0, area.current.angle.y, 0);
-        dDbVw_drawCubeXlu(center, half_extent, angle, color);
+        draw_box(center, half_extent, area.current.angle.y, color, context.settings.wireframeOnly);
         return;
     }
 
@@ -272,7 +321,8 @@ void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext&
         base.y = context.player.y - context.settings.drawRange;
         size.y = context.settings.drawRange * 2.0f;
     }
-    draw_elliptic_cylinder(base, size, area.shape_angle.y, color);
+    draw_elliptic_cylinder(
+        base, size, area.shape_angle.y, color, context.settings.wireframeOnly);
 }
 
 bool scripted_event_tag_deleted(const daTag_Evt_c& tag) {
@@ -308,11 +358,12 @@ void draw_scripted_event_tag(const daTag_Evt_c& tag, const ActorTriggerDrawConte
 
     const bool enabled = (tag.field_0x5E4 == 0 || tag.field_0x5E4 == 1) &&
                          tag.field_0x5D0 == 0 && !scripted_event_tag_deleted(tag);
-    const GXColor color = event_area_color(enabled, context.settings.opacity);
+    const GXColor color =
+        event_area_color(enabled, context.settings.opacity, context.settings.wireframeOnly);
     cXyz base = tag.current.pos;
     base.y -= half_height;
-    draw_elliptic_cylinder(
-        base, cXyz(radius, half_height * 2.0f, radius), 0, color);
+    draw_elliptic_cylinder(base, cXyz(radius, half_height * 2.0f, radius), 0, color,
+        context.settings.wireframeOnly);
 }
 
 bool mapped_event_tag_enabled(const daTag_Event_c& tag) {
@@ -348,15 +399,14 @@ void draw_mapped_event_tag(const daTag_Event_c& tag, const ActorTriggerDrawConte
         return;
     }
 
-    const GXColor color =
-        event_area_color(mapped_event_tag_enabled(tag), context.settings.opacity);
+    const GXColor color = event_area_color(mapped_event_tag_enabled(tag), context.settings.opacity,
+        context.settings.wireframeOnly);
     if ((tag.home.angle.x & 0x8000) != 0) {
         cXyz center = tag.current.pos;
         center.y += tag.scale.y * 0.5f;
         cXyz half_extent(std::abs(tag.scale.x) * 0.5f, std::abs(tag.scale.y) * 0.5f,
             std::abs(tag.scale.z) * 0.5f);
-        csXyz angle(0, 0, 0);
-        dDbVw_drawCubeXlu(center, half_extent, angle, color);
+        draw_box(center, half_extent, 0, color, context.settings.wireframeOnly);
         return;
     }
 
@@ -365,7 +415,7 @@ void draw_mapped_event_tag(const daTag_Event_c& tag, const ActorTriggerDrawConte
     draw_elliptic_cylinder(base,
         cXyz(std::abs(tag.scale.x), std::abs(tag.scale.y) * 2.0f,
             std::abs(tag.scale.x)),
-        0, color);
+        0, color, context.settings.wireframeOnly);
 }
 
 int draw_actor_trigger(void* candidate, void* raw_context) {
@@ -386,9 +436,8 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
         cXyz center = exit.current.pos;
         center.y += exit.scale.y * 0.5f;
         cXyz half_extent(exit.scale.x, exit.scale.y * 0.5f, exit.scale.z);
-        csXyz angle(0, exit.shape_angle.y, 0);
         GXColor color = scene_exit_enabled(exit) ? context.enabledColor : context.disabledColor;
-        dDbVw_drawCubeXlu(center, half_extent, angle, color);
+        draw_box(center, half_extent, exit.shape_angle.y, color, context.settings.wireframeOnly);
     } else if (context.settings.enableSceneExitView && actor_name == fpcNm_SCENE_EXIT2_e) {
         const auto& exit = *static_cast<const daScExit_c*>(actor);
         if (!finite(exit.current.pos) || !std::isfinite(exit.mRadius) || exit.mRadius < 0.0f)
@@ -402,7 +451,9 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
             exit.current.pos.x, context.player.y - context.settings.drawRange, exit.current.pos.z);
         const bool enabled = exit.mAction == daScExit_c::ACTION_WAIT_e;
         GXColor color = enabled ? context.enabledColor : context.disabledColor;
-        dDbVw_drawCylinderXlu(base, exit.mRadius, context.settings.drawRange * 2.0f, color, TRUE);
+        draw_elliptic_cylinder(base,
+            cXyz(exit.mRadius, context.settings.drawRange * 2.0f, exit.mRadius), 0, color,
+            context.settings.wireframeOnly);
     } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVTAREA_e) {
         draw_event_area(*static_cast<const daTag_EvtArea_c*>(actor), context);
     } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVT_e) {

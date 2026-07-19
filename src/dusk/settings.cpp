@@ -395,6 +395,7 @@ static TransientSettings g_transientSettings = {
     .triggerView = {
         .enableSceneExitView = false,
         .enableEventAreaView = false,
+        .wireframeOnly = false,
         .opacity = 80.0f,
         .drawRange = 1000.0f,
     },
