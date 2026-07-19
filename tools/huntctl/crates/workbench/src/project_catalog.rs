@@ -226,7 +226,7 @@ pub(super) fn project_catalog_projection(
             }
 
             let loaded = load_project_tape(repository_root, entry).and_then(|tape| {
-                load_project_launch_profile(repository_root, entry).map(|profile| (tape, profile))
+                load_project_native_oracle(repository_root, entry).map(|oracle| (tape, oracle))
             });
             let (boot, frame_count, materialization_sha256, error) = match loaded {
                 Ok((mut tape, _profile)) => {
@@ -306,22 +306,22 @@ pub(super) fn project_materialized_playback(
     }
     let mut tape = load_project_tape(repository_root, project)?;
     apply_boot_override(repository_root, project, &mut tape)?;
-    let native_profile = load_project_launch_profile(repository_root, project)?;
+    let native_oracle = load_project_native_oracle(repository_root, project)?;
     Ok(MaterializedPlayback {
         lineage: None,
         segment: Some(format!("project:{project_id}")),
         tape,
         seed_stage: None,
-        native_profile,
+        native_oracle,
     })
 }
 
-fn load_project_launch_profile(
+fn load_project_native_oracle(
     repository_root: &Path,
     project: &ProjectDefinition,
-) -> Result<NativePlaybackProfile, WorkbenchError> {
+) -> Result<NativePlaybackOracle, WorkbenchError> {
     let Some(relative) = &project.launch else {
-        return Ok(NativePlaybackProfile::Standard);
+        return Ok(NativePlaybackOracle::None);
     };
     let path = checked_artifact_path(repository_root, relative)?;
     let source = fs::read_to_string(&path)
@@ -338,13 +338,13 @@ fn load_project_launch_profile(
         )));
     }
     match lines.as_slice() {
-        [_, "profile eye_shredder"] => Ok(NativePlaybackProfile::EyeShredder),
+        [_, "oracle eye_shredder"] => Ok(NativePlaybackOracle::EyeShredder),
         [_, profile] => Err(WorkbenchError::new(format!(
             "{} has unsupported launch directive {profile:?}",
             path.display()
         ))),
         _ => Err(WorkbenchError::new(format!(
-            "{} must contain exactly one `profile NAME` directive",
+            "{} must contain exactly one `oracle NAME` directive",
             path.display()
         ))),
     }
@@ -1035,7 +1035,7 @@ mod tests {
                 }
                 ProjectKind::Tas | ProjectKind::Tape => {
                     load_project_tape(&repository, entry).unwrap();
-                    load_project_launch_profile(&repository, entry).unwrap();
+                    load_project_native_oracle(&repository, entry).unwrap();
                 }
             }
         }
@@ -1053,7 +1053,7 @@ mod tests {
         .unwrap();
         fs::write(
             repository.join("routes/qa/canary.launch"),
-            "dusklaunch 1\nprofile eye_shredder\n",
+            "dusklaunch 1\noracle eye_shredder\n",
         )
         .unwrap();
 
@@ -1084,8 +1084,8 @@ mod tests {
             TapeBoot::Stage { ref stage, .. } if stage == "F_SP103"
         ));
         assert_eq!(
-            materialized.native_profile,
-            NativePlaybackProfile::EyeShredder
+            materialized.native_oracle,
+            NativePlaybackOracle::EyeShredder
         );
 
         create_workspace_folder(

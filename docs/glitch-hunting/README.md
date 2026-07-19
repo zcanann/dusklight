@@ -38,10 +38,14 @@ state hashes, and the reason it was classified as interesting.
 ## Read-only gameplay boundary
 
 Normal playback, recording, milestones, oracles, reactive controllers, and
-catalog capture must never write gameplay state. Game objects enter automation
-observers through `const` pointers, and snapshot APIs expose capture only; in
-particular, the normal build has no RNG restore/setter API. Tests verify that
-capturing RNG state does not advance or alter either game RNG stream.
+catalog capture must never write gameplay state except for a reviewed model of
+a console behavior that native layout cannot reproduce safely. The sole current
+exception is the always-on bounded Cursor Breakout model; it reproduces the
+retail OOB write's J2D consequence without performing a native OOB access. Game
+objects otherwise enter automation observers through `const` pointers, and
+snapshot APIs expose capture only; in particular, the normal build has no RNG
+restore/setter API. Tests verify that capturing RNG state does not advance or
+alter either game RNG stream.
 
 The permitted runtime effects are deliberately narrow: exclusive virtual PAD
 input, automation-owned files and lifecycle state, and host/substrate controls

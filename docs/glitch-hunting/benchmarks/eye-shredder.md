@@ -175,10 +175,11 @@ The current native implementation under audit is
 ## Acceptance criteria
 
 The Route Workbench discovers `routes/qa/glitches/eye_shredder.launch` beside
-the authored tape. That checked-in launch profile supplies the fidelity switch,
-observer trace, and native oracle automatically. It also preflights the selected
-executable and refuses playback when either required compile gate is absent;
-ordinary tapes remain on the standard, unmodified runtime profile.
+the authored tape. Console-correct Cursor Breakout behavior is universal; this
+checked-in launch metadata adds only the benchmark trace and semantic oracle.
+The workbench preflights the selected executable for every playback and
+recording and refuses one missing either required compile gate or the default
+fidelity profile.
 
 Compile and inspect the checked tape, then run the native oracle through the
 cross-platform tape runner:
@@ -193,7 +194,6 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- tape run \
   --game build/macos-default-debug/dusklight \
   --dvd orig/GZ2E01/GZ2E01.iso \
   --state-root build/automation-state/eye-shredder \
-  --game-arg --cursor-breakout-shadow \
   --game-arg --automation-oracle --game-arg eye-shredder \
   --game-arg --automation-oracle-continue-on-pass \
   --game-arg --automation-oracle-result \

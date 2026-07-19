@@ -1,3 +1,3 @@
-# Native requirements travel with the tape through workspace move/delete.
+# Tape-specific verification travels with the tape through workspace move/delete.
 dusklaunch 1
-profile eye_shredder
+oracle eye_shredder

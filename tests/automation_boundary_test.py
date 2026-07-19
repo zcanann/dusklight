@@ -212,6 +212,14 @@ def main() -> int:
                 failures.append(f"{path}: observer contains forbidden live effect {needle}")
 
     main_source = (root / "src/m_Do/m_Do_main.cpp").read_text(encoding="utf-8")
+    if not re.search(
+        r'\("cursor-breakout-shadow".*?default_value\("true"\)',
+        main_source,
+        re.DOTALL,
+    ):
+        failures.append("Cursor Breakout fidelity must default on")
+    if "constexpr bool cursorBreakoutShadow = true;" not in main_source:
+        failures.append("Cursor Breakout fidelity must not be runtime-selectable")
     forbidden_main_reads = (
         "dComIfGp_getStartStage",
         "dComIfGp_roomControl_getStayNo",

@@ -363,20 +363,20 @@ roadmap documents describe the larger target.
   splines, and cubic Béziers with rational sample phase, integer interpolation,
   defined rounding, exact duration, search macros, and authenticated capture.
 - Name-entry instrumentation exposes stable logical/visual cursor snapshots,
-  original-layout offsets, and a bounded event ring. Its off-by-default Eye
-  Shredder shadow profile models original big-endian neighboring writes without
+  original-layout offsets, and a bounded event ring. Its default Eye Shredder
+  fidelity profile models original big-endian neighboring writes without a
   native out-of-bounds access.
 - `--name-entry-trace` writes the final snapshot, modeled bytes, counters,
-  dropped-event count, and ordered events as versioned JSON. The explicit
-  `--cursor-breakout-shadow` switch requires that trace output.
+  dropped-event count, and ordered events as versioned JSON. Trace capture is
+  optional and does not control the always-on console-fidelity behavior.
 
 ## Useful commands
 
 ```console
-# Read-only observation build without code mods
+# Console-fidelity observation build without code mods
 cmake --preset windows-clang-debug -DDUSK_ENABLE_CODE_MODS=OFF \
   -DDUSK_ENABLE_AUTOMATION_OBSERVERS=ON \
-  -DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=OFF
+  -DDUSK_ENABLE_AUTOMATION_FIDELITY_MODELS=ON
 cmake --build --preset windows-clang-debug --target dusklight
 
 # Static fork/native observation-boundary guardrail
@@ -430,7 +430,7 @@ dusklight --headless --dvd game.iso --input-tape prefix.tape \
   --input-controller route.dctl --exit-after-controller \
   --realized-input-tape build/route-realized.tape
 dusklight --headless --dvd game.iso --input-tape eye-shredder.tape \
-  --exit-after-tape --deterministic-time-start 0 --cursor-breakout-shadow \
+  --exit-after-tape --deterministic-time-start 0 \
   --name-entry-trace eye-shredder.trace.json
 ```
 

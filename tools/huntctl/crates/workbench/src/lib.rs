@@ -932,13 +932,13 @@ struct MaterializedPlayback {
     segment: Option<String>,
     tape: InputTape,
     seed_stage: Option<&'static str>,
-    native_profile: NativePlaybackProfile,
+    native_oracle: NativePlaybackOracle,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum NativePlaybackProfile {
+enum NativePlaybackOracle {
     #[default]
-    Standard,
+    None,
     EyeShredder,
 }
 

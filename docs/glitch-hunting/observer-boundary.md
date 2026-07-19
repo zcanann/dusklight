@@ -41,11 +41,13 @@ generic `TARGET_PC` block, or `IF_DUSK` branch is insufficient. With the gate
 off, the native statements and control flow surrounding that block remain
 unchanged.
 
-Eye Shredder's original-memory consequence is not an observer. Its control-flow
-and J2D color-channel mutation is separately compiled behind the default-off
-`DUSK_ENABLE_AUTOMATION_FIDELITY_MODELS` option, which requires observers and
-still requires the explicit runtime `--cursor-breakout-shadow` capability.
-Search builds force this write-capable option off.
+Eye Shredder's original-memory consequence is not an observer. It is the narrow
+console-compatibility exception: the bounded retail-layout model and its
+required observers are enabled by default in this fork. Cursor Breakout
+therefore has the console-correct control flow and J2D consequence in ordinary
+playback, recording, and search without tape-specific opt-in. The model never
+performs a native out-of-bounds write. `--name-entry-trace` only requests an
+artifact; it does not enable the behavior.
 
 Trace v2 has one narrow private-read exception for Link's already-resolved
 background-collision caches. The declaring headers grant a compile-gated
