@@ -122,6 +122,35 @@ replay verdicts, exact boundary proof, best proved tape, and the selected
 winner. A missed expected terminal returns a failing exit status after writing
 the diagnostic report.
 
+## Shortest macOS operator loop
+
+Use the dry run to inspect the exact case before spending budget, then execute
+the campaign as above. The executing command performs the independent finalist
+replays; they are not inferred from the tournament score. Inspect the compact
+result and the winning replay with:
+
+```sh
+CAMPAIGN=build/harness/stage-ready-campaign
+jq '{passed, winner_proposer, winner_tape, rows}' "$CAMPAIGN/report.json"
+
+PROPOSER=$(jq -r .winner_proposer "$CAMPAIGN/report.json")
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  harness inspect-objective \
+  --request "$CAMPAIGN/requests/$PROPOSER/replay-001.json" \
+  --result "$CAMPAIGN/replays/$PROPOSER/attempt-001/result.json" \
+  --artifact-root "$CAMPAIGN/replays/$PROPOSER/attempt-001" \
+  --repository-root .
+```
+
+That inspection revalidates the retained request, result, objective evidence,
+and artifact hashes. Keep a winner only by copying its reported tape into the
+appropriate authored `routes/<route>/segments/` location, attaching its exact
+proof through the Route Workbench, and committing those route files. To discard
+it, reveal the ignored campaign directory with
+`open -R "$CAMPAIGN/report.json"` and move that campaign directory to Trash in
+Finder. Leaving a result under ignored `build/` is evidence retention, not
+promotion; neither a report row nor a learner score edits an authored route.
+
 ## Current boundary
 
 The schema, validator, sealer, campaign resolver, and executing proposer
