@@ -1007,9 +1007,7 @@ fn execution_error(message: impl Into<String>) -> HarnessExecutionError {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::observation_contract::{
-        ObservationAdmissionIssue, ObservationAdmissionIssueKind,
-    };
+    use crate::observation_contract::{ObservationAdmissionIssue, ObservationAdmissionIssueKind};
     use std::os::unix::process::ExitStatusExt;
 
     fn unsupported_detail() -> HarnessTerminalDetail {

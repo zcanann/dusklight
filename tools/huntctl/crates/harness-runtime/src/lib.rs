@@ -4,9 +4,7 @@
 //! inspection. It does not schedule campaigns, rank candidates, propose
 //! actions, or train models.
 
-pub use dusklight_automation_contracts::{
-    artifact, controller_program, scenario_fixture, tape,
-};
+pub use dusklight_automation_contracts::{artifact, controller_program, scenario_fixture, tape};
 pub use dusklight_control::tape_dsl;
 pub use dusklight_harness_contracts::{
     evaluation, objective_suite, observation_contract, run_contract,
