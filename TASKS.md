@@ -150,7 +150,7 @@ not a learner score, controller claim, or lucky filename.
   proposers, ranks results, cold-replays finalists, and writes the report.
 - [x] Support a dry run showing resolved paths, identities, required facts,
   capabilities, budgets, and output locations.
-- [ ] Keep generated evidence under an ignored build root and print the first
+- [x] Keep generated evidence under an ignored build root and print the first
   unsupported or mismatched fact with its artifact path.
 - [x] Document the shortest macOS loop: inspect case, run, inspect evidence,
   replay finalist, and explicitly keep or discard it.
