@@ -1,6 +1,7 @@
 #include "dusk/automation/milestone_program.hpp"
 
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/typed_facts.hpp"
 
 #include <algorithm>
 #include <array>
@@ -332,6 +333,27 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
         std::copy_n(source, length, value.symbol.begin());
         value.symbolLength = static_cast<std::uint8_t>(length);
     };
+    const auto present_fact = [&context](const TypedFactId id,
+                                  const TypedFactValueType type) -> const TypedFactEntry* {
+        if (context.facts == nullptr) return nullptr;
+        const TypedFactEntry* entry = context.facts->find(id);
+        return entry != nullptr && entry->status == TypedFactStatus::Present &&
+                       entry->type == type ?
+                   entry :
+                   nullptr;
+    };
+    const auto actor_exists = [&context, &value](const TypedFactId id) {
+        if (context.facts == nullptr) return false;
+        const TypedFactEntry* entry = context.facts->find(id);
+        if (entry == nullptr || entry->type != TypedFactValueType::ActorIdentity ||
+            (entry->status != TypedFactStatus::Present &&
+                entry->status != TypedFactStatus::Absent)) {
+            value.available = false;
+        } else {
+            value.bits = entry->status == TypedFactStatus::Present ? 1 : 0;
+        }
+        return true;
+    };
     switch (field) {
     case 1: value.bits = static_cast<std::uint32_t>(context.boundaryKind); break;
     case 2: value.bits = context.boundaryIndex; break;
@@ -339,24 +361,102 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
         value.available = context.tapeFrame.has_value();
         value.bits = context.tapeFrame.value_or(kMilestoneProgramUnavailableTapeFrame);
         break;
-    case 4: set_symbol(observation.stageName); break;
-    case 5: value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.room)); break;
+    case 4:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::StageName, TypedFactValueType::StageCode);
+            if (entry == nullptr) {
+                value.available = false;
+            } else {
+                std::copy(entry->value.stageCode.begin(), entry->value.stageCode.end(),
+                    value.symbol.begin());
+                while (value.symbolLength < entry->value.stageCode.size() &&
+                       value.symbol[value.symbolLength] != '\0') {
+                    ++value.symbolLength;
+                }
+                value.available = value.symbolLength != 0;
+            }
+        } else {
+            set_symbol(observation.stageName);
+        }
+        break;
+    case 5:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::StageRoom, TypedFactValueType::I32);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = static_cast<std::uint32_t>(entry->value.i32);
+        } else {
+            value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.room));
+        }
+        break;
     case 6: value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.layer)); break;
-    case 7: value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.point)); break;
-    case 8: value.bits = observation.playerPresent ? 1 : 0; break;
-    case 9: value.available = observation.playerPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerPositionX); break;
-    case 10: value.available = observation.playerPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerPositionY); break;
-    case 11: value.available = observation.playerPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerPositionZ); break;
+    case 7:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::StageSpawn, TypedFactValueType::I32);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = static_cast<std::uint32_t>(entry->value.i32);
+        } else {
+            value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.point));
+        }
+        break;
+    case 8:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::PlayerExists, TypedFactValueType::Boolean);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = entry->value.boolean ? 1 : 0;
+        } else {
+            value.bits = observation.playerPresent ? 1 : 0;
+        }
+        break;
+    case 9:
+    case 10:
+    case 11:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::PlayerPosition, TypedFactValueType::Vec3F32);
+            value.available = entry != nullptr;
+            if (entry != nullptr) {
+                value.bits = std::bit_cast<std::uint32_t>(entry->value.vec3[field - 9]);
+            }
+        } else {
+            value.available = observation.playerPresent;
+            const float positions[] = {observation.playerPositionX, observation.playerPositionY,
+                observation.playerPositionZ};
+            value.bits = std::bit_cast<std::uint32_t>(positions[field - 9]);
+        }
+        break;
     case 12: value.available = observation.playerPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerForwardSpeed); break;
     case 13: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.playerProcId; break;
-    case 14: value.bits = observation.eventRunning ? 1 : 0; break;
-    case 15: value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.eventId)); break;
+    case 14:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::EventRunning, TypedFactValueType::Boolean);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = entry->value.boolean ? 1 : 0;
+        } else {
+            value.bits = observation.eventRunning ? 1 : 0;
+        }
+        break;
+    case 15:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::EventId, TypedFactValueType::I32);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = static_cast<std::uint32_t>(entry->value.i32);
+        } else {
+            value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.eventId));
+        }
+        break;
     case 16: set_symbol(observation.nextStageName, observation.nextStageEnabled); break;
     case 17: value.available = observation.nextStageEnabled; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.nextRoom)); break;
     case 18: value.available = observation.nextStageEnabled; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.nextLayer)); break;
     case 19: value.available = observation.nextStageEnabled; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.nextPoint)); break;
     case 20: value.bits = 1; break;
-    case 21: value.bits = observation.playerIsLink ? 1 : 0; break;
+    case 21:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::PlayerIsLink, TypedFactValueType::Boolean);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = entry->value.boolean ? 1 : 0;
+        } else {
+            value.bits = observation.playerIsLink ? 1 : 0;
+        }
+        break;
     case 22: value.bits = observation.nextStageEnabled ? 1 : 0; break;
     case 23: value.available = observation.playerPresent; value.bits = observation.playerProcessId; break;
     case 24: value.available = observation.playerPresent; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.playerActorName)); break;
@@ -394,17 +494,70 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
     case 56: value.available = observation.playerGroundHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerGroundHeight); break;
     case 57: value.available = observation.playerRoofHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerRoofHeight); break;
     case 58: value.available = observation.playerPresent && observation.playerGroundHeightPresent; value.bits = std::bit_cast<std::uint32_t>(observation.playerPositionY - observation.playerGroundHeight); break;
-    case 59: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.playerDoStatus; break;
-    case 60: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.talkPartner.present ? 1 : 0; break;
-    case 61: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.actorName)); break;
-    case 62: value.available = observation.talkPartner.present; value.bits = observation.talkPartner.setId; break;
-    case 63: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.homeRoom)); break;
-    case 64: value.available = observation.talkPartner.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.talkPartner.currentRoom)); break;
-    case 65: value.available = observation.playerPresent && observation.playerIsLink; value.bits = observation.grabbedActor.present ? 1 : 0; break;
-    case 66: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.actorName)); break;
-    case 67: value.available = observation.grabbedActor.present; value.bits = observation.grabbedActor.setId; break;
-    case 68: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.homeRoom)); break;
-    case 69: value.available = observation.grabbedActor.present; value.bits = static_cast<std::uint32_t>(static_cast<std::int32_t>(observation.grabbedActor.currentRoom)); break;
+    case 59:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::PlayerDoStatus, TypedFactValueType::U32);
+            value.available = entry != nullptr;
+            if (entry != nullptr) value.bits = entry->value.u32;
+        } else {
+            value.available = observation.playerPresent && observation.playerIsLink;
+            value.bits = observation.playerDoStatus;
+        }
+        break;
+    case 60:
+        if (!actor_exists(TypedFactId::TalkPartner)) {
+            value.available = observation.playerPresent && observation.playerIsLink;
+            value.bits = observation.talkPartner.present ? 1 : 0;
+        }
+        break;
+    case 61:
+    case 62:
+    case 63:
+    case 64:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::TalkPartner, TypedFactValueType::ActorIdentity);
+            value.available = entry != nullptr;
+            if (entry != nullptr) {
+                const auto& actor = entry->value.actor;
+                const std::int32_t values[] = {actor.actorName, actor.setId, actor.homeRoom,
+                    actor.currentRoom};
+                value.bits = static_cast<std::uint32_t>(values[field - 61]);
+            }
+        } else {
+            value.available = observation.talkPartner.present;
+            const std::int32_t values[] = {observation.talkPartner.actorName,
+                observation.talkPartner.setId, observation.talkPartner.homeRoom,
+                observation.talkPartner.currentRoom};
+            value.bits = static_cast<std::uint32_t>(values[field - 61]);
+        }
+        break;
+    case 65:
+        if (!actor_exists(TypedFactId::GrabbedActor)) {
+            value.available = observation.playerPresent && observation.playerIsLink;
+            value.bits = observation.grabbedActor.present ? 1 : 0;
+        }
+        break;
+    case 66:
+    case 67:
+    case 68:
+    case 69:
+        if (context.facts != nullptr) {
+            const auto* entry = present_fact(TypedFactId::GrabbedActor, TypedFactValueType::ActorIdentity);
+            value.available = entry != nullptr;
+            if (entry != nullptr) {
+                const auto& actor = entry->value.actor;
+                const std::int32_t values[] = {actor.actorName, actor.setId, actor.homeRoom,
+                    actor.currentRoom};
+                value.bits = static_cast<std::uint32_t>(values[field - 66]);
+            }
+        } else {
+            value.available = observation.grabbedActor.present;
+            const std::int32_t values[] = {observation.grabbedActor.actorName,
+                observation.grabbedActor.setId, observation.grabbedActor.homeRoom,
+                observation.grabbedActor.currentRoom};
+            value.bits = static_cast<std::uint32_t>(values[field - 66]);
+        }
+        break;
     default: value.available = false; break;
     }
     return value;
@@ -615,12 +768,14 @@ bool evaluate_instructions(
             const Value rhs = stack[--depth];
             const Value lhs = stack[--depth];
             stack[depth++] = Value{.type = ValueType::Bool,
+                                   .available = lhs.available && rhs.available,
                                    .bits = compare_values(lhs, rhs, instruction.opcode) ? 1u : 0u};
         } else if (instruction.opcode == 0x30) {
             stack[depth - 1].bits = stack[depth - 1].bits == 0 ? 1 : 0;
         } else {
             const Value rhs = stack[--depth];
             Value& lhs = stack[depth - 1];
+            lhs.available = lhs.available && rhs.available;
             lhs.bits = instruction.opcode == 0x31 ? (lhs.bits != 0 && rhs.bits != 0)
                                                   : (lhs.bits != 0 || rhs.bits != 0);
         }

@@ -1073,11 +1073,41 @@ InputControllerStepResponse InputControllerProgram::respond(
         response.error = InputControllerStepError::InvalidPhase;
         return response;
     }
+    if (request.facts.majorVersion != kTypedFactResponseMajorVersion ||
+        request.facts.minorVersion != kTypedFactResponseMinorVersion ||
+        request.facts.phase != TypedFactPhase::PreInput ||
+        request.facts.simulationTick != request.simulationTick ||
+        request.facts.tapeFrame != request.inputFrame) {
+        response.error = InputControllerStepError::InvalidFacts;
+        return response;
+    }
     if (finished(request.controllerFrame)) {
         response.error = InputControllerStepError::InvalidFrame;
         return response;
     }
-    response.evaluation = evaluateDetailed(request.controllerFrame, request.observation);
+    ControllerObservation observation = request.observation;
+    const auto* stage = request.facts.find(TypedFactId::StageName);
+    observation.stageName = {};
+    if (stage != nullptr && stage->status == TypedFactStatus::Present &&
+        stage->type == TypedFactValueType::StageCode) {
+        observation.stageName = stage->value.stageCode;
+    }
+    const auto* playerExists = request.facts.find(TypedFactId::PlayerExists);
+    observation.playerPresent = playerExists != nullptr &&
+                                playerExists->status == TypedFactStatus::Present &&
+                                playerExists->type == TypedFactValueType::Boolean &&
+                                playerExists->value.boolean;
+    const auto* playerPosition = request.facts.find(TypedFactId::PlayerPosition);
+    if (observation.playerPresent && playerPosition != nullptr &&
+        playerPosition->status == TypedFactStatus::Present &&
+        playerPosition->type == TypedFactValueType::Vec3F32) {
+        observation.playerX = playerPosition->value.vec3[0];
+        observation.playerY = playerPosition->value.vec3[1];
+        observation.playerZ = playerPosition->value.vec3[2];
+    } else {
+        observation.playerPresent = false;
+    }
+    response.evaluation = evaluateDetailed(request.controllerFrame, observation);
     return response;
 }
 

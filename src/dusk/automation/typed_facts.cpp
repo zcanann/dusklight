@@ -1,5 +1,7 @@
 #include "dusk/automation/typed_facts.hpp"
 
+#include "dusk/automation/input_controller.hpp"
+
 #include <algorithm>
 #include <cstring>
 
@@ -59,10 +61,12 @@ TypedFactResponse build_typed_fact_response(const MilestoneObservation& observat
     }
     append(response, stageName);
 
-    auto stageRoom = fact(TypedFactId::StageRoom, TypedFactValueType::I32, sources.stage);
+    const TypedFactStatus stageStatus =
+        dependent_status(sources.stage, observation.stageName != nullptr);
+    auto stageRoom = fact(TypedFactId::StageRoom, TypedFactValueType::I32, stageStatus);
     stageRoom.value.i32 = observation.room;
     append(response, stageRoom);
-    auto stageSpawn = fact(TypedFactId::StageSpawn, TypedFactValueType::I32, sources.stage);
+    auto stageSpawn = fact(TypedFactId::StageSpawn, TypedFactValueType::I32, stageStatus);
     stageSpawn.value.i32 = observation.point;
     append(response, stageSpawn);
 
@@ -108,6 +112,35 @@ TypedFactResponse build_typed_fact_response(const MilestoneObservation& observat
         grabbed.value.actor = actor_identity(observation.grabbedActor);
     }
     append(response, grabbed);
+    return response;
+}
+
+TypedFactResponse build_typed_fact_response(const ControllerObservation& observation,
+    const TypedFactPhase phase, const std::uint64_t simulationTick,
+    const std::optional<std::uint64_t> tapeFrame) {
+    std::array<char, 9> stageName{};
+    std::copy(observation.stageName.begin(), observation.stageName.end(), stageName.begin());
+    MilestoneObservation shared{
+        .stageName = stageName[0] == '\0' ? nullptr : stageName.data(),
+        .playerPresent = observation.playerPresent,
+        .playerIsLink = observation.playerPresent,
+        .playerPositionX = observation.playerX,
+        .playerPositionY = observation.playerY,
+        .playerPositionZ = observation.playerZ,
+    };
+    auto response = build_typed_fact_response(shared, phase, simulationTick, tapeFrame,
+        {
+            .stage = TypedFactStatus::Present,
+            .player = TypedFactStatus::Present,
+            .event = TypedFactStatus::Unavailable,
+            .interaction = TypedFactStatus::Unavailable,
+        });
+    for (std::size_t index = 0; index < response.count; ++index) {
+        auto& entry = response.entries[index];
+        if (entry.id == TypedFactId::StageRoom || entry.id == TypedFactId::StageSpawn) {
+            entry.status = TypedFactStatus::Unavailable;
+        }
+    }
     return response;
 }
 

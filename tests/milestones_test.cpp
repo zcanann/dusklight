@@ -1,5 +1,6 @@
 #include "dusk/automation/input_recording.hpp"
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/typed_facts.hpp"
 
 #include <array>
 #include <bit>
@@ -480,6 +481,26 @@ void testAuthoredBootStableAndExactFirstHit() {
             "788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615");
 }
 
+void testAuthoredObjectiveConsumesTypedFacts() {
+    using namespace dusk::automation;
+    MilestoneProgram program;
+    REQUIRE(
+        decode_milestone_program(IntroProgram, noSymbols, program) == MilestoneProgramError::None);
+    const auto* link = program.find("link_control");
+    REQUIRE(link != nullptr);
+    const MilestoneObservation observation = f_sp103();
+    auto facts = build_typed_fact_response(
+        observation, TypedFactPhase::PostSimulation, 12, std::uint64_t{11});
+    REQUIRE(link->evaluate(MilestoneProgramContext{.observation = observation, .facts = &facts}));
+
+    for (std::size_t index = 0; index < facts.count; ++index) {
+        if (facts.entries[index].id == TypedFactId::EventRunning) {
+            facts.entries[index].status = TypedFactStatus::Unavailable;
+        }
+    }
+    REQUIRE(!link->evaluate(MilestoneProgramContext{.observation = observation, .facts = &facts}));
+}
+
 void testMalformedAuthoredProgramIsRejected() {
     using namespace dusk::automation;
     auto corrupt = IntroProgram;
@@ -883,6 +904,7 @@ int main() {
     testCheckedStageSmokeFingerprintV4();
     testGoalMustBeRequested();
     testAuthoredBootStableAndExactFirstHit();
+    testAuthoredObjectiveConsumesTypedFacts();
     testRichV11FactsAndBitMasksEvaluateNatively();
     testV12PlacedActorGeometryAndIndexedFlagsEvaluateNatively();
     testV13SpatialRelationsAndBoundedSequencesEvaluateNatively();

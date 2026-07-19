@@ -836,6 +836,7 @@ void testVersionedPreInputStepContract() {
         .simulationTick = 77,
         .inputFrame = 41,
         .controllerFrame = 0,
+        .facts = build_typed_fact_response(ControllerObservation{}, TypedFactPhase::PreInput, 77, 41),
         .observation = {},
     };
     const InputControllerStepResponse response = program.respond(request);
@@ -856,6 +857,9 @@ void testVersionedPreInputStepContract() {
     invalid = request;
     invalid.phase = static_cast<InputControllerObservationPhase>(0);
     REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidPhase);
+    invalid = request;
+    invalid.facts.phase = TypedFactPhase::PostSimulation;
+    REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFacts);
     invalid = request;
     invalid.controllerFrame = program.duration();
     REQUIRE(program.respond(invalid).error == InputControllerStepError::InvalidFrame);

@@ -814,6 +814,8 @@ void mDoAutomationInputTick(const bool tapeWasPlaying) {
         .simulationTick = automationSimulationTick,
         .inputFrame = inputFrame,
         .controllerFrame = inputControllerNextFrame,
+        .facts = dusk::automation::build_typed_fact_response(observation,
+            dusk::automation::TypedFactPhase::PreInput, automationSimulationTick, inputFrame),
         .observation = observation,
     };
     const dusk::automation::InputControllerStepResponse response =

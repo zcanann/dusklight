@@ -12,6 +12,7 @@
 namespace dusk::automation {
 
 struct MilestoneObservation;
+struct TypedFactResponse;
 
 inline constexpr std::array<std::uint8_t, 4> kMilestoneProgramMagic{'D', 'M', 'S', 'P'};
 inline constexpr std::uint16_t kMilestoneProgramWireMajor = 1;
@@ -79,6 +80,7 @@ using MilestoneProgramSymbolResolver = bool (*)(MilestoneProgramSymbolKind kind,
 
 struct MilestoneProgramContext {
     const MilestoneObservation& observation;
+    const TypedFactResponse* facts = nullptr;
     MilestoneProgramPhase phase = MilestoneProgramPhase::PostSim;
     MilestoneBoundaryKind boundaryKind = MilestoneBoundaryKind::Tick;
     std::uint64_t boundaryIndex = 0;

@@ -491,6 +491,7 @@ set_target_properties(dusk_input_tape_test PROPERTIES FOLDER "Tests")
 add_executable(dusk_input_controller_test EXCLUDE_FROM_ALL
     tests/input_controller_test.cpp
     src/dusk/automation/input_controller.cpp
+    src/dusk/automation/typed_facts.cpp
 )
 target_include_directories(dusk_input_controller_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_compile_definitions(dusk_input_controller_test PRIVATE
@@ -531,6 +532,7 @@ add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
     tests/milestones_test.cpp
     src/dusk/automation/milestones.cpp
     src/dusk/automation/milestone_program.cpp
+    src/dusk/automation/typed_facts.cpp
     src/dusk/automation/input_recording.cpp
     src/dusk/automation/scenario_fixture.cpp
 )

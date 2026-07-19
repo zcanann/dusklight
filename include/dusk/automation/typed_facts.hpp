@@ -9,6 +9,8 @@
 
 namespace dusk::automation {
 
+struct ControllerObservation;
+
 inline constexpr std::uint16_t kTypedFactResponseMajorVersion = 1;
 inline constexpr std::uint16_t kTypedFactResponseMinorVersion = 0;
 inline constexpr std::size_t kTypedFactMaximumEntries = 16;
@@ -99,5 +101,11 @@ struct TypedFactResponse {
     std::uint64_t simulationTick,
     std::optional<std::uint64_t> tapeFrame,
     TypedFactSourceStatus sources = {});
+
+[[nodiscard]] TypedFactResponse build_typed_fact_response(
+    const ControllerObservation& observation,
+    TypedFactPhase phase,
+    std::uint64_t simulationTick,
+    std::optional<std::uint64_t> tapeFrame);
 
 }  // namespace dusk::automation

@@ -1,5 +1,7 @@
 #include "dusk/automation/milestones.hpp"
 
+#include "dusk/automation/typed_facts.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -765,8 +767,15 @@ void MilestoneTracker::observeBoundary(const MilestoneObservation& observation,
             continue;
         const MilestoneProgramDefinition* definition = mProgram->find(hit.id);
         if (definition == nullptr) continue;
+        const auto facts = build_typed_fact_response(observation,
+            phase == MilestoneProgramPhase::PreInput ? TypedFactPhase::PreInput :
+                                                       TypedFactPhase::PostSimulation,
+            simulationTick,
+            tapeFrame == MilestoneNoTapeFrame ? std::nullopt :
+                                                std::optional<std::uint64_t>(tapeFrame));
         const MilestoneProgramContext context{
             .observation = observation,
+            .facts = &facts,
             .phase = phase,
             .boundaryKind = boundaryKind,
             .boundaryIndex = boundaryIndex,

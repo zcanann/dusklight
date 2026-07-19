@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <span>
 
+#include "dusk/automation/typed_facts.hpp"
+
 namespace dusk::automation {
 
 inline constexpr std::array<std::uint8_t, 8> kInputControllerMagic{
@@ -167,6 +169,7 @@ enum class InputControllerStepError : std::uint8_t {
     UnsupportedVersion = 1,
     InvalidPhase = 2,
     InvalidFrame = 3,
+    InvalidFacts = 4,
 };
 
 // One immutable observation offered immediately before the named input frame.
@@ -178,6 +181,7 @@ struct InputControllerStepRequest {
     std::uint64_t simulationTick = 0;
     std::uint64_t inputFrame = 0;
     std::uint32_t controllerFrame = 0;
+    TypedFactResponse facts;
     ControllerObservation observation;
 };
 
