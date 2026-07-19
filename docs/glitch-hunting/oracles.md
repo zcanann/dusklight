@@ -204,8 +204,12 @@ huntctl oracle compose \
 ```
 
 The `dusklight-oracle-composition/v1` manifest embeds one to four role-labeled
-run outcomes and a `dusklight-semantic-event-catalog/v1`. Composition validates
-every native observation, hashes its canonical typed facts, attaches its
+run outcomes and a `dusklight-semantic-event-catalog/v1`. Every run carries its
+complete `ArtifactIdentity`. Headful/headless roles must be compatible under
+the cross-fidelity policy; control/treatment roles must be compatible under the
+cross-build policy. Incompatible inputs are rejected before oracle semantics
+are evaluated. Composition then validates every native observation, hashes its
+canonical typed facts, attaches its
 logical tick and tape frame as separate provenance, adds process termination as
 a semantic event, canonicalizes/deduplicates the catalog, and derives the
 catalog identity. Absolute tick provenance is excluded from event signatures;

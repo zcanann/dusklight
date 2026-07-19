@@ -33,6 +33,7 @@ Compatibility is always selected for a concrete operation. There is no generic
 | Model training | build feature digest; game, region, language, action/observation schemas, settings; protocol/capabilities; fidelity | commits, compiler/target/configuration, dirty tree, scenario, predicate, payload |
 | Checkpoint restore | complete build; game, region, language, scenario, settings; protocol/capabilities; fidelity | predicate and action/observation schemas; payload |
 | Cross-build comparison | game, region, language, scenario, predicate, action/observation schemas, settings; protocol/capabilities; fidelity | complete build identity and payload |
+| Cross-fidelity comparison | complete build except fidelity; game, region, language, scenario, predicate, action/observation schemas, settings; protocol/capabilities | fidelity and payload |
 
 These are conservative rules. Relaxing one requires a new identity schema or an
 explicit mode revision; callers may not silently omit a field. Rejections list
@@ -43,9 +44,12 @@ ACTUAL.json` validates that both portable identity documents are complete, then
 applies the selected operation's rules. A rejection prints every incompatible
 field, including both values; a successful comparison emits a small JSON
 report. This is currently an explicit inspection/enforcement boundary. Wiring
-the same check into every artifact-consuming command and the route workbench is
-still open work, so callers must not treat this command as proof that all CLI
-paths are already guarded.
+the same check into every artifact-consuming command remains incremental work,
+but the core paths are guarded automatically: run results and cold replays use
+replay compatibility, identified episode sets use model-training compatibility,
+and cross-run oracle inputs use cross-build or cross-fidelity compatibility as
+appropriate. The explicit command remains useful for inspecting two identities
+without invoking one of those consumers.
 
 ## Scenario
 

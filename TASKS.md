@@ -144,7 +144,7 @@ not a learner score, controller claim, or lucky filename.
 
 - [x] Define operation-specific compatibility and provide `huntctl identity
   compare` with precise incompatibility output.
-- [ ] Reject incompatible inputs automatically at the active run, episode,
+- [x] Reject incompatible inputs automatically at the active run, episode,
   comparison, and replay boundaries.
 - [x] Add one top-level command that resolves a suite case, runs selected
   proposers, ranks results, cold-replays finalists, and writes the report.

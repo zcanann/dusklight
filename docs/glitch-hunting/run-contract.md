@@ -43,6 +43,12 @@ exhausted, impossible, unsupported observation, capability or identity
 mismatch, host timeout, cancellation, worker or game crash, protocol failure,
 hang, target loss, nondeterminism, and rejected execution.
 
+Result validation applies replay compatibility to the request and result
+artifact identities before requiring their exact identity payloads to agree.
+This both reports the specific incompatible field and prevents a worker result
+from crossing build, game-data, scenario, schema, settings, protocol, or
+fidelity boundaries.
+
 Workers expose a versioned observation inventory with present, absent,
 not-sampled, unavailable, truncated, stale, or invalid status. Present and
 semantic absence satisfy admission; a missing, old, unavailable, truncated,

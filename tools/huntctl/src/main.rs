@@ -421,7 +421,7 @@ fn command_identity(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
-        _ => Err("identity command: compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json".into()),
+        _ => Err("identity command: compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison|cross-fidelity-comparison --expected EXPECTED.json --actual ACTUAL.json".into()),
     }
 }
 
@@ -5411,7 +5411,7 @@ fn print_usage() {
         "\nCore harness:\n  huntctl harness validate-suite --suite SUITE.json [--repository-root DIR]\n  huntctl harness seal-suite --input DRAFT.json --output SUITE.json [--repository-root DIR]\n  huntctl harness validate-run-request --request REQUEST.json [--repository-root DIR]\n  huntctl harness seal-run-request --input DRAFT.json --output REQUEST.json [--repository-root DIR]\n  huntctl harness validate-run-result --result RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness seal-run-result --input DRAFT.json --output RESULT.json --request REQUEST.json --artifact-root DIR [--repository-root DIR]\n  huntctl harness execute --request REQUEST.json [--repository-root DIR] [--attempt N]\n  huntctl harness inspect-objective --request REQUEST.json [--result RESULT.json --artifact-root DIR] [--repository-root DIR]"
     );
     eprintln!(
-        "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison --expected EXPECTED.json --actual ACTUAL.json"
+        "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison|cross-fidelity-comparison --expected EXPECTED.json --actual ACTUAL.json"
     );
     eprintln!(
         "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
