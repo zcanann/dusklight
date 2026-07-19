@@ -6,8 +6,8 @@
 
 use super::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use super::training_guard::{
-    CoverageGuardConfig, CriticSnapshot, OnlineCoverageGate, OnlineTrainingHealth,
-    TrainingGuardConfig,
+    CoverageGuardConfig, CriticSnapshot, LearnedProposalGate, OnlineCoverageGate,
+    OnlineTrainingHealth, TrainingGuardConfig,
 };
 use crate::action_guidance::{
     ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
@@ -50,6 +50,15 @@ pub struct QProposalConfig {
     pub iterations: usize,
     pub trees_per_action: usize,
     pub seed: u64,
+    pub readiness: QProposalReadinessEvidence,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QProposalReadinessEvidence {
+    pub required_facts_supported: bool,
+    pub determinism_proved: bool,
+    pub held_out_performance_adequate: bool,
+    pub initial_bounded_trial: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -60,6 +69,7 @@ pub struct QProposalSummary {
     pub training_transitions: usize,
     pub training_actions: usize,
     pub coverage_gate: OnlineCoverageGate,
+    pub proposal_gate: LearnedProposalGate,
     pub training_health: Option<OnlineTrainingHealth>,
     pub proposal_states: usize,
     pub action_guidance_schema: &'static str,
@@ -282,6 +292,13 @@ fn propose_q_candidates_internal(
         CoverageGuardConfig::default(),
     )
     .map_err(|error| QSearchError::new(error.to_string()))?;
+    let proposal_gate = LearnedProposalGate::evaluate(
+        &coverage_gate,
+        config.readiness.required_facts_supported,
+        config.readiness.determinism_proved,
+        config.readiness.held_out_performance_adequate,
+        config.readiness.initial_bounded_trial,
+    );
     let feature_width = training_corpora[0].feature_count as usize;
     let training_limits = TrainingGuardConfig::default();
     if config.iterations as f64 > training_limits.maximum_update_to_data_ratio {
@@ -298,7 +315,7 @@ fn propose_q_candidates_internal(
         categorical_features: MOVEMENT_CATEGORICAL_FEATURES_V1.to_vec(),
         ..FqiConfig::default()
     };
-    let model = coverage_gate
+    let model = proposal_gate
         .learned_policy_enabled
         .then(|| {
             FittedQ::fit_with_episode_groups(
@@ -543,7 +560,7 @@ fn propose_q_candidates_internal(
         })
         .collect::<Result<HashSet<_>, _>>()?;
     let (collection_cycle_offset, budgets, schedule_policy) =
-        if coverage_gate.learned_policy_enabled {
+        if proposal_gate.learned_policy_enabled {
             let offset = config.generation as usize % 5;
             (
                 offset,
@@ -555,7 +572,7 @@ fn propose_q_candidates_internal(
             (
                 offset,
                 split_fallback_budget(config.max_proposals, config.generation as usize % 3),
-                "coverage_fallback_structured_archive_blind_round_robin",
+                "readiness_fallback_structured_archive_blind_round_robin",
             )
         };
     let pools = [
@@ -642,12 +659,13 @@ fn propose_q_candidates_internal(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v7",
+            schema: "dusklight-q-proposals/v8",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
             training_actions: actions.len(),
             coverage_gate,
+            proposal_gate,
             training_health,
             proposal_states: considered,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V1,
@@ -683,6 +701,10 @@ fn proposal_configuration_sha256(
         config.iterations,
         config.trees_per_action,
         config.seed,
+        config.readiness.required_facts_supported,
+        config.readiness.determinism_proved,
+        config.readiness.held_out_performance_adequate,
+        config.readiness.initial_bounded_trial,
         lineage.map(|(dataset, _)| dataset.generation_sha256),
         lineage.and_then(|(_, model)| model.map(|model| model.lineage_sha256)),
     );
@@ -1070,6 +1092,15 @@ mod tests {
         NamedDigest::new("q-search-test", Digest([0xa5; 32]))
     }
 
+    fn admitted_readiness() -> QProposalReadinessEvidence {
+        QProposalReadinessEvidence {
+            required_facts_supported: true,
+            determinism_proved: true,
+            held_out_performance_adequate: true,
+            initial_bounded_trial: false,
+        }
+    }
+
     fn corpus_for(candidate: &Candidate) -> TransitionCorpus {
         let tape = candidate.compile().unwrap();
         let transitions = tape
@@ -1154,6 +1185,7 @@ mod tests {
             iterations: 4,
             trees_per_action: 3,
             seed: 7,
+            readiness: admitted_readiness(),
         };
         let first = propose_q_candidates(std::slice::from_ref(&corpus), &episodes, config).unwrap();
         let second = propose_q_candidates(&[corpus], &episodes, config).unwrap();
@@ -1178,10 +1210,11 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v7");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v8");
         assert!(first.summary.dataset_generation_sha256.is_none());
         assert!(first.summary.model_lineage.is_none());
         assert!(first.summary.coverage_gate.learned_policy_enabled);
+        assert!(first.summary.proposal_gate.learned_policy_enabled);
         assert_eq!(first.summary.collection_cycle_offset, 1);
         assert_eq!(first.summary.guided_action_evaluations, 4);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
@@ -1328,6 +1361,7 @@ mod tests {
             iterations: 2,
             trees_per_action: 3,
             seed: 9,
+            readiness: admitted_readiness(),
         };
         let first = propose_q_candidates_with_lineage(
             std::slice::from_ref(&corpus),
@@ -1392,6 +1426,7 @@ mod tests {
                 iterations: 2,
                 trees_per_action: 3,
                 seed: 9,
+                readiness: admitted_readiness(),
             },
         )
         .unwrap();
@@ -1408,7 +1443,7 @@ mod tests {
         assert!(batch.summary.training_health.is_none());
         assert_eq!(
             batch.summary.schedule_policy,
-            "coverage_fallback_structured_archive_blind_round_robin"
+            "readiness_fallback_structured_archive_blind_round_robin"
         );
         assert!(
             batch
@@ -1429,6 +1464,78 @@ mod tests {
                 .map(|lane| lane.requested_budget)
                 .sum::<usize>(),
             0
+        );
+    }
+
+    #[test]
+    fn unsupported_facts_unproved_determinism_and_bad_holdout_disable_learning() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..8)
+                .map(|index| InputFrame {
+                    owned_ports: 1,
+                    pads: [
+                        canonical_movement_pad_v2(if index % 2 == 0 { 0 } else { 18 }).unwrap(),
+                        disconnected,
+                        disconnected,
+                        disconnected,
+                    ],
+                    ..InputFrame::default()
+                })
+                .collect(),
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for(&candidate);
+        let batch = propose_q_candidates(
+            std::slice::from_ref(&corpus),
+            &[QEpisode {
+                candidate,
+                corpus: corpus.clone(),
+                outcome: EpisodeOutcomeClass::Successful,
+                objective: objective(),
+            }],
+            QProposalConfig {
+                generation: 1,
+                max_proposals: 3,
+                iterations: 2,
+                trees_per_action: 3,
+                seed: 9,
+                readiness: QProposalReadinessEvidence {
+                    required_facts_supported: false,
+                    determinism_proved: false,
+                    held_out_performance_adequate: false,
+                    initial_bounded_trial: false,
+                },
+            },
+        )
+        .unwrap();
+        assert!(batch.summary.coverage_gate.learned_policy_enabled);
+        assert!(!batch.summary.proposal_gate.learned_policy_enabled);
+        assert_eq!(
+            batch.summary.proposal_gate.blockers,
+            [
+                super::super::training_guard::LearnedProposalBlocker::RequiredFactsUnsupported,
+                super::super::training_guard::LearnedProposalBlocker::DeterminismUnproved,
+                super::super::training_guard::LearnedProposalBlocker::HeldOutPerformanceInadequate,
+            ]
+        );
+        assert!(batch.summary.model_lineage.is_none());
+        assert!(batch.summary.training_health.is_none());
+        assert!(
+            batch
+                .summary
+                .collection_schedule
+                .iter()
+                .all(|lane| matches!(
+                    *lane,
+                    "structured_counterfactual" | "archive_novelty" | "blind_coverage"
+                ))
         );
     }
 
@@ -1516,6 +1623,7 @@ mod tests {
                 iterations: 33,
                 trees_per_action: 1,
                 seed: 1,
+                readiness: admitted_readiness(),
             },
         )
         .unwrap_err();

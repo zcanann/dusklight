@@ -28,12 +28,15 @@ use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use crate::offline_rl::{
     ExploratoryExtractConfig, extract_exploratory_from_bytes, movement_action_schema_digest_v2,
 };
-use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates_with_lineage};
+use crate::q_search::{
+    QEpisode, QProposalConfig, QProposalReadinessEvidence, propose_q_candidates_with_lineage,
+};
 use crate::search::{
-    Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LexicographicScore,
-    MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
-    SegmentProfile, evolve_population, evolve_population_with_retained_and_proposals,
-    rank_population, tape_input_complexity, write_explicit_population, write_seed_population,
+    Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LeaderboardEntry,
+    LexicographicScore, MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA,
+    SearchResults, SegmentProfile, evolve_population,
+    evolve_population_with_retained_and_proposals, rank_population, tape_input_complexity,
+    write_explicit_population, write_seed_population,
 };
 use crate::semantic_novelty::catalog::{
     SemanticNoveltyAssessment, SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
@@ -2407,6 +2410,48 @@ fn tape_intervention(parent: &InputTape, child: &InputTape) -> Option<Interventi
     })
 }
 
+fn required_native_facts_supported(attempts: &[AttemptEvidence]) -> bool {
+    !attempts.is_empty()
+        && attempts.iter().all(|attempt| {
+            !matches!(
+                attempt.harness_terminal,
+                None | Some(
+                    HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch
+                )
+            )
+        })
+}
+
+fn learned_proposal_held_out_performance(
+    manifest: &PopulationManifest,
+    leaderboard: &[LeaderboardEntry],
+) -> bool {
+    let member_by_id = manifest
+        .members
+        .iter()
+        .map(|member| (member.candidate_id.as_str(), member))
+        .collect::<BTreeMap<_, _>>();
+    let mut best_learned: Option<LexicographicScore> = None;
+    let mut best_baseline: Option<LexicographicScore> = None;
+    for row in leaderboard {
+        let Some(member) = member_by_id.get(row.candidate_id.as_str()) else {
+            continue;
+        };
+        let learned = member.ancestry.mutation.as_deref().is_some_and(|mutation| {
+            mutation.starts_with("q_guided") || mutation.starts_with("q_disagreement_heuristic")
+        });
+        let best = if learned {
+            &mut best_learned
+        } else {
+            &mut best_baseline
+        };
+        if best.as_ref().is_none_or(|score| row.score > *score) {
+            *best = Some(row.score.clone());
+        }
+    }
+    matches!((best_learned, best_baseline), (Some(learned), Some(baseline)) if learned >= baseline)
+}
+
 pub fn run_anchored_search(
     config: &AnchoredSearchRunConfig,
 ) -> Result<AnchoredSearchRunSummary, EvaluateError> {
@@ -2736,6 +2781,17 @@ pub fn run_anchored_search(
                     .then_with(|| left_id.cmp(&right_id))
             });
             let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
+            let initial_bounded_trial = previous_model_lineage.is_none();
+            let readiness = QProposalReadinessEvidence {
+                required_facts_supported: required_native_facts_supported(&report.attempts),
+                determinism_proved: report.repetitions >= 2
+                    && report.attempts.iter().all(|attempt| {
+                        attempt.harness_terminal != Some(HarnessTerminalReason::Nondeterministic)
+                    }),
+                held_out_performance_adequate: !initial_bounded_trial
+                    && learned_proposal_held_out_performance(&manifest, &leaderboard),
+                initial_bounded_trial,
+            };
             let q_result = match dataset_generation.as_ref() {
                 Some(dataset_generation) if q_budget > 0 && !q_episodes.is_empty() => {
                     propose_q_candidates_with_lineage(
@@ -2747,6 +2803,7 @@ pub fn run_anchored_search(
                             iterations: 12,
                             trees_per_action: 15,
                             seed: search.rng_seed + u64::from(generation) + 1,
+                            readiness,
                         },
                         dataset_generation,
                         previous_model_lineage.as_ref(),

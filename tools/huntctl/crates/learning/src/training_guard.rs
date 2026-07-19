@@ -111,6 +111,7 @@ pub struct LearnedProposalGate {
     pub state_coverage_adequate: bool,
     pub determinism_proved: bool,
     pub held_out_performance_adequate: bool,
+    pub initial_bounded_trial: bool,
     pub learned_policy_enabled: bool,
     pub fallback_policy: Option<&'static str>,
     pub blockers: Vec<LearnedProposalBlocker>,
@@ -122,6 +123,7 @@ impl LearnedProposalGate {
         required_facts_supported: bool,
         determinism_proved: bool,
         held_out_performance_adequate: bool,
+        initial_bounded_trial: bool,
     ) -> Self {
         let action_support_adequate = matches!(
             coverage.disposition,
@@ -146,7 +148,7 @@ impl LearnedProposalGate {
         if !determinism_proved {
             blockers.push(LearnedProposalBlocker::DeterminismUnproved);
         }
-        if !held_out_performance_adequate {
+        if !held_out_performance_adequate && !initial_bounded_trial {
             blockers.push(LearnedProposalBlocker::HeldOutPerformanceInadequate);
         }
         let learned_policy_enabled = blockers.is_empty();
@@ -157,6 +159,7 @@ impl LearnedProposalGate {
             state_coverage_adequate,
             determinism_proved,
             held_out_performance_adequate,
+            initial_bounded_trial,
             learned_policy_enabled,
             fallback_policy: (!learned_policy_enabled).then_some("structured_archive_blind_only"),
             blockers,
@@ -411,7 +414,7 @@ mod tests {
             CoverageGuardConfig::default(),
         )
         .unwrap();
-        let blocked = LearnedProposalGate::evaluate(&coverage, false, false, false);
+        let blocked = LearnedProposalGate::evaluate(&coverage, false, false, false, false);
         assert!(!blocked.learned_policy_enabled);
         assert_eq!(
             blocked.blockers,
@@ -435,7 +438,12 @@ mod tests {
             CoverageGuardConfig::default(),
         )
         .unwrap();
-        let ready = LearnedProposalGate::evaluate(&ready_coverage, true, true, true);
+        let initial_trial = LearnedProposalGate::evaluate(&ready_coverage, true, true, false, true);
+        assert!(initial_trial.learned_policy_enabled);
+        assert!(!initial_trial.held_out_performance_adequate);
+        assert!(initial_trial.initial_bounded_trial);
+
+        let ready = LearnedProposalGate::evaluate(&ready_coverage, true, true, true, false);
         assert!(ready.learned_policy_enabled);
         assert!(ready.blockers.is_empty());
         assert_eq!(ready.fallback_policy, None);
