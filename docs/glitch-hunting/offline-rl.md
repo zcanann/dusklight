@@ -857,6 +857,14 @@ snapshot count, maxima, configured limits, and the exact healthy or rejected
 disposition. This is a numerical circuit breaker, not a calibration claim;
 native evaluation remains mandatory.
 
+The route proposal critic does not mutate the immutable corpus reward. Its
+authenticated terminal projection treats each bounded candidate ending as a
+terminal decision, adds `+512` at a proved objective terminal and `-512` at a
+non-goal ending, and records the projection schema and values in model lineage.
+Learned interventions are then drawn from successful parent tapes as bounded
+local improvements; failed and near-miss episodes remain critic evidence and
+feed the explicitly attributed non-learned exploration lanes.
+
 Before each online refit, anchored search writes
 `online-dataset-generation.json`. Its content identity covers the cumulative
 corpus digests and schemas, the prior dataset-generation identity, and the

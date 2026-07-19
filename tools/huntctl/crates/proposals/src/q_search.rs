@@ -35,6 +35,10 @@ const MAX_PROPOSAL_STATES: usize = 4096;
 const MAX_TRAINING_HEALTH_STATES: usize = 4096;
 const EXPLORATION_WEIGHT: f64 = 1.5;
 const UNMASKED_Q_PROBE_INTERVAL: usize = 4;
+const Q_TERMINAL_REWARD_SCHEMA_V1: &str = "dusklight-route-q-terminal-reward/v1";
+const Q_GOAL_TERMINAL_ADJUSTMENT: f32 = 512.0;
+const Q_FAILURE_TERMINAL_ADJUSTMENT: f32 = -512.0;
+const LEARNED_PARENT_POLICY_V1: &str = "successful-local-improvement/v1";
 
 #[derive(Clone, Debug)]
 pub struct QEpisode {
@@ -73,6 +77,12 @@ pub struct QProposalSummary {
     pub proposal_gate: LearnedProposalGate,
     pub training_health: Option<OnlineTrainingHealth>,
     pub proposal_states: usize,
+    pub terminal_reward_schema: &'static str,
+    pub goal_terminal_adjustment: f32,
+    pub failure_terminal_adjustment: f32,
+    pub learned_parent_policy: &'static str,
+    pub learned_parent_episodes: usize,
+    pub learned_parent_states: usize,
     pub action_guidance_schema: &'static str,
     pub state_masked_proposal_states: usize,
     pub guided_action_evaluations: usize,
@@ -193,6 +203,35 @@ struct Intervention {
     width: usize,
 }
 
+#[derive(Serialize)]
+struct RouteQTrainingConfig<'a> {
+    fqi: &'a FqiConfig,
+    terminal_reward_schema: &'static str,
+    goal_terminal_adjustment: f32,
+    failure_terminal_adjustment: f32,
+}
+
+#[derive(Serialize)]
+struct ProposalConfigurationIdentity {
+    schema: &'static str,
+    terminal_reward_schema: &'static str,
+    goal_terminal_adjustment_bits: u32,
+    failure_terminal_adjustment_bits: u32,
+    learned_parent_policy: &'static str,
+    action_guidance_schema: &'static str,
+    generation: u32,
+    max_proposals: usize,
+    iterations: usize,
+    trees_per_action: usize,
+    seed: u64,
+    required_facts_supported: bool,
+    determinism_proved: bool,
+    held_out_performance_adequate: bool,
+    initial_bounded_trial: bool,
+    dataset_generation_sha256: Option<Digest>,
+    previous_model_lineage_sha256: Option<Digest>,
+}
+
 pub fn propose_q_candidates(
     training_corpora: &[TransitionCorpus],
     episodes: &[QEpisode],
@@ -256,30 +295,15 @@ fn propose_q_candidates_internal(
                 "Q proposal corpus does not use the authenticated movement schemas",
             ));
         }
-        let mut ended_terminal = false;
-        for transition in &corpus.transitions {
+        for (index, transition) in corpus.transitions.iter().enumerate() {
+            let final_transition = index + 1 == corpus.transitions.len();
             actions.insert(transition.action.action_id);
-            transitions.push(FqiTransition {
-                state: transition.state.clone(),
-                action: transition.action.action_id,
-                duration: transition.duration_ticks,
-                reward: transition.reward,
-                next_state: transition.next_state.clone(),
-                terminal: transition.terminal,
-            });
+            transitions.push(route_q_training_transition(transition, final_transition));
             episode_groups.push(next_episode_group);
-            ended_terminal = transition.terminal;
-            if transition.terminal {
-                next_episode_group = next_episode_group.checked_add(1).ok_or_else(|| {
-                    QSearchError::new("Q proposal episode-group count overflowed")
-                })?;
-            }
         }
-        if !ended_terminal {
-            next_episode_group = next_episode_group
-                .checked_add(1)
-                .ok_or_else(|| QSearchError::new("Q proposal episode-group count overflowed"))?;
-        }
+        next_episode_group = next_episode_group
+            .checked_add(1)
+            .ok_or_else(|| QSearchError::new("Q proposal episode-group count overflowed"))?;
     }
     let actions: Vec<_> = actions.into_iter().collect();
     let action_support = collection_action_support(training_corpora);
@@ -332,13 +356,19 @@ fn propose_q_candidates_internal(
             .map_err(|error| QSearchError::new(error.to_string()))
         })
         .transpose()?;
+    let lineage_training_config = RouteQTrainingConfig {
+        fqi: &fqi_config,
+        terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
+        goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
+        failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
+    };
     let model_lineage = match (lineage, model.as_ref()) {
         (Some((dataset, previous)), Some(model)) => Some(
             OnlineModelLineage::build(
                 dataset,
                 previous,
                 FITTED_Q_MODEL_SCHEMA_V2,
-                &fqi_config,
+                &lineage_training_config,
                 model,
             )
             .map_err(|error| QSearchError::new(error.to_string()))?,
@@ -401,6 +431,17 @@ fn propose_q_candidates_internal(
     let mut unmasked_action_evaluations = 0_usize;
     let mut unmasked_q_probe_states = 0_usize;
     let mut ordinal = 0;
+    let learned_parent_episodes = aligned
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| episodes[*index].outcome == EpisodeOutcomeClass::Successful)
+        .count();
+    let learned_parent_states = aligned
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| episodes[*index].outcome == EpisodeOutcomeClass::Successful)
+        .map(|(_, episode)| episode.corpus.transitions.len())
+        .sum();
     let archive_context_support = aligned
         .iter()
         .flat_map(|episode| &episode.corpus.transitions)
@@ -426,7 +467,9 @@ fn propose_q_candidates_internal(
             state_masked += usize::from(
                 (0..MOVEMENT_ACTION_COUNT_V2).any(|action| !guidance.recommends(action)),
             );
-            if let Some(model) = &model {
+            if let Some(model) = &model
+                && episodes[episode_index].outcome == EpisodeOutcomeClass::Successful
+            {
                 let current = model
                     .estimate(&transition.state, transition.action.action_id)
                     .map_err(|error| QSearchError::new(error.to_string()))?;
@@ -669,7 +712,7 @@ fn propose_q_candidates_internal(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v8",
+            schema: "dusklight-q-proposals/v9",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
@@ -678,6 +721,12 @@ fn propose_q_candidates_internal(
             proposal_gate,
             training_health,
             proposal_states: considered,
+            terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
+            goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
+            failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
+            learned_parent_policy: LEARNED_PARENT_POLICY_V1,
+            learned_parent_episodes,
+            learned_parent_states,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
             state_masked_proposal_states: state_masked,
             guided_action_evaluations,
@@ -701,25 +750,56 @@ fn propose_q_candidates_internal(
     })
 }
 
+fn route_q_training_transition(
+    transition: &crate::transition_corpus::Transition,
+    final_transition: bool,
+) -> FqiTransition {
+    let terminal_adjustment = if final_transition {
+        if transition.terminal {
+            Q_GOAL_TERMINAL_ADJUSTMENT
+        } else {
+            Q_FAILURE_TERMINAL_ADJUSTMENT
+        }
+    } else {
+        0.0
+    };
+    FqiTransition {
+        state: transition.state.clone(),
+        action: transition.action.action_id,
+        duration: transition.duration_ticks,
+        reward: transition.reward + terminal_adjustment,
+        next_state: transition.next_state.clone(),
+        // A candidate tape ending is a terminal decision for this bounded
+        // proposal problem even when it missed the objective. The immutable
+        // corpus retains the native terminal bit.
+        terminal: final_transition,
+    }
+}
+
 fn proposal_configuration_sha256(
     config: &QProposalConfig,
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
 ) -> Result<Digest, QSearchError> {
-    let identity = (
-        "dusklight-q-proposals/v8",
-        ACTION_GUIDANCE_SCHEMA_V2,
-        config.generation,
-        config.max_proposals,
-        config.iterations,
-        config.trees_per_action,
-        config.seed,
-        config.readiness.required_facts_supported,
-        config.readiness.determinism_proved,
-        config.readiness.held_out_performance_adequate,
-        config.readiness.initial_bounded_trial,
-        lineage.map(|(dataset, _)| dataset.generation_sha256),
-        lineage.and_then(|(_, model)| model.map(|model| model.lineage_sha256)),
-    );
+    let identity = ProposalConfigurationIdentity {
+        schema: "dusklight-q-proposals/v9",
+        terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
+        goal_terminal_adjustment_bits: Q_GOAL_TERMINAL_ADJUSTMENT.to_bits(),
+        failure_terminal_adjustment_bits: Q_FAILURE_TERMINAL_ADJUSTMENT.to_bits(),
+        learned_parent_policy: LEARNED_PARENT_POLICY_V1,
+        action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
+        generation: config.generation,
+        max_proposals: config.max_proposals,
+        iterations: config.iterations,
+        trees_per_action: config.trees_per_action,
+        seed: config.seed,
+        required_facts_supported: config.readiness.required_facts_supported,
+        determinism_proved: config.readiness.determinism_proved,
+        held_out_performance_adequate: config.readiness.held_out_performance_adequate,
+        initial_bounded_trial: config.readiness.initial_bounded_trial,
+        dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
+        previous_model_lineage_sha256: lineage
+            .and_then(|(_, model)| model.map(|model| model.lineage_sha256)),
+    };
     let bytes =
         serde_json::to_vec(&identity).map_err(|error| QSearchError::new(error.to_string()))?;
     let mut hasher = Sha256::new();
@@ -1228,7 +1308,17 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v8");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v9");
+        assert_eq!(
+            first.summary.terminal_reward_schema,
+            Q_TERMINAL_REWARD_SCHEMA_V1
+        );
+        assert_eq!(
+            first.summary.learned_parent_policy,
+            LEARNED_PARENT_POLICY_V1
+        );
+        assert_eq!(first.summary.learned_parent_episodes, 1);
+        assert_eq!(first.summary.learned_parent_states, 8);
         assert!(first.summary.dataset_generation_sha256.is_none());
         assert!(first.summary.model_lineage.is_none());
         assert!(first.summary.coverage_gate.learned_policy_enabled);
@@ -1315,6 +1405,44 @@ mod tests {
                 .sum::<usize>(),
             config.max_proposals
         );
+    }
+
+    #[test]
+    fn route_q_projection_values_success_and_failed_tape_endings() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: vec![InputFrame {
+                owned_ports: 1,
+                pads: [
+                    canonical_movement_pad_v2(0).unwrap(),
+                    disconnected,
+                    disconnected,
+                    disconnected,
+                ],
+                ..InputFrame::default()
+            }],
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for(&candidate);
+        let successful = route_q_training_transition(&corpus.transitions[0], true);
+        assert!(successful.terminal);
+        assert_eq!(successful.reward, -1.0 + Q_GOAL_TERMINAL_ADJUSTMENT);
+
+        let mut missed = corpus.transitions[0].clone();
+        missed.terminal = false;
+        let failed = route_q_training_transition(&missed, true);
+        assert!(failed.terminal);
+        assert_eq!(failed.reward, -1.0 + Q_FAILURE_TERMINAL_ADJUSTMENT);
+
+        let interior = route_q_training_transition(&missed, false);
+        assert!(!interior.terminal);
+        assert_eq!(interior.reward, -1.0);
     }
 
     #[test]

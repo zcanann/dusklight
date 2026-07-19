@@ -593,10 +593,13 @@ candidate without the normal repeated native evaluation and proof gates.
 
 Fitted-Q proposals may receive half of the slots left after archive retention. They
 alternate between a state-guided mean-Q action change and a fully unmasked
-uncertainty-weighted action change. Each change replaces a one-, two-, or
-four-frame window with an exact canonical controller sample, compiles back to
-an ordinary candidate, and goes through the same cold-process milestone
-evaluator as every other route. Unsupported schemas, misaligned tape/action
+uncertainty-weighted action change. The learned lanes are local-improvement
+operators over successful parent tapes; failed and near-miss episodes still
+train the critic and remain proposal parents for the separately attributed
+structured, archive, and blind-coverage lanes. Each learned change replaces a
+one-, two-, or four-frame window with an exact canonical controller sample,
+compiles back to an ordinary candidate, and goes through the same cold-process
+milestone evaluator as every other route. Unsupported schemas, misaligned tape/action
 pairs, unsupported required facts, nondeterministic repetitions, insufficient
 action/state coverage, or inadequate held-out native performance disable Q
 proposals for that generation rather than weakening evaluation. Remaining
@@ -622,8 +625,18 @@ proof acceptance do not import or consult the mask. Consequently a
 glitch-producing input that looks invalid to the prior remains an ordinary
 executable and promotable proof candidate.
 
-Each generation writes `q-proposals.json` v8 with its training size, complete
-readiness and coverage gates, guidance schema, masked-state count, guided and
+The immutable transition corpus keeps its native `-1` step reward and terminal
+bit. Before fitting the route critic, the proposal layer projects every bounded
+tape ending to a terminal decision and applies the authenticated
+`dusklight-route-q-terminal-reward/v1` adjustment: `+512` for reaching the
+objective and `-512` for ending without it. This prevents a short failed tape
+from outranking a longer successful route without rewriting collected evidence.
+The projection schema and values are part of both model lineage and proposer
+configuration identity.
+
+Each generation writes `q-proposals.json` v9 with its training size, complete
+readiness and coverage gates, terminal-reward and successful-parent policies,
+guidance schema, masked-state count, guided and
 unmasked action evaluation counts, unmasked probe-state count, intervention
 counts, exact collection schedule, and proposal count (or an explicit
 unavailable reason). Candidate
