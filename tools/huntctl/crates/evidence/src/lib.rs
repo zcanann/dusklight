@@ -12,6 +12,7 @@ pub mod content_store;
 pub mod corpus;
 pub mod episode;
 pub mod episode_store;
+pub mod semantic_state_hash;
 pub mod trace_diff;
 pub mod transition_corpus;
 pub mod transition_evidence;

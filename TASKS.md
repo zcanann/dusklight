@@ -391,3 +391,18 @@ episodes without copying mutable per-run paths or trusting a filename digest.
 
 **Done when:** a shared episode store can be checked and compacted without
 manual digest scraping, permanent deletion, or path-based trust.
+
+## 27. Canonical active-state hash series
+
+- [x] Derive one sealed semantic hash at every retained trace boundary from the
+  validated typed-fact response, binding its exact field profile, phase,
+  simulation tick, tape frame, boot origin, and source trace.
+- [x] Compare two compatible series by boundary and report the first differing
+  or missing boundary plus both hashes; reject profile, boot, tick-rate, seal,
+  ordering, or source tampering before comparison.
+- [x] Expose generation and comparison through `huntctl trace`, document the
+  supported facts and whole-game non-claim, and pass the full suites.
+
+**Done when:** parity and reset experiments get a cheap deterministic
+divergence alarm over the active query aperture and can escalate to trace diff
+at an exact boundary.

@@ -252,6 +252,49 @@ fn native_evaluator_handles_hits_goal_misses_timeouts_and_tape_import() {
             })
     );
 
+    let gameplay_trace = report["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|attempt| attempt["gameplay_trace"].is_string())
+        .unwrap()["gameplay_trace"]
+        .as_str()
+        .unwrap();
+    let state_hashes_path = root.join("state-hashes.json");
+    let output = run(&[
+        "trace",
+        "state-hashes",
+        gameplay_trace,
+        "--output",
+        state_hashes_path.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let state_hashes: serde_json::Value =
+        serde_json::from_slice(&fs::read(&state_hashes_path).unwrap()).unwrap();
+    assert_eq!(
+        state_hashes["schema"],
+        "dusklight-semantic-state-hash-series/v1"
+    );
+    assert!(!state_hashes["entries"].as_array().unwrap().is_empty());
+
+    let output = run(&["trace", "compare-state", gameplay_trace, gameplay_trace]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let comparison: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        comparison["schema"],
+        "dusklight-semantic-state-hash-comparison/v1"
+    );
+    assert_eq!(comparison["identical"], true);
+    assert!(comparison["first_divergence"].is_null());
+
     let boot = root.join("boot-population");
     seed(&boot, "boot_to_fsp103", "2");
     let boot_results = root.join("boot-results.json");

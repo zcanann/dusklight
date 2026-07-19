@@ -140,3 +140,34 @@ The initial hash should include:
 
 Use a full diagnostic trace around the first mismatching hash to locate the
 cause. The hash is a divergence alarm, not a replacement for observations.
+
+The first implemented profile is `core-typed-facts/v1`. `huntctl` derives one
+hash for every retained gameplay-trace boundary and seals the series to the
+source trace, trace version, boot origin, tick rate, field profile, observation
+phase, simulation tick, and tape frame:
+
+```sh
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  trace state-hashes build/run/gameplay.trace \
+  --output build/run/state-hashes.json
+
+cargo run --manifest-path tools/huntctl/Cargo.toml -- \
+  trace compare-state build/reference/gameplay.trace build/trial/gameplay.trace
+```
+
+Comparison requires compatible profiles, boot origins, and tick rates. It
+reports the first changed or missing boundary and both available hashes, which
+gives parity and reset experiments an exact point at which to request detailed
+trace evidence.
+
+The v1 profile includes the status and value of the current typed-fact query
+aperture: stage name, room, and spawn; player existence, Link identity, and
+position; event-running state and event ID; and player do-status, talk partner,
+and grabbed actor. Unavailable, absent, truncated, and invalid statuses are
+hashed rather than silently treated as values.
+
+This is not a whole-game-state hash. It does not yet cover player motion and
+animation detail, save/event flags beyond the active event ID, RNG streams,
+the actor catalog, UI state, collision/contact state, or watched memory ranges.
+Equal v1 hashes establish equality only for the documented typed-fact aperture;
+a differing hash proves that aperture diverged and should trigger trace diff.

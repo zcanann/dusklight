@@ -535,7 +535,10 @@ reproduction work.
   batches; current tape execution uses process CLI options.
 - Headless still creates an invisible SDL window because Aurora's null renderer
   requires a presentable surface to drain the existing GX traversal.
-- There are no canonical state hashes or reset/checkpoint acceleration yet.
+- Canonical per-boundary hashes now cover the active typed-fact aperture and
+  report the first divergence between compatible traces. They are not a
+  whole-game hash; reset/checkpoint acceleration and broader semantic state
+  coverage remain unimplemented.
 - Actor observation is currently bounded to 256 snapshots, with deterministic
   retention and stable-ID tie-breaking. Controller programs have no internal
   state transitions yet, and actors are selected by numeric process name.

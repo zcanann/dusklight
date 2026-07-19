@@ -32,7 +32,9 @@ events and hashes and can be viewed headful.
   modes.
 - Expose RNG state/call counters and deterministic initialization.
 - Audit asynchronous loading, audio, movie, and job completion ordering.
-- Build canonical state hashes and first-divergence diagnostics.
+- Expand the implemented typed-fact state hashes to RNG, actor, save/event,
+  collision, UI, and watched-memory profiles while preserving first-divergence
+  diagnostics.
 
 Acceptance: realtime and unpaced execution of the same tape agree at every
 declared checkpoint.
