@@ -711,14 +711,31 @@ fn reject_active_timeline_move(
 }
 
 fn validate_workspace_name(name: &str) -> Result<(), WorkbenchError> {
+    let invalid_character = name
+        .chars()
+        .any(|character| character.is_control() || r#"<>:"/\|?*"#.contains(character));
+    let windows_stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let windows_reserved = matches!(windows_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || windows_stem
+            .strip_prefix("COM")
+            .or_else(|| windows_stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            });
     if name.is_empty()
         || name.len() > 64
-        || !name.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
-        })
+        || name.trim() != name
+        || name.ends_with('.')
+        || matches!(name, "." | "..")
+        || invalid_character
+        || windows_reserved
     {
         return Err(WorkbenchError::new(
-            "folder names use 1-64 lowercase letters, digits, dashes, or underscores",
+            "folder names must be 1-64 characters and portable across Git, Windows, and macOS",
         ));
     }
     Ok(())
@@ -1068,5 +1085,29 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("cannot be moved into itself"));
         fs::remove_dir_all(repository).unwrap();
+    }
+
+    #[test]
+    fn workspace_folder_names_preserve_human_casing_and_spaces() {
+        for valid in ["QA", "Intro Segments", "Glitch-Hunt_01", "Élite Routes"] {
+            validate_workspace_name(valid).unwrap();
+        }
+        for invalid in [
+            "",
+            ".",
+            "..",
+            " trailing ",
+            "trailing.",
+            "a/b",
+            r"a\b",
+            "CON",
+            "con.txt",
+            "LPT9",
+        ] {
+            assert!(
+                validate_workspace_name(invalid).is_err(),
+                "accepted unsafe workspace folder {invalid:?}"
+            );
+        }
     }
 }

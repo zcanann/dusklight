@@ -385,7 +385,7 @@
     }
     async function createWorkspaceFolder() {
       const parent=selectedWorkspaceParent();
-      const name=window.prompt(`New folder under ${parent}\nUse lowercase letters, digits, dashes, or underscores:`,'new_folder');
+      const name=window.prompt(`New folder under ${parent}\nUppercase, spaces, and Unicode names are supported:`,'New Folder');
       if(name===null)return;
       if(await mutateWorkspace('/api/workspace/folders/create',{parent,name},`Created ${parent}/${name}`)) { workspaceNodeSelection={kind:'folder',id:`${parent}/${name}`}; renderProjects(); }
     }
