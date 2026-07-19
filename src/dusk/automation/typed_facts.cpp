@@ -35,6 +35,10 @@ TypedFactActorIdentity actor_identity(const MilestoneObservation::ActorIdentity&
     };
 }
 
+float canonical_float(const float value) {
+    return value == 0.0F ? 0.0F : value;
+}
+
 }  // namespace
 
 const TypedFactEntry* TypedFactResponse::find(TypedFactId id) const {
@@ -81,9 +85,9 @@ TypedFactResponse build_typed_fact_response(const MilestoneObservation& observat
     append(response, playerIsLink);
     auto playerPosition = fact(TypedFactId::PlayerPosition, TypedFactValueType::Vec3F32, playerStatus);
     playerPosition.value.vec3 = {
-        observation.playerPositionX,
-        observation.playerPositionY,
-        observation.playerPositionZ,
+        canonical_float(observation.playerPositionX),
+        canonical_float(observation.playerPositionY),
+        canonical_float(observation.playerPositionZ),
     };
     append(response, playerPosition);
 
@@ -124,7 +128,7 @@ TypedFactResponse build_typed_fact_response(const ControllerObservation& observa
     MilestoneObservation shared{
         .stageName = stageName[0] == '\0' ? nullptr : stageName.data(),
         .playerPresent = observation.playerPresent,
-        .playerIsLink = observation.playerPresent,
+        .playerIsLink = observation.playerIsLink,
         .playerPositionX = observation.playerX,
         .playerPositionY = observation.playerY,
         .playerPositionZ = observation.playerZ,
@@ -174,6 +178,8 @@ bool validate_typed_fact_response(const TypedFactResponse& response) {
     };
     if (response.majorVersion != kTypedFactResponseMajorVersion ||
         response.minorVersion != kTypedFactResponseMinorVersion ||
+        (response.phase != TypedFactPhase::PreInput &&
+            response.phase != TypedFactPhase::PostSimulation) ||
         response.count != expectedIds.size()) {
         return false;
     }
@@ -186,7 +192,7 @@ bool validate_typed_fact_response(const TypedFactResponse& response) {
         if (entry.status != TypedFactStatus::Present) continue;
         if (entry.type == TypedFactValueType::Vec3F32 &&
             !std::ranges::all_of(entry.value.vec3, [](const float value) {
-                return std::isfinite(value);
+                return std::isfinite(value) && !(value == 0.0F && std::signbit(value));
             })) {
             return false;
         }

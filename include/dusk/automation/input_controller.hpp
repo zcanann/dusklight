@@ -128,6 +128,7 @@ struct ControllerActor {
 
 struct ControllerObservation {
     bool playerPresent = false;
+    bool playerIsLink = false;
     float playerX = 0.0F;
     float playerY = 0.0F;
     float playerZ = 0.0F;

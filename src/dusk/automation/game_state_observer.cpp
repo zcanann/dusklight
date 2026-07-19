@@ -96,6 +96,7 @@ ControllerObservation capture_controller_observation(ControllerObservationStorag
     }
     if (const fopAc_ac_c* player = dComIfGp_getPlayer(0); player != nullptr) {
         observation.playerPresent = true;
+        observation.playerIsLink = fopAcM_GetName(player) == fpcNm_ALINK_e;
         observation.playerX = player->current.pos.x;
         observation.playerY = player->current.pos.y;
         observation.playerZ = player->current.pos.z;

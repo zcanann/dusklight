@@ -1,5 +1,7 @@
+#include "dusk/automation/input_controller.hpp"
 #include "dusk/automation/typed_facts.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 
@@ -22,7 +24,7 @@ void test_exact_interaction_snapshot() {
     observation.point = 0;
     observation.playerPresent = true;
     observation.playerIsLink = true;
-    observation.playerPositionX = 1.0F;
+    observation.playerPositionX = -0.0F;
     observation.playerPositionY = 2.0F;
     observation.playerPositionZ = 3.0F;
     observation.playerDoStatus = 21;
@@ -49,6 +51,8 @@ void test_exact_interaction_snapshot() {
     REQUIRE(position != nullptr);
     REQUIRE(position->status == TypedFactStatus::Present);
     REQUIRE(position->type == TypedFactValueType::Vec3F32);
+    REQUIRE(position->value.vec3[0] == 0.0F);
+    REQUIRE(!std::signbit(position->value.vec3[0]));
     REQUIRE(position->value.vec3[2] == 3.0F);
     const auto* talk = response.find(TypedFactId::TalkPartner);
     REQUIRE(talk != nullptr);
@@ -59,6 +63,10 @@ void test_exact_interaction_snapshot() {
     REQUIRE(talk->value.actor.currentRoom == 2);
     REQUIRE(talk->value.actor.runtimeGeneration == 99);
     REQUIRE(response.find(TypedFactId::GrabbedActor)->status == TypedFactStatus::Absent);
+
+    auto invalid = response;
+    invalid.entries[5].value.vec3[0] = -0.0F;
+    REQUIRE(!validate_typed_fact_response(invalid));
 }
 
 void test_missingness_is_not_false() {
@@ -79,6 +87,22 @@ void test_missingness_is_not_false() {
     REQUIRE(response.find(TypedFactId::StageRoom)->status == TypedFactStatus::Absent);
     REQUIRE(response.find(TypedFactId::StageSpawn)->status == TypedFactStatus::Absent);
     REQUIRE(validate_typed_fact_response(response));
+
+    auto invalid = response;
+    invalid.phase = static_cast<TypedFactPhase>(0);
+    REQUIRE(!validate_typed_fact_response(invalid));
+}
+
+void test_controller_projection_does_not_invent_link_identity() {
+    ControllerObservation observation{
+        .playerPresent = true,
+        .playerIsLink = false,
+    };
+    const auto response = build_typed_fact_response(
+        observation, TypedFactPhase::PreInput, 8, std::uint64_t{7});
+    REQUIRE(response.find(TypedFactId::PlayerExists)->value.boolean);
+    REQUIRE(!response.find(TypedFactId::PlayerIsLink)->value.boolean);
+    REQUIRE(validate_typed_fact_response(response));
 }
 
 }  // namespace
@@ -86,5 +110,6 @@ void test_missingness_is_not_false() {
 int main() {
     test_exact_interaction_snapshot();
     test_missingness_is_not_false();
+    test_controller_projection_does_not_invent_link_identity();
     return 0;
 }
