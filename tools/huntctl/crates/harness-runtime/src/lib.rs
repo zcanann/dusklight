@@ -14,3 +14,4 @@ pub use dusklight_trace::trace;
 
 pub mod execution;
 pub mod inspection;
+pub mod request_materialization;

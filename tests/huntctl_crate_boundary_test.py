@@ -76,6 +76,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "finalist-reduction/src/route.rs": 1_250,
     "harness-contracts/src/native_evidence.rs": 75,
     "harness-contracts/src/run_contract.rs": 1_575,
+    "harness-runtime/src/request_materialization.rs": 375,
     "orchestration/src/anchored_search.rs": 800,
     "objectives/src/milestone_dsl/binary.rs": 800,
     "objectives/src/milestone_dsl/compile.rs": 175,
@@ -142,7 +143,12 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "observation_contract.rs",
         "run_contract.rs",
     },
-    "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
+    "harness-runtime": {
+        "execution.rs",
+        "inspection.rs",
+        "lib.rs",
+        "request_materialization.rs",
+    },
     "orchestration": {
         "anchored_search.rs",
         "harness/campaign.rs",

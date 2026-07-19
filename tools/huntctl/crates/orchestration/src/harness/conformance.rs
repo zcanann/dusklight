@@ -2,24 +2,21 @@
 
 use super::execution::execute_request;
 use super::objective_suite::{
-    ArtifactReference, ExpectedTerminalClass, ObjectiveCaseRole, ObjectiveSeed, ObjectiveSuite,
+    ArtifactReference, ExpectedTerminalClass, ObjectiveCaseRole, ObjectiveSuite,
     ObjectiveSuiteCase,
 };
-use super::run_contract::{
-    HarnessFidelityMode, HarnessProtocolIdentity, HarnessRunRequest, HarnessTerminalReason,
-    RUN_REQUEST_SCHEMA_V2,
+use super::request_materialization::{
+    NativeRequestConfig, inspect_native_inputs, materialize_native_request, protocol_for_cases,
 };
-use crate::artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity, Digest};
+use super::run_contract::{HarnessFidelityMode, HarnessTerminalReason};
+use crate::artifact::{BuildIdentity, Digest};
 use dusklight_objectives::milestone_dsl;
 use dusklight_trace::trace;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 pub const CONFORMANCE_REPORT_SCHEMA_V1: &str = "dusklight-objective-conformance-report/v1";
 
@@ -111,10 +108,6 @@ pub fn run_conformance(
         .canonicalize()
         .map_err(|error| conformance_error(format!("cannot resolve repository root: {error}")))?;
     let suite_path = resolve_repository_file(&repository_root, config.suite_path, "suite", false)?;
-    let executable_path =
-        resolve_repository_file(&repository_root, config.executable, "executable", false)?;
-    let game_data_path =
-        resolve_repository_file(&repository_root, config.game_data, "game data", true)?;
     let output_root = resolve_new_build_root(&repository_root, config.output_root)?;
 
     let suite: ObjectiveSuite = read_json(&suite_path, "objective suite")?;
@@ -127,10 +120,10 @@ pub fn run_conformance(
             validation.positive_count
         )));
     }
-    let executable = artifact_reference(&repository_root, config.executable, &executable_path)?;
-    let game_data = artifact_reference(&repository_root, config.game_data, &game_data_path)?;
-    let build = inspect_native_build(&executable_path, &game_data_path, game_data.sha256)?;
-    let protocol = conformance_protocol(&suite)?;
+    let inputs = inspect_native_inputs(&repository_root, config.executable, config.game_data)
+        .map_err(|error| conformance_error(error.to_string()))?;
+    let protocol = protocol_for_cases(&suite.cases)
+        .map_err(|error| conformance_error(error.to_string()))?;
 
     fs::create_dir_all(output_root.join("requests"))
         .map_err(|error| conformance_error(format!("cannot create conformance output: {error}")))?;
@@ -162,15 +155,18 @@ pub fn run_conformance(
             let request_path = repository_root.join(&request_relative);
             let artifact_root = repository_root.join(&artifact_relative);
             let result_path = artifact_root.join("result.json");
-            let request = build_request(
+            let request_id = format!("conformance-{}", case.id);
+            let request = materialize_native_request(&NativeRequestConfig {
                 case,
-                &executable,
-                &game_data,
-                &build,
-                &protocol,
-                &artifact_relative,
-                config.fidelity,
-            )?;
+                inputs: &inputs,
+                protocol: &protocol,
+                request_id: &request_id,
+                artifact_destination: &artifact_relative,
+                fidelity: config.fidelity,
+                native_evidence: None,
+                rng_seed: 0x4455_534b_434f_4e46,
+            })
+            .map_err(|error| conformance_error(error.to_string()))?;
             write_new_json(&request_path, &request)?;
             executed_attempts += 1;
             let execution = execute_request(&request, &repository_root, u32::from(attempt));
@@ -264,9 +260,9 @@ pub fn run_conformance(
         positive_cases: validation.positive_count,
         negative_controls: validation.negative_control_count,
         executed_attempts,
-        build,
-        executable,
-        game_data,
+        build: inputs.build,
+        executable: inputs.executable,
+        game_data: inputs.game_data,
         output_root: repository_relative(&repository_root, &output_root, "output root")?,
         report: report_relative,
         first_failure,
@@ -277,80 +273,6 @@ pub fn run_conformance(
     }
     write_new_json(&output_root.join("report.json"), &report)?;
     Ok(report)
-}
-
-fn build_request(
-    case: &ObjectiveSuiteCase,
-    executable: &ArtifactReference,
-    game_data: &ArtifactReference,
-    build: &BuildIdentity,
-    protocol: &HarnessProtocolIdentity,
-    artifact_destination: &Path,
-    fidelity: HarnessFidelityMode,
-) -> Result<HarnessRunRequest, ConformanceError> {
-    let settings_digest = domain_digest(
-        b"dusklight.conformance-settings/v1\0",
-        &serde_json::to_vec(&(
-            case.logical_tick_budget,
-            case.host_timeout_seconds,
-            fidelity,
-        ))
-        .map_err(|error| conformance_error(error.to_string()))?,
-    );
-    let content_digest = match &case.seed {
-        ObjectiveSeed::Neutral => {
-            domain_digest(b"dusklight.conformance-neutral/v1\0", case.id.as_bytes())
-        }
-        ObjectiveSeed::Tape { artifact }
-        | ObjectiveSeed::TapeSource { artifact }
-        | ObjectiveSeed::Controller { artifact } => artifact.sha256,
-    };
-    let mut request = HarnessRunRequest {
-        schema: RUN_REQUEST_SCHEMA_V2.into(),
-        content_sha256: Digest::ZERO,
-        id: format!("conformance-{}", case.id),
-        executable: executable.clone(),
-        game_data: game_data.clone(),
-        build: build.clone(),
-        identity: ArtifactIdentity {
-            schema_version: ARTIFACT_SCHEMA_VERSION,
-            content_digest,
-            build: build.clone(),
-            protocol_name: protocol.name.clone(),
-            protocol_version: protocol.version,
-            protocol_capabilities_digest: protocol.capabilities_sha256,
-            scenario_id: case.id.clone(),
-            region_digest: domain_digest(
-                b"dusklight.conformance-region/v1\0",
-                &serde_json::to_vec(&case.boot)
-                    .map_err(|error| conformance_error(error.to_string()))?,
-            ),
-            language_assets_digest: case.objective.source.sha256,
-            scenario_digest: case.scenario.sha256,
-            predicate_program_digest: case.objective.program_sha256,
-            action_schema_digest: case.action_schema.sha256,
-            observation_schema_digest: case.observation_view.schema_sha256,
-            settings_digest,
-        },
-        protocol: protocol.clone(),
-        boot: case.boot.clone(),
-        scenario: case.scenario.clone(),
-        objective: case.objective.clone(),
-        observation_view: case.observation_view.clone(),
-        action_schema: case.action_schema.clone(),
-        observation_requirements: case.observation_requirements.clone(),
-        input: case.seed.clone(),
-        native_evidence: None,
-        rng_seed: 0x4455_534b_434f_4e46,
-        logical_tick_budget: case.logical_tick_budget,
-        host_timeout_seconds: case.host_timeout_seconds,
-        fidelity,
-        artifact_destination: path_string(artifact_destination, "artifact destination")?,
-    };
-    request
-        .refresh_content_sha256()
-        .map_err(|error| conformance_error(error.to_string()))?;
-    Ok(request)
 }
 
 fn offline_first_hit(
@@ -409,94 +331,6 @@ fn attempts_are_deterministic(attempts: &[ConformanceAttemptReport]) -> bool {
             && attempt.first_hit_tick == first.first_hit_tick
             && attempt.boundary_fingerprint == first.boundary_fingerprint
             && attempt.offline_first_hit_tick == first.offline_first_hit_tick
-    })
-}
-
-fn conformance_protocol(
-    suite: &ObjectiveSuite,
-) -> Result<HarnessProtocolIdentity, ConformanceError> {
-    let mut capabilities = BTreeSet::new();
-    for case in &suite.cases {
-        capabilities.extend(super::campaign::required_capabilities(case));
-    }
-    let mut protocol = HarnessProtocolIdentity {
-        name: "dusklight-automation".into(),
-        version: 2,
-        capabilities_sha256: Digest::ZERO,
-        capabilities: capabilities.into_iter().collect(),
-    };
-    protocol
-        .refresh_capabilities_sha256()
-        .map_err(|error| conformance_error(error.to_string()))?;
-    Ok(protocol)
-}
-
-#[derive(Deserialize)]
-struct NativeHello {
-    protocol: NativeProtocol,
-    ok: bool,
-    build: NativeBuild,
-}
-
-#[derive(Deserialize)]
-struct NativeProtocol {
-    name: String,
-    version: u16,
-}
-
-#[derive(Deserialize)]
-struct NativeBuild {
-    revision: String,
-    aurora_revision: String,
-    compiler: String,
-    compiler_target: String,
-    build_type: String,
-    feature_digest: String,
-    fidelity_profile: String,
-    dirty_digest: Option<String>,
-}
-
-fn inspect_native_build(
-    executable: &Path,
-    game_data: &Path,
-    game_digest: Digest,
-) -> Result<BuildIdentity, ConformanceError> {
-    let output = Command::new(executable)
-        .arg("--automation-hello")
-        .arg("--dvd")
-        .arg(game_data)
-        .output()
-        .map_err(|error| conformance_error(format!("cannot inspect native build: {error}")))?;
-    if !output.status.success() {
-        return Err(conformance_error(format!(
-            "native build inspection failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    let hello: NativeHello = serde_json::from_slice(&output.stdout)
-        .map_err(|error| conformance_error(format!("invalid native hello: {error}")))?;
-    if !hello.ok || hello.protocol.name != "dusklight-automation" || hello.protocol.version != 2 {
-        return Err(conformance_error("native hello protocol is incompatible"));
-    }
-    Ok(BuildIdentity {
-        dusklight_commit: hello.build.revision,
-        aurora_commit: hello.build.aurora_revision,
-        compiler: hello.build.compiler,
-        target: hello.build.compiler_target,
-        profile: hello.build.build_type,
-        feature_digest: hello
-            .build
-            .feature_digest
-            .parse()
-            .map_err(|error| conformance_error(format!("invalid feature digest: {error}")))?,
-        game_digest,
-        dirty_digest: hello
-            .build
-            .dirty_digest
-            .map(|value| value.parse())
-            .transpose()
-            .map_err(|error| conformance_error(format!("invalid dirty digest: {error}")))?,
-        fidelity_profile: hello.build.fidelity_profile,
     })
 }
 
@@ -570,22 +404,6 @@ fn resolve_new_build_root(
     Ok(output)
 }
 
-fn artifact_reference(
-    repository_root: &Path,
-    authored_path: &Path,
-    resolved_path: &Path,
-) -> Result<ArtifactReference, ConformanceError> {
-    let joined = repository_join(repository_root, authored_path, "artifact")?;
-    let relative = joined
-        .strip_prefix(repository_root)
-        .map_err(|_| conformance_error("artifact escaped repository"))?;
-    Ok(ArtifactReference {
-        path: path_string(relative, "artifact")?,
-        sha256: super::run_contract::sha256_artifact_file(resolved_path)
-            .map_err(|error| conformance_error(error.to_string()))?,
-    })
-}
-
 fn repository_relative(
     repository_root: &Path,
     path: &Path,
@@ -594,20 +412,6 @@ fn repository_relative(
     path.strip_prefix(repository_root)
         .map(Path::to_path_buf)
         .map_err(|_| conformance_error(format!("{label} escaped repository")))
-}
-
-fn path_string(path: &Path, label: &str) -> Result<String, ConformanceError> {
-    path.to_str()
-        .map(|value| value.replace(std::path::MAIN_SEPARATOR, "/"))
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| conformance_error(format!("{label} is not valid UTF-8")))
-}
-
-fn domain_digest(domain: &[u8], payload: &[u8]) -> Digest {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(payload);
-    Digest(hasher.finalize().into())
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(
