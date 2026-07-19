@@ -443,9 +443,9 @@ fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
             .transpose()?
             .map(|bytes| Digest(Sha256::digest(bytes).into())),
         "game": game,
-        "game_sha256": Digest(Sha256::digest(fs::read(&game)?).into()),
+        "game_sha256": sha256_artifact_file(&game)?,
         "dvd": dvd,
-        "dvd_sha256": Digest(Sha256::digest(fs::read(&dvd)?).into()),
+        "dvd_sha256": sha256_artifact_file(&dvd)?,
         "game_args": game_args,
         "repetitions": repetitions,
         "controller_in_loop": false,

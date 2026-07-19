@@ -21,7 +21,7 @@ use huntctl::fqi::{
 use huntctl::harness::execution::execute_request;
 use huntctl::harness::inspection::inspect_objective;
 use huntctl::harness::objective_suite::ObjectiveSuite;
-use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
+use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult, sha256_artifact_file};
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::planning_priors::QBeamPriorTable;
 use huntctl::low_data_baselines::{
