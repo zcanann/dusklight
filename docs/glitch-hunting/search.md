@@ -332,6 +332,13 @@ huntctl search tournament --definition build/tournament.json \
   --workers 8 --repetitions 3
 ```
 
+For an authenticated objective campaign, replace the loose executable inputs
+with `--run-request REQUEST.json --repository-root ROOT`. The request becomes
+the sole authority for executable, game data, objective, scenario, schemas,
+fidelity, timeout, and protocol capabilities; combining it with `--game`,
+`--dvd`, `--game-arg`, a working directory, or timeout override is rejected.
+Every tournament attempt then retains its derived request/result identities.
+
 The definition uses schema `dusklight-proposer-tournament-definition/v1`, one
 `episodes` or `candidate_ticks` cap per proposer, and 2–16 named entries:
 

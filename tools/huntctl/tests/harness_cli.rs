@@ -1075,5 +1075,84 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
                 .all(|attempt| attempt["harness_terminal"] == "reached")
         );
     }
+
+    let tournament_definition = root.join("tournament.json");
+    fs::write(
+        &tournament_definition,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "dusklight-proposer-tournament-definition/v1",
+            "budget_unit": "episodes",
+            "budget_per_proposer": 2,
+            "proposers": [
+                {
+                    "name": "scripted",
+                    "kind": "incumbent_mutation",
+                    "population": "population/manifest.json"
+                },
+                {
+                    "name": "learned",
+                    "kind": "blind_exploration",
+                    "population": "population/manifest.json"
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let tournament_root = root.join("authenticated-tournament");
+    let tournament = Command::new(executable)
+        .args(["search", "tournament", "--definition"])
+        .arg(&tournament_definition)
+        .arg("--output")
+        .arg(&tournament_root)
+        .args(["--workers", "1", "--repetitions", "2", "--run-request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        tournament.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tournament.stderr)
+    );
+    let tournament_summary: Value = serde_json::from_slice(&tournament.stdout).unwrap();
+    assert_eq!(
+        tournament_summary["schema"],
+        "dusklight-proposer-tournament/v2"
+    );
+    assert_eq!(tournament_summary["rows"].as_array().unwrap().len(), 2);
+    let tournament_evaluation: Value = serde_json::from_slice(
+        &fs::read(tournament_root.join("evaluations/evaluation.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        tournament_evaluation["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|attempt| attempt["harness_terminal"] == "reached"
+                && attempt["harness_request_sha256"].is_string()
+                && attempt["harness_result_sha256"].is_string())
+    );
+
+    let conflicting_tournament = Command::new(executable)
+        .args(["search", "tournament", "--definition"])
+        .arg(&tournament_definition)
+        .arg("--output")
+        .arg(root.join("conflicting-tournament"))
+        .arg("--run-request")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .arg("--dvd")
+        .arg(root.join("inputs/disc.iso"))
+        .output()
+        .unwrap();
+    assert!(!conflicting_tournament.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflicting_tournament.stderr)
+            .contains("sole execution authority")
+    );
     fs::remove_dir_all(root).unwrap();
 }

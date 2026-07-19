@@ -3401,19 +3401,19 @@ fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .parent()
                     .ok_or("tournament definition has no parent directory")?,
             )?;
+            let execution = search_execution_config(search_args)?;
             let summary = run_proposer_tournament(&ProposerTournamentConfig {
                 definition,
                 definition_directory,
-                game: required_path(search_args, "--game")?,
-                dvd: required_path(search_args, "--dvd")?,
+                game: execution.game,
+                dvd: execution.dvd,
                 output_root: required_path(search_args, "--output")?,
-                working_directory: option(search_args, "--working-directory")
-                    .map(PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?),
-                game_args_prefix: repeated_option(search_args, "--game-arg"),
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
-                timeout: timeout_option(search_args)?,
+                timeout: execution.timeout,
+                harness: execution.harness,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -5407,7 +5407,7 @@ fn print_usage() {
         "  huntctl search beam --candidate SEED.json --options OPTIONS.json [--q-priors PRIORS.json] --game PATH --dvd PATH --output DIR [--beam-width N] [--maximum-depth N] [--candidate-budget N] [--workers N] [--repetitions N]\n",
         "  huntctl search continuous --method cem|cma-es --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--population N] [--elites N] [--initial-sigma S] [--candidate-budget N] [--rng-seed N]\n",
         "  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n",
-        "  huntctl search tournament --definition TOURNAMENT.json --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
+        "  huntctl search tournament --definition TOURNAMENT.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--workers N] [--repetitions N]\n",
         "  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n",

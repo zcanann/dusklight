@@ -411,6 +411,7 @@ pub struct ProposerTournamentConfig {
     pub workers: usize,
     pub repetitions: u32,
     pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2161,7 +2162,7 @@ pub fn run_proposer_tournament(
         workers: config.workers,
         repetitions: config.repetitions,
         timeout: config.timeout,
-        harness: None,
+        harness: config.harness.clone(),
     })?;
     let evaluation_wall_millis = started.elapsed().as_millis();
     let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
