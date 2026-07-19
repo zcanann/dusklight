@@ -4498,6 +4498,15 @@ struct TapeMinimizeProof {
     fingerprint: BoundaryFingerprint,
 }
 
+const TAPE_REPLAY_TERMINAL_CLASS: &str = "reached";
+const TAPE_REPLAY_FIDELITY_PROFILE: &str = "headless-fixed-step-unpaced-30hz/v1";
+const TAPE_REPLAY_CVARS: [&str; 4] = [
+    "game.instantSaves=true",
+    "backend.cardFileType=1",
+    "backend.wasPresetChosen=true",
+    "game.enableMenuPointer=false",
+];
+
 fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
     let input = PathBuf::from(args.first().ok_or("tape prove requires INPUT.tape")?);
     let game = required_path(args, "--game")?;
@@ -4525,22 +4534,10 @@ fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
 
     let tape_bytes = fs::read(&input)?;
     let tape = InputTape::decode(&tape_bytes)?.tape;
-    if tape.frames.is_empty() {
-        return Err("tape prove requires at least one frame".into());
-    }
-    if tape.tick_rate_numerator != 30 || tape.tick_rate_denominator != 1 {
-        return Err("tape prove requires a canonical 30/1 input tape".into());
-    }
-    if tape
-        .frames
-        .iter()
-        .any(|frame| frame.wait_condition != huntctl::tape::WaitCondition::None)
-    {
-        return Err("tape prove requires absolute input without reactive waits".into());
-    }
+    validate_proof_tape(&tape, "tape prove")?;
 
     let game_args = repeated_option(args, "--game-arg");
-    validate_cold_replay_game_args(&game_args)?;
+    validate_replay_game_args("tape prove", &game_args)?;
     fs::create_dir_all(&work_root)?;
     if let Some(parent) = proof_path
         .parent()
@@ -4595,22 +4592,27 @@ fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn validate_cold_replay_game_args(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+fn validate_replay_game_args(command: &str, arguments: &[String]) -> Result<(), Box<dyn Error>> {
     const OWNED_OPTIONS: &[&str] = &[
         "--automation-data-root",
         "--automation-tick-budget",
         "--dvd",
+        "--deterministic-time-start",
         "--exit-after-tape",
         "--fixed-step",
+        "--fixed-step-speed-percent",
         "--headless",
         "--input-controller",
         "--input-tape",
         "--input-tape-end",
+        "--input-tape-fast-forward-frames",
+        "--input-tape-fast-forward-visible",
         "--milestone-goal",
         "--milestone-program",
         "--milestone-result",
         "--milestones",
         "--renderer-cache-root",
+        "--unpaced",
     ];
     if let Some(argument) = arguments.iter().find(|argument| {
         OWNED_OPTIONS
@@ -4618,9 +4620,26 @@ fn validate_cold_replay_game_args(arguments: &[String]) -> Result<(), Box<dyn Er
             .any(|option| argument == option || argument.starts_with(&format!("{option}=")))
     }) {
         return Err(format!(
-            "tape prove owns replay option {argument}; a controller, alternate tape, or proof override cannot enter the cold-replay launch"
+            "{command} owns replay option {argument}; a controller, alternate tape, fidelity override, or proof override cannot enter the replay launch"
         )
         .into());
+    }
+    Ok(())
+}
+
+fn validate_proof_tape(tape: &InputTape, command: &str) -> Result<(), Box<dyn Error>> {
+    if tape.frames.is_empty() {
+        return Err(format!("{command} requires at least one frame").into());
+    }
+    if tape.tick_rate_numerator != 30 || tape.tick_rate_denominator != 1 {
+        return Err(format!("{command} requires a canonical 30/1 input tape").into());
+    }
+    if tape
+        .frames
+        .iter()
+        .any(|frame| frame.wait_condition != huntctl::tape::WaitCondition::None)
+    {
+        return Err(format!("{command} requires absolute input without reactive waits").into());
     }
     Ok(())
 }
@@ -4664,12 +4683,12 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
 
-    let source = InputTape::decode(&fs::read(&input)?)?.tape;
-    if source.frames.is_empty() {
-        return Err("tape minimize requires at least one frame".into());
-    }
+    let source_bytes = fs::read(&input)?;
+    let source = InputTape::decode(&source_bytes)?.tape;
+    validate_proof_tape(&source, "tape minimize")?;
     let timeout = timeout_option(args)?;
     let game_args = repeated_option(args, "--game-arg");
+    validate_replay_game_args("tape minimize", &game_args)?;
     let mut evaluation_index = 0_u64;
     let target = evaluate_minimize_tape(
         &source,
@@ -4782,13 +4801,36 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         return Err("trimmed minimized tape changed the exact goal proof".into());
     }
 
-    fs::write(&output, current.encode()?)?;
+    let minimized_bytes = current.encode()?;
+    fs::write(&output, &minimized_bytes)?;
     let summary = json!({
-        "schema": "huntctl-tape-minimization/v1",
+        "schema": "dusklight-tape-minimization-proof/v2",
         "boot": current.boot,
+        "source_boot": source.boot,
         "goal": goal,
         "source_tape": input,
+        "source_tape_sha256": Digest(Sha256::digest(&source_bytes).into()),
         "minimized_tape": output,
+        "minimized_tape_sha256": Digest(Sha256::digest(&minimized_bytes).into()),
+        "milestone_program": milestone_program,
+        "milestone_program_sha256": milestone_program
+            .as_deref()
+            .map(fs::read)
+            .transpose()?
+            .map(|bytes| Digest(Sha256::digest(bytes).into())),
+        "game": game,
+        "game_sha256": Digest(Sha256::digest(fs::read(&game)?).into()),
+        "dvd": dvd,
+        "dvd_sha256": Digest(Sha256::digest(fs::read(&dvd)?).into()),
+        "game_args": game_args,
+        "fidelity": {
+            "profile": TAPE_REPLAY_FIDELITY_PROFILE,
+            "headless": true,
+            "fixed_step": true,
+            "unpaced": true,
+            "logical_hz": 30,
+            "cvars": TAPE_REPLAY_CVARS,
+        },
         "source_frames": source.frames.len(),
         "minimized_frames": current.frames.len(),
         "source_active_frames": source_active_frames,
@@ -4796,6 +4838,8 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         "evaluated_candidates": evaluation_index,
         "repetitions": repetitions,
         "proof": {
+            "terminal_class": TAPE_REPLAY_TERMINAL_CLASS,
+            "fidelity_profile": TAPE_REPLAY_FIDELITY_PROFILE,
             "sim_tick": target.sim_tick,
             "tape_frame": target.tape_frame,
             "boundary_fingerprint": target.fingerprint,

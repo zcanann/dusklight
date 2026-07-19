@@ -137,7 +137,10 @@ proved goal frame. Every accepted reduction must reproduce the source proof in
 at least two cold runs: the same boot origin, goal simulation tick, goal tape
 frame, and complete `dusklight.milestone-boundary/v4` fingerprint. The emitted
 `.proof.json` retains the exact oracle/boundary evidence and all candidate-run
-artifacts remain under the supplied state root.
+artifacts remain under the supplied state root. The proof also binds the source
+and minimized tapes, executable, game data, optional milestone program, launch
+arguments, and headless fixed-step fidelity by content digest. Reactive tapes
+and replay-owned launch overrides are rejected before minimization begins.
 
 `tape resample` treats the source as a piecewise-constant authoring signal and
 samples it at the start of every canonical 30 Hz tick. Upsampling repeats exact

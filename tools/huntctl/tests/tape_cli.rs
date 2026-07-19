@@ -254,6 +254,33 @@ frame neutral
             .contains("repetitions produced contradictory exact proofs")
     );
 
+    let reactive_root = directory.join("reactive-minimize-state");
+    let reactive_minimize = Command::new(executable)
+        .args([
+            "tape",
+            "minimize",
+            tape.to_str().unwrap(),
+            directory.join("reactive-minimized.tape").to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            reactive_root.to_str().unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+        ])
+        .output()
+        .unwrap();
+    assert!(!reactive_minimize.status.success());
+    assert!(
+        String::from_utf8_lossy(&reactive_minimize.stderr)
+            .contains("tape minimize requires absolute input without reactive waits")
+    );
+    assert!(!reactive_root.join("candidate-000000").exists());
+
     let minimized_path = directory.join("minimized.tape");
     let minimize = Command::new(executable)
         .args([
@@ -286,12 +313,21 @@ frame neutral
     let minimize_summary: serde_json::Value = serde_json::from_slice(&minimize.stdout).unwrap();
     assert_eq!(minimize_summary["schema"], "huntctl-tape-minimization/v1");
     assert_eq!(minimize_summary["boot"]["kind"], "stage");
+    assert_eq!(minimize_summary["fidelity"], "headless_fixed_step");
+    assert_eq!(
+        minimize_summary["source_tape_sha256"],
+        proof["input_tape_sha256"]
+    );
+    assert!(minimize_summary["minimized_tape_sha256"].is_string());
+    assert!(minimize_summary["game_sha256"].is_string());
+    assert!(minimize_summary["dvd_sha256"].is_string());
     assert_eq!(minimize_summary["minimized_frames"], 1);
     assert_eq!(minimize_summary["minimized_active_frames"], 0);
     assert_eq!(
         minimize_summary["proof"]["boundary_fingerprint"]["schema"],
         "dusklight.milestone-boundary/v4"
     );
+    assert_eq!(minimize_summary["proof"]["terminal_class"], "reached");
     let minimized = InputTape::decode(&fs::read(&minimized_path).unwrap())
         .unwrap()
         .tape;
