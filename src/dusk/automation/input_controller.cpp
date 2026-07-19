@@ -916,9 +916,6 @@ InputControllerError decode_input_controller(
             }
             layer.homeRoom = std::bit_cast<std::int8_t>(record[15]);
             layer.setId = read_u16(record + 37);
-            if (layer.setId == std::numeric_limits<std::uint16_t>::max()) {
-                return InputControllerError::InvalidSetId;
-            }
             if (!canonical_nonempty_fixed_string(record + 39, layer.placedStageName.size())) {
                 return InputControllerError::InvalidStageName;
             }

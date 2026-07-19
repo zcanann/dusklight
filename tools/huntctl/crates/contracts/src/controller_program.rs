@@ -289,15 +289,13 @@ impl ControllerProgram {
                                 "layer {index} process ID must not be 0 or 4294967295"
                             )));
                         }
-                        ActorSelector::Placed {
-                            set_id, stage_name, ..
-                        } if *set_id != u16::MAX
-                            && !stage_name.is_empty()
-                            && stage_name.len() <= 8
-                            && stage_name.is_ascii() => {}
+                        ActorSelector::Placed { stage_name, .. }
+                            if !stage_name.is_empty()
+                                && stage_name.len() <= 8
+                                && stage_name.is_ascii() => {}
                         ActorSelector::Placed { .. } => {
                             return Err(ControllerError::new(format!(
-                                "layer {index} placed selector requires set ID below 65535 and a nonempty ASCII stage name of at most 8 bytes"
+                                "layer {index} placed selector requires a nonempty ASCII stage name of at most 8 bytes"
                             )));
                         }
                     }
@@ -2542,7 +2540,7 @@ mod tests {
         let source = r#"duskcontrol 1
 frames 8
 seek actor replace from 0 for 4 actor 123 process 42 offset 0 0 0 magnitude 127 stop 0
-seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 2 3 magnitude 80 stop 5
+seek actor replace from 4 for 4 actor -77 set 65535 room -3 stage F_SP103 offset 1 2 3 magnitude 80 stop 5
 "#;
         let program = parse(source).unwrap();
         assert_eq!(
@@ -2562,7 +2560,7 @@ seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 
                 blend: StickBlend::Replace,
                 actor_name: -77,
                 selector: ActorSelector::Placed {
-                    set_id: 14,
+                    set_id: u16::MAX,
                     room: -3,
                     stage_name: "F_SP103".to_owned(),
                 },
@@ -2579,7 +2577,7 @@ seek actor replace from 4 for 4 actor -77 set 14 room -3 stage F_SP103 offset 1 
         assert_eq!(get_u32(&bytes, first + 33), 42);
         assert_eq!(bytes[second + 14], 2);
         assert_eq!(bytes[second + 15] as i8, -3);
-        assert_eq!(get_u16(&bytes, second + 37), 14);
+        assert_eq!(get_u16(&bytes, second + 37), u16::MAX);
         assert_eq!(&bytes[second + 39..second + 46], b"F_SP103");
         assert_eq!(bytes[second + 46], 0);
         assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
@@ -2776,7 +2774,6 @@ maintain distance replace from 5 for 1 frame world target 10 0 20 distance 5 tol
         for (selector, expected) in [
             ("process 0", "process ID"),
             ("process 4294967295", "process ID"),
-            ("set 65535 room 0 stage F_SP103", "set ID"),
             ("set 1", "room field"),
             ("room 1", "set field"),
             ("set 1 room 0", "stage field"),

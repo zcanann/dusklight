@@ -93,6 +93,8 @@ ties by process ID.
 `process ID` follows exactly that runtime instance and never falls back.
 `set SETID room ROOM stage STAGE` selects the matching map-authored placement;
 duplicate matches deterministically choose the lowest process ID. A missing
+`SETID` value from the game is represented by the native unsigned value
+`65535` and remains valid in an explicitly tagged placed selector. A missing
 player or camera yields neutral output. A missing nearest-kind actor also stays
 neutral because there is no exact identity to declare lost. By contrast, loss
 of a process-ID or placed selector produces the typed native terminal reason

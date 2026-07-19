@@ -464,16 +464,24 @@ void testPlacedActorSelectionRequiresExactStageAndPlacement() {
     using namespace dusk::automation;
     auto bytes = makeProgram(2, 1);
     setActor(layer(bytes, 0), 0, 0, 2, 42, 0.0F, 0.0F, 0.0F, 0.0F, 100,
-        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -3, 0, 7,
-        stageName("F_SP103"));
+        static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -3, 0,
+        std::numeric_limits<std::uint16_t>::max(), stageName("F_SP103"));
     const InputControllerProgram program = decode(bytes);
-    REQUIRE(program.layers()[0].setId == 7);
+    REQUIRE(program.layers()[0].setId == std::numeric_limits<std::uint16_t>::max());
     REQUIRE(program.layers()[0].homeRoom == -3);
     REQUIRE(program.layers()[0].placedStageName == stageName("F_SP103"));
 
     std::array<ControllerActor, 4> actors{{
-        {.actorName = 42, .stableId = 9, .setId = 7, .homeRoom = -3, .x = 10.0F},
-        {.actorName = 42, .stableId = 3, .setId = 7, .homeRoom = -3, .x = -10.0F},
+        {.actorName = 42,
+            .stableId = 9,
+            .setId = std::numeric_limits<std::uint16_t>::max(),
+            .homeRoom = -3,
+            .x = 10.0F},
+        {.actorName = 42,
+            .stableId = 3,
+            .setId = std::numeric_limits<std::uint16_t>::max(),
+            .homeRoom = -3,
+            .x = -10.0F},
         {.actorName = 42, .stableId = 1, .setId = 8, .homeRoom = -3, .x = 1.0F},
         {.actorName = 7, .stableId = 2, .setId = 7, .homeRoom = -3, .z = 1.0F},
     }};
@@ -493,8 +501,8 @@ void testPlacedActorSelectionRequiresExactStageAndPlacement() {
     actors[0].setId = 8;
     actors[1].setId = 8;
     REQUIRE(program.evaluate(0, observation) == RawPadState{});
-    actors[0].setId = 7;
-    actors[1].setId = 7;
+    actors[0].setId = std::numeric_limits<std::uint16_t>::max();
+    actors[1].setId = std::numeric_limits<std::uint16_t>::max();
     actors[0].homeRoom = -2;
     actors[1].homeRoom = -2;
     REQUIRE(program.evaluate(0, observation) == RawPadState{});
@@ -715,8 +723,9 @@ void testStrictCanonicalValidation() {
     bad = makeProgram(10, 1);
     setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
         static_cast<std::uint8_t>(InputControllerActorSelector::Placed), -1, 0,
-        std::numeric_limits<std::uint16_t>::max());
-    REQUIRE(decode_input_controller(bad, output) == InputControllerError::InvalidSetId);
+        std::numeric_limits<std::uint16_t>::max(), stageName("F_SP103"));
+    REQUIRE(decode_input_controller(bad, output) == InputControllerError::None);
+    REQUIRE(output.layers()[0].setId == std::numeric_limits<std::uint16_t>::max());
 
     bad = makeProgram(10, 1);
     setActor(layer(bad, 0), 0, 0, 10, 42, 0.0F, 0.0F, 0.0F, 0.0F, 1,
