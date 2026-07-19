@@ -79,6 +79,7 @@ pub(super) fn handle_http(
                         let artifact_root = configured_artifact_root(config)?;
                         let mut graph =
                             graph_with_drafts(&timeline, &artifact_root, &config.state_root)?;
+                        graph.projects = project_catalog_projection(&config.repository_root)?;
                         append_generated_search_segments(
                             &mut graph,
                             &timeline,
@@ -100,14 +101,23 @@ pub(super) fn handle_http(
                         .and_then(|browser_request| {
                             validate_playback_origin(&browser_request)?;
                             let timeline = load_authoritative_timeline(&config.timeline_path)?;
+                            let accelerated =
+                                browser_request.mode == PlaybackMode::ResumeAccelerated;
+                            let playback = PlaybackSettings {
+                                speed_percent: if accelerated {
+                                    0
+                                } else {
+                                    browser_request.speed_percent
+                                },
+                                fast: accelerated,
+                            };
                             let (response, _child) = match &browser_request.selection {
                                 BrowserSelection::Draft { id } => play_draft(
                                     &timeline,
                                     config,
                                     id,
-                                    browser_request.origin,
-                                    browser_request.speed_percent,
-                                    browser_request.fast,
+                                    playback.speed_percent,
+                                    playback.fast,
                                 )?,
                                 BrowserSelection::Segment { id } => play_segment(
                                     &timeline,
@@ -116,16 +126,15 @@ pub(super) fn handle_http(
                                     &browser_request.stop,
                                     SegmentPlaybackOptions {
                                         handoff: browser_request.handoff,
-                                        origin: browser_request.origin,
-                                        playback: PlaybackSettings {
-                                            speed_percent: if browser_request.fast {
-                                                0
-                                            } else {
-                                                browser_request.speed_percent
-                                            },
-                                            fast: browser_request.fast,
-                                        },
+                                        playback,
                                     },
+                                )?,
+                                BrowserSelection::Project { id } => play_project(
+                                    &timeline,
+                                    config,
+                                    id,
+                                    browser_request.handoff,
+                                    playback,
                                 )?,
                             };
                             Ok(response)

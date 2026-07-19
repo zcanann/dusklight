@@ -25,6 +25,20 @@ pub fn graph_from_timeline(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
+    let mut boot_configurations = Vec::new();
+    let mut boot_configuration_keys = BTreeSet::new();
+    for segment in timeline
+        .segments
+        .values()
+        .filter(|segment| segment.parent.is_none())
+    {
+        if let Ok(tape) = load_segment_tape(segment, repository_root) {
+            let key = serde_json::to_string(&tape.boot).unwrap_or_default();
+            if boot_configuration_keys.insert(key) {
+                boot_configurations.push(tape.boot);
+            }
+        }
+    }
     let origin = timeline.origin.as_ref().map(|origin| GraphOrigin {
         id: origin.id.clone(),
         predicate: origin.predicate.clone(),
@@ -37,6 +51,7 @@ pub fn graph_from_timeline(
                     .find(|definition| definition.name == origin.predicate)
             })
             .is_some_and(is_exact_boot_boundary_predicate),
+        configurations: boot_configurations,
     });
     let goals = timeline
         .goals
@@ -167,6 +182,10 @@ pub fn graph_from_timeline(
         segments,
         goals,
         drafts: Vec::new(),
+        projects: GraphProjectCatalog {
+            schema: PROJECT_CATALOG_SCHEMA.into(),
+            ..GraphProjectCatalog::default()
+        },
         draft_graph_revision: None,
         predicate_program,
     })
@@ -596,6 +615,9 @@ pub(super) fn graph_node_thumbnail_key(
                 WorkbenchError::new(format!("draft {id:?} has no finalized chain fingerprint"))
             })?;
             Ok(thumbnail_key("draft", identity))
+        }
+        BrowserSelection::Project { .. } => {
+            Err(WorkbenchError::new("project thumbnails are not supported"))
         }
     }
 }

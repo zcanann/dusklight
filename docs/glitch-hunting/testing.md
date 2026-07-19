@@ -25,19 +25,22 @@ so they never write the normal Dusklight profile.
 For route work, choose the single **Glitch Hunt: Route Workbench** entry under
 **Run and Debug** and press F5. VS Code builds Dusklight and the Rust workbench,
 then opens a browser containing the checked-in segment tree. Every playable
-segment has **Play from boot**; every non-root segment also has **Play from
-parent** and **Play from parent (fast)**. Ordinary parent playback is visible
-and uses the global Playback pacing. Fast playback runs the exact complete tape
-windowless, muted, presentation-suppressed, and uncapped, then reveals its
-retained terminal frame and releases live input at normal pacing. Recording
+segment and standalone Project tape has exactly two launch choices. **Playback**
+uses the global Playback pacing and renders the complete boot-rooted tape.
+**Resume (accelerated)** runs that same complete tape windowless, muted,
+presentation-suppressed, and uncapped, then reveals its retained terminal frame
+and releases live input at normal pacing. It works for root segments as well as
+children. Recording
 pacing is configured separately and begins only after the same exact fast
 handoff. These are host-pacing controls only: all modes use absolute 30 Hz
 input frames and own all controller ports until handoff.
 
-The workbench replaces per-scenario launch configurations and generated-winner
-dropdown entries. Git-owned segments and repeat-proved generated search results
-appear in the same graph; generated nodes remain uncommitted and restricted
-until their tape and proof are promoted into `routes/`.
+The Projects sidebar is the checked standalone test selector. Its Git-owned
+`projects/workbench.projects` catalog groups QA, canary, glitch, route, and map
+boot tapes. Every checked `.tas`/`.tape` fixture under
+`tests/fixtures/automation` must be cataloged; a Rust test enforces coverage and
+compiles every entry. Stage boot entries expose map, room, spawn, layer, save,
+and optional fixture/loadout configuration in Properties.
 
 See [Route segment trees and Git](timelines.md) for lineage semantics.
 

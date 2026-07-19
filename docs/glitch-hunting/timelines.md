@@ -69,17 +69,19 @@ Choose **Glitch Hunt: Route Workbench** under VS Code's Run and Debug panel.
 The pre-launch task builds Dusklight and the Rust server, then opens the local
 view in Brave when available.
 
-The left pane is a literal tree: Boot followed by nested segments. Alternative
-attempts appear as siblings. Goals, proofs, fingerprints, scores, and artifact
-information appear only in the selected segment's details. There are no
-decorative type icons beside expanders because every checked-in entry has the
-same structural meaning.
+The left sidebar is a compact Projects tree for standalone boot-rooted QA,
+canary, glitch, and sample tapes. The large canvas remains the structural route
+graph: Boot followed by nested segments, with alternatives as siblings. Goals,
+proofs, fingerprints, scores, and artifact information appear only in the
+selected entry's details.
 
-**Play** follows the selected segment's unique parent chain to Boot, composes
-those exact artifacts, launches a fresh isolated process, and releases
-controller ownership when the selected tape ends. Named continuations are
-bookmarks and preferred paths, not playback authorization; an unpinned sibling
-remains playable when its structural chain and fingerprints are valid.
+**Playback** follows the selected segment's unique parent chain to Boot,
+composes those exact artifacts, launches a fresh isolated process at the global
+Playback speed, and releases controller ownership when the selected tape ends.
+**Resume (accelerated)** replays that same full tape windowless and uncapped,
+then hands over at the endpoint. Named continuations are bookmarks and preferred
+paths, not playback authorization; an unpinned sibling remains playable when
+its structural chain and fingerprints are valid.
 
 Segment **Rename** writes a human-facing `label` beside the segment declaration
 in the Git-owned timeline. The immutable segment ID remains the key used by
@@ -198,17 +200,23 @@ access remains deferred until a full checkpoint can reproduce live actors,
 collision, loaders, heaps, and host-side state; until then exact prefix replay
 is authoritative.
 
-Every playable non-root segment, including an uncommitted generated search
-result, exposes **Play from boot**, **Play from parent**, and **Play from parent
-(fast)**. All modes compose and verify the complete absolute tape. Ordinary
-parent playback is visible from process start and uses the global Playback
-pacing. Fast parent playback suppresses its window, presentation, and audio,
-runs the complete tape uncapped, submits the retained terminal image without a
-simulation tick, then reveals it and releases live input at normal pacing. Fast
-mode deliberately ignores Playback speed. The real renderer remains active so
-render-side game state can resume; it is not Aurora's irreversible null
-backend. None of these controls change logical game time. Root segments have
-no parent boundary and therefore expose boot playback only.
+Every playable route node and standalone Project tape exposes **Playback** and
+**Resume (accelerated)**. Both compose the complete absolute tape from its
+declared process or stage boot. Accelerated resume suppresses its window,
+presentation, and audio, runs the complete tape uncapped, submits the retained
+terminal image without a simulation tick, then reveals it and releases live
+input at normal pacing. It deliberately ignores Playback speed and works on
+root nodes. The real renderer remains active so render-side game state can
+resume; it is not Aurora's irreversible null backend. None of these controls
+change logical game time.
+
+Standalone entries are declared in `projects/workbench.projects`. Group IDs use
+slash-separated parents; each project points at checked TAS source or a compact
+tape and may attach a checked scenario fixture. The compiled tape remains the
+authority for boot type. Process boot starts from a clean process; stage boot
+records its map, room, spawn point, layer, optional save slot, inventory,
+equipment, flags, settings, and RNG fixture directly in the tape launched by the
+workbench.
 
 ## Route store
 

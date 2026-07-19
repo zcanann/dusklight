@@ -7,7 +7,7 @@
 
 // Keep the implementation's domain vocabulary explicit while its public API migrates out of the
 // historical root crate. These are dependencies, not callbacks into the huntctl executable.
-pub use dusklight_automation_contracts::{artifact, tape};
+pub use dusklight_automation_contracts::{artifact, scenario_fixture, tape};
 pub use dusklight_control::{
     option_diagnostics, option_execution, tape_chain, tape_dsl, tape_program,
 };
@@ -18,6 +18,7 @@ pub use dusklight_routes::timeline;
 pub use dusklight_search::search;
 
 mod graph_projection;
+mod project_catalog;
 mod server;
 
 pub use graph_projection::{
@@ -26,6 +27,7 @@ pub use graph_projection::{
 pub use server::serve;
 
 use graph_projection::*;
+use project_catalog::*;
 
 #[cfg(test)]
 use server::{HttpResponse, handle_http, origin_allowed, thumbnail_response};
@@ -52,7 +54,9 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v8";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v9";
+const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.projects.v1";
+const PROJECT_CATALOG_PATH: &str = "projects/workbench.projects";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
 const DRAFT_MANIFEST: &str = "draft.json";
 const DRAFT_FINAL_MANIFEST: &str = "draft.final.json";
@@ -111,10 +115,43 @@ pub struct WorkbenchGraph {
     pub segments: Vec<GraphSegment>,
     pub goals: Vec<GraphGoal>,
     pub drafts: Vec<GraphDraft>,
+    pub projects: GraphProjectCatalog,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_graph_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predicate_program: Option<GraphPredicateProgram>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct GraphProjectCatalog {
+    pub schema: String,
+    pub groups: Vec<GraphProjectGroup>,
+    pub entries: Vec<GraphProject>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphProjectGroup {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphProject {
+    pub id: String,
+    pub label: String,
+    pub group: String,
+    pub artifact: GraphArtifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot: Option<TapeBoot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_count: Option<u64>,
+    pub playable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixture_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -269,6 +306,7 @@ pub struct GraphOrigin {
     pub id: String,
     pub predicate: String,
     pub recordable_from_boot: bool,
+    pub configurations: Vec<TapeBoot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -396,14 +434,20 @@ pub struct BrowserPlayRequest {
     #[serde(default = "default_takeover")]
     pub handoff: bool,
     #[serde(default)]
-    pub origin: PlaybackOrigin,
+    pub mode: PlaybackMode,
     #[serde(
         default = "default_speed_percent",
         deserialize_with = "deserialize_playback_speed_percent"
     )]
     pub speed_percent: u16,
-    #[serde(default)]
-    pub fast: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackMode {
+    #[default]
+    Playback,
+    ResumeAccelerated,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -411,7 +455,6 @@ pub struct BrowserPlayRequest {
 pub enum PlaybackOrigin {
     #[default]
     Boot,
-    Parent,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -419,6 +462,7 @@ pub enum PlaybackOrigin {
 pub enum BrowserSelection {
     Draft { id: String },
     Segment { id: String },
+    Project { id: String },
 }
 
 const DEFAULT_RECORD_INPUT_COUNTDOWN_SECONDS: u8 = 3;
@@ -743,7 +787,6 @@ struct PlaybackCliOptions<'a> {
 #[derive(Clone, Copy, Debug)]
 struct SegmentPlaybackOptions {
     handoff: bool,
-    origin: PlaybackOrigin,
     playback: PlaybackSettings,
 }
 

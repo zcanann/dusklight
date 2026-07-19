@@ -410,7 +410,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v8");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v9");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -873,6 +873,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     let html = include_str!("../../../assets/route_workbench.html");
     for required in [
         "aria-label=\"Route graph\"",
+        "aria-label=\"Projects\"",
+        "id=\"projects\"",
         "id=\"tree\"",
         "id=\"detail\"",
         "graph-canvas",
@@ -905,8 +907,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "Generated search siblings",
         "remove every other displayed sibling",
         "The selected segment and its descendants are retained",
-        "selection:{kind:'segment',id}",
-        "stop:{kind:'segment',segment:id}",
+        "selection:{kind,id}",
+        "const stop=segment?{kind:'segment',segment:id}",
         "goalDetail(segment.id",
         "segment.goal_proofs",
         "segment.option_visualization",
@@ -924,7 +926,10 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "id=\"recordingSpeed\"",
         "id=\"playbackSpeed\"",
         "speed_percent:speedPercent",
-        "origin,fast,speed_percent:speedPercent",
+        "mode,speed_percent:speedPercent",
+        "Resume (accelerated)",
+        ">Playback</button>",
+        ">Record child</button>",
         "window.localStorage",
         "countdown_seconds:countdownSeconds",
         "kind==='origin'?0",
@@ -1101,7 +1106,7 @@ fn browser_speed_settings_default_and_reject_unlisted_values() {
         )
         .unwrap();
     assert_eq!(playback.speed_percent, 100);
-    assert!(!playback.fast);
+    assert_eq!(playback.mode, PlaybackMode::Playback);
 
     for speed_percent in PLAYBACK_SPEED_PERCENTAGES {
         let request = serde_json::from_value::<BrowserPlayRequest>(serde_json::json!({
@@ -1157,30 +1162,58 @@ fn recording_speed_is_fixed_step_host_pacing_not_a_tape_rate() {
 }
 
 #[test]
-fn browser_accepts_segment_playback_from_boot_or_parent() {
-    let boot = BrowserPlayRequest {
+fn browser_accepts_playback_and_accelerated_resume() {
+    let playback = BrowserPlayRequest {
         selection: BrowserSelection::Segment {
             id: "link_exit.one".into(),
         },
         stop: BrowserStop::Tick { tick: 1 },
         handoff: true,
-        origin: PlaybackOrigin::Boot,
+        mode: PlaybackMode::Playback,
         speed_percent: 100,
-        fast: false,
     };
-    assert!(validate_playback_origin(&boot).is_ok());
+    assert!(validate_playback_origin(&playback).is_ok());
 
-    let parent_origin = BrowserPlayRequest {
+    let accelerated = BrowserPlayRequest {
         selection: BrowserSelection::Segment {
             id: "link_exit.one".into(),
         },
         stop: BrowserStop::Tick { tick: 1 },
         handoff: true,
-        origin: PlaybackOrigin::Parent,
+        mode: PlaybackMode::ResumeAccelerated,
         speed_percent: 100,
-        fast: true,
     };
-    assert!(validate_playback_origin(&parent_origin).is_ok());
+    assert!(validate_playback_origin(&accelerated).is_ok());
+
+    let no_handoff = BrowserPlayRequest {
+        handoff: false,
+        ..accelerated
+    };
+    assert!(validate_playback_origin(&no_handoff).is_err());
+}
+
+#[test]
+fn accelerated_resume_hides_the_complete_boot_rooted_tape_even_for_root_nodes() {
+    assert_eq!(
+        playback_fast_forward_frames(
+            PlaybackSettings {
+                speed_percent: 0,
+                fast: true,
+            },
+            439,
+        ),
+        Some(439)
+    );
+    assert_eq!(
+        playback_fast_forward_frames(
+            PlaybackSettings {
+                speed_percent: 100,
+                fast: false,
+            },
+            439,
+        ),
+        None
+    );
 }
 
 #[test]
@@ -1340,7 +1373,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
             "selection":{"kind":"segment","id":"another_segment"},
             "stop":{"kind":"segment","segment":"another_segment"},
             "handoff":true,
-            "origin":"boot"
+            "mode":"playback"
         }"#;
     assert!(serde_json::from_str::<BrowserPlayRequest>(sibling_request).is_ok());
 }

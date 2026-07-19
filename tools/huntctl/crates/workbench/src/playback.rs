@@ -300,6 +300,9 @@ pub(super) fn capture_thumbnail(
         BrowserSelection::Draft { id } => {
             materialize_draft(timeline, &artifact_root, &config.state_root, id)?
         }
+        BrowserSelection::Project { .. } => {
+            return Err(WorkbenchError::new("project thumbnails are not supported"));
+        }
     };
 
     fs::create_dir_all(&config.state_root).map_err(|error| {
@@ -406,25 +409,18 @@ pub(super) fn play_draft(
     timeline: &Timeline,
     config: &WorkbenchConfig,
     draft_id: &str,
-    origin: PlaybackOrigin,
     speed_percent: u16,
     fast: bool,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
     let artifact_root = configured_artifact_root(config)?;
     let materialized = materialize_draft(timeline, &artifact_root, &config.state_root, draft_id)?;
-    let fast_forward_frames = match origin {
-        PlaybackOrigin::Boot => None,
-        PlaybackOrigin::Parent => {
-            draft_parent_frame_count(
-                timeline,
-                &artifact_root,
-                &config.state_root,
-                draft_id,
-                materialized.tape.frames.len() as u64,
-            )?;
-            fast.then_some(materialized.tape.frames.len() as u64)
-        }
-    };
+    let fast_forward_frames = playback_fast_forward_frames(
+        PlaybackSettings {
+            speed_percent: if fast { 0 } else { speed_percent },
+            fast,
+        },
+        materialized.tape.frames.len() as u64,
+    );
     let thumbnail = prepare_missing_playback_thumbnail(
         timeline,
         config,
@@ -438,7 +434,7 @@ pub(super) fn play_draft(
         materialized,
         MaterializedLaunchOptions {
             takeover: true,
-            origin,
+            origin: PlaybackOrigin::Boot,
             fast_forward_frames,
             thumbnail,
             playback: PlaybackSettings {
@@ -449,6 +445,31 @@ pub(super) fn play_draft(
     )
 }
 
+pub(super) fn play_project(
+    timeline: &Timeline,
+    config: &WorkbenchConfig,
+    project_id: &str,
+    handoff: bool,
+    playback: PlaybackSettings,
+) -> Result<(PlayResponse, Child), WorkbenchError> {
+    let materialized = project_materialized_playback(&config.repository_root, project_id)?;
+    let fast_forward_frames =
+        playback_fast_forward_frames(playback, materialized.tape.frames.len() as u64);
+    launch_materialized(
+        timeline,
+        config,
+        materialized,
+        MaterializedLaunchOptions {
+            takeover: handoff,
+            origin: PlaybackOrigin::Boot,
+            fast_forward_frames,
+            thumbnail: None,
+            playback,
+        },
+    )
+}
+
+#[cfg(test)]
 pub(super) fn draft_parent_frame_count(
     timeline: &Timeline,
     repository_root: &Path,
@@ -498,6 +519,7 @@ pub(super) fn draft_parent_frame_count(
     Ok(parent_frames)
 }
 
+#[cfg(test)]
 pub(super) fn validate_parent_boundary_metadata(
     actual_parent_frames: u64,
     actual_continuation_frames: u64,
@@ -517,6 +539,7 @@ pub(super) fn validate_parent_boundary_metadata(
     )
 }
 
+#[cfg(test)]
 pub(super) fn validate_parent_boundary(
     parent_frames: u64,
     continuation_frames: u64,
@@ -1645,30 +1668,15 @@ pub(super) fn play_segment(
             tape,
             seed_stage: None,
         };
-        let artifact_root = configured_artifact_root(config)?;
-        let fast_forward_frames = match options.origin {
-            PlaybackOrigin::Boot => None,
-            PlaybackOrigin::Parent => {
-                segment_parent_frame_count(
-                    timeline,
-                    &artifact_root,
-                    projection.segment.parent.as_deref(),
-                    &materialized.tape,
-                    segment_id,
-                )?;
-                options
-                    .playback
-                    .fast
-                    .then_some(materialized.tape.frames.len() as u64)
-            }
-        };
+        let fast_forward_frames =
+            playback_fast_forward_frames(options.playback, materialized.tape.frames.len() as u64);
         return launch_materialized(
             timeline,
             config,
             materialized,
             MaterializedLaunchOptions {
                 takeover: options.handoff,
-                origin: options.origin,
+                origin: PlaybackOrigin::Boot,
                 fast_forward_frames,
                 thumbnail: None,
                 playback: options.playback,
@@ -1687,22 +1695,8 @@ pub(super) fn play_segment(
     let artifact_root = configured_artifact_root(config)?;
     let materialized =
         materialize_segment_playback(timeline, &artifact_root, segment_id, local_frame)?;
-    let fast_forward_frames = match options.origin {
-        PlaybackOrigin::Boot => None,
-        PlaybackOrigin::Parent => {
-            segment_parent_frame_count(
-                timeline,
-                &artifact_root,
-                timeline.segments[segment_id].parent.as_deref(),
-                &materialized.tape,
-                segment_id,
-            )?;
-            options
-                .playback
-                .fast
-                .then_some(materialized.tape.frames.len() as u64)
-        }
-    };
+    let fast_forward_frames =
+        playback_fast_forward_frames(options.playback, materialized.tape.frames.len() as u64);
     let thumbnail = prepare_missing_playback_thumbnail(
         timeline,
         config,
@@ -1716,7 +1710,7 @@ pub(super) fn play_segment(
         materialized,
         MaterializedLaunchOptions {
             takeover: options.handoff,
-            origin: options.origin,
+            origin: PlaybackOrigin::Boot,
             fast_forward_frames,
             thumbnail,
             playback: options.playback,
@@ -1724,6 +1718,7 @@ pub(super) fn play_segment(
     )
 }
 
+#[cfg(test)]
 pub(super) fn segment_parent_frame_count(
     timeline: &Timeline,
     repository_root: &Path,
@@ -1914,20 +1909,14 @@ pub(super) fn play_target(request: &PlayRequest) -> Result<MaterializeTarget, Wo
 }
 
 pub(super) fn validate_playback_origin(request: &BrowserPlayRequest) -> Result<(), WorkbenchError> {
-    if request.fast && request.origin != PlaybackOrigin::Parent {
+    if request.mode == PlaybackMode::ResumeAccelerated && !request.handoff {
         return Err(WorkbenchError::new(
-            "fast playback requires a parent-origin segment or ready draft selection",
-        ));
-    }
-    if request.origin == PlaybackOrigin::Parent
-        && !matches!(
-            request.selection,
-            BrowserSelection::Draft { .. } | BrowserSelection::Segment { .. }
-        )
-    {
-        return Err(WorkbenchError::new(
-            "parent-origin playback requires a segment or ready draft selection",
+            "accelerated resume requires controller handoff at the selected endpoint",
         ));
     }
     Ok(())
+}
+
+pub(super) fn playback_fast_forward_frames(playback: PlaybackSettings, frames: u64) -> Option<u64> {
+    playback.fast.then_some(frames)
 }

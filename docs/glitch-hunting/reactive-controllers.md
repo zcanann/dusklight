@@ -343,12 +343,12 @@ null backend is not used because its live GPU state cannot become graphical.
 Conditioned tapes, looping/holding end behavior, controller continuations,
 headless/unpaced launches, and exit-after-tape are rejected for this exact live
 handoff. Partial `0 < N < tape frame count` acceleration remains available to
-native callers, while ordinary workbench parent playback is visible and paced
-from process start.
+native callers. Workbench **Playback** is visible and paced from its declared
+boot; **Resume (accelerated)** always uses the complete tape length.
 
-For authoritative **Record child from parent**, `N` is likewise the absolute
-prefix tape length. Recording additionally verifies its authored start
-boundary before exposing the retained image:
+For authoritative **Record child**, `N` is likewise the absolute prefix tape
+length. Recording additionally verifies its authored start boundary before
+exposing the retained image:
 
 ```powershell
 dusklight --dvd game.iso --fixed-step `

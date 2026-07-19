@@ -21,6 +21,18 @@
     .record-pref select { padding:4px 22px 4px 7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     .reload { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--text); cursor:pointer; font-size:11px; }
     main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
+    .workarea { min-width:0; min-height:0; display:grid; grid-template-columns:230px minmax(0,1fr); }
+    .projects { min-width:0; min-height:0; overflow:auto; border-right:1px solid var(--line); background:#0f141c; }
+    .projects .pane-title { position:sticky; top:0; z-index:3; }
+    .project-tree { padding:7px 6px 18px; font-size:11px; }
+    .project-row { width:100%; min-height:27px; display:flex; align-items:center; gap:5px; padding:4px 7px; border:0; border-radius:4px; background:transparent; color:#bcc6d5; text-align:left; cursor:pointer; }
+    .project-row:hover { background:#171e29; color:var(--text); }
+    .project-row.selected { background:#1c2b40; color:#fff; }
+    .project-row.group { color:#8f9caf; font-weight:700; }
+    .project-row .arrow { width:12px; flex:0 0 12px; color:#68768a; font-size:9px; }
+    .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .project-row .project-frames { color:#657287; font-size:9px; }
+    .project-indent { margin-left:13px; }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
     .pane-title { height:34px; display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--line); background:#0f141c; color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
     .browser .pane-title { position:absolute; z-index:5; top:0; left:0; right:0; pointer-events:none; background:rgba(15,20,28,.94); backdrop-filter:blur(5px); }
@@ -135,7 +147,7 @@
     .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
     .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
     @media (max-width:900px) { .detail-body{grid-template-columns:1fr}.property-content{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))} }
-    @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.detail-body{padding:16px}.property-content{grid-template-columns:1fr}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
+    @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.workarea{grid-template-columns:170px minmax(0,1fr)}.detail-body{padding:16px}.property-content{grid-template-columns:1fr}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
   </style>
 </head>
 <body>
@@ -204,9 +216,15 @@
     <button id="reload" class="reload" type="button">Reload</button>
   </header>
   <main>
-    <section class="browser" aria-label="Route graph">
-      <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · wheel to zoom</span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
-      <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
+    <section class="workarea">
+      <aside class="projects" aria-label="Projects">
+        <div class="pane-title">Projects</div>
+        <div id="projects" class="project-tree" role="tree"><div class="empty">Loading projects...</div></div>
+      </aside>
+      <section class="browser" aria-label="Route graph">
+        <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · wheel to zoom</span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
+        <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
+      </section>
     </section>
     <aside class="details" aria-label="Selection details">
       <div class="pane-title">Properties</div>
@@ -231,6 +249,7 @@
     let predicateEditRevision = null;
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
     let collapsed = new Set();
+    let projectCollapsed = new Set();
     let occurrenceIndex = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
     const RECORDING_SPEED_STORAGE_KEY='dusklight.route-workbench.recording-speed-percent';
@@ -278,7 +297,8 @@
     function normalize(raw) {
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[]};
+      const projects=raw.projects||{groups:[],entries:[]};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = id => graph.predicate_program?.definitions?.find(item=>item.name===id);
@@ -287,6 +307,23 @@
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
     const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
+    function renderProjects() {
+      const root=$('projects');
+      const groups=graph.projects.groups||[];
+      const entries=graph.projects.entries||[];
+      const groupChildren=parent=>groups.filter(group=>(group.parent??null)===parent).sort((a,b)=>a.label.localeCompare(b.label));
+      const projectChildren=group=>entries.filter(entry=>entry.group===group).sort((a,b)=>a.label.localeCompare(b.label));
+      const groupHtml=(group,depth)=>{
+        const children=groupChildren(group.id),projects=projectChildren(group.id);
+        const open=!projectCollapsed.has(group.id);
+        const nested=open?[...children.map(child=>groupHtml(child,depth+1)),...projects.map(project=>projectHtml(project,depth+1))].join(''):'';
+        return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span><span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
+      };
+      const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${selection.kind==='project'&&selection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span><span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.frame_count??'—'}f</span></button></div>`;
+      root.innerHTML=groupChildren(null).map(group=>groupHtml(group,0)).join('')||'<div class="empty">No project tapes.</div>';
+      root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();}));
+      root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId;selection={kind:'project',id,occurrence:`project:${id}`,chain:[]};renderProjects();renderTree();renderDetail();}));
+    }
     const NODE_WIDTH=220;
     const NODE_HEIGHT=68;
     const COLUMN_GAP=76;
@@ -456,6 +493,11 @@
       $('zoomFit').addEventListener('click',fitGraphCamera);
     }
     function field(name,value,mono=false) { return `<div class="field-label">${escapeHtml(name)}</div><div class="field-value${mono?' mono':''}">${escapeHtml(value??'—')}</div>`; }
+    function bootFields(boot) {
+      if(!boot||boot.kind==='process')return field('Type','Process boot');
+      const fixture=boot.fixture;
+      return field('Type','Stage boot')+field('Map',boot.stage,true)+field('Room',boot.room)+field('Spawn point',boot.point)+field('Layer',boot.layer)+field('Save slot',boot.save_slot??'None')+(fixture?field('Loadout',fixture.name||'Fixture')+field('Form',fixture.form||'Default')+field('Inventory entries',(fixture.inventory||[]).length)+field('Equipment entries',(fixture.equipment||[]).length)+field('Flags',(fixture.flags||[]).length)+field('RNG streams',(fixture.rng||[]).length):field('Loadout','Default'));
+    }
     function goalDetail(segmentId,proofs=[]) {
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
@@ -525,10 +567,10 @@
       return `<div class="gameplay-overlay"><img class="detail-thumbnail" src="${escapeHtml(segment.thumbnail)}" alt="Terminal gameplay frame with option evidence overlay">${markers}${markers?'<div class="overlay-legend"><span>◇ target</span><span>○ contact</span></div>':''}</div>`;
     }
     function segmentActions(segment) {
-      const parentPlays=segment.parent?`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-id="${escapeHtml(segment.id)}">Play from parent</button>${segment.generated?'':`<button class="play" type="button" data-play-kind="segment" data-play-origin="parent" data-play-fast="true" data-id="${escapeHtml(segment.id)}">Play from parent (fast)</button>`}`:'';
-      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-origin="boot" data-id="${escapeHtml(segment.id)}">Play from boot</button>${parentPlays}`:'';
+      const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-mode="playback" data-id="${escapeHtml(segment.id)}">Playback</button><button class="play" type="button" data-play-kind="segment" data-play-mode="resume_accelerated" data-id="${escapeHtml(segment.id)}">Resume (accelerated)</button>`:'';
       if(segment.generated)return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}</div>`;
-      const records=(segment.record_anchors||[]).map(anchor=>`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child${anchor.goal?` · ${escapeHtml(label(anchor.goal))}`:''}</button>`).join('');
+      const anchor=(segment.record_anchors||[])[0];
+      const records=anchor?`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child</button>`:'';
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
       const hasSiblings=segment.parent&&(graph.segments.some(item=>item.id!==segment.id&&item.parent===segment.parent)||graph.drafts.some(item=>item.parent?.kind==='segment'&&item.parent.id===segment.parent));
       const siblingDelete=hasSiblings?`<button class="delete" type="button" data-delete-siblings="${escapeHtml(segment.id)}">Keep this; delete siblings…</button>`:'';
@@ -538,24 +580,22 @@
       let html='';
       if(selection.kind==='origin'&&selection.id==='boot') {
         const boot=graph.origin?.recordable_from_boot?graph.origin:null;
-        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="detail-subtitle">A fresh process before the first emulated controller input.</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record from Boot</button></div>`:''}</section>`;
+        const configurations=graph.origin?.configurations||[{kind:'process'}];
+        html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div>${boot?`<div class="actions"><button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button></div>`:''}</section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>Configuration${configurations.length>1?` ${index+1}`:''}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}</div>`;
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
         if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
-        if(draft){const parent=draft.parent||{};const parentPlayback=parent.kind==='milestone'?'':`<button class="play" type="button" data-play-kind="draft" data-play-origin="parent" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from parent</button>`;html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div><div class="detail-subtitle">Unpromoted recorded input. Its immutable ID and tape remain separate from its display name.</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-origin="boot" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Play from boot</button>${parentPlayback}<button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
+        if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
+      } else if(selection.kind==='project') {
+        const project=graph.projects.entries.find(item=>item.id===selection.id);
+        if(project){const artifact=project.artifact||{};html=`<section class="property-summary"><div class="detail-kicker">Project tape</div><div class="detail-title">${escapeHtml(project.label)}</div><div class="actions"><button class="play" type="button" data-play-kind="project" data-play-mode="playback" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="project" data-play-mode="resume_accelerated" data-id="${escapeHtml(project.id)}" ${project.playable?'':'disabled'}>Resume (accelerated)</button></div></section><div class="property-content"><div class="detail-section"><h3>Boot configuration</h3><div class="fields">${project.boot?bootFields(project.boot):field('Status','Invalid')}</div></div><div class="detail-section"><h3>Artifact</h3><div class="fields">${field('Frames',project.frame_count)}${field('Source',artifact.value,true)}${project.fixture_source?field('Fixture source',project.fixture_source,true):''}${field('ID',project.id,true)}</div></div>${project.error?`<div class="detail-section error-note">${escapeHtml(project.error)}</div>`:''}</div>`;}
       }
       $('detail').innerHTML=html||'<div class="empty">This entry no longer exists.</div>';
       bindActions($('detail'));
     }
     function bindActions(root) {
-      root.querySelectorAll('[data-play-kind="draft"][data-play-origin="parent"]:not([data-play-fast])').forEach(button=>{
-        const fast=button.cloneNode(true);
-        fast.dataset.playFast='true';
-        fast.textContent='Play from parent (fast)';
-        button.after(fast);
-      });
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
@@ -566,7 +606,7 @@
       root.querySelectorAll('[data-capture-kind]').forEach(button=>button.addEventListener('click',()=>captureThumbnail(button)));
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
     }
-    function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
+    function render() { $('timelineName').textContent=`${graph.timeline} · Git timeline`;renderProjects();renderTree();if(selection.kind!=='project'&&!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
     function editPredicate(id) {
       if(!graph.predicate_program)return;
       $('predicateTitle').textContent=`Edit objective · ${label(id)}`;
@@ -597,30 +637,30 @@
     }
     async function play(button) {
       const {playKind:kind,id}=button.dataset;
-      const origin=button.dataset.playOrigin||'boot';
-      const fast=button.dataset.playFast==='true';
+      const mode=button.dataset.playMode||'playback';
+      const accelerated=mode==='resume_accelerated';
       const segment=kind==='segment'&&graph.segments.find(item=>item.id===id);
       const draft=kind==='draft'&&graph.drafts.find(item=>item.id===id);
-      if(!segment&&!draft)return;
-      const name=segment?.name||draft?.label||id;
+      const project=kind==='project'&&graph.projects.entries.find(item=>item.id===id);
+      if(!segment&&!draft&&!project)return;
+      const name=segment?.name||draft?.label||project?.label||id;
       button.disabled=true; button.textContent='Launching…';
       $('status').textContent=`Launching ${name}...`; $('status').className='status';
       const speedPercent=validSpeed($('playbackSpeed').value,PLAYBACK_SPEEDS);
-      const payload=segment?{selection:{kind:'segment',id},stop:{kind:'segment',segment:id},handoff:true,origin,fast,speed_percent:speedPercent}:{selection:{kind:'draft',id},stop:{kind:'tick',tick:0},handoff:true,origin,fast,speed_percent:speedPercent};
+      const stop=segment?{kind:'segment',segment:id}:{kind:'tick',tick:0};
+      const payload={selection:{kind,id},stop,handoff:true,mode,speed_percent:speedPercent};
       try {
         const response=await fetch('/api/play',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent=`Running ${name}`; $('status').className='status ok';
-        const pacing=speedPercent===0?'uncapped':`at ${speedPercent}%`;
         const thumbnail=body.thumbnail?' Its missing thumbnail will be captured from the same terminal frame.':'';
-        const playback=fast?'Windowless, muted, uncapped playback to the terminal boundary.':`Playback ${pacing}.`;
-        toast(`Launched ${name} from ${body.origin||origin}. ${playback} Controller handoff is armed after ${body.frames||'the selected'} frames.${thumbnail}`);
+        toast(accelerated?`Resuming ${name} after accelerated playback.${thumbnail}`:`Playing ${name}.${thumbnail}`);
         if(body.thumbnail)waitForThumbnail(body.thumbnail).then(async()=>{await load();toast(`Captured the terminal frame for ${name} during normal playback.`);}).catch(error=>toast(error.message,true));
       } catch(error) {
         $('status').textContent='Launch failed'; $('status').className='status error'; toast(error.message,true);
       } finally {
-        button.disabled=!(segment?.playable||draft?.playable); button.textContent=origin==='parent'?(fast?'Play from parent (fast)':'Play from parent'):'Play from boot';
+        button.disabled=!(segment?.playable||draft?.playable||project?.playable); button.textContent=accelerated?'Resume (accelerated)':'Playback';
       }
     }
     async function waitForThumbnail(url,timeoutMs=180000) {
@@ -791,10 +831,10 @@
         const countdown=countdownSeconds?` Holding the final parent frame for a ${countdownSeconds}s handoff countdown.`:'';
         toast(`Recording ${body.draft_id} at ${speedPercent}%.${prefix}${countdown} Close Dusklight normally to finalize.`); setTimeout(load,750);
       } catch(error) { $('status').textContent='Record failed'; $('status').className='status error'; toast(error.message,true); }
-      finally { button.disabled=false; button.textContent=kind==='origin'?'Record from Boot':'Record child'; }
+      finally { button.disabled=false; button.textContent='Record child'; }
     }
     async function load() {
-      $('status').textContent='Loading…'; $('status').className='status'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';
+      $('status').textContent='Loading…'; $('status').className='status'; $('projects').innerHTML='<div class="empty">Loading projects...</div>'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';
       try {
         const response=await fetch('/api/graph',{cache:'no-store'});
         const body=await response.json().catch(()=>({}));
