@@ -1,4 +1,69 @@
-use super::*;
+use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
+use dusklight_automation_contracts::candidate_envelope::{
+    CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
+};
+use dusklight_automation_contracts::compatibility::{CompatibilityMode, ensure_compatible};
+use dusklight_evaluation::*;
+use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
+use dusklight_search::search::{
+    Candidate, POPULATION_SCHEMA, PopulationManifest, SearchResults, rank_population,
+    write_explicit_population,
+};
+use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
+use serde::Serialize;
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+const fn envelope_kind(kind: TournamentProposerKind) -> ProposerKind {
+    match kind {
+        TournamentProposerKind::IncumbentMutation => ProposerKind::Scripted,
+        TournamentProposerKind::BlindExploration => ProposerKind::Random,
+        TournamentProposerKind::Structured => ProposerKind::StructuredSearch,
+        TournamentProposerKind::Learned => ProposerKind::Learned,
+    }
+}
+
+fn directory_is_nonempty(path: &Path) -> Result<bool, EvaluateError> {
+    Ok(path.exists() && fs::read_dir(path)?.next().is_some())
+}
+
+fn validate_manifest(manifest: &PopulationManifest, path: &Path) -> Result<(), EvaluateError> {
+    if manifest.schema != POPULATION_SCHEMA || manifest.members.is_empty() {
+        return Err(EvaluateError::InvalidManifest(format!(
+            "invalid population manifest {}",
+            path.display()
+        )));
+    }
+    let mut ids = HashSet::new();
+    if manifest
+        .members
+        .iter()
+        .any(|member| !ids.insert(&member.candidate_id))
+    {
+        return Err(EvaluateError::InvalidManifest(
+            "population contains duplicate candidate IDs".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_parent(path: &Path) -> Result<PathBuf, EvaluateError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| EvaluateError::InvalidManifest("manifest has no parent".into()))?;
+    Ok(fs::canonicalize(parent)?)
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<(), EvaluateError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(value)?)?;
+    Ok(())
+}
 
 /// Evaluate several proposer populations under the same declared cap. Every
 /// selected candidate enters one deduplicated native population, so no proposer
@@ -133,7 +198,7 @@ pub fn run_proposer_tournament(
         }
         let proposer_objective = envelope_set.envelopes[0].objective.clone();
         let proposer_action_schema = envelope_set.envelopes[0].action_schema.clone();
-        if proposer_identity.kind != proposer.kind.envelope_kind() {
+        if proposer_identity.kind != envelope_kind(proposer.kind) {
             return Err(EvaluateError::InvalidManifest(format!(
                 "proposer {:?} declares {:?} but its authenticated envelope kind is {:?}",
                 proposer.name, proposer.kind, proposer_identity.kind
@@ -294,10 +359,10 @@ pub fn run_proposer_tournament(
     let prepared_anchored = config
         .anchored
         .as_ref()
-        .map(|anchored| prepare_anchored_objective(anchored, PathBuf::new()))
+        .map(prepare_anchored_evaluator)
         .transpose()?;
     if let Some(prepared) = &prepared_anchored {
-        let identity = &prepared.identity;
+        let identity = prepared.identity();
         let expected_objective = NamedDigest::new(
             identity.goal_milestone.clone(),
             identity.digest.parse().map_err(|error| {
@@ -339,12 +404,12 @@ pub fn run_proposer_tournament(
         harness: config.harness.clone(),
     };
     let (report, results) = if let Some(objective) = &config.anchored {
-        let (report, results) = evaluate_anchored_population_internal(
+        let (report, results) = evaluate_prepared_anchored_population(
             &AnchoredEvaluateConfig {
                 evaluation,
                 objective: objective.clone(),
             },
-            prepared_anchored.as_ref(),
+            prepared_anchored.as_ref().expect("prepared above"),
         )?;
         (report, results.results)
     } else {
@@ -613,82 +678,4 @@ fn validate_tournament_attempt_compatibility(
             })?;
     }
     Ok(())
-}
-
-pub(super) fn required_native_facts_supported(attempts: &[AttemptEvidence]) -> bool {
-    if attempts
-        .iter()
-        .any(|attempt| attempt.harness_terminal.is_some())
-    {
-        return native_terminals_support_required_facts(
-            attempts.iter().map(|attempt| attempt.harness_terminal),
-        );
-    }
-
-    // Anchored route evaluation predates HarnessRunResult, but its first
-    // repetition extracts the same authenticated observation view into a
-    // sealed transition corpus. That successful extraction is direct evidence
-    // that the required native facts and channel ABI were available. Later
-    // repetitions intentionally omit traces and must not negate it.
-    !attempts.is_empty()
-        && attempts
-            .iter()
-            .all(|attempt| attempt.infrastructure_error.is_none())
-        && attempts
-            .iter()
-            .any(|attempt| attempt.transition_corpus.is_some())
-}
-
-pub(super) fn native_terminals_support_required_facts(
-    terminals: impl IntoIterator<Item = Option<HarnessTerminalReason>>,
-) -> bool {
-    let mut observed = false;
-    for terminal in terminals {
-        observed = true;
-        if matches!(
-            terminal,
-            None | Some(
-                HarnessTerminalReason::Unsupported | HarnessTerminalReason::CapabilityMismatch
-            )
-        ) {
-            return false;
-        }
-    }
-    observed
-}
-
-pub(super) fn learned_holdout_scores_adequate(
-    rows: impl IntoIterator<Item = (bool, LexicographicScore)>,
-) -> bool {
-    let mut best_learned: Option<LexicographicScore> = None;
-    let mut best_baseline: Option<LexicographicScore> = None;
-    for (learned, score) in rows {
-        let best = if learned {
-            &mut best_learned
-        } else {
-            &mut best_baseline
-        };
-        if best.as_ref().is_none_or(|incumbent| score > *incumbent) {
-            *best = Some(score);
-        }
-    }
-    matches!((best_learned, best_baseline), (Some(learned), Some(baseline)) if learned >= baseline)
-}
-
-pub(super) fn learned_proposal_held_out_performance(
-    manifest: &PopulationManifest,
-    leaderboard: &[LeaderboardEntry],
-) -> bool {
-    let member_by_id = manifest
-        .members
-        .iter()
-        .map(|member| (member.candidate_id.as_str(), member))
-        .collect::<BTreeMap<_, _>>();
-    learned_holdout_scores_adequate(leaderboard.iter().filter_map(|row| {
-        let member = member_by_id.get(row.candidate_id.as_str())?;
-        let learned = member.ancestry.mutation.as_deref().is_some_and(|mutation| {
-            mutation.starts_with("q_guided") || mutation.starts_with("q_disagreement_heuristic")
-        });
-        Some((learned, row.score))
-    }))
 }

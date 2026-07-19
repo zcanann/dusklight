@@ -42,8 +42,8 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "lib.rs",
         "search_evaluator.rs",
         "search_evaluator/native_result.rs",
+        "search_evaluator/proposal_readiness.rs",
         "search_evaluator/tests.rs",
-        "search_evaluator/tournament.rs",
         "search_evaluator/trial.rs",
     },
     "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
@@ -56,6 +56,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "harness/mod.rs",
         "lib.rs",
         "search_drivers.rs",
+        "tournament.rs",
     },
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {

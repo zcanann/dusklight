@@ -206,3 +206,14 @@ or acquire a second native proof path by mere module placement.
 
 **Done when:** adding another bounded optimizer cannot grow the evaluator crate
 or hide portable candidate logic inside native-execution policy.
+
+## 10. Compiler-enforced tournament ownership
+
+- [x] Move proposer tournament selection, budget accounting, and comparison
+  orchestration out of `dusklight-evaluation`; retain learned-proposal fact and
+  holdout admission as explicit evaluator policy.
+- [x] Preserve equal-budget and campaign CLI behavior, ratchet the closed crate
+  inventories, and pass the full workspace suite.
+
+**Done when:** tournament policy depends one-way on authenticated evaluation,
+while evaluator admission remains independent of tournament coordination.

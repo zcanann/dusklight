@@ -1,4 +1,5 @@
 use super::*;
+use crate::search::write_explicit_population;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn heldout_score(first_hit_tick: u64) -> LexicographicScore {

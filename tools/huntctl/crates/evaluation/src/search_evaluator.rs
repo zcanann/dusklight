@@ -6,7 +6,6 @@ use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavio
 use crate::candidate_envelope::{
     CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
 };
-use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
     ContinuousAxes, ContinuousMethod, ContinuousOptimizerSnapshot,
@@ -39,7 +38,7 @@ use crate::search::{
     MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
     SegmentProfile,
     evolve_population_with_retained_and_proposals, rank_population, tape_input_complexity,
-    write_explicit_population, write_seed_population,
+    write_seed_population,
 };
 use crate::semantic_novelty::catalog::{
     SemanticNoveltyAssessment, SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig,
@@ -367,17 +366,6 @@ pub enum TournamentProposerKind {
     BlindExploration,
     Structured,
     Learned,
-}
-
-impl TournamentProposerKind {
-    const fn envelope_kind(self) -> ProposerKind {
-        match self {
-            Self::IncumbentMutation => ProposerKind::Scripted,
-            Self::BlindExploration => ProposerKind::Random,
-            Self::Structured => ProposerKind::StructuredSearch,
-            Self::Learned => ProposerKind::Learned,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1396,11 +1384,10 @@ fn validate_anchored_execution_paths(
     Ok(())
 }
 
-mod tournament;
-pub use tournament::run_proposer_tournament;
+mod proposal_readiness;
 #[cfg(test)]
-use tournament::{learned_holdout_scores_adequate, native_terminals_support_required_facts};
-use tournament::{
+use proposal_readiness::{learned_holdout_scores_adequate, native_terminals_support_required_facts};
+use proposal_readiness::{
     learned_proposal_held_out_performance, required_native_facts_supported,
 };
 pub fn run_anchored_search(

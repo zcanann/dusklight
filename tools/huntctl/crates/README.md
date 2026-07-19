@@ -89,13 +89,14 @@ proposal authority.
 ## `dusklight-evaluation`
 
 Owns authenticated population evaluation, anchored generation evaluation,
-tournament scoring, trial evidence extraction, and native-result admission. It
-may execute already-materialized candidates through the harness runtime and
-consume proposal policies, but it cannot define harness request truth, train
-models, author proposal policy, schedule general optimizer loops or top-level
-objective campaigns, or choose how finalists are reduced. A prepared anchored
-evaluator exposes repeated proof against one authenticated objective without
-granting reducer policy access to evaluation internals.
+trial evidence extraction, native-result admission, and explicit learned-
+proposal fact/holdout gates. It may execute already-materialized candidates
+through the harness runtime and consume proposal policies, but it cannot define
+harness request truth, train models, author proposal or tournament policy,
+schedule general optimizer loops or top-level objective campaigns, or choose
+how finalists are reduced. A prepared anchored evaluator exposes repeated proof
+against one authenticated objective without granting orchestration access to
+evaluation internals.
 
 ## `dusklight-harness-contracts`
 
@@ -174,12 +175,13 @@ systems that consume them.
 ## `dusklight-orchestration`
 
 Owns top-level objective campaign planning, scheduling, cold replay, final
-reporting, bounded optimizer drivers, and finalist-reduction policy. Search
-drivers and boot/anchored-route reducers compose portable candidate, learner,
-and control transforms with the authenticated evaluator; evaluation cannot
-depend back on them. Nothing below orchestration may depend on it or the
-huntctl executable. It is not a general-purpose home for native execution,
-evaluation truth, learner implementation, or proposal code.
+reporting, bounded optimizer drivers, proposer tournaments, and finalist-
+reduction policy. Search drivers, tournaments, and boot/anchored-route reducers
+compose portable candidate, learner, and control transforms with the
+authenticated evaluator; evaluation cannot depend back on them. Nothing below
+orchestration may depend on it or the huntctl executable. It is not a general-
+purpose home for native execution, evaluation truth, learner implementation,
+or proposal code.
 
 ## `dusklight-proposals`
 
