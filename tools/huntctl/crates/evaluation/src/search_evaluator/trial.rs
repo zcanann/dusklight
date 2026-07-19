@@ -730,7 +730,7 @@ fn extract_trial_transition_corpus(
         &trial.candidate_id,
         &trace_bytes,
     );
-    let corpus = extract_exploratory_from_bytes(
+    let corpus = extract_exploratory_v2_from_bytes(
         &trace_bytes,
         &tape_bytes,
         ExploratoryExtractConfig {

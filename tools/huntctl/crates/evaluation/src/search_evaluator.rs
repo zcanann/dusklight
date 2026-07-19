@@ -39,7 +39,7 @@ use crate::learning::evaluation_isolation::{
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use crate::offline_rl::{
-    ExploratoryExtractConfig, extract_exploratory_from_bytes, movement_action_schema_digest_v2,
+    ExploratoryExtractConfig, extract_exploratory_v2_from_bytes, movement_action_schema_digest_v2,
 };
 use crate::q_search::{
     QEpisode, QProposalConfig, QProposalReadinessEvidence, propose_q_candidates_with_lineage,
