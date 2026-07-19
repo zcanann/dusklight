@@ -388,6 +388,7 @@
       const overridden=project.boot_override?.enabled===true;
       const boot=overridden?project.boot_override.boot:project.boot;
       const source=overridden?'workspace override':'stored in tape';
+      if(overridden)return `<span class="project-icon" title="${escapeHtml(bootSummary(boot,true))}" aria-label="Active workspace boot override">🫠</span>`;
       if(boot?.kind==='stage')return `<span class="project-icon" title="Starts in ${escapeHtml(boot.stage||'a stage')} (${source})" aria-label="Tape stage boot">🗺️</span>`;
       return '<span class="project-icon" title="Tape starts from game startup" aria-label="Tape process boot">💿</span>';
     };
