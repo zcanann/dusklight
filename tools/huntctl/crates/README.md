@@ -45,6 +45,7 @@ dusklight-huntctl (CLI and domain orchestration)
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-evaluation ──────────┤
 │   ├── dusklight-harness-runtime ─────┤
+│   ├── dusklight-learning ─────────────┤
 │   └── dusklight-search ──────────────┤
 ├── dusklight-proposals ──────────────┤
 │   ├── dusklight-evidence ───────────┤
@@ -87,14 +88,14 @@ proposal authority.
 
 ## `dusklight-evaluation`
 
-Owns authenticated population evaluation, bounded search runs, tournament
-scoring, trial evidence extraction, and native-result admission. It may execute
-already-materialized candidates through the harness runtime and consume
-proposal policies, but it cannot define harness request truth, train models,
-author proposal policy, schedule top-level objective campaigns, or choose how
-finalists are reduced. A prepared anchored evaluator exposes repeated proof
-against one authenticated objective without granting reducer policy access to
-evaluation internals.
+Owns authenticated population evaluation, anchored generation evaluation,
+tournament scoring, trial evidence extraction, and native-result admission. It
+may execute already-materialized candidates through the harness runtime and
+consume proposal policies, but it cannot define harness request truth, train
+models, author proposal policy, schedule general optimizer loops or top-level
+objective campaigns, or choose how finalists are reduced. A prepared anchored
+evaluator exposes repeated proof against one authenticated objective without
+granting reducer policy access to evaluation internals.
 
 ## `dusklight-harness-contracts`
 
@@ -173,11 +174,12 @@ systems that consume them.
 ## `dusklight-orchestration`
 
 Owns top-level objective campaign planning, scheduling, cold replay, final
-reporting, and finalist-reduction policy. Boot and anchored-route reducers
-compose portable candidate/control transforms with the authenticated evaluator;
-evaluation cannot depend back on them. Nothing below orchestration may depend
-on it or the huntctl executable. It is not a general-purpose home for native
-execution, evaluation truth, learning, or proposal code.
+reporting, bounded optimizer drivers, and finalist-reduction policy. Search
+drivers and boot/anchored-route reducers compose portable candidate, learner,
+and control transforms with the authenticated evaluator; evaluation cannot
+depend back on them. Nothing below orchestration may depend on it or the
+huntctl executable. It is not a general-purpose home for native execution,
+evaluation truth, learner implementation, or proposal code.
 
 ## `dusklight-proposals`
 

@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn tape_intervention_is_minimal_and_requires_shared_identity() {
+    let parent = Candidate::baseline(SegmentProfile::BootToFsp103)
+        .compile()
+        .unwrap();
+    let mut child = parent.clone();
+    child.frames[1].pads[0].buttons ^= BUTTON_A;
+    assert_eq!(
+        tape_intervention(&parent, &child),
+        Some(InterventionRange {
+            start_frame: 1,
+            end_frame_exclusive: 2,
+            parent_end_frame_exclusive: 2,
+        })
+    );
+    assert_eq!(tape_intervention(&parent, &parent), None);
+    child.boot = TapeBoot::Stage {
+        stage: "F_SP103".into(),
+        room: 1,
+        point: 1,
+        layer: 3,
+        save_slot: None,
+        fixture: None,
+    };
+    assert_eq!(tape_intervention(&parent, &child), None);
+}
+
+#[test]
 fn macro_ir_compiles_analog_roll_and_press() {
     let candidate = Candidate {
         schema: CANDIDATE_SCHEMA.into(),

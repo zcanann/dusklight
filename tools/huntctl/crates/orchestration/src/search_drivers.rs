@@ -1,4 +1,32 @@
-use super::*;
+use dusklight_evaluation::*;
+use dusklight_search::bayesian_search::{
+    BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal,
+};
+use dusklight_search::continuous_search::{
+    ContinuousOptimizer, ContinuousOptimizerConfig, ContinuousSample, ContinuousTemplate,
+};
+use dusklight_search::search::{
+    Ancestry, Candidate, EvolutionConfig, InterventionRange, LexicographicScore, SearchResults,
+    evolve_population, rank_population, tape_intervention, write_explicit_population,
+    write_seed_population,
+};
+use dusklight_learning::planning_priors::option_catalog_sha256;
+use serde::Serialize;
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
+use std::path::Path;
+
+fn directory_is_nonempty(path: &Path) -> Result<bool, EvaluateError> {
+    Ok(path.is_dir() && fs::read_dir(path)?.next().transpose()?.is_some())
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> Result<(), EvaluateError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec_pretty(value)?)?;
+    Ok(())
+}
 
 pub fn run_search(config: &SearchRunConfig) -> Result<SearchRunSummary, EvaluateError> {
     if config.generations == 0

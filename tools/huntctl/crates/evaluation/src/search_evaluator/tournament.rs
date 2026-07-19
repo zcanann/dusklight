@@ -615,36 +615,6 @@ fn validate_tournament_attempt_compatibility(
     Ok(())
 }
 
-pub(super) fn tape_intervention(
-    parent: &InputTape,
-    child: &InputTape,
-) -> Option<InterventionRange> {
-    if parent.boot != child.boot
-        || parent.tick_rate_numerator != child.tick_rate_numerator
-        || parent.tick_rate_denominator != child.tick_rate_denominator
-    {
-        return None;
-    }
-    let shared = parent.frames.len().min(child.frames.len());
-    let start = (0..shared)
-        .find(|index| parent.frames[*index] != child.frames[*index])
-        .or_else(|| (parent.frames.len() != child.frames.len()).then_some(shared))?;
-    let mut parent_end = parent.frames.len();
-    let mut child_end = child.frames.len();
-    while parent_end > start
-        && child_end > start
-        && parent.frames[parent_end - 1] == child.frames[child_end - 1]
-    {
-        parent_end -= 1;
-        child_end -= 1;
-    }
-    Some(InterventionRange {
-        start_frame: start as u64,
-        end_frame_exclusive: child_end as u64,
-        parent_end_frame_exclusive: parent_end as u64,
-    })
-}
-
 pub(super) fn required_native_facts_supported(attempts: &[AttemptEvidence]) -> bool {
     if attempts
         .iter()

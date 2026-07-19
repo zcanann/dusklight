@@ -387,6 +387,7 @@ dependencies = [
  "dusklight-evaluation",
  "dusklight-harness-contracts",
  "dusklight-harness-runtime",
+ "dusklight-learning",
  "dusklight-objectives",
  "dusklight-search",
  "dusklight-trace",

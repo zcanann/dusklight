@@ -11,6 +11,7 @@ dusklight-control = { path = "../control" }
 dusklight-evaluation = { path = "../evaluation" }
 dusklight-harness-contracts = { path = "../harness-contracts" }
 dusklight-harness-runtime = { path = "../harness-runtime" }
+dusklight-learning = { path = "../learning" }
 dusklight-objectives = { path = "../objectives" }
 dusklight-search = { path = "../search" }
 dusklight-trace = { path = "../trace" }

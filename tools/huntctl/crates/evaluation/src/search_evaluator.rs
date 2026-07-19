@@ -1,9 +1,7 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
 use crate::artifact::Digest as ArtifactDigest;
-use crate::bayesian_search::{
-    BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
-};
+use crate::bayesian_search::BayesianSnapshot;
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
 use crate::candidate_envelope::{
     CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
@@ -11,8 +9,7 @@ use crate::candidate_envelope::{
 use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
-    ContinuousAxes, ContinuousMethod, ContinuousOptimizer, ContinuousOptimizerConfig,
-    ContinuousOptimizerSnapshot, ContinuousSample, ContinuousTemplate,
+    ContinuousAxes, ContinuousMethod, ContinuousOptimizerSnapshot,
 };
 use crate::dataset::{DATASET_SOURCE_SCHEMA_V1, DatasetSourceDescriptor};
 use crate::episode::{
@@ -30,7 +27,7 @@ use crate::learning::evaluation_isolation::{
     EvaluationOutcomeInput,
 };
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
-use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
+use crate::learning::planning_priors::QBeamPriorTable;
 use crate::offline_rl::{
     ExploratoryExtractConfig, extract_exploratory_v2_from_bytes, movement_action_schema_digest_v2,
 };
@@ -38,9 +35,9 @@ use crate::q_search::{
     QEpisode, QProposalConfig, QProposalReadinessEvidence, propose_q_candidates_with_lineage,
 };
 use crate::search::{
-    Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LeaderboardEntry,
-    LexicographicScore, MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA,
-    SearchResults, SegmentProfile, evolve_population,
+    Ancestry, Candidate, CandidateResult, EvolutionConfig, LeaderboardEntry, LexicographicScore,
+    MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
+    SegmentProfile,
     evolve_population_with_retained_and_proposals, rank_population, tape_input_complexity,
     write_explicit_population, write_seed_population,
 };
@@ -1399,14 +1396,12 @@ fn validate_anchored_execution_paths(
     Ok(())
 }
 
-mod search_runs;
-pub use search_runs::*;
 mod tournament;
 pub use tournament::run_proposer_tournament;
 #[cfg(test)]
 use tournament::{learned_holdout_scores_adequate, native_terminals_support_required_facts};
 use tournament::{
-    learned_proposal_held_out_performance, required_native_facts_supported, tape_intervention,
+    learned_proposal_held_out_performance, required_native_facts_supported,
 };
 pub fn run_anchored_search(
     config: &AnchoredSearchRunConfig,

@@ -194,3 +194,15 @@ general search or silently changing the successful terminal state.
 
 **Done when:** adding another finalist reducer cannot grow the evaluator crate
 or acquire a second native proof path by mere module placement.
+
+## 9. Compiler-enforced bounded-search ownership
+
+- [x] Move ordinary, beam, continuous, and Bayesian native search drivers from
+  `dusklight-evaluation` into `dusklight-orchestration`; search policy may call
+  evaluation, but evaluation must not own optimizer loops.
+- [x] Move pure parent/child tape intervention discovery into
+  `dusklight-search`, preserve the CLI facade, ratchet closed inventories, and
+  pass the full workspace suite.
+
+**Done when:** adding another bounded optimizer cannot grow the evaluator crate
+or hide portable candidate logic inside native-execution policy.

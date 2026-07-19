@@ -42,7 +42,6 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "lib.rs",
         "search_evaluator.rs",
         "search_evaluator/native_result.rs",
-        "search_evaluator/search_runs.rs",
         "search_evaluator/tests.rs",
         "search_evaluator/tournament.rs",
         "search_evaluator/trial.rs",
@@ -56,6 +55,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "harness/conformance.rs",
         "harness/mod.rs",
         "lib.rs",
+        "search_drivers.rs",
     },
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {
@@ -149,6 +149,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-evaluation",
         "dusklight-harness-contracts",
         "dusklight-harness-runtime",
+        "dusklight-learning",
         "dusklight-objectives",
         "dusklight-search",
         "dusklight-trace",
