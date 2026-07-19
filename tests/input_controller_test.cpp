@@ -850,6 +850,23 @@ void testVersionedPreInputStepContract() {
     REQUIRE(response.evaluation.input.stickY == -34);
     REQUIRE(program.respond(request).evaluation.input == response.evaluation.input);
 
+    auto seekBytes = makeProgram(1, 1);
+    setPoint(layer(seekBytes, 0), 0, 0, 1, 10.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F,
+        0.5F, 100);
+    const InputControllerProgram seekProgram = decode(seekBytes);
+    ControllerObservation rawObservation{
+        .playerPresent = true,
+        .cameraPresent = true,
+    };
+    ControllerObservation factObservation = rawObservation;
+    factObservation.playerX = 10.0F;
+    InputControllerStepRequest factRequest = request;
+    factRequest.facts =
+        build_typed_fact_response(factObservation, TypedFactPhase::PreInput, 77, 41);
+    factRequest.observation = rawObservation;
+    REQUIRE(seekProgram.evaluate(0, rawObservation).stickX != 0);
+    REQUIRE(seekProgram.respond(factRequest).evaluation.input.stickX == 0);
+
     InputControllerStepRequest invalid = request;
     ++invalid.minorVersion;
     REQUIRE(program.respond(invalid).error == InputControllerStepError::UnsupportedVersion);
