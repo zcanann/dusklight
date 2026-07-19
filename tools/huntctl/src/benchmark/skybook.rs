@@ -509,8 +509,7 @@ fn bare_urls(body: &str) -> Vec<String> {
                     character.is_whitespace() || matches!(character, ')' | ']' | '>' | '"' | '\'')
                 })
                 .map_or(body.len(), |relative| start + relative);
-            let url = body[start..end]
-                .trim_end_matches(|character: char| matches!(character, '.' | ',' | ';' | ':'));
+            let url = body[start..end].trim_end_matches(['.', ',', ';', ':']);
             if !url.is_empty() {
                 urls.insert(url.to_string());
             }

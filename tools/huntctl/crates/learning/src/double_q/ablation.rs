@@ -191,7 +191,7 @@ impl QComponentModel {
                     )?;
                 }
                 gradient_updates += 1;
-                if gradient_updates % config.critic.target_sync_steps as u64 == 0 {
+                if gradient_updates.is_multiple_of(config.critic.target_sync_steps as u64) {
                     target_a = critic_a.clone();
                     target_b = critic_b.clone();
                     target_synchronizations += 1;
@@ -499,6 +499,9 @@ struct NoisyCritic {
     output_bias_noise: Vec<f64>,
 }
 
+// These critics intentionally use row-major flat tensors. Index-based loops
+// make the parameter layout and gradient destination explicit.
+#[allow(clippy::needless_range_loop)]
 impl NoisyCritic {
     fn initialized(
         feature_width: usize,
@@ -704,6 +707,7 @@ struct DistributionalCritic {
     output_bias: Vec<f64>,
 }
 
+#[allow(clippy::needless_range_loop)]
 impl DistributionalCritic {
     fn initialized(
         feature_width: usize,
@@ -928,6 +932,7 @@ struct DuelingCritic {
     advantage_bias: Vec<f64>,
 }
 
+#[allow(clippy::needless_range_loop)]
 impl DuelingCritic {
     fn initialized(
         feature_width: usize,

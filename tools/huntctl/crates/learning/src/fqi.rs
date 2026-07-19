@@ -551,6 +551,7 @@ struct RegressionForest {
 }
 
 impl RegressionForest {
+    #[allow(clippy::too_many_arguments)]
     fn fit(
         transitions: &[Transition],
         targets: &[f64],

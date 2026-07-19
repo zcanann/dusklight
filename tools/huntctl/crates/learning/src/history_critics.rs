@@ -382,7 +382,7 @@ impl Reservoir {
         let input_weights = (0..hidden_width)
             .map(|row| {
                 (0..input_width)
-                    .map(|column| weight(row, column, 0x494e_5055_54, 0.75))
+                    .map(|column| weight(row, column, 0x0049_4e50_5554, 0.75))
                     .collect()
             })
             .collect();
@@ -393,7 +393,7 @@ impl Reservoir {
                         if row == column {
                             0.55
                         } else {
-                            weight(row, column, 0x5245_4355_52, 0.08 / hidden_width as f64)
+                            weight(row, column, 0x0052_4543_5552, 0.08 / hidden_width as f64)
                         }
                     })
                     .collect()

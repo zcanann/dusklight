@@ -430,9 +430,12 @@ mod tests {
     #[test]
     fn generation_is_exact_parent_plus_sealed_delta() {
         let first_corpus = corpus(1);
-        let first =
-            OnlineDatasetGeneration::build(None, &seal(0, &first_corpus), &[first_corpus.clone()])
-                .unwrap();
+        let first = OnlineDatasetGeneration::build(
+            None,
+            &seal(0, &first_corpus),
+            std::slice::from_ref(&first_corpus),
+        )
+        .unwrap();
         let second_corpus = corpus(2);
         let second = OnlineDatasetGeneration::build(
             Some(&first),

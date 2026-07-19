@@ -77,7 +77,7 @@ pub enum EvidencePhase {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExactActionEvidence {
     PadFrame { tape_frame: u64, frame: InputFrame },
-    Option { execution: OptionExecution },
+    Option { execution: Box<OptionExecution> },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -653,18 +653,17 @@ impl TransitionEvidenceBundle {
                 "entity",
             )?;
             validate_exact_action(&evidence.action, evidence.duration_ticks, self.tape_sha256)?;
-            if let ExactActionEvidence::PadFrame { tape_frame, .. } = &evidence.action {
-                if evidence.post_action.tape_frame != Some(*tape_frame)
+            if let ExactActionEvidence::PadFrame { tape_frame, .. } = &evidence.action
+                && (evidence.post_action.tape_frame != Some(*tape_frame)
                     || evidence
                         .pre_action
                         .tape_frame
                         .and_then(|frame| frame.checked_add(1))
-                        != Some(*tape_frame)
-                {
-                    return Err(TransitionEvidenceError::new(
-                        "pad-frame action is not aligned to its observation boundaries",
-                    ));
-                }
+                        != Some(*tape_frame))
+            {
+                return Err(TransitionEvidenceError::new(
+                    "pad-frame action is not aligned to its observation boundaries",
+                ));
             }
         }
         Ok(())

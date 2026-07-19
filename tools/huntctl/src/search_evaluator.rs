@@ -2014,7 +2014,7 @@ pub fn run_proposer_tournament(
     let episode_slots = match definition.budget_unit {
         TournamentBudgetUnit::Episodes => {
             let repetitions = u64::from(config.repetitions);
-            if definition.budget_per_proposer % repetitions != 0 {
+            if !definition.budget_per_proposer.is_multiple_of(repetitions) {
                 return Err(EvaluateError::InvalidConfig(
                     "episode budget must be an exact multiple of repetitions".into(),
                 ));
@@ -2736,27 +2736,27 @@ pub fn run_anchored_search(
                     .then_with(|| left_id.cmp(&right_id))
             });
             let q_budget = (non_elite_budget - archived_candidates.len()).div_ceil(2);
-            let q_result = if q_budget == 0 || q_episodes.is_empty() || dataset_generation.is_none()
-            {
-                Err(
+            let q_result = match dataset_generation.as_ref() {
+                Some(dataset_generation) if q_budget > 0 && !q_episodes.is_empty() => {
+                    propose_q_candidates_with_lineage(
+                        &corpora,
+                        &q_episodes,
+                        QProposalConfig {
+                            generation: generation + 1,
+                            max_proposals: q_budget,
+                            iterations: 12,
+                            trees_per_action: 15,
+                            seed: search.rng_seed + u64::from(generation) + 1,
+                        },
+                        dataset_generation,
+                        previous_model_lineage.as_ref(),
+                    )
+                    .map_err(|error| error.to_string())
+                }
+                _ => Err(
                     "no non-elite slots, aligned elite episodes, or sealed training generation is available"
                         .to_string(),
-                )
-            } else {
-                propose_q_candidates_with_lineage(
-                    &corpora,
-                    &q_episodes,
-                    QProposalConfig {
-                        generation: generation + 1,
-                        max_proposals: q_budget,
-                        iterations: 12,
-                        trees_per_action: 15,
-                        seed: search.rng_seed + u64::from(generation) + 1,
-                    },
-                    dataset_generation.as_ref().expect("checked above"),
-                    previous_model_lineage.as_ref(),
-                )
-                .map_err(|error| error.to_string())
+                ),
             };
             let q_candidates = match q_result {
                 Ok(batch) => {
@@ -4377,11 +4377,13 @@ fn classify_outcome(
     }
 }
 
+type ExtractedTrialTransitionCorpus = (PathBuf, PathBuf, PathBuf, Option<PathBuf>, PathBuf, u64);
+
 fn extract_trial_transition_corpus(
     trial: &Trial,
     evidence: &AttemptEvidence,
     objective: &PreparedAnchoredObjective,
-) -> Result<(PathBuf, PathBuf, PathBuf, Option<PathBuf>, PathBuf, u64), String> {
+) -> Result<ExtractedTrialTransitionCorpus, String> {
     let trace_path = evidence
         .gameplay_trace
         .as_ref()
@@ -5044,7 +5046,7 @@ fn parse_anchored_milestones(
             ))
         })?)?;
     if native.schema.name != "dusklight.automation.milestones"
-        || !matches!(native.schema.version, 1 | 2 | 3 | 4 | 5)
+        || !matches!(native.schema.version, 1..=5)
     {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),
@@ -5270,7 +5272,7 @@ fn parse_native_milestones(
             ))
         })?)?;
     if native.schema.name != "dusklight.automation.milestones"
-        || !matches!(native.schema.version, 1 | 2 | 3 | 4 | 5)
+        || !matches!(native.schema.version, 1..=5)
     {
         return Err(EvaluateError::NativeResult(
             "unsupported native milestone schema".into(),

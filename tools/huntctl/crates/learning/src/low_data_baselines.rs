@@ -103,12 +103,11 @@ pub fn empirical_return_samples(
             || transition.next_state.len() != width
             || transition.duration == 0
             || !transition.reward.is_finite()
-            || transition
+            || !transition
                 .state
                 .iter()
                 .chain(&transition.next_state)
                 .all(|value| value.is_finite())
-                == false
         {
             return Err(BaselineError::new("invalid empirical-return transition"));
         }

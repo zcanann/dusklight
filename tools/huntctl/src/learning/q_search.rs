@@ -504,7 +504,7 @@ fn propose_q_candidates_internal(
             });
             let stratum = considered - 1;
             let mut latin_action = ((stratum * MOVEMENT_ACTION_COUNT_V2 as usize
-                / total_states.min(MAX_PROPOSAL_STATES).max(1))
+                / total_states.clamp(1, MAX_PROPOSAL_STATES))
                 + config.seed as usize)
                 % MOVEMENT_ACTION_COUNT_V2 as usize;
             if latin_action as u32 == transition.action.action_id {

@@ -315,6 +315,7 @@ impl RainbowAblationReport {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn single_component(
         training_transitions: usize,
         held_out_transitions: usize,

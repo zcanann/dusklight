@@ -3156,18 +3156,14 @@ enum StackItem {
     Expression(Expression),
 }
 
-fn decode_expression(
-    bytes: &[u8],
-    operation_count: u16,
-) -> Result<
-    (
-        Expression,
-        Vec<Expression>,
-        Option<u16>,
-        Vec<ValueProjection>,
-    ),
-    BinaryError,
-> {
+type DecodedExpression = (
+    Expression,
+    Vec<Expression>,
+    Option<u16>,
+    Vec<ValueProjection>,
+);
+
+fn decode_expression(bytes: &[u8], operation_count: u16) -> Result<DecodedExpression, BinaryError> {
     let mut cursor = Cursor::new(bytes);
     let mut stack = Vec::new();
     let mut sequence_within = None;
@@ -3824,7 +3820,7 @@ milestone local_actor_goal {
 
         let compiled = compile(&program).unwrap();
         assert_eq!(&compiled.bytes[4..12], &[1, 0, 2, 0, 1, 0, 2, 0]);
-        assert!(compiled.bytes.iter().any(|byte| *byte == 0x02));
+        assert!(compiled.bytes.contains(&0x02));
         let decoded = decode(&compiled.bytes).unwrap();
         assert_eq!(decoded.program, program);
         assert_eq!(compile(&decoded.program).unwrap().bytes, compiled.bytes);

@@ -1564,7 +1564,7 @@ fn match_target(
             (action.procedure_id == *procedure_id
                 && action.mode_flags & mode_all == *mode_all
                 && action.mode_flags & mode_none == 0)
-                .then(|| OracleFacts::Action {
+                .then_some(OracleFacts::Action {
                     procedure_id: action.procedure_id,
                     mode_flags: action.mode_flags,
                 })?
@@ -2031,10 +2031,8 @@ fn validate_target(target: &OracleTarget) -> Result<(), OracleError> {
                 validate_evidence_text(field, "oracle field selector")?;
             }
         }
-        OracleTarget::HeapFailure { heap } => {
-            if let Some(heap) = heap {
-                validate_evidence_text(heap, "oracle heap selector")?;
-            }
+        OracleTarget::HeapFailure { heap: Some(heap) } => {
+            validate_evidence_text(heap, "oracle heap selector")?;
         }
         OracleTarget::Hang {
             minimum_stalled_millis,
@@ -2046,10 +2044,8 @@ fn validate_target(target: &OracleTarget) -> Result<(), OracleError> {
         {
             return Err(OracleError::new("invalid run anomaly tick threshold"));
         }
-        OracleTarget::PreservedStorageState { field } => {
-            if let Some(field) = field {
-                validate_evidence_text(field, "oracle state-field selector")?;
-            }
+        OracleTarget::PreservedStorageState { field: Some(field) } => {
+            validate_evidence_text(field, "oracle state-field selector")?;
         }
         OracleTarget::SaveStateAnomaly { slot, field } => {
             if slot.is_some_and(|slot| slot > 2) {
@@ -2064,10 +2060,10 @@ fn validate_target(target: &OracleTarget) -> Result<(), OracleError> {
         {
             return Err(OracleError::new("invalid event-queue depth"));
         }
-        OracleTarget::SequenceBreak { sequence } => {
-            if let Some(sequence) = sequence {
-                validate_evidence_text(sequence, "oracle sequence selector")?;
-            }
+        OracleTarget::SequenceBreak {
+            sequence: Some(sequence),
+        } => {
+            validate_evidence_text(sequence, "oracle sequence selector")?;
         }
         _ => {}
     }

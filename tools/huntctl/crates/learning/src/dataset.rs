@@ -801,7 +801,7 @@ mod tests {
             Digest([0x22; 32]),
             2,
             vec![Transition {
-                source: source_reference.clone(),
+                source: source_reference,
                 state: vec![byte as f32, 0.0],
                 action: MacroAction {
                     action_id: u32::from(byte),
@@ -810,7 +810,7 @@ mod tests {
                 },
                 duration_ticks: 1,
                 reward: 1.0,
-                next: next_reference.clone(),
+                next: next_reference,
                 next_state: vec![byte as f32 + 1.0, 0.0],
                 terminal: true,
             }],

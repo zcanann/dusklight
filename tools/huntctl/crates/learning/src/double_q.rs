@@ -177,7 +177,7 @@ impl DoubleQ {
                     conservative_temperature,
                 )?;
                 gradient_updates += 1;
-                if gradient_updates % config.target_sync_steps as u64 == 0 {
+                if gradient_updates.is_multiple_of(config.target_sync_steps as u64) {
                     target_a = critic_a.clone();
                     target_b = critic_b.clone();
                     target_synchronizations += 1;
@@ -435,6 +435,9 @@ struct Critic {
     output_bias: Vec<f64>,
 }
 
+// Dense parameters are stored row-major; explicit indices keep each gradient
+// update aligned with the corresponding flat tensor slot.
+#[allow(clippy::needless_range_loop)]
 impl Critic {
     fn initialized(
         feature_width: usize,
@@ -514,6 +517,7 @@ impl Critic {
             .expect("action count is validated as nonzero")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
         state: &[f64],

@@ -229,6 +229,9 @@ pub struct ContinuousOptimizer {
     rng: DeterministicRng,
 }
 
+// Covariance matrices and evolution paths use explicit stable indices; their
+// updates intentionally mirror the mathematical row/column notation.
+#[allow(clippy::needless_range_loop)]
 impl ContinuousOptimizer {
     pub fn new(
         template: ContinuousTemplate,
@@ -632,6 +635,7 @@ fn cholesky_with_jitter(matrix: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, Continuous
     ))
 }
 
+#[allow(clippy::needless_range_loop)]
 fn cholesky(matrix: &[Vec<f64>], jitter: f64) -> Option<Vec<Vec<f64>>> {
     let size = matrix.len();
     let mut output = vec![vec![0.0; size]; size];
@@ -699,6 +703,7 @@ fn add_outer(matrix: &mut [Vec<f64>], vector: &[f64], scale: f64) {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 fn symmetrize(matrix: &mut [Vec<f64>]) {
     for row in 0..matrix.len() {
         for column in 0..row {

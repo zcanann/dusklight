@@ -537,7 +537,7 @@ impl HarnessTerminalDetail {
             !self.missing_query_facts.is_empty() || !self.observation_issues.is_empty();
         if (terminal == HarnessTerminalReason::Unsupported) != has_unsupported_observation
             || (terminal == HarnessTerminalReason::CapabilityMismatch)
-                != !self.missing_capabilities.is_empty()
+                == self.missing_capabilities.is_empty()
         {
             return Err(contract_error(
                 "run-result missing-fact/capability details contradict the terminal reason",
@@ -591,7 +591,7 @@ impl HarnessBoundaryFingerprint {
         )?;
         if self.digest.len() < 32
             || self.digest.len() > 128
-            || self.digest.len() % 2 != 0
+            || !self.digest.len().is_multiple_of(2)
             || !self
                 .digest
                 .bytes()

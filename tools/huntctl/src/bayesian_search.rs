@@ -343,6 +343,8 @@ fn lexicographic_f64(left: &[f64], right: &[f64]) -> std::cmp::Ordering {
         .unwrap_or(std::cmp::Ordering::Equal)
 }
 
+// Triangular decomposition depends on already-computed row/column prefixes.
+#[allow(clippy::needless_range_loop)]
 fn cholesky(matrix: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, BayesianError> {
     let count = matrix.len();
     let mut output = vec![vec![0.0; count]; count];

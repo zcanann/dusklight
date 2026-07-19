@@ -45,19 +45,10 @@ impl Default for IqlConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PrioritizedIqlConfig {
     pub iql: IqlConfig,
     pub replay: PrioritizedReplayConfig,
-}
-
-impl Default for PrioritizedIqlConfig {
-    fn default() -> Self {
-        Self {
-            iql: IqlConfig::default(),
-            replay: PrioritizedReplayConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -252,7 +243,7 @@ impl ImplicitQ {
                 }
 
                 gradient_updates += 1;
-                if gradient_updates % config.target_sync_steps as u64 == 0 {
+                if gradient_updates.is_multiple_of(config.target_sync_steps as u64) {
                     target_a = critic_a.clone();
                     target_b = critic_b.clone();
                     target_synchronizations += 1;
@@ -426,6 +417,9 @@ struct Network {
     output_bias: Vec<f64>,
 }
 
+// Network parameters use a stable row-major serialization layout; explicit
+// indices preserve the correspondence between serialized and updated slots.
+#[allow(clippy::needless_range_loop)]
 impl Network {
     fn initialized(
         feature_width: usize,

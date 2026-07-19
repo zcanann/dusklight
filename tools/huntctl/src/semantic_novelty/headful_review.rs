@@ -128,7 +128,7 @@ pub struct HumanClassificationRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HeadfulEnqueueDecision {
-    Enqueued(HeadfulReplayRequest),
+    Enqueued(Box<HeadfulReplayRequest>),
     BelowSignalThreshold,
     UnsupportedEvidence,
     AlreadyQueued,
@@ -227,7 +227,7 @@ impl HeadfulReviewQueue {
         };
         self.queued_artifacts.insert(discovery.artifact_identity);
         self.pending.insert(request_identity, request.clone());
-        Ok(HeadfulEnqueueDecision::Enqueued(request))
+        Ok(HeadfulEnqueueDecision::Enqueued(Box::new(request)))
     }
 
     pub fn complete_replay(

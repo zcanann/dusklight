@@ -305,7 +305,7 @@ enum PreparedNativeInput {
     Controller {
         artifact: PathBuf,
         boot: TapeBoot,
-        stage_boot_tape: Option<InputTape>,
+        stage_boot_tape: Option<Box<InputTape>>,
         duration_ticks: u64,
     },
 }
@@ -330,7 +330,7 @@ impl PreparedNativeInput {
             Self::Tape { tape } => Some(tape),
             Self::Controller {
                 stage_boot_tape, ..
-            } => stage_boot_tape.as_ref(),
+            } => stage_boot_tape.as_deref(),
         }
     }
 
@@ -428,9 +428,11 @@ fn prepare_native_input(
                     execution_error(format!("cannot decode seed controller: {error}"))
                 })?;
             let duration_ticks = u64::from(program.duration_frames);
-            let stage_boot_tape = matches!(boot, TapeBoot::Stage { .. }).then(|| InputTape {
-                boot: boot.clone(),
-                ..InputTape::default()
+            let stage_boot_tape = matches!(boot, TapeBoot::Stage { .. }).then(|| {
+                Box::new(InputTape {
+                    boot: boot.clone(),
+                    ..InputTape::default()
+                })
             });
             Ok(PreparedNativeInput::Controller {
                 artifact: artifact_path,

@@ -52,8 +52,7 @@ impl InferenceConformanceReport {
     ) -> Result<Self, InferenceConformanceError> {
         if input_corpus_sha256 == Digest::ZERO
             || accelerator_build_sha256 == Digest::ZERO
-            || cpu_repetitions < 2
-            || cpu_repetitions > MAX_CPU_REPETITIONS
+            || !(2..=MAX_CPU_REPETITIONS).contains(&cpu_repetitions)
             || !tolerance.absolute.is_finite()
             || tolerance.absolute < 0.0
             || !tolerance.relative.is_finite()

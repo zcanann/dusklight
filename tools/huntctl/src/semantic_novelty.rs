@@ -213,13 +213,13 @@ impl SemanticNoveltyDescriptor {
                 },
             )?;
 
-            if let Some(from) = previous_state.replace(state.clone()) {
-                if from != state {
-                    push_bounded(
-                        &mut descriptor.state_transitions,
-                        StateTransitionFact { from, to: state },
-                    )?;
-                }
+            if let Some(from) = previous_state.replace(state.clone())
+                && from != state
+            {
+                push_bounded(
+                    &mut descriptor.state_transitions,
+                    StateTransitionFact { from, to: state },
+                )?;
             }
         }
         Ok(descriptor)
@@ -337,8 +337,8 @@ fn actor_relationship_state(
         .filter(|actor| Some(actor.session_process_id) != record.player_session_process_id)
         .map(|actor| {
             let mut relative = [0; 3];
-            for axis in 0..3 {
-                relative[axis] = quantize(
+            for (axis, relative_axis) in relative.iter_mut().enumerate() {
+                *relative_axis = quantize(
                     actor.position[axis] - record.position[axis],
                     ACTOR_RELATION_BIN_WORLD_UNITS,
                     "actor relative position",

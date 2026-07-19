@@ -693,7 +693,7 @@ mod tests {
         corpus(&[1, 2]).write_zstd_file(&first, 1).unwrap();
         corpus(&[1, 2]).write_zstd_file(&second, 1).unwrap();
         assert_eq!(
-            query(&[first.clone()], Some(2), None, None, 10)
+            query(std::slice::from_ref(&first), Some(2), None, None, 10)
                 .unwrap()
                 .len(),
             1
@@ -708,7 +708,7 @@ mod tests {
         let shards = shard(&merged, &root.join("shards"), 1, 1).unwrap();
         assert_eq!(shards.outputs.len(), 2);
         let arrow = root.join("analysis.arrow");
-        let exported = export_arrow(&[merged.clone()], &arrow).unwrap();
+        let exported = export_arrow(std::slice::from_ref(&merged), &arrow).unwrap();
         assert!(!exported.replay_authority);
         assert_eq!(exported.rows, 2);
         let reader = FileReader::try_new(fs::File::open(&arrow).unwrap(), None).unwrap();
@@ -723,10 +723,10 @@ mod tests {
         let invalid = root.join("invalid.dtcz");
         fs::write(&invalid, b"invalid").unwrap();
         let quarantine = root.join("quarantine");
-        let dry = quarantine_invalid(&[invalid.clone()], &quarantine, true).unwrap();
+        let dry = quarantine_invalid(std::slice::from_ref(&invalid), &quarantine, true).unwrap();
         assert_eq!(dry.quarantined.len(), 1);
         assert!(invalid.exists());
-        let moved = quarantine_invalid(&[invalid.clone()], &quarantine, false).unwrap();
+        let moved = quarantine_invalid(std::slice::from_ref(&invalid), &quarantine, false).unwrap();
         assert_eq!(moved.quarantined.len(), 1);
         assert!(!invalid.exists());
         assert!(moved.quarantined[0].destination.exists());

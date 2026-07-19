@@ -342,7 +342,6 @@ mod tests {
             tick_rate_numerator: 30,
             tick_rate_denominator: 1,
             frames,
-            ..InputTape::default()
         };
         let execution = plan
             .capture_execution(

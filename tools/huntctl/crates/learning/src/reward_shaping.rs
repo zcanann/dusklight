@@ -275,6 +275,7 @@ impl PotentialShapingSpec {
         Ok(Digest(Sha256::digest(bytes).into()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn shape_reward(
         &self,
         feature_count: usize,

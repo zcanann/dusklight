@@ -174,7 +174,7 @@ impl OptionValueModel {
         let actions = keyed.into_values().collect::<Vec<_>>();
         let action_keys = actions
             .iter()
-            .map(|action| serde_json::to_vec(action))
+            .map(serde_json::to_vec)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| OptionValueError::Serialization(error.to_string()))?;
         let action_ids = (0..actions.len()).map(|id| id as u32).collect::<Vec<_>>();

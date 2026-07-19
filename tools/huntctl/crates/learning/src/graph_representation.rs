@@ -267,9 +267,8 @@ fn encode(sample: &GraphSample, graph: bool, width: usize) -> Vec<f64> {
         let source = indices[&edge.source_id];
         let target = indices[&edge.target_id];
         degrees[target] += 1;
-        for index in 0..width {
-            messages[target][index] +=
-                f64::from(nodes[source].features[index]) * f64::from(edge.weight);
+        for (message, feature) in messages[target].iter_mut().zip(&nodes[source].features) {
+            *message += f64::from(*feature) * f64::from(edge.weight);
         }
     }
     let mut message_mean = vec![0.0; width];
