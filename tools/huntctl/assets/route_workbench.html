@@ -23,11 +23,19 @@
     main { height:calc(100vh - 48px); display:grid; grid-template-rows:minmax(260px,58%) minmax(190px,42%); }
     .workarea { min-width:0; min-height:0; display:grid; grid-template-columns:230px minmax(0,1fr); }
     .projects { min-width:0; min-height:0; overflow:auto; border-right:1px solid var(--line); background:#0f141c; }
-    .projects .pane-title { position:sticky; top:0; z-index:3; gap:4px; }
-    .workspace-tools { display:flex; gap:3px; margin-left:auto; }
-    .workspace-tools button { height:22px; padding:0 6px; border:1px solid var(--line); border-radius:4px; background:#151b24; color:#96a3b6; cursor:pointer; font-size:9px; font-weight:650; letter-spacing:0; text-transform:none; }
-    .workspace-tools button:hover { border-color:#46556a; color:var(--text); }
-    .workspace-tools button:disabled { opacity:.4; cursor:not-allowed; }
+    .projects .pane-title { position:sticky; top:0; z-index:5; }
+    .workspace-commandbar { position:sticky; top:34px; z-index:5; display:flex; gap:6px; padding:6px; border-bottom:1px solid var(--line); background:#0f141c; }
+    .workspace-menu-wrap { position:relative; flex:1; min-width:0; }
+    .workspace-command { width:100%; height:27px; padding:0 9px; border:1px solid var(--line); border-radius:5px; background:#151b24; color:#aab5c5; cursor:pointer; font-size:10px; font-weight:650; text-align:left; }
+    .workspace-command:hover,.workspace-command[aria-expanded="true"] { border-color:#46556a; color:var(--text); background:#19212c; }
+    .workspace-command:disabled { opacity:.4; cursor:not-allowed; }
+    .workspace-menu { position:absolute; top:31px; left:0; z-index:12; min-width:150px; padding:4px; border:1px solid #39465a; border-radius:6px; background:#171e29; box-shadow:0 12px 30px rgba(0,0,0,.45); }
+    .workspace-menu.right { right:0; left:auto; }
+    .workspace-menu[hidden] { display:none; }
+    .workspace-menu button { width:100%; padding:7px 8px; border:0; border-radius:4px; background:transparent; color:#c3ccda; cursor:pointer; font-size:10px; text-align:left; }
+    .workspace-menu button:hover { background:#202a38; color:#fff; }
+    .workspace-menu button:disabled { color:#596577; cursor:not-allowed; }
+    .workspace-menu button:disabled:hover { background:transparent; }
     .project-tree { padding:7px 6px 18px; font-size:11px; }
     .project-row { width:100%; min-height:27px; display:flex; align-items:center; gap:5px; padding:4px 7px; border:0; border-radius:4px; background:transparent; color:#bcc6d5; text-align:left; cursor:pointer; }
     .project-row:hover { background:#171e29; color:var(--text); }
@@ -157,6 +165,19 @@
     .boot-field textarea { min-height:170px; }
     .boot-toggle { display:flex; align-items:flex-start; gap:9px; padding:10px; border:1px solid rgba(231,189,104,.4); border-radius:6px; color:var(--amber); font-size:11px; line-height:1.45; }
     .boot-toggle input { margin-top:2px; }
+    .boot-tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+    .boot-tab { padding:7px 11px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--muted); cursor:pointer; font-size:11px; }
+    .boot-tab.active { border-bottom-color:var(--blue); color:var(--text); }
+    .boot-panel[hidden] { display:none; }
+    .inventory-head { display:flex; align-items:center; gap:7px; margin-bottom:10px; }
+    .inventory-head p { margin-right:auto; }
+    .inventory-head button { padding:5px 8px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:#b8c2d1; cursor:pointer; font-size:10px; }
+    .inventory-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 12px; max-height:390px; overflow:auto; padding-right:4px; }
+    .inventory-row { display:grid; grid-template-columns:58px minmax(0,1fr) 62px; gap:6px; align-items:center; }
+    .inventory-row label { color:var(--muted); font-size:10px; }
+    .inventory-row select,.inventory-row input { min-width:0; width:100%; padding:6px; border:1px solid var(--line); border-radius:5px; background:#090d13; color:var(--text); font-size:10px; }
+    .inventory-row input:disabled { opacity:.35; }
+    .inventory-disabled { padding:18px; border:1px dashed var(--line); border-radius:6px; color:var(--muted); font-size:11px; }
     @media (max-width:900px) { .detail-body{grid-template-columns:1fr}.property-content{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))} }
     @media (max-width:760px) { .record-pref span{display:none}.status{display:none}main{grid-template-rows:minmax(230px,50%) minmax(210px,50%)}.workarea{grid-template-columns:170px minmax(0,1fr)}.detail-body{padding:16px}.property-content{grid-template-columns:1fr}.fields{grid-template-columns:110px 1fr}.pane-hint{display:none} }
   </style>
@@ -229,7 +250,11 @@
   <main>
     <section class="workarea">
       <aside class="projects" aria-label="Workspace">
-        <div class="pane-title"><span>Workspace</span><span class="workspace-tools"><button id="workspaceNewFolder" type="button" title="Create a folder">New folder</button><button id="workspaceMove" type="button" title="Move the selected folder or tape">Move</button><button id="workspaceDelete" type="button" title="Delete the selected folder or tape">Delete</button></span></div>
+        <div class="pane-title"><span>Workspace</span></div>
+        <div id="workspaceCommandbar" class="workspace-commandbar">
+          <div class="workspace-menu-wrap"><button id="workspaceNew" class="workspace-command" type="button" aria-expanded="false">＋ New</button><div id="workspaceNewMenu" class="workspace-menu" hidden><button id="workspaceNewTape" type="button">New tape</button><button id="workspaceNewFolder" type="button">New folder</button></div></div>
+          <div class="workspace-menu-wrap"><button id="workspaceActions" class="workspace-command" type="button" aria-expanded="false">••• Actions</button><div id="workspaceActionsMenu" class="workspace-menu right" hidden><button id="workspaceClone" type="button">Clone tape</button><button id="workspaceMove" type="button">Move…</button><button id="workspaceDelete" type="button">Delete…</button></div></div>
+        </div>
         <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
       </aside>
       <section class="browser" aria-label="Route graph">
@@ -256,14 +281,24 @@
       <h2>Edit boot configuration</h2>
       <p>This is explicit workspace launch metadata. Leave the override disabled for the tape's authored, cheat-free boot.</p>
       <label class="boot-toggle"><input id="bootOverrideEnabled" type="checkbox"><span>Enable boot override for this route or standalone tape. Playback will replace the artifact's authored boot configuration.</span></label>
-      <div class="boot-grid">
+      <div class="boot-tabs" role="tablist"><button id="bootTabLocation" class="boot-tab active" type="button" role="tab">Location</button><button id="bootTabInventory" class="boot-tab" type="button" role="tab">Inventory</button><button id="bootTabAdvanced" class="boot-tab" type="button" role="tab">Advanced fixture</button></div>
+      <div id="bootPanelLocation" class="boot-panel boot-grid" role="tabpanel">
         <label class="boot-field"><span>Boot type</span><select id="bootKind"><option value="process">Process boot</option><option value="stage">Stage boot</option></select></label>
         <label class="boot-field wide"><span>Stage</span><span class="boot-choice"><select id="bootStageChoice" aria-label="Known retail stage"><option value="">Custom stage...</option></select><input id="bootStage" value="F_SP103" maxlength="8" aria-label="Editable stage ID" title="Editable raw stage ID"></span><span id="bootStageSource" class="boot-source">Choose an extracted retail stage or enter any raw ID.</span></label>
         <label class="boot-field"><span>Room</span><span class="boot-choice"><select id="bootRoomChoice" aria-label="Known room"><option value="">Custom...</option></select><input id="bootRoom" type="number" min="-128" max="127" value="1" aria-label="Editable room"></span></label>
         <label class="boot-field"><span>Spawn point</span><span class="boot-choice"><select id="bootPointChoice" aria-label="Known spawn point"><option value="">Custom...</option></select><input id="bootPoint" type="number" min="-32768" max="32767" value="1" aria-label="Editable spawn point"></span></label>
         <label class="boot-field"><span>Layer</span><span class="boot-choice"><select id="bootLayerChoice" aria-label="Known layer"><option value="">Custom...</option></select><input id="bootLayer" type="number" min="-128" max="127" value="-1" aria-label="Editable layer"></span></label>
         <label class="boot-field"><span>Load save slot</span><select id="bootSaveSlot"><option value="">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+      </div>
+      <div id="bootPanelInventory" class="boot-panel" role="tabpanel" hidden>
+        <div class="inventory-head"><p>Choose which slots stage boot initializes. “Inherit” leaves the loaded state untouched.</p><button id="inventoryInheritAll" type="button">Inherit all</button><button id="inventoryDefaultAll" type="button">Default all</button><button id="inventoryClearAll" type="button">Clear all</button></div>
+        <div id="inventoryDisabled" class="inventory-disabled" hidden>Inventory initialization is only available for stage boot.</div>
+        <div id="inventoryGrid" class="inventory-grid"></div>
+      </div>
+      <div id="bootPanelAdvanced" class="boot-panel" role="tabpanel" hidden>
+        <div class="boot-grid">
         <label class="boot-field wide"><span>Loadout / inventory fixture JSON (blank for none)</span><textarea id="bootFixture" spellcheck="false" placeholder='{"schema":"dusklight-scenario-fixture/v1", ...}'></textarea></label>
+        </div>
       </div>
       <div id="bootError" class="editor-error" role="alert"></div>
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="saveBoot" class="save" value="default" type="button">Save boot configuration</button></div>
@@ -280,6 +315,8 @@
     let bootEditProject = null;
     let bootStageMetadata = null;
     let bootStageRequest = 0;
+    let bootFixtureDraft = null;
+    let bootActiveTab = 'location';
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
     let workspaceSelection = null;
     let workspaceNodeSelection = {kind:'folder',id:'routes'};
@@ -332,7 +369,7 @@
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
       const projects=raw.projects||{groups:[],entries:[]};
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[]}};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = goal => goal.predicate_program?.definitions?.find(item=>item.name===goal.predicate);
@@ -368,34 +405,64 @@
     }
     function updateWorkspaceTools() {
       const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id==='routes';
+      const project=workspaceNodeSelection.kind==='project'?graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id):null;
+      $('workspaceClone').disabled=!project||project.kind==='timeline';
       $('workspaceMove').disabled=rootSelected;
       $('workspaceDelete').disabled=rootSelected;
+    }
+    function closeWorkspaceMenus() {
+      for(const [button,menu] of [['workspaceNew','workspaceNewMenu'],['workspaceActions','workspaceActionsMenu']]) { $(menu).hidden=true; $(button).setAttribute('aria-expanded','false'); }
+    }
+    function toggleWorkspaceMenu(buttonId,menuId) {
+      const open=$(menuId).hidden; closeWorkspaceMenus(); $(menuId).hidden=!open; $(buttonId).setAttribute('aria-expanded',String(open));
     }
     async function mutateWorkspace(endpoint,body,success) {
       $('status').textContent='Updating workspace…'; $('status').className='status';
       try {
         const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
         const result=await response.json(); if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
-        toast(success); await load(); return true;
-      } catch(error) { $('status').textContent='Workspace update failed'; $('status').className='status error'; toast(error.message,true); return false; }
+        toast(success); await load(); return result;
+      } catch(error) { $('status').textContent='Workspace update failed'; $('status').className='status error'; toast(error.message,true); return null; }
     }
     function selectedWorkspaceParent() {
       if(workspaceNodeSelection.kind==='folder')return workspaceNodeSelection.id;
       return graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id)?.group||'routes';
     }
     async function createWorkspaceFolder() {
+      closeWorkspaceMenus();
       const parent=selectedWorkspaceParent();
       const name=window.prompt(`New folder under ${parent}\nUppercase, spaces, and Unicode names are supported:`,'New Folder');
       if(name===null)return;
       if(await mutateWorkspace('/api/workspace/folders/create',{parent,name},`Created ${parent}/${name}`)) { workspaceNodeSelection={kind:'folder',id:`${parent}/${name}`}; renderProjects(); }
     }
+    async function createWorkspaceTape() {
+      closeWorkspaceMenus();
+      const parent=selectedWorkspaceParent();
+      const name=window.prompt(`New tape under ${parent}:`,'New Tape');
+      if(name===null)return;
+      const result=await mutateWorkspace('/api/workspace/tapes/create',{parent,name},`Created ${parent}/${name}`);
+      if(result) { workspaceSelection=result.id; workspaceNodeSelection={kind:'project',id:result.id}; render(); }
+    }
+    async function cloneWorkspaceTape() {
+      closeWorkspaceMenus();
+      if(workspaceNodeSelection.kind!=='project')return;
+      const project=graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id);
+      if(!project||project.kind==='timeline')return;
+      const destination=project.group;
+      const name=window.prompt(`Clone ${project.label} under ${destination}:`,`${project.label} Copy`);
+      if(name===null)return;
+      const result=await mutateWorkspace('/api/workspace/tapes/clone',{source:project.id,destination,name},`Cloned ${project.id}`);
+      if(result) { workspaceSelection=result.id; workspaceNodeSelection={kind:'project',id:result.id}; render(); }
+    }
     async function moveWorkspaceSelection() {
+      closeWorkspaceMenus();
       const destination=window.prompt('Move to folder (for example routes/qa):',selectedWorkspaceParent());
       if(destination===null)return;
       const current={...workspaceNodeSelection};
       if(await mutateWorkspace('/api/workspace/move',{...current,destination},`Moved ${current.id}`)) { workspaceNodeSelection={kind:'folder',id:destination}; renderProjects(); }
     }
     async function deleteWorkspaceSelection() {
+      closeWorkspaceMenus();
       const current={...workspaceNodeSelection};
       if(current.kind==='folder'&&current.id==='routes')return;
       if(!window.confirm(`Delete ${current.id}${current.kind==='folder'?' and everything beneath it':''}?\n\nThe workbench moves it to recoverable local trash; Git remains the source of history.`))return;
@@ -711,6 +778,72 @@
     function setBootStageFieldsEnabled() {
       const enabled=$('bootKind').value==='stage';
       ['bootStageChoice','bootStage','bootRoomChoice','bootRoom','bootPointChoice','bootPoint','bootLayerChoice','bootLayer','bootSaveSlot','bootFixture'].forEach(id=>$(id).disabled=!enabled);
+      ['inventoryInheritAll','inventoryDefaultAll','inventoryClearAll'].forEach(id=>$(id).disabled=!enabled);
+      $('inventoryDisabled').hidden=enabled;
+      $('inventoryGrid').hidden=!enabled;
+    }
+    function fixtureFromEditor() {
+      const source=$('bootFixture').value.trim();
+      if(!source)return null;
+      const fixture=JSON.parse(source);
+      if(!fixture||typeof fixture!=='object'||Array.isArray(fixture))throw new Error('Advanced fixture must be a JSON object.');
+      return fixture;
+    }
+    function syncFixtureEditor() { $('bootFixture').value=bootFixtureDraft?JSON.stringify(bootFixtureDraft,null,2):''; }
+    function selectBootTab(name) {
+      if(name!=='advanced'&&bootActiveTab==='advanced') {
+        try { bootFixtureDraft=fixtureFromEditor(); $('bootError').textContent=''; }
+        catch(error) { $('bootError').textContent=error.message; return; }
+      }
+      bootActiveTab=name;
+      for(const candidate of ['location','inventory','advanced']) {
+        $(`bootTab${candidate[0].toUpperCase()+candidate.slice(1)}`).classList.toggle('active',candidate===name);
+        $(`bootPanel${candidate[0].toUpperCase()+candidate.slice(1)}`).hidden=candidate!==name;
+      }
+      if(name==='inventory')renderInventoryEditor();
+      if(name==='advanced')syncFixtureEditor();
+    }
+    function ensureFixtureDraft() {
+      if(!bootFixtureDraft)bootFixtureDraft={schema:'dusklight-scenario-fixture/v1',name:'Workbench loadout',inventory:[]};
+      if(!Array.isArray(bootFixtureDraft.inventory))bootFixtureDraft.inventory=[];
+      return bootFixtureDraft;
+    }
+    function setInventoryEntry(slot,item,quantity=1) {
+      const fixture=ensureFixtureDraft();
+      fixture.inventory=fixture.inventory.filter(entry=>Number(entry.slot)!==slot);
+      if(item!==null)fixture.inventory.push({slot,item,quantity});
+      fixture.inventory.sort((a,b)=>Number(a.slot)-Number(b.slot));
+      syncFixtureEditor();
+    }
+    function renderInventoryEditor() {
+      const items=graph.projects.inventory_items||[],slots=graph.projects.inventory_slots||[];
+      const inventory=Array.isArray(bootFixtureDraft?.inventory)?bootFixtureDraft.inventory:[];
+      const options=items.map(item=>`<option value="${item.id}">${escapeHtml(`${item.name} (0x${item.id.toString(16).padStart(2,'0').toUpperCase()})`)}</option>`).join('');
+      $('inventoryGrid').innerHTML=slots.map(slot=>{
+        const entry=inventory.find(candidate=>Number(candidate.slot)===slot.id);
+        return `<div class="inventory-row"><label for="inventorySlot${slot.id}">Slot ${slot.id}</label><select id="inventorySlot${slot.id}" data-inventory-slot="${slot.id}"><option value="inherit">Inherit</option>${options}</select><input id="inventoryQuantity${slot.id}" data-inventory-quantity="${slot.id}" type="number" min="1" max="255" value="${entry?.quantity??1}" aria-label="Slot ${slot.id} quantity" ${slot.quantity&&entry?'':'disabled'}></div>`;
+      }).join('')||'<div class="inventory-disabled">Native inventory definitions are unavailable.</div>';
+      for(const slot of slots) {
+        const entry=inventory.find(candidate=>Number(candidate.slot)===slot.id),select=$(`inventorySlot${slot.id}`),quantity=$(`inventoryQuantity${slot.id}`);
+        if(!select)continue;
+        select.value=entry?String(entry.item):'inherit';
+        select.addEventListener('change',()=>{
+          const value=select.value==='inherit'?null:Number(select.value);
+          setInventoryEntry(slot.id,value,Math.max(1,Number(quantity.value)||1));
+          quantity.disabled=!slot.quantity||value===null;
+        });
+        quantity.addEventListener('change',()=>{
+          const value=select.value==='inherit'?null:Number(select.value);
+          if(value===null)return;
+          const amount=Math.min(255,Math.max(1,Number(quantity.value)||1));quantity.value=String(amount);setInventoryEntry(slot.id,value,amount);
+        });
+      }
+    }
+    function setInventoryAll(mode) {
+      const slots=graph.projects.inventory_slots||[];
+      const fixture=ensureFixtureDraft();
+      fixture.inventory=mode==='inherit'?[]:slots.map(slot=>({slot:slot.id,item:mode==='default'?slot.default_item:255,quantity:1}));
+      syncFixtureEditor();renderInventoryEditor();
     }
     function fillBootChoice(id,values,current,labeler,emptyLabel='Custom...') {
       const select=$(id),selected=String(current??'');
@@ -760,8 +893,9 @@
       $('bootPoint').value=String(configuration.point??1);
       $('bootLayer').value=String(configuration.layer??-1);
       $('bootSaveSlot').value=configuration.save_slot==null?'':String(configuration.save_slot);
-      $('bootFixture').value=configuration.fixture?JSON.stringify(configuration.fixture,null,2):'';
-      $('bootError').textContent='';setBootStageFieldsEnabled();populateStageChoices($('bootStage').value);$('bootEditor').showModal();void refreshStageChoices();
+      bootFixtureDraft=configuration.fixture?JSON.parse(JSON.stringify(configuration.fixture)):null;
+      syncFixtureEditor();
+      $('bootError').textContent='';selectBootTab('location');setBootStageFieldsEnabled();populateStageChoices($('bootStage').value);renderInventoryEditor();$('bootEditor').showModal();void refreshStageChoices();
     }
     function boundedInteger(id,min,max) {
       const value=Number($(id).value);
@@ -774,8 +908,7 @@
       try {
         let boot={kind:'process'};
         if($('bootKind').value==='stage') {
-          const fixtureSource=$('bootFixture').value.trim();
-          const fixture=fixtureSource?JSON.parse(fixtureSource):null;
+          const fixture=bootActiveTab==='advanced'?fixtureFromEditor():bootFixtureDraft;
           boot={kind:'stage',stage:$('bootStage').value.trim(),room:boundedInteger('bootRoom',-128,127),point:boundedInteger('bootPoint',-32768,32767),layer:boundedInteger('bootLayer',-128,127)};
           if($('bootSaveSlot').value)boot.save_slot=Number($('bootSaveSlot').value);
           if(fixture)boot.fixture=fixture;
@@ -1028,9 +1161,15 @@
       }
     }
     $('reload').addEventListener('click',load);
+    $('workspaceCommandbar').addEventListener('click',event=>event.stopPropagation());
+    $('workspaceNew').addEventListener('click',()=>toggleWorkspaceMenu('workspaceNew','workspaceNewMenu'));
+    $('workspaceActions').addEventListener('click',()=>toggleWorkspaceMenu('workspaceActions','workspaceActionsMenu'));
+    $('workspaceNewTape').addEventListener('click',createWorkspaceTape);
     $('workspaceNewFolder').addEventListener('click',createWorkspaceFolder);
+    $('workspaceClone').addEventListener('click',cloneWorkspaceTape);
     $('workspaceMove').addEventListener('click',moveWorkspaceSelection);
     $('workspaceDelete').addEventListener('click',deleteWorkspaceSelection);
+    document.addEventListener('click',closeWorkspaceMenus);
     bindGraphPan();
     $('recordCountdown').value=String(loadRecordingCountdown());
     $('recordingSpeed').value=String(loadStoredSpeed(RECORDING_SPEED_STORAGE_KEY,RECORDING_SPEEDS));
@@ -1040,7 +1179,13 @@
     $('playbackSpeed').addEventListener('change',()=>saveSpeed('playbackSpeed',PLAYBACK_SPEED_STORAGE_KEY,PLAYBACK_SPEEDS));
     $('savePredicate').addEventListener('click',savePredicate);
     $('saveBoot').addEventListener('click',saveBoot);
-    $('bootKind').addEventListener('change',setBootStageFieldsEnabled);
+    $('bootKind').addEventListener('change',()=>{setBootStageFieldsEnabled();renderInventoryEditor();});
+    $('bootTabLocation').addEventListener('click',()=>selectBootTab('location'));
+    $('bootTabInventory').addEventListener('click',()=>selectBootTab('inventory'));
+    $('bootTabAdvanced').addEventListener('click',()=>selectBootTab('advanced'));
+    $('inventoryInheritAll').addEventListener('click',()=>setInventoryAll('inherit'));
+    $('inventoryDefaultAll').addEventListener('click',()=>setInventoryAll('default'));
+    $('inventoryClearAll').addEventListener('click',()=>setInventoryAll('clear'));
     $('bootStageChoice').addEventListener('change',()=>{if($('bootStageChoice').value)$('bootStage').value=$('bootStageChoice').value;void refreshStageChoices();});
     $('bootStage').addEventListener('change',refreshStageChoices);
     $('bootRoomChoice').addEventListener('change',()=>{if($('bootRoomChoice').value)$('bootRoom').value=$('bootRoomChoice').value;applyStageRoomChoices();});
@@ -1049,7 +1194,7 @@
     $('bootPoint').addEventListener('change',()=>fillBootChoice('bootPointChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`));
     $('bootLayerChoice').addEventListener('change',()=>{if($('bootLayerChoice').value)$('bootLayer').value=$('bootLayerChoice').value;});
     $('bootLayer').addEventListener('change',()=>fillBootChoice('bootLayerChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`));
-    $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootStageMetadata=null;bootStageRequest+=1;});
+    $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootStageMetadata=null;bootFixtureDraft=null;bootActiveTab='location';bootStageRequest+=1;});
     $('predicateEditor').addEventListener('close',()=>{predicateEditRevision=null;predicateEditOwner=null;});
     load();
   })();

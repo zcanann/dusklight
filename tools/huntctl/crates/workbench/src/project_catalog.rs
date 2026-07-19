@@ -9,6 +9,8 @@ use super::*;
 use crate::scenario_fixture::ScenarioFixture;
 
 const BOOT_OVERRIDE_SCHEMA: &str = "dusklight.route-workbench.boot-override.v1";
+const NEW_TAPE_SOURCE: &str =
+    "dusktape 1\nrate 30/1\nports 0x0f\n\nstate neutral {}\nframe neutral\n";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -173,6 +175,7 @@ pub(super) fn project_catalog_projection(
     active_timeline: &Path,
 ) -> Result<GraphProjectCatalog, WorkbenchError> {
     let catalog = load_project_catalog(repository_root)?;
+    let inventory = crate::inventory_catalog::load(repository_root)?;
     let active_timeline = fs::canonicalize(active_timeline).ok();
     let groups = catalog
         .groups
@@ -287,6 +290,8 @@ pub(super) fn project_catalog_projection(
         groups,
         entries,
         stages: crate::stage_catalog::stage_summaries(repository_root),
+        inventory_items: inventory.items,
+        inventory_slots: inventory.slots,
     })
 }
 
@@ -367,6 +372,7 @@ pub(super) fn update_boot_override(
     }
     .validate()
     .map_err(|error| WorkbenchError::new(format!("invalid boot configuration: {error}")))?;
+    validate_native_inventory_limits(&request.boot)?;
     let path = boot_override_path(repository_root, project)?;
     if path.exists() {
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
@@ -389,6 +395,30 @@ pub(super) fn update_boot_override(
         enabled: request.enabled,
         boot: request.boot.clone(),
     })
+}
+
+fn validate_native_inventory_limits(boot: &TapeBoot) -> Result<(), WorkbenchError> {
+    let TapeBoot::Stage {
+        fixture: Some(fixture),
+        ..
+    } = boot
+    else {
+        return Ok(());
+    };
+    for entry in &fixture.inventory {
+        if entry.slot >= 24 || entry.item > u8::MAX.into() || entry.quantity > u8::MAX.into() {
+            return Err(WorkbenchError::new(
+                "inventory slot, item, or quantity exceeds native save limits",
+            ));
+        }
+        let quantity_slot = matches!(entry.slot, 4 | 11..=17 | 23);
+        if entry.quantity != 1 && !quantity_slot {
+            return Err(WorkbenchError::new(
+                "inventory quantity is only defined for bow, bottle, bomb-bag, and slingshot slots",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn active_timeline_boot_override(
@@ -529,6 +559,120 @@ pub(super) fn create_workspace_folder(
     let id = format!("{}/{}", request.parent, request.name);
     Ok(WorkspaceMutationResult {
         operation: "create_folder".into(),
+        id: id.clone(),
+        destination: Some(id),
+        trash: None,
+    })
+}
+
+pub(super) fn create_workspace_tape(
+    repository_root: &Path,
+    request: &BrowserWorkspaceTapeCreateRequest,
+) -> Result<WorkspaceMutationResult, WorkbenchError> {
+    let _guard = workspace_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("workspace edit lock is poisoned"))?;
+    validate_workspace_name(&request.name)?;
+    let parent = public_workspace_group_path(repository_root, &request.parent)?;
+    let destination = parent.join(format!("{}.tas", request.name));
+    if destination.exists() {
+        return Err(WorkbenchError::new("workspace destination already exists"));
+    }
+    crate::tape_dsl::parse(NEW_TAPE_SOURCE)
+        .map_err(|error| WorkbenchError::new(format!("invalid built-in tape template: {error}")))?
+        .compile()
+        .map_err(|error| WorkbenchError::new(format!("invalid built-in tape template: {error}")))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .map_err(|error| {
+            WorkbenchError::new(format!("cannot create {}: {error}", destination.display()))
+        })?;
+    file.write_all(NEW_TAPE_SOURCE.as_bytes())
+        .map_err(|error| {
+            let _ = fs::remove_file(&destination);
+            WorkbenchError::new(format!("cannot write {}: {error}", destination.display()))
+        })?;
+    let id = format!("{}/{}", request.parent, request.name);
+    Ok(WorkspaceMutationResult {
+        operation: "create_tape".into(),
+        id: id.clone(),
+        destination: Some(id),
+        trash: None,
+    })
+}
+
+pub(super) fn clone_workspace_tape(
+    repository_root: &Path,
+    request: &BrowserWorkspaceTapeCloneRequest,
+) -> Result<WorkspaceMutationResult, WorkbenchError> {
+    let _guard = workspace_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("workspace edit lock is poisoned"))?;
+    validate_workspace_name(&request.name)?;
+    let catalog = load_project_catalog(repository_root)?;
+    let project = catalog.entries.get(&request.source).ok_or_else(|| {
+        WorkbenchError::new(format!("unknown workspace tape {:?}", request.source))
+    })?;
+    if project.kind == ProjectKind::Timeline {
+        return Err(WorkbenchError::new(
+            "route timelines cannot be cloned as standalone tapes",
+        ));
+    }
+    let destination = public_workspace_group_path(repository_root, &request.destination)?;
+    let artifact = checked_artifact_path(repository_root, &project.artifact)?;
+    let stem = artifact
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| WorkbenchError::new("workspace filename is not UTF-8"))?;
+    let sources =
+        workspace_node_sources(repository_root, &request.source, WorkspaceNodeKind::Project)?;
+    let copies = sources
+        .iter()
+        .map(|source| {
+            let metadata = fs::symlink_metadata(source)
+                .map_err(|error| WorkbenchError::new(error.to_string()))?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(WorkbenchError::new(
+                    "standalone tape cloning only accepts regular artifact files",
+                ));
+            }
+            let filename = source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| WorkbenchError::new("workspace filename is not UTF-8"))?;
+            let suffix = filename
+                .strip_prefix(stem)
+                .ok_or_else(|| WorkbenchError::new("workspace sidecar stem changed"))?;
+            Ok((
+                source.clone(),
+                destination.join(format!("{}{suffix}", request.name)),
+            ))
+        })
+        .collect::<Result<Vec<_>, WorkbenchError>>()?;
+    if copies.iter().any(|(_, target)| target.exists()) {
+        return Err(WorkbenchError::new(
+            "workspace clone destination already exists",
+        ));
+    }
+    let mut completed: Vec<PathBuf> = Vec::new();
+    for (source, target) in &copies {
+        if let Err(error) = fs::copy(source, target) {
+            for copied in completed.iter().rev() {
+                let _ = fs::remove_file(copied);
+            }
+            return Err(WorkbenchError::new(format!(
+                "cannot clone {} to {}: {error}",
+                source.display(),
+                target.display()
+            )));
+        }
+        completed.push(target.clone());
+    }
+    let id = format!("{}/{}", request.destination, request.name);
+    Ok(WorkspaceMutationResult {
+        operation: "clone_tape".into(),
         id: id.clone(),
         destination: Some(id),
         trash: None,
@@ -1145,6 +1289,75 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("cannot be moved into itself"));
+        fs::remove_dir_all(repository).unwrap();
+    }
+
+    #[test]
+    fn workspace_creates_playable_tapes_and_clones_every_sidecar() {
+        let repository = temporary_repository("create-clone");
+        fs::create_dir_all(repository.join("routes/QA")).unwrap();
+        let created = create_workspace_tape(
+            &repository,
+            &BrowserWorkspaceTapeCreateRequest {
+                parent: "routes/QA".into(),
+                name: "Blank Boot".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(created.id, "routes/QA/Blank Boot");
+        let catalog = load_project_catalog(&repository).unwrap();
+        let entry = &catalog.entries[&created.id];
+        let tape = load_project_tape(&repository, entry).unwrap();
+        assert_eq!(tape.frames.len(), 1);
+
+        let invalid_boot: TapeBoot = serde_json::from_value(serde_json::json!({
+            "kind": "stage",
+            "stage": "F_SP103",
+            "room": 1,
+            "point": 0,
+            "layer": -1,
+            "fixture": {
+                "schema": "dusklight-scenario-fixture/v1",
+                "name": "invalid native slot",
+                "inventory": [{"slot": 24, "item": 64, "quantity": 1}]
+            }
+        }))
+        .unwrap();
+        let error = update_boot_override(
+            &repository,
+            &BrowserBootOverrideUpdateRequest {
+                project: created.id.clone(),
+                enabled: true,
+                boot: invalid_boot,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("native save limits"));
+
+        let boot = br#"{"schema":"dusklight.route-workbench.boot-override.v1","enabled":false,"boot":{"kind":"process"}}"#;
+        let launch = b"dusklaunch 1\noracle eye_shredder\n";
+        fs::write(repository.join("routes/QA/Blank Boot.boot.json"), boot).unwrap();
+        fs::write(repository.join("routes/QA/Blank Boot.launch"), launch).unwrap();
+        let cloned = clone_workspace_tape(
+            &repository,
+            &BrowserWorkspaceTapeCloneRequest {
+                source: created.id,
+                destination: "routes/QA".into(),
+                name: "Configured Copy".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(cloned.id, "routes/QA/Configured Copy");
+        assert_eq!(
+            fs::read(repository.join("routes/QA/Configured Copy.boot.json")).unwrap(),
+            boot
+        );
+        assert_eq!(
+            fs::read(repository.join("routes/QA/Configured Copy.launch")).unwrap(),
+            launch
+        );
+        assert!(repository.join("routes/QA/Configured Copy.tas").is_file());
+
         fs::remove_dir_all(repository).unwrap();
     }
 

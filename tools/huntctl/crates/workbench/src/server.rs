@@ -415,6 +415,38 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/workspace/tapes/create") => {
+                    let result =
+                        serde_json::from_slice::<BrowserWorkspaceTapeCreateRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!("invalid create-tape request: {error}"))
+                            })
+                            .and_then(|create| {
+                                create_workspace_tape(&config.repository_root, &create)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/workspace/tapes/clone") => {
+                    let result =
+                        serde_json::from_slice::<BrowserWorkspaceTapeCloneRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!("invalid clone-tape request: {error}"))
+                            })
+                            .and_then(|clone| {
+                                clone_workspace_tape(&config.repository_root, &clone)
+                            });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/workspace/move") => {
                     let result =
                         serde_json::from_slice::<BrowserWorkspaceMoveRequest>(&request.body)

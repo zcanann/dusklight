@@ -18,6 +18,7 @@ pub use dusklight_routes::timeline;
 pub use dusklight_search::search;
 
 mod graph_projection;
+mod inventory_catalog;
 mod project_catalog;
 mod server;
 mod stage_catalog;
@@ -134,6 +135,21 @@ pub struct GraphProjectCatalog {
     pub groups: Vec<GraphProjectGroup>,
     pub entries: Vec<GraphProject>,
     pub stages: Vec<GraphStageSummary>,
+    pub inventory_items: Vec<GraphInventoryItem>,
+    pub inventory_slots: Vec<GraphInventorySlot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphInventoryItem {
+    pub id: u16,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphInventorySlot {
+    pub id: u16,
+    pub default_item: u16,
+    pub quantity: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,6 +240,21 @@ pub enum WorkspaceNodeKind {
 #[serde(deny_unknown_fields)]
 pub struct BrowserWorkspaceFolderCreateRequest {
     pub parent: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWorkspaceTapeCreateRequest {
+    pub parent: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserWorkspaceTapeCloneRequest {
+    pub source: String,
+    pub destination: String,
     pub name: String,
 }
 
