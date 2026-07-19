@@ -7,6 +7,8 @@ not an architectural boundary if any sibling module can import through it.
 dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-control ────────────────┐
 ├── dusklight-evidence ───────────────┐
+├── dusklight-objectives ─────────────┤
+│   └── dusklight-trace ──────────────┤
 ├── dusklight-worker-protocol ────────┤
 ├── dusklight-world ──────────────────┤
 └── dusklight-automation-contracts ◄──┘
@@ -39,6 +41,21 @@ routes, workers, native process execution, or CLI parsing.
 Owns framed and NDJSON worker protocols, transports, the checked client, and
 the local worker pool. It may depend on contracts. It cannot depend on search,
 learning, evidence storage, routes, workbench code, or CLI parsing.
+
+## `dusklight-trace`
+
+Owns the versioned gameplay-trace wire decoder and the lossless projection from
+a decoded trace boundary into shared typed facts. It may depend on contracts.
+It cannot depend on objective semantics, search, learning, harness execution,
+routes, workbench code, or CLI parsing.
+
+## `dusklight-objectives`
+
+Owns the bounded milestone language, bytecode, and offline evaluation against
+decoded traces. It may depend on contracts and trace. It cannot execute the
+game, select candidates, mutate routes, train models, or parse CLI commands.
+This direction is deliberate: observations do not acquire objective semantics,
+while objectives may interpret observations.
 
 ## `dusklight-world`
 

@@ -10,7 +10,6 @@ pub mod corpus_ops;
 pub mod harness;
 pub mod intervention;
 pub mod learning;
-pub mod milestone_dsl;
 pub mod motion_path_golf;
 pub mod option_diagnostics;
 pub mod option_golf;
@@ -23,9 +22,7 @@ pub mod semantic_novelty;
 pub mod semantic_oracle;
 pub mod tactic_tests;
 pub mod timeline;
-pub mod trace;
 pub mod trace_diff;
-pub mod trace_typed_facts;
 pub mod transition_evidence;
 
 // Compatibility re-exports keep existing callers stable while the physical
@@ -39,6 +36,8 @@ pub use dusklight_control::{
     tape_dsl, tape_edit, tape_program,
 };
 pub use dusklight_evidence::{content_store, corpus, episode, transition_corpus};
+pub use dusklight_objectives::milestone_dsl;
+pub use dusklight_trace::{trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};
 

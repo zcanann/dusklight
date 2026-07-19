@@ -1,0 +1,10 @@
+[package]
+name = "dusklight-trace"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Versioned Dusklight gameplay traces and typed-fact projection"
+
+[dependencies]
+dusklight-automation-contracts = { path = "../contracts" }
+serde = { version = "1", features = ["derive"] }

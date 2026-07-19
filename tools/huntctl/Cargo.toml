@@ -13,6 +13,8 @@ experimental-interventions = []
 dusklight-automation-contracts = { path = "crates/contracts" }
 dusklight-control = { path = "crates/control" }
 dusklight-evidence = { path = "crates/evidence" }
+dusklight-objectives = { path = "crates/objectives" }
+dusklight-trace = { path = "crates/trace" }
 dusklight-worker-protocol = { path = "crates/worker" }
 dusklight-world = { path = "crates/world" }
 serde = { version = "1", features = ["derive"] }
@@ -41,6 +43,8 @@ members = [
     "crates/contracts",
     "crates/control",
     "crates/evidence",
+    "crates/objectives",
+    "crates/trace",
     "crates/worker",
     "crates/world",
 ]
@@ -49,6 +53,8 @@ default-members = [
     "crates/contracts",
     "crates/control",
     "crates/evidence",
+    "crates/objectives",
+    "crates/trace",
     "crates/worker",
     "crates/world",
 ]

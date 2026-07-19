@@ -3906,7 +3906,8 @@ milestone exact_next_tick_transition {
 
     #[test]
     fn language_1_4_named_value_projections_round_trip() {
-        let source = include_str!("../../../tests/fixtures/automation/value_projection.milestones");
+        let source =
+            include_str!("../../../../../tests/fixtures/automation/value_projection.milestones");
         let program = parse(source).unwrap();
         let projections = &program.definitions[0].projections;
         assert_eq!(projections.len(), 1);
