@@ -95,6 +95,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Core harness run contract](run-contract.md) defines the content-bound request
   and typed result shared by future tape, controller, search, and learner
   execution paths.
+- [Authenticated cold-process throughput](throughput.md) defines the sealed
+  process-per-run baseline that future persistent/reset workers must beat
+  without changing native proof.
 - [Route segment trees and Git](timelines.md) documents the visual route
   workbench, immutable segment ancestry, exact boundary dependencies, and
   Git-owned lineages.

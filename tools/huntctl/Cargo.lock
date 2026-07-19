@@ -358,6 +358,7 @@ dependencies = [
  "dusklight-routes",
  "dusklight-search",
  "dusklight-semantic-novelty",
+ "dusklight-throughput-benchmark",
  "dusklight-trace",
  "dusklight-worker-protocol",
  "dusklight-world",
@@ -511,6 +512,17 @@ version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
  "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-throughput-benchmark"
+version = "0.1.0"
+dependencies = [
+ "dusklight-harness-contracts",
+ "dusklight-harness-runtime",
  "serde",
  "serde_json",
  "sha2",

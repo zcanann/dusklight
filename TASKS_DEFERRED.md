@@ -103,7 +103,8 @@ first cheap-objective learning and winner-narrowing loop.
   compression, and corruption recovery.
 - [ ] Add MCTS or other search that depends on validated checkpoint restoration.
 - [ ] Pursue renderer/audio suppression, copy-on-write pages, batched stepping,
-  or other throughput optimization only after profiling the active harness.
+  or other throughput optimization only after the active cold-process baseline
+  demonstrates where candidate time is spent.
 - [ ] OS process snapshots and forkservers remain won't-do unless portable
   reset/checkpoint approaches demonstrably fail.
 

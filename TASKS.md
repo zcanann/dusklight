@@ -496,3 +496,15 @@ and the root binary cannot absorb harness policy implementation.
 
 **Done when:** moving or deleting an unrelated root/evaluation import cannot
 silently change which names another production domain receives.
+
+## 37. Authenticated cold-process throughput baseline
+
+- [x] Benchmark repeated isolated executions of one sealed run request and
+  retain each exact request/result identity, terminal, tick count, native
+  process time, and end-to-end harness time in one machine-readable report.
+- [x] Reject incomparable attempts, expose logical-tick and candidate
+  throughput from the CLI, document the macOS operator path, and measure one
+  checked-in cheap objective before designing persistent reset/session work.
+
+**Done when:** a future persistent worker or reset optimization can be compared
+against a reproducible process-per-run baseline without weakening run proof.

@@ -26,6 +26,7 @@ dusklight-route-workbench = { path = "crates/workbench" }
 dusklight-search = { path = "crates/search" }
 dusklight-semantic-novelty = { path = "crates/semantic-novelty" }
 dusklight-trace = { path = "crates/trace" }
+dusklight-throughput-benchmark = { path = "crates/throughput-benchmark" }
 dusklight-worker-protocol = { path = "crates/worker" }
 dusklight-world = { path = "crates/world" }
 serde = { version = "1", features = ["derive"] }
@@ -72,6 +73,7 @@ members = [
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
+    "crates/throughput-benchmark",
     "crates/worker",
     "crates/world",
 ]
@@ -98,6 +100,7 @@ default-members = [
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
+    "crates/throughput-benchmark",
     "crates/worker",
     "crates/world",
 ]

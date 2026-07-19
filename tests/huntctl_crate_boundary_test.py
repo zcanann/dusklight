@@ -71,6 +71,9 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "finalist-reduction/src/route.rs": 1_250,
     "orchestration/src/anchored_search.rs": 800,
     "proposer-tournament/src/lib.rs": 850,
+    "throughput-benchmark/src/lib.rs": 100,
+    "throughput-benchmark/src/report.rs": 400,
+    "throughput-benchmark/src/runner.rs": 350,
 }
 
 # These integration-heavy crates are deliberately closed inventories. Adding a
@@ -97,6 +100,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "lib.rs",
     },
     "proposer-tournament": {"lib.rs"},
+    "throughput-benchmark": {"lib.rs", "report.rs", "runner.rs", "tests.rs"},
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {
         "draft_store.rs",
@@ -132,6 +136,7 @@ EXPECTED_MEMBERS = {
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
+    "crates/throughput-benchmark",
     "crates/worker",
     "crates/world",
 }
@@ -256,6 +261,10 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-trace",
     },
     "dusklight-trace": {"dusklight-automation-contracts"},
+    "dusklight-throughput-benchmark": {
+        "dusklight-harness-contracts",
+        "dusklight-harness-runtime",
+    },
     "dusklight-worker-protocol": {"dusklight-automation-contracts"},
     "dusklight-world": {"dusklight-automation-contracts"},
     "dusklight-huntctl": {
@@ -275,6 +284,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-search",
         "dusklight-semantic-novelty",
         "dusklight-trace",
+        "dusklight-throughput-benchmark",
         "dusklight-worker-protocol",
         "dusklight-world",
     },

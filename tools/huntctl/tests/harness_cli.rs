@@ -26,6 +26,7 @@ use huntctl::search::{
     Ancestry, CANDIDATE_SCHEMA, Candidate, ControllerButton, MacroAction, PopulationManifest,
     SegmentProfile, write_explicit_population,
 };
+use huntctl::throughput_benchmark::ColdProcessBenchmarkReport;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::fs;
@@ -738,6 +739,142 @@ fn executes_a_tape_request_through_the_authenticated_boundary() {
     let request: HarnessRunRequest =
         serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
     result.validate_files(&request, &artifact_root).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn cold_process_benchmark_retains_comparable_authenticated_attempts() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_native_execution(&root, &request_draft, executable);
+    let request_path = root.join("run-request.json");
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        sealed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sealed.stderr)
+    );
+
+    let report_path = root.join("artifacts/cold-process/report.json");
+    let benchmark = Command::new(executable)
+        .args(["benchmark", "cold-process", "--request"])
+        .arg(&request_path)
+        .args(["--artifact-root", "artifacts/cold-process"])
+        .arg("--output")
+        .arg(&report_path)
+        .args(["--repository-root"])
+        .arg(&root)
+        .args(["--repetitions", "2"])
+        .output()
+        .unwrap();
+    assert!(
+        benchmark.status.success(),
+        "{}",
+        String::from_utf8_lossy(&benchmark.stderr)
+    );
+    let report: ColdProcessBenchmarkReport =
+        serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    report.validate().unwrap();
+    assert!(report.comparable);
+    assert_eq!(report.attempts.len(), 2);
+    assert_ne!(
+        report.attempts[0].request_sha256,
+        report.attempts[1].request_sha256
+    );
+    assert_eq!(
+        report.attempts[0].gameplay_trace_sha256,
+        report.attempts[1].gameplay_trace_sha256
+    );
+    assert_eq!(report.summary.total_logical_ticks, 2);
+    assert!(report.summary.candidates_per_second_millionths > 0);
+    let validated = Command::new(executable)
+        .args(["benchmark", "validate-cold-process", "--report"])
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(validated.status.success());
+    for attempt in 1..=2 {
+        assert!(
+            root.join(format!(
+                "artifacts/cold-process/requests/attempt-{attempt:03}.json"
+            ))
+            .is_file()
+        );
+        assert!(
+            root.join(format!(
+                "artifacts/cold-process/attempt-{attempt:03}/result.json"
+            ))
+            .is_file()
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn cold_process_benchmark_rejects_different_native_boundaries() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let root = unique_root();
+    let suite_path = write_suite(&root);
+    let request_draft = write_run_request_draft(&root, &suite_path);
+    rewrite_request_for_mock_controller(
+        &root,
+        &request_draft,
+        executable,
+        Some("unstable-fingerprint"),
+        "artifacts/unused-template-destination",
+    );
+    let request_path = root.join("run-request.json");
+    let sealed = Command::new(executable)
+        .args(["harness", "seal-run-request", "--input"])
+        .arg(&request_draft)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(sealed.status.success());
+
+    let report_path = root.join("artifacts/unstable/report.json");
+    let benchmark = Command::new(executable)
+        .args(["benchmark", "cold-process", "--request"])
+        .arg(&request_path)
+        .args(["--artifact-root", "artifacts/unstable"])
+        .arg("--output")
+        .arg(&report_path)
+        .args(["--repository-root"])
+        .arg(&root)
+        .args(["--repetitions", "2"])
+        .output()
+        .unwrap();
+    assert!(!benchmark.status.success());
+    assert!(
+        String::from_utf8_lossy(&benchmark.stderr)
+            .contains("cold-process attempts are not comparable")
+    );
+    let report: ColdProcessBenchmarkReport =
+        serde_json::from_slice(&fs::read(report_path).unwrap()).unwrap();
+    report.validate().unwrap();
+    assert!(!report.comparable);
+    assert!(
+        report
+            .comparison_issue
+            .as_deref()
+            .unwrap()
+            .contains("not semantically and artifact-identical")
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
