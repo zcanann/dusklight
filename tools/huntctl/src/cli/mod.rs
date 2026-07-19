@@ -1,8 +1,13 @@
 //! Command adapters grouped by control-plane domain.
 
 pub mod conformance;
+pub mod controller;
 pub mod corpus;
+pub mod fixture;
 pub mod learning;
+pub mod milestone;
+pub mod observation;
+pub mod oracle;
 pub mod search;
 pub mod tape;
 pub mod timeline;

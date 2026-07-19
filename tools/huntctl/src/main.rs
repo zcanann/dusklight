@@ -3,9 +3,7 @@ use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDi
 use huntctl::calibration::calibrate_fitted_q;
 use huntctl::candidate_envelope::{CandidateEnvelope, CandidateEnvelopeSet};
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
-use huntctl::comparison_oracle::{ComparisonEvidence, ComparisonOracleProgram};
 use huntctl::continuous_search::{ContinuousAxes, ContinuousMethod};
-use huntctl::controller_compilation::{ControllerObservationProvenance, compile_static_controller};
 use huntctl::controller_program::ControllerProgram;
 use huntctl::dataset::{
     DATASET_SOURCE_SCHEMA_V1, DatasetBuildConfig, DatasetManifest, DatasetSourceDescriptor,
@@ -30,14 +28,13 @@ use huntctl::low_data_baselines::{
 use huntctl::milestone_dsl;
 use huntctl::motion_path::{MotionPathPlan, PathCancellationHit};
 use huntctl::motion_path_golf::{MotionPathGolfSteps, golf_motion_path};
-use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, ObservationSpec, movement_state_v2_spec};
+use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
     extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
 };
 use huntctl::option_execution::OptionExecution;
 use huntctl::option_golf::{RollGolfSteps, golf_roll_option};
-use huntctl::oracle_pipeline::OracleCompositionManifest;
 use huntctl::pool::{MixedBuildPolicy, WorkerLaunch, WorkerPool};
 use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
 use huntctl::roll_option::{RollCancellationHit, RollOptionPlan};
@@ -55,9 +52,6 @@ use huntctl::search_evaluator::{
     ProposerTournamentConfig, SearchRunConfig, TournamentDefinition, evaluate_population,
     golf_boot, minimize_anchored_route, minimize_boot, run_anchored_search, run_bayesian_search,
     run_beam_search, run_continuous_search, run_proposer_tournament, run_search,
-};
-use huntctl::semantic_oracle::{
-    RunOutcomeEvidence, SemanticOracleProgram, SupplementalObservations,
 };
 use huntctl::tape::InputTape;
 use huntctl::tape_chain::{ChainSegment, concatenate};
@@ -107,16 +101,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         "harness" => command_harness(&args[1..]),
         "identity" => command_identity(&args[1..]),
         "corpus" => cli::corpus::command_corpus(&args[1..]),
-        "controller" => command_controller(&args[1..]),
-        "milestone" => command_milestone(&args[1..]),
-        "fixture" => command_fixture(&args[1..]),
+        "controller" => cli::controller::command_controller(&args[1..]),
+        "milestone" => cli::milestone::command_milestone(&args[1..]),
+        "fixture" => cli::fixture::command_fixture(&args[1..]),
         "tape" => cli::tape::command_tape(&args[1..]),
         "trace" => cli::trace::command_trace(&args[1..]),
         "timeline" => cli::timeline::command_timeline(&args[1..]),
         "search" => cli::search::command_search(&args[1..]),
         "learn" => cli::learning::command_learn(&args[1..]),
-        "observe" => command_observe(&args[1..]),
-        "oracle" => command_oracle(&args[1..]),
+        "observe" => cli::observation::command_observe(&args[1..]),
+        "oracle" => cli::oracle::command_oracle(&args[1..]),
         "world" => cli::world::command_world(&args[1..]),
         "run" | "replay" => command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
@@ -527,305 +521,6 @@ fn clean_git_revision(checkout: &Path, imported_path: &str) -> Result<String, Bo
         .into());
     }
     Ok(revision)
-}
-
-fn command_oracle(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("evaluate") => {
-            let oracle_args = &args[1..];
-            let program_path = required_path(oracle_args, "--program")?;
-            let trace_path = required_path(oracle_args, "--trace")?;
-            let program: SemanticOracleProgram =
-                serde_json::from_slice(&fs::read(&program_path)?)?;
-            let trace = huntctl::trace::decode(&fs::read(&trace_path)?)?;
-            let mut supplemental: SupplementalObservations =
-                if let Some(path) = option(oracle_args, "--supplemental") {
-                    serde_json::from_slice(&fs::read(path)?)?
-                } else {
-                    SupplementalObservations::default()
-                };
-            if let Some(path) = option(oracle_args, "--run-outcome") {
-                if supplemental.run_outcome.is_some() {
-                    return Err(
-                        "run outcome was supplied in both --supplemental and --run-outcome".into(),
-                    );
-                }
-                supplemental.run_outcome = Some(serde_json::from_slice::<RunOutcomeEvidence>(
-                    &fs::read(path)?,
-                )?);
-            }
-            let report = program.evaluate(&trace, &supplemental)?;
-            let encoded = serde_json::to_vec_pretty(&report)?;
-            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
-                if let Some(parent) = path
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(path, &encoded)?;
-            }
-            println!("{}", String::from_utf8(encoded)?);
-            Ok(())
-        }
-        Some("compare") => {
-            let oracle_args = &args[1..];
-            let program: ComparisonOracleProgram = serde_json::from_slice(&fs::read(
-                required_path(oracle_args, "--program")?,
-            )?)?;
-            let evidence: ComparisonEvidence = serde_json::from_slice(&fs::read(required_path(
-                oracle_args,
-                "--evidence",
-            )?)?)?;
-            let report = program.evaluate(&evidence)?;
-            let encoded = serde_json::to_vec_pretty(&report)?;
-            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
-                if let Some(parent) = path
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(path, &encoded)?;
-            }
-            println!("{}", String::from_utf8(encoded)?);
-            Ok(())
-        }
-        Some("compose") => {
-            let oracle_args = &args[1..];
-            let manifest: OracleCompositionManifest = serde_json::from_slice(&fs::read(
-                required_path(oracle_args, "--manifest")?,
-            )?)?;
-            let evidence = manifest.compose()?;
-            let encoded = serde_json::to_vec_pretty(&evidence)?;
-            if let Some(path) = option(oracle_args, "--output").map(PathBuf::from) {
-                if let Some(parent) = path
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(path, &encoded)?;
-            }
-            println!("{}", String::from_utf8(encoded)?);
-            Ok(())
-        }
-        _ => Err("oracle command: evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json] | compose --manifest COMPOSITION.json [--output EVIDENCE.json] | compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]".into()),
-    }
-}
-
-fn command_fixture(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("compile") if args.len() == 3 => {
-            let fixture: ScenarioFixture = serde_json::from_slice(&fs::read(&args[1])?)?;
-            let bytes = fixture.encode()?;
-            fs::write(&args[2], &bytes)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "schema": fixture.schema,
-                    "name": fixture.name,
-                    "encoded_bytes": bytes.len(),
-                    "output": args[2]
-                }))?
-            );
-            Ok(())
-        }
-        Some("inspect") if args.len() == 2 => {
-            let fixture = ScenarioFixture::decode(&fs::read(&args[1])?)?;
-            println!("{}", serde_json::to_string_pretty(&fixture)?);
-            Ok(())
-        }
-        _ => Err(
-            "fixture commands: compile SOURCE.json OUTPUT.fixture, inspect INPUT.fixture".into(),
-        ),
-    }
-}
-
-fn command_observe(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("spec") if args.get(1).map(String::as_str) == Some(MOVEMENT_STATE_V2_ID) => {
-            let spec = movement_state_v2_spec();
-            let bytes = spec.canonical_bytes()?;
-            if let Some(output) = option(&args[2..], "--output") {
-                let output = PathBuf::from(output);
-                if let Some(parent) = output
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&output, &bytes)?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "output": output,
-                        "id": spec.id,
-                        "digest": spec.digest()?,
-                        "feature_count": spec.feature_count(),
-                    }))?
-                );
-            } else {
-                println!("{}", serde_json::to_string_pretty(&spec)?);
-            }
-            Ok(())
-        }
-        Some("inspect") if args.len() == 2 => {
-            let spec: ObservationSpec = serde_json::from_slice(&fs::read(&args[1])?)?;
-            spec.validate()?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "path": args[1],
-                    "id": spec.id,
-                    "objective": spec.objective,
-                    "phase": spec.phase,
-                    "digest": spec.digest()?,
-                    "feature_count": spec.feature_count(),
-                    "categorical_features": spec.categorical_features(),
-                    "channels": spec.channels,
-                    "features": spec.features,
-                }))?
-            );
-            Ok(())
-        }
-        _ => usage_error(),
-    }
-}
-
-fn command_milestone(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("compile") if args.len() == 3 => {
-            let source = fs::read_to_string(&args[1])?;
-            let compiled = milestone_dsl::compile_source(&source)?;
-            let output = PathBuf::from(&args[2]);
-            if let Some(parent) = output
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&output, &compiled.bytes)?;
-            println!(
-                "wrote {} milestones ({} bytes, sha256 {}) to {}",
-                compiled.definitions.len(),
-                compiled.bytes.len(),
-                Digest(compiled.program_sha256),
-                output.display()
-            );
-            Ok(())
-        }
-        Some("inspect") if args.len() == 2 => {
-            let decoded = milestone_dsl::decode(&fs::read(&args[1])?)?;
-            let definitions = decoded
-                .definitions
-                .iter()
-                .zip(&decoded.program.definitions)
-                .map(|(definition, ast)| -> Result<_, milestone_dsl::BinaryError> {
-                    let projections = ast
-                        .projections
-                        .iter()
-                        .map(|projection| {
-                            Ok(json!({
-                                "name": projection.name,
-                                "identity": Digest(milestone_dsl::value_projection_identity(projection)?),
-                                "items": projection.items,
-                            }))
-                        })
-                        .collect::<Result<Vec<_>, milestone_dsl::BinaryError>>()?;
-                    Ok(json!({
-                        "id": definition.name,
-                        "sha256": Digest(definition.sha256),
-                        "value_projections": projections,
-                    }))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "format": "DMSP",
-                    "program_sha256": Digest(decoded.program_sha256),
-                    "definitions": definitions,
-                    "source": milestone_dsl::format(&decoded.program)?,
-                }))?
-            );
-            Ok(())
-        }
-        Some("format") if args.len() == 2 => {
-            let source = fs::read_to_string(&args[1])?;
-            println!(
-                "{}",
-                milestone_dsl::format(&milestone_dsl::parse(&source)?)?
-            );
-            Ok(())
-        }
-        _ => usage_error(),
-    }
-}
-
-fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("compile") if args.len() == 3 => {
-            let source = fs::read_to_string(&args[1])?;
-            let program = ControllerProgram::parse(&source)?;
-            let bytes = program.encode()?;
-            let output = PathBuf::from(&args[2]);
-            if let Some(parent) = output
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&output, &bytes)?;
-            println!(
-                "wrote {} frames, {} layers ({} bytes) to {}",
-                program.duration_frames,
-                program.layers.len(),
-                bytes.len(),
-                output.display()
-            );
-            Ok(())
-        }
-        Some("inspect") if args.len() == 2 => {
-            let bytes = fs::read(&args[1])?;
-            let program = ControllerProgram::decode(&bytes)?;
-            let version_major = u16::from_le_bytes(bytes[8..10].try_into()?);
-            let version_minor = u16::from_le_bytes(bytes[10..12].try_into()?);
-            let provenance = ControllerObservationProvenance::for_program(&program);
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "format": "DUSKCTRL",
-                    "version": { "major": version_major, "minor": version_minor },
-                    "duration_frames": program.duration_frames,
-                    "layer_count": program.layers.len(),
-                    "static_tape_compilable": provenance.is_static(),
-                    "observation_provenance": provenance,
-                    "layers": program.layers,
-                }))?
-            );
-            Ok(())
-        }
-        Some("flatten") if args.len() == 3 => {
-            let program = ControllerProgram::decode(&fs::read(&args[1])?)?;
-            let tape = compile_static_controller(&program)?;
-            let output = PathBuf::from(&args[2]);
-            if let Some(parent) = output
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&output, tape.encode()?)?;
-            println!(
-                "flattened {} controller frames to {}",
-                tape.frames.len(),
-                output.display()
-            );
-            Ok(())
-        }
-        _ => usage_error(),
-    }
 }
 
 fn command_pool(args: &[String]) -> Result<(), Box<dyn Error>> {

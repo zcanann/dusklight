@@ -446,3 +446,13 @@ back into a cross-domain implementation file.
 
 **Done when:** route and workbench command growth is owned beside those domains
 instead of accumulating in the root Rust binary.
+
+## 32. Domain-owned objective and control CLI adapters
+
+- [x] Move fixture, observation, milestone, controller, and semantic/comparison
+  oracle commands into explicit CLI domains.
+- [x] Ratchet the reduced root binary and pass each public adapter integration,
+  lint, and architecture gate without changing command behavior.
+
+**Done when:** objective/control surface growth no longer accumulates as mixed
+implementation code in the root Rust binary.

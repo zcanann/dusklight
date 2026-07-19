@@ -22,13 +22,32 @@ EXPECTED_ROOT_MODULE_DIRECTORIES = {
     "cli",
 }
 
+EXPECTED_CLI_SOURCE_FILES = {
+    "conformance.rs",
+    "controller.rs",
+    "corpus.rs",
+    "fixture.rs",
+    "learning/algorithms.rs",
+    "learning/commands.rs",
+    "learning/mod.rs",
+    "milestone.rs",
+    "mod.rs",
+    "observation.rs",
+    "oracle.rs",
+    "search.rs",
+    "tape.rs",
+    "timeline.rs",
+    "trace.rs",
+    "world.rs",
+}
+
 # The executable is an adapter, not a domain-owner escape hatch. These are
 # ratchets: lower them as commands move into their domain modules, and never
 # raise them to accommodate another flat implementation.
 ROOT_FILE_LINE_BUDGETS = {
     "corpus_ops.rs": 1_000,
     "lib.rs": 200,
-    "main.rs": 1_500,
+    "main.rs": 1_200,
 }
 ROOT_MODULE_FILE_LINE_BUDGET = 2_000
 CRATE_ENTRYPOINT_LINE_BUDGET = 2_500
@@ -305,6 +324,15 @@ root_module_directories = {
 assert root_module_directories == EXPECTED_ROOT_MODULE_DIRECTORIES, (
     "huntctl root module directories changed without an explicit ownership decision: "
     f"{sorted(root_module_directories)}"
+)
+
+cli_source_files = {
+    path.relative_to(ROOT_SOURCE / "cli").as_posix()
+    for path in (ROOT_SOURCE / "cli").rglob("*.rs")
+}
+assert cli_source_files == EXPECTED_CLI_SOURCE_FILES, (
+    "huntctl CLI ownership changed without updating the architecture policy: "
+    f"expected {sorted(EXPECTED_CLI_SOURCE_FILES)}, got {sorted(cli_source_files)}"
 )
 
 for name, budget in ROOT_FILE_LINE_BUDGETS.items():
