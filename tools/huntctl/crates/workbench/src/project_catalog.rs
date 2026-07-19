@@ -1140,15 +1140,19 @@ mod tests {
             .canonicalize()
             .unwrap();
         let catalog = load_project_catalog(&repository).unwrap();
-        assert!(catalog.entries.contains_key("routes/intro"));
-        assert_eq!(catalog.entries["routes/intro"].kind, ProjectKind::Timeline);
+        assert!(catalog.entries.contains_key("routes/Glitch Exhibition/intro"));
+        assert_eq!(
+            catalog.entries["routes/Glitch Exhibition/intro"].kind,
+            ProjectKind::Timeline
+        );
         assert!(
             !catalog
                 .entries
-                .contains_key("routes/intro/segments/golf439")
+                .contains_key("routes/Glitch Exhibition/intro/segments/tolink/01-title-ready")
         );
         assert!(catalog.groups.contains_key("routes"));
-        assert!(!catalog.groups.contains_key("routes/intro"));
+        assert!(catalog.groups.contains_key("routes/Glitch Exhibition"));
+        assert!(!catalog.groups.contains_key("routes/Glitch Exhibition/intro"));
     }
 
     #[test]

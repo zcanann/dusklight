@@ -745,6 +745,24 @@ pub(super) fn delete_segment_subtrees_in_timeline_source_preferring<'a>(
         .iter()
         .filter(|proof| segments.contains(&proof.segment) || goals.contains(&proof.goal))
         .count();
+    let removed_subgraphs = timeline
+        .subgraphs
+        .values()
+        .filter(|subgraph| {
+            timeline
+                .subgraph_segment_closure(&subgraph.id)
+                .iter()
+                .any(|segment| segments.contains(segment))
+        })
+        .map(|subgraph| subgraph.id.clone())
+        .collect::<BTreeSet<_>>();
+    let surviving_subgraph_parent = |id: &str| {
+        let mut parent = timeline.subgraphs[id].parent.as_deref();
+        while parent.is_some_and(|candidate| removed_subgraphs.contains(candidate)) {
+            parent = parent.and_then(|candidate| timeline.subgraphs[candidate].parent.as_deref());
+        }
+        parent.map(str::to_owned)
+    };
 
     let mut reanchored_steps = BTreeMap::<(String, String), String>::new();
     if let Some(preferred_id) = preferred_goal_anchor
@@ -847,6 +865,28 @@ pub(super) fn delete_segment_subtrees_in_timeline_source_preferring<'a>(
             ));
             continue;
         }
+        if tokens.first().map(String::as_str) == Some("subgraph")
+            && let Some(id) = tokens.get(1)
+            && !removed_subgraphs.contains(id)
+            && let Some(subgraph) = timeline.subgraphs.get(id)
+            && subgraph.parent != surviving_subgraph_parent(id)
+        {
+            match surviving_subgraph_parent(id) {
+                Some(parent) => replacement.push_str(&format!(
+                    "subgraph {id} inside {parent} entry {} exit {}{}",
+                    subgraph.entry_segment,
+                    subgraph.exit_segment,
+                    timeline_line_ending(line)
+                )),
+                None => replacement.push_str(&format!(
+                    "subgraph {id} root entry {} exit {}{}",
+                    subgraph.entry_segment,
+                    subgraph.exit_segment,
+                    timeline_line_ending(line)
+                )),
+            }
+            continue;
+        }
         let remove = match tokens.first().map(String::as_str) {
             Some("segment") | Some("label") => tokens
                 .get(1)
@@ -878,6 +918,17 @@ pub(super) fn delete_segment_subtrees_in_timeline_source_preferring<'a>(
                         .is_some_and(|(parent, _)| segments.contains(parent))
                 });
                 removed_lineage || removed_segment || removed_parent
+            }
+            Some("subgraph") | Some("subgraph_label") => tokens
+                .get(1)
+                .is_some_and(|id| removed_subgraphs.contains(id)),
+            Some("subgraph_member") => {
+                tokens
+                    .get(1)
+                    .is_some_and(|id| removed_subgraphs.contains(id))
+                    || tokens
+                        .get(3)
+                        .is_some_and(|segment| segments.contains(segment))
             }
             _ => false,
         };

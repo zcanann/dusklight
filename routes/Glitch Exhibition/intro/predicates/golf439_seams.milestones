@@ -1,0 +1,44 @@
+milestones 1.3
+
+# Structural checkpoints at the authored seams in golf439.tas. These predicates
+# identify exact pre-input boundaries for harvesting fingerprints; they are not
+# optimization goals and deliberately make no claim about menu semantics.
+milestone golf439_title_ready {
+  phase pre_input
+  when tape.frame == 114
+}
+
+milestone golf439_title_opened {
+  phase pre_input
+  when tape.frame == 146
+}
+
+milestone golf439_play_chosen {
+  phase pre_input
+  when tape.frame == 226
+}
+
+milestone golf439_no_save_chosen {
+  phase pre_input
+  when tape.frame == 234
+}
+
+milestone golf439_link_name_accepted {
+  phase pre_input
+  when tape.frame == 236
+}
+
+milestone golf439_epona_name_ready {
+  phase pre_input
+  when tape.frame == 267
+}
+
+milestone golf439_epona_name_accepted {
+  phase pre_input
+  when tape.frame == 334
+}
+
+milestone golf439_opening_event_skipped {
+  phase pre_input
+  when tape.frame == 336
+}

@@ -361,6 +361,33 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/subgraphs/create") => {
+                    let result = serde_json::from_slice::<BrowserSubgraphCreateRequest>(&request.body)
+                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph create request: {error}")))
+                        .and_then(|edit| create_subgraph(&config.timeline_path, &edit));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/subgraphs/rename") => {
+                    let result = serde_json::from_slice::<BrowserSubgraphRenameRequest>(&request.body)
+                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph rename request: {error}")))
+                        .and_then(|edit| rename_subgraph(&config.timeline_path, &edit));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/subgraphs/ungroup") => {
+                    let result = serde_json::from_slice::<BrowserSubgraphUngroupRequest>(&request.body)
+                        .map_err(|error| WorkbenchError::new(format!("invalid subgraph ungroup request: {error}")))
+                        .and_then(|edit| ungroup_subgraph(&config.timeline_path, &edit));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/workspace/boot") => {
                     let result =
                         serde_json::from_slice::<BrowserBootOverrideUpdateRequest>(&request.body)

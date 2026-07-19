@@ -128,7 +128,7 @@ target goal, program, and observed seed from the checked-in timeline and
 lineage. When either segment has several attached goals, pass `--source-goal`
 or `--goal` explicitly:
 
-    huntctl search run-route --timeline routes/intro.timeline --lineage main --segment to_ordon_spring_human150 --source-goal link_control --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
+    huntctl search run-route --timeline "routes/Glitch Exhibition/intro.timeline" --lineage main --segment to_ordon_spring_human150 --source-goal link_control --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
 The loose executable inputs may be replaced with `--run-request REQUEST.json`
 and `--repository-root ROOT`. The sealed request must bind the exact

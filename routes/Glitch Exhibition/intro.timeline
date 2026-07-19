@@ -1,0 +1,57 @@
+# Curated segment tree. Every playable artifact is a segment; alternatives are
+# sibling segments with the same parent. Subgraphs only collapse coherent runs
+# in the workbench; goals and proofs remain metadata on terminal segments.
+timeline intro
+origin boot predicate process_boot source intro/predicates/process_boot.milestones
+
+segment tolink_title_ready root profile boot_to_fsp103 uses tas intro/segments/tolink/01-title-ready.tas starts process-clean-v1 produces c4b02b22fdb5c3e7f0f933720d535179
+label tolink_title_ready "Title ready"
+segment tolink_open_title after tolink_title_ready profile boot_to_fsp103 uses tas intro/segments/tolink/02-open-title.tas starts c4b02b22fdb5c3e7f0f933720d535179 produces d64a4484dfa708d62a45d1fe32f99681
+label tolink_open_title "Open title"
+segment tolink_choose_play after tolink_open_title profile boot_to_fsp103 uses tas intro/segments/tolink/03-choose-play.tas starts d64a4484dfa708d62a45d1fe32f99681 produces d4ad06517079d54c9d2225b11faf2ab2
+label tolink_choose_play "Choose Play"
+segment tolink_continue_no_save after tolink_choose_play profile boot_to_fsp103 uses tas intro/segments/tolink/04-continue-without-saving.tas starts d4ad06517079d54c9d2225b11faf2ab2 produces d4ad06517079d54c9d2225b11faf2ab2
+label tolink_continue_no_save "Continue without saving"
+segment tolink_accept_link after tolink_continue_no_save profile boot_to_fsp103 uses tas intro/segments/tolink/05-accept-default-link.tas starts d4ad06517079d54c9d2225b11faf2ab2 produces d4ad06517079d54c9d2225b11faf2ab2
+label tolink_accept_link "Accept Link"
+segment tolink_choose_epona after tolink_accept_link profile boot_to_fsp103 uses tas intro/segments/tolink/06-choose-default-epona.tas starts d4ad06517079d54c9d2225b11faf2ab2 produces d4ad06517079d54c9d2225b11faf2ab2
+label tolink_choose_epona "Choose Epona"
+segment tolink_accept_epona after tolink_choose_epona profile boot_to_fsp103 uses tas intro/segments/tolink/07-accept-default-epona.tas starts d4ad06517079d54c9d2225b11faf2ab2 produces bffdf305d3ea7b6ffdc3507d65e8daa9
+label tolink_accept_epona "Accept Epona"
+segment tolink_skip_event after tolink_accept_epona profile boot_to_fsp103 uses tas intro/segments/tolink/08-skip-opening-event.tas starts bffdf305d3ea7b6ffdc3507d65e8daa9 produces f3b695cdcbad6b40de77ca4657af72bf
+label tolink_skip_event "Skip opening event"
+segment tolink_link_control after tolink_skip_event profile boot_to_fsp103 uses tas intro/segments/tolink/09-skip-opening-cutscene.tas starts f3b695cdcbad6b40de77ca4657af72bf produces cb138869f3fbbb433046e39218d3b0a4
+label tolink_link_control "Link control"
+
+subgraph tolink root entry tolink_title_ready exit tolink_link_control
+subgraph_label tolink "ToLink"
+subgraph_member tolink segment tolink_title_ready
+subgraph_member tolink segment tolink_open_title
+subgraph_member tolink segment tolink_choose_play
+subgraph_member tolink segment tolink_continue_no_save
+subgraph_member tolink segment tolink_accept_link
+subgraph_member tolink segment tolink_choose_epona
+subgraph_member tolink segment tolink_accept_epona
+subgraph_member tolink segment tolink_skip_event
+subgraph_member tolink segment tolink_link_control
+
+segment to_ordon_spring_q129 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_q129.tape starts cb138869f3fbbb433046e39218d3b0a4 produces c4ba7afe943b7ade1d12cc61ed6f2488
+label to_ordon_spring_q129 "ToOrdonSprings 129f"
+
+goal link_control on tolink_link_control predicate link_control source intro/predicates/link_control.milestones
+goal ordon_spring_load_committed on to_ordon_spring_q129 predicate ordon_spring_load_committed source intro/predicates/ordon_spring_load_committed.milestones
+
+proof tolink_link_control satisfies link_control program 9d6fbe94e5c52782d6f8a4ec5fea53af03e98f016c84d502347d2337c0b8e6eb predicate 788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615 ticks 439
+proof to_ordon_spring_q129 satisfies ordon_spring_load_committed program 82599e2646457c2d873970f0e3ccdf78d4d7277c4b1e9159b4516dcb8a1d4a79 predicate 631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57 ticks 129
+
+continuation main starts root@process-clean-v1
+continue main with tolink_title_ready after root@process-clean-v1
+continue main with tolink_open_title after tolink_title_ready@c4b02b22fdb5c3e7f0f933720d535179
+continue main with tolink_choose_play after tolink_open_title@d64a4484dfa708d62a45d1fe32f99681
+continue main with tolink_continue_no_save after tolink_choose_play@d4ad06517079d54c9d2225b11faf2ab2
+continue main with tolink_accept_link after tolink_continue_no_save@d4ad06517079d54c9d2225b11faf2ab2
+continue main with tolink_choose_epona after tolink_accept_link@d4ad06517079d54c9d2225b11faf2ab2
+continue main with tolink_accept_epona after tolink_choose_epona@d4ad06517079d54c9d2225b11faf2ab2
+continue main with tolink_skip_event after tolink_accept_epona@bffdf305d3ea7b6ffdc3507d65e8daa9
+continue main with tolink_link_control after tolink_skip_event@f3b695cdcbad6b40de77ca4657af72bf
+continue main with to_ordon_spring_q129 after tolink_link_control@cb138869f3fbbb433046e39218d3b0a4

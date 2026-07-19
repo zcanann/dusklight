@@ -22,6 +22,7 @@ mod inventory_catalog;
 mod project_catalog;
 mod server;
 mod stage_catalog;
+mod subgraph_store;
 
 pub use graph_projection::{
     ThumbnailPruneEntry, ThumbnailPruneReport, graph_from_timeline, prune_thumbnails,
@@ -30,6 +31,7 @@ pub use server::serve;
 
 use graph_projection::*;
 use project_catalog::*;
+use subgraph_store::*;
 
 #[cfg(test)]
 use server::{HttpResponse, handle_http, origin_allowed, thumbnail_response};
@@ -56,7 +58,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v9";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v10";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -73,6 +75,7 @@ const DRAFT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.delete-prev
 const DRAFT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.delete-result.v1";
 const DRAFT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.rename-result.v1";
 const SEGMENT_RENAME_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-rename-result.v1";
+const SUBGRAPH_EDIT_RESULT_SCHEMA: &str = "dusklight.route-workbench.subgraph-edit-result.v1";
 const SEGMENT_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.segment-delete-preview.v1";
 const SIBLING_DELETE_PREVIEW_SCHEMA: &str = "dusklight.route-workbench.sibling-delete-preview.v1";
 const SEGMENT_DELETE_RESULT_SCHEMA: &str = "dusklight.route-workbench.segment-delete-result.v1";
@@ -115,6 +118,7 @@ pub struct WorkbenchGraph {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<GraphOrigin>,
     pub segments: Vec<GraphSegment>,
+    pub subgraphs: Vec<GraphSubgraph>,
     pub goals: Vec<GraphGoal>,
     pub drafts: Vec<GraphDraft>,
     pub projects: GraphProjectCatalog,
@@ -122,6 +126,40 @@ pub struct WorkbenchGraph {
     pub draft_graph_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predicate_program: Option<GraphPredicateProgram>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSubgraphCreateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub segments: Vec<String>,
+    #[serde(default)]
+    pub subgraphs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSubgraphRenameRequest {
+    pub id: String,
+    pub expected_name: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSubgraphUngroupRequest {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SubgraphEditResult {
+    pub schema: String,
+    pub id: String,
+    pub name: String,
+    pub operation: String,
 }
 
 fn workspace_edits() -> &'static Mutex<()> {
@@ -572,6 +610,19 @@ pub struct BrowserPlayRequest {
         deserialize_with = "deserialize_playback_speed_percent"
     )]
     pub speed_percent: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphSubgraph {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub entry_segment: String,
+    pub exit_segment: String,
+    pub segments: Vec<String>,
+    pub recursive_segments: Vec<String>,
+    pub frame_count: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

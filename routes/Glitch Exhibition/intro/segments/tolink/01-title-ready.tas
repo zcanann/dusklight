@@ -1,0 +1,7 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+repeat 115 neutral

@@ -63,6 +63,21 @@ Because every segment has one structural parent, the tree itself remains easy
 to inspect. Pinned paths answer a separate question: which sibling was selected
 for a named route such as `main`?
 
+## Structural subgraphs
+
+Subgraphs are collapsible views over a connected, single-entry/single-exit
+region of ordinary segments. They do not own inputs, add playback edges, or
+change fingerprints. Collapsing a subgraph shows one node whose frame count is
+the sum of its contained segments; playback and recording at that node use its
+exit segment, so the exact Boot-rooted chain remains authoritative.
+
+Double-click a subgraph to open it and use the breadcrumb to move back out.
+Ctrl/Command-click or Shift-click selects several visible segments/subgraphs;
+**Group selection** accepts only a connected region at the current level.
+Rename and Ungroup edit only the Git-owned structural metadata. Nested
+subgraphs are supported, while overlapping membership and multiple entries or
+exits are rejected by the timeline parser.
+
 ## Route Workbench
 
 Choose **Glitch Hunt: Route Workbench** under VS Code's Run and Debug panel.
@@ -128,7 +143,7 @@ ready draft, and projected search result, previews by default, and moves
 orphans to a recoverable transaction under the workbench state root:
 
 ```sh
-huntctl timeline prune-thumbnails --timeline routes/intro.timeline \
+huntctl timeline prune-thumbnails --timeline "routes/Glitch Exhibition/intro.timeline" \
   --repository-root . \
   --state-root build/automation-state/route-workbench
 # Review the JSON report, then repeat with --apply.
@@ -168,6 +183,10 @@ segment human420 after golf439 profile link_control_to_tunnel_crawl_start uses t
 label human420 "Link control to tunnel crawl"
 segment human_alt420 after golf439 profile link_control_to_tunnel_crawl_start uses tape intro/segments/human_alt420.tape starts LINK_STATE produces CRAWL_STATE_B
 
+subgraph intro_menu root entry golf439 exit golf439
+subgraph_label intro_menu "Boot to Link"
+subgraph_member intro_menu segment golf439
+
 goal link_control on golf439 predicate link_control source intro/predicates/link_control.milestones
 goal tunnel_crawl_start on human420 predicate tunnel_crawl_start source intro/predicates/tunnel_crawl_start.milestones
 
@@ -191,7 +210,7 @@ Run the workbench directly with:
 
 ```powershell
 cargo run --manifest-path tools/huntctl/Cargo.toml -- timeline workbench `
-  --timeline routes/intro.timeline `
+  --timeline "routes/Glitch Exhibition/intro.timeline" `
   --game build/windows-clang-debug/dusklight.exe `
   --dvd orig/GZ2E01/GZ2E01.iso
 ```

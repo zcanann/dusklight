@@ -8,7 +8,7 @@
             "program": "${workspaceFolder}/tools/huntctl/target/debug/huntctl.exe",
             "args": [
                 "timeline", "workbench",
-                "--timeline", "${workspaceFolder}/routes/intro.timeline",
+                "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
@@ -35,7 +35,7 @@
             "program": "${workspaceFolder}/tools/huntctl/target/debug/huntctl",
             "args": [
                 "timeline", "workbench",
-                "--timeline", "${workspaceFolder}/routes/intro.timeline",
+                "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
                 "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"

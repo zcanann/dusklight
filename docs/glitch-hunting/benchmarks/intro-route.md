@@ -125,8 +125,11 @@ obtained by reducing an 800-frame
 alternating A/Start baseline while holding that tick and fingerprint immutable.
 The resulting absolute tape has eight non-neutral frames and reproduced the
 same proof in 20/20 independent cold boots. Generated populations and evidence
-remain ignored under `build/`; the compact TAS source is checked in at
-`routes/intro/segments/golf439.tas`.
+remain ignored under `build/`. The exact 440-frame input is checked in as nine
+editable TAS shards under
+`routes/Glitch Exhibition/intro/segments/tolink/`; their concatenation is
+byte-identical to the proved compact tape. The workbench collapses those shards
+into the `ToLink` structural subgraph by default.
 
 An exhaustive timing pass then evaluated every legal earlier timestamp for
 each surviving pulse. The locally minimal timestamp vector is

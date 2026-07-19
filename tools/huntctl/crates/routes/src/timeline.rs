@@ -5,7 +5,7 @@ use crate::search::{Candidate, SegmentProfile};
 use crate::tape::InputTape;
 use crate::tape_dsl;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -19,6 +19,7 @@ pub struct Timeline {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
     pub segments: BTreeMap<String, Segment>,
+    pub subgraphs: BTreeMap<String, Subgraph>,
     pub goals: BTreeMap<String, Goal>,
     pub proofs: Vec<GoalProof>,
     pub continuations: BTreeMap<String, Continuation>,
@@ -888,6 +889,7 @@ impl Timeline {
             }
         }
         self.validate_segment_forest()?;
+        self.validate_subgraphs()?;
         for segment in self.segments.values() {
             if let Some(parent_id) = &segment.parent {
                 let parent = &self.segments[parent_id];
@@ -1099,6 +1101,162 @@ impl Timeline {
         Ok(())
     }
 
+    fn validate_subgraphs(&self) -> Result<(), TimelineError> {
+        let mut owners = HashMap::<&str, &str>::new();
+        for subgraph in self.subgraphs.values() {
+            if subgraph.parent.as_deref() == Some(subgraph.id.as_str()) {
+                return Err(TimelineError::at(
+                    subgraph.line,
+                    1,
+                    format!("subgraph {} cannot contain itself", subgraph.id),
+                ));
+            }
+            if let Some(parent) = &subgraph.parent
+                && !self.subgraphs.contains_key(parent)
+            {
+                return Err(TimelineError::at(
+                    subgraph.line,
+                    1,
+                    format!("subgraph {} references unknown parent {parent}", subgraph.id),
+                ));
+            }
+            for segment in &subgraph.segments {
+                if !self.segments.contains_key(segment) {
+                    return Err(TimelineError::at(
+                        subgraph.line,
+                        1,
+                        format!("subgraph {} references unknown segment {segment}", subgraph.id),
+                    ));
+                }
+                if let Some(previous) = owners.insert(segment, &subgraph.id) {
+                    return Err(TimelineError::at(
+                        subgraph.line,
+                        1,
+                        format!(
+                            "segment {segment} belongs directly to both {previous} and {}",
+                            subgraph.id
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for start in self.subgraphs.values() {
+            let mut seen = HashSet::new();
+            let mut current = Some(start.id.as_str());
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    return Err(TimelineError::at(
+                        start.line,
+                        1,
+                        format!("subgraph hierarchy contains a cycle at {id}"),
+                    ));
+                }
+                current = self.subgraphs[id].parent.as_deref();
+            }
+        }
+
+        for subgraph in self.subgraphs.values() {
+            let closure = self.subgraph_segment_closure(&subgraph.id);
+            if !closure.contains(&subgraph.entry_segment) {
+                return Err(TimelineError::at(
+                    subgraph.line,
+                    1,
+                    format!(
+                        "subgraph {} entry {} is not contained by it",
+                        subgraph.id, subgraph.entry_segment
+                    ),
+                ));
+            }
+            if !closure.contains(&subgraph.exit_segment) {
+                return Err(TimelineError::at(
+                    subgraph.line,
+                    1,
+                    format!(
+                        "subgraph {} exit {} is not contained by it",
+                        subgraph.id, subgraph.exit_segment
+                    ),
+                ));
+            }
+            for segment_id in &closure {
+                let segment = &self.segments[segment_id];
+                let parent_inside = segment
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| closure.contains(parent));
+                if segment_id == &subgraph.entry_segment {
+                    if parent_inside {
+                        return Err(TimelineError::at(
+                            subgraph.line,
+                            1,
+                            format!(
+                                "subgraph {} entry {} has a parent inside the subgraph",
+                                subgraph.id, segment_id
+                            ),
+                        ));
+                    }
+                } else if !parent_inside {
+                    return Err(TimelineError::at(
+                        subgraph.line,
+                        1,
+                        format!(
+                            "subgraph {} has a second entry at segment {segment_id}",
+                            subgraph.id
+                        ),
+                    ));
+                }
+                for child in self
+                    .segments
+                    .values()
+                    .filter(|child| child.parent.as_deref() == Some(segment_id))
+                {
+                    if !closure.contains(&child.id) && segment_id != &subgraph.exit_segment {
+                        return Err(TimelineError::at(
+                            subgraph.line,
+                            1,
+                            format!(
+                                "subgraph {} leaks from non-exit segment {segment_id}",
+                                subgraph.id
+                            ),
+                        ));
+                    }
+                }
+            }
+            if self.segments.values().any(|segment| {
+                segment.parent.as_deref() == Some(&subgraph.exit_segment)
+                    && closure.contains(&segment.id)
+            }) {
+                return Err(TimelineError::at(
+                    subgraph.line,
+                    1,
+                    format!(
+                        "subgraph {} exit {} has a child inside the subgraph",
+                        subgraph.id, subgraph.exit_segment
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn subgraph_segment_closure(&self, id: &str) -> BTreeSet<String> {
+        let mut result = BTreeSet::new();
+        let mut pending = vec![id];
+        while let Some(current) = pending.pop() {
+            let Some(subgraph) = self.subgraphs.get(current) else {
+                continue;
+            };
+            result.extend(subgraph.segments.iter().cloned());
+            pending.extend(
+                self.subgraphs
+                    .values()
+                    .filter(|child| child.parent.as_deref() == Some(current))
+                    .map(|child| child.id.as_str()),
+            );
+        }
+        result
+    }
+
     fn validate_branch_cycles(&self) -> Result<(), TimelineError> {
         for start in self.branches.keys() {
             let mut seen = HashSet::new();
@@ -1125,6 +1283,9 @@ struct Parser<'a> {
     origin: Option<Origin>,
     segments: BTreeMap<String, Segment>,
     segment_labels: BTreeMap<String, (String, usize)>,
+    subgraphs: BTreeMap<String, Subgraph>,
+    subgraph_labels: BTreeMap<String, (String, usize)>,
+    subgraph_members: Vec<(String, String, usize)>,
     goals: BTreeMap<String, Goal>,
     proofs: Vec<GoalProof>,
     continuations: BTreeMap<String, Continuation>,
@@ -1140,6 +1301,9 @@ impl<'a> Parser<'a> {
             origin: None,
             segments: BTreeMap::new(),
             segment_labels: BTreeMap::new(),
+            subgraphs: BTreeMap::new(),
+            subgraph_labels: BTreeMap::new(),
+            subgraph_members: Vec::new(),
             goals: BTreeMap::new(),
             proofs: Vec::new(),
             continuations: BTreeMap::new(),
@@ -1160,6 +1324,9 @@ impl<'a> Parser<'a> {
                 "origin" => self.parse_origin(&tokens, line_number)?,
                 "segment" => self.parse_segment(&tokens, line_number)?,
                 "label" => self.parse_segment_label(&tokens, line_number)?,
+                "subgraph" => self.parse_subgraph(&tokens, line_number)?,
+                "subgraph_label" => self.parse_subgraph_label(&tokens, line_number)?,
+                "subgraph_member" => self.parse_subgraph_member(&tokens, line_number)?,
                 "goal" => self.parse_goal(&tokens, line_number)?,
                 "proof" => self.parse_proof(&tokens, line_number)?,
                 "continuation" => self.parse_continuation(&tokens, line_number)?,
@@ -1180,6 +1347,24 @@ impl<'a> Parser<'a> {
             })?;
             segment.name = Some(label);
         }
+        for (id, (label, line)) in self.subgraph_labels {
+            let subgraph = self.subgraphs.get_mut(&id).ok_or_else(|| {
+                TimelineError::at(line, 1, format!("subgraph_label references unknown subgraph {id}"))
+            })?;
+            subgraph.name = label;
+        }
+        for (id, segment, line) in self.subgraph_members {
+            let subgraph = self.subgraphs.get_mut(&id).ok_or_else(|| {
+                TimelineError::at(line, 1, format!("subgraph_member references unknown subgraph {id}"))
+            })?;
+            if !subgraph.segments.insert(segment.clone()) {
+                return Err(TimelineError::at(
+                    line,
+                    1,
+                    format!("duplicate membership of segment {segment} in subgraph {id}"),
+                ));
+            }
+        }
         let timeline = Timeline {
             name: self
                 .timeline_name
@@ -1187,6 +1372,7 @@ impl<'a> Parser<'a> {
             predicate_program: self.predicate_program,
             origin: self.origin,
             segments: self.segments,
+            subgraphs: self.subgraphs,
             goals: self.goals,
             proofs: self.proofs,
             continuations: self.continuations,
@@ -1347,6 +1533,84 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn parse_subgraph(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
+        if tokens.len() != 7 && tokens.len() != 8 {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "expected subgraph ID (root | inside PARENT) entry SEGMENT exit SEGMENT",
+            ));
+        }
+        let (parent, cursor) = match tokens[2].as_str() {
+            "root" if tokens.len() == 7 => (None, 3),
+            "inside" if tokens.len() == 8 => (Some(tokens[3].clone()), 4),
+            _ => {
+                return Err(TimelineError::at(
+                    line,
+                    1,
+                    "expected subgraph ID (root | inside PARENT) entry SEGMENT exit SEGMENT",
+                ));
+            }
+        };
+        expect(tokens, cursor, "entry", line)?;
+        expect(tokens, cursor + 2, "exit", line)?;
+        let id = tokens[1].clone();
+        let subgraph = Subgraph {
+            id: id.clone(),
+            name: id.clone(),
+            parent,
+            entry_segment: tokens[cursor + 1].clone(),
+            exit_segment: tokens[cursor + 3].clone(),
+            segments: BTreeSet::new(),
+            line,
+        };
+        if self.subgraphs.insert(id.clone(), subgraph).is_some() {
+            return Err(TimelineError::at(line, 1, format!("duplicate subgraph {id}")));
+        }
+        Ok(())
+    }
+
+    fn parse_subgraph_label(
+        &mut self,
+        tokens: &[String],
+        line: usize,
+    ) -> Result<(), TimelineError> {
+        exact_len(tokens, 3, line, "subgraph_label SUBGRAPH DISPLAY_NAME")?;
+        let id = tokens[1].clone();
+        let label = tokens[2].trim().to_owned();
+        if label.is_empty() || label.len() > 160 || label.chars().any(char::is_control) {
+            return Err(TimelineError::at(
+                line,
+                1,
+                "subgraph label must be 1 to 160 UTF-8 bytes without controls",
+            ));
+        }
+        if self
+            .subgraph_labels
+            .insert(id.clone(), (label, line))
+            .is_some()
+        {
+            return Err(TimelineError::at(
+                line,
+                1,
+                format!("duplicate label for subgraph {id}"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn parse_subgraph_member(
+        &mut self,
+        tokens: &[String],
+        line: usize,
+    ) -> Result<(), TimelineError> {
+        exact_len(tokens, 4, line, "subgraph_member SUBGRAPH segment SEGMENT")?;
+        expect(tokens, 2, "segment", line)?;
+        self.subgraph_members
+            .push((tokens[1].clone(), tokens[3].clone(), line));
+        Ok(())
+    }
+
     fn parse_goal(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
         if tokens.len() != 6 && tokens.len() != 8 {
             return Err(TimelineError::at(
@@ -1498,6 +1762,19 @@ impl<'a> Parser<'a> {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Subgraph {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub entry_segment: String,
+    pub exit_segment: String,
+    pub segments: BTreeSet<String>,
+    #[serde(skip)]
+    line: usize,
 }
 
 fn parse_contained_relative_path(
@@ -2197,5 +2474,63 @@ continue main with boot_link after root@clean
         .unwrap();
         timeline.validate_artifacts(Some(&root)).unwrap();
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn nested_subgraphs_are_structural_single_entry_single_exit_regions() {
+        let timeline = Timeline::parse(
+            r#"
+timeline nested
+segment a root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+segment b after a profile boot_to_fsp103 uses baseline boot_to_fsp103 starts one produces two
+segment c after b profile boot_to_fsp103 uses baseline boot_to_fsp103 starts two produces three
+subgraph outer root entry a exit c
+subgraph_label outer "Outer graph"
+subgraph_member outer segment a
+subgraph_member outer segment c
+subgraph inner inside outer entry b exit b
+subgraph_label inner "Inner graph"
+subgraph_member inner segment b
+"#,
+        )
+        .unwrap();
+        assert_eq!(timeline.subgraphs["outer"].name, "Outer graph");
+        assert_eq!(
+            timeline.subgraph_segment_closure("outer"),
+            ["a", "b", "c"].into_iter().map(str::to_owned).collect()
+        );
+        assert_eq!(
+            timeline.subgraph_segment_closure("inner"),
+            ["b"].into_iter().map(str::to_owned).collect()
+        );
+    }
+
+    #[test]
+    fn subgraphs_reject_overlapping_or_disconnected_regions() {
+        let overlap = Timeline::parse(
+            r#"
+timeline overlap
+segment a root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+subgraph first root entry a exit a
+subgraph_member first segment a
+subgraph second root entry a exit a
+subgraph_member second segment a
+"#,
+        )
+        .unwrap_err();
+        assert!(overlap.to_string().contains("belongs directly to both"));
+
+        let disconnected = Timeline::parse(
+            r#"
+timeline disconnected
+segment a root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces one
+segment b root profile boot_to_fsp103 uses baseline boot_to_fsp103 starts clean produces two
+subgraph broken root entry a exit b
+subgraph_member broken segment a
+subgraph_member broken segment b
+"#,
+        )
+        .unwrap_err();
+        assert!(disconnected.to_string().contains("second entry"));
     }
 }

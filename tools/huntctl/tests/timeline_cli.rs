@@ -21,7 +21,7 @@ fn repo_root() -> PathBuf {
 
 #[test]
 fn authored_timeline_and_content_addressed_store_round_trip() {
-    let route = repo_root().join("routes/intro.timeline");
+    let route = repo_root().join("routes/Glitch Exhibition/intro.timeline");
     let parsed = run(&["timeline", "parse", route.to_str().unwrap()]);
     assert!(
         parsed.status.success(),
@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 2);
+    assert_eq!(summary["segments"], 10);
 
     let status = run(&[
         "timeline",
@@ -45,14 +45,14 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     assert_eq!(status["immutable_lineages"][0]["stale"], false);
     assert_eq!(
         status["workspace"]["steps"][0]["workspace_segment"],
-        "golf439"
+        "tolink_title_ready"
     );
     assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
     assert_eq!(
-        status["workspace"]["steps"][1]["workspace_segment"],
+        status["workspace"]["steps"][9]["workspace_segment"],
         "to_ordon_spring_q129"
     );
-    assert_eq!(status["workspace"]["steps"][1]["state"], "unchanged");
+    assert_eq!(status["workspace"]["steps"][9]["state"], "unchanged");
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -83,7 +83,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     let imported: serde_json::Value = serde_json::from_slice(&imported.stdout).unwrap();
     assert_eq!(
         imported["segments"]["to_ordon_spring_q129"]["parent"],
-        "golf439"
+        "tolink_link_control"
     );
     assert!(
         imported["segments"]["to_ordon_spring_q129"]["goals"]["ordon_spring_load_committed"]
@@ -166,7 +166,7 @@ fn thumbnail_pruning_previews_then_moves_orphans_to_recoverable_trash() {
     let orphan_key = "f".repeat(64);
     let orphan = thumbnails.join(format!("{orphan_key}.png"));
     fs::write(&orphan, b"\x89PNG\r\n\x1a\ncache").unwrap();
-    let route = repo_root().join("routes/intro.timeline");
+    let route = repo_root().join("routes/Glitch Exhibition/intro.timeline");
 
     let preview = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["timeline", "prune-thumbnails", "--timeline"])

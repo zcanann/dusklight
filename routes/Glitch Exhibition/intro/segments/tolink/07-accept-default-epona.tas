@@ -1,0 +1,9 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+state accept { p0 buttons A }
+
+frame accept
+repeat 66 neutral

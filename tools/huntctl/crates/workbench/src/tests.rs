@@ -39,6 +39,10 @@ fn temporary_root(name: &str) -> PathBuf {
     root
 }
 
+fn checked_intro_timeline(repository: &Path) -> PathBuf {
+    repository.join("routes/Glitch Exhibition/intro.timeline")
+}
+
 fn write_tape(root: &Path, name: &str, values: &[i8]) {
     let tape = InputTape {
         frames: values
@@ -411,7 +415,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v9");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v10");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -422,6 +426,67 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     let playback = materialize_segment_chain(&timeline(), &root, "link_exit.one").unwrap();
     assert_eq!(playback.tape.frames.len(), 7);
     assert_eq!(playback.steps[1].chain_start_frame, 4);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn subgraph_edits_group_nest_rename_and_ungroup_without_changing_segments() {
+    let root = temporary_root("subgraph-edits");
+    let path = root.join("route.timeline");
+    fs::write(
+        &path,
+        r#"timeline test
+segment first root profile boot_to_fsp103 uses tape first.tape starts clean produces aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+segment second after first profile boot_to_fsp103 uses tape second.tape starts aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa produces bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"#,
+    )
+    .unwrap();
+    let first = create_subgraph(
+        &path,
+        &BrowserSubgraphCreateRequest {
+            name: "First step".into(),
+            parent: None,
+            segments: vec!["first".into()],
+            subgraphs: Vec::new(),
+        },
+    )
+    .unwrap();
+    let whole = create_subgraph(
+        &path,
+        &BrowserSubgraphCreateRequest {
+            name: "Whole route".into(),
+            parent: None,
+            segments: vec!["second".into()],
+            subgraphs: vec![first.id.clone()],
+        },
+    )
+    .unwrap();
+    let renamed = rename_subgraph(
+        &path,
+        &BrowserSubgraphRenameRequest {
+            id: whole.id.clone(),
+            expected_name: "Whole route".into(),
+            name: "To Link".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(renamed.name, "To Link");
+    ungroup_subgraph(
+        &path,
+        &BrowserSubgraphUngroupRequest {
+            id: first.id.clone(),
+        },
+    )
+    .unwrap();
+    let route = load_authoritative_timeline(&path).unwrap();
+    assert_eq!(route.segments.len(), 2);
+    assert_eq!(route.segments["second"].parent.as_deref(), Some("first"));
+    assert!(!route.subgraphs.contains_key(&first.id));
+    assert_eq!(route.subgraphs[&whole.id].name, "To Link");
+    assert_eq!(
+        route.subgraphs[&whole.id].segments,
+        ["first", "second"].into_iter().map(str::to_owned).collect()
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -886,7 +951,13 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "graph-edges",
         "placeGraphNode",
         "bindGraphPan",
-        "Detached / invalid",
+        "id=\"graphBreadcrumbs\"",
+        "id=\"groupSelection\"",
+        "Double-click a subgraph to open",
+        "/api/subgraphs/create",
+        "/api/subgraphs/rename",
+        "/api/subgraphs/ungroup",
+        "scopedSegmentForest",
         "grid-template-rows",
         "projectBootIcon",
         "🫠",
@@ -1375,7 +1446,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         .join("../../../..")
         .canonicalize()
         .unwrap();
-    let timeline_path = repository.join("routes/intro.timeline");
+    let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
     assert!(graph.predicate_program.is_none());
@@ -1394,15 +1465,17 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
             .iter()
             .find(|segment| segment.id == "to_ordon_spring_q129")
             .and_then(|segment| segment.parent.as_deref()),
-        Some("golf439")
+        Some("tolink_link_control")
     );
     assert!(graph.goals.iter().any(|goal| {
-        goal.id == "link_control" && goal.segment == "golf439" && goal.predicate == "link_control"
+        goal.id == "link_control"
+            && goal.segment == "tolink_link_control"
+            && goal.predicate == "link_control"
     }));
     let segment = graph
         .segments
         .iter()
-        .find(|segment| segment.id == "golf439")
+        .find(|segment| segment.id == "tolink_link_control")
         .unwrap();
     assert!(segment.playable);
     assert!(segment.recordable);
@@ -1410,6 +1483,15 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(segment.goal_proofs.len(), 1);
     assert_eq!(segment.goal_proofs[0].goal, "link_control");
     assert_eq!(segment.record_anchors.len(), 1);
+    let to_link = graph
+        .subgraphs
+        .iter()
+        .find(|subgraph| subgraph.id == "tolink")
+        .unwrap();
+    assert_eq!(to_link.entry_segment, "tolink_title_ready");
+    assert_eq!(to_link.exit_segment, "tolink_link_control");
+    assert_eq!(to_link.recursive_segments.len(), 9);
+    assert_eq!(to_link.frame_count, Some(440));
     let continuation = graph
         .segments
         .iter()
@@ -1436,7 +1518,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         .join("../../../..")
         .canonicalize()
         .unwrap();
-    let timeline_path = repository.join("routes/intro.timeline");
+    let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let artifact_root = timeline_path.parent().unwrap();
     let graph = graph_from_timeline(&route, artifact_root).unwrap();
@@ -1444,10 +1526,38 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         &route,
         artifact_root,
         "main",
-        MaterializeTarget::ThroughSegment("golf439".into()),
+        MaterializeTarget::ThroughSegment("tolink_link_control".into()),
     )
     .unwrap();
     assert_eq!(prefix.tape.frames.len(), 440);
+    let start_frames = BTreeSet::from([115_usize, 147, 227, 235, 237, 335, 337]);
+    for (index, frame) in prefix.tape.frames.iter().enumerate() {
+        let expected_buttons = if index == 268 {
+            0x0100
+        } else if start_frames.contains(&index) {
+            0x1000
+        } else {
+            0
+        };
+        assert_eq!(frame.owned_ports, 0x0f, "owned ports at frame {index}");
+        assert_eq!(
+            frame.pads[0].buttons, expected_buttons,
+            "buttons at frame {index}"
+        );
+        assert_eq!(
+            RawPadState {
+                buttons: expected_buttons,
+                ..RawPadState::default()
+            },
+            frame.pads[0],
+            "pad state at frame {index}"
+        );
+        assert_eq!(
+            &frame.pads[1..],
+            &[RawPadState::default(); 3],
+            "inactive pads at frame {index}"
+        );
+    }
 
     let (segment_id, expected_output) =
         ("to_ordon_spring_q129", "c4ba7afe943b7ade1d12cc61ed6f2488");
@@ -1459,7 +1569,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         .find(|candidate| candidate.id == segment_id)
         .unwrap();
     assert!(card.playable);
-    assert_eq!(card.parent.as_deref(), Some("golf439"));
+    assert_eq!(card.parent.as_deref(), Some("tolink_link_control"));
     let continuation = load_segment_tape(segment, artifact_root).unwrap();
     assert_eq!(continuation.frames.len(), 130);
     let playback = materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
@@ -1492,11 +1602,22 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         first_local_frame.tape.frames.last(),
         continuation.frames.first()
     );
-    let root_playback =
-        materialize_segment_playback(&route, artifact_root, "golf439", None).unwrap();
+    let root_playback = materialize_segment_playback(
+        &route,
+        artifact_root,
+        "tolink_title_ready",
+        None,
+    )
+    .unwrap();
     assert!(
-        segment_parent_frame_count(&route, artifact_root, None, &root_playback.tape, "golf439",)
-            .is_err()
+        segment_parent_frame_count(
+            &route,
+            artifact_root,
+            None,
+            &root_playback.tape,
+            "tolink_title_ready",
+        )
+        .is_err()
     );
     let mut tampered = playback.tape.clone();
     tampered.frames[0].pads[0].stick_x = tampered.frames[0].pads[0].stick_x.wrapping_add(1);
@@ -1525,7 +1646,7 @@ fn authored_boot_recording_status_becomes_a_proved_root_draft() {
         .join("../../../..")
         .canonicalize()
         .unwrap();
-    let timeline_path = repository.join("routes/intro.timeline");
+    let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let artifact_root = timeline_path.parent().unwrap();
     let program = origin_predicate_program_projection(&route, artifact_root)
@@ -2505,6 +2626,19 @@ fn segment_delete_rewrites_only_the_selected_structural_subtree() {
     assert!(empty.goals.is_empty());
     assert!(empty.proofs.is_empty());
     assert!(empty.continuations.is_empty());
+}
+
+#[test]
+fn segment_delete_removes_intersected_subgraph_metadata() {
+    let source = format!(
+        "{}\nsubgraph route root entry boot_link.one exit link_exit.one\nsubgraph_label route \"Route\"\nsubgraph_member route segment boot_link.one\nsubgraph_member route segment link_exit.one\n",
+        milestone_timeline_source()
+    );
+    let deletion = delete_segment_subtree_in_timeline_source(&source, "link_exit.one").unwrap();
+    assert!(!deletion.replacement.contains("subgraph route"));
+    let parsed = Timeline::parse(&deletion.replacement).unwrap();
+    assert!(parsed.subgraphs.is_empty());
+    assert!(parsed.segments.contains_key("boot_link.one"));
 }
 
 #[test]

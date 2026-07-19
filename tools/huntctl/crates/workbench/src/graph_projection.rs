@@ -58,7 +58,7 @@ pub fn graph_from_timeline(
         })
         .collect::<Result<Vec<_>, WorkbenchError>>()?;
 
-    let segments = timeline
+    let segments: Vec<GraphSegment> = timeline
         .segments
         .values()
         .map(|segment| {
@@ -180,11 +180,39 @@ pub fn graph_from_timeline(
             }
         })
         .collect();
+    let subgraphs = timeline
+        .subgraphs
+        .values()
+        .map(|subgraph| {
+            let recursive_segments = timeline
+                .subgraph_segment_closure(&subgraph.id)
+                .into_iter()
+                .collect::<Vec<_>>();
+            let frame_count = recursive_segments.iter().try_fold(0_u64, |total, id| {
+                segments
+                    .iter()
+                    .find(|segment| &segment.id == id)
+                    .and_then(|segment| segment.frame_count)
+                    .and_then(|frames| total.checked_add(frames))
+            });
+            GraphSubgraph {
+                id: subgraph.id.clone(),
+                name: subgraph.name.clone(),
+                parent: subgraph.parent.clone(),
+                entry_segment: subgraph.entry_segment.clone(),
+                exit_segment: subgraph.exit_segment.clone(),
+                segments: subgraph.segments.iter().cloned().collect(),
+                recursive_segments,
+                frame_count,
+            }
+        })
+        .collect();
     Ok(WorkbenchGraph {
         schema: GRAPH_SCHEMA.into(),
         timeline: timeline.name.clone(),
         origin,
         segments,
+        subgraphs,
         goals,
         drafts: Vec::new(),
         projects: GraphProjectCatalog {

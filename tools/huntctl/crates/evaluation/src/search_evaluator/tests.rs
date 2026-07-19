@@ -266,7 +266,7 @@ milestone tunnel_crawl_start {
     assert_eq!(ordinary_score.deepest, "link_control");
 
     let suffix_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../routes/intro/segments/human420.tape");
+        .join("../../../../routes/Glitch Exhibition/intro/segments/human420.tape");
     let suffix = InputTape::decode(&fs::read(suffix_path).unwrap())
         .unwrap()
         .tape;

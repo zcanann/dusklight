@@ -54,6 +54,12 @@
     .graph-controls button { min-width:25px; height:23px; padding:0 6px; border:1px solid var(--line); border-radius:4px; background:#151b24; color:#aeb9c9; cursor:pointer; font-size:10px; line-height:1; }
     .graph-controls button:hover { border-color:#46556a; color:var(--text); }
     .graph-controls .zoom-value { min-width:48px; color:var(--blue); }
+    .graph-breadcrumbs { display:flex; align-items:center; gap:4px; min-width:0; pointer-events:auto; text-transform:none; letter-spacing:0; }
+    .graph-breadcrumbs button { padding:2px 4px; border:0; background:transparent; color:#8290a3; cursor:pointer; font-size:10px; }
+    .graph-breadcrumbs button:hover,.graph-breadcrumbs button:last-child { color:var(--text); }
+    .graph-toolbar { display:flex; align-items:center; gap:4px; margin-left:10px; pointer-events:auto; }
+    .graph-toolbar button { height:23px; padding:0 7px; border:1px solid var(--line); border-radius:4px; background:#151b24; color:#aeb9c9; cursor:pointer; font-size:10px; }
+    .graph-toolbar button:disabled { opacity:.38; cursor:not-allowed; }
     .tree { position:absolute; inset:34px 0 0; overflow:hidden; overscroll-behavior:contain; cursor:grab; font-size:12px; touch-action:none; }
     .tree.panning { cursor:grabbing; user-select:none; }
     .graph-canvas { position:absolute; left:0; top:0; transform-origin:0 0; will-change:transform; }
@@ -62,6 +68,8 @@
     .graph-node { position:absolute; width:220px; height:68px; display:flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid #303b4b; border-radius:7px; background:#141a23; color:#cfd6e2; box-shadow:0 5px 18px rgba(0,0,0,.22); cursor:default; user-select:none; }
     .graph-node:hover { border-color:#485970; background:#19212c; }
     .graph-node.selected { border-color:#638ac5; background:#1c2b40; color:#fff; box-shadow:0 0 0 1px rgba(134,174,251,.16),0 7px 22px rgba(0,0,0,.3); }
+    .graph-node.multi-selected { border-color:var(--amber); box-shadow:0 0 0 1px rgba(231,189,104,.25),0 7px 22px rgba(0,0,0,.3); }
+    .graph-node.subgraph { border-style:double; border-color:#65758d; background:#18202b; }
     .node-copy { min-width:0; flex:1; }
     .node-thumbnail { width:72px; height:54px; flex:0 0 auto; object-fit:cover; border:1px solid #303b4b; border-radius:5px; background:#080b10; }
     .tree-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:650; }
@@ -259,7 +267,7 @@
         <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
       </aside>
       <section class="browser" aria-label="Route graph">
-        <div class="pane-title">Route graph <span class="pane-hint">Drag empty space to pan · wheel to zoom</span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
+        <div class="pane-title"><span id="graphBreadcrumbs" class="graph-breadcrumbs"></span><span class="pane-hint">Double-click a subgraph to open</span><span class="graph-toolbar"><button id="groupSelection" type="button" disabled>Group selection…</button><button id="renameSubgraph" type="button" disabled>Rename…</button><button id="ungroupSubgraph" type="button" disabled>Ungroup…</button></span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
         <div id="tree" class="tree" role="tree"><div class="empty">Loading route…</div></div>
       </section>
     </section>
@@ -331,6 +339,8 @@
     let bootFixtureDraft = null;
     let bootActiveTab = 'location';
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
+    let activeSubgraph = null;
+    let groupedSelection = new Set();
     let workspaceSelection = null;
     const WORKSPACE_ROOT='routes';
     let workspaceNodeSelection = {kind:'folder',id:WORKSPACE_ROOT};
@@ -382,8 +392,9 @@
     function normalize(raw) {
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
+      const subgraphs=Array.isArray(raw.subgraphs)?raw.subgraphs:[];
       const projects=raw.projects||{groups:[],entries:[]};
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,subgraphs,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = goal => goal.predicate_program?.definitions?.find(item=>item.name===goal.predicate);
@@ -416,7 +427,7 @@
       const workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null;
       root.innerHTML=[...groupChildren(workspaceRoot).map(group=>groupHtml(group,0)),...projectChildren(workspaceRoot).map(project=>projectHtml(project,0))].join('')||'<div class="empty">No project tapes.</div>';
       root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;workspaceNodeSelection={kind:'folder',id};projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();updateWorkspaceTools();}));
-      root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId,entry=graph.projects.entries.find(item=>item.id===id);if(!entry)return;workspaceSelection=id;workspaceNodeSelection={kind:'project',id};selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:['origin:boot']};graphCamera={x:0,y:0,zoom:1};render();}));
+      root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId,entry=graph.projects.entries.find(item=>item.id===id);if(!entry)return;workspaceSelection=id;workspaceNodeSelection={kind:'project',id};activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:['origin:boot']};graphCamera={x:0,y:0,zoom:1};render();}));
       updateWorkspaceTools();
     }
     function updateWorkspaceTools() {
@@ -575,7 +586,8 @@
     function treeRow(node) {
       const selectionData=node.selectable===false?'':`tabindex="0" data-select-kind="${escapeHtml(node.kind)}" data-select-id="${escapeHtml(node.id)}" data-select-occurrence="${escapeHtml(node.occurrence)}"`;
       const thumbnail=node.thumbnail?`<img class="node-thumbnail" src="${escapeHtml(node.thumbnail)}" alt="" loading="lazy">`:'';
-      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}>${thumbnail}<span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
+      const grouped=groupedSelection.has(entityKey(node.kind,node.id));
+      return `<div class="graph-node tree-row${selected(node.occurrence)?' selected':''}${grouped?' multi-selected':''}${node.kind==='subgraph'?' subgraph':''}" style="left:${node.x}px;top:${node.y}px" role="treeitem" ${selectionData}>${thumbnail}<span class="node-copy"><span class="tree-name">${escapeHtml(node.name)}</span>${node.tail?`<span class="tree-tail">${node.tail}</span>`:''}</span></div>`;
     }
     function renderDraftNode(draft,path=new Set(),chain=[]) {
       const canonical=entityKey('draft',draft.id);
@@ -639,9 +651,71 @@
       let childTop=top+(node.span-childSpan)/2;
       node.children.forEach(child=>{placeGraphNode(child,depth+1,childTop,nodes,edges);edges.push({from:node,to:child});childTop+=child.span+ROW_GAP;});
     }
+    function subgraphById(id) { return graph.subgraphs.find(item=>item.id===id); }
+    function directSegmentOwner(id) {
+      const owner=graph.subgraphs.find(group=>(group.segments||[]).includes(id));
+      return owner?.id??null;
+    }
+    function scopedRepresentative(segmentId) {
+      if(!segmentId)return null;
+      const directOwner=directSegmentOwner(segmentId);
+      if(directOwner===activeSubgraph)return entityKey('segment',segmentId);
+      const child=graph.subgraphs.find(group=>group.parent===activeSubgraph&&(group.recursive_segments||[]).includes(segmentId));
+      return child?entityKey('subgraph',child.id):null;
+    }
+    function renderScopedEntity(kind,id,childrenByKey,path=new Set(),chain=[]) {
+      const canonical=entityKey(kind,id);
+      if(path.has(canonical)||renderedEntities.has(canonical))return null;
+      renderedEntities.add(canonical);
+      const next=new Set(path);next.add(canonical);
+      const nextChain=typedPath(chain,kind,id);
+      const occurrence=`route:${nextChain.join('/')}`;
+      occurrenceIndex.set(occurrence,{kind,id,chain:nextChain});
+      if(kind==='subgraph') {
+        const group=subgraphById(id),exit=graph.segments.find(segment=>segment.id===group.exit_segment);
+        const children=(childrenByKey.get(canonical)||[]).map(child=>renderScopedEntity(child.kind,child.id,childrenByKey,next,nextChain)).filter(Boolean);
+        return {kind,id,occurrence,key:occurrence,name:group.name,thumbnail:exit?.thumbnail,tail:`<span>${group.frame_count??'—'}f</span><span>subgraph</span>`,hasChildren:children.length>0,children};
+      }
+      const segment=graph.segments.find(item=>item.id===id);
+      const structural=(childrenByKey.get(canonical)||[]).map(child=>renderScopedEntity(child.kind,child.id,childrenByKey,next,nextChain)).filter(Boolean);
+      const drafts=draftsUnder('segment',id).map(draft=>renderDraftNode(draft,next,nextChain)).filter(Boolean);
+      const score=segment.first_hit_tick??segment.ticks;
+      const state=(segment.error||segment.option_diagnostic_error)?'bad':segment.playable?'ok':'warn';
+      return {kind,id,occurrence,key:occurrence,name:segmentName(id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}<span class="dot ${state}"></span>`,hasChildren:structural.length+drafts.length>0,children:[...structural,...drafts]};
+    }
+    function scopedSegmentForest() {
+      const directSegments=graph.segments.filter(segment=>directSegmentOwner(segment.id)===activeSubgraph);
+      const directGroups=graph.subgraphs.filter(group=>group.parent===activeSubgraph);
+      const entities=[...directSegments.map(segment=>({kind:'segment',id:segment.id})),...directGroups.map(group=>({kind:'subgraph',id:group.id}))];
+      const visible=new Set(entities.map(entity=>entityKey(entity.kind,entity.id)));
+      const childrenByKey=new Map();
+      const roots=[];
+      for(const entity of entities) {
+        const underlying=entity.kind==='segment'?graph.segments.find(segment=>segment.id===entity.id)?.parent:subgraphById(entity.id)?.entry_segment;
+        const parentSegment=entity.kind==='segment'?underlying:graph.segments.find(segment=>segment.id===underlying)?.parent;
+        const parentKey=scopedRepresentative(parentSegment);
+        if(parentKey&&parentKey!==entityKey(entity.kind,entity.id)&&visible.has(parentKey)) {
+          if(!childrenByKey.has(parentKey))childrenByKey.set(parentKey,[]);
+          childrenByKey.get(parentKey).push(entity);
+        } else roots.push(entity);
+      }
+      const sort=(items)=>items.sort((left,right)=>left.id.localeCompare(right.id));
+      sort(roots);childrenByKey.forEach(sort);
+      return roots.map(entity=>renderScopedEntity(entity.kind,entity.id,childrenByKey,new Set(),[activeSubgraph?`scope:${activeSubgraph}`:'origin:boot'])).filter(Boolean);
+    }
+    function renderGraphBreadcrumbs() {
+      const chain=[];let current=activeSubgraph;
+      while(current){const group=subgraphById(current);if(!group)break;chain.unshift(group);current=group.parent;}
+      $('graphBreadcrumbs').innerHTML=`<button type="button" data-open-subgraph="">Route graph</button>${chain.map(group=>`<span>›</span><button type="button" data-open-subgraph="${escapeHtml(group.id)}">${escapeHtml(group.name)}</button>`).join('')}`;
+      $('graphBreadcrumbs').querySelectorAll('[data-open-subgraph]').forEach(button=>button.addEventListener('click',()=>openSubgraph(button.dataset.openSubgraph||null)));
+      $('groupSelection').disabled=groupedSelection.size===0;
+      $('renameSubgraph').disabled=selection.kind!=='subgraph';
+      $('ungroupSubgraph').disabled=selection.kind!=='subgraph';
+    }
     function renderTree() {
       const viewport=$('tree');
       occurrenceIndex=new Map();occurrenceIndex.set('origin:boot',{kind:'origin',id:'boot',chain:['origin:boot']});
+      if(activeSubgraph)occurrenceIndex.set(`scope:${activeSubgraph}`,{kind:'subgraph',id:activeSubgraph,chain:[`scope:${activeSubgraph}`]});
       renderedEntities=new Set();
       const standalone=standaloneWorkspaceEntry();
       if(standalone) {
@@ -658,17 +732,21 @@
         viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
         applyGraphCamera();bindRenderedGraph(viewport);return;
       }
+      const scopedChildren=scopedSegmentForest();
       const roots=graph.segments.filter(segment=>segment.parent==null).sort((a,b)=>a.id.localeCompare(b.id));
       const bootDrafts=graph.drafts.filter(draft=>draft.parent?.kind==='milestone'||(draft.parent?.kind==='origin'&&draft.parent.id===graph.origin?.id)).sort(compareDrafts);
       const reachable=new Set();
       roots.forEach(segment=>collectReachable('segment',segment.id,reachable));
       bootDrafts.forEach(draft=>collectReachable('draft',draft.id,reachable));
-      const bootChildren=[...roots.map(segment=>renderPlayableSegmentNode(segment,new Set(),['origin:boot'])),...bootDrafts.map(draft=>renderDraftNode(draft,new Set(),['origin:boot']))].filter(Boolean);
-      const boot={kind:'origin',id:'boot',occurrence:'origin:boot',key:'origin:boot',name:'Boot',tail:'<span>frame 0</span><span class="dot ok"></span>',hasChildren:roots.length>0||bootDrafts.length>0,children:bootChildren};
-      const detached=detachedRoots(reachable);
+      const scope=activeSubgraph?subgraphById(activeSubgraph):null;
+      if(scope)occurrenceIndex.set(`scope:${scope.id}`,{kind:'subgraph',id:scope.id,chain:[`scope:${scope.id}`]});
+      const boot={kind:'origin',id:'boot',occurrence:'origin:boot',key:'origin:boot',name:'Boot',tail:'<span>frame 0</span><span class="dot ok"></span>',hasChildren:scopedChildren.length>0||bootDrafts.length>0,children:[...scopedChildren,...bootDrafts.map(draft=>renderDraftNode(draft,new Set(),['origin:boot'])).filter(Boolean)]};
+      const hiddenBySubgraphs=new Set(renderedEntities);
+      if(!activeSubgraph)graph.subgraphs.filter(group=>group.parent==null).forEach(group=>(group.recursive_segments||[]).forEach(id=>hiddenBySubgraphs.add(entityKey('segment',id))));
+      const detached=!activeSubgraph?detachedRoots(hiddenBySubgraphs):[];
       const detachedChildren=detached.map(([kind,id])=>kind==='segment'?renderPlayableSegmentNode(graph.segments.find(item=>item.id===id),new Set(),['synthetic:detached']):renderDraftNode(graph.drafts.find(item=>item.id===id),new Set(),['synthetic:detached'])).filter(Boolean);
-      const forest=[boot];
-      if(detached.length)forest.push({kind:'synthetic',id:'detached',occurrence:'synthetic:detached',key:'synthetic:detached',name:'Detached / invalid',tail:`<span>${detached.length} component${detached.length===1?'':'s'}</span><span class="dot bad"></span>`,selectable:false,hasChildren:true,children:detachedChildren});
+      const detachedNode=detachedChildren.length?{kind:'synthetic',id:'detached',occurrence:'synthetic:detached',key:'synthetic:detached',name:'Detached / invalid',tail:'<span>repair required</span>',selectable:false,hasChildren:true,children:detachedChildren}:null;
+      const forest=[...(scope?scopedChildren:[boot]),...(detachedNode?[detachedNode]:[])];
       const root={kind:'synthetic',id:'workspace',occurrence:'synthetic:workspace',key:'synthetic:workspace',name:'Workspace',tail:'',selectable:false,hasChildren:true,children:forest};
       measureGraphNode(root);
       const nodes=[];const edges=[];
@@ -681,9 +759,30 @@
       viewport.innerHTML=`<div class="graph-canvas" style="width:${width}px;height:${height}px"><svg class="graph-edges" width="${width}" height="${height}" aria-hidden="true">${paths}</svg>${nodes.map(treeRow).join('')}</div>`;
       applyGraphCamera();
       bindRenderedGraph(viewport);
+      renderGraphBreadcrumbs();
     }
     function bindRenderedGraph(viewport) {
-      viewport.querySelectorAll('[data-select-kind]').forEach(row=>{const activate=()=>{const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind:row.dataset.selectKind,id:row.dataset.selectId,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();};row.addEventListener('click',activate);row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate();}});});
+      viewport.querySelectorAll('[data-select-kind]').forEach(row=>{
+        const activate=event=>{
+          const kind=row.dataset.selectKind,id=row.dataset.selectId,key=entityKey(kind,id);
+          if((event?.ctrlKey||event?.metaKey||event?.shiftKey)&&['segment','subgraph'].includes(kind)) {
+            groupedSelection.has(key)?groupedSelection.delete(key):groupedSelection.add(key);
+          } else {
+            groupedSelection=new Set(['segment','subgraph'].includes(kind)?[key]:[]);
+          }
+          const context=occurrenceIndex.get(row.dataset.selectOccurrence);selection={kind,id,occurrence:row.dataset.selectOccurrence,chain:[...(context?.chain||[])]};render();
+        };
+        row.addEventListener('click',activate);
+        row.addEventListener('dblclick',event=>{if(row.dataset.selectKind==='subgraph'){event.preventDefault();openSubgraph(row.dataset.selectId);}});
+        row.addEventListener('keydown',event=>{if(event.target===row&&(event.key==='Enter'||event.key===' ')){event.preventDefault();activate(event);}});
+      });
+    }
+    function openSubgraph(id) {
+      activeSubgraph=id;
+      groupedSelection=new Set();
+      selection=id?{kind:'subgraph',id,occurrence:`scope:${id}`,chain:[]}:{kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
+      graphCamera={x:0,y:0,zoom:1};
+      render();
     }
     function bindGraphPan() {
       const viewport=$('tree');
@@ -813,6 +912,16 @@
         const configurations=override?.enabled?[override.boot]:authored;
         const inactiveOverride=override&&!override.enabled?`<div class="detail-section"><h3>Saved override · Off</h3><div class="fields">${bootFields(override.boot)}</div></div>`:'';
         html=`<section class="property-summary"><div class="detail-kicker">Origin</div><div class="detail-title">Boot</div><div class="badges"><span class="badge ${override?.enabled?'score':'ok'}">${escapeHtml(bootSummary(configurations[0],override?.enabled))}</span>${override&&!override.enabled?'<span class="badge">Saved override off</span>':''}</div><div class="actions">${boot?`<button class="record" type="button" data-record-kind="origin" data-id="${escapeHtml(boot.id)}">Record child</button>`:''}<button class="rename" type="button" data-edit-boot="${escapeHtml(workspace?.id||'')}">Edit boot…</button></div></section><div class="property-content">${configurations.map((configuration,index)=>`<div class="detail-section"><h3>${override?.enabled?'Playback starts from saved override':`Playback starts from tape${configurations.length>1?` · option ${index+1}`:''}`}</h3><div class="fields">${bootFields(configuration)}</div></div>`).join('')}${inactiveOverride}</div>`;
+      } else if(selection.kind==='subgraph') {
+        const group=subgraphById(selection.id);
+        if(group){
+          const entry=graph.segments.find(item=>item.id===group.entry_segment),exit=graph.segments.find(item=>item.id===group.exit_segment);
+          const score=exit?.first_hit_tick??exit?.ticks;
+          const anchor=(exit?.record_anchors||[])[0];
+          const plays=exit?.playable?`<button class="play" type="button" data-play-kind="segment" data-play-mode="playback" data-id="${escapeHtml(exit.id)}">Playback</button><button class="play" type="button" data-play-kind="segment" data-play-mode="resume_accelerated" data-id="${escapeHtml(exit.id)}">Resume (accelerated)</button>`:'<button class="play" type="button" disabled>Playback unavailable</button>';
+          const records=anchor?`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(exit.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child</button>`:'';
+          html=`<section class="property-summary"><div class="detail-kicker">Subgraph</div><div class="detail-title">${escapeHtml(group.name)}</div><div class="detail-subtitle">A nested view of ${escapeHtml((group.recursive_segments||[]).length)} unchanged segments.</div>${exit?gameplayThumbnail(exit):''}<div class="badges"><span class="badge">${escapeHtml(group.frame_count??'—')} frames</span>${score!=null?`<span class="badge score">${escapeHtml(score)} tick terminal score</span>`:''}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Entry',entry?segmentName(entry.id):group.entry_segment)}${field('Exit',exit?segmentName(exit.id):group.exit_segment)}${entry?field('Input',entry.start_fingerprint,true):''}${exit?field('Output',exit.boundary_fingerprint,true):''}</div><div class="actions">${plays}${records}${exit?`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(exit.id)}" ${exit.playable?'':'disabled'}>${exit.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`:''}<button type="button" data-open-subgraph-detail="${escapeHtml(group.id)}">Open subgraph</button><button class="rename" type="button" data-rename-subgraph="${escapeHtml(group.id)}">Rename…</button><button class="delete" type="button" data-ungroup-subgraph="${escapeHtml(group.id)}">Ungroup…</button><button class="delete" type="button" data-delete-segment="${escapeHtml(group.entry_segment)}">Delete branch…</button></div></div>${exit?goalDetail(exit.id,exit.goal_proofs||[]):''}</div>`;
+        }
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
         if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
@@ -835,6 +944,9 @@
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
+      root.querySelectorAll('[data-open-subgraph-detail]').forEach(button=>button.addEventListener('click',()=>openSubgraph(button.dataset.openSubgraphDetail)));
+      root.querySelectorAll('[data-rename-subgraph]').forEach(button=>button.addEventListener('click',()=>renameSelectedSubgraph(button.dataset.renameSubgraph)));
+      root.querySelectorAll('[data-ungroup-subgraph]').forEach(button=>button.addEventListener('click',()=>ungroupSelectedSubgraph(button.dataset.ungroupSubgraph)));
       root.querySelectorAll('[data-delete-segment]').forEach(button=>button.addEventListener('click',()=>deleteSegment(button.dataset.deleteSegment,button)));
       root.querySelectorAll('[data-delete-siblings]').forEach(button=>button.addEventListener('click',()=>deleteSiblings(button.dataset.deleteSiblings,button)));
       root.querySelectorAll('[data-rename-draft]').forEach(button=>button.addEventListener('click',()=>renameDraft(button.dataset.renameDraft,button)));
@@ -1232,6 +1344,37 @@
         button.disabled=false; button.textContent='Rename…';
       }
     }
+    async function mutateSubgraph(endpoint,body,success) {
+      $('status').textContent='Updating subgraph…'; $('status').className='status';
+      try {
+        const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+        const result=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
+        toast(success(result));await load();return result;
+      } catch(error) {
+        $('status').textContent='Subgraph update failed';$('status').className='status error';toast(error.message,true);return null;
+      }
+    }
+    async function createSubgraphFromSelection() {
+      if(!groupedSelection.size)return;
+      const name=window.prompt('Name this subgraph','New subgraph');if(name===null)return;
+      const segments=[],subgraphs=[];
+      groupedSelection.forEach(key=>{const split=key.indexOf(':'),kind=key.slice(0,split),id=key.slice(split+1);if(kind==='segment')segments.push(id);if(kind==='subgraph')subgraphs.push(id);});
+      const result=await mutateSubgraph('/api/subgraphs/create',{name,parent:activeSubgraph,segments,subgraphs},item=>`Created ${item.name}. Playback data was not changed.`);
+      if(result)openSubgraph(result.id);
+    }
+    async function renameSelectedSubgraph(id=selection.kind==='subgraph'?selection.id:null) {
+      const group=subgraphById(id);if(!group)return;
+      const name=window.prompt('Rename subgraph',group.name);if(name===null||name.trim()===group.name)return;
+      await mutateSubgraph('/api/subgraphs/rename',{id,name,expected_name:group.name},item=>`Renamed subgraph to ${item.name}.`);
+    }
+    async function ungroupSelectedSubgraph(id=selection.kind==='subgraph'?selection.id:null) {
+      const group=subgraphById(id);if(!group)return;
+      if(!window.confirm(`Ungroup ${group.name}?\n\nIts direct segments and nested subgraphs move up one level. No tape, segment, edge, goal, or proof changes.`))return;
+      const parent=group.parent;
+      const result=await mutateSubgraph('/api/subgraphs/ungroup',{id},item=>`Ungrouped ${item.name}.`);
+      if(result){if(activeSubgraph===id)activeSubgraph=parent;groupedSelection=new Set();selection=activeSubgraph?{kind:'subgraph',id:activeSubgraph,occurrence:`scope:${activeSubgraph}`,chain:[]}:{kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};render();}
+    }
     async function record(button) {
       const kind=button.dataset.recordKind, id=button.dataset.id;
       const entered=window.prompt('Optional draft label',''); if(entered===null)return;
@@ -1255,7 +1398,7 @@
         const response=await fetch('/api/graph',{cache:'no-store'});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        graph=normalize(body); if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
+        graph=normalize(body); if(activeSubgraph&&!subgraphById(activeSubgraph)){activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};} if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
         clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status)))load.poll=setTimeout(load,2500);
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
@@ -1273,6 +1416,9 @@
     $('workspaceMove').addEventListener('click',moveWorkspaceSelection);
     $('confirmWorkspaceMove').addEventListener('click',confirmWorkspaceMove);
     $('workspaceDelete').addEventListener('click',deleteWorkspaceSelection);
+    $('groupSelection').addEventListener('click',createSubgraphFromSelection);
+    $('renameSubgraph').addEventListener('click',()=>renameSelectedSubgraph());
+    $('ungroupSubgraph').addEventListener('click',()=>ungroupSelectedSubgraph());
     document.addEventListener('click',closeWorkspaceMenus);
     bindGraphPan();
     $('recordCountdown').value=String(loadRecordingCountdown());
