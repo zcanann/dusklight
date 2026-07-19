@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
-pub const ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1: &str =
-    "dusklight-engine-session-reuse-audit/v1";
+pub const ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1: &str = "dusklight-engine-session-reuse-audit/v1";
 pub const POST_AUTHENTICATED_RUN_BOUNDARY: &str = "post_authenticated_run";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,9 +35,7 @@ impl SessionReuseAudit {
             "pre_engine_boot" | POST_AUTHENTICATED_RUN_BOUNDARY
         ) || self.target_boundary != POST_AUTHENTICATED_RUN_BOUNDARY
         {
-            return Err(audit_error(
-                "audit lifecycle boundaries are not canonical",
-            ));
+            return Err(audit_error("audit lifecycle boundaries are not canonical"));
         }
         if self.reusable != self.blockers.is_empty() {
             return Err(audit_error(

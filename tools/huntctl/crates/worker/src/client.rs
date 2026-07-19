@@ -492,5 +492,4 @@ mod tests {
         assert!(error.contains("build.fidelity_profile"));
         assert!(error.contains("must not be empty"));
     }
-
 }

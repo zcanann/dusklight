@@ -917,15 +917,16 @@ pub(super) fn decorate_graph_thumbnails(
     // legacy image only when that boundary identifies exactly one node. A
     // shared boundary is ambiguous (menu seams commonly share one), so it must
     // be recaptured under the exact materialized-chain identity.
-    let boundary_counts = graph.segments.iter().fold(
-        BTreeMap::<String, usize>::new(),
-        |mut counts, segment| {
-            *counts
-                .entry(segment.boundary_fingerprint.clone())
-                .or_default() += 1;
-            counts
-        },
-    );
+    let boundary_counts =
+        graph
+            .segments
+            .iter()
+            .fold(BTreeMap::<String, usize>::new(), |mut counts, segment| {
+                *counts
+                    .entry(segment.boundary_fingerprint.clone())
+                    .or_default() += 1;
+                counts
+            });
     for segment in &mut graph.segments {
         if !valid_sha256(&segment.materialization_sha256) {
             continue;

@@ -711,16 +711,13 @@ pub(super) fn move_workspace_node(
     let moved_active_timeline = canonical_active.as_ref().and_then(|active| {
         moves.iter().find_map(|(source, target)| {
             let canonical_source = fs::canonicalize(source).ok()?;
-            active
-                .strip_prefix(&canonical_source)
-                .ok()
-                .map(|relative| {
-                    if relative.as_os_str().is_empty() {
-                        target.clone()
-                    } else {
-                        target.join(relative)
-                    }
-                })
+            active.strip_prefix(&canonical_source).ok().map(|relative| {
+                if relative.as_os_str().is_empty() {
+                    target.clone()
+                } else {
+                    target.join(relative)
+                }
+            })
         })
     });
     if moves.iter().any(|(_, target)| target.exists()) {
@@ -1140,7 +1137,11 @@ mod tests {
             .canonicalize()
             .unwrap();
         let catalog = load_project_catalog(&repository).unwrap();
-        assert!(catalog.entries.contains_key("routes/Glitch Exhibition/intro"));
+        assert!(
+            catalog
+                .entries
+                .contains_key("routes/Glitch Exhibition/intro")
+        );
         assert_eq!(
             catalog.entries["routes/Glitch Exhibition/intro"].kind,
             ProjectKind::Timeline
@@ -1152,7 +1153,11 @@ mod tests {
         );
         assert!(catalog.groups.contains_key("routes"));
         assert!(catalog.groups.contains_key("routes/Glitch Exhibition"));
-        assert!(!catalog.groups.contains_key("routes/Glitch Exhibition/intro"));
+        assert!(
+            !catalog
+                .groups
+                .contains_key("routes/Glitch Exhibition/intro")
+        );
     }
 
     #[test]
@@ -1328,7 +1333,11 @@ mod tests {
         let repository = temporary_repository("move-folder");
         fs::create_dir_all(repository.join("routes/source/nested")).unwrap();
         fs::create_dir_all(repository.join("routes/destination")).unwrap();
-        fs::write(repository.join("routes/source/nested/canary.tas"), NEW_TAPE_SOURCE).unwrap();
+        fs::write(
+            repository.join("routes/source/nested/canary.tas"),
+            NEW_TAPE_SOURCE,
+        )
+        .unwrap();
 
         let mut active_timeline = repository.join("not-active.timeline");
         let moved = move_workspace_node(
@@ -1358,8 +1367,16 @@ mod tests {
         let repository = temporary_repository("move-active-timeline");
         fs::create_dir_all(repository.join("routes/destination")).unwrap();
         fs::create_dir_all(repository.join("routes/active/segments")).unwrap();
-        fs::write(repository.join("routes/active.timeline"), "timeline active\n").unwrap();
-        fs::write(repository.join("routes/active/segments/marker"), b"private route data").unwrap();
+        fs::write(
+            repository.join("routes/active.timeline"),
+            "timeline active\n",
+        )
+        .unwrap();
+        fs::write(
+            repository.join("routes/active/segments/marker"),
+            b"private route data",
+        )
+        .unwrap();
         let mut active_timeline = repository.join("routes/active.timeline");
 
         let moved = move_workspace_node(

@@ -167,7 +167,10 @@ impl SkybookPilot {
 
     fn validate_claim(&self) -> Result<(), SkybookPilotError> {
         canonical_text("native_port.claim", &self.native_port.claim)?;
-        canonical_text_list("native_port.required_setup", &self.native_port.required_setup)?;
+        canonical_text_list(
+            "native_port.required_setup",
+            &self.native_port.required_setup,
+        )?;
         canonical_text_list(
             "native_port.fidelity_limitations",
             &self.native_port.fidelity_limitations,
@@ -192,8 +195,7 @@ impl SkybookPilot {
 
     fn validate_cases(&self, repository_root: &Path) -> Result<(), SkybookPilotError> {
         if self.positive_case.expected_oracle_status != "passed"
-            || self.positive_case.required_stages
-                != ["memory", "renderer", "gameplay", "tape"]
+            || self.positive_case.required_stages != ["memory", "renderer", "gameplay", "tape"]
         {
             return Err(pilot_error("positive case acceptance contract is invalid"));
         }
@@ -204,7 +206,10 @@ impl SkybookPilot {
             return Err(pilot_error("positive tape identity is stale"));
         }
         canonical_text("negative_control.id", &self.negative_control.id)?;
-        canonical_text("negative_control.derivation", &self.negative_control.derivation)?;
+        canonical_text(
+            "negative_control.derivation",
+            &self.negative_control.derivation,
+        )?;
         canonical_text_list(
             "negative_control.must_not_report",
             &self.negative_control.must_not_report,
@@ -212,7 +217,9 @@ impl SkybookPilot {
         if self.negative_control.expected_oracle_status != "failed"
             || self.negative_control.must_not_report != ["memory", "renderer"]
         {
-            return Err(pilot_error("negative-control acceptance contract is invalid"));
+            return Err(pilot_error(
+                "negative-control acceptance contract is invalid",
+            ));
         }
         Ok(())
     }
@@ -281,7 +288,9 @@ impl SkybookPilot {
 
 fn canonical_text(field: &str, value: &str) -> Result<(), SkybookPilotError> {
     if value.is_empty() || value != value.trim() || value.len() > MAX_TEXT_BYTES {
-        return Err(pilot_error(format!("{field} is not canonical bounded text")));
+        return Err(pilot_error(format!(
+            "{field} is not canonical bounded text"
+        )));
     }
     Ok(())
 }

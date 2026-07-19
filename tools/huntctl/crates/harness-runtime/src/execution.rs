@@ -1,7 +1,7 @@
 //! Native execution adapter for authenticated core-harness requests.
 
-use super::objective_suite::{ArtifactReference, ObjectiveBoot, ObjectiveSeed};
 use super::native_evidence::{HarnessNativeEvidenceArtifacts, HarnessNativeEvidenceRequest};
+use super::objective_suite::{ArtifactReference, ObjectiveBoot, ObjectiveSeed};
 use super::observation_contract::{
     OBSERVATION_INVENTORY_SCHEMA_V1, ObservationFamilyAvailability, ObservationFamilyStatus,
     ObservationInventory,

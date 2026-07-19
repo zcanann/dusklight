@@ -349,9 +349,10 @@ impl Timeline {
         root: &Path,
         goal_id: &str,
     ) -> Result<CompiledMilestones, TimelineError> {
-        let goal = self.goals.get(goal_id).ok_or_else(|| {
-            TimelineError::new(format!("unknown goal {goal_id:?}"))
-        })?;
+        let goal = self
+            .goals
+            .get(goal_id)
+            .ok_or_else(|| TimelineError::new(format!("unknown goal {goal_id:?}")))?;
         self.compile_owned_predicate(
             root,
             self.goal_predicate_source(goal_id),
@@ -405,11 +406,12 @@ impl Timeline {
             ))
         })?;
         let program = milestone_dsl::parse(&source).map_err(|error| {
-            TimelineError::new(format!("invalid predicate source {}: {error}", path.display()))
+            TimelineError::new(format!(
+                "invalid predicate source {}: {error}",
+                path.display()
+            ))
         })?;
-        if local
-            && (program.definitions.len() != 1 || program.definitions[0].name != expected)
-        {
+        if local && (program.definitions.len() != 1 || program.definitions[0].name != expected) {
             return Err(TimelineError::at(
                 line,
                 1,
@@ -434,7 +436,10 @@ impl Timeline {
             ));
         }
         milestone_dsl::compile(&program).map_err(|error| {
-            TimelineError::new(format!("cannot compile predicate source {}: {error}", path.display()))
+            TimelineError::new(format!(
+                "cannot compile predicate source {}: {error}",
+                path.display()
+            ))
         })
     }
 
@@ -446,7 +451,10 @@ impl Timeline {
         self.compile_origin_predicate(root)?;
         let mut compiled_goals = BTreeMap::new();
         for goal_id in self.goals.keys() {
-            compiled_goals.insert(goal_id.as_str(), self.compile_goal_predicate(root, goal_id)?);
+            compiled_goals.insert(
+                goal_id.as_str(),
+                self.compile_goal_predicate(root, goal_id)?,
+            );
         }
         for proof in &self.proofs {
             let goal = &self.goals[&proof.goal];
@@ -472,10 +480,7 @@ impl Timeline {
                     1,
                     format!(
                         "proof for segment {} and goal {} pins stale predicate source {}; current source program is {}",
-                        proof.segment,
-                        proof.goal,
-                        proof.predicate_program_sha256,
-                        program_sha256
+                        proof.segment, proof.goal, proof.predicate_program_sha256, program_sha256
                     ),
                 ));
             }
@@ -1117,7 +1122,10 @@ impl Timeline {
                 return Err(TimelineError::at(
                     subgraph.line,
                     1,
-                    format!("subgraph {} references unknown parent {parent}", subgraph.id),
+                    format!(
+                        "subgraph {} references unknown parent {parent}",
+                        subgraph.id
+                    ),
                 ));
             }
             for segment in &subgraph.segments {
@@ -1125,7 +1133,10 @@ impl Timeline {
                     return Err(TimelineError::at(
                         subgraph.line,
                         1,
-                        format!("subgraph {} references unknown segment {segment}", subgraph.id),
+                        format!(
+                            "subgraph {} references unknown segment {segment}",
+                            subgraph.id
+                        ),
                     ));
                 }
                 if let Some(previous) = owners.insert(segment, &subgraph.id) {
@@ -1349,13 +1360,21 @@ impl<'a> Parser<'a> {
         }
         for (id, (label, line)) in self.subgraph_labels {
             let subgraph = self.subgraphs.get_mut(&id).ok_or_else(|| {
-                TimelineError::at(line, 1, format!("subgraph_label references unknown subgraph {id}"))
+                TimelineError::at(
+                    line,
+                    1,
+                    format!("subgraph_label references unknown subgraph {id}"),
+                )
             })?;
             subgraph.name = label;
         }
         for (id, segment, line) in self.subgraph_members {
             let subgraph = self.subgraphs.get_mut(&id).ok_or_else(|| {
-                TimelineError::at(line, 1, format!("subgraph_member references unknown subgraph {id}"))
+                TimelineError::at(
+                    line,
+                    1,
+                    format!("subgraph_member references unknown subgraph {id}"),
+                )
             })?;
             if !subgraph.segments.insert(segment.clone()) {
                 return Err(TimelineError::at(
@@ -1565,7 +1584,11 @@ impl<'a> Parser<'a> {
             line,
         };
         if self.subgraphs.insert(id.clone(), subgraph).is_some() {
-            return Err(TimelineError::at(line, 1, format!("duplicate subgraph {id}")));
+            return Err(TimelineError::at(
+                line,
+                1,
+                format!("duplicate subgraph {id}"),
+            ));
         }
         Ok(())
     }

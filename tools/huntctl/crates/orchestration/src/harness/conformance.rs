@@ -2,8 +2,7 @@
 
 use super::execution::execute_request;
 use super::objective_suite::{
-    ArtifactReference, ExpectedTerminalClass, ObjectiveCaseRole, ObjectiveSuite,
-    ObjectiveSuiteCase,
+    ArtifactReference, ExpectedTerminalClass, ObjectiveCaseRole, ObjectiveSuite, ObjectiveSuiteCase,
 };
 use super::request_materialization::{
     NativeRequestConfig, inspect_native_inputs, materialize_native_request, protocol_for_cases,
@@ -122,8 +121,8 @@ pub fn run_conformance(
     }
     let inputs = inspect_native_inputs(&repository_root, config.executable, config.game_data)
         .map_err(|error| conformance_error(error.to_string()))?;
-    let protocol = protocol_for_cases(&suite.cases)
-        .map_err(|error| conformance_error(error.to_string()))?;
+    let protocol =
+        protocol_for_cases(&suite.cases).map_err(|error| conformance_error(error.to_string()))?;
 
     fs::create_dir_all(output_root.join("requests"))
         .map_err(|error| conformance_error(format!("cannot create conformance output: {error}")))?;

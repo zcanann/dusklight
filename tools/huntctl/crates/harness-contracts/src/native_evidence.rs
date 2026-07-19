@@ -27,7 +27,10 @@ impl HarnessNativeEvidenceRequest {
         match self {
             Self::EyeShredderV4
                 if matches!(boot, ObjectiveBoot::Process)
-                    && matches!(input, ObjectiveSeed::Tape { .. } | ObjectiveSeed::TapeSource { .. }) =>
+                    && matches!(
+                        input,
+                        ObjectiveSeed::Tape { .. } | ObjectiveSeed::TapeSource { .. }
+                    ) =>
             {
                 Ok(())
             }

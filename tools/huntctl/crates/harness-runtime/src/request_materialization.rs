@@ -41,7 +41,8 @@ pub fn inspect_native_inputs(
     let repository_root = repository_root
         .canonicalize()
         .map_err(|error| request_error(format!("cannot resolve repository root: {error}")))?;
-    let executable_path = resolve_repository_file(&repository_root, executable, "executable", false)?;
+    let executable_path =
+        resolve_repository_file(&repository_root, executable, "executable", false)?;
     let game_data_path = resolve_repository_file(&repository_root, game_data, "game data", true)?;
     let executable = artifact_reference(&repository_root, executable, &executable_path)?;
     let game_data = artifact_reference(&repository_root, game_data, &game_data_path)?;
@@ -247,7 +248,8 @@ fn resolve_repository_file(
     let canonical = joined
         .canonicalize()
         .map_err(|error| request_error(format!("cannot resolve {label}: {error}")))?;
-    if !canonical.is_file() || (!allow_external_symlink && !canonical.starts_with(repository_root)) {
+    if !canonical.is_file() || (!allow_external_symlink && !canonical.starts_with(repository_root))
+    {
         return Err(request_error(format!(
             "{label} must resolve to an allowed repository file"
         )));
@@ -266,9 +268,9 @@ fn repository_join(
         repository_root.join(input)
     };
     let lexical = if input.is_absolute() {
-        input.strip_prefix(repository_root).map_err(|_| {
-            request_error(format!("{label} must be beneath the repository root"))
-        })?
+        input
+            .strip_prefix(repository_root)
+            .map_err(|_| request_error(format!("{label} must be beneath the repository root")))?
     } else {
         input
     };

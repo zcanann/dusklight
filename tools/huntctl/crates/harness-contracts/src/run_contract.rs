@@ -1,11 +1,11 @@
 //! Canonical request/result boundary shared by every core-harness executor.
 
+use super::native_evidence::{HarnessNativeEvidenceArtifacts, HarnessNativeEvidenceRequest};
 use super::objective_suite::{
     ArtifactReference, ExpectedTerminalClass, ObjectiveBoot, ObjectiveCaseRole,
     ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuiteCase, ObservationViewReference,
     SchemaIdentity,
 };
-use super::native_evidence::{HarnessNativeEvidenceArtifacts, HarnessNativeEvidenceRequest};
 use super::observation_contract::{
     ObjectiveObservationRequirements, ObservationAdmission, ObservationAdmissionIssue,
     ObservationInventory,
@@ -1493,13 +1493,11 @@ mod tests {
                 reusable: false,
                 evaluated_boundary: POST_AUTHENTICATED_RUN_BOUNDARY.into(),
                 target_boundary: POST_AUTHENTICATED_RUN_BOUNDARY.into(),
-                blockers: vec![
-                    SessionReuseBlocker {
-                        code: "game_global_reconstruction".into(),
-                        subsystem: "game_state".into(),
-                        required_guarantee: "game state reconstructs from a clean origin".into(),
-                    },
-                ],
+                blockers: vec![SessionReuseBlocker {
+                    code: "game_global_reconstruction".into(),
+                    subsystem: "game_state".into(),
+                    required_guarantee: "game state reconstructs from a clean origin".into(),
+                }],
             }),
         }
     }
