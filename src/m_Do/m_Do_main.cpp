@@ -1997,7 +1997,7 @@ int game_main(int argc, char* argv[]) {
             ("milestone-program", "Load a compiled read-only DMSP milestone predicate program", cxxopts::value<std::string>())
             ("milestone-goal", "Stop on first hit of this requested milestone", cxxopts::value<std::string>())
             ("milestone-result", "Write versioned memory-backed milestone results as JSON", cxxopts::value<std::string>())
-            ("cursor-breakout-shadow", "Model Cursor Breakout writes in bounded shadow memory (requires --name-entry-trace)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("cursor-breakout-shadow", "Compatibility alias; console-correct Cursor Breakout behavior is always enabled", cxxopts::value<bool>()->default_value("true")->implicit_value("true"))
             ("automation-oracle", "Run a semantic automation oracle (supported: eye-shredder)", cxxopts::value<std::string>())
             ("automation-oracle-result", "Write the semantic automation oracle result as versioned JSON", cxxopts::value<std::string>())
             ("automation-oracle-continue-on-pass", "Keep playing after an automation oracle passes; failures still stop immediately", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -2129,7 +2129,9 @@ int game_main(int argc, char* argv[]) {
         fixedStepMainLoop ? dusk::game_clock::MainLoopMode::FixedStep
                           : dusk::game_clock::MainLoopMode::Realtime);
 
-    const bool cursorBreakoutShadow = parsed_arg_options["cursor-breakout-shadow"].as<bool>();
+    // Keep the legacy option parseable for old launch files, but do not permit
+    // a run to opt out of console-correct Cursor Breakout behavior.
+    constexpr bool cursorBreakoutShadow = true;
     const bool hasNameEntryTrace = parsed_arg_options.count("name-entry-trace") != 0;
     if (hasNameEntryTrace && !dusk::automation::game_state_observers_enabled()) {
         fprintf(stderr,
@@ -2143,11 +2145,6 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
 #endif
-    if (cursorBreakoutShadow && !hasNameEntryTrace) {
-        fprintf(stderr,
-                "Name Entry Error: --cursor-breakout-shadow requires --name-entry-trace PATH\n");
-        return 1;
-    }
     if (hasNameEntryTrace) {
         const std::string tracePath = parsed_arg_options["name-entry-trace"].as<std::string>();
         if (tracePath.empty()) {
