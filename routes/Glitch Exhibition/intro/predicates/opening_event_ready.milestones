@@ -1,0 +1,10 @@
+milestones 1.7
+
+# The opening event has accepted Epona's default name and is now in the first
+# skippable event state. Input belongs on the following tape frame because this
+# predicate is sampled before controller input is applied.
+milestone opening_event_ready {
+  phase pre_input
+  when stage.name == "F_SP108" && stage.room == 1 && player.exists &&
+   event.running && event.id == 2305 && event.mode == 2 && event.status == 1
+}

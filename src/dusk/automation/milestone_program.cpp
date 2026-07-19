@@ -255,13 +255,15 @@ std::optional<ValueType> field_type(const std::uint8_t field) {
     case 9: case 10: case 11: case 12: return ValueType::F32;
     case 13: return ValueType::Procedure;
     case 23: case 34: case 37: case 38: case 39: case 40: case 42: case 59: case 62:
-    case 67: return ValueType::U32;
+    case 67: case 81: case 87: case 89: case 91: case 92: return ValueType::U32;
     case 24: case 28: case 29: case 30: case 31: case 32: case 33: case 35: case 36:
     case 43: case 44: case 45: case 47: case 48: case 49: case 61: case 63: case 64:
     case 66: case 68: case 69: return ValueType::I32;
     case 25: case 26: case 27: case 56: case 57: case 58: case 70: case 71: case 72:
     case 73: case 74: case 75: return ValueType::F32;
     case 41: case 51: case 52: case 53: case 54: case 55: case 60: case 65:
+    case 76: case 77: case 78: case 79: case 80: case 82: case 83: case 84: case 85:
+    case 86: case 88: case 90:
         return ValueType::Bool;
     case 46: case 50: return ValueType::U64;
     default: return std::nullopt;
@@ -597,6 +599,23 @@ Value load_field(const std::uint8_t field, const MilestoneProgramContext& contex
             value.bits = std::bit_cast<std::uint32_t>(values[field - 73]);
         }
         break;
+    case 76: value.bits = observation.titleLogoSkipReady ? 1 : 0; break;
+    case 77: value.bits = observation.titleStartReady ? 1 : 0; break;
+    case 78: value.bits = observation.nameEntryActive ? 1 : 0; break;
+    case 79: value.bits = observation.nameEntryCharacterSelectReady ? 1 : 0; break;
+    case 80: value.bits = observation.nameEntryInputReady ? 1 : 0; break;
+    case 81: value.bits = observation.nameEntrySelectionProcedure; break;
+    case 82: value.bits = observation.fileSelectNoSaveReady ? 1 : 0; break;
+    case 83: value.bits = observation.fileSelectDataSelectReady ? 1 : 0; break;
+    case 84: value.bits = observation.fileSelectKeyWaitReady ? 1 : 0; break;
+    case 85: value.bits = observation.fileSelectYesNoReady ? 1 : 0; break;
+    case 86: value.bits = observation.titlePresent ? 1 : 0; break;
+    case 87: value.bits = observation.titleProcedure; break;
+    case 88: value.bits = observation.nameScenePresent ? 1 : 0; break;
+    case 89: value.available = observation.nameScenePresent; value.bits = observation.nameSceneProcedure; break;
+    case 90: value.available = observation.nameScenePresent; value.bits = observation.fileSelectPresent ? 1 : 0; break;
+    case 91: value.available = observation.fileSelectPresent; value.bits = observation.fileSelectProcedure; break;
+    case 92: value.available = observation.fileSelectPresent; value.bits = observation.fileSelectCardCheckProcedure; break;
     default: value.available = false; break;
     }
     return value;
@@ -1056,6 +1075,8 @@ MilestoneProgramError decode_milestone_program(const std::span<const std::uint8_
                 if (languageMinor < 5 && instruction.field >= 59)
                     return MilestoneProgramError::InvalidField;
                 if (languageMinor < 6 && instruction.field >= 70)
+                    return MilestoneProgramError::InvalidField;
+                if (languageMinor < 7 && instruction.field >= 76)
                     return MilestoneProgramError::InvalidField;
                 const auto type = field_type(instruction.field);
                 if (!type.has_value()) return MilestoneProgramError::InvalidField;

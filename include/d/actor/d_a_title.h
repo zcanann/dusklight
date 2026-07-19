@@ -15,6 +15,12 @@ public:
 class mDoDvdThd_mountArchive_c;
 class CPaneMgrAlpha;
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+class MenuStateObserver;
+}
+#endif
+
 /**
  * @ingroup actors-unsorted
  * @class daTitle_c
@@ -51,6 +57,12 @@ public:
     #endif
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // Read-only automation instrumentation. This friendship does not alter the
+    // actor layout or native gameplay behavior.
+    friend class dusk::automation::MenuStateObserver;
+#endif
+
     /* 0x568 */ request_of_phase_process_class mPhaseReq;
     /* 0x570 */ JKRHeap* mpHeap;
     /* 0x574 */ J3DModel* mpModel;

@@ -1,0 +1,8 @@
+milestones 1.7
+
+milestone link_name_end_selected {
+  phase pre_input
+  when menu.name_scene.present && menu.name_scene.procedure == 1 &&
+   menu.file_select.present && menu.file_select.procedure == 16 &&
+   menu.name_entry.active && menu.name_entry.selection_procedure == 4
+}

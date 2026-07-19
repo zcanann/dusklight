@@ -7,6 +7,12 @@
 #include "d/d_file_select.h"
 #include "d/d_bright_check.h"
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+class MenuStateObserver;
+}
+#endif
+
 class dSn_HIO_c : public JORReflexible {
 public:
     dSn_HIO_c();
@@ -57,6 +63,12 @@ public:
     #endif
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // Read-only automation instrumentation; no layout or gameplay behavior is
+    // changed by granting observer access.
+    friend class dusk::automation::MenuStateObserver;
+#endif
+
     #if VERSION == VERSION_GCN_PAL
     u8 field_0x1c4_pal[0x28];
     #endif

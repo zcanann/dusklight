@@ -15,7 +15,7 @@
 namespace dusk::automation {
 
 inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
-inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 4;
+inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 5;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -84,6 +84,25 @@ struct MilestoneObservation {
     std::uint8_t eventMapToolId = 0xff;
     bool eventNameHashPresent = false;
     std::uint32_t eventNameHash = 0;
+
+    // Read-only menu observations used to prove deterministic TAS boundaries.
+    bool titlePresent = false;
+    std::uint8_t titleProcedure = 0xff;
+    bool titleLogoSkipReady = false;
+    bool titleStartReady = false;
+    bool nameEntryActive = false;
+    bool nameEntryCharacterSelectReady = false;
+    bool nameEntryInputReady = false;
+    std::uint8_t nameEntrySelectionProcedure = 0xff;
+    bool fileSelectNoSaveReady = false;
+    bool fileSelectDataSelectReady = false;
+    bool fileSelectKeyWaitReady = false;
+    bool fileSelectYesNoReady = false;
+    bool nameScenePresent = false;
+    std::uint8_t nameSceneProcedure = 0xff;
+    bool fileSelectPresent = false;
+    std::uint8_t fileSelectProcedure = 0xff;
+    std::uint8_t fileSelectCardCheckProcedure = 0xff;
 
     bool nextStageEnabled = false;
     const char* nextStageName = nullptr;
@@ -158,6 +177,24 @@ struct MilestoneEvidence {
     std::uint8_t eventMapToolId = 0xff;
     bool eventNameHashPresent = false;
     std::uint32_t eventNameHash = 0;
+
+    bool titlePresent = false;
+    std::uint8_t titleProcedure = 0xff;
+    bool titleLogoSkipReady = false;
+    bool titleStartReady = false;
+    bool nameEntryActive = false;
+    bool nameEntryCharacterSelectReady = false;
+    bool nameEntryInputReady = false;
+    std::uint8_t nameEntrySelectionProcedure = 0xff;
+    bool fileSelectNoSaveReady = false;
+    bool fileSelectDataSelectReady = false;
+    bool fileSelectKeyWaitReady = false;
+    bool fileSelectYesNoReady = false;
+    bool nameScenePresent = false;
+    std::uint8_t nameSceneProcedure = 0xff;
+    bool fileSelectPresent = false;
+    std::uint8_t fileSelectProcedure = 0xff;
+    std::uint8_t fileSelectCardCheckProcedure = 0xff;
 
     bool nextStageEnabled = false;
     std::string nextStageName;

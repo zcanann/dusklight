@@ -125,6 +125,23 @@ MilestoneEvidence capture_evidence(
         .eventMapToolId = observation.eventMapToolId,
         .eventNameHashPresent = observation.eventNameHashPresent,
         .eventNameHash = observation.eventNameHash,
+        .titlePresent = observation.titlePresent,
+        .titleProcedure = observation.titleProcedure,
+        .titleLogoSkipReady = observation.titleLogoSkipReady,
+        .titleStartReady = observation.titleStartReady,
+        .nameEntryActive = observation.nameEntryActive,
+        .nameEntryCharacterSelectReady = observation.nameEntryCharacterSelectReady,
+        .nameEntryInputReady = observation.nameEntryInputReady,
+        .nameEntrySelectionProcedure = observation.nameEntrySelectionProcedure,
+        .fileSelectNoSaveReady = observation.fileSelectNoSaveReady,
+        .fileSelectDataSelectReady = observation.fileSelectDataSelectReady,
+        .fileSelectKeyWaitReady = observation.fileSelectKeyWaitReady,
+        .fileSelectYesNoReady = observation.fileSelectYesNoReady,
+        .nameScenePresent = observation.nameScenePresent,
+        .nameSceneProcedure = observation.nameSceneProcedure,
+        .fileSelectPresent = observation.fileSelectPresent,
+        .fileSelectProcedure = observation.fileSelectProcedure,
+        .fileSelectCardCheckProcedure = observation.fileSelectCardCheckProcedure,
         .nextStageEnabled = observation.nextStageEnabled,
         .nextStageName = observation.nextStageName == nullptr ? "" : observation.nextStageName,
         .nextRoom = observation.nextRoom,
@@ -446,6 +463,38 @@ json evidence_json(const MilestoneEvidence& evidence) {
             }},
         // Retained for additive compatibility with v1 consumers.
         {"event_running", evidence.eventRunning},
+        {"menu",
+            {
+                {"title",
+                    {
+                        {"present", evidence.titlePresent},
+                        {"procedure", evidence.titleProcedure},
+                        {"logo_skip_ready", evidence.titleLogoSkipReady},
+                        {"start_ready", evidence.titleStartReady},
+                    }},
+                {"name_entry",
+                    {
+                        {"active", evidence.nameEntryActive},
+                        {"character_select_ready", evidence.nameEntryCharacterSelectReady},
+                        {"input_ready", evidence.nameEntryInputReady},
+                        {"selection_procedure", evidence.nameEntrySelectionProcedure},
+                    }},
+                {"name_scene",
+                    {
+                        {"present", evidence.nameScenePresent},
+                        {"procedure", evidence.nameSceneProcedure},
+                    }},
+                {"file_select",
+                    {
+                        {"present", evidence.fileSelectPresent},
+                        {"procedure", evidence.fileSelectProcedure},
+                        {"card_check_procedure", evidence.fileSelectCardCheckProcedure},
+                        {"no_save_ready", evidence.fileSelectNoSaveReady},
+                        {"data_select_ready", evidence.fileSelectDataSelectReady},
+                        {"key_wait_ready", evidence.fileSelectKeyWaitReady},
+                        {"yes_no_ready", evidence.fileSelectYesNoReady},
+                    }},
+            }},
         {"next_stage",
             {
                 {"enabled", evidence.nextStageEnabled},
@@ -463,9 +512,9 @@ json evidence_json(const MilestoneEvidence& evidence) {
             }},
         {"boundary_fingerprint",
             {
-                {"schema", "dusklight.milestone-boundary/v4"},
+                {"schema", "dusklight.milestone-boundary/v5"},
                 {"algorithm", "xxh3-128"},
-                {"canonical_encoding", "little-endian-fixed-v4"},
+                {"canonical_encoding", "little-endian-fixed-v5"},
                 {"digest", evidence.boundaryFingerprint},
             }},
     };
@@ -543,6 +592,24 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
     if (evidence.eventNameHashPresent) {
         append_integer(canonical, evidence.eventNameHash);
     }
+    append_integer<std::uint8_t>(canonical, evidence.titlePresent ? 1 : 0);
+    append_integer(canonical, evidence.titleProcedure);
+    append_integer<std::uint8_t>(canonical, evidence.titleLogoSkipReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.titleStartReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.nameEntryActive ? 1 : 0);
+    append_integer<std::uint8_t>(canonical,
+        evidence.nameEntryCharacterSelectReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.nameEntryInputReady ? 1 : 0);
+    append_integer(canonical, evidence.nameEntrySelectionProcedure);
+    append_integer<std::uint8_t>(canonical, evidence.fileSelectNoSaveReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.fileSelectDataSelectReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.fileSelectKeyWaitReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.fileSelectYesNoReady ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, evidence.nameScenePresent ? 1 : 0);
+    append_integer(canonical, evidence.nameSceneProcedure);
+    append_integer<std::uint8_t>(canonical, evidence.fileSelectPresent ? 1 : 0);
+    append_integer(canonical, evidence.fileSelectProcedure);
+    append_integer(canonical, evidence.fileSelectCardCheckProcedure);
     append_integer<std::uint8_t>(canonical, evidence.nextStageEnabled ? 1 : 0);
     append_fixed_string(canonical, evidence.nextStageName);
     append_integer(canonical, evidence.nextRoom);

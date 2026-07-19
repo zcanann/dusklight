@@ -1,0 +1,7 @@
+milestones 1.7
+
+milestone data_select_ready {
+  phase pre_input
+  when menu.name_scene.present && menu.name_scene.procedure == 1 &&
+   menu.file_select.present && menu.file_select.procedure == 3
+}

@@ -1,7 +1,7 @@
 # Milestone boundary fingerprints
 
 Every hit in a native `dusklight.automation.milestones` result includes explicit boundary evidence
-and a `dusklight.milestone-boundary/v4` fingerprint. Search tooling can use this to distinguish a
+and a `dusklight.milestone-boundary/v5` fingerprint. Search tooling can use this to distinguish a
 strict frame improvement from a faster arrival that leaves a materially different known state.
 
 The digest is XXH3-128 over a fixed v4 byte layout. Integers and raw IEEE-754 binary32 float bits

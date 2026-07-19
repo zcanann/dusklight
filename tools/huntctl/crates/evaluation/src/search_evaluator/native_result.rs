@@ -1,5 +1,25 @@
 use super::*;
 
+fn native_boundary_coordinates_match(
+    phase: &str,
+    boundary_index: u64,
+    sim_tick: u64,
+    tape_frame: u64,
+) -> bool {
+    if boundary_index != tape_frame.saturating_add(1) {
+        return false;
+    }
+    match phase {
+        // Before input B, frame B - 1 is the last consumed tape frame and B
+        // simulation ticks have completed.
+        "pre_input" => sim_tick == boundary_index,
+        // Immediately after simulating frame N, N is both the current tick and
+        // tape frame while the resulting state is boundary N + 1.
+        "post_sim" => sim_tick == tape_frame,
+        _ => false,
+    }
+}
+
 pub(super) fn empty_harness_score() -> TrialScore {
     TrialScore {
         depth: 0,
@@ -354,9 +374,14 @@ pub(super) fn parse_anchored_milestones(
             &milestone.evidence,
         ) {
             (true, Some(boundary_index), Some(sim_tick), Some(tape_frame), Some(evidence)) => {
-                if boundary_index != tape_frame.saturating_add(1) || sim_tick != tape_frame {
+                if !native_boundary_coordinates_match(
+                    milestone.phase.as_deref().unwrap_or_default(),
+                    boundary_index,
+                    sim_tick,
+                    tape_frame,
+                ) {
                     return Err(EvaluateError::NativeResult(format!(
-                        "milestone {id} tick, tape frame, and boundary index are not one absolute fixed-step boundary"
+                        "milestone {id} phase, tick, tape frame, and boundary index are not one absolute fixed-step boundary"
                     )));
                 }
                 validate_fingerprint(&evidence.boundary_fingerprint)?;
@@ -466,7 +491,10 @@ pub(super) fn parse_anchored_milestones(
                     ));
                 }
             }
-            SegmentProfile::BootToFsp103 => unreachable!("validated anchored profile"),
+            // Boot/menu segments are authenticated by their authored source
+            // and goal predicates. Unlike movement profiles, they have no one
+            // hard-coded stage shape shared by every intermediate menu node.
+            SegmentProfile::BootToFsp103 => {}
         }
         Some(goal_frame - objective.identity.source_boundary_index)
     } else if let Some(definition) = progress_hits
@@ -663,6 +691,38 @@ pub(super) fn parse_native_milestones(
     })
 }
 
+#[cfg(test)]
+mod boundary_coordinate_tests {
+    use super::native_boundary_coordinates_match;
+
+    #[test]
+    fn phase_defines_the_absolute_tick_to_tape_relationship() {
+        assert!(native_boundary_coordinates_match(
+            "pre_input",
+            270,
+            270,
+            269
+        ));
+        assert!(native_boundary_coordinates_match("post_sim", 270, 269, 269));
+        assert!(!native_boundary_coordinates_match(
+            "pre_input",
+            270,
+            269,
+            269
+        ));
+        assert!(!native_boundary_coordinates_match(
+            "post_sim", 270, 270, 269
+        ));
+        assert!(!native_boundary_coordinates_match("unknown", 270, 270, 269));
+        assert!(!native_boundary_coordinates_match(
+            "pre_input",
+            271,
+            270,
+            269
+        ));
+    }
+}
+
 fn validate_native_boot(
     native: &NativeMilestoneResult,
     expected_boot: &TapeBoot,
@@ -710,7 +770,9 @@ fn validate_fingerprint(fingerprint: &BoundaryFingerprint) -> Result<(), Evaluat
         || (fingerprint.schema == "dusklight.milestone-boundary/v3"
             && fingerprint.canonical_encoding == "little-endian-fixed-v3")
         || (fingerprint.schema == "dusklight.milestone-boundary/v4"
-            && fingerprint.canonical_encoding == "little-endian-fixed-v4");
+            && fingerprint.canonical_encoding == "little-endian-fixed-v4")
+        || (fingerprint.schema == "dusklight.milestone-boundary/v5"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v5");
     if !supported_contract
         || fingerprint.algorithm != "xxh3-128"
         || fingerprint.digest.len() != 32

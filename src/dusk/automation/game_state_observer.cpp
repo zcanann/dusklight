@@ -3,9 +3,14 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_s_play.h"
+#include "d/d_s_name.h"
+#include "dusk/automation/file_select_observer.hpp"
+#include "dusk/automation/menu_state_observer.hpp"
+#include "dusk/automation/name_entry_observer.hpp"
 #include "dusk/automation/rng.hpp"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
@@ -16,6 +21,34 @@
 #include <limits>
 
 namespace dusk::automation {
+
+TitleMenuObservation MenuStateObserver::captureTitle() {
+    const auto* title = static_cast<const daTitle_c*>(fopAcM_SearchByName(fpcNm_TITLE_e));
+    if (title == nullptr) return {};
+    return {
+        .present = true,
+        .procedure = title->mProcID,
+        .logoSkipReady = title->mProcID == 1,
+        .startReady = title->mProcID == 3,
+    };
+}
+
+NameSceneMenuObservation MenuStateObserver::captureNameScene() {
+    const auto* scene = reinterpret_cast<const dScnName_c*>(
+        fpcM_SearchByName(fpcNm_NAME_SCENE_e));
+    if (scene == nullptr) return {};
+    const dFile_select_c* fileSelect = scene->dFs_c;
+    return {
+        .present = true,
+        .procedure = scene->mProc,
+        .fileSelectPresent = fileSelect != nullptr,
+        .fileSelectProcedure =
+            static_cast<std::uint8_t>(fileSelect == nullptr ? 0xff : fileSelect->mDataSelProc),
+        .cardCheckProcedure =
+            static_cast<std::uint8_t>(fileSelect == nullptr ? 0xff : fileSelect->mCardCheckProc),
+    };
+}
+
 namespace {
 
 int capture_controller_actor(void* candidate, void* context) {
@@ -137,6 +170,12 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
     const auto* link = playerIsLink ? static_cast<const daAlink_c*>(player) : nullptr;
     const dEvt_control_c* event = dComIfGp_getEvent();
+    const TitleMenuObservation titleMenu = MenuStateObserver::captureTitle();
+    const NameSceneMenuObservation nameScene = MenuStateObserver::captureNameScene();
+    const NameEntryObservation& nameEntry = name_entry_observer().latest();
+    const bool nameEntryActive = nameEntry.active != 0;
+    const bool nameEntryInputReady = nameEntryActive && name_entry_observer().inputProcessed();
+    const FileSelectObserver& fileSelect = file_select_observer();
     const auto actorIdentity = [](const fopAc_ac_c* actor) {
         MilestoneObservation::ActorIdentity identity;
         if (actor != nullptr) {
@@ -221,6 +260,24 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         // accessor is non-const and traverses private manager state.
         .eventNameHashPresent = false,
         .eventNameHash = 0,
+        .titlePresent = titleMenu.present,
+        .titleProcedure = titleMenu.procedure,
+        .titleLogoSkipReady = titleMenu.logoSkipReady,
+        .titleStartReady = titleMenu.startReady,
+        .nameEntryActive = nameEntryActive,
+        .nameEntryCharacterSelectReady =
+            nameEntryInputReady && nameEntry.selectionProcedure == 0,
+        .nameEntryInputReady = nameEntryInputReady,
+        .nameEntrySelectionProcedure = nameEntry.selectionProcedure,
+        .fileSelectNoSaveReady = fileSelect.noSavePromptReady(),
+        .fileSelectDataSelectReady = fileSelect.dataSelectReady(),
+        .fileSelectKeyWaitReady = fileSelect.keyWaitReady(),
+        .fileSelectYesNoReady = fileSelect.yesNoSelectReady(),
+        .nameScenePresent = nameScene.present,
+        .nameSceneProcedure = nameScene.procedure,
+        .fileSelectPresent = nameScene.fileSelectPresent,
+        .fileSelectProcedure = nameScene.fileSelectProcedure,
+        .fileSelectCardCheckProcedure = nameScene.cardCheckProcedure,
         .nextStageEnabled = dComIfGp_isEnableNextStage() != 0,
         .nextStageName = dComIfGp_getNextStageName(),
         .nextRoom = static_cast<std::int8_t>(dComIfGp_getNextStageRoomNo()),

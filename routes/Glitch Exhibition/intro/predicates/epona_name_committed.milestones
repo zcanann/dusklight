@@ -1,0 +1,6 @@
+milestones 1.7
+
+milestone epona_name_committed {
+  phase pre_input
+  when menu.name_scene.present && menu.name_scene.procedure == 5
+}

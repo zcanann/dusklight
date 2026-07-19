@@ -1771,7 +1771,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
     assert!(graph.predicate_program.is_none());
-    assert_eq!(graph.goals.len(), 2);
+    assert_eq!(graph.goals.len(), 11);
     assert!(graph.goals.iter().all(|goal| {
         goal.predicate_program.definitions.len() == 1
             && goal.predicate_program.definitions[0].name == goal.predicate
@@ -1812,7 +1812,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(to_link.entry_segment, "tolink_title_ready");
     assert_eq!(to_link.exit_segment, "tolink_link_control");
     assert_eq!(to_link.parent, None);
-    assert_eq!(to_link.recursive_segments.len(), 9);
+    assert_eq!(to_link.recursive_segments.len(), 10);
     assert_eq!(to_link.frame_count, Some(440));
     let choose_play = graph
         .segments
@@ -1824,9 +1824,9 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         .iter()
         .find(|segment| segment.id == "tolink_continue_no_save")
         .unwrap();
-    assert_eq!(
+    assert_ne!(
         choose_play.boundary_fingerprint, continue_without_saving.boundary_fingerprint,
-        "the coarse menu-state proof deliberately cannot distinguish these seams"
+        "native menu procedures must distinguish adjacent authored seams"
     );
     assert_ne!(
         choose_play.materialization_sha256, continue_without_saving.materialization_sha256,
@@ -1926,7 +1926,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     }
 
     let (segment_id, expected_output) =
-        ("to_ordon_spring_q129", "c4ba7afe943b7ade1d12cc61ed6f2488");
+        ("to_ordon_spring_q129", "65c12a65a2dd3d3566b0f0d9149fa8db");
     let segment = &route.segments[segment_id];
     assert_eq!(segment.end_fingerprint, expected_output);
     let card = graph

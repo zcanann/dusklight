@@ -266,10 +266,11 @@ impl Parser {
             TokenKind::Number(value) if value == "1.4" => LanguageVersion { major: 1, minor: 4 },
             TokenKind::Number(value) if value == "1.5" => LanguageVersion { major: 1, minor: 5 },
             TokenKind::Number(value) if value == "1.6" => LanguageVersion { major: 1, minor: 6 },
+            TokenKind::Number(value) if value == "1.7" => LanguageVersion { major: 1, minor: 7 },
             _ => {
                 return Err(self.at_error(
                     &version_token,
-                    "unsupported or missing language version; expected 1.0 through 1.6",
+                    "unsupported or missing language version; expected 1.0 through 1.7",
                 ));
             }
         };
@@ -1307,6 +1308,12 @@ fn validate_expression(
             if language_minor < 6 && (*field as u8) >= Field::TalkPartnerHomePositionX as u8 {
                 return Err(format!(
                     "field {} requires milestone language 1.6",
+                    field.path()
+                ));
+            }
+            if language_minor < 7 && (*field as u8) >= Field::TitleLogoSkipReady as u8 {
+                return Err(format!(
+                    "field {} requires milestone language 1.7",
                     field.path()
                 ));
             }

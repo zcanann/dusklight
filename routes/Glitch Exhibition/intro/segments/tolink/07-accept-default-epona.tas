@@ -6,4 +6,4 @@ state neutral {}
 state accept { p0 buttons A }
 
 frame accept
-repeat 66 neutral
+frame neutral

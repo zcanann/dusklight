@@ -7,3 +7,4 @@ state start { p0 buttons START }
 
 frame start
 frame neutral
+frame start

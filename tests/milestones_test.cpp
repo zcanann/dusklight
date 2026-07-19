@@ -311,7 +311,7 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][0]["state"][0] == 11);
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][1]["call_count"] == 200);
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["schema"] ==
-            "dusklight.milestone-boundary/v4");
+            "dusklight.milestone-boundary/v5");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["algorithm"] == "xxh3-128");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["digest"]
                 .get<std::string>()
@@ -432,7 +432,7 @@ void testCheckedStageSmokeFingerprintV4() {
         .callCount = 0,
     };
     REQUIRE(compute_milestone_boundary_fingerprint(evidence) ==
-            "33e867ceb2d908460bd6871f54aef658");
+            "cf5035320998bac915a8d76bfe787d2e");
 }
 
 void testGoalMustBeRequested() {

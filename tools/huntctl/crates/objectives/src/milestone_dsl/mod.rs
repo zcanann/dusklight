@@ -17,8 +17,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 4] = *b"DMSP";
-pub const WIRE_VERSION: (u16, u16) = (1, 6);
-pub const LANGUAGE_VERSION: (u16, u16) = (1, 6);
+pub const WIRE_VERSION: (u16, u16) = (1, 7);
+pub const LANGUAGE_VERSION: (u16, u16) = (1, 7);
 pub const MAX_DEFINITIONS: usize = 256;
 pub const MAX_NAME_BYTES: usize = 96;
 pub const MAX_SYMBOL_BYTES: usize = 64;
@@ -295,6 +295,23 @@ pub enum Field {
     GrabbedActorHomePositionX = 73,
     GrabbedActorHomePositionY = 74,
     GrabbedActorHomePositionZ = 75,
+    TitleLogoSkipReady = 76,
+    TitleStartReady = 77,
+    NameEntryActive = 78,
+    NameEntryCharacterSelectReady = 79,
+    NameEntryInputReady = 80,
+    NameEntrySelectionProcedure = 81,
+    FileSelectNoSaveReady = 82,
+    FileSelectDataSelectReady = 83,
+    FileSelectKeyWaitReady = 84,
+    FileSelectYesNoReady = 85,
+    TitlePresent = 86,
+    TitleProcedure = 87,
+    NameScenePresent = 88,
+    NameSceneProcedure = 89,
+    FileSelectPresent = 90,
+    FileSelectProcedure = 91,
+    FileSelectCardCheckProcedure = 92,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -492,6 +509,23 @@ impl Field {
             Self::GrabbedActorHomePositionX => "player.interaction.grabbed_actor.home_position.x",
             Self::GrabbedActorHomePositionY => "player.interaction.grabbed_actor.home_position.y",
             Self::GrabbedActorHomePositionZ => "player.interaction.grabbed_actor.home_position.z",
+            Self::TitleLogoSkipReady => "menu.title.logo_skip_ready",
+            Self::TitleStartReady => "menu.title.start_ready",
+            Self::NameEntryActive => "menu.name_entry.active",
+            Self::NameEntryCharacterSelectReady => "menu.name_entry.character_select_ready",
+            Self::NameEntryInputReady => "menu.name_entry.input_ready",
+            Self::NameEntrySelectionProcedure => "menu.name_entry.selection_procedure",
+            Self::FileSelectNoSaveReady => "menu.file_select.no_save_ready",
+            Self::FileSelectDataSelectReady => "menu.file_select.data_select_ready",
+            Self::FileSelectKeyWaitReady => "menu.file_select.key_wait_ready",
+            Self::FileSelectYesNoReady => "menu.file_select.yes_no_ready",
+            Self::TitlePresent => "menu.title.present",
+            Self::TitleProcedure => "menu.title.procedure",
+            Self::NameScenePresent => "menu.name_scene.present",
+            Self::NameSceneProcedure => "menu.name_scene.procedure",
+            Self::FileSelectPresent => "menu.file_select.present",
+            Self::FileSelectProcedure => "menu.file_select.procedure",
+            Self::FileSelectCardCheckProcedure => "menu.file_select.card_check_procedure",
         }
     }
 
@@ -512,6 +546,11 @@ impl Field {
             Self::PlayerDoStatus | Self::TalkPartnerSetId | Self::GrabbedActorSetId => {
                 FieldType::U32
             }
+            Self::NameEntrySelectionProcedure
+            | Self::TitleProcedure
+            | Self::NameSceneProcedure
+            | Self::FileSelectProcedure
+            | Self::FileSelectCardCheckProcedure => FieldType::U32,
             Self::StageName | Self::NextStageName => FieldType::Symbol,
             Self::StageRoom
             | Self::StageLayer
@@ -546,6 +585,18 @@ impl Field {
             | Self::PlayerIsLink
             | Self::NextStageEnabled => FieldType::Bool,
             Self::TalkPartnerExists | Self::GrabbedActorExists => FieldType::Bool,
+            Self::TitleLogoSkipReady
+            | Self::TitleStartReady
+            | Self::NameEntryActive
+            | Self::NameEntryCharacterSelectReady
+            | Self::NameEntryInputReady
+            | Self::FileSelectNoSaveReady
+            | Self::FileSelectDataSelectReady
+            | Self::FileSelectKeyWaitReady
+            | Self::FileSelectYesNoReady
+            | Self::TitlePresent
+            | Self::NameScenePresent
+            | Self::FileSelectPresent => FieldType::Bool,
             Self::EventNameHashPresent
             | Self::CollisionGroundContact
             | Self::CollisionWallContact
@@ -574,7 +625,7 @@ impl Field {
     }
 
     fn parse(path: &str) -> Option<Self> {
-        (1..=75).find_map(|id| {
+        (1..=92).find_map(|id| {
             let field = Self::from_id(id)?;
             (field.path() == path).then_some(field)
         })
@@ -657,6 +708,23 @@ impl Field {
             73 => Self::GrabbedActorHomePositionX,
             74 => Self::GrabbedActorHomePositionY,
             75 => Self::GrabbedActorHomePositionZ,
+            76 => Self::TitleLogoSkipReady,
+            77 => Self::TitleStartReady,
+            78 => Self::NameEntryActive,
+            79 => Self::NameEntryCharacterSelectReady,
+            80 => Self::NameEntryInputReady,
+            81 => Self::NameEntrySelectionProcedure,
+            82 => Self::FileSelectNoSaveReady,
+            83 => Self::FileSelectDataSelectReady,
+            84 => Self::FileSelectKeyWaitReady,
+            85 => Self::FileSelectYesNoReady,
+            86 => Self::TitlePresent,
+            87 => Self::TitleProcedure,
+            88 => Self::NameScenePresent,
+            89 => Self::NameSceneProcedure,
+            90 => Self::FileSelectPresent,
+            91 => Self::FileSelectProcedure,
+            92 => Self::FileSelectCardCheckProcedure,
             _ => return None,
         })
     }

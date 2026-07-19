@@ -144,7 +144,7 @@ success oracle. It first neutralizes contiguous chunks of active input with
 ddmin, then retries individual active frames, and finally truncates after the
 proved goal frame. Every accepted reduction must reproduce the source proof in
 at least two cold runs: the same boot origin, goal simulation tick, goal tape
-frame, and complete `dusklight.milestone-boundary/v4` fingerprint. The emitted
+frame, and complete `dusklight.milestone-boundary/v5` fingerprint. The emitted
 `.proof.json` retains the exact oracle/boundary evidence and all candidate-run
 artifacts remain under the supplied state root. The proof also binds the source
 and minimized tapes, executable, game data, optional milestone program, launch

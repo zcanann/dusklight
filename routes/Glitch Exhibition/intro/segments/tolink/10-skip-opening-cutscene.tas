@@ -3,7 +3,5 @@ rate 30/1
 ports 0x0f
 
 state neutral {}
-state start { p0 buttons START }
 
-frame start
 repeat 102 neutral

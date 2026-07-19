@@ -1,0 +1,7 @@
+milestones 1.7
+
+milestone opening_event_skipped {
+  phase post_sim
+  when stage.name == "F_SP108" && stage.room == 1 && player.exists &&
+   event.running && event.id == 2305 && event.mode == 2 && event.status == 5
+}

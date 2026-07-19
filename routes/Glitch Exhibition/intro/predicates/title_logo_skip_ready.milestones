@@ -1,0 +1,6 @@
+milestones 1.7
+
+milestone title_logo_skip_ready {
+  phase pre_input
+  when menu.title.present && menu.title.procedure == 1 && menu.title.logo_skip_ready
+}

@@ -213,6 +213,10 @@ fn wire_field_ids_and_opcodes_are_stable() {
     assert_eq!(Field::EventId as u8, 15);
     assert_eq!(Field::PlayerIsLink as u8, 21);
     assert_eq!(Field::NextStageEnabled as u8, 22);
+    assert_eq!(Field::TitleLogoSkipReady as u8, 76);
+    assert_eq!(Field::FileSelectYesNoReady as u8, 85);
+    assert_eq!(Field::FileSelectCardCheckProcedure as u8, 92);
+    assert_eq!(Field::TitleProcedure as u8, 87);
     let program =
         parse("milestones 1.0 milestone one { phase pre_input when event.id == -1 }").unwrap();
     let bytes = compile(&program).unwrap().bytes;
@@ -221,6 +225,29 @@ fn wire_field_ids_and_opcodes_are_stable() {
         &bytes[bytecode_start..bytecode_start + 8],
         &[0x01, 15, 0x13, 0xff, 0xff, 0xff, 0xff, 0x20]
     );
+}
+
+#[test]
+fn read_only_menu_boundary_fields_round_trip() {
+    let source = r#"milestones 1.7
+milestone menu_ready {
+  phase pre_input
+  when menu.title.present || menu.title.procedure == 3 ||
+   menu.title.logo_skip_ready || menu.title.start_ready ||
+   menu.name_entry.active || menu.name_entry.character_select_ready ||
+   menu.name_entry.input_ready || menu.name_entry.selection_procedure == 4 ||
+   menu.name_scene.present || menu.name_scene.procedure == 1 ||
+   menu.file_select.present || menu.file_select.procedure == 16 ||
+   menu.file_select.card_check_procedure == 4 ||
+   menu.file_select.no_save_ready || menu.file_select.data_select_ready ||
+   menu.file_select.key_wait_ready || menu.file_select.yes_no_ready
+}"#;
+    let program = parse(source).unwrap();
+    let compiled = compile(&program).unwrap();
+    let decoded = decode(&compiled.bytes).unwrap();
+    assert_eq!(decoded.program, program);
+    assert_eq!(parse(&format(&program).unwrap()).unwrap(), program);
+    assert!(parse(&source.replace("milestones 1.7", "milestones 1.6")).is_err());
 }
 
 #[test]
@@ -400,7 +427,7 @@ fn language_1_4_named_value_projections_round_trip() {
 
     for invalid in [
         source.replace("milestones 1.4", "milestones 1.3"),
-        source.replace("    rng secondary\n", "    rng primary\n"),
+        source.replace("rng secondary", "rng primary"),
         source.replace("flag event 821", "flag event 822"),
         source.replace(
             "actor_population \"F_SP103\" 1",

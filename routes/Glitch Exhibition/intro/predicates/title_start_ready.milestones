@@ -1,0 +1,6 @@
+milestones 1.7
+
+milestone title_start_ready {
+  phase pre_input
+  when menu.title.present && menu.title.procedure == 3 && menu.title.start_ready
+}

@@ -1179,6 +1179,13 @@ static bool finish_automation_oracle_tick() {
         if (automationLogicalTickBudget != 0 &&
             automationSimulationTick >= automationLogicalTickBudget)
         {
+            if (exitAfterInputTape &&
+                !dusk::automation::input_tape_player().isPlaying() &&
+                record_milestone_pre_input_boundary())
+            {
+                dusk::IsRunning = false;
+                return true;
+            }
             automationLogicalTickBudgetExhausted = true;
             dusk::IsRunning = false;
             DuskLog.info("Automation logical-tick budget exhausted after {} completed ticks",
@@ -1210,6 +1217,12 @@ static bool finish_automation_oracle_tick() {
     if (automationLogicalTickBudget != 0 &&
         automationSimulationTick >= automationLogicalTickBudget)
     {
+        if (exitAfterInputTape && !dusk::automation::input_tape_player().isPlaying() &&
+            record_milestone_pre_input_boundary())
+        {
+            dusk::IsRunning = false;
+            return true;
+        }
         automationLogicalTickBudgetExhausted = true;
         dusk::IsRunning = false;
         DuskLog.info("Automation logical-tick budget exhausted after {} completed ticks",
@@ -1354,6 +1367,16 @@ static bool finish_input_tape_tick() {
         if (eyeShredderOracleEnabled && !eyeShredderOracle.isTerminal()) {
             eyeShredderOracle.reject(reason);
         }
+        dusk::IsRunning = false;
+        return true;
+    }
+
+    // A pre-input boundary belongs to the gap after the preceding frame, not
+    // to the next frame itself. Clean proof playback must therefore expose
+    // the final gap after the last tape frame has completed before honoring
+    // --exit-after-tape. This performs no PAD read or gameplay tick and keeps
+    // the next segment's first input out of the current segment.
+    if (exitAfterInputTape && record_milestone_pre_input_boundary()) {
         dusk::IsRunning = false;
         return true;
     }

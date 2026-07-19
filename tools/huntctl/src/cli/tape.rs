@@ -921,10 +921,11 @@ fn evaluate_minimize_tape(
         }
         let fingerprint: BoundaryFingerprint =
             serde_json::from_value(milestone["evidence"]["boundary_fingerprint"].clone())?;
-        if fingerprint.schema != "dusklight.milestone-boundary/v4"
-            || fingerprint.canonical_encoding != "little-endian-fixed-v4"
-            || fingerprint.algorithm != "xxh3-128"
-        {
+        let supported_boundary = (fingerprint.schema == "dusklight.milestone-boundary/v4"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v4")
+            || (fingerprint.schema == "dusklight.milestone-boundary/v5"
+                && fingerprint.canonical_encoding == "little-endian-fixed-v5");
+        if !supported_boundary || fingerprint.algorithm != "xxh3-128" {
             return Err("minimization received an unsupported boundary fingerprint".into());
         }
         let proof = TapeMinimizeProof {
