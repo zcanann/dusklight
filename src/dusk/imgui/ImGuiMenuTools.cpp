@@ -84,6 +84,15 @@ namespace dusk {
                 ImGui::Checkbox("Enable wireframe view", &collisionView.enableWireframe);
                 ImGui::SliderFloat("Opacity##terrain", &collisionView.terrainViewOpacity, 0.0f, 100.0f);
                 ImGui::SliderFloat("Draw Range", &collisionView.drawRange, 0.0f, 1000.0f);
+                ImGui::SeparatorText("Ceiling extent");
+                ImGui::Checkbox("Show ceiling volumes", &collisionView.enableCeilingExtent);
+                ImGui::BeginDisabled(!collisionView.enableCeilingExtent);
+                ImGui::DragFloat("Upward extent", &collisionView.ceilingExtentUp, 1.0f, 0.0f,
+                                 10000.0f, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::DragFloat("Downward extent", &collisionView.ceilingExtentDown, 1.0f, 0.0f,
+                                 10000.0f, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextDisabled("Rendering only; collision geometry is unchanged.");
+                ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::Checkbox("Enable Attack Collider view", &collisionView.enableAtView);
                 ImGui::Checkbox("Enable Target Collider view", &collisionView.enableTgView);

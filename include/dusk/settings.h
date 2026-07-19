@@ -315,12 +315,15 @@ void registerSettings();
 struct CollisionViewSettings {
     bool enableTerrainView;
     bool enableWireframe;
+    bool enableCeilingExtent;
     bool enableAtView;
     bool enableTgView;
     bool enableCoView;
     float terrainViewOpacity;
     float colliderViewOpacity;
     float drawRange;
+    float ceilingExtentUp;
+    float ceilingExtentDown;
 };
 
 struct TriggerViewSettings {

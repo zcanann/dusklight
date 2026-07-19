@@ -385,12 +385,15 @@ static TransientSettings g_transientSettings = {
     .collisionView = {
         .enableTerrainView = false,
         .enableWireframe = false,
+        .enableCeilingExtent = false,
         .enableAtView = false,
         .enableTgView = false,
         .enableCoView = false,
         .terrainViewOpacity = 50.0f,
         .colliderViewOpacity = 50.0f,
         .drawRange = 100.0f,
+        .ceilingExtentUp = 250.0f,
+        .ceilingExtentDown = 250.0f,
     },
     .triggerView = {
         .enableSceneExitView = false,

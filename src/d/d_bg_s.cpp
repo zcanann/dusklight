@@ -646,6 +646,26 @@ static int poly_draw(dBgS_CaptPoly* capt, cBgD_Vtx_t* vtxList, int v0, int v1, i
     } else if (cBgW_CheckBRoof(plane->mNormal.y)) {
         if (!s_InsideHio.ChkRoofOff()) {
             dDbVw_drawTriangleOpa(points, roof_color, TRUE);
+#if TARGET_PC
+            if (collisionViewSettings.enableCeilingExtent &&
+                (collisionViewSettings.ceilingExtentUp > 0.0f ||
+                 collisionViewSettings.ceilingExtentDown > 0.0f))
+            {
+                // drawCube's eight-point strip becomes a triangular prism when
+                // its fourth corner is duplicated. This keeps each ceiling
+                // volume to one debug packet instead of five separate faces.
+                cXyz prism[8];
+                for (int i = 0; i < 3; ++i) {
+                    prism[i] = points[i];
+                    prism[i].y += collisionViewSettings.ceilingExtentUp;
+                    prism[i + 4] = points[i];
+                    prism[i + 4].y -= collisionViewSettings.ceilingExtentDown;
+                }
+                prism[3] = prism[2];
+                prism[7] = prism[6];
+                dDbVw_drawCube8pXlu(prism, roof_color);
+            }
+#endif
         }
     } else {
         if (!s_InsideHio.ChkWallOff()) {
