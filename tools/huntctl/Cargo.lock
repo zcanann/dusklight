@@ -358,6 +358,7 @@ dependencies = [
  "dusklight-routes",
  "dusklight-search",
  "dusklight-semantic-novelty",
+ "dusklight-skybook-benchmark",
  "dusklight-throughput-benchmark",
  "dusklight-trace",
  "dusklight-worker-protocol",
@@ -512,6 +513,16 @@ version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
  "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-skybook-benchmark"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
  "serde",
  "serde_json",
  "sha2",

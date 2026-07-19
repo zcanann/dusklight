@@ -1,4 +1,4 @@
-//! Offline benchmark import and specification domains.
+//! Compatibility exports for offline benchmark specifications.
 
-pub mod skybook;
-pub mod skybook_selection;
+pub use dusklight_skybook_benchmark::manifest as skybook;
+pub use dusklight_skybook_benchmark::selection as skybook_selection;

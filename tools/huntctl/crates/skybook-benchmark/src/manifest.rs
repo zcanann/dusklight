@@ -1,6 +1,6 @@
 //! Read-only, revision-bound import of the Skybook Markdown requirements corpus.
 
-use crate::artifact::Digest;
+use dusklight_automation_contracts::artifact::Digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

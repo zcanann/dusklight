@@ -25,6 +25,7 @@ dusklight-routes = { path = "crates/routes" }
 dusklight-route-workbench = { path = "crates/workbench" }
 dusklight-search = { path = "crates/search" }
 dusklight-semantic-novelty = { path = "crates/semantic-novelty" }
+dusklight-skybook-benchmark = { path = "crates/skybook-benchmark" }
 dusklight-trace = { path = "crates/trace" }
 dusklight-throughput-benchmark = { path = "crates/throughput-benchmark" }
 dusklight-worker-protocol = { path = "crates/worker" }
@@ -72,6 +73,7 @@ members = [
     "crates/workbench",
     "crates/search",
     "crates/semantic-novelty",
+    "crates/skybook-benchmark",
     "crates/trace",
     "crates/throughput-benchmark",
     "crates/worker",
@@ -99,6 +101,7 @@ default-members = [
     "crates/workbench",
     "crates/search",
     "crates/semantic-novelty",
+    "crates/skybook-benchmark",
     "crates/trace",
     "crates/throughput-benchmark",
     "crates/worker",
