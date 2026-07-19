@@ -856,15 +856,24 @@ model schema, and previous model/lineage digests. The same immutable inputs must
 reproduce the same model lineage; a changed dataset, config, or model fails the
 resume check. `q-proposals.json` embeds both identities.
 
-Learned lanes additionally require `dusklight-online-coverage-gate/v1` to pass.
-The default gate requires at least four effective decisions spanning four
-semantic state bins, with at least two actions supported by two or more
-decisions each. If action support, state coverage, or both are inadequate, no Q
-model is fitted and exploit/disagreement receive zero budget. Their budget is
-rotated across structured counterfactual, archive-novelty, and blind-coverage
-fallbacks instead. The v7 proposal report records the measured counts, limits,
-fallback reason and policy, so sparse data cannot silently produce a learned
-proposal claim.
+Learned lanes additionally require `dusklight-online-coverage-gate/v1` and
+`dusklight-learned-proposal-gate/v1` to pass. The coverage gate requires at
+least four effective decisions spanning four semantic state bins, with at least
+two actions supported by two or more decisions each. The proposal gate also
+requires supported objective facts, repeated deterministic native evidence,
+and held-out learned performance at least as good as the best non-learned
+native result. A search may issue one explicitly recorded initial trial before
+held-out learned evidence exists; it is capped at one candidate from each
+learned lane, is tracked independently of model lineage, and cannot bypass the
+fact, determinism, action-support, or state-coverage gates. The exception is
+consumed only when a learned candidate is actually emitted.
+
+If any required gate is inadequate, no Q model is fitted and
+exploit/disagreement receive zero budget. Their budget is rotated across
+structured counterfactual, archive-novelty, and blind-coverage fallbacks
+instead. The v8 proposal report records every gate input and blocker, measured
+coverage, fallback policy, and the exact lane schedule, so sparse or
+unsupported data cannot silently produce a learned proposal claim.
 
 The generation-local `q-proposals.json` reports requested, available, and
 generated counts per proposer, the generation's cycle offset and actual lane

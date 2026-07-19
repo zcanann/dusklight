@@ -552,16 +552,19 @@ when they are not currently fastest. The archive keeps at most 256 cells;
 complete cell descriptors. Neither cell placement nor novelty can promote a
 candidate without the normal repeated native evaluation and proof gates.
 
-Fitted-Q proposals receive half of the slots left after archive retention. They
+Fitted-Q proposals may receive half of the slots left after archive retention. They
 alternate between a state-guided mean-Q action change and a fully unmasked
 uncertainty-weighted action change. Each change replaces a one-, two-, or
 four-frame window with an exact canonical controller sample, compiles back to
 an ordinary candidate, and goes through the same cold-process milestone
 evaluator as every other route. Unsupported schemas, misaligned tape/action
-pairs, and insufficient action coverage disable Q proposals for that generation
-rather than weakening evaluation. Remaining slots use the unmasked structured
-mutation operators, so waypoint and roll specialists are never displaced
-wholesale.
+pairs, unsupported required facts, nondeterministic repetitions, insufficient
+action/state coverage, or inadequate held-out native performance disable Q
+proposals for that generation rather than weakening evaluation. Remaining
+slots use the unmasked structured, archive, and blind-coverage operators. The
+only bootstrap exception is one recorded trial capped at two candidates, one
+per learned lane; it cannot bypass fact, determinism, or coverage gates and is
+consumed only after a learned candidate is emitted.
 
 The versioned `dusklight-action-guidance/movement-v1` mask is an advisory prior
 over the 68 movement-v2 action classes. Normal gameplay recommends all actions;
@@ -580,10 +583,11 @@ proof acceptance do not import or consult the mask. Consequently a
 glitch-producing input that looks invalid to the prior remains an ordinary
 executable and promotable proof candidate.
 
-Each generation writes `q-proposals.json` v4 with its training size, action
-coverage, guidance schema, masked-state count, guided and unmasked action
-evaluation counts, unmasked probe-state count, intervention counts, and
-proposal count (or an explicit unavailable reason). Candidate
+Each generation writes `q-proposals.json` v8 with its training size, complete
+readiness and coverage gates, guidance schema, masked-state count, guided and
+unmasked action evaluation counts, unmasked probe-state count, intervention
+counts, exact collection schedule, and proposal count (or an explicit
+unavailable reason). Candidate
 ancestry marks `q_GuidedExploit` and `q_UnmaskedExplore` proposals, making
 equal-budget attribution auditable. In the first
 closed-loop route smoke, both Q proposals replayed and reached the 138-frame
