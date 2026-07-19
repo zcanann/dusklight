@@ -560,7 +560,13 @@ fn propose_q_candidates_internal(
         })
         .collect::<Result<HashSet<_>, _>>()?;
     let (collection_cycle_offset, budgets, schedule_policy) =
-        if proposal_gate.learned_policy_enabled {
+        if proposal_gate.learned_policy_enabled && proposal_gate.initial_bounded_trial {
+            (
+                0,
+                split_initial_learned_budget(config.max_proposals),
+                "initial_bounded_trial_learned_lanes_only",
+            )
+        } else if proposal_gate.learned_policy_enabled {
             let offset = config.generation as usize % 5;
             (
                 offset,
@@ -821,6 +827,10 @@ fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
         budgets[(cycle_offset + offset) % budgets.len()] += 1;
     }
     budgets
+}
+
+fn split_initial_learned_budget(total: usize) -> [usize; 5] {
+    [usize::from(total > 0), usize::from(total > 1), 0, 0, 0]
 }
 
 fn split_fallback_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
@@ -1551,6 +1561,34 @@ mod tests {
             }
         }
         assert_eq!(totals, [3; 5]);
+    }
+
+    #[test]
+    fn initial_trial_is_capped_and_cannot_bypass_fact_or_determinism_gates() {
+        let ready_coverage = OnlineCoverageGate::evaluate(
+            8,
+            &BTreeMap::from([(0, 4), (18, 4)]),
+            8,
+            CoverageGuardConfig::default(),
+        )
+        .unwrap();
+        let admitted = LearnedProposalGate::evaluate(&ready_coverage, true, true, false, true);
+        assert!(admitted.learned_policy_enabled);
+        assert_eq!(split_initial_learned_budget(64), [1, 1, 0, 0, 0]);
+
+        let unsupported = LearnedProposalGate::evaluate(&ready_coverage, false, true, false, true);
+        assert!(!unsupported.learned_policy_enabled);
+        assert!(unsupported.blockers.contains(
+            &super::super::training_guard::LearnedProposalBlocker::RequiredFactsUnsupported
+        ));
+        let nondeterministic =
+            LearnedProposalGate::evaluate(&ready_coverage, true, false, false, true);
+        assert!(!nondeterministic.learned_policy_enabled);
+        assert!(
+            nondeterministic.blockers.contains(
+                &super::super::training_guard::LearnedProposalBlocker::DeterminismUnproved
+            )
+        );
     }
 
     #[test]
