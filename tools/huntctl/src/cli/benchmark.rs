@@ -2,6 +2,7 @@
 
 use crate::{option, required_path, u32_option};
 use huntctl::benchmark::skybook::SkybookManifest;
+use huntctl::benchmark::skybook_pilot::SkybookPilot;
 use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDisposition};
 use huntctl::harness::run_contract::HarnessRunRequest;
 use huntctl::throughput_benchmark::{
@@ -83,6 +84,31 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("validate-skybook-pilot") => {
+            let pilot_args = &args[1..];
+            let manifest_path = required_path(pilot_args, "--manifest")?;
+            let pilot_path = required_path(pilot_args, "--pilot")?;
+            let repository_root = option(pilot_args, "--repository-root")
+                .map(Into::into)
+                .unwrap_or(env::current_dir()?);
+            let manifest: SkybookManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+            let pilot: SkybookPilot = serde_json::from_slice(&fs::read(&pilot_path)?)?;
+            pilot.validate_against(&manifest, &repository_root)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": pilot.schema,
+                    "content_sha256": pilot.content_sha256,
+                    "source_revision": pilot.source_git_revision,
+                    "page_slug": pilot.page.slug,
+                    "positive_tape_sha256": pilot.positive_case.tape_sha256,
+                    "negative_control": pilot.negative_control.id,
+                    "implementation_artifact_count": pilot.implementation_artifacts.len(),
+                    "pilot": pilot_path,
+                }))?
+            );
+            Ok(())
+        }
         Some("cold-process") => {
             let benchmark_args = &args[1..];
             let request_path = required_path(benchmark_args, "--request")?;
@@ -126,7 +152,7 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N]\n  validate-cold-process --report REPORT.json".into()),
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N]\n  validate-cold-process --report REPORT.json".into()),
     }
 }
 

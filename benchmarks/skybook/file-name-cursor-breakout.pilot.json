@@ -1,0 +1,114 @@
+{
+  "schema": "dusklight-skybook-pilot/v1",
+  "content_sha256": "8a33c2a60f57a5a79f4350f9726c628c9f0c52ef031895b551f63ecb0f6ce24a",
+  "source_manifest_content_sha256": "bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6",
+  "source_repository_url": "https://github.com/qwertyquerty/skybook",
+  "source_git_revision": "e9104852ff6b87862b67100f58aaa729096b42dc",
+  "approved_by": "repository-owner",
+  "approval_reference": "TASKS.md#43",
+  "page": {
+    "slug": "file-name-cursor-breakout",
+    "source_path": "_posts/file-name-cursor-breakout.md",
+    "source_sha256": "f2e4ce02f15d01b2028e328cbf9f12bfd0e96ddfa3ae033bf736ee7d4d3d8fd3",
+    "body_sha256": "3e5d1cb2eac5adaf8633c1726871b840d124bb8694300d68c82bb9c385359e47"
+  },
+  "native_port": {
+    "claim": "The branch-free Eye Shredder tape reproduces the documented cursor breakout as the exact position-113 write in a bounded original-layout dName model, and Aurora observes the resulting raw XF/BP channel-count mismatch at a real draw boundary before controllable gameplay is reached.",
+    "required_setup": [
+      "Boot the GCN NTSC-U game from a clean automation state with no existing save.",
+      "Use the cursor_breakout_shadow fidelity profile and the eye-shredder semantic oracle.",
+      "Replay the checked absolute 650-frame tape with physical controller input disconnected.",
+      "Retain the authenticated observation, gameplay trace, native timing, name-entry trace, and oracle result."
+    ],
+    "fidelity_limitations": [
+      "The retail write is applied to a bounded original-layout shadow model; native host memory is never accessed out of bounds and the host dName object is not claimed to occupy its GameCube address.",
+      "Aurora preserves the command multiplicity and diagnoses the exact XF/BP mismatch, but the magenta/cyan diagnostic is not a pixel-accurate reproduction of the console triangular/rainbow artifact.",
+      "The native-port claim proves the modeled corruption signature and renderer-state consequence only; it does not prove arbitrary cursor-breakout writes or original-console rasterization."
+    ],
+    "oracle_schema_name": "dusklight.eye_shredder_oracle",
+    "oracle_schema_version": 4,
+    "fidelity_profile": "cursor_breakout_shadow",
+    "retail_profile": "fresh_gcn_ntsc_u",
+    "expected_character_index": 113,
+    "expected_original_offset": 1620,
+    "expected_gc_cached_address": 2168813192,
+    "expected_bytes": [12, 0, 2, 1, 0, 0, 0, 77],
+    "expected_xf_channels": 12,
+    "expected_bp_channels": 4,
+    "expected_tape_completion_frame": 650
+  },
+  "positive_case": {
+    "tape_path": "tests/fixtures/automation/eye_shredder.tas",
+    "tape_sha256": "e2b4d8ce4654b76440757ce6bf043825591b8f174db213e4ff4e09af7c551893",
+    "expected_oracle_status": "passed",
+    "required_stages": ["memory", "renderer", "gameplay", "tape"]
+  },
+  "negative_control": {
+    "id": "omit-position-113-write",
+    "derivation": "Replace the positive tape's eye-shredder-write-113 A+START frame with a neutral frame while preserving every other frame and the 650-frame completion boundary.",
+    "expected_oracle_status": "failed",
+    "must_not_report": ["memory", "renderer"]
+  },
+  "implementation_artifacts": [
+    {
+      "role": "aurora_command_processor",
+      "path": "extern/aurora/lib/gx/command_processor.cpp",
+      "sha256": "d89d00ec0b0e8fb7e44783eb0e6527d1c5a05b0d9eebc4ea9642ce6e56e86341"
+    },
+    {
+      "role": "aurora_gfx_interface",
+      "path": "extern/aurora/include/aurora/gfx.h",
+      "sha256": "d22992e105d595bff57ec053b1fdccc1585fd99b97826c027d465b2ee737c144"
+    },
+    {
+      "role": "aurora_renderer_diagnostic",
+      "path": "extern/aurora/lib/aurora.cpp",
+      "sha256": "b9dc1aaf8aa98a2a28a7fc81b2c0a13584f7ed1dd09a2423895393b97dac26fd"
+    },
+    {
+      "role": "name_entry_observer_implementation",
+      "path": "src/dusk/automation/name_entry_observer.cpp",
+      "sha256": "1e4339cc3d52ab06644c0ae112c2ceffc2d491a680cc22704e2e5671503e2407"
+    },
+    {
+      "role": "name_entry_observer_interface",
+      "path": "include/dusk/automation/name_entry_observer.hpp",
+      "sha256": "175beffdf40be326934fd159699dcf5bd1a9c6de007165b00b6d684261261fdd"
+    },
+    {
+      "role": "name_entry_trace_implementation",
+      "path": "src/dusk/automation/name_entry_trace.cpp",
+      "sha256": "bd6de6e08f4a08663b6a638eed99472b1984b14a42be5f053aad3ed7d646cfda"
+    },
+    {
+      "role": "name_entry_trace_interface",
+      "path": "include/dusk/automation/name_entry_trace.hpp",
+      "sha256": "161ef855d206767a061455b5d5add138f798d03904b18d8c2130ef365564dfad"
+    },
+    {
+      "role": "native_automation_integration",
+      "path": "src/m_Do/m_Do_main.cpp",
+      "sha256": "fb5d30c4725e68f19c0da0f2e2c77fce90ff7b9412f66daab9a790950a43de29"
+    },
+    {
+      "role": "original_layout_shadow_implementation",
+      "path": "src/d/d_name.cpp",
+      "sha256": "e6f8b7ecaff38b1c974ff242f3a1ccee0a905e4cddcdd459977a5c53a06dd963"
+    },
+    {
+      "role": "original_name_layout_interface",
+      "path": "include/d/d_name.h",
+      "sha256": "04cfb35ac4e6037f189d0dc9f09fd75bf0bd937781536a55f4db92bc9115bc33"
+    },
+    {
+      "role": "semantic_oracle_implementation",
+      "path": "src/dusk/automation/eye_shredder_oracle.cpp",
+      "sha256": "d0721eb42717fc641acf80e6bd1e4b61ebb94926ff5a9f5c5638d494fd7803dc"
+    },
+    {
+      "role": "semantic_oracle_interface",
+      "path": "include/dusk/automation/eye_shredder_oracle.hpp",
+      "sha256": "7067e8b8dca92aca13ee40331cb0fb41aded3670e2a211fc014c3e303fb55e3c"
+    }
+  ]
+}

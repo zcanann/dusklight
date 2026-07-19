@@ -89,6 +89,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "throughput-benchmark/src/runner.rs": 350,
     "skybook-benchmark/src/lib.rs": 50,
     "skybook-benchmark/src/manifest.rs": 900,
+    "skybook-benchmark/src/pilot.rs": 375,
     "skybook-benchmark/src/selection.rs": 325,
     "trace/src/trace/columnar.rs": 1_700,
     "trace/src/trace/decode.rs": 325,
@@ -157,7 +158,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "runner.rs",
         "tests.rs",
     },
-    "skybook-benchmark": {"lib.rs", "manifest.rs", "selection.rs"},
+    "skybook-benchmark": {"lib.rs", "manifest.rs", "pilot.rs", "selection.rs"},
     "trace": {
         "lib.rs",
         "trace/columnar.rs",

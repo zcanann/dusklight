@@ -1,5 +1,6 @@
 use huntctl::Digest;
 use huntctl::benchmark::skybook::SkybookManifest;
+use huntctl::benchmark::skybook_pilot::SkybookPilot;
 use huntctl::benchmark::skybook_selection::{
     SKYBOOK_SELECTION_SCHEMA, SkybookSelection, SkybookSelectionDisposition, SkybookSelectionEntry,
 };
@@ -78,5 +79,58 @@ fn validates_human_selection_against_exact_checked_manifest() {
         .unwrap();
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("identity is stale"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn validates_single_pilot_and_rejects_stale_implementation_identity() {
+    let executable = env!("CARGO_BIN_EXE_huntctl");
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest_path = repository.join("benchmarks/skybook/manifest.json");
+    let checked_pilot = repository.join("benchmarks/skybook/file-name-cursor-breakout.pilot.json");
+
+    let output = Command::new(executable)
+        .args(["benchmark", "validate-skybook-pilot", "--manifest"])
+        .arg(&manifest_path)
+        .arg("--pilot")
+        .arg(&checked_pilot)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["page_slug"], "file-name-cursor-breakout");
+    assert_eq!(report["implementation_artifact_count"], 12);
+
+    let directory = std::env::temp_dir().join(format!(
+        "huntctl-skybook-pilot-cli-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    let stale_path = directory.join("stale-pilot.json");
+    let mut pilot: SkybookPilot =
+        serde_json::from_slice(&fs::read(&checked_pilot).unwrap()).unwrap();
+    pilot.implementation_artifacts[0].sha256 = Digest([9; 32]);
+    pilot.refresh_content_sha256().unwrap();
+    fs::write(&stale_path, pilot.to_pretty_json().unwrap()).unwrap();
+    let rejected = Command::new(executable)
+        .args(["benchmark", "validate-skybook-pilot", "--manifest"])
+        .arg(&manifest_path)
+        .arg("--pilot")
+        .arg(&stale_path)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("artifact identity is stale"));
     fs::remove_dir_all(directory).unwrap();
 }
