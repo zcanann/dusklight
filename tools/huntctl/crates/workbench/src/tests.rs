@@ -889,7 +889,6 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "grid-template-rows",
         "projectBootIcon",
         "🫠",
-        "🗺️",
         "</span>${projectBootIcon(project)}<span class=\"project-label\">",
         "workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null",
         "This predicate source belongs only to this goal",
@@ -995,6 +994,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     assert!(!html.to_ascii_lowercase().contains("authored boot"));
     assert!(!html.contains("let collapsed = new Set()"));
     assert!(!html.contains("?ready=${Date.now()}"));
+    assert!(!html.contains("🗺️"));
+    assert!(!html.contains("aria-label=\"Tape stage boot\""));
+    assert!(html.contains("aria-label=\"Custom boot\""));
     assert!(!html.contains("Move to folder (for example routes/"));
     assert!(html.contains("workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some"));
     assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));
