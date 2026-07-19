@@ -4491,7 +4491,7 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 struct TapeMinimizeProof {
     sim_tick: u64,
     tape_frame: u64,
@@ -4958,7 +4958,26 @@ fn evaluate_minimize_tape(
         };
         if status.code() == Some(2) {
             if accepted.is_some() {
-                return Err("minimization repetitions disagree on goal reachability".into());
+                let quarantine = write_replay_quarantine(
+                    &root,
+                    tape,
+                    game,
+                    dvd,
+                    goal,
+                    milestone_program,
+                    game_args,
+                    repetitions,
+                    repetition,
+                    "goal_reachability_disagreement",
+                    accepted.as_ref(),
+                    None,
+                    false,
+                )?;
+                return Err(format!(
+                    "minimization repetitions disagree on goal reachability; quarantined at {}",
+                    quarantine.display()
+                )
+                .into());
             }
             missed = true;
             continue;
@@ -4972,7 +4991,26 @@ fn evaluate_minimize_tape(
         }
         let result: Value = serde_json::from_slice(&fs::read(&result_path)?)?;
         if missed {
-            return Err("minimization repetitions disagree on goal reachability".into());
+            let quarantine = write_replay_quarantine(
+                &root,
+                tape,
+                game,
+                dvd,
+                goal,
+                milestone_program,
+                game_args,
+                repetitions,
+                repetition,
+                "goal_reachability_disagreement",
+                None,
+                None,
+                true,
+            )?;
+            return Err(format!(
+                "minimization repetitions disagree on goal reachability; quarantined at {}",
+                quarantine.display()
+            )
+            .into());
         }
         if result["schema"]["name"] != "dusklight.automation.milestones"
             || result["schema"]["version"] != 5
@@ -5009,11 +5047,89 @@ fn evaluate_minimize_tape(
             fingerprint,
         };
         if accepted.as_ref().is_some_and(|prior| prior != &proof) {
-            return Err("minimization repetitions produced contradictory exact proofs".into());
+            let quarantine = write_replay_quarantine(
+                &root,
+                tape,
+                game,
+                dvd,
+                goal,
+                milestone_program,
+                game_args,
+                repetitions,
+                repetition,
+                "exact_proof_disagreement",
+                accepted.as_ref(),
+                Some(&proof),
+                true,
+            )?;
+            return Err(format!(
+                "minimization repetitions produced contradictory exact proofs; quarantined at {}",
+                quarantine.display()
+            )
+            .into());
         }
         accepted = Some(proof);
     }
     Ok(if missed { None } else { accepted })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_replay_quarantine(
+    root: &Path,
+    tape: &InputTape,
+    game: &Path,
+    dvd: &Path,
+    goal: &str,
+    milestone_program: Option<&Path>,
+    game_args: &[String],
+    repetitions_expected: u32,
+    contradictory_repetition: u32,
+    reason: &str,
+    prior_proof: Option<&TapeMinimizeProof>,
+    current_proof: Option<&TapeMinimizeProof>,
+    current_goal_reached: bool,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let tape_bytes = tape.encode()?;
+    let quarantine_path = root.join("quarantine.json");
+    let retained_trials = (1..=contradictory_repetition)
+        .map(|repetition| root.join(format!("repeat-{repetition:03}")))
+        .collect::<Vec<_>>();
+    let quarantine = json!({
+        "schema": "dusklight-replay-quarantine/v1",
+        "reason": reason,
+        "promotion_allowed": false,
+        "candidate": {
+            "tape": root.join("candidate.tape"),
+            "tape_sha256": Digest(Sha256::digest(&tape_bytes).into()),
+        },
+        "build": {
+            "game": game,
+            "game_sha256": Digest(Sha256::digest(fs::read(game)?).into()),
+            "dvd": dvd,
+            "dvd_sha256": Digest(Sha256::digest(fs::read(dvd)?).into()),
+            "game_args": game_args,
+            "fidelity_profile": TAPE_REPLAY_FIDELITY_PROFILE,
+            "cvars": TAPE_REPLAY_CVARS,
+        },
+        "scenario": {
+            "boot": tape.boot,
+            "goal": goal,
+            "milestone_program": milestone_program,
+            "milestone_program_sha256": milestone_program
+                .map(fs::read)
+                .transpose()?
+                .map(|bytes| Digest(Sha256::digest(bytes).into())),
+        },
+        "repetitions_expected": repetitions_expected,
+        "contradictory_repetition": contradictory_repetition,
+        "prior_goal_reached": prior_proof.is_some(),
+        "current_goal_reached": current_goal_reached,
+        "prior_proof": prior_proof,
+        "current_proof": current_proof,
+        "retained_trials": retained_trials,
+    });
+    fs::write(&quarantine_path, serde_json::to_vec_pretty(&quarantine)?)?;
+    Ok(quarantine_path)
 }
 
 fn command_tape_record(args: &[String]) -> Result<(), Box<dyn Error>> {

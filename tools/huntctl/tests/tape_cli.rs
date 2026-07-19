@@ -1,5 +1,6 @@
 use huntctl::tape::InputTape;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -253,6 +254,27 @@ frame neutral
         String::from_utf8_lossy(&contradictory.stderr)
             .contains("repetitions produced contradictory exact proofs")
     );
+    let quarantine_path =
+        directory.join("contradictory-proof-state/candidate-000000/quarantine.json");
+    assert!(
+        String::from_utf8_lossy(&contradictory.stderr).contains(quarantine_path.to_str().unwrap())
+    );
+    let quarantine: serde_json::Value =
+        serde_json::from_slice(&fs::read(&quarantine_path).unwrap()).unwrap();
+    assert_eq!(quarantine["schema"], "dusklight-replay-quarantine/v1");
+    assert_eq!(quarantine["reason"], "exact_proof_disagreement");
+    assert_eq!(quarantine["promotion_allowed"], false);
+    assert_eq!(quarantine["contradictory_repetition"], 2);
+    assert_ne!(
+        quarantine["prior_proof"]["fingerprint"]["digest"],
+        quarantine["current_proof"]["fingerprint"]["digest"]
+    );
+    assert_eq!(quarantine["scenario"]["boot"]["kind"], "stage");
+    assert!(quarantine["build"]["game_sha256"].is_string());
+    assert!(quarantine["build"]["dvd_sha256"].is_string());
+    for trial in quarantine["retained_trials"].as_array().unwrap() {
+        assert!(PathBuf::from(trial.as_str().unwrap()).is_dir());
+    }
 
     let reactive_root = directory.join("reactive-minimize-state");
     let reactive_minimize = Command::new(executable)

@@ -128,7 +128,12 @@ repetition must agree on goal reachability, simulation tick, tape frame, and
 the complete terminal boundary fingerprint. The resulting
 `dusklight-cold-replay-proof/v1` artifact binds the tape, executable, game data,
 optional milestone program, boot origin, launch arguments, and retained trial
-directory by path and content digest.
+directory by path and content digest. If repetitions disagree on reachability
+or exact boundary proof, the command retains every trial and writes a
+`dusklight-replay-quarantine/v1` artifact binding the candidate, build, game
+data, boot/scenario, objective, fidelity, and contradictory proofs. The error
+prints that artifact path and the combination is explicitly ineligible for
+promotion.
 
 `tape minimize` treats the requested milestone goal as the run's semantic
 success oracle. It first neutralizes contiguous chunks of active input with
