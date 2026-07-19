@@ -157,12 +157,13 @@ disabled learned proposals and fell back to structured, archive, and blind
 collection. Each successful tournament finalist is a content-addressed
 579- or 584-frame clean-boot tape copied from an actual replay attempt.
 
-The generation-zero outcome seal contains successes and near misses but no
-ordinary failures, so the three-stratum collection task remains open. Because
-the immutable source milestone is necessarily depth one, anchored collection
-needs an authored intermediate progress milestone (or an equivalent explicit
-progress contract) before source-only misses can be distinguished honestly
-from route near misses.
+The follow-up generation-zero collection authored
+`ordon_spring_exit_approach` between control and the committed transition. Its
+sealed 36 native attempts contain 18 successes, 12 approach near misses, and 6
+source-only ordinary failures. Training admits at most the first corpus from
+each candidate beginning in generation one; all 24 proof repetitions remain
+ineligible. This removes the old ambiguity where every anchored miss inherited
+source depth one and was mislabeled as a near miss.
 
 ## Baseline and scoring
 

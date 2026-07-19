@@ -737,6 +737,7 @@ pub struct BootGolfSummary {
 
 #[derive(Clone, Debug)]
 struct AuthoredDefinitionExpectation {
+    name: String,
     phase: String,
     stable_ticks: u16,
     digest: String,
@@ -749,6 +750,7 @@ struct PreparedAnchoredObjective {
     prefix: InputTape,
     program_bytes: Vec<u8>,
     source: AuthoredDefinitionExpectation,
+    progress: Vec<AuthoredDefinitionExpectation>,
     goal: AuthoredDefinitionExpectation,
     runtime_program: PathBuf,
 }
@@ -823,6 +825,7 @@ fn prepare_anchored_objective(
         let ast = &decoded.program.definitions[index];
         let identity = &decoded.definitions[index];
         Ok(AuthoredDefinitionExpectation {
+            name: name.into(),
             phase: match ast.phase {
                 crate::milestone_dsl::EvaluationPhase::PreInput => "pre_input",
                 crate::milestone_dsl::EvaluationPhase::PostSim => "post_sim",
@@ -843,6 +846,28 @@ fn prepare_anchored_objective(
     };
     let source = definition(&config.source_milestone)?;
     let goal = definition(&config.goal_milestone)?;
+    let source_index = decoded
+        .program
+        .definitions
+        .iter()
+        .position(|definition| definition.name == config.source_milestone)
+        .expect("source definition was resolved above");
+    let goal_index = decoded
+        .program
+        .definitions
+        .iter()
+        .position(|definition| definition.name == config.goal_milestone)
+        .expect("goal definition was resolved above");
+    if source_index >= goal_index {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored milestone programs must author source, then optional progress milestones, then goal"
+                .into(),
+        ));
+    }
+    let progress = decoded.program.definitions[source_index + 1..goal_index]
+        .iter()
+        .map(|definition_ast| definition(&definition_ast.name))
+        .collect::<Result<Vec<_>, _>>()?;
     let prefix_frames = prefix.frames.len() as u64;
     let source_tape_frame = prefix_frames - 1;
     let source_boundary_index = prefix_frames;
@@ -893,6 +918,7 @@ fn prepare_anchored_objective(
         prefix,
         program_bytes,
         source,
+        progress,
         goal,
         runtime_program,
     })
@@ -1451,7 +1477,10 @@ pub fn run_anchored_search(
                 candidate_id: attempt.candidate_id.clone(),
                 attempt: attempt.attempt,
                 outcome: attempt.outcome.class,
-                milestone_depth: attempt.milestone_depth,
+                // The immutable anchored source is a prerequisite, not route
+                // progress. Source-only misses are ordinary failures; authored
+                // milestones between source and goal define near misses.
+                milestone_depth: attempt.milestone_depth.saturating_sub(1),
                 goal_reached: attempt.goal_reached,
                 transition_corpus_sha256,
             });
@@ -1663,7 +1692,11 @@ pub fn run_anchored_search(
                 initial_bounded_trial,
             };
             let q_result = match dataset_generation.as_ref() {
-                Some(dataset_generation) if q_budget > 0 && !q_episodes.is_empty() => {
+                Some(dataset_generation)
+                    if outcome_collection.required_mix_complete
+                        && q_budget > 0
+                        && !q_episodes.is_empty() =>
+                {
                     propose_q_candidates_with_lineage(
                         &corpora,
                         &q_episodes,
@@ -1680,6 +1713,10 @@ pub fn run_anchored_search(
                     )
                     .map_err(|error| error.to_string())
                 }
+                _ if !outcome_collection.required_mix_complete => Err(
+                    "sealed evaluation generation has no complete success/near-miss/ordinary-failure mix"
+                        .to_string(),
+                ),
                 _ => Err(
                     "no non-elite slots, aligned elite episodes, or sealed training generation is available"
                         .to_string(),

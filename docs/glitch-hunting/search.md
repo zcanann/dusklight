@@ -97,10 +97,13 @@ must match the selected timeline segment.
 Every trial concatenates the same immutable prefix with one candidate suffix
 and boots that complete tape in a clean process. It does not pass `--stage`;
 any fixture origin comes from the composed tape itself.
-The native run receives the compiled milestone program and exactly the source
-and goal milestones. A result is accepted only when all of the following match:
+The native run receives the compiled milestone program and exactly the authored
+source-to-goal slice. Definitions between source and goal are ordered progress
+milestones: a source-only miss is an ordinary failure, a miss that reaches one
+or more progress milestones is a near miss, and only the goal is success. A
+result is accepted only when all of the following match:
 
-- DMSP program and source/goal definition digests;
+- DMSP program and source/progress/goal definition digests;
 - the source milestone's final prefix frame, boundary index, and pinned
   boundary fingerprint;
 - the exact source and goal predicates selected from the timeline.
@@ -114,6 +117,11 @@ execution inputs change.
 Ranking records goal time relative to the source boundary. The winner emits
 both `champion.suffix.tape` for continuation work and a composed
 `champion.tape` for clean-boot visual playback.
+
+Each generation seals all repeated evaluation outcomes before any first
+attempt corpus becomes training-eligible. Online learned proposals remain
+unavailable until the sealed generation contains at least one success, near
+miss, and ordinary failure; proof repetitions never enter training.
 
 The route-aware command derives the prefix, source fingerprint, source goal,
 target goal, program, and observed seed from the checked-in timeline and
@@ -597,7 +605,7 @@ only bootstrap exception is one recorded trial capped at two candidates, one
 per learned lane; it cannot bypass fact, determinism, or coverage gates and is
 consumed only after a learned candidate is emitted.
 
-The versioned `dusklight-action-guidance/movement-v1` mask is an advisory prior
+The versioned `dusklight-action-guidance/movement-v2` mask is an advisory prior
 over the 68 movement-v2 action classes. Normal gameplay recommends all actions;
 an event prefers unbuttoned movement and neutral-stick button states; an absent
 player prefers neutral-stick button states; and a pad error prefers neutral.

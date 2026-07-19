@@ -8,14 +8,17 @@ use serde::Serialize;
 use std::error::Error;
 use std::fmt;
 
-pub const ACTION_GUIDANCE_SCHEMA_V1: &str = "dusklight-action-guidance/movement-v1";
+pub const ACTION_GUIDANCE_SCHEMA_V2: &str = "dusklight-action-guidance/movement-v2";
 pub const MOVEMENT_ACTION_COUNT_V2: u32 = 68;
 
-const PLAYER_PRESENT_FEATURE: usize = 11;
-const PLAYER_IS_LINK_FEATURE: usize = 12;
-const EVENT_RUNNING_FEATURE: usize = 13;
-const PAD_ERROR_FEATURE: usize = 34;
-const REQUIRED_FEATURE_COUNT: usize = PAD_ERROR_FEATURE + 1;
+// Exact movement-state/v2 feature slots. Keep this small prior versioned with
+// the observation layout; interpreting the old v1 offsets against v2 made
+// stick_x look like pad_error and silently masked every gameplay action.
+const PLAYER_PRESENT_FEATURE: usize = 15;
+const PLAYER_IS_LINK_FEATURE: usize = 16;
+const PAD_ERROR_FEATURE: usize = 36;
+const EVENT_RUNNING_FEATURE: usize = 37;
+const REQUIRED_FEATURE_COUNT: usize = EVENT_RUNNING_FEATURE + 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,7 +81,7 @@ impl Error for GuidanceError {}
 /// mask prefers unbuttoned motion plus neutral-stick button presses. Without a
 /// live Link it prefers neutral-stick button states, and a pad error prefers a
 /// completely neutral pad. These are proposal priors only.
-pub fn movement_action_mask_v1(state: &[f32]) -> Result<AdvisoryActionMask, GuidanceError> {
+pub fn movement_action_mask_v2(state: &[f32]) -> Result<AdvisoryActionMask, GuidanceError> {
     if state.len() < REQUIRED_FEATURE_COUNT {
         return Err(GuidanceError::FeatureCount {
             expected_at_least: REQUIRED_FEATURE_COUNT,
@@ -116,7 +119,7 @@ pub fn movement_action_mask_v1(state: &[f32]) -> Result<AdvisoryActionMask, Guid
         GuidanceState::Gameplay => (0..MOVEMENT_ACTION_COUNT_V2).collect(),
     };
     Ok(AdvisoryActionMask {
-        schema: ACTION_GUIDANCE_SCHEMA_V1,
+        schema: ACTION_GUIDANCE_SCHEMA_V2,
         advisory: true,
         state: state_class,
         action_count: MOVEMENT_ACTION_COUNT_V2,
@@ -137,13 +140,13 @@ mod tests {
 
     #[test]
     fn classifies_state_and_recommends_a_sorted_subset() {
-        let gameplay = movement_action_mask_v1(&state()).unwrap();
+        let gameplay = movement_action_mask_v2(&state()).unwrap();
         assert_eq!(gameplay.state, GuidanceState::Gameplay);
         assert_eq!(gameplay.recommended_actions.len(), 68);
 
         let mut event = state();
         event[EVENT_RUNNING_FEATURE] = 1.0;
-        let event = movement_action_mask_v1(&event).unwrap();
+        let event = movement_action_mask_v2(&event).unwrap();
         assert_eq!(event.state, GuidanceState::EventRunning);
         assert!(event.recommends(16));
         assert!(event.recommends(17));
@@ -153,14 +156,14 @@ mod tests {
         let mut unavailable = state();
         unavailable[PLAYER_PRESENT_FEATURE] = 0.0;
         assert_eq!(
-            movement_action_mask_v1(&unavailable)
+            movement_action_mask_v2(&unavailable)
                 .unwrap()
                 .recommended_actions,
             [0, 17, 34, 51]
         );
         unavailable[PAD_ERROR_FEATURE] = -1.0;
         assert_eq!(
-            movement_action_mask_v1(&unavailable)
+            movement_action_mask_v2(&unavailable)
                 .unwrap()
                 .recommended_actions,
             [0]

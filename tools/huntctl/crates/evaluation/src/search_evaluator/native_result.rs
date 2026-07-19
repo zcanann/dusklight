@@ -84,7 +84,9 @@ pub(super) fn score_harness_result(
     };
     if let Some(objective) = anchored {
         let mut score = anchored_source_score(objective);
-        score.depth = 2;
+        score.depth = u16::try_from(objective.progress.len())
+            .unwrap_or(u16::MAX - 2)
+            .saturating_add(2);
         score.deepest = milestone.id.clone();
         score.score_tick = Some(
             tape_frame
@@ -276,10 +278,15 @@ pub(super) fn parse_anchored_milestones(
             )));
         }
     }
-    let requested = [
-        objective.identity.source_milestone.as_str(),
-        objective.identity.goal_milestone.as_str(),
-    ];
+    let mut requested = Vec::with_capacity(objective.progress.len() + 2);
+    requested.push(objective.identity.source_milestone.as_str());
+    requested.extend(
+        objective
+            .progress
+            .iter()
+            .map(|definition| definition.name.as_str()),
+    );
+    requested.push(objective.identity.goal_milestone.as_str());
     if milestones.len() != requested.len()
         || requested.iter().any(|id| !milestones.contains_key(*id))
     {
@@ -290,8 +297,14 @@ pub(super) fn parse_anchored_milestones(
     let expected = |id: &str| {
         if id == objective.identity.source_milestone {
             &objective.source
-        } else {
+        } else if id == objective.identity.goal_milestone {
             &objective.goal
+        } else {
+            objective
+                .progress
+                .iter()
+                .find(|definition| definition.name == id)
+                .expect("requested progress milestone has an authored definition")
         }
     };
     let mut observations = BTreeMap::new();
@@ -391,6 +404,20 @@ pub(super) fn parse_anchored_milestones(
             "goal_reached disagrees with the authored anchored goal".into(),
         ));
     }
+    let mut progress_hits = 0_usize;
+    let mut progress_gap = false;
+    for definition in &objective.progress {
+        if milestones[&definition.name].hit {
+            if progress_gap {
+                return Err(EvaluateError::NativeResult(
+                    "anchored progress milestones were reached out of authored order".into(),
+                ));
+            }
+            progress_hits += 1;
+        } else {
+            progress_gap = true;
+        }
+    }
     let score_tick = if goal.hit {
         let goal_frame = goal.tape_frame.expect("hit tuple checked above");
         if goal_frame < objective.identity.prefix_frames {
@@ -442,16 +469,45 @@ pub(super) fn parse_anchored_milestones(
             SegmentProfile::BootToFsp103 => unreachable!("validated anchored profile"),
         }
         Some(goal_frame - objective.identity.source_boundary_index)
+    } else if let Some(definition) = progress_hits
+        .checked_sub(1)
+        .and_then(|index| objective.progress.get(index))
+    {
+        let progress_frame = milestones[&definition.name]
+            .tape_frame
+            .expect("hit progress tuple checked above");
+        Some(
+            progress_frame
+                .checked_sub(objective.identity.source_boundary_index)
+                .ok_or_else(|| {
+                    EvaluateError::NativeResult(
+                        "anchored progress milestone fired inside the immutable prefix".into(),
+                    )
+                })?,
+        )
     } else {
         Some(0)
     };
+    let depth = if goal.hit {
+        objective.progress.len().saturating_add(2)
+    } else {
+        progress_hits.saturating_add(1)
+    };
+    let deepest = if goal.hit {
+        objective.identity.goal_milestone.clone()
+    } else if let Some(definition) = progress_hits
+        .checked_sub(1)
+        .and_then(|index| objective.progress.get(index))
+    {
+        definition.name.clone()
+    } else {
+        objective.identity.source_milestone.clone()
+    };
     Ok(TrialScore {
-        depth: if goal.hit { 2 } else { 1 },
-        deepest: if goal.hit {
-            objective.identity.goal_milestone.clone()
-        } else {
-            objective.identity.source_milestone.clone()
-        },
+        depth: u16::try_from(depth).map_err(|_| {
+            EvaluateError::NativeResult("anchored milestone depth exceeds u16".into())
+        })?,
+        deepest,
         score_tick,
         goal_reached: goal.hit,
         milestone_observations: observations,

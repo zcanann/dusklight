@@ -305,7 +305,8 @@ pub(super) fn generated_search_projections(
             .candidates
             .iter()
             .filter(|(_, result)| {
-                result.milestone_depth == 2
+                (result.goal_reached == Some(true)
+                    || (result.goal_reached.is_none() && result.milestone_depth == 2))
                     && result.attempts >= 2
                     && result.successes == result.attempts
                     && result.first_hit_ticks.len() == result.attempts as usize

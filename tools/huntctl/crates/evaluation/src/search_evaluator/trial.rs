@@ -290,13 +290,21 @@ pub(super) fn run_trial(
             command
                 .arg("--milestone-program")
                 .arg(&objective.runtime_program);
-            (
-                format!(
-                    "{},{}",
-                    objective.identity.source_milestone, objective.identity.goal_milestone
-                ),
-                objective.identity.goal_milestone.clone(),
-            )
+            {
+                let mut milestones = Vec::with_capacity(objective.progress.len() + 2);
+                milestones.push(objective.identity.source_milestone.as_str());
+                milestones.extend(
+                    objective
+                        .progress
+                        .iter()
+                        .map(|definition| definition.name.as_str()),
+                );
+                milestones.push(objective.identity.goal_milestone.as_str());
+                (
+                    milestones.join(","),
+                    objective.identity.goal_milestone.clone(),
+                )
+            }
         } else {
             match segment {
                 SegmentProfile::BootToFsp103 => (

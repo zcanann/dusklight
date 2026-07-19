@@ -169,6 +169,10 @@ milestone link_control {
   phase post_sim
   when stage.name == "F_SP103"
 }
+milestone near_tunnel {
+  phase post_sim
+  when stage.name == "F_SP104"
+}
 milestone tunnel_crawl_start {
   phase post_sim
   when stage.name == "F_SP104" && stage.room == 1 && stage.spawn == 0 && player.procedure == "crawl_start"
@@ -243,15 +247,52 @@ milestone tunnel_crawl_start {
         "program_digest": prepared.identity.milestone_program_sha256,
         "milestones": [
             authored("link_control", &prepared.source, 1, 1, 2, "a".repeat(32), false),
-            authored("tunnel_crawl_start", &prepared.goal, 2, 2, 3, "b".repeat(32), true),
+            authored("near_tunnel", &prepared.progress[0], 2, 2, 3, "b".repeat(32), false),
+            authored("tunnel_crawl_start", &prepared.goal, 3, 3, 4, "c".repeat(32), true),
         ],
     });
     let result_path = root.join("result.json");
     fs::write(&result_path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     let score = parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).unwrap();
     assert!(score.goal_reached);
-    assert_eq!(score.depth, 2);
-    assert_eq!(score.score_tick, Some(0));
+    assert_eq!(score.depth, 3);
+    assert_eq!(score.score_tick, Some(1));
+
+    let clear_hit_evidence = |milestone: &mut serde_json::Value| {
+        let object = milestone.as_object_mut().unwrap();
+        object.insert("hit".into(), false.into());
+        for field in [
+            "boundary_index",
+            "sim_tick",
+            "tape_frame",
+            "evidence",
+            "projections",
+        ] {
+            object.remove(field);
+        }
+    };
+    let mut near_miss = result.clone();
+    near_miss["goal_reached"] = false.into();
+    clear_hit_evidence(&mut near_miss["milestones"][2]);
+    fs::write(&result_path, serde_json::to_vec_pretty(&near_miss).unwrap()).unwrap();
+    let near_score =
+        parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).unwrap();
+    assert!(!near_score.goal_reached);
+    assert_eq!(near_score.depth, 2);
+    assert_eq!(near_score.deepest, "near_tunnel");
+
+    let mut ordinary_failure = near_miss;
+    clear_hit_evidence(&mut ordinary_failure["milestones"][1]);
+    fs::write(
+        &result_path,
+        serde_json::to_vec_pretty(&ordinary_failure).unwrap(),
+    )
+    .unwrap();
+    let ordinary_score =
+        parse_anchored_milestones(&result_path, &prepared, &TapeBoot::Process).unwrap();
+    assert!(!ordinary_score.goal_reached);
+    assert_eq!(ordinary_score.depth, 1);
+    assert_eq!(ordinary_score.deepest, "link_control");
 
     let suffix_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../routes/intro/segments/human420.tape");

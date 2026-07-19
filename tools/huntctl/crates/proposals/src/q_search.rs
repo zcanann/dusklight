@@ -10,7 +10,7 @@ use super::training_guard::{
     OnlineTrainingHealth, TrainingGuardConfig,
 };
 use crate::action_guidance::{
-    ACTION_GUIDANCE_SCHEMA_V1, AdvisoryActionMask, movement_action_mask_v1,
+    ACTION_GUIDANCE_SCHEMA_V2, AdvisoryActionMask, movement_action_mask_v2,
 };
 use crate::artifact::Digest;
 use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
@@ -421,7 +421,7 @@ fn propose_q_candidates_internal(
                 continue;
             }
             considered += 1;
-            let guidance = movement_action_mask_v1(&transition.state)
+            let guidance = movement_action_mask_v2(&transition.state)
                 .map_err(|error| QSearchError::new(error.to_string()))?;
             state_masked += usize::from(
                 (0..MOVEMENT_ACTION_COUNT_V2).any(|action| !guidance.recommends(action)),
@@ -678,7 +678,7 @@ fn propose_q_candidates_internal(
             proposal_gate,
             training_health,
             proposal_states: considered,
-            action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V1,
+            action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
             state_masked_proposal_states: state_masked,
             guided_action_evaluations,
             unmasked_action_evaluations,
@@ -1095,7 +1095,7 @@ fn sort_interventions(interventions: &mut [Intervention]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action_guidance::{ACTION_GUIDANCE_SCHEMA_V1, movement_action_mask_v1};
+    use crate::action_guidance::{ACTION_GUIDANCE_SCHEMA_V2, movement_action_mask_v2};
     use crate::artifact::Digest;
     use crate::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
     use crate::search::SegmentProfile;
@@ -1216,7 +1216,7 @@ mod tests {
         }));
         assert_eq!(
             first.summary.action_guidance_schema,
-            ACTION_GUIDANCE_SCHEMA_V1
+            ACTION_GUIDANCE_SCHEMA_V2
         );
         assert!(first.summary.state_masked_proposal_states > 0);
         assert_eq!(first.summary.proposal_states, 8);
@@ -1599,11 +1599,11 @@ mod tests {
 
     #[test]
     fn guidance_lane_prefers_mask_while_exploration_lane_remains_unmasked() {
-        let mut state = vec![0.0; 49];
-        state[11] = 1.0;
-        state[12] = 1.0;
-        state[13] = 1.0;
-        let guidance = movement_action_mask_v1(&state).unwrap();
+        let mut state = vec![0.0; 98];
+        state[15] = 1.0;
+        state[16] = 1.0;
+        state[37] = 1.0;
+        let guidance = movement_action_mask_v2(&state).unwrap();
         let masked_high_value = QEstimate {
             action: 67,
             mean: 10.0,
