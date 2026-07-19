@@ -12,3 +12,4 @@ pub mod controller_program;
 pub mod observation_view;
 pub mod scenario_fixture;
 pub mod tape;
+pub mod typed_facts;
