@@ -456,3 +456,13 @@ instead of accumulating in the root Rust binary.
 
 **Done when:** objective/control surface growth no longer accumulates as mixed
 implementation code in the root Rust binary.
+
+## 33. Domain-owned benchmark and identity CLI adapters
+
+- [x] Move revision-pinned benchmark metadata and artifact-compatibility
+  commands out of the root binary into explicit CLI domains.
+- [x] Ratchet the reduced root binary and pass benchmark/identity integration,
+  lint, and architecture gates without changing command behavior.
+
+**Done when:** offline benchmark and compatibility tooling no longer depends on
+mixed root-module implementation ownership.

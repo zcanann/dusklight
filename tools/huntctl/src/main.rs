@@ -1,5 +1,4 @@
-use huntctl::benchmark::skybook::SkybookManifest;
-use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDisposition};
+use huntctl::Digest;
 use huntctl::calibration::calibrate_fitted_q;
 use huntctl::candidate_envelope::{CandidateEnvelope, CandidateEnvelopeSet};
 use huntctl::client::{CONTROL_PROTOCOL_NAME, CONTROL_PROTOCOL_VERSION, WorkerClient};
@@ -64,7 +63,6 @@ use huntctl::transition_evidence::{
     TransitionEvidenceBundle,
 };
 use huntctl::transport::ProcessTransport;
-use huntctl::{ArtifactIdentity, CompatibilityMode, Digest, ensure_compatible};
 use serde_json::{Value, json};
 use sha2::{Digest as ShaDigest, Sha256};
 use std::collections::BTreeSet;
@@ -95,11 +93,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         "hello" => command_hello(&args[1..]),
         "ping" => command_ping(&args[1..]),
         "pool" => command_pool(&args[1..]),
-        "benchmark" => command_benchmark(&args[1..]),
+        "benchmark" => cli::benchmark::command_benchmark(&args[1..]),
         "campaign" => command_campaign(&args[1..]),
         "conformance" => cli::conformance::command_conformance(&args[1..]),
         "harness" => command_harness(&args[1..]),
-        "identity" => command_identity(&args[1..]),
+        "identity" => cli::identity::command_identity(&args[1..]),
         "corpus" => cli::corpus::command_corpus(&args[1..]),
         "controller" => cli::controller::command_controller(&args[1..]),
         "milestone" => cli::milestone::command_milestone(&args[1..]),
@@ -361,166 +359,6 @@ fn write_new_file(path: &Path, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
     file.write_all(&bytes)?;
     file.flush()?;
     Ok(())
-}
-
-fn command_identity(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("compare") => {
-            let compare_args = &args[1..];
-            let mode: CompatibilityMode = option(compare_args, "--mode")
-                .ok_or("identity compare requires --mode MODE")?
-                .parse()?;
-            let expected_path = required_path(compare_args, "--expected")?;
-            let actual_path = required_path(compare_args, "--actual")?;
-            let expected: ArtifactIdentity =
-                serde_json::from_slice(&fs::read(&expected_path)?)?;
-            let actual: ArtifactIdentity = serde_json::from_slice(&fs::read(&actual_path)?)?;
-            expected.validate().map_err(|error| {
-                format!(
-                    "invalid expected identity {}: {error}",
-                    expected_path.display()
-                )
-            })?;
-            actual.validate().map_err(|error| {
-                format!(
-                    "invalid actual identity {}: {error}",
-                    actual_path.display()
-                )
-            })?;
-            ensure_compatible(mode, &expected, &actual)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "schema": "huntctl-identity-comparison/v1",
-                    "mode": mode.as_str(),
-                    "compatible": true,
-                    "expected": expected_path,
-                    "actual": actual_path,
-                }))?
-            );
-            Ok(())
-        }
-        _ => Err("identity command: compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison|cross-fidelity-comparison --expected EXPECTED.json --actual ACTUAL.json".into()),
-    }
-}
-
-fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
-    match args.first().map(String::as_str) {
-        Some("import-skybook") => {
-            let import_args = &args[1..];
-            let source = required_path(import_args, "--source")?;
-            let output = required_path(import_args, "--output")?;
-            if output.exists() {
-                return Err(format!("Skybook manifest already exists: {}", output.display()).into());
-            }
-            let revision = clean_git_revision(&source, "_posts")?;
-            if let Some(expected) = option(import_args, "--revision")
-                && expected != revision
-            {
-                return Err(format!(
-                    "Skybook checkout revision {revision} does not match requested {expected}"
-                )
-                .into());
-            }
-            let repository = option(import_args, "--repository")
-                .unwrap_or_else(|| "https://github.com/qwertyquerty/skybook".into());
-            let manifest =
-                SkybookManifest::import_directory(&source, &repository, &revision)?;
-            if let Some(parent) = output
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&output, manifest.to_pretty_json()?)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "schema": manifest.schema,
-                    "source_revision": manifest.source.git_revision,
-                    "page_count": manifest.source.post_count,
-                    "categorized_glitch_count": manifest.source.categorized_glitch_count,
-                    "content_digest": manifest.content_sha256,
-                    "output": output,
-                }))?
-            );
-            Ok(())
-        }
-        Some("validate-skybook-selection") => {
-            let selection_args = &args[1..];
-            let manifest_path = required_path(selection_args, "--manifest")?;
-            let selection_path = required_path(selection_args, "--selection")?;
-            let manifest: SkybookManifest =
-                serde_json::from_slice(&fs::read(&manifest_path)?)?;
-            let selection: SkybookSelection =
-                serde_json::from_slice(&fs::read(&selection_path)?)?;
-            selection.validate_against(&manifest)?;
-            let selected = selection
-                .entries
-                .iter()
-                .filter(|entry| entry.disposition == SkybookSelectionDisposition::Selected)
-                .count();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "schema": selection.schema,
-                    "content_digest": selection.content_sha256,
-                    "source_revision": selection.source_git_revision,
-                    "approved_by": selection.approved_by,
-                    "selected_page_count": selected,
-                    "entry_count": selection.entries.len(),
-                    "selection": selection_path,
-                }))?
-            );
-            Ok(())
-        }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json".into()),
-    }
-}
-
-fn clean_git_revision(checkout: &Path, imported_path: &str) -> Result<String, Box<dyn Error>> {
-    let revision_output = Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .args(["rev-parse", "HEAD"])
-        .output()?;
-    if !revision_output.status.success() {
-        return Err(format!(
-            "cannot resolve Git revision for {}: {}",
-            checkout.display(),
-            String::from_utf8_lossy(&revision_output.stderr).trim()
-        )
-        .into());
-    }
-    let revision = String::from_utf8(revision_output.stdout)?.trim().to_owned();
-    let status_output = Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .args([
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--",
-            imported_path,
-        ])
-        .output()?;
-    if !status_output.status.success() {
-        return Err(format!(
-            "cannot inspect Git state for {}: {}",
-            checkout.display(),
-            String::from_utf8_lossy(&status_output.stderr).trim()
-        )
-        .into());
-    }
-    let dirty = String::from_utf8(status_output.stdout)?;
-    if !dirty.trim().is_empty() {
-        return Err(format!(
-            "refusing to import dirty Skybook {imported_path} content at {revision}:\n{}",
-            dirty.trim_end()
-        )
-        .into());
-    }
-    Ok(revision)
 }
 
 fn command_pool(args: &[String]) -> Result<(), Box<dyn Error>> {
