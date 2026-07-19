@@ -91,6 +91,21 @@ artifact whose bytes do not match the manifest. Per-run paths remain in the
 evaluation report for diagnosis; the shared entry contains no mutable run
 paths, so rediscovery from a second output root deduplicates exactly.
 
+Verify the complete store before selecting retention roots:
+
+```sh
+huntctl corpus verify-episodes --store build/episode-store
+huntctl corpus gc-episodes --store build/episode-store \
+  --trash-root build/episode-trash --retain-episode EPISODE_SHA256
+# Repeat with --apply only after reviewing the dry-run JSON.
+```
+
+Episode GC refuses an empty retention set, a missing retained episode, or a
+trash root within the live store. It validates every entry and blob first,
+then moves unretained entries and unreachable blobs to the explicit trash tree;
+it never permanently deletes evidence. Extra non-episode blob roots can be
+preserved with repeated `--reference BLOB_SHA256` arguments.
+
 Manual `--terminal` extraction records `declared_extraction_boundary`; it does
 not invent objective proof from frame bounds. Anchored search can record
 `objective_reached` because its terminal transition is already backed by the

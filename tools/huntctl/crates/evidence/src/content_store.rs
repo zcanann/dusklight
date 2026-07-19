@@ -94,6 +94,14 @@ impl ContentStore {
         Ok(store)
     }
 
+    pub fn open(root: impl Into<PathBuf>) -> Result<Self, ContentStoreError> {
+        let store = Self { root: root.into() };
+        if !store.root.join("blobs").join("sha256").is_dir() || !store.root.join("tmp").is_dir() {
+            return Err(ContentStoreError::NotInitialized(store.root));
+        }
+        Ok(store)
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -407,6 +415,7 @@ fn verify_file(path: &Path, expected: Digest, size: u64) -> Result<(), ContentSt
 #[derive(Debug)]
 pub enum ContentStoreError {
     Io(std::io::Error),
+    NotInitialized(PathBuf),
     TooLarge(u64),
     SourceChanged { expected: u64, observed: u64 },
     InvalidReference,
@@ -421,6 +430,11 @@ impl fmt::Display for ContentStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "content store I/O failed: {error}"),
+            Self::NotInitialized(path) => write!(
+                formatter,
+                "directory is not an initialized content store: {}",
+                path.display()
+            ),
             Self::TooLarge(size) => write!(formatter, "content blob size {size} exceeds the bound"),
             Self::SourceChanged { expected, observed } => write!(
                 formatter,

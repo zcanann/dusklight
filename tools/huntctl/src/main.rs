@@ -15,6 +15,7 @@ use huntctl::dataset::{
 };
 use huntctl::double_q::{ConservativeQ, ConservativeQConfig, DoubleQ, DoubleQConfig};
 use huntctl::episode::{EpisodeContext, EpisodeManifest, EpisodeManifestBuild};
+use huntctl::episode_store::EpisodeStore;
 use huntctl::fqi::{
     FittedQ, FqiConfig, MAX_FQI_ACTIONS, MAX_FQI_BACKUP_STEPS, MAX_FQI_ITERATIONS,
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
@@ -1732,6 +1733,34 @@ fn command_corpus(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
+        Some("verify-episodes") => {
+            let corpus_args = &args[1..];
+            let report =
+                EpisodeStore::open(required_path(corpus_args, "--store")?)?.verify_all()?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("gc-episodes") => {
+            let corpus_args = &args[1..];
+            let store = EpisodeStore::open(required_path(corpus_args, "--store")?)?;
+            let trash_root = required_path(corpus_args, "--trash-root")?;
+            let retained = repeated_option(corpus_args, "--retain-episode")
+                .into_iter()
+                .map(|value| value.parse::<Digest>())
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let additionally_referenced = repeated_option(corpus_args, "--reference")
+                .into_iter()
+                .map(|value| value.parse::<Digest>())
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let report = store.garbage_collect(
+                &retained,
+                &additionally_referenced,
+                &trash_root,
+                !flag(corpus_args, "--apply"),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Some("export-arrow") => {
             let corpus_args = &args[1..];
             let inputs = repeated_option(corpus_args, "--input")
@@ -1999,7 +2028,7 @@ fn print_usage() {
         "\nTape editing:\n  huntctl tape slice INPUT.tape OUTPUT.tape --start N --frames N\n  huntctl tape layer BASE.tape OVERLAY.tape OUTPUT.tape --start N\n  huntctl tape resample INPUT.tape OUTPUT.tape\n  huntctl tape diff LEFT.tape RIGHT.tape"
     );
     eprintln!(
-        "\nTransition corpus lifecycle:\n  huntctl corpus query --input BATCH.dtcz [--input MORE.dtcz] [--action N] [--terminal BOOL] [--minimum-reward R] [--limit N]\n  huntctl corpus compare --left LEFT.dtcz --right RIGHT.dtcz\n  huntctl corpus merge|compact --input BATCH.dtcz [--input MORE.dtcz] --output OUTPUT.dtcz\n  huntctl corpus shard --input BATCH.dtcz --output-directory DIR [--maximum-transitions N]\n  huntctl corpus refeature --source SOURCE.json --output OUTPUT.dtcz [--view movement-state/v1|movement-state/v2]\n  huntctl corpus validate-transitions --input BATCH.dtcz [--input MORE.dtcz]\n  huntctl corpus quarantine --input BATCH.dtcz [--input MORE.dtcz] --quarantine-root DIR [--apply]\n  huntctl corpus gc-content --store ROOT --trash-root DIR (--manifest ROOT.json | --reference SHA256)... [--apply]\n  huntctl corpus export-arrow --input BATCH.dtcz [--input MORE.dtcz] --output ANALYSIS.arrow"
+        "\nTransition corpus lifecycle:\n  huntctl corpus query --input BATCH.dtcz [--input MORE.dtcz] [--action N] [--terminal BOOL] [--minimum-reward R] [--limit N]\n  huntctl corpus compare --left LEFT.dtcz --right RIGHT.dtcz\n  huntctl corpus merge|compact --input BATCH.dtcz [--input MORE.dtcz] --output OUTPUT.dtcz\n  huntctl corpus shard --input BATCH.dtcz --output-directory DIR [--maximum-transitions N]\n  huntctl corpus refeature --source SOURCE.json --output OUTPUT.dtcz [--view movement-state/v1|movement-state/v2]\n  huntctl corpus validate-transitions --input BATCH.dtcz [--input MORE.dtcz]\n  huntctl corpus quarantine --input BATCH.dtcz [--input MORE.dtcz] --quarantine-root DIR [--apply]\n  huntctl corpus gc-content --store ROOT --trash-root DIR (--manifest ROOT.json | --reference SHA256)... [--apply]\n  huntctl corpus verify-episodes --store ROOT\n  huntctl corpus gc-episodes --store ROOT --trash-root DIR --retain-episode SHA256 [--retain-episode SHA256]... [--reference BLOB_SHA256]... [--apply]\n  huntctl corpus export-arrow --input BATCH.dtcz [--input MORE.dtcz] --output ANALYSIS.arrow"
     );
     eprintln!(
         "\nTape recording:\n  huntctl tape record SEED.tape OUTPUT.tape --game PATH --dvd PATH --state-root DIR [--capacity N] [--timeout-seconds N] [--game-arg ARG]..."

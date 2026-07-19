@@ -1,5 +1,6 @@
 use huntctl::content_store::{ContentKind, ContentStore};
 use huntctl::corpus::{Corpus, CorpusError};
+use huntctl::episode_store::EpisodeStore;
 use huntctl::tape::{InputFrame, InputTape};
 use huntctl::transition_corpus::{
     MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
@@ -338,6 +339,30 @@ fn corpus_lifecycle_cli_is_schema_aware_and_gc_is_recoverable() {
         .exists()
     );
     assert!(store.blob_path(kept.sha256).exists());
+
+    let episode_root = root.join("episode-store");
+    EpisodeStore::initialize(&episode_root).unwrap();
+    let verify_episodes = Command::new(executable)
+        .args(["corpus", "verify-episodes", "--store"])
+        .arg(&episode_root)
+        .output()
+        .unwrap();
+    assert!(
+        verify_episodes.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify_episodes.stderr)
+    );
+    let verified: serde_json::Value = serde_json::from_slice(&verify_episodes.stdout).unwrap();
+    assert_eq!(verified["entries"], 0);
+    let unsafe_empty_gc = Command::new(executable)
+        .args(["corpus", "gc-episodes", "--store"])
+        .arg(&episode_root)
+        .args(["--trash-root"])
+        .arg(root.join("episode-trash"))
+        .output()
+        .unwrap();
+    assert!(!unsafe_empty_gc.status.success());
+    assert!(String::from_utf8_lossy(&unsafe_empty_gc.stderr).contains("nonempty retention set"));
 
     fs::remove_dir_all(root).unwrap();
 }

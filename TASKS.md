@@ -378,3 +378,16 @@ novelty, route, workbench, or CLI ownership through flat sibling imports.
 
 **Done when:** independent search runs can share authenticated learning
 episodes without copying mutable per-run paths or trusting a filename digest.
+
+## 26. Verified episode retention and recoverable GC
+
+- [x] Inventory and verify every immutable episode entry and referenced blob,
+  rejecting malformed paths, identity drift, missing content, and corruption.
+- [x] Retain episodes by authenticated episode ID and preview unretained entries
+  plus unreachable blobs before moving them to an explicit recoverable trash
+  root; refuse an empty retention set or a trash path inside the live store.
+- [x] Expose the lifecycle through the CLI, document it, and pass the full
+  workspace and architecture suites.
+
+**Done when:** a shared episode store can be checked and compacted without
+manual digest scraping, permanent deletion, or path-based trust.

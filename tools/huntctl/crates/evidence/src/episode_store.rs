@@ -1,12 +1,15 @@
 //! Immutable, content-addressed publication of complete learning episodes.
 
 use crate::artifact::Digest;
-use crate::content_store::{ContentBlob, ContentKind, ContentStore, ContentStoreError};
+use crate::content_store::{
+    ContentBlob, ContentGcReport, ContentKind, ContentStore, ContentStoreError,
+};
 use crate::episode::EpisodeManifest;
 use crate::tape::InputTape;
 use crate::transition_corpus::TransitionCorpus;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -15,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EPISODE_STORE_ENTRY_SCHEMA_V1: &str = "dusklight-episode-store-entry/v1";
+pub const EPISODE_STORE_GC_SCHEMA_V1: &str = "dusklight-episode-store-gc/v1";
+pub const MAX_EPISODE_STORE_ENTRIES: usize = 1_000_000;
 static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
@@ -52,11 +57,51 @@ pub struct EpisodeStoreIngestResult {
     pub created: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodeStoreVerifyReport {
+    pub entries: usize,
+    pub unique_blobs: usize,
+    pub episode_sha256: Vec<Digest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodeGcEntry {
+    pub episode_sha256: Digest,
+    pub size: u64,
+    pub source: PathBuf,
+    pub trash_destination: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodeStoreGcReport {
+    pub schema: String,
+    pub dry_run: bool,
+    pub store_root: PathBuf,
+    pub trash_root: PathBuf,
+    pub retained: Vec<Digest>,
+    pub unretained: Vec<EpisodeGcEntry>,
+    pub moved_entries: usize,
+    pub reclaimed_bytes: u64,
+    pub content: ContentGcReport,
+}
+
 impl EpisodeStore {
     pub fn initialize(root: impl Into<PathBuf>) -> Result<Self, EpisodeStoreError> {
         let root = root.into();
         let content = ContentStore::initialize(root.clone())?;
         fs::create_dir_all(root.join("episodes").join("sha256"))?;
+        Ok(Self { root, content })
+    }
+
+    pub fn open(root: impl Into<PathBuf>) -> Result<Self, EpisodeStoreError> {
+        let root = root.into();
+        let content = ContentStore::open(root.clone())?;
+        if !root.join("episodes").join("sha256").is_dir() {
+            return Err(EpisodeStoreError::NotInitialized(root));
+        }
         Ok(Self { root, content })
     }
 
@@ -141,6 +186,108 @@ impl EpisodeStore {
         Ok(entry)
     }
 
+    pub fn verify_all(&self) -> Result<EpisodeStoreVerifyReport, EpisodeStoreError> {
+        let ids = self.entry_ids()?;
+        let mut blobs = BTreeSet::new();
+        for episode_sha256 in &ids {
+            let entry = self.verify(*episode_sha256)?;
+            blobs.extend(entry_blob_digests(&entry));
+        }
+        Ok(EpisodeStoreVerifyReport {
+            entries: ids.len(),
+            unique_blobs: blobs.len(),
+            episode_sha256: ids,
+        })
+    }
+
+    /// Retains explicitly selected episode identities and moves every other
+    /// entry plus blobs unreachable from the retained entries to recoverable
+    /// trash. An empty retained set is never accepted.
+    pub fn garbage_collect(
+        &self,
+        retained: &BTreeSet<Digest>,
+        additionally_referenced: &BTreeSet<Digest>,
+        trash_root: &Path,
+        dry_run: bool,
+    ) -> Result<EpisodeStoreGcReport, EpisodeStoreError> {
+        if retained.is_empty() {
+            return Err(EpisodeStoreError::EmptyRetentionSet);
+        }
+        let store_root = fs::canonicalize(&self.root)?;
+        let resolved_trash = resolve_path_even_if_missing(trash_root)?;
+        if resolved_trash == store_root || resolved_trash.starts_with(&store_root) {
+            return Err(EpisodeStoreError::UnsafeTrashRoot);
+        }
+
+        let present = self.entry_ids()?;
+        let present_set = present.iter().copied().collect::<BTreeSet<_>>();
+        let missing = retained
+            .difference(&present_set)
+            .copied()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(EpisodeStoreError::RetainedEpisodeMissing(missing));
+        }
+
+        let mut referenced_blobs = additionally_referenced.clone();
+        let mut unretained = Vec::new();
+        for episode_sha256 in present {
+            let entry = self.verify(episode_sha256)?;
+            if retained.contains(&episode_sha256) {
+                referenced_blobs.extend(entry_blob_digests(&entry));
+            } else {
+                let source = self.entry_path(episode_sha256);
+                let digest = episode_sha256.to_string();
+                unretained.push(EpisodeGcEntry {
+                    episode_sha256,
+                    size: fs::metadata(&source)?.len(),
+                    source,
+                    trash_destination: resolved_trash
+                        .join("episodes")
+                        .join("sha256")
+                        .join(&digest[..2])
+                        .join(format!("{}.json", &digest[2..])),
+                });
+            }
+        }
+        unretained.sort_by_key(|entry| entry.episode_sha256);
+        for entry in &unretained {
+            if entry.trash_destination.exists() {
+                return Err(EpisodeStoreError::TrashDestinationExists(
+                    entry.trash_destination.clone(),
+                ));
+            }
+        }
+
+        let content = self
+            .content
+            .garbage_collect(&referenced_blobs, &resolved_trash, dry_run)?;
+        if !dry_run {
+            for entry in &unretained {
+                fs::create_dir_all(
+                    entry
+                        .trash_destination
+                        .parent()
+                        .expect("episode trash path has a parent"),
+                )?;
+                fs::rename(&entry.source, &entry.trash_destination)?;
+            }
+        }
+        let reclaimed_bytes =
+            content.reclaimed_bytes + unretained.iter().map(|entry| entry.size).sum::<u64>();
+        Ok(EpisodeStoreGcReport {
+            schema: EPISODE_STORE_GC_SCHEMA_V1.into(),
+            dry_run,
+            store_root,
+            trash_root: resolved_trash,
+            retained: retained.iter().copied().collect(),
+            moved_entries: if dry_run { 0 } else { unretained.len() },
+            reclaimed_bytes,
+            unretained,
+            content,
+        })
+    }
+
     pub fn entry_path(&self, episode_sha256: Digest) -> PathBuf {
         let digest = episode_sha256.to_string();
         self.root
@@ -194,6 +341,88 @@ impl EpisodeStore {
         }
         Ok(())
     }
+
+    fn entry_ids(&self) -> Result<Vec<Digest>, EpisodeStoreError> {
+        let entry_root = self.root.join("episodes").join("sha256");
+        let mut ids = Vec::new();
+        for prefix in fs::read_dir(entry_root)? {
+            let prefix = prefix?;
+            let prefix_name = prefix.file_name().to_string_lossy().into_owned();
+            if !prefix.file_type()?.is_dir() || !is_lower_hex(&prefix_name, 2) {
+                return Err(EpisodeStoreError::InvalidEntryPath(prefix.path()));
+            }
+            for entry in fs::read_dir(prefix.path())? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Some(suffix) = name.strip_suffix(".json") else {
+                    return Err(EpisodeStoreError::InvalidEntryPath(entry.path()));
+                };
+                if !entry.file_type()?.is_file() || !is_lower_hex(suffix, 62) {
+                    return Err(EpisodeStoreError::InvalidEntryPath(entry.path()));
+                }
+                ids.push(
+                    format!("{prefix_name}{suffix}")
+                        .parse()
+                        .map_err(|_| EpisodeStoreError::InvalidEntryPath(entry.path()))?,
+                );
+                if ids.len() > MAX_EPISODE_STORE_ENTRIES {
+                    return Err(EpisodeStoreError::TooManyEntries(ids.len()));
+                }
+            }
+        }
+        ids.sort_unstable();
+        Ok(ids)
+    }
+}
+
+fn entry_blob_digests(entry: &EpisodeStoreEntry) -> impl Iterator<Item = Digest> {
+    [
+        entry.manifest.sha256,
+        entry.absolute_tape.sha256,
+        entry.gameplay_trace.sha256,
+        entry.transition_corpus.sha256,
+        entry.transition_evidence.sha256,
+    ]
+    .into_iter()
+}
+
+fn is_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn resolve_path_even_if_missing(path: &Path) -> Result<PathBuf, EpisodeStoreError> {
+    if path.as_os_str().is_empty() {
+        return Err(EpisodeStoreError::UnsafeTrashRoot);
+    }
+    if path.exists() {
+        return Ok(fs::canonicalize(path)?);
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut missing = Vec::new();
+    let mut existing = absolute.as_path();
+    while !existing.exists() {
+        missing.push(
+            existing
+                .file_name()
+                .ok_or(EpisodeStoreError::UnsafeTrashRoot)?
+                .to_os_string(),
+        );
+        existing = existing
+            .parent()
+            .ok_or(EpisodeStoreError::UnsafeTrashRoot)?;
+    }
+    let mut resolved = fs::canonicalize(existing)?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 fn require_digest(
@@ -256,9 +485,16 @@ fn install_immutable(path: &Path, bytes: &[u8]) -> Result<bool, EpisodeStoreErro
 #[derive(Debug)]
 pub enum EpisodeStoreError {
     Io(std::io::Error),
+    NotInitialized(PathBuf),
     Json(serde_json::Error),
     Content(ContentStoreError),
     InvalidBundle(String),
+    InvalidEntryPath(PathBuf),
+    TooManyEntries(usize),
+    EmptyRetentionSet,
+    RetainedEpisodeMissing(Vec<Digest>),
+    UnsafeTrashRoot,
+    TrashDestinationExists(PathBuf),
     DigestMismatch {
         label: &'static str,
         expected: Digest,
@@ -271,9 +507,40 @@ impl fmt::Display for EpisodeStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "episode store I/O failed: {error}"),
+            Self::NotInitialized(path) => write!(
+                formatter,
+                "directory is not an initialized episode store: {}",
+                path.display()
+            ),
             Self::Json(error) => write!(formatter, "invalid episode store JSON: {error}"),
             Self::Content(error) => write!(formatter, "episode content storage failed: {error}"),
             Self::InvalidBundle(message) => write!(formatter, "invalid episode bundle: {message}"),
+            Self::InvalidEntryPath(path) => {
+                write!(formatter, "invalid episode entry path: {}", path.display())
+            }
+            Self::TooManyEntries(count) => write!(
+                formatter,
+                "episode store contains {count} entries; limit is {MAX_EPISODE_STORE_ENTRIES}"
+            ),
+            Self::EmptyRetentionSet => {
+                formatter.write_str("episode garbage collection requires a nonempty retention set")
+            }
+            Self::RetainedEpisodeMissing(missing) => write!(
+                formatter,
+                "retained episode identities are missing from the store: {}",
+                missing
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::UnsafeTrashRoot => formatter
+                .write_str("episode trash root must be explicit and outside the live store"),
+            Self::TrashDestinationExists(path) => write!(
+                formatter,
+                "episode trash destination already exists: {}",
+                path.display()
+            ),
             Self::DigestMismatch {
                 label,
                 expected,
@@ -354,7 +621,7 @@ mod tests {
         .unwrap()
     }
 
-    fn context() -> EpisodeContext {
+    fn context(worker_id: &str) -> EpisodeContext {
         EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
             run_identity: None,
@@ -376,7 +643,7 @@ mod tests {
                 version: "1".into(),
             },
             seed: EpisodeSeed::Deterministic { value: 7 },
-            worker_id: "worker-0".into(),
+            worker_id: worker_id.into(),
             lineage: EpisodeLineage {
                 candidate_id: Some("candidate-a".into()),
                 parent_candidate_id: None,
@@ -412,7 +679,7 @@ mod tests {
         let evidence_bytes = b"authenticated transition evidence";
         let corpus = fixture_corpus();
         let manifest = EpisodeManifest::build(EpisodeManifestBuild {
-            context: &context(),
+            context: &context("worker-0"),
             boot: &TapeBoot::Process,
             corpus: &corpus,
             query_view_id: "movement-state/v2",
@@ -458,6 +725,93 @@ mod tests {
             manifest.episode_sha256
         );
 
+        let third_root = root.join("run-c");
+        fs::create_dir_all(&third_root).unwrap();
+        let second_manifest = EpisodeManifest::build(EpisodeManifestBuild {
+            context: &context("worker-1"),
+            boot: &TapeBoot::Process,
+            corpus: &corpus,
+            query_view_id: "movement-state/v2",
+            tape_sha256: Digest(Sha256::digest(&tape_bytes).into()),
+            trace_sha256: Digest(Sha256::digest(trace_bytes).into()),
+            transition_evidence_sha256: Digest(Sha256::digest(evidence_bytes).into()),
+        })
+        .unwrap();
+        fs::write(
+            third_root.join("episode.json"),
+            serde_json::to_vec_pretty(&second_manifest).unwrap(),
+        )
+        .unwrap();
+        fs::copy(first_root.join("run.tape"), third_root.join("run.tape")).unwrap();
+        fs::copy(
+            first_root.join("gameplay.trace"),
+            third_root.join("gameplay.trace"),
+        )
+        .unwrap();
+        fs::copy(
+            first_root.join("transitions.dtcz"),
+            third_root.join("transitions.dtcz"),
+        )
+        .unwrap();
+        fs::copy(
+            first_root.join("transitions.evidence.json"),
+            third_root.join("transitions.evidence.json"),
+        )
+        .unwrap();
+        let third = ingest(&third_root);
+        assert!(third.created);
+        let verified = store.verify_all().unwrap();
+        assert_eq!(verified.entries, 2);
+        assert_eq!(verified.unique_blobs, 6);
+
+        let malformed = store.root().join("episodes/sha256/not-hex");
+        fs::create_dir_all(&malformed).unwrap();
+        assert!(matches!(
+            store.verify_all(),
+            Err(EpisodeStoreError::InvalidEntryPath(_))
+        ));
+        fs::remove_dir(malformed).unwrap();
+
+        let retained = BTreeSet::from([first.episode_sha256]);
+        let trash = root.join("trash");
+        assert!(matches!(
+            store.garbage_collect(&BTreeSet::new(), &BTreeSet::new(), &trash, true),
+            Err(EpisodeStoreError::EmptyRetentionSet)
+        ));
+        assert!(matches!(
+            store.garbage_collect(
+                &retained,
+                &BTreeSet::new(),
+                &store.root().join("trash"),
+                true
+            ),
+            Err(EpisodeStoreError::UnsafeTrashRoot)
+        ));
+        assert!(matches!(
+            store.garbage_collect(
+                &BTreeSet::from([Digest([0xaa; 32])]),
+                &BTreeSet::new(),
+                &trash,
+                true
+            ),
+            Err(EpisodeStoreError::RetainedEpisodeMissing(_))
+        ));
+        let preview = store
+            .garbage_collect(&retained, &BTreeSet::new(), &trash, true)
+            .unwrap();
+        assert_eq!(preview.unretained.len(), 1);
+        assert_eq!(preview.content.unreachable.len(), 1);
+        assert_eq!(preview.moved_entries, 0);
+        assert!(third.entry_path.is_file());
+        let applied = store
+            .garbage_collect(&retained, &BTreeSet::new(), &trash, false)
+            .unwrap();
+        assert_eq!(applied.moved_entries, 1);
+        assert_eq!(applied.content.moved, 1);
+        assert!(!third.entry_path.exists());
+        assert!(applied.unretained[0].trash_destination.is_file());
+        assert_eq!(store.verify_all().unwrap().entries, 1);
+
         fs::write(second_root.join("gameplay.trace"), b"tampered").unwrap();
         assert!(
             store
@@ -472,6 +826,15 @@ mod tests {
                 .to_string()
                 .contains("gameplay trace SHA-256 mismatch")
         );
+        let retained_entry = store.verify(first.episode_sha256).unwrap();
+        fs::write(
+            store
+                .content
+                .blob_path(retained_entry.gameplay_trace.sha256),
+            b"corrupt",
+        )
+        .unwrap();
+        assert!(store.verify_all().is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }
