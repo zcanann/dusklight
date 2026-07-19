@@ -34,6 +34,19 @@ ROOT_MODULE_FILE_LINE_BUDGET = 2_000
 CRATE_ENTRYPOINT_LINE_BUDGET = 2_500
 CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
 
+# Coordination modules get tighter ratchets than ordinary domain code. These
+# files are the easiest places to accumulate unrelated policy behind broad
+# dependency surfaces; growth beyond these limits requires another ownership
+# split, not a larger generic allowance.
+COORDINATION_FILE_LINE_BUDGETS = {
+    "evaluation/src/search_evaluator.rs": 2_000,
+    "orchestration/src/finalist_reduction/boot.rs": 1_000,
+    "orchestration/src/finalist_reduction/mod.rs": 250,
+    "orchestration/src/finalist_reduction/route.rs": 1_250,
+    "orchestration/src/search_drivers.rs": 1_000,
+    "orchestration/src/tournament.rs": 900,
+}
+
 # These integration-heavy crates are deliberately closed inventories. Adding a
 # new sibling module requires an explicit ownership-policy edit instead of
 # quietly recreating a general-purpose dumping ground.
@@ -301,6 +314,14 @@ for crate_name, expected in EXPECTED_COORDINATION_SOURCE_FILES.items():
     assert actual == expected, (
         f"{crate_name} source ownership changed without updating the architecture policy: "
         f"expected {sorted(expected)}, got {sorted(actual)}"
+    )
+
+for relative, budget in COORDINATION_FILE_LINE_BUDGETS.items():
+    path = WORKSPACE / "crates" / relative
+    lines = len(path.read_text().splitlines())
+    assert lines <= budget, (
+        f"coordination module crates/{relative} grew past its {budget}-line architecture "
+        f"budget: {lines}"
     )
 
 seen = set()

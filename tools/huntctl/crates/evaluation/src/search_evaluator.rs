@@ -1,15 +1,11 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
 use crate::artifact::Digest as ArtifactDigest;
-use crate::bayesian_search::BayesianSnapshot;
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
 use crate::candidate_envelope::{
     CandidateEnvelope, CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
 };
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
-use crate::continuous_search::{
-    ContinuousAxes, ContinuousMethod, ContinuousOptimizerSnapshot,
-};
 use crate::dataset::{DATASET_SOURCE_SCHEMA_V1, DatasetSourceDescriptor};
 use crate::episode::{
     EPISODE_CONTEXT_SCHEMA_V1, EpisodeContext, EpisodeIntervention, EpisodeLedger, EpisodeLineage,
@@ -26,7 +22,6 @@ use crate::learning::evaluation_isolation::{
     EvaluationOutcomeInput,
 };
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
-use crate::learning::planning_priors::QBeamPriorTable;
 use crate::offline_rl::{
     ExploratoryExtractConfig, extract_exploratory_v2_from_bytes, movement_action_schema_digest_v2,
 };
@@ -35,8 +30,7 @@ use crate::q_search::{
 };
 use crate::search::{
     Ancestry, Candidate, CandidateResult, EvolutionConfig, LeaderboardEntry, LexicographicScore,
-    MacroAction, POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults,
-    SegmentProfile,
+    POPULATION_SCHEMA, PopulationManifest, RESULTS_SCHEMA, SearchResults, SegmentProfile,
     evolve_population_with_retained_and_proposals, rank_population, tape_input_complexity,
     write_seed_population,
 };
@@ -215,252 +209,6 @@ pub struct SearchRunConfig {
     pub timeout: Duration,
     pub rng_seed: u64,
     pub harness: Option<HarnessEvaluateConfig>,
-}
-
-#[derive(Clone, Debug)]
-pub struct BeamSearchConfig {
-    pub segment: SegmentProfile,
-    pub seed_candidate: Candidate,
-    pub options: Vec<MacroAction>,
-    pub q_priors: Option<QBeamPriorTable>,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub beam_width: usize,
-    pub maximum_depth: u32,
-    pub candidate_budget: usize,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct BeamSearchSummary {
-    pub schema: &'static str,
-    pub segment: SegmentProfile,
-    pub beam_width: usize,
-    pub maximum_depth: u32,
-    pub candidate_budget: usize,
-    pub evaluated_candidates: usize,
-    pub simulator_episodes: usize,
-    pub duplicate_proposals: usize,
-    pub beam_pruned_prefixes: usize,
-    pub terminal_bound_pruned_children: usize,
-    pub q_prior_table_sha256: Option<ArtifactDigest>,
-    pub q_prior_model_sha256: Option<ArtifactDigest>,
-    pub q_prior_ranked_children: usize,
-    pub q_prior_role: &'static str,
-    pub native_rollout_ranking_authority: bool,
-    pub policy_owns_route: bool,
-    pub depths_evaluated: u32,
-    pub champion_id: String,
-    pub champion_score: LexicographicScore,
-    pub champion_candidate: PathBuf,
-    pub champion_tape: PathBuf,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct ContinuousSearchRunConfig {
-    pub method: ContinuousMethod,
-    pub seed_candidate: Candidate,
-    pub axes: ContinuousAxes,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub generations: u32,
-    pub population_size: usize,
-    pub elite_count: usize,
-    pub initial_sigma: f64,
-    pub candidate_budget: usize,
-    pub rng_seed: u64,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ContinuousSearchRunSummary {
-    pub schema: &'static str,
-    pub method: ContinuousMethod,
-    pub segment: SegmentProfile,
-    pub generations_requested: u32,
-    pub generations_completed: u32,
-    pub population_size: usize,
-    pub elite_count: usize,
-    pub candidate_budget: usize,
-    pub evaluated_candidates: usize,
-    pub simulator_episodes: usize,
-    pub duplicate_proposals: usize,
-    pub invalid_proposals: usize,
-    pub rng_seed: u64,
-    pub final_optimizer: ContinuousOptimizerSnapshot,
-    pub champion_id: String,
-    pub champion_score: LexicographicScore,
-    pub champion_values: Vec<f64>,
-    pub champion_candidate: PathBuf,
-    pub champion_tape: PathBuf,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct BayesianSearchRunConfig {
-    pub seed_candidate: Candidate,
-    pub axes: ContinuousAxes,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub generations: u32,
-    pub batch_size: usize,
-    pub initial_samples: usize,
-    pub acquisition_pool: usize,
-    pub length_scale: f64,
-    pub observation_noise: f64,
-    pub exploration: f64,
-    pub candidate_budget: usize,
-    pub rng_seed: u64,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct BayesianSearchRunSummary {
-    pub schema: &'static str,
-    pub segment: SegmentProfile,
-    pub generations_requested: u32,
-    pub generations_completed: u32,
-    pub batch_size: usize,
-    pub candidate_budget: usize,
-    pub evaluated_candidates: usize,
-    pub simulator_episodes: usize,
-    pub duplicate_proposals: usize,
-    pub invalid_proposals: usize,
-    pub rng_seed: u64,
-    pub final_optimizer: BayesianSnapshot,
-    pub champion_id: String,
-    pub champion_score: LexicographicScore,
-    pub champion_values: Vec<f64>,
-    pub champion_candidate: PathBuf,
-    pub champion_tape: PathBuf,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TournamentBudgetUnit {
-    Episodes,
-    CandidateTicks,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TournamentProposerKind {
-    IncumbentMutation,
-    BlindExploration,
-    Structured,
-    Learned,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TournamentProposer {
-    pub name: String,
-    pub kind: TournamentProposerKind,
-    pub population: PathBuf,
-    pub proposal_envelopes: PathBuf,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TournamentDefinition {
-    pub schema: String,
-    pub budget_unit: TournamentBudgetUnit,
-    pub budget_per_proposer: u64,
-    pub proposers: Vec<TournamentProposer>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ProposerTournamentConfig {
-    pub definition: TournamentDefinition,
-    pub definition_directory: PathBuf,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-    pub harness: Option<HarnessEvaluateConfig>,
-    /// Optional clean-boot prefix objective. This is mutually exclusive with
-    /// the core-harness request mode and keeps route suffixes on the same fair
-    /// tournament boundary as directly bootable candidates.
-    pub anchored: Option<AnchoredObjectiveConfig>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ProposerTournamentRow {
-    pub name: String,
-    pub kind: TournamentProposerKind,
-    pub proposer: ProposerIdentity,
-    pub proposal_envelope_set_sha256: ArtifactDigest,
-    pub selected_candidates: usize,
-    pub charged_episodes: u64,
-    pub charged_candidate_ticks: u64,
-    pub observed_simulator_ticks: u64,
-    pub shared_duplicate_proposals: usize,
-    pub improvements_over_incumbent: usize,
-    pub misses: usize,
-    pub crashes: usize,
-    pub predicate_hits: usize,
-    pub predicate_hit_rate: f64,
-    pub frame_wins: usize,
-    pub boundary_diversity: usize,
-    pub boundary_fingerprints: Vec<String>,
-    pub cold_replay_pass_rate: f64,
-    pub replay_verdict: ProposerReplayVerdict,
-    pub best_candidate_id: String,
-    pub best_score: LexicographicScore,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub best_proved_tape: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub best_proved_tape_sha256: Option<ArtifactDigest>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProposerReplayVerdict {
-    Proved,
-    ObjectiveMiss,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ProposerTournamentSummary {
-    pub schema: &'static str,
-    pub segment: SegmentProfile,
-    pub boot: TapeBoot,
-    pub objective: NamedDigest,
-    pub action_schema: NamedDigest,
-    pub budget_unit: TournamentBudgetUnit,
-    pub budget_per_proposer: u64,
-    pub repetitions: u32,
-    pub physical_candidates: usize,
-    pub physical_episodes: usize,
-    pub physical_candidate_ticks: u64,
-    pub physical_simulator_ticks: u64,
-    pub evaluation_wall_millis: u128,
-    pub incumbent_score: LexicographicScore,
-    pub rows: Vec<ProposerTournamentRow>,
-    pub champion_id: String,
-    pub champion_score: LexicographicScore,
-    pub output_root: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -647,122 +395,6 @@ pub struct AnchoredSearchRunSummary {
     pub champion_suffix_tape: PathBuf,
     pub champion_tape: PathBuf,
     pub score: crate::search::LexicographicScore,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct AnchoredRouteMinimizeConfig {
-    pub candidate: Candidate,
-    pub objective: AnchoredObjectiveConfig,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub candidate_budget: usize,
-    pub resume: bool,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct AnchoredRouteMinimizeRound {
-    pub round: u32,
-    pub operation: String,
-    pub evaluated_candidates: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accepted_candidate_id: Option<String>,
-    pub retained_frames: u64,
-    pub retained_actions: usize,
-    pub retained_input_complexity: u64,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct AnchoredRouteMinimizeSummary {
-    pub schema: &'static str,
-    pub objective: AnchoredObjectiveIdentity,
-    pub source_candidate_id: String,
-    pub minimized_candidate_id: String,
-    pub source_frames: u64,
-    pub minimized_frames: u64,
-    pub source_actions: usize,
-    pub minimized_actions: usize,
-    pub source_input_complexity: u64,
-    pub minimized_input_complexity: u64,
-    pub goal_first_hit_tick: u64,
-    pub goal_sim_tick: u64,
-    pub goal_tape_frame: u64,
-    pub goal_boundary_fingerprint: String,
-    pub evaluated_candidates: usize,
-    pub accepted_reductions: usize,
-    pub candidate: PathBuf,
-    pub suffix_tape: PathBuf,
-    pub realized_tape: PathBuf,
-    pub source_proof: PathBuf,
-    pub final_proof: PathBuf,
-    pub reduction_history: PathBuf,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct BootMinimizeConfig {
-    pub candidate: Candidate,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct BootMinimizeSummary {
-    pub schema: &'static str,
-    pub source_candidate_id: String,
-    pub minimized_candidate_id: String,
-    pub source_frames: u64,
-    pub minimized_frames: u64,
-    pub source_pulse_frames: usize,
-    pub minimized_pulse_frames: usize,
-    pub goal_sim_tick: u64,
-    pub goal_tape_frame: u64,
-    pub goal_boundary_fingerprint: String,
-    pub candidate: PathBuf,
-    pub tape: PathBuf,
-    pub proof: PathBuf,
-    pub output_root: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct BootGolfConfig {
-    pub candidate: Candidate,
-    pub game: PathBuf,
-    pub dvd: PathBuf,
-    pub output_root: PathBuf,
-    pub working_directory: PathBuf,
-    pub game_args_prefix: Vec<String>,
-    pub workers: usize,
-    pub repetitions: u32,
-    pub timeout: Duration,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct BootGolfSummary {
-    pub schema: &'static str,
-    pub source_candidate_id: String,
-    pub golfed_candidate_id: String,
-    pub source_goal_sim_tick: u64,
-    pub goal_sim_tick: u64,
-    pub goal_tape_frame: u64,
-    pub goal_boundary_fingerprint: String,
-    pub source_pulse_timestamps: Vec<u64>,
-    pub golfed_pulse_timestamps: Vec<u64>,
-    pub accepted_moves: u32,
-    pub evaluated_candidates: usize,
-    pub candidate: PathBuf,
-    pub tape: PathBuf,
-    pub proof: PathBuf,
     pub output_root: PathBuf,
 }
 

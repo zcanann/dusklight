@@ -229,3 +229,14 @@ while evaluator admission remains independent of tournament coordination.
 
 **Done when:** interrupting a long route reduction no longer discards completed
 proposal work or weakens its clean-process proof requirements.
+
+## 12. Compiler-enforced policy contract ownership
+
+- [x] Move finalist-reduction config and result contracts from
+  `dusklight-evaluation` beside their reducers in `dusklight-orchestration`.
+- [x] Move specialized bounded-search and proposer-tournament config and result contracts
+  beside their orchestration policy, preserving the public CLI facade.
+- [x] Ratchet the closed crate inventories and pass the full workspace suite.
+
+**Done when:** adding a reducer, optimizer, or tournament policy cannot grow the
+authenticated evaluator crate merely to define that policy's command surface.

@@ -10,11 +10,11 @@ use super::run_contract::{
 use crate::artifact::Digest;
 use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::search::LexicographicScore;
-use crate::search_evaluator::{
-    HarnessEvaluateConfig, ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition,
-    TournamentProposerKind, derive_candidate_request,
+use crate::search_evaluator::{HarnessEvaluateConfig, derive_candidate_request};
+use crate::{
+    ProposerReplayVerdict, ProposerTournamentConfig, TournamentDefinition,
+    TournamentProposerKind, run_proposer_tournament,
 };
-use crate::run_proposer_tournament;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;

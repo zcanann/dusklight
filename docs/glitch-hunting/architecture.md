@@ -45,6 +45,15 @@ ticks.
 Rust should not call into C++ once per tick. Search policies generate or mutate
 compact controller programs and tapes, then submit batches.
 
+Within Rust, `dusklight-evaluation` owns authenticated native execution and
+evidence interpretation. `dusklight-orchestration` owns reducer, optimizer,
+tournament, and campaign policy together with each policy's public config and
+result contracts. Portable candidate transformations stay in
+`dusklight-search`; learning and proposal crates cannot execute or promote a
+candidate. Closed source inventories, one-way Cargo dependencies, and tighter
+line budgets on coordination modules enforce these boundaries in
+`tests/huntctl_crate_boundary_test.py`.
+
 The same ownership boundary applies to learned models.
 `dusklight-model-generation-request/v1` is issued by Rust for one immutable
 dataset generation and binds its feature, action, and objective schemas. A

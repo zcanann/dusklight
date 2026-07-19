@@ -3,19 +3,131 @@ use dusklight_automation_contracts::candidate_envelope::{
     CandidateEnvelopeSet, NamedDigest, ProposerIdentity, ProposerKind,
 };
 use dusklight_automation_contracts::compatibility::{CompatibilityMode, ensure_compatible};
+use dusklight_automation_contracts::tape::TapeBoot;
 use dusklight_evaluation::*;
 use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
 use dusklight_search::search::{
-    Candidate, POPULATION_SCHEMA, PopulationManifest, SearchResults, rank_population,
-    write_explicit_population,
+    Candidate, LexicographicScore, POPULATION_SCHEMA, PopulationManifest, SearchResults,
+    SegmentProfile, rank_population, write_explicit_population,
 };
 use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TournamentBudgetUnit {
+    Episodes,
+    CandidateTicks,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TournamentProposerKind {
+    IncumbentMutation,
+    BlindExploration,
+    Structured,
+    Learned,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TournamentProposer {
+    pub name: String,
+    pub kind: TournamentProposerKind,
+    pub population: PathBuf,
+    pub proposal_envelopes: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TournamentDefinition {
+    pub schema: String,
+    pub budget_unit: TournamentBudgetUnit,
+    pub budget_per_proposer: u64,
+    pub proposers: Vec<TournamentProposer>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProposerTournamentConfig {
+    pub definition: TournamentDefinition,
+    pub definition_directory: PathBuf,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+    pub harness: Option<HarnessEvaluateConfig>,
+    /// Optional clean-boot prefix objective. This is mutually exclusive with
+    /// the core-harness request mode and keeps route suffixes on the same fair
+    /// tournament boundary as directly bootable candidates.
+    pub anchored: Option<AnchoredObjectiveConfig>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProposerTournamentRow {
+    pub name: String,
+    pub kind: TournamentProposerKind,
+    pub proposer: ProposerIdentity,
+    pub proposal_envelope_set_sha256: ArtifactDigest,
+    pub selected_candidates: usize,
+    pub charged_episodes: u64,
+    pub charged_candidate_ticks: u64,
+    pub observed_simulator_ticks: u64,
+    pub shared_duplicate_proposals: usize,
+    pub improvements_over_incumbent: usize,
+    pub misses: usize,
+    pub crashes: usize,
+    pub predicate_hits: usize,
+    pub predicate_hit_rate: f64,
+    pub frame_wins: usize,
+    pub boundary_diversity: usize,
+    pub boundary_fingerprints: Vec<String>,
+    pub cold_replay_pass_rate: f64,
+    pub replay_verdict: ProposerReplayVerdict,
+    pub best_candidate_id: String,
+    pub best_score: LexicographicScore,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape_sha256: Option<ArtifactDigest>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposerReplayVerdict {
+    Proved,
+    ObjectiveMiss,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProposerTournamentSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub boot: TapeBoot,
+    pub objective: NamedDigest,
+    pub action_schema: NamedDigest,
+    pub budget_unit: TournamentBudgetUnit,
+    pub budget_per_proposer: u64,
+    pub repetitions: u32,
+    pub physical_candidates: usize,
+    pub physical_episodes: usize,
+    pub physical_candidate_ticks: u64,
+    pub physical_simulator_ticks: u64,
+    pub evaluation_wall_millis: u128,
+    pub incumbent_score: LexicographicScore,
+    pub rows: Vec<ProposerTournamentRow>,
+    pub champion_id: String,
+    pub champion_score: LexicographicScore,
+    pub output_root: PathBuf,
+}
 
 const fn envelope_kind(kind: TournamentProposerKind) -> ProposerKind {
     match kind {
