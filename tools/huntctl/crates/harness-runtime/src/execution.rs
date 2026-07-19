@@ -1,6 +1,7 @@
 //! Native execution adapter for authenticated core-harness requests.
 
 use super::objective_suite::{ArtifactReference, ObjectiveBoot, ObjectiveSeed};
+use super::native_evidence::{HarnessNativeEvidenceArtifacts, HarnessNativeEvidenceRequest};
 use super::observation_contract::{
     OBSERVATION_INVENTORY_SCHEMA_V1, ObservationFamilyAvailability, ObservationFamilyStatus,
     ObservationInventory,
@@ -172,6 +173,17 @@ fn execute_native_request(
         .arg("game.enableMenuPointer=false")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if request.native_evidence == Some(HarnessNativeEvidenceRequest::EyeShredderV4) {
+        command
+            .arg("--cursor-breakout-shadow")
+            .arg("--automation-oracle")
+            .arg("eye-shredder")
+            .arg("--automation-oracle-continue-on-pass")
+            .arg("--automation-oracle-result")
+            .arg(&paths.native_evidence_oracle)
+            .arg("--name-entry-trace")
+            .arg(&paths.native_evidence_trace);
+    }
     if request.logical_tick_budget > FULL_TRACE_MAXIMUM_TICKS {
         command
             .arg("--gameplay-trace-retention")
@@ -290,6 +302,8 @@ struct ExecutionPaths {
     stdout: PathBuf,
     stderr: PathBuf,
     native_phase_timing: PathBuf,
+    native_evidence_oracle: PathBuf,
+    native_evidence_trace: PathBuf,
     result: PathBuf,
 }
 
@@ -307,6 +321,8 @@ impl ExecutionPaths {
             stdout: root.join("stdout.txt"),
             stderr: root.join("stderr.txt"),
             native_phase_timing: root.join("native-timing.json"),
+            native_evidence_oracle: root.join("native-evidence-oracle.json"),
+            native_evidence_trace: root.join("native-evidence-trace.json"),
             result: root.join("result.json"),
         }
     }
@@ -939,6 +955,7 @@ fn build_result(
     let stdout = artifact_if_file(&paths.root, &paths.stdout)?;
     let stderr = artifact_if_file(&paths.root, &paths.stderr)?;
     let native_phase_timing = artifact_if_file(&paths.root, &paths.native_phase_timing)?;
+    let native_evidence = native_evidence_artifacts(request, paths)?;
     let goal = (outcome.terminal == HarnessTerminalReason::Reached)
         .then_some(evidence.native_goal)
         .flatten();
@@ -984,6 +1001,7 @@ fn build_result(
             stdout,
             stderr,
             native_phase_timing,
+            native_evidence,
             complete: outcome.proof_complete,
         },
         timing: HarnessRunTiming {
@@ -997,6 +1015,27 @@ fn build_result(
         .refresh_content_sha256()
         .map_err(|error| execution_error(format!("cannot seal run result: {error}")))?;
     Ok(result)
+}
+
+fn native_evidence_artifacts(
+    request: &HarnessRunRequest,
+    paths: &ExecutionPaths,
+) -> Result<Option<HarnessNativeEvidenceArtifacts>, HarnessExecutionError> {
+    if request.native_evidence.is_none() {
+        return Ok(None);
+    }
+    let oracle_result = artifact_if_file(&paths.root, &paths.native_evidence_oracle)?;
+    let semantic_trace = artifact_if_file(&paths.root, &paths.native_evidence_trace)?;
+    match (oracle_result, semantic_trace) {
+        (Some(oracle_result), Some(semantic_trace)) => Ok(Some(HarnessNativeEvidenceArtifacts {
+            oracle_result,
+            semantic_trace,
+        })),
+        (None, None) => Ok(None),
+        _ => Err(execution_error(
+            "native evidence emitted only one of its required artifacts",
+        )),
+    }
 }
 
 fn artifact_if_file(

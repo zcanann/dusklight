@@ -340,6 +340,7 @@ fn build_request(
         action_schema: case.action_schema.clone(),
         observation_requirements: case.observation_requirements.clone(),
         input: case.seed.clone(),
+        native_evidence: None,
         rng_seed: 0x4455_534b_434f_4e46,
         logical_tick_budget: case.logical_tick_budget,
         host_timeout_seconds: case.host_timeout_seconds,

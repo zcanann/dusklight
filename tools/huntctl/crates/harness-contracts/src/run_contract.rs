@@ -5,6 +5,7 @@ use super::objective_suite::{
     ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuiteCase, ObservationViewReference,
     SchemaIdentity,
 };
+use super::native_evidence::{HarnessNativeEvidenceArtifacts, HarnessNativeEvidenceRequest};
 use super::observation_contract::{
     ObjectiveObservationRequirements, ObservationAdmission, ObservationAdmissionIssue,
     ObservationInventory,
@@ -55,6 +56,8 @@ pub struct HarnessRunRequest {
     pub action_schema: SchemaIdentity,
     pub observation_requirements: ObjectiveObservationRequirements,
     pub input: ObjectiveSeed,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_evidence: Option<HarnessNativeEvidenceRequest>,
     pub rng_seed: u64,
     pub logical_tick_budget: u64,
     pub host_timeout_seconds: u32,
@@ -152,6 +155,8 @@ pub struct HarnessRunArtifacts {
     pub stderr: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_phase_timing: Option<ArtifactReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_evidence: Option<HarnessNativeEvidenceArtifacts>,
     pub complete: bool,
 }
 
@@ -242,6 +247,11 @@ impl HarnessRunRequest {
         self.as_bound_case()
             .validate_bound_structure()
             .map_err(|error| contract_error(error.to_string()))?;
+        if let Some(native_evidence) = self.native_evidence {
+            native_evidence
+                .validate_for(&self.boot, &self.input)
+                .map_err(|error| contract_error(error.to_string()))?;
+        }
         if !(1..=MAX_LOGICAL_TICKS).contains(&self.logical_tick_budget)
             || !(1..=MAX_HOST_TIMEOUT_SECONDS).contains(&self.host_timeout_seconds)
         {
@@ -425,7 +435,13 @@ impl HarnessRunResult {
         }
         self.detail.validate(self.terminal, request)?;
         self.objective.validate(self.terminal, request)?;
-        self.artifacts.validate(self.terminal)?;
+        self.artifacts
+            .validate(self.terminal, request.native_evidence.is_some())?;
+        if self.artifacts.native_evidence.is_some() && request.native_evidence.is_none() {
+            return Err(contract_error(
+                "run result contains native evidence not requested by the run",
+            ));
+        }
         if self.timing.logical_ticks > request.logical_tick_budget
             || self.timing.consumed_input_ticks > self.timing.logical_ticks
         {
@@ -507,6 +523,20 @@ impl HarnessRunResult {
             (
                 "native phase timing",
                 self.artifacts.native_phase_timing.as_ref(),
+            ),
+            (
+                "native evidence oracle result",
+                self.artifacts
+                    .native_evidence
+                    .as_ref()
+                    .map(|evidence| &evidence.oracle_result),
+            ),
+            (
+                "native evidence semantic trace",
+                self.artifacts
+                    .native_evidence
+                    .as_ref()
+                    .map(|evidence| &evidence.semantic_trace),
             ),
         ] {
             if let Some(reference) = reference {
@@ -651,7 +681,11 @@ impl HarnessBoundaryFingerprint {
 }
 
 impl HarnessRunArtifacts {
-    fn validate(&self, terminal: HarnessTerminalReason) -> Result<(), HarnessRunContractError> {
+    fn validate(
+        &self,
+        terminal: HarnessTerminalReason,
+        native_evidence_requested: bool,
+    ) -> Result<(), HarnessRunContractError> {
         for (label, reference) in [
             ("realized input", self.realized_input.as_ref()),
             ("gameplay trace", self.gameplay_trace.as_ref()),
@@ -659,6 +693,18 @@ impl HarnessRunArtifacts {
             ("stdout", self.stdout.as_ref()),
             ("stderr", self.stderr.as_ref()),
             ("native phase timing", self.native_phase_timing.as_ref()),
+            (
+                "native evidence oracle result",
+                self.native_evidence
+                    .as_ref()
+                    .map(|evidence| &evidence.oracle_result),
+            ),
+            (
+                "native evidence semantic trace",
+                self.native_evidence
+                    .as_ref()
+                    .map(|evidence| &evidence.semantic_trace),
+            ),
         ] {
             if let Some(reference) = reference {
                 validate_artifact(label, reference)?;
@@ -666,7 +712,8 @@ impl HarnessRunArtifacts {
         }
         let complete_artifacts = self.realized_input.is_some()
             && self.gameplay_trace.is_some()
-            && self.objective_result.is_some();
+            && self.objective_result.is_some()
+            && (!native_evidence_requested || self.native_evidence.is_some());
         if self.complete && !complete_artifacts {
             return Err(contract_error(
                 "complete run result is missing replay or objective artifacts",
@@ -1176,6 +1223,7 @@ mod tests {
                 facts: vec!["player.exists".into(), "stage.name".into()],
             },
             input: ObjectiveSeed::Neutral,
+            native_evidence: None,
             rng_seed: 42,
             logical_tick_budget: 300,
             host_timeout_seconds: 30,
@@ -1232,6 +1280,7 @@ mod tests {
                 stdout: None,
                 stderr: None,
                 native_phase_timing: None,
+                native_evidence: None,
                 complete: true,
             },
             timing: HarnessRunTiming {
