@@ -95,9 +95,11 @@ namespace dusk {
             auto& triggerView = getTransientSettings().triggerView;
             if (ImGui::BeginMenu("Trigger View")) {
                 ImGui::Checkbox("Enable Scene Exit view", &triggerView.enableSceneExitView);
+                ImGui::Checkbox("Enable Event Area view", &triggerView.enableEventAreaView);
                 ImGui::SliderFloat("Opacity##triggers", &triggerView.opacity, 0.0f, 100.0f);
                 ImGui::SliderFloat("Draw Range##triggers", &triggerView.drawRange, 100.0f, 5000.0f);
-                ImGui::TextDisabled("Yellow: enabled  Orange: disabled");
+                ImGui::TextDisabled("Scene exits: yellow/orange");
+                ImGui::TextDisabled("Event areas: magenta/dim magenta");
                 ImGui::EndMenu();
             }
 

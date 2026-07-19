@@ -2,6 +2,8 @@
 
 #include "d/actor/d_a_scene_exit.h"
 #include "d/actor/d_a_scene_exit2.h"
+#include "d/actor/d_a_npc.h"
+#include "d/actor/d_a_tag_evtarea.h"
 #include "d/d_bg_w.h"
 #include "d/d_bg_w_kcol.h"
 #include "d/d_com_inf_game.h"
@@ -11,6 +13,7 @@
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
 #include "f_pc/f_pc_name.h"
+#include "m_Do/m_Do_mtx.h"
 
 #include <algorithm>
 #include <cmath>
@@ -38,6 +41,23 @@ struct TriggerViewReadAdapter {
         const std::size_t count = (block_address - prism_address) / sizeof(KC_PrismData);
         return count <= std::numeric_limits<u16>::max() ? count : 0;
     }
+
+    static int event_area_type(const daTag_EvtArea_c& area) {
+        const u16 type = area.shape_angle.z & 0xff;
+        return type == 0xff ? 0 : type;
+    }
+
+    static bool event_area_enabled(const daTag_EvtArea_c& area) {
+        if (area.field_0x56c != 0)
+            return false;
+
+        const u32 parameters = fopAcM_GetParam(&area);
+        const u32 on_event_bit = parameters & 0xfff;
+        const u8 on_switch = area.home.angle.x & 0xff;
+        return (on_event_bit != 0xfff && daNpcT_chkEvtBit(on_event_bit)) ||
+               (on_switch != 0xff && dComIfGs_isSwitch(on_switch, fopAcM_GetRoomNo(&area))) ||
+               (on_event_bit == 0xfff && on_switch == 0xff);
+    }
 };
 
 namespace {
@@ -56,6 +76,11 @@ u8 alpha_from_percent(const float opacity) {
 GXColor trigger_color(const bool enabled, const float opacity) {
     const u8 alpha = alpha_from_percent(opacity);
     return enabled ? GXColor{0xff, 0xdc, 0x00, alpha} : GXColor{0xff, 0x80, 0x00, alpha};
+}
+
+GXColor event_area_color(const bool enabled, const float opacity) {
+    const u8 alpha = alpha_from_percent(opacity * 0.5f);
+    return enabled ? GXColor{0xff, 0x00, 0xc8, alpha} : GXColor{0x80, 0x00, 0x64, alpha};
 }
 
 const stage_scls_info_dummy_class* loaded_scls_for_room(const int room) {
@@ -174,12 +199,60 @@ struct ActorTriggerDrawContext {
     GXColor disabledColor;
 };
 
+void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const GXColor& color) {
+    Mtx transform;
+    Mtx operation;
+    cMtx_trans(transform, base.x, base.y, base.z);
+    cMtx_YrotS(operation, angle);
+    cMtx_concat(transform, operation, transform);
+    cMtx_scale(operation, std::abs(size.x), std::abs(size.y) * 0.5f, std::abs(size.z));
+    cMtx_concat(transform, operation, transform);
+    cMtx_trans(operation, 0.0f, 1.0f, 0.0f);
+    cMtx_concat(transform, operation, transform);
+    cMtx_XrotS(operation, 0x4000);
+    cMtx_concat(transform, operation, transform);
+    dDbVw_drawCylinderMXlu(transform, color, TRUE);
+}
+
+void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext& context) {
+    if (!finite(area.current.pos) || !finite(area.home.pos) || !finite(area.scale))
+        return;
+    const float extent =
+        std::max({std::abs(area.scale.x), std::abs(area.scale.y), std::abs(area.scale.z)});
+    if ((area.current.pos - context.player).abs2() >
+        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
+    {
+        return;
+    }
+
+    const int type = TriggerViewReadAdapter::event_area_type(area);
+    const GXColor color = event_area_color(
+        TriggerViewReadAdapter::event_area_enabled(area), context.settings.opacity);
+    if (type == 15 || type == 16) {
+        cXyz center(area.home.pos.x, area.current.pos.y + area.scale.y * 0.5f, area.home.pos.z);
+        cXyz half_extent(
+            std::abs(area.scale.x), std::abs(area.scale.y) * 0.5f, std::abs(area.scale.z));
+        csXyz angle(0, area.current.angle.y, 0);
+        dDbVw_drawCubeXlu(center, half_extent, angle, color);
+        return;
+    }
+
+    cXyz base = area.current.pos;
+    cXyz size = area.scale;
+    base.y -= 10.0f;
+    if (type == 21) {
+        base.y = context.player.y - context.settings.drawRange;
+        size.y = context.settings.drawRange * 2.0f;
+    }
+    draw_elliptic_cylinder(base, size, area.shape_angle.y, color);
+}
+
 int draw_actor_trigger(void* candidate, void* raw_context) {
     const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto& context = *static_cast<ActorTriggerDrawContext*>(raw_context);
     const s16 actor_name = fopAcM_GetName(actor);
 
-    if (actor_name == fpcNm_SCENE_EXIT_e) {
+    if (context.settings.enableSceneExitView && actor_name == fpcNm_SCENE_EXIT_e) {
         const auto& exit = *static_cast<const daScex_c*>(actor);
         if (!finite(exit.current.pos) || !finite(exit.scale))
             return 1;
@@ -195,7 +268,7 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
         csXyz angle(0, exit.shape_angle.y, 0);
         GXColor color = scene_exit_enabled(exit) ? context.enabledColor : context.disabledColor;
         dDbVw_drawCubeXlu(center, half_extent, angle, color);
-    } else if (actor_name == fpcNm_SCENE_EXIT2_e) {
+    } else if (context.settings.enableSceneExitView && actor_name == fpcNm_SCENE_EXIT2_e) {
         const auto& exit = *static_cast<const daScExit_c*>(actor);
         if (!finite(exit.current.pos) || !std::isfinite(exit.mRadius) || exit.mRadius < 0.0f)
             return 1;
@@ -209,6 +282,8 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
         const bool enabled = exit.mAction == daScExit_c::ACTION_WAIT_e;
         GXColor color = enabled ? context.enabledColor : context.disabledColor;
         dDbVw_drawCylinderXlu(base, exit.mRadius, context.settings.drawRange * 2.0f, color, TRUE);
+    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVTAREA_e) {
+        draw_event_area(*static_cast<const daTag_EvtArea_c*>(actor), context);
     }
     return 1;
 }
@@ -217,7 +292,8 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
 
 void draw_trigger_view() {
     const TriggerViewSettings& settings = getTransientSettings().triggerView;
-    if (!IsGameLaunched || !settings.enableSceneExitView || settings.drawRange <= 0.0f)
+    if (!IsGameLaunched || (!settings.enableSceneExitView && !settings.enableEventAreaView) ||
+        settings.drawRange <= 0.0f)
         return;
     const fopAc_ac_c* player = dComIfGp_getPlayer(0);
     if (player == nullptr || !finite(player->current.pos))
@@ -225,7 +301,9 @@ void draw_trigger_view() {
 
     const GXColor enabled_color = trigger_color(true, settings.opacity);
     const GXColor disabled_color = trigger_color(false, settings.opacity);
-    draw_collision_exit_view(player->current.pos, settings, enabled_color, disabled_color);
+    if (settings.enableSceneExitView) {
+        draw_collision_exit_view(player->current.pos, settings, enabled_color, disabled_color);
+    }
 
     ActorTriggerDrawContext context{player->current.pos, settings, enabled_color, disabled_color};
     fopAcIt_Executor(draw_actor_trigger, &context);

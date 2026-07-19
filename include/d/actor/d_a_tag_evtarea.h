@@ -3,6 +3,14 @@
 
 #include "f_op/f_op_actor_mng.h"
 
+#if TARGET_PC
+// DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: declaration only; adapter body lives
+// outside native gameplay code and may inspect observer state without mutation.
+namespace dusk {
+struct TriggerViewReadAdapter;
+}
+#endif
+
 class daTag_EvtArea_c : public fopAc_ac_c {
 public:
     cPhs_Step create();
@@ -46,6 +54,9 @@ public:
     void noEffect() { field_0x56c = 1; }
 
 private:
+#if TARGET_PC
+    friend struct dusk::TriggerViewReadAdapter;
+#endif
     /* 0x568 vtable */
     /* 0x56C */ u8 field_0x56c;
 };

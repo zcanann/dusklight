@@ -165,7 +165,7 @@ UserSettings g_userSettings = {
         .wasPresetChosen {"backend.wasPresetChosen", false},
         .checkForUpdates {"backend.checkForUpdates", true},
         .cardFileType {"backend.cardFileType", static_cast<int>(CARD_GCIFOLDER)},
-        .enableAdvancedSettings {"backend.enableAdvancedSettings", false},
+        .enableAdvancedSettings {"backend.enableAdvancedSettings", true},
     },
 
     // Not sure if there's a better way to declare this
@@ -394,6 +394,7 @@ static TransientSettings g_transientSettings = {
     },
     .triggerView = {
         .enableSceneExitView = false,
+        .enableEventAreaView = false,
         .opacity = 80.0f,
         .drawRange = 1000.0f,
     },
