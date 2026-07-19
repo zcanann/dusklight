@@ -4675,6 +4675,12 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    let source_bytes = fs::read(&input)?;
+    let source = InputTape::decode(&source_bytes)?.tape;
+    validate_proof_tape(&source, "tape minimize")?;
+    let timeout = timeout_option(args)?;
+    let game_args = repeated_option(args, "--game-arg");
+    validate_replay_game_args("tape minimize", &game_args)?;
     fs::create_dir_all(&work_root)?;
     if let Some(parent) = output
         .parent()
@@ -4683,12 +4689,6 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
 
-    let source_bytes = fs::read(&input)?;
-    let source = InputTape::decode(&source_bytes)?.tape;
-    validate_proof_tape(&source, "tape minimize")?;
-    let timeout = timeout_option(args)?;
-    let game_args = repeated_option(args, "--game-arg");
-    validate_replay_game_args("tape minimize", &game_args)?;
     let mut evaluation_index = 0_u64;
     let target = evaluate_minimize_tape(
         &source,
@@ -4928,19 +4928,15 @@ fn evaluate_minimize_tape(
             .arg(goal)
             .arg("--milestone-result")
             .arg(&result_path)
-            .arg("--cvar")
-            .arg("game.instantSaves=true")
-            .arg("--cvar")
-            .arg("backend.cardFileType=1")
-            .arg("--cvar")
-            .arg("backend.wasPresetChosen=true")
-            .arg("--cvar")
-            .arg("game.enableMenuPointer=false")
-            .arg("--headless")
-            .arg("--fixed-step")
-            .arg("--exit-after-tape")
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
+        for cvar in TAPE_REPLAY_CVARS {
+            command.arg("--cvar").arg(cvar);
+        }
+        command
+            .arg("--headless")
+            .arg("--fixed-step")
+            .arg("--exit-after-tape");
         if let Some(program) = milestone_program {
             command.arg("--milestone-program").arg(program);
         }
