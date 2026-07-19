@@ -2428,7 +2428,7 @@ pub fn evaluate_recorded_trace(
                     .chain(&definition.then)
                     .collect::<Vec<_>>();
                 if state.sequence_next == 0 {
-                    if evaluate_trace_expression(steps[0], record) {
+                    if evaluate_trace_expression(steps[0], record) == Some(true) {
                         state.sequence_next = 1;
                         state.sequence_elapsed = 0;
                     }
@@ -2436,14 +2436,15 @@ pub fn evaluate_recorded_trace(
                 }
                 let next_elapsed = state.sequence_elapsed.saturating_add(1);
                 if next_elapsed > definition.within_ticks.unwrap() {
-                    state.sequence_next = usize::from(evaluate_trace_expression(steps[0], record));
+                    state.sequence_next =
+                        usize::from(evaluate_trace_expression(steps[0], record) == Some(true));
                     state.sequence_elapsed = 0;
                     continue;
                 }
                 state.sequence_elapsed = next_elapsed;
-                if evaluate_trace_expression(steps[state.sequence_next], record) {
+                if evaluate_trace_expression(steps[state.sequence_next], record) == Some(true) {
                     state.sequence_next += 1;
-                } else if evaluate_trace_expression(steps[0], record) {
+                } else if evaluate_trace_expression(steps[0], record) == Some(true) {
                     state.sequence_next = 1;
                     state.sequence_elapsed = 0;
                 }
@@ -2452,7 +2453,7 @@ pub fn evaluate_recorded_trace(
                 }
                 continue;
             }
-            if evaluate_trace_expression(&definition.when, record) {
+            if evaluate_trace_expression(&definition.when, record) == Some(true) {
                 state.stable = state.stable.saturating_add(1).min(definition.stable_ticks);
                 if state.stable == definition.stable_ticks {
                     state.hit = Some(capture());
@@ -2477,7 +2478,10 @@ fn trace_channel_present(
     record.channel_status.get(&channel) == Some(&crate::trace::TraceChannelStatus::Present)
 }
 
-fn evaluate_trace_expression(expression: &Expression, record: &crate::trace::TraceRecord) -> bool {
+fn evaluate_trace_expression(
+    expression: &Expression,
+    record: &crate::trace::TraceRecord,
+) -> Option<bool> {
     let facts = typed_facts_from_trace_record(record);
     evaluate_trace_expression_with_facts(expression, record, &facts)
 }
@@ -2486,29 +2490,40 @@ fn evaluate_trace_expression_with_facts(
     expression: &Expression,
     record: &crate::trace::TraceRecord,
     facts: &TypedFactResponse,
-) -> bool {
+) -> Option<bool> {
     match expression {
         Expression::Compare {
             field,
             operator,
             value,
         } => trace_field(record, facts, *field)
-            .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
+            .map(|actual| compare_trace_values(&actual, *operator, value)),
         Expression::Query {
             fact,
             operator,
             value,
-        } => trace_query(record, fact)
-            .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
-        Expression::Not(inner) => !evaluate_trace_expression_with_facts(inner, record, facts),
-        Expression::And(left, right) => {
-            evaluate_trace_expression_with_facts(left, record, facts)
-                && evaluate_trace_expression_with_facts(right, record, facts)
+        } => {
+            trace_query(record, fact).map(|actual| compare_trace_values(&actual, *operator, value))
         }
-        Expression::Or(left, right) => {
-            evaluate_trace_expression_with_facts(left, record, facts)
-                || evaluate_trace_expression_with_facts(right, record, facts)
+        Expression::Not(inner) => {
+            evaluate_trace_expression_with_facts(inner, record, facts).map(|value| !value)
         }
+        Expression::And(left, right) => match (
+            evaluate_trace_expression_with_facts(left, record, facts),
+            evaluate_trace_expression_with_facts(right, record, facts),
+        ) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        Expression::Or(left, right) => match (
+            evaluate_trace_expression_with_facts(left, record, facts),
+            evaluate_trace_expression_with_facts(right, record, facts),
+        ) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
     }
 }
 
@@ -4027,6 +4042,35 @@ milestone exact_interaction {
             .unwrap()
             .set_id = 9;
         assert!(evaluate_recorded_trace(&program, &wrong).unwrap()["exact_interaction"].is_none());
+
+        let absence_program = parse(
+            r#"milestones 1.5
+
+milestone no_talk_partner {
+  phase post_sim
+  when !player.interaction.talk_partner.exists
+}
+"#,
+        )
+        .unwrap();
+        let mut absent_action = wrong.records[0].player_action.clone().unwrap();
+        absent_action.talk_partner = None;
+        wrong.records[0].player_action = None;
+        wrong.records[0].channel_status.insert(
+            crate::trace::TraceChannel::PlayerAction,
+            crate::trace::TraceChannelStatus::Truncated,
+        );
+        assert!(
+            evaluate_recorded_trace(&absence_program, &wrong).unwrap()["no_talk_partner"].is_none()
+        );
+        wrong.records[0].channel_status.insert(
+            crate::trace::TraceChannel::PlayerAction,
+            crate::trace::TraceChannelStatus::Present,
+        );
+        wrong.records[0].player_action = Some(absent_action);
+        assert!(
+            evaluate_recorded_trace(&absence_program, &wrong).unwrap()["no_talk_partner"].is_some()
+        );
     }
 
     #[test]
