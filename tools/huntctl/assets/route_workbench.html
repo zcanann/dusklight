@@ -35,7 +35,7 @@
     .project-row.group { color:#8f9caf; font-weight:700; }
     .project-row .arrow { width:12px; flex:0 0 12px; color:#68768a; font-size:9px; }
     .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .project-row .project-icon { flex:0 0 auto; font-size:13px; line-height:1; filter:saturate(.82); }
+    .project-row .project-icon { width:16px; flex:0 0 16px; text-align:center; font-size:13px; line-height:1; filter:saturate(.82); }
     .project-row .project-frames { color:#657287; font-size:9px; }
     .project-indent { margin-left:13px; }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
@@ -359,7 +359,7 @@
         const nested=open?[...children.map(child=>groupHtml(child,depth+1)),...projects.map(project=>projectHtml(project,depth+1))].join(''):'';
         return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group${workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===group.id?' selected':''}" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span><span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
       };
-      const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span><span class="project-label">${escapeHtml(project.label)}</span>${projectBootIcon(project)}<span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;
+      const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span>${projectBootIcon(project)}<span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;
       const workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null;
       root.innerHTML=[...groupChildren(workspaceRoot).map(group=>groupHtml(group,0)),...projectChildren(workspaceRoot).map(project=>projectHtml(project,0))].join('')||'<div class="empty">No project tapes.</div>';
       root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;workspaceNodeSelection={kind:'folder',id};projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();updateWorkspaceTools();}));

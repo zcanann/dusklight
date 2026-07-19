@@ -889,6 +889,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "grid-template-rows",
         "projectBootIcon",
         "🫠",
+        "</span>${projectBootIcon(project)}<span class=\"project-label\">",
         "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
         "This predicate source belongs only to this goal",
         "data-capture-kind=\"project\"",
