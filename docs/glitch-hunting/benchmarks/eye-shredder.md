@@ -174,6 +174,12 @@ The current native implementation under audit is
 
 ## Acceptance criteria
 
+The Route Workbench discovers `routes/qa/glitches/eye_shredder.launch` beside
+the authored tape. That checked-in launch profile supplies the fidelity switch,
+observer trace, and native oracle automatically. It also preflights the selected
+executable and refuses playback when either required compile gate is absent;
+ordinary tapes remain on the standard, unmodified runtime profile.
+
 Compile and inspect the checked tape, then run the native oracle through the
 cross-platform tape runner:
 

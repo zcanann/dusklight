@@ -932,6 +932,14 @@ struct MaterializedPlayback {
     segment: Option<String>,
     tape: InputTape,
     seed_stage: Option<&'static str>,
+    native_profile: NativePlaybackProfile,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum NativePlaybackProfile {
+    #[default]
+    Standard,
+    EyeShredder,
 }
 
 fn legacy_seed_stage(

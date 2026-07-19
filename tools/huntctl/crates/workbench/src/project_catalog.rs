@@ -33,6 +33,7 @@ pub(super) struct ProjectDefinition {
     pub artifact: PathBuf,
     pub kind: ProjectKind,
     pub fixture: Option<PathBuf>,
+    pub launch: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -127,6 +128,15 @@ pub(super) fn load_project_catalog(
                     .expect("checked workspace fixture")
                     .to_path_buf()
             });
+        let launch = (kind != ProjectKind::Timeline)
+            .then(|| path.with_extension("launch"))
+            .filter(|candidate| candidate.is_file())
+            .map(|candidate| {
+                candidate
+                    .strip_prefix(&canonical_repository)
+                    .expect("checked workspace launch profile")
+                    .to_path_buf()
+            });
         let label = if kind == ProjectKind::Timeline {
             load_authoritative_timeline(&path)
                 .map(|timeline| human_label(&timeline.name))
@@ -147,6 +157,7 @@ pub(super) fn load_project_catalog(
             artifact: relative.to_path_buf(),
             kind,
             fixture,
+            launch,
         };
         if catalog.entries.insert(id.clone(), definition).is_some() {
             return Err(WorkbenchError::new(format!(
@@ -214,9 +225,11 @@ pub(super) fn project_catalog_projection(
                 };
             }
 
-            let loaded = load_project_tape(repository_root, entry);
+            let loaded = load_project_tape(repository_root, entry).and_then(|tape| {
+                load_project_launch_profile(repository_root, entry).map(|profile| (tape, profile))
+            });
             let (boot, frame_count, materialization_sha256, error) = match loaded {
-                Ok(mut tape) => {
+                Ok((mut tape, _profile)) => {
                     let authored_boot = tape.boot.clone();
                     if let Some(configuration) =
                         boot_override.as_ref().filter(|value| value.enabled)
@@ -293,12 +306,48 @@ pub(super) fn project_materialized_playback(
     }
     let mut tape = load_project_tape(repository_root, project)?;
     apply_boot_override(repository_root, project, &mut tape)?;
+    let native_profile = load_project_launch_profile(repository_root, project)?;
     Ok(MaterializedPlayback {
         lineage: None,
         segment: Some(format!("project:{project_id}")),
         tape,
         seed_stage: None,
+        native_profile,
     })
+}
+
+fn load_project_launch_profile(
+    repository_root: &Path,
+    project: &ProjectDefinition,
+) -> Result<NativePlaybackProfile, WorkbenchError> {
+    let Some(relative) = &project.launch else {
+        return Ok(NativePlaybackProfile::Standard);
+    };
+    let path = checked_artifact_path(repository_root, relative)?;
+    let source = fs::read_to_string(&path)
+        .map_err(|error| WorkbenchError::new(format!("cannot read {}: {error}", path.display())))?;
+    let lines = source
+        .lines()
+        .map(|line| line.split_once('#').map_or(line, |(body, _)| body).trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.first().copied() != Some("dusklaunch 1") {
+        return Err(WorkbenchError::new(format!(
+            "{} must begin with `dusklaunch 1`",
+            path.display()
+        )));
+    }
+    match lines.as_slice() {
+        [_, "profile eye_shredder"] => Ok(NativePlaybackProfile::EyeShredder),
+        [_, profile] => Err(WorkbenchError::new(format!(
+            "{} has unsupported launch directive {profile:?}",
+            path.display()
+        ))),
+        _ => Err(WorkbenchError::new(format!(
+            "{} must contain exactly one `profile NAME` directive",
+            path.display()
+        ))),
+    }
 }
 
 pub(super) fn update_boot_override(
@@ -986,6 +1035,7 @@ mod tests {
                 }
                 ProjectKind::Tas | ProjectKind::Tape => {
                     load_project_tape(&repository, entry).unwrap();
+                    load_project_launch_profile(&repository, entry).unwrap();
                 }
             }
         }
@@ -999,6 +1049,11 @@ mod tests {
         fs::write(
             repository.join("routes/qa/canary.tape"),
             InputTape::default().encode().unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            repository.join("routes/qa/canary.launch"),
+            "dusklaunch 1\nprofile eye_shredder\n",
         )
         .unwrap();
 
@@ -1028,6 +1083,10 @@ mod tests {
             materialized.tape.boot,
             TapeBoot::Stage { ref stage, .. } if stage == "F_SP103"
         ));
+        assert_eq!(
+            materialized.native_profile,
+            NativePlaybackProfile::EyeShredder
+        );
 
         create_workspace_folder(
             &repository,
@@ -1049,6 +1108,7 @@ mod tests {
         .unwrap();
         assert!(repository.join("routes/moved/canary.tape").is_file());
         assert!(repository.join("routes/moved/canary.boot.json").is_file());
+        assert!(repository.join("routes/moved/canary.launch").is_file());
         assert!(!repository.join("routes/qa/canary.tape").exists());
 
         let state_root = repository.join("state");
@@ -1065,6 +1125,7 @@ mod tests {
         let trash = deletion.trash.unwrap();
         assert!(trash.join("canary.tape").is_file());
         assert!(trash.join("canary.boot.json").is_file());
+        assert!(trash.join("canary.launch").is_file());
         assert!(!repository.join("routes/moved/canary.tape").exists());
         fs::remove_dir_all(repository).unwrap();
     }

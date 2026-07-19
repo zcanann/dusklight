@@ -211,6 +211,11 @@ pub(super) fn launch_materialized(
     }
     let game = canonical_file(&config.game, "game executable")?;
     let dvd = canonical_file(&config.dvd, "DVD image")?;
+    verify_native_playback_profile(
+        &game,
+        &config.working_directory,
+        materialized.native_profile,
+    )?;
     fs::create_dir_all(&config.state_root).map_err(|error| {
         WorkbenchError::new(format!(
             "cannot create state root {}: {error}",
@@ -251,7 +256,7 @@ pub(super) fn launch_materialized(
         WorkbenchError::new(format!("cannot write {}: {error}", tape_path.display()))
     })?;
     let end = if options.takeover { "release" } else { "hold" };
-    let mut command = Command::new(game);
+    let mut command = Command::new(&game);
     command.current_dir(&config.working_directory);
     append_playback_args(
         &mut command,
@@ -265,6 +270,7 @@ pub(super) fn launch_materialized(
             playback: options.playback,
         },
     );
+    append_native_playback_profile_args(&mut command, &state_root, materialized.native_profile);
     if let Some(thumbnail) = &options.thumbnail {
         command
             .arg("--input-tape-thumbnail-png")
@@ -315,6 +321,11 @@ pub(super) fn capture_thumbnail(
             project_materialized_playback(&config.repository_root, id)?
         }
     };
+    verify_native_playback_profile(
+        &game,
+        &config.working_directory,
+        materialized.native_profile,
+    )?;
 
     fs::create_dir_all(&config.state_root).map_err(|error| {
         WorkbenchError::new(format!(
@@ -376,7 +387,7 @@ pub(super) fn capture_thumbnail(
         WorkbenchError::new(format!("cannot write {}: {error}", tape_path.display()))
     })?;
 
-    let mut command = Command::new(game);
+    let mut command = Command::new(&game);
     command.current_dir(&config.working_directory);
     append_playback_args(
         &mut command,
@@ -393,6 +404,7 @@ pub(super) fn capture_thumbnail(
             },
         },
     );
+    append_native_playback_profile_args(&mut command, &session_root, materialized.native_profile);
     command
         .arg("--unpaced")
         .arg("--exit-after-tape")
@@ -713,6 +725,85 @@ pub(super) fn append_playback_args(
     }
 }
 
+fn append_native_playback_profile_args(
+    command: &mut Command,
+    state_root: &Path,
+    profile: NativePlaybackProfile,
+) {
+    if profile == NativePlaybackProfile::EyeShredder {
+        command
+            .arg("--cursor-breakout-shadow")
+            .arg("--automation-oracle")
+            .arg("eye-shredder")
+            .arg("--automation-oracle-continue-on-pass")
+            .arg("--automation-oracle-result")
+            .arg(state_root.join("eye-shredder.oracle.json"))
+            .arg("--name-entry-trace")
+            .arg(state_root.join("eye-shredder.name-entry.trace.json"));
+    }
+}
+
+fn verify_native_playback_profile(
+    game: &Path,
+    working_directory: &Path,
+    profile: NativePlaybackProfile,
+) -> Result<(), WorkbenchError> {
+    if profile == NativePlaybackProfile::Standard {
+        return Ok(());
+    }
+    let output = Command::new(game)
+        .current_dir(working_directory)
+        .arg("--automation-hello")
+        .arg("--cursor-breakout-shadow")
+        .output()
+        .map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect native Eye Shredder support in {}: {error}",
+                game.display()
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(WorkbenchError::new(format!(
+            "native Eye Shredder preflight failed for {} (exit {})",
+            game.display(),
+            output.status
+        )));
+    }
+    let hello: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        WorkbenchError::new(format!(
+            "native Eye Shredder preflight returned invalid automation identity: {error}"
+        ))
+    })?;
+    validate_native_playback_profile_identity(&hello, profile)
+}
+
+fn validate_native_playback_profile_identity(
+    hello: &serde_json::Value,
+    profile: NativePlaybackProfile,
+) -> Result<(), WorkbenchError> {
+    if profile == NativePlaybackProfile::Standard {
+        return Ok(());
+    }
+    let feature_switches = hello
+        .pointer("/build/feature_switches")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let fidelity_profile = hello
+        .pointer("/build/fidelity_profile")
+        .and_then(serde_json::Value::as_str);
+    let supported = hello.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        && fidelity_profile == Some("cursor_breakout_shadow")
+        && feature_switches.contains("automation_observers=ON")
+        && feature_switches.contains("automation_fidelity_models=ON");
+    if supported {
+        return Ok(());
+    }
+    Err(WorkbenchError::new(format!(
+        "Eye Shredder requires a native build with automation observers and fidelity models enabled; this executable reports profile {:?} and feature switches {:?}",
+        fidelity_profile, feature_switches
+    )))
+}
+
 pub(super) fn append_fixed_step_pacing(command: &mut Command, speed_percent: u16) {
     command
         .arg("--fixed-step")
@@ -793,6 +884,7 @@ pub(super) fn record_continuation(
                     segment: Some(format!("origin:{id}")),
                     tape: InputTape::default(),
                     seed_stage: None,
+                    native_profile: NativePlaybackProfile::Standard,
                 },
                 DraftParent::Milestone {
                     id: id.clone(),
@@ -834,6 +926,7 @@ pub(super) fn record_continuation(
                 segment: Some(id.clone()),
                 tape: segment_chain.tape,
                 seed_stage,
+                native_profile: NativePlaybackProfile::Standard,
             };
             let parent = DraftParent::Segment {
                 id: id.clone(),
@@ -1659,6 +1752,7 @@ pub(super) fn materialize_play_request(
         segment: None,
         tape: materialized.tape,
         seed_stage,
+        native_profile: NativePlaybackProfile::Standard,
     })
 }
 
@@ -1699,6 +1793,7 @@ pub(super) fn materialize_segment_playback(
         segment: Some(segment_id.into()),
         tape: chain.tape,
         seed_stage,
+        native_profile: NativePlaybackProfile::Standard,
     })
 }
 
@@ -1741,6 +1836,7 @@ pub(super) fn play_segment(
             segment: Some(segment_id.into()),
             tape,
             seed_stage: None,
+            native_profile: NativePlaybackProfile::Standard,
         };
         let fast_forward_frames =
             playback_fast_forward_frames(options.playback, materialized.tape.frames.len() as u64);
@@ -1963,6 +2059,7 @@ pub(super) fn materialize_draft(
         segment: Some(format!("{base_label}:{draft_id}")),
         tape,
         seed_stage,
+        native_profile: NativePlaybackProfile::Standard,
     })
 }
 
@@ -1993,4 +2090,68 @@ pub(super) fn validate_playback_origin(request: &BrowserPlayRequest) -> Result<(
 
 pub(super) fn playback_fast_forward_frames(playback: PlaybackSettings, frames: u64) -> Option<u64> {
     playback.fast.then_some(frames)
+}
+
+#[cfg(test)]
+mod native_profile_tests {
+    use super::*;
+
+    #[test]
+    fn eye_shredder_profile_supplies_fidelity_trace_and_oracle_arguments() {
+        let mut command = Command::new("dusklight");
+        append_native_playback_profile_args(
+            &mut command,
+            Path::new("session"),
+            NativePlaybackProfile::EyeShredder,
+        );
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "--cursor-breakout-shadow",
+                "--automation-oracle",
+                "eye-shredder",
+                "--automation-oracle-continue-on-pass",
+                "--automation-oracle-result",
+                &Path::new("session")
+                    .join("eye-shredder.oracle.json")
+                    .to_string_lossy(),
+                "--name-entry-trace",
+                &Path::new("session")
+                    .join("eye-shredder.name-entry.trace.json")
+                    .to_string_lossy(),
+            ]
+        );
+    }
+
+    #[test]
+    fn eye_shredder_profile_refuses_a_binary_without_compile_gates() {
+        let unsupported = serde_json::json!({
+            "ok": true,
+            "build": {
+                "feature_switches": "automation_observers=OFF;automation_fidelity_models=OFF",
+                "fidelity_profile": "cursor_breakout_shadow"
+            }
+        });
+        assert!(
+            validate_native_playback_profile_identity(
+                &unsupported,
+                NativePlaybackProfile::EyeShredder
+            )
+            .is_err()
+        );
+
+        let supported = serde_json::json!({
+            "ok": true,
+            "build": {
+                "feature_switches": "automation_observers=ON;automation_fidelity_models=ON",
+                "fidelity_profile": "cursor_breakout_shadow"
+            }
+        });
+        validate_native_playback_profile_identity(&supported, NativePlaybackProfile::EyeShredder)
+            .unwrap();
+    }
 }
