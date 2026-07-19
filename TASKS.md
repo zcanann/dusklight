@@ -313,3 +313,13 @@ path after accepting a core-harness authority.
 
 **Done when:** exact anchored finalist reduction and resume cannot drop or swap
 an explicitly supplied core-harness authority.
+
+## 20. Authenticated anchored proposer tournaments
+
+- [x] Allow an anchored tournament to retain a sole run-request authority
+  through its shared evaluation and cold-replay evidence.
+- [x] Validate the request's exact milestone program and goal separately from
+  the derived anchored-objective identity carried by proposal envelopes.
+
+**Done when:** a fair anchored tournament can use the core harness without
+conflating or weakening either authenticated identity.

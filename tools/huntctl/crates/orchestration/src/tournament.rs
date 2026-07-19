@@ -65,9 +65,8 @@ pub struct ProposerTournamentConfig {
     pub repetitions: u32,
     pub timeout: Duration,
     pub harness: Option<HarnessEvaluateConfig>,
-    /// Optional clean-boot prefix objective. This is mutually exclusive with
-    /// the core-harness request mode and keeps route suffixes on the same fair
-    /// tournament boundary as directly bootable candidates.
+    /// Optional clean-boot prefix objective. Route suffixes remain on the same
+    /// fair tournament boundary as directly bootable candidates.
     pub anchored: Option<AnchoredObjectiveConfig>,
 }
 
@@ -184,12 +183,6 @@ pub fn run_proposer_tournament(
     config: &ProposerTournamentConfig,
 ) -> Result<ProposerTournamentSummary, EvaluateError> {
     let definition = &config.definition;
-    if config.harness.is_some() && config.anchored.is_some() {
-        return Err(EvaluateError::InvalidConfig(
-            "tournament execution cannot combine a harness request with an anchored objective"
-                .into(),
-        ));
-    }
     if definition.schema != "dusklight-proposer-tournament-definition/v2"
         || definition.budget_per_proposer == 0
         || definition.proposers.len() < 2
@@ -451,7 +444,9 @@ pub fn run_proposer_tournament(
     let action_schema = action_schema.ok_or_else(|| {
         EvaluateError::InvalidManifest("tournament action schema identity is missing".into())
     })?;
-    if let Some(harness) = &config.harness {
+    if let Some(harness) = &config.harness
+        && config.anchored.is_none()
+    {
         let request = &harness.request_template;
         let expected_objective = NamedDigest::new(
             request.objective.goal.clone(),
@@ -483,6 +478,13 @@ pub fn run_proposer_tournament(
         );
         let expected_action_schema =
             NamedDigest::new("movement-action/v2", movement_action_schema_digest_v2());
+        if let Some(harness) = &config.harness {
+            validate_anchored_tournament_harness(
+                harness,
+                identity,
+                &expected_action_schema,
+            )?;
+        }
         if objective != expected_objective || action_schema != expected_action_schema {
             return Err(EvaluateError::InvalidManifest(
                 "tournament proposal envelopes do not match the anchored objective and action schema"
@@ -721,6 +723,47 @@ fn observed_attempt_ticks(attempt: &AttemptEvidence, candidate_ticks: u64) -> u6
     )
 }
 
+fn validate_anchored_tournament_harness(
+    harness: &HarnessEvaluateConfig,
+    identity: &AnchoredObjectiveIdentity,
+    expected_action_schema: &NamedDigest,
+) -> Result<(), EvaluateError> {
+    let request = &harness.request_template;
+    let request_objective = NamedDigest::new(
+        request.objective.goal.clone(),
+        request.objective.program_sha256,
+    );
+    let request_action_schema = NamedDigest::new(
+        request.action_schema.id.clone(),
+        request.action_schema.sha256,
+    );
+    if !anchored_request_identities_match(
+        &request_objective,
+        &request_action_schema,
+        &identity.goal_milestone,
+        &identity.milestone_program_sha256,
+        expected_action_schema,
+    ) {
+        return Err(EvaluateError::InvalidConfig(
+            "anchored tournament run request must bind the exact goal, milestone program, and movement action schema"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn anchored_request_identities_match(
+    request_objective: &NamedDigest,
+    request_action_schema: &NamedDigest,
+    anchored_goal: &str,
+    anchored_program_sha256: &str,
+    expected_action_schema: &NamedDigest,
+) -> bool {
+    request_objective.id == anchored_goal
+        && request_objective.sha256.to_string() == anchored_program_sha256
+        && request_action_schema == expected_action_schema
+}
+
 fn observed_simulator_ticks(
     goal_reached: bool,
     first_hit_tick: Option<u64>,
@@ -740,13 +783,50 @@ fn observed_simulator_ticks(
 
 #[cfg(test)]
 mod accounting_tests {
-    use super::observed_simulator_ticks;
+    use super::{anchored_request_identities_match, observed_simulator_ticks};
+    use dusklight_automation_contracts::artifact::Digest;
+    use dusklight_automation_contracts::candidate_envelope::NamedDigest;
 
     #[test]
     fn intermediate_progress_does_not_undercharge_an_objective_miss() {
         assert_eq!(observed_simulator_ticks(false, Some(0), 144), 144);
         assert_eq!(observed_simulator_ticks(true, Some(138), 144), 139);
         assert_eq!(observed_simulator_ticks(true, None, 144), 144);
+    }
+
+    #[test]
+    fn anchored_request_keeps_program_and_derived_objective_identities_separate() {
+        let program = Digest([1; 32]);
+        let request_objective = NamedDigest::new("goal", program);
+        let action = NamedDigest::new("movement-action/v2", Digest([2; 32]));
+        assert!(anchored_request_identities_match(
+            &request_objective,
+            &action,
+            "goal",
+            &program.to_string(),
+            &action,
+        ));
+        assert!(!anchored_request_identities_match(
+            &request_objective,
+            &action,
+            "other-goal",
+            &program.to_string(),
+            &action,
+        ));
+        assert!(!anchored_request_identities_match(
+            &request_objective,
+            &action,
+            "goal",
+            &Digest([3; 32]).to_string(),
+            &action,
+        ));
+        assert!(!anchored_request_identities_match(
+            &request_objective,
+            &action,
+            "goal",
+            &program.to_string(),
+            &NamedDigest::new("movement-action/v2", Digest([4; 32])),
+        ));
     }
 }
 

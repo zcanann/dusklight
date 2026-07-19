@@ -458,9 +458,6 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             )?;
             let execution = search_execution_config(search_args)?;
             let anchored = if let Some(prefix) = option(search_args, "--anchored-prefix") {
-                if execution.harness.is_some() {
-                    return Err("--anchored-prefix cannot be combined with --run-request".into());
-                }
                 Some(AnchoredObjectiveConfig {
                     segment: option(search_args, "--segment")
                         .ok_or("anchored tournament requires --segment ID")?

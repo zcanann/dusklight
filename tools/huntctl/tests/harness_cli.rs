@@ -46,6 +46,7 @@ fn write_proposal_envelopes(
     kind: ProposerKind,
     proposer_id: &str,
     request: &HarnessRunRequest,
+    objective: Option<NamedDigest>,
 ) {
     let manifest: PopulationManifest =
         serde_json::from_slice(&fs::read(population_root.join("manifest.json")).unwrap()).unwrap();
@@ -75,10 +76,12 @@ fn write_proposal_envelopes(
                     .transpose()
                     .unwrap(),
                 member.ancestry.generation,
-                NamedDigest::new(
-                    request.objective.goal.clone(),
-                    request.objective.program_sha256,
-                ),
+                objective.clone().unwrap_or_else(|| {
+                    NamedDigest::new(
+                        request.objective.goal.clone(),
+                        request.objective.program_sha256,
+                    )
+                }),
                 NamedDigest::new(
                     request.action_schema.id.clone(),
                     request.action_schema.sha256,
@@ -1034,6 +1037,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         ProposerKind::Scripted,
         "scripted.fixture",
         &request,
+        None,
     );
     write_proposal_envelopes(
         &population,
@@ -1041,6 +1045,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         ProposerKind::Random,
         "random.uniform",
         &request,
+        None,
     );
 
     let output = root.join("search-evaluation");
@@ -1607,6 +1612,11 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         goal: "entered-f-sp104".into(),
     };
     anchored_request.identity.predicate_program_digest = anchored_request.objective.program_sha256;
+    anchored_request.action_schema = SchemaIdentity {
+        id: "movement-action/v2".into(),
+        sha256: huntctl::learning::offline_rl::movement_action_schema_digest_v2(),
+    };
+    anchored_request.identity.action_schema_digest = anchored_request.action_schema.sha256;
     let mut anchored_observation = observation;
     anchored_observation.objective.id = anchored_request.objective.goal.clone();
     let anchored_observation_bytes = serde_json::to_vec_pretty(&anchored_observation).unwrap();
@@ -1668,6 +1678,122 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
         }],
         ancestry: Ancestry::default(),
     };
+    let anchored_objective_config = huntctl::search_evaluator::AnchoredObjectiveConfig {
+        segment: SegmentProfile::Fsp103ToFsp104,
+        prefix_tape: prefix_path.clone(),
+        milestone_program: anchored_program_path.clone(),
+        game: root.join(&sealed_anchored_request.executable.path),
+        dvd: root.join(&sealed_anchored_request.game_data.path),
+        source_milestone: "source-ready".into(),
+        source_boundary_fingerprint: "11111111111111111111111111111111".into(),
+        goal_milestone: "entered-f-sp104".into(),
+    };
+    let anchored_identity =
+        huntctl::search_evaluator::prepare_anchored_evaluator(&anchored_objective_config)
+            .unwrap()
+            .identity()
+            .clone();
+    let anchored_envelope_objective = NamedDigest::new(
+        anchored_identity.goal_milestone.clone(),
+        anchored_identity.digest.parse().unwrap(),
+    );
+    let anchored_tournament_population = root.join("anchored-tournament-population");
+    write_explicit_population(
+        &anchored_tournament_population,
+        SegmentProfile::Fsp103ToFsp104,
+        0,
+        vec![anchored_candidate.clone()],
+    )
+    .unwrap();
+    write_proposal_envelopes(
+        &anchored_tournament_population,
+        "scripted-envelopes.json",
+        ProposerKind::Scripted,
+        "scripted.anchored-fixture",
+        &sealed_anchored_request,
+        Some(anchored_envelope_objective.clone()),
+    );
+    write_proposal_envelopes(
+        &anchored_tournament_population,
+        "random-envelopes.json",
+        ProposerKind::Random,
+        "random.anchored-uniform",
+        &sealed_anchored_request,
+        Some(anchored_envelope_objective),
+    );
+    let anchored_tournament_definition = root.join("anchored-tournament.json");
+    fs::write(
+        &anchored_tournament_definition,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "dusklight-proposer-tournament-definition/v2",
+            "budget_unit": "episodes",
+            "budget_per_proposer": 2,
+            "proposers": [
+                {
+                    "name": "scripted",
+                    "kind": "incumbent_mutation",
+                    "population": "anchored-tournament-population/manifest.json",
+                    "proposal_envelopes": "anchored-tournament-population/scripted-envelopes.json"
+                },
+                {
+                    "name": "random",
+                    "kind": "blind_exploration",
+                    "population": "anchored-tournament-population/manifest.json",
+                    "proposal_envelopes": "anchored-tournament-population/random-envelopes.json"
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let anchored_tournament_root = root.join("authenticated-anchored-tournament");
+    let anchored_tournament = Command::new(executable)
+        .args(["search", "tournament", "--definition"])
+        .arg(&anchored_tournament_definition)
+        .arg("--output")
+        .arg(&anchored_tournament_root)
+        .arg("--anchored-prefix")
+        .arg(&prefix_path)
+        .arg("--milestones")
+        .arg(&anchored_program_path)
+        .args([
+            "--segment",
+            "fsp103_to_fsp104",
+            "--source-milestone",
+            "source-ready",
+            "--source-boundary-fingerprint",
+            "11111111111111111111111111111111",
+            "--goal-milestone",
+            "entered-f-sp104",
+            "--workers",
+            "1",
+            "--repetitions",
+            "2",
+            "--run-request",
+        ])
+        .arg(&anchored_request_path)
+        .arg("--repository-root")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        anchored_tournament.status.success(),
+        "{}",
+        String::from_utf8_lossy(&anchored_tournament.stderr)
+    );
+    let anchored_tournament_evaluation: Value = serde_json::from_slice(
+        &fs::read(anchored_tournament_root.join("evaluations/evaluation.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        anchored_tournament_evaluation["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|attempt| attempt["harness_terminal"] == "reached"
+                && attempt["harness_request_sha256"].is_string()
+                && attempt["harness_result_sha256"].is_string())
+    );
     let anchored_candidate_path = root.join("anchored-candidate.json");
     fs::write(
         &anchored_candidate_path,
@@ -1814,6 +1940,7 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         ProposerKind::Scripted,
         "scripted.fixture",
         &tournament_request,
+        None,
     );
     write_proposal_envelopes(
         &population,
@@ -1821,6 +1948,7 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         ProposerKind::Random,
         "random.uniform",
         &tournament_request,
+        None,
     );
     let definition_path = root.join("tournament.json");
     fs::write(
@@ -1928,6 +2056,7 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         ProposerKind::Scripted,
         "scripted.fixture",
         &unsupported_request,
+        None,
     );
     write_proposal_envelopes(
         &population,
@@ -1935,6 +2064,7 @@ fn campaign_runs_ranked_proposers_and_cold_replays_their_finalists() {
         ProposerKind::Random,
         "random.uniform",
         &unsupported_request,
+        None,
     );
     let unsupported_campaign = Command::new(executable)
         .current_dir(&root)

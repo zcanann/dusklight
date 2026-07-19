@@ -412,10 +412,13 @@ Every tournament attempt then retains its derived request/result identities.
 
 Prefix-anchored route suffixes use the same tournament boundary by supplying
 `--anchored-prefix`, the compiled `--milestones` program, `--segment`, source
-milestone and fingerprint, and goal milestone beside `--game` and `--dvd`.
-Those inputs are content-bound as one anchored objective before native spend.
-Successful finalists are the clean-boot prefix-plus-suffix tapes actually
-replayed, never an unbootable suffix presented as proof.
+milestone and fingerprint, and goal milestone beside either `--game` and
+`--dvd` or the sole `--run-request` authority. Those inputs are content-bound
+as one anchored objective before native spend. In request mode, the request
+must independently bind the exact goal, compiled milestone-program digest, and
+movement action schema. Successful finalists are the clean-boot
+prefix-plus-suffix tapes actually replayed, never an unbootable suffix presented
+as proof.
 
 To extract one authenticated candidate from a search population or
 `q-proposals.json` into a tournament lane without rewriting its generation or
@@ -454,9 +457,12 @@ All populations must carry the same segment and boot origin. An envelope set
 must exactly cover its population and bind every candidate digest, parent,
 generation, seed, objective, action schema, and proposer configuration. The
 declared lane kind must match the authenticated proposer kind; all lanes must
-share one objective and action schema. Under `--run-request`, those identities
-must also match the authenticated request before output creation or simulator
-spend. Episode caps must be exact multiples of the repetition count;
+share one objective and action schema. Under `--run-request`, ordinary
+tournaments match those identities directly to the request. Anchored
+tournaments instead retain the derived anchored-objective digest in their
+envelopes while separately verifying the request's underlying milestone program
+and goal before output creation or simulator spend. Episode caps must be exact
+multiples of the repetition count;
 candidate-tick caps charge compiled tape frames times repetitions. The runner
 refuses definitions without both an incumbent-mutation lane and a
 blind-exploration lane, selects every lane under the same declared cap, and
