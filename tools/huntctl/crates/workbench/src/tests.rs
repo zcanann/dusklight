@@ -891,7 +891,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "🫠",
         "🗺️",
         "</span>${projectBootIcon(project)}<span class=\"project-label\">",
-        "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
+        "workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null",
         "This predicate source belongs only to this goal",
         "data-capture-kind=\"project\"",
         "data-select-kind",
@@ -902,6 +902,10 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "id=\"workspaceNewFolder\"",
         "id=\"workspaceClone\"",
         "id=\"workspaceMove\"",
+        "id=\"workspaceMoveDialog\"",
+        "id=\"workspaceMoveDestination\"",
+        "selectedFolderOrRoot",
+        "workspacePath",
         "id=\"workspaceDelete\"",
         "/api/workspace/tapes/create",
         "/api/workspace/tapes/clone",
@@ -991,6 +995,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     assert!(!html.to_ascii_lowercase().contains("authored boot"));
     assert!(!html.contains("let collapsed = new Set()"));
     assert!(!html.contains("?ready=${Date.now()}"));
+    assert!(!html.contains("Move to folder (for example routes/"));
+    assert!(html.contains("workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some"));
     assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));
     assert!(!html.contains("${segmentActions(segment)}</section>"));
 }

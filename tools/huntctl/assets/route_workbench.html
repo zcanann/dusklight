@@ -307,6 +307,15 @@
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="saveBoot" class="save" value="default" type="button">Save boot configuration</button></div>
     </form>
   </dialog>
+  <dialog id="workspaceMoveDialog">
+    <form id="workspaceMoveForm" class="editor" method="dialog">
+      <h2 id="workspaceMoveTitle">Move workspace item</h2>
+      <p>Choose an existing destination folder.</p>
+      <label class="boot-field"><span>Destination</span><select id="workspaceMoveDestination"></select></label>
+      <div id="workspaceMoveError" class="editor-error" role="alert"></div>
+      <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="confirmWorkspaceMove" class="save" value="default" type="button">Move</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script>
   (() => {
@@ -323,7 +332,8 @@
     let bootActiveTab = 'location';
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
     let workspaceSelection = null;
-    let workspaceNodeSelection = {kind:'folder',id:'routes'};
+    const WORKSPACE_ROOT='routes';
+    let workspaceNodeSelection = {kind:'folder',id:WORKSPACE_ROOT};
     let projectCollapsed = new Set();
     let occurrenceIndex = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
@@ -405,18 +415,18 @@
         return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group${workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===group.id?' selected':''}" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span><span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
       };
       const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span>${projectBootIcon(project)}<span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;
-      const workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null;
+      const workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null;
       root.innerHTML=[...groupChildren(workspaceRoot).map(group=>groupHtml(group,0)),...projectChildren(workspaceRoot).map(project=>projectHtml(project,0))].join('')||'<div class="empty">No project tapes.</div>';
       root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;workspaceNodeSelection={kind:'folder',id};projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();updateWorkspaceTools();}));
       root.querySelectorAll('[data-project-id]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectId,entry=graph.projects.entries.find(item=>item.id===id);if(!entry)return;workspaceSelection=id;workspaceNodeSelection={kind:'project',id};selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:['origin:boot']};graphCamera={x:0,y:0,zoom:1};render();}));
       updateWorkspaceTools();
     }
     function updateWorkspaceTools() {
-      const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id==='routes';
+      const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===WORKSPACE_ROOT;
       const project=workspaceNodeSelection.kind==='project'?graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id):null;
       $('workspaceClone').disabled=!project||project.kind==='timeline';
-      $('workspaceMove').disabled=rootSelected;
-      $('workspaceDelete').disabled=rootSelected;
+      $('workspaceMove').disabled=rootSelected||project?.active===true;
+      $('workspaceDelete').disabled=rootSelected||project?.active===true;
     }
     function closeWorkspaceMenus() {
       for(const [button,menu] of [['workspaceNew','workspaceNewMenu'],['workspaceActions','workspaceActionsMenu']]) { $(menu).hidden=true; $(button).setAttribute('aria-expanded','false'); }
@@ -434,21 +444,33 @@
     }
     function selectedWorkspaceParent() {
       if(workspaceNodeSelection.kind==='folder')return workspaceNodeSelection.id;
-      return graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id)?.group||'routes';
+      return graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id)?.group||WORKSPACE_ROOT;
+    }
+    function selectedFolderOrRoot() {
+      return workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some(group=>group.id===workspaceNodeSelection.id)?workspaceNodeSelection.id:WORKSPACE_ROOT;
+    }
+    function workspacePath(id) {
+      if(!id||id===WORKSPACE_ROOT)return 'Root';
+      return id.startsWith(`${WORKSPACE_ROOT}/`)?id.slice(WORKSPACE_ROOT.length+1):id;
+    }
+    function workspaceParent(id) {
+      const split=id.lastIndexOf('/');
+      return split<0?WORKSPACE_ROOT:id.slice(0,split);
     }
     async function createWorkspaceFolder() {
       closeWorkspaceMenus();
-      const parent=selectedWorkspaceParent();
-      const name=window.prompt(`New folder under ${parent}\nUppercase, spaces, and Unicode names are supported:`,'New Folder');
+      const parent=selectedFolderOrRoot();
+      const name=window.prompt(`New folder in ${workspacePath(parent)}\nUppercase, spaces, and Unicode names are supported:`,'New Folder');
       if(name===null)return;
-      if(await mutateWorkspace('/api/workspace/folders/create',{parent,name},`Created ${parent}/${name}`)) { workspaceNodeSelection={kind:'folder',id:`${parent}/${name}`}; renderProjects(); }
+      const result=await mutateWorkspace('/api/workspace/folders/create',{parent,name},'Folder created');
+      if(result) { workspaceNodeSelection={kind:'folder',id:result.id}; renderProjects(); toast(`Created ${workspacePath(result.id)}`); }
     }
     async function createWorkspaceTape() {
       closeWorkspaceMenus();
       const parent=selectedWorkspaceParent();
-      const name=window.prompt(`New tape under ${parent}:`,'New Tape');
+      const name=window.prompt(`New tape in ${workspacePath(parent)}:`,'New Tape');
       if(name===null)return;
-      const result=await mutateWorkspace('/api/workspace/tapes/create',{parent,name},`Created ${parent}/${name}`);
+      const result=await mutateWorkspace('/api/workspace/tapes/create',{parent,name},'Tape created');
       if(result) { workspaceSelection=result.id; workspaceNodeSelection={kind:'project',id:result.id}; render(); }
     }
     async function cloneWorkspaceTape() {
@@ -457,26 +479,56 @@
       const project=graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id);
       if(!project||project.kind==='timeline')return;
       const destination=project.group;
-      const name=window.prompt(`Clone ${project.label} under ${destination}:`,`${project.label} Copy`);
+      const name=window.prompt(`Clone ${project.label} in ${workspacePath(destination)}:`,`${project.label} Copy`);
       if(name===null)return;
       const result=await mutateWorkspace('/api/workspace/tapes/clone',{source:project.id,destination,name},`Cloned ${project.id}`);
       if(result) { workspaceSelection=result.id; workspaceNodeSelection={kind:'project',id:result.id}; render(); }
     }
-    async function moveWorkspaceSelection() {
+    function moveWorkspaceSelection() {
       closeWorkspaceMenus();
-      const destination=window.prompt('Move to folder (for example routes/qa):',selectedWorkspaceParent());
-      if(destination===null)return;
       const current={...workspaceNodeSelection};
-      if(await mutateWorkspace('/api/workspace/move',{...current,destination},`Moved ${current.id}`)) { workspaceNodeSelection={kind:'folder',id:destination}; renderProjects(); }
+      if(current.kind==='folder'&&current.id===WORKSPACE_ROOT)return;
+      const currentParent=current.kind==='folder'?workspaceParent(current.id):graph.projects.entries.find(item=>item.id===current.id)?.group;
+      const sourceName=current.id.slice(current.id.lastIndexOf('/')+1);
+      const occupied=new Set([...(graph.projects.groups||[]).map(group=>group.id),...(graph.projects.entries||[]).map(entry=>entry.id)]);
+      const candidates=[{id:WORKSPACE_ROOT,label:'Root'},...(graph.projects.groups||[]).filter(group=>group.id!==WORKSPACE_ROOT).map(group=>({id:group.id,label:workspacePath(group.id)}))]
+        .filter(folder=>folder.id!==currentParent)
+        .filter(folder=>current.kind!=='folder'||(folder.id!==current.id&&!folder.id.startsWith(`${current.id}/`)))
+        .filter(folder=>!occupied.has(`${folder.id}/${sourceName}`))
+        .sort((a,b)=>a.label.localeCompare(b.label));
+      $('workspaceMoveTitle').textContent=`Move ${workspacePath(current.id)}`;
+      $('workspaceMoveDestination').innerHTML=candidates.map(folder=>`<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.label)}</option>`).join('');
+      $('workspaceMoveError').textContent=candidates.length?'':'There are no other destination folders.';
+      $('confirmWorkspaceMove').disabled=!candidates.length;
+      $('workspaceMoveDialog').showModal();
+    }
+    async function confirmWorkspaceMove() {
+      const current={...workspaceNodeSelection};
+      const destination=$('workspaceMoveDestination').value;
+      if(!destination)return;
+      $('confirmWorkspaceMove').disabled=true;
+      $('workspaceMoveError').textContent='';
+      const result=await mutateWorkspace('/api/workspace/move',{...current,destination},'Workspace item moved');
+      if(result) {
+        $('workspaceMoveDialog').close();
+        workspaceNodeSelection={kind:current.kind,id:result.id};
+        if(current.kind==='project'&&workspaceSelection===current.id)workspaceSelection=result.id;
+        if(current.kind==='folder'&&workspaceSelection?.startsWith(`${current.id}/`))workspaceSelection=`${result.id}${workspaceSelection.slice(current.id.length)}`;
+        render();
+        toast(`Moved to ${workspacePath(result.id)}`);
+      } else {
+        $('workspaceMoveError').textContent='Move failed. The workspace was not changed.';
+        $('confirmWorkspaceMove').disabled=false;
+      }
     }
     async function deleteWorkspaceSelection() {
       closeWorkspaceMenus();
       const current={...workspaceNodeSelection};
-      if(current.kind==='folder'&&current.id==='routes')return;
-      if(!window.confirm(`Delete ${current.id}${current.kind==='folder'?' and everything beneath it':''}?\n\nThe workbench moves it to recoverable local trash; Git remains the source of history.`))return;
-      if(await mutateWorkspace('/api/workspace/delete',current,`Deleted ${current.id}`)) {
+      if(current.kind==='folder'&&current.id===WORKSPACE_ROOT)return;
+      if(!window.confirm(`Delete ${workspacePath(current.id)}${current.kind==='folder'?' and everything beneath it':''}?\n\nThe workbench moves it to recoverable local trash; Git remains the source of history.`))return;
+      if(await mutateWorkspace('/api/workspace/delete',current,`Deleted ${workspacePath(current.id)}`)) {
         if(current.kind==='project'&&workspaceSelection===current.id)workspaceSelection=null;
-        workspaceNodeSelection={kind:'folder',id:'routes'};
+        workspaceNodeSelection={kind:'folder',id:WORKSPACE_ROOT};
         renderProjects();
       }
     }
@@ -1221,6 +1273,7 @@
     $('workspaceNewFolder').addEventListener('click',createWorkspaceFolder);
     $('workspaceClone').addEventListener('click',cloneWorkspaceTape);
     $('workspaceMove').addEventListener('click',moveWorkspaceSelection);
+    $('confirmWorkspaceMove').addEventListener('click',confirmWorkspaceMove);
     $('workspaceDelete').addEventListener('click',deleteWorkspaceSelection);
     document.addEventListener('click',closeWorkspaceMenus);
     bindGraphPan();

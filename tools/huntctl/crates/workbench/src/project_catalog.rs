@@ -727,9 +727,14 @@ pub(super) fn move_workspace_node(
         }
         completed.push((source.clone(), target.clone()));
     }
+    let source_name = request
+        .id
+        .rsplit_once('/')
+        .map_or(request.id.as_str(), |(_, name)| name);
+    let moved_id = format!("{}/{}", request.destination, source_name);
     Ok(WorkspaceMutationResult {
         operation: "move".into(),
-        id: request.id.clone(),
+        id: moved_id,
         destination: Some(request.destination.clone()),
         trash: None,
     })
@@ -1240,7 +1245,7 @@ mod tests {
             },
         )
         .unwrap();
-        move_workspace_node(
+        let moved = move_workspace_node(
             &repository,
             &repository.join("not-active.timeline"),
             &BrowserWorkspaceMoveRequest {
@@ -1250,6 +1255,8 @@ mod tests {
             },
         )
         .unwrap();
+        assert_eq!(moved.id, "routes/moved/canary");
+        assert_eq!(moved.destination.as_deref(), Some("routes/moved"));
         assert!(repository.join("routes/moved/canary.tape").is_file());
         assert!(repository.join("routes/moved/canary.boot.json").is_file());
         assert!(repository.join("routes/moved/canary.launch").is_file());
@@ -1289,6 +1296,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("cannot be moved into itself"));
+        fs::remove_dir_all(repository).unwrap();
+    }
+
+    #[test]
+    fn workspace_moves_a_folder_to_an_existing_sibling_and_returns_its_new_identity() {
+        let repository = temporary_repository("move-folder");
+        fs::create_dir_all(repository.join("routes/source/nested")).unwrap();
+        fs::create_dir_all(repository.join("routes/destination")).unwrap();
+        fs::write(repository.join("routes/source/nested/canary.tas"), NEW_TAPE_SOURCE).unwrap();
+
+        let moved = move_workspace_node(
+            &repository,
+            &repository.join("not-active.timeline"),
+            &BrowserWorkspaceMoveRequest {
+                id: "routes/source".into(),
+                kind: WorkspaceNodeKind::Folder,
+                destination: "routes/destination".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(moved.id, "routes/destination/source");
+        assert_eq!(moved.destination.as_deref(), Some("routes/destination"));
+        assert!(
+            repository
+                .join("routes/destination/source/nested/canary.tas")
+                .is_file()
+        );
+        assert!(!repository.join("routes/source").exists());
         fs::remove_dir_all(repository).unwrap();
     }
 
