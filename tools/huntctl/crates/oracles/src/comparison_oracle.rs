@@ -1,5 +1,7 @@
 //! Corpus- and cross-run semantic comparison oracles.
 
+use crate::artifact::ArtifactIdentity;
+use crate::compatibility::{CompatibilityMode, ensure_compatible};
 use crate::semantic_oracle::{OracleDisposition, OraclePolarity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -63,6 +65,7 @@ pub struct ComparisonEvidence {
 pub struct ComparisonRunEvidence {
     pub label: String,
     pub role: ComparisonRunRole,
+    pub identity: ArtifactIdentity,
     /// True only when the complete semantic event stream was retained.
     pub complete: bool,
     #[serde(default)]
@@ -161,6 +164,9 @@ impl ComparisonOracleProgram {
     ) -> Result<ComparisonOracleReport, ComparisonOracleError> {
         self.validate()?;
         evidence.validate()?;
+        for oracle in &self.oracles {
+            validate_target_compatibility(&oracle.target, evidence)?;
+        }
         let results = self
             .oracles
             .iter()
@@ -208,6 +214,12 @@ impl ComparisonEvidence {
                     "invalid, duplicate, or oversized comparison run",
                 ));
             }
+            run.identity.validate().map_err(|error| {
+                ComparisonOracleError::new(format!(
+                    "comparison run {:?} has invalid identity: {error}",
+                    run.label
+                ))
+            })?;
             let mut previous_tick = None;
             for event in &run.events {
                 if !valid_text(&event.event_kind)
@@ -223,6 +235,40 @@ impl ComparisonEvidence {
         }
         Ok(())
     }
+}
+
+fn validate_target_compatibility(
+    target: &ComparisonTarget,
+    evidence: &ComparisonEvidence,
+) -> Result<(), ComparisonOracleError> {
+    let pair = match target {
+        ComparisonTarget::HeadfulHeadlessDivergence => Some((
+            ComparisonRunRole::Headful,
+            ComparisonRunRole::Headless,
+            CompatibilityMode::CrossFidelityComparison,
+        )),
+        ComparisonTarget::ControlTreatmentDifference => Some((
+            ComparisonRunRole::Control,
+            ComparisonRunRole::Treatment,
+            CompatibilityMode::CrossBuildComparison,
+        )),
+        ComparisonTarget::NovelSemanticEventSignature { .. } => None,
+    };
+    let Some((left_role, right_role, mode)) = pair else {
+        return Ok(());
+    };
+    let Some(left) = evidence.runs.iter().find(|run| run.role == left_role) else {
+        return Ok(());
+    };
+    let Some(right) = evidence.runs.iter().find(|run| run.role == right_role) else {
+        return Ok(());
+    };
+    ensure_compatible(mode, &left.identity, &right.identity).map_err(|error| {
+        ComparisonOracleError::new(format!(
+            "comparison runs {:?} and {:?} are incompatible: {error}",
+            left.label, right.label
+        ))
+    })
 }
 
 fn evaluate_one(
@@ -394,15 +440,49 @@ impl Error for ComparisonOracleError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact::{ARTIFACT_SCHEMA_VERSION, BuildIdentity, Digest};
 
     fn digest(byte: char) -> String {
         std::iter::repeat_n(byte, 64).collect()
+    }
+
+    fn identity(fidelity: &str) -> ArtifactIdentity {
+        ArtifactIdentity {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            content_digest: Digest([1; 32]),
+            build: BuildIdentity {
+                dusklight_commit: "1".repeat(40),
+                aurora_commit: "2".repeat(40),
+                compiler: "clang".into(),
+                target: "arm64-apple-darwin".into(),
+                profile: "debug".into(),
+                feature_digest: Digest([3; 32]),
+                game_digest: Digest([4; 32]),
+                dirty_digest: None,
+                fidelity_profile: fidelity.into(),
+            },
+            protocol_name: "dusklight-automation".into(),
+            protocol_version: 1,
+            protocol_capabilities_digest: Digest([5; 32]),
+            scenario_id: "comparison-scenario".into(),
+            region_digest: Digest([6; 32]),
+            language_assets_digest: Digest([7; 32]),
+            scenario_digest: Digest([8; 32]),
+            predicate_program_digest: Digest([9; 32]),
+            action_schema_digest: Digest([10; 32]),
+            observation_schema_digest: Digest([11; 32]),
+            settings_digest: Digest([12; 32]),
+        }
     }
 
     fn run(label: &str, role: ComparisonRunRole, signatures: &[char]) -> ComparisonRunEvidence {
         ComparisonRunEvidence {
             label: label.into(),
             role,
+            identity: identity(match role {
+                ComparisonRunRole::Headful => "realtime-headful",
+                _ => "headless",
+            }),
             complete: true,
             final_boundary_identity: Some(digest('f')),
             events: signatures
@@ -498,6 +578,30 @@ mod tests {
             program.evaluate(&evidence).unwrap().results[0].disposition,
             OracleDisposition::Indeterminate
         );
+    }
+
+    #[test]
+    fn comparison_rejects_incompatible_run_inputs_before_oracle_evaluation() {
+        let mut evidence = ComparisonEvidence {
+            schema: COMPARISON_EVIDENCE_SCHEMA_V1.into(),
+            catalog_identity: digest('c'),
+            known_event_signatures: vec![],
+            runs: vec![
+                run("control", ComparisonRunRole::Control, &['1']),
+                run("treatment", ComparisonRunRole::Treatment, &['1']),
+            ],
+        };
+        evidence.runs[1].identity.settings_digest = Digest([99; 32]);
+        let program = ComparisonOracleProgram {
+            schema: COMPARISON_ORACLE_SCHEMA_V1.into(),
+            oracles: vec![ComparisonOracle {
+                name: "treatment-difference".into(),
+                polarity: OraclePolarity::Reached,
+                target: ComparisonTarget::ControlTreatmentDifference,
+            }],
+        };
+        let error = program.evaluate(&evidence).unwrap_err();
+        assert!(error.to_string().contains("settings_digest"));
     }
 
     #[test]

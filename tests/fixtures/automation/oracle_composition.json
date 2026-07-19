@@ -8,6 +8,31 @@
     {
       "label": "intervention",
       "role": "treatment",
+      "identity": {
+        "schema_version": 2,
+        "content_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "build": {
+          "dusklight_commit": "1111111111111111111111111111111111111111",
+          "aurora_commit": "2222222222222222222222222222222222222222",
+          "compiler": "clang",
+          "target": "arm64-apple-darwin",
+          "profile": "debug",
+          "feature_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+          "game_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "fidelity_profile": "headless-fixed-step"
+        },
+        "protocol_name": "dusklight-automation",
+        "protocol_version": 1,
+        "protocol_capabilities_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+        "scenario_id": "comparison-scenario",
+        "region_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+        "language_assets_digest": "7777777777777777777777777777777777777777777777777777777777777777",
+        "scenario_digest": "8888888888888888888888888888888888888888888888888888888888888888",
+        "predicate_program_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "action_schema_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observation_schema_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "settings_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
       "complete": true,
       "final_boundary_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
       "run_outcome": {

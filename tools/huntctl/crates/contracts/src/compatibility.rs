@@ -13,6 +13,7 @@ pub enum CompatibilityMode {
     ModelTraining,
     CheckpointRestore,
     CrossBuildComparison,
+    CrossFidelityComparison,
 }
 
 impl CompatibilityMode {
@@ -23,6 +24,7 @@ impl CompatibilityMode {
             Self::ModelTraining => "model-training",
             Self::CheckpointRestore => "checkpoint-restore",
             Self::CrossBuildComparison => "cross-build-comparison",
+            Self::CrossFidelityComparison => "cross-fidelity-comparison",
         }
     }
 }
@@ -39,7 +41,7 @@ pub struct ParseCompatibilityModeError;
 impl fmt::Display for ParseCompatibilityModeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "compatibility mode must be replay, trace-merge, model-training, checkpoint-restore, or cross-build-comparison",
+            "compatibility mode must be replay, trace-merge, model-training, checkpoint-restore, cross-build-comparison, or cross-fidelity-comparison",
         )
     }
 }
@@ -56,6 +58,7 @@ impl FromStr for CompatibilityMode {
             "model-training" => Ok(Self::ModelTraining),
             "checkpoint-restore" => Ok(Self::CheckpointRestore),
             "cross-build-comparison" => Ok(Self::CrossBuildComparison),
+            "cross-fidelity-comparison" => Ok(Self::CrossFidelityComparison),
             _ => Err(ParseCompatibilityModeError),
         }
     }
@@ -135,6 +138,7 @@ pub fn compatibility_differences(
         CompatibilityMode::Replay
             | CompatibilityMode::TraceMerge
             | CompatibilityMode::CheckpointRestore
+            | CompatibilityMode::CrossFidelityComparison
     );
     if exact_build {
         compare!(
@@ -178,11 +182,13 @@ pub fn compatibility_differences(
         expected.build.game_digest,
         actual.build.game_digest
     );
-    compare!(
-        "build.fidelity_profile",
-        expected.build.fidelity_profile,
-        actual.build.fidelity_profile
-    );
+    if mode != CompatibilityMode::CrossFidelityComparison {
+        compare!(
+            "build.fidelity_profile",
+            expected.build.fidelity_profile,
+            actual.build.fidelity_profile
+        );
+    }
     compare!(
         "protocol_name",
         expected.protocol_name,
@@ -219,6 +225,7 @@ pub fn compatibility_differences(
         CompatibilityMode::Replay
             | CompatibilityMode::CheckpointRestore
             | CompatibilityMode::CrossBuildComparison
+            | CompatibilityMode::CrossFidelityComparison
     );
     if exact_scenario {
         compare!("scenario_id", expected.scenario_id, actual.scenario_id);
@@ -231,7 +238,9 @@ pub fn compatibility_differences(
 
     let predicate_relevant = matches!(
         mode,
-        CompatibilityMode::Replay | CompatibilityMode::CrossBuildComparison
+        CompatibilityMode::Replay
+            | CompatibilityMode::CrossBuildComparison
+            | CompatibilityMode::CrossFidelityComparison
     );
     if predicate_relevant {
         compare!(
@@ -381,9 +390,35 @@ mod tests {
             CompatibilityMode::ModelTraining,
             CompatibilityMode::CheckpointRestore,
             CompatibilityMode::CrossBuildComparison,
+            CompatibilityMode::CrossFidelityComparison,
         ] {
             assert!(compatibility_differences(mode, &expected, &actual).is_empty());
         }
+    }
+
+    #[test]
+    fn cross_fidelity_comparison_allows_only_the_declared_fidelity_change() {
+        let expected = identity();
+        let mut actual = expected.clone();
+        actual.build.fidelity_profile = "realtime-headful".into();
+        assert!(
+            compatibility_differences(
+                CompatibilityMode::CrossFidelityComparison,
+                &expected,
+                &actual,
+            )
+            .is_empty()
+        );
+        actual.settings_digest = Digest([91; 32]);
+        assert_eq!(
+            compatibility_differences(
+                CompatibilityMode::CrossFidelityComparison,
+                &expected,
+                &actual,
+            )[0]
+            .field,
+            "settings_digest"
+        );
     }
 
     #[test]

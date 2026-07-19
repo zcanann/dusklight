@@ -1,5 +1,6 @@
 //! Composition of cheap native anomaly observations into corpus signatures.
 
+use crate::artifact::ArtifactIdentity;
 use crate::comparison_oracle::{
     COMPARISON_EVIDENCE_SCHEMA_V1, ComparisonEvidence, ComparisonRunEvidence, ComparisonRunRole,
     SemanticEventSignature,
@@ -36,6 +37,7 @@ pub struct SemanticEventCatalog {
 pub struct OracleCompositionRun {
     pub label: String,
     pub role: ComparisonRunRole,
+    pub identity: ArtifactIdentity,
     pub complete: bool,
     #[serde(default)]
     pub final_boundary_identity: Option<String>,
@@ -129,6 +131,7 @@ fn compose_run(run: &OracleCompositionRun) -> Result<ComparisonRunEvidence, Orac
     Ok(ComparisonRunEvidence {
         label: run.label.clone(),
         role: run.role,
+        identity: run.identity.clone(),
         complete: run.complete,
         final_boundary_identity: run.final_boundary_identity.clone(),
         events,
@@ -306,7 +309,37 @@ impl Error for OraclePipelineError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact::{ARTIFACT_SCHEMA_VERSION, BuildIdentity, Digest};
     use crate::semantic_oracle::{RUN_OUTCOME_SCHEMA_V1, RunEvidenceKind};
+
+    fn identity() -> ArtifactIdentity {
+        ArtifactIdentity {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            content_digest: Digest([1; 32]),
+            build: BuildIdentity {
+                dusklight_commit: "1".repeat(40),
+                aurora_commit: "2".repeat(40),
+                compiler: "clang".into(),
+                target: "arm64-apple-darwin".into(),
+                profile: "debug".into(),
+                feature_digest: Digest([3; 32]),
+                game_digest: Digest([4; 32]),
+                dirty_digest: None,
+                fidelity_profile: "headless".into(),
+            },
+            protocol_name: "dusklight-automation".into(),
+            protocol_version: 1,
+            protocol_capabilities_digest: Digest([5; 32]),
+            scenario_id: "comparison-scenario".into(),
+            region_digest: Digest([6; 32]),
+            language_assets_digest: Digest([7; 32]),
+            scenario_digest: Digest([8; 32]),
+            predicate_program_digest: Digest([9; 32]),
+            action_schema_digest: Digest([10; 32]),
+            observation_schema_digest: Digest([11; 32]),
+            settings_digest: Digest([12; 32]),
+        }
+    }
 
     fn outcome(tick: u64) -> RunOutcomeEvidence {
         RunOutcomeEvidence {
@@ -328,6 +361,7 @@ mod tests {
         let first = OracleCompositionRun {
             label: "control".into(),
             role: ComparisonRunRole::Control,
+            identity: identity(),
             complete: true,
             final_boundary_identity: None,
             run_outcome: outcome(10),
@@ -335,6 +369,7 @@ mod tests {
         let second = OracleCompositionRun {
             label: "treatment".into(),
             role: ComparisonRunRole::Treatment,
+            identity: identity(),
             complete: true,
             final_boundary_identity: None,
             run_outcome: outcome(20),
