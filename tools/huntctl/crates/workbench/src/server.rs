@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub fn serve(listener: TcpListener, config: WorkbenchConfig) -> Result<(), WorkbenchError> {
+pub fn serve(listener: TcpListener, mut config: WorkbenchConfig) -> Result<(), WorkbenchError> {
     let address = listener
         .local_addr()
         .map_err(|error| WorkbenchError::new(error.to_string()))?;
@@ -15,7 +15,7 @@ pub fn serve(listener: TcpListener, config: WorkbenchConfig) -> Result<(), Workb
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let response = handle_http(&mut stream, address, &config);
+                let response = handle_http(&mut stream, address, &mut config);
                 let _ = write_http_response(&mut stream, response);
             }
             Err(error) => return Err(WorkbenchError::new(format!("HTTP accept failed: {error}"))),
@@ -63,7 +63,7 @@ pub(super) fn thumbnail_response(config: &WorkbenchConfig, request_path: &str) -
 pub(super) fn handle_http(
     stream: &mut TcpStream,
     server_address: SocketAddr,
-    config: &WorkbenchConfig,
+    config: &mut WorkbenchConfig,
 ) -> HttpResponse {
     match read_http_request(stream) {
         Ok(request) => {
@@ -458,7 +458,7 @@ pub(super) fn handle_http(
                             .and_then(|move_request| {
                                 move_workspace_node(
                                     &config.repository_root,
-                                    &config.timeline_path,
+                                    &mut config.timeline_path,
                                     &move_request,
                                 )
                             });

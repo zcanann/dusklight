@@ -681,7 +681,7 @@ pub(super) fn clone_workspace_tape(
 
 pub(super) fn move_workspace_node(
     repository_root: &Path,
-    active_timeline: &Path,
+    active_timeline: &mut PathBuf,
     request: &BrowserWorkspaceMoveRequest,
 ) -> Result<WorkspaceMutationResult, WorkbenchError> {
     let _guard = workspace_edits()
@@ -689,7 +689,7 @@ pub(super) fn move_workspace_node(
         .map_err(|_| WorkbenchError::new("workspace edit lock is poisoned"))?;
     let destination = public_workspace_group_path(repository_root, &request.destination)?;
     let sources = workspace_node_sources(repository_root, &request.id, request.kind)?;
-    reject_active_timeline_move(active_timeline, &sources)?;
+    let canonical_active = fs::canonicalize(&*active_timeline).ok();
     if sources
         .iter()
         .filter(|source| source.is_dir())
@@ -708,6 +708,21 @@ pub(super) fn move_workspace_node(
             Ok((source.clone(), destination.join(name)))
         })
         .collect::<Result<Vec<_>, WorkbenchError>>()?;
+    let moved_active_timeline = canonical_active.as_ref().and_then(|active| {
+        moves.iter().find_map(|(source, target)| {
+            let canonical_source = fs::canonicalize(source).ok()?;
+            active
+                .strip_prefix(&canonical_source)
+                .ok()
+                .map(|relative| {
+                    if relative.as_os_str().is_empty() {
+                        target.clone()
+                    } else {
+                        target.join(relative)
+                    }
+                })
+        })
+    });
     if moves.iter().any(|(_, target)| target.exists()) {
         return Err(WorkbenchError::new(
             "workspace move destination already exists",
@@ -726,6 +741,9 @@ pub(super) fn move_workspace_node(
             )));
         }
         completed.push((source.clone(), target.clone()));
+    }
+    if let Some(path) = moved_active_timeline {
+        *active_timeline = path;
     }
     let source_name = request
         .id
@@ -1245,9 +1263,10 @@ mod tests {
             },
         )
         .unwrap();
+        let mut active_timeline = repository.join("not-active.timeline");
         let moved = move_workspace_node(
             &repository,
-            &repository.join("not-active.timeline"),
+            &mut active_timeline,
             &BrowserWorkspaceMoveRequest {
                 id: "routes/qa/canary".into(),
                 kind: WorkspaceNodeKind::Project,
@@ -1285,9 +1304,10 @@ mod tests {
     fn workspace_rejects_moving_a_folder_into_its_descendant() {
         let repository = temporary_repository("cycle");
         fs::create_dir_all(repository.join("routes/a/b")).unwrap();
+        let mut active_timeline = repository.join("not-active.timeline");
         let error = move_workspace_node(
             &repository,
-            &repository.join("not-active.timeline"),
+            &mut active_timeline,
             &BrowserWorkspaceMoveRequest {
                 id: "routes/a".into(),
                 kind: WorkspaceNodeKind::Folder,
@@ -1306,9 +1326,10 @@ mod tests {
         fs::create_dir_all(repository.join("routes/destination")).unwrap();
         fs::write(repository.join("routes/source/nested/canary.tas"), NEW_TAPE_SOURCE).unwrap();
 
+        let mut active_timeline = repository.join("not-active.timeline");
         let moved = move_workspace_node(
             &repository,
-            &repository.join("not-active.timeline"),
+            &mut active_timeline,
             &BrowserWorkspaceMoveRequest {
                 id: "routes/source".into(),
                 kind: WorkspaceNodeKind::Folder,
@@ -1325,6 +1346,41 @@ mod tests {
                 .is_file()
         );
         assert!(!repository.join("routes/source").exists());
+        fs::remove_dir_all(repository).unwrap();
+    }
+
+    #[test]
+    fn workspace_moves_the_open_timeline_and_updates_the_live_server_path() {
+        let repository = temporary_repository("move-active-timeline");
+        fs::create_dir_all(repository.join("routes/destination")).unwrap();
+        fs::create_dir_all(repository.join("routes/active/segments")).unwrap();
+        fs::write(repository.join("routes/active.timeline"), "timeline active\n").unwrap();
+        fs::write(repository.join("routes/active/segments/marker"), b"private route data").unwrap();
+        let mut active_timeline = repository.join("routes/active.timeline");
+
+        let moved = move_workspace_node(
+            &repository,
+            &mut active_timeline,
+            &BrowserWorkspaceMoveRequest {
+                id: "routes/active".into(),
+                kind: WorkspaceNodeKind::Project,
+                destination: "routes/destination".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(moved.id, "routes/destination/active");
+        assert_eq!(
+            active_timeline,
+            fs::canonicalize(repository.join("routes/destination/active.timeline")).unwrap()
+        );
+        assert!(active_timeline.is_file());
+        assert!(
+            repository
+                .join("routes/destination/active/segments/marker")
+                .is_file()
+        );
+        assert!(!repository.join("routes/active.timeline").exists());
         fs::remove_dir_all(repository).unwrap();
     }
 

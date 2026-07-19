@@ -423,7 +423,7 @@
       const rootSelected=workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===WORKSPACE_ROOT;
       const project=workspaceNodeSelection.kind==='project'?graph.projects.entries.find(item=>item.id===workspaceNodeSelection.id):null;
       $('workspaceClone').disabled=!project||project.kind==='timeline';
-      $('workspaceMove').disabled=rootSelected||project?.active===true;
+      $('workspaceMove').disabled=rootSelected;
       $('workspaceDelete').disabled=rootSelected||project?.active===true;
     }
     function closeWorkspaceMenus() {

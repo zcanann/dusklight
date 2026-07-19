@@ -366,7 +366,8 @@ fn call_http(config: &WorkbenchConfig, method: &str, path: &str, body: &[u8]) ->
         stream.shutdown(std::net::Shutdown::Write).unwrap();
     });
     let (mut stream, _) = listener.accept().unwrap();
-    let response = handle_http(&mut stream, address, config);
+    let mut config = config.clone();
+    let response = handle_http(&mut stream, address, &mut config);
     client.join().unwrap();
     response
 }
