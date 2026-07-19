@@ -616,7 +616,6 @@ pub struct BrowserPlayRequest {
 pub struct GraphSubgraph {
     pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub entry_segment: String,
     pub exit_segment: String,

@@ -958,6 +958,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/subgraphs/rename",
         "/api/subgraphs/ungroup",
         "scopedSegmentForest",
+        "parent:item.parent??null",
+        "(group.parent??null)===activeSubgraph",
         "grid-template-rows",
         "projectBootIcon",
         "🫠",
@@ -1490,8 +1492,18 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         .unwrap();
     assert_eq!(to_link.entry_segment, "tolink_title_ready");
     assert_eq!(to_link.exit_segment, "tolink_link_control");
+    assert_eq!(to_link.parent, None);
     assert_eq!(to_link.recursive_segments.len(), 9);
     assert_eq!(to_link.frame_count, Some(440));
+    let serialized = serde_json::to_value(&graph).unwrap();
+    let serialized_to_link = serialized["subgraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|subgraph| subgraph["id"] == "tolink")
+        .unwrap();
+    assert!(serialized_to_link.get("parent").is_some());
+    assert!(serialized_to_link["parent"].is_null());
     let continuation = graph
         .segments
         .iter()

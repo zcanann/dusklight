@@ -392,7 +392,7 @@
     function normalize(raw) {
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
-      const subgraphs=Array.isArray(raw.subgraphs)?raw.subgraphs:[];
+      const subgraphs=(Array.isArray(raw.subgraphs)?raw.subgraphs:[]).map(item=>({...item,parent:item.parent??null}));
       const projects=raw.projects||{groups:[],entries:[]};
       return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,subgraphs,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
     }
@@ -660,7 +660,7 @@
       if(!segmentId)return null;
       const directOwner=directSegmentOwner(segmentId);
       if(directOwner===activeSubgraph)return entityKey('segment',segmentId);
-      const child=graph.subgraphs.find(group=>group.parent===activeSubgraph&&(group.recursive_segments||[]).includes(segmentId));
+      const child=graph.subgraphs.find(group=>(group.parent??null)===activeSubgraph&&(group.recursive_segments||[]).includes(segmentId));
       return child?entityKey('subgraph',child.id):null;
     }
     function renderScopedEntity(kind,id,childrenByKey,path=new Set(),chain=[]) {
@@ -685,7 +685,7 @@
     }
     function scopedSegmentForest() {
       const directSegments=graph.segments.filter(segment=>directSegmentOwner(segment.id)===activeSubgraph);
-      const directGroups=graph.subgraphs.filter(group=>group.parent===activeSubgraph);
+      const directGroups=graph.subgraphs.filter(group=>(group.parent??null)===activeSubgraph);
       const entities=[...directSegments.map(segment=>({kind:'segment',id:segment.id})),...directGroups.map(group=>({kind:'subgraph',id:group.id}))];
       const visible=new Set(entities.map(entity=>entityKey(entity.kind,entity.id)));
       const childrenByKey=new Map();
