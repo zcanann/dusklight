@@ -503,11 +503,11 @@ mod tests {
     #[test]
     fn checked_in_comparison_fixtures_evaluate() {
         let program: ComparisonOracleProgram = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/automation/comparison_oracles.json"
+            "../../../../../tests/fixtures/automation/comparison_oracles.json"
         ))
         .unwrap();
         let evidence: ComparisonEvidence = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/automation/comparison_evidence.json"
+            "../../../../../tests/fixtures/automation/comparison_evidence.json"
         ))
         .unwrap();
         let report = program.evaluate(&evidence).unwrap();

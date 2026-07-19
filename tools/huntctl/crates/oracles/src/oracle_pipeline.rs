@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn checked_in_composition_fixture_produces_valid_comparison_evidence() {
         let manifest: OracleCompositionManifest = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/automation/oracle_composition.json"
+            "../../../../../tests/fixtures/automation/oracle_composition.json"
         ))
         .unwrap();
         let evidence = manifest.compose().unwrap();

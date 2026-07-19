@@ -9,6 +9,8 @@ dusklight-huntctl (CLI and domain orchestration)
 ├── dusklight-evidence ───────────────┐
 ├── dusklight-objectives ─────────────┤
 │   └── dusklight-trace ──────────────┤
+├── dusklight-oracles ────────────────┤
+│   └── dusklight-trace ──────────────┤
 ├── dusklight-worker-protocol ────────┤
 ├── dusklight-world ──────────────────┤
 └── dusklight-automation-contracts ◄──┘
@@ -56,6 +58,14 @@ decoded traces. It may depend on contracts and trace. It cannot execute the
 game, select candidates, mutate routes, train models, or parse CLI commands.
 This direction is deliberate: observations do not acquire objective semantics,
 while objectives may interpret observations.
+
+## `dusklight-oracles`
+
+Owns run-local semantic oracles, cross-run comparison oracles, and the pipeline
+that composes their evidence. It may depend on contracts and trace. It cannot
+launch the game, rank or mutate candidates, train models, own route state, or
+parse CLI commands. Oracle verdicts therefore remain independent of the search
+systems that consume them.
 
 ## `dusklight-world`
 

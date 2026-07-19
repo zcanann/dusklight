@@ -2404,7 +2404,7 @@ mod tests {
     #[test]
     fn checked_in_semantic_oracle_catalog_is_valid() {
         let program: SemanticOracleProgram = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/automation/semantic_oracles.json"
+            "../../../../../tests/fixtures/automation/semantic_oracles.json"
         ))
         .unwrap();
         program.validate().unwrap();
@@ -2413,7 +2413,7 @@ mod tests {
     #[test]
     fn checked_in_run_outcome_fixture_is_valid() {
         let outcome: RunOutcomeEvidence = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/automation/run_outcome.json"
+            "../../../../../tests/fixtures/automation/run_outcome.json"
         ))
         .unwrap();
         validate_run_outcome(&outcome).unwrap();

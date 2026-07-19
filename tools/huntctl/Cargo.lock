@@ -263,6 +263,7 @@ dependencies = [
  "dusklight-control",
  "dusklight-evidence",
  "dusklight-objectives",
+ "dusklight-oracles",
  "dusklight-trace",
  "dusklight-worker-protocol",
  "dusklight-world",
@@ -274,6 +275,17 @@ dependencies = [
 
 [[package]]
 name = "dusklight-objectives"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-oracles"
 version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
