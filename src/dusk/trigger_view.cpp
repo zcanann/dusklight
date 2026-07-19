@@ -3,6 +3,8 @@
 #include "d/actor/d_a_scene_exit.h"
 #include "d/actor/d_a_scene_exit2.h"
 #include "d/actor/d_a_npc.h"
+#include "d/actor/d_a_tag_event.h"
+#include "d/actor/d_a_tag_evt.h"
 #include "d/actor/d_a_tag_evtarea.h"
 #include "d/d_bg_w.h"
 #include "d/d_bg_w_kcol.h"
@@ -200,18 +202,44 @@ struct ActorTriggerDrawContext {
 };
 
 void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const GXColor& color) {
+    constexpr int kSegments = 16;
+    constexpr float kFullTurn = 6.28318530717958647692f;
     Mtx transform;
-    Mtx operation;
     cMtx_trans(transform, base.x, base.y, base.z);
-    cMtx_YrotS(operation, angle);
-    cMtx_concat(transform, operation, transform);
-    cMtx_scale(operation, std::abs(size.x), std::abs(size.y) * 0.5f, std::abs(size.z));
-    cMtx_concat(transform, operation, transform);
-    cMtx_trans(operation, 0.0f, 1.0f, 0.0f);
-    cMtx_concat(transform, operation, transform);
-    cMtx_XrotS(operation, 0x4000);
-    cMtx_concat(transform, operation, transform);
-    dDbVw_drawCylinderMXlu(transform, color, TRUE);
+    cMtx_YrotM(transform, angle);
+
+    cXyz bottom_center;
+    cXyz top_center;
+    cXyz local_bottom_center(0.0f, 0.0f, 0.0f);
+    cXyz local_top_center(0.0f, std::abs(size.y), 0.0f);
+    cMtx_multVec(transform, &local_bottom_center, &bottom_center);
+    cMtx_multVec(transform, &local_top_center, &top_center);
+
+    for (int segment = 0; segment < kSegments; ++segment) {
+        const float first_angle = kFullTurn * static_cast<float>(segment) / kSegments;
+        const float second_angle = kFullTurn * static_cast<float>(segment + 1) / kSegments;
+        cXyz local_bottom[2] = {
+            cXyz(std::cos(first_angle) * std::abs(size.x), 0.0f,
+                std::sin(first_angle) * std::abs(size.z)),
+            cXyz(std::cos(second_angle) * std::abs(size.x), 0.0f,
+                std::sin(second_angle) * std::abs(size.z)),
+        };
+        cXyz bottom[2];
+        cXyz top[2];
+        for (int point = 0; point < 2; ++point) {
+            cMtx_multVec(transform, &local_bottom[point], &bottom[point]);
+            cXyz local_top = local_bottom[point];
+            local_top.y = std::abs(size.y);
+            cMtx_multVec(transform, &local_top, &top[point]);
+        }
+
+        cXyz side[4] = {bottom[0], bottom[1], top[1], top[0]};
+        cXyz bottom_cap[3] = {bottom_center, bottom[1], bottom[0]};
+        cXyz top_cap[3] = {top_center, top[0], top[1]};
+        dDbVw_drawQuadXlu(side, color, TRUE);
+        dDbVw_drawTriangleXlu(bottom_cap, color, TRUE);
+        dDbVw_drawTriangleXlu(top_cap, color, TRUE);
+    }
 }
 
 void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext& context) {
@@ -245,6 +273,99 @@ void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext&
         size.y = context.settings.drawRange * 2.0f;
     }
     draw_elliptic_cylinder(base, size, area.shape_angle.y, color);
+}
+
+bool scripted_event_tag_deleted(const daTag_Evt_c& tag) {
+    if (tag.field_0x5E0 != 0xfff || tag.field_0x5E2 != 0xfff) {
+        if (tag.field_0x5E0 != 0xfff && !daNpcT_chkEvtBit(tag.field_0x5E0))
+            return true;
+        return tag.field_0x5E2 != 0xfff && daNpcT_chkEvtBit(tag.field_0x5E2);
+    }
+    if (tag.field_0x5DD != 0xff || tag.field_0x5DE != 0xff) {
+        if (tag.field_0x5DD != 0xff &&
+            !dComIfGs_isSwitch(tag.field_0x5DD, fopAcM_GetRoomNo(&tag)))
+        {
+            return true;
+        }
+        // Mirrors the native comparison bug: this u8 field is always compared
+        // as a real switch number, including 0xff.
+        return dComIfGs_isSwitch(tag.field_0x5DE, fopAcM_GetRoomNo(&tag));
+    }
+    return false;
+}
+
+void draw_scripted_event_tag(const daTag_Evt_c& tag, const ActorTriggerDrawContext& context) {
+    if (!finite(tag.current.pos) || !finite(tag.scale))
+        return;
+    const float radius = std::abs(tag.scale.x);
+    const float half_height = std::abs(tag.scale.y);
+    const float extent = std::max(radius, half_height);
+    if ((tag.current.pos - context.player).abs2() >
+        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
+    {
+        return;
+    }
+
+    const bool enabled = (tag.field_0x5E4 == 0 || tag.field_0x5E4 == 1) &&
+                         tag.field_0x5D0 == 0 && !scripted_event_tag_deleted(tag);
+    const GXColor color = event_area_color(enabled, context.settings.opacity);
+    cXyz base = tag.current.pos;
+    base.y -= half_height;
+    draw_elliptic_cylinder(
+        base, cXyz(radius, half_height * 2.0f, radius), 0, color);
+}
+
+bool mapped_event_tag_enabled(const daTag_Event_c& tag) {
+    if (tag.mAction != daTag_Event_c::ACTION_ARRIVAL && tag.mAction != daTag_Event_c::ACTION_HUNT)
+        return false;
+
+    const u32 parameters = fopAcM_GetParam(&tag);
+    const u8 switch_number = (parameters >> 8) & 0xff;
+    if (switch_number != 0xff && dComIfGs_isSwitch(switch_number, fopAcM_GetRoomNo(&tag)))
+        return false;
+    const u8 required_switch = (parameters >> 16) & 0xff;
+    if (required_switch != 0xff &&
+        !dComIfGs_isSwitch(required_switch, fopAcM_GetRoomNo(&tag)))
+    {
+        return false;
+    }
+
+    const u16 invalid_event = tag.home.angle.x & 0x7fff;
+    if (invalid_event != 0x7fff && invalid_event != 0 && daNpcT_chkEvtBit(invalid_event))
+        return false;
+    const u16 required_event = tag.home.angle.z;
+    return required_event == 0xffff || required_event == 0 || daNpcT_chkEvtBit(required_event);
+}
+
+void draw_mapped_event_tag(const daTag_Event_c& tag, const ActorTriggerDrawContext& context) {
+    if (!finite(tag.current.pos) || !finite(tag.scale))
+        return;
+    const float extent =
+        std::max({std::abs(tag.scale.x), std::abs(tag.scale.y), std::abs(tag.scale.z)});
+    if ((tag.current.pos - context.player).abs2() >
+        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
+    {
+        return;
+    }
+
+    const GXColor color =
+        event_area_color(mapped_event_tag_enabled(tag), context.settings.opacity);
+    if ((tag.home.angle.x & 0x8000) != 0) {
+        cXyz center = tag.current.pos;
+        center.y += tag.scale.y * 0.5f;
+        cXyz half_extent(std::abs(tag.scale.x) * 0.5f, std::abs(tag.scale.y) * 0.5f,
+            std::abs(tag.scale.z) * 0.5f);
+        csXyz angle(0, 0, 0);
+        dDbVw_drawCubeXlu(center, half_extent, angle, color);
+        return;
+    }
+
+    cXyz base = tag.current.pos;
+    base.y -= std::abs(tag.scale.y);
+    draw_elliptic_cylinder(base,
+        cXyz(std::abs(tag.scale.x), std::abs(tag.scale.y) * 2.0f,
+            std::abs(tag.scale.x)),
+        0, color);
 }
 
 int draw_actor_trigger(void* candidate, void* raw_context) {
@@ -284,6 +405,10 @@ int draw_actor_trigger(void* candidate, void* raw_context) {
         dDbVw_drawCylinderXlu(base, exit.mRadius, context.settings.drawRange * 2.0f, color, TRUE);
     } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVTAREA_e) {
         draw_event_area(*static_cast<const daTag_EvtArea_c*>(actor), context);
+    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVT_e) {
+        draw_scripted_event_tag(*static_cast<const daTag_Evt_c*>(actor), context);
+    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVENT_e) {
+        draw_mapped_event_tag(*static_cast<const daTag_Event_c*>(actor), context);
     }
     return 1;
 }

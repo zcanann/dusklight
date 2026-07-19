@@ -15,12 +15,18 @@ extent. `SCENE_EXIT2` is an XZ-only radial test, so the viewer renders its
 radius as a vertical extrusion through the configured visible range rather
 than inventing a gameplay height bound.
 
-The event-area view draws the exact rotated ellipse or box tested by each
-loaded `TAG_EVTAREA` actor, including its authored asymmetric X/Z radii. These
-are generic script activation volumes rather than NPC conversation radii. For
+The event/script-area view covers the three generic spatial event families:
+
+- `TAG_EVTAREA` rotated ellipses and boxes, including asymmetric X/Z radii;
+- `TAG_EVT` radial script areas; and
+- `TAG_EVENT` radial or axis-aligned map-event areas.
+
+These are script activation volumes rather than NPC conversation radii. For
 example, the forced Colin conversation blocking the opening `F_SP103` path
 tests event-area type 7 until event bit 14 is set; the corresponding magenta
-ellipse is the actual spatial boundary that starts that conversation.
+ellipse is the actual spatial boundary that starts that conversation. The
+opening `F_SP104` Ilia/Epona scene is driven by a separate `TAG_EVT` radial
+area, which is covered by the same toggle.
 
 ## Observation boundary
 
