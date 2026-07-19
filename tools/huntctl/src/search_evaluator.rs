@@ -430,8 +430,20 @@ pub struct ProposerTournamentRow {
     pub frame_wins: usize,
     pub boundary_diversity: usize,
     pub cold_replay_pass_rate: f64,
+    pub replay_verdict: ProposerReplayVerdict,
     pub best_candidate_id: String,
     pub best_score: LexicographicScore,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_proved_tape_sha256: Option<ArtifactDigest>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposerReplayVerdict {
+    Proved,
+    ObjectiveMiss,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2127,6 +2139,7 @@ pub fn run_proposer_tournament(
     let boot = boot.ok_or_else(|| EvaluateError::InvalidConfig("empty tournament".into()))?;
     fs::create_dir_all(&config.output_root)?;
     let population_root = config.output_root.join("population");
+    let candidates_by_id = union.clone();
     let manifest =
         write_explicit_population(&population_root, segment, 0, union.into_values().collect())?;
     if manifest.boot != boot {
@@ -2176,6 +2189,8 @@ pub fn run_proposer_tournament(
         .iter()
         .map(|member| (member.candidate_id.as_str(), member.frame_count))
         .collect::<BTreeMap<_, _>>();
+    let finalists_root = config.output_root.join("finalists");
+    fs::create_dir_all(&finalists_root)?;
     let mut rows = Vec::new();
     for proposer in selected {
         let best = leaderboard
@@ -2223,6 +2238,28 @@ pub fn run_proposer_tournament(
                     .unwrap_or(frame_counts[attempt.candidate_id.as_str()])
             })
             .sum();
+        let (replay_verdict, best_proved_tape, best_proved_tape_sha256) =
+            if best.score.goal_feasible {
+                let candidate = candidates_by_id.get(&best.candidate_id).ok_or_else(|| {
+                    EvaluateError::InvalidResult(format!(
+                        "best candidate {} is absent from the evaluated population",
+                        best.candidate_id
+                    ))
+                })?;
+                let tape_bytes = candidate.compile()?.encode()?;
+                let tape_sha256 = ArtifactDigest(Sha256::digest(&tape_bytes).into());
+                let tape_path = finalists_root.join(format!("{tape_sha256}.tape"));
+                if !tape_path.exists() {
+                    fs::write(&tape_path, &tape_bytes)?;
+                }
+                (
+                    ProposerReplayVerdict::Proved,
+                    Some(tape_path),
+                    Some(tape_sha256),
+                )
+            } else {
+                (ProposerReplayVerdict::ObjectiveMiss, None, None)
+            };
         rows.push(ProposerTournamentRow {
             name: proposer.name,
             kind: proposer.kind,
@@ -2243,8 +2280,11 @@ pub fn run_proposer_tournament(
             frame_wins,
             boundary_diversity: boundaries.len(),
             cold_replay_pass_rate: predicate_hits as f64 / proposer.candidate_ids.len() as f64,
+            replay_verdict,
             best_candidate_id: best.candidate_id.clone(),
             best_score: best.score,
+            best_proved_tape,
+            best_proved_tape_sha256,
         });
     }
     rows.sort_by(|left, right| left.name.cmp(&right.name));
@@ -2265,7 +2305,7 @@ pub fn run_proposer_tournament(
         })
         .sum();
     let summary = ProposerTournamentSummary {
-        schema: "dusklight-proposer-tournament/v1",
+        schema: "dusklight-proposer-tournament/v2",
         segment,
         boot,
         budget_unit: definition.budget_unit,

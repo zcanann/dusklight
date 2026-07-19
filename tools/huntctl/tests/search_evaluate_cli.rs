@@ -7,7 +7,7 @@ use huntctl::search::{
 };
 use huntctl::tape::InputTape;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1008,13 +1008,15 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
         String::from_utf8_lossy(&output.stderr)
     );
     let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(summary["schema"], "dusklight-proposer-tournament/v1");
+    assert_eq!(summary["schema"], "dusklight-proposer-tournament/v2");
     assert_eq!(summary["rows"].as_array().unwrap().len(), 2);
     for row in summary["rows"].as_array().unwrap() {
         assert_eq!(row["selected_candidates"], 2);
         assert_eq!(row["charged_episodes"], 4);
         assert_eq!(row["predicate_hits"], 0);
         assert_eq!(row["misses"], 2);
+        assert_eq!(row["replay_verdict"], "objective_miss");
+        assert_eq!(row["best_proved_tape"], serde_json::Value::Null);
     }
     let physical_candidates = summary["physical_candidates"].as_u64().unwrap();
     assert!(physical_candidates <= 4);
@@ -1025,5 +1027,49 @@ fn proposer_tournament_enforces_equal_budgets_and_deduplicates_before_native_rol
     assert!(output_root.join("evaluations/evaluation.json").exists());
     assert!(output_root.join("leaderboard.json").exists());
     assert!(output_root.join("tournament.summary.json").exists());
+
+    let proved_root = root.join("proved-results");
+    let proved = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["search", "tournament", "--definition"])
+        .arg(&definition)
+        .args(["--game", env!("CARGO_BIN_EXE_huntctl")])
+        .args(["--game-arg", "mock-search-worker"])
+        .args(["--dvd"])
+        .arg(&dvd)
+        .args(["--output"])
+        .arg(&proved_root)
+        .args([
+            "--workers",
+            "2",
+            "--repetitions",
+            "2",
+            "--timeout-ms",
+            "2000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        proved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&proved.stderr)
+    );
+    let proved_summary: serde_json::Value = serde_json::from_slice(&proved.stdout).unwrap();
+    assert_eq!(proved_summary["schema"], "dusklight-proposer-tournament/v2");
+    for row in proved_summary["rows"].as_array().unwrap() {
+        assert_eq!(row["charged_episodes"], 4);
+        assert_eq!(row["predicate_hits"], 2);
+        assert_eq!(row["misses"], 0);
+        assert!(row["boundary_diversity"].as_u64().unwrap() > 0);
+        assert_eq!(row["cold_replay_pass_rate"], 1.0);
+        assert_eq!(row["replay_verdict"], "proved");
+        assert!(row["best_proved_tape_sha256"].is_string());
+        let tape_path = PathBuf::from(row["best_proved_tape"].as_str().unwrap());
+        assert!(tape_path.is_file());
+        assert_eq!(
+            tape_path.file_stem().and_then(|value| value.to_str()),
+            row["best_proved_tape_sha256"].as_str()
+        );
+        InputTape::decode(&fs::read(tape_path).unwrap()).unwrap();
+    }
     fs::remove_dir_all(root).unwrap();
 }
