@@ -19,6 +19,42 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub const SEARCH_RUN_SCHEMA: &str = "dusklight-search-run/v2";
+
+#[derive(Clone, Debug)]
+pub struct SearchRunConfig {
+    pub segment: SegmentProfile,
+    pub seed_candidate: Option<Candidate>,
+    pub game: PathBuf,
+    pub dvd: PathBuf,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub generations: u32,
+    pub population_size: usize,
+    pub elite_count: usize,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub timeout: Duration,
+    pub rng_seed: u64,
+    pub harness: Option<HarnessEvaluateConfig>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SearchRunSummary {
+    pub schema: &'static str,
+    pub segment: SegmentProfile,
+    pub generations: u32,
+    pub population_size: usize,
+    pub repetitions: u32,
+    pub rng_seed: u64,
+    pub champion_id: String,
+    pub champion_candidate: PathBuf,
+    pub champion_tape: PathBuf,
+    pub score: LexicographicScore,
+    pub output_root: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 pub struct BeamSearchConfig {
     pub segment: SegmentProfile,

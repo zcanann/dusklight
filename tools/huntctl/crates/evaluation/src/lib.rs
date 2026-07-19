@@ -1,4 +1,4 @@
-//! Authenticated population evaluation and bounded search-run orchestration.
+//! Authenticated population evaluation and evidence interpretation.
 //!
 //! This crate may execute already-materialized candidates through the harness
 //! runtime and attach objective evidence. It does not define harness request

@@ -39,7 +39,8 @@ CRATE_IMPLEMENTATION_LINE_BUDGET = 3_000
 # dependency surfaces; growth beyond these limits requires another ownership
 # split, not a larger generic allowance.
 COORDINATION_FILE_LINE_BUDGETS = {
-    "evaluation/src/search_evaluator.rs": 2_000,
+    "evaluation/src/search_evaluator.rs": 1_500,
+    "orchestration/src/anchored_search.rs": 800,
     "orchestration/src/finalist_reduction/boot.rs": 1_000,
     "orchestration/src/finalist_reduction/mod.rs": 250,
     "orchestration/src/finalist_reduction/route.rs": 1_250,
@@ -61,6 +62,7 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
     },
     "harness-runtime": {"execution.rs", "inspection.rs", "lib.rs"},
     "orchestration": {
+        "anchored_search.rs",
         "finalist_reduction/boot.rs",
         "finalist_reduction/mod.rs",
         "finalist_reduction/route.rs",
@@ -160,12 +162,15 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
     "dusklight-orchestration": {
         "dusklight-automation-contracts",
         "dusklight-control",
+        "dusklight-evidence",
         "dusklight-evaluation",
         "dusklight-harness-contracts",
         "dusklight-harness-runtime",
         "dusklight-learning",
         "dusklight-objectives",
+        "dusklight-proposals",
         "dusklight-search",
+        "dusklight-semantic-novelty",
         "dusklight-trace",
     },
     "dusklight-proposals": {

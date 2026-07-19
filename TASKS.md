@@ -240,3 +240,16 @@ proposal work or weakens its clean-process proof requirements.
 
 **Done when:** adding a reducer, optimizer, or tournament policy cannot grow the
 authenticated evaluator crate merely to define that policy's command surface.
+
+## 13. Compiler-enforced anchored-generation ownership
+
+- [x] Move the anchored generation, archive, learning-admission, evolution, and
+  champion-promotion loop from `dusklight-evaluation` to
+  `dusklight-orchestration` with its config and result contracts.
+- [x] Expose only prepared evaluation, evidence-derived novelty/context, fact
+  support, holdout admission, and authenticated suffix realization APIs.
+- [x] Add direct one-way domain dependencies, ratchet inventories and line
+  budgets, preserve the CLI facade, and pass the full workspace suite.
+
+**Done when:** `dusklight-evaluation` can authenticate and interpret a prepared
+population but cannot own a multi-generation search or learning loop.
