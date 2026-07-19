@@ -167,6 +167,6 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 3. [x] Seal the shared episode artifact and pre-input observation/action turn.
 4. [x] Run scripted, random, structured, and one simple learned proposer on one
    cheap objective under the same budget.
-5. [ ] Rank, minimize, and cold-replay the finalists.
+5. [x] Rank, minimize, and cold-replay the finalists.
 6. [x] Publish one conformance/tournament report and use its measured friction
    to decide what, if anything, returns from `TASKS_DEFERRED.md`.

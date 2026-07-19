@@ -670,3 +670,12 @@ pass rate of 1.0. The retained ignored report is
 `build/harness/ordon-spring-learned-win-v1/run/tournament.summary.json`; it
 binds the current anchored-objective digest, movement-action schema, proposal
 envelopes, seeds, budgets, and exact candidate identities.
+
+The winning learned candidate was then used as the exact seed of a bounded
+native narrowing run. The repeatedly proved descendant kept the 135-tick goal
+while reducing the suffix from 144 to 143 frames and canonical input complexity
+from 115 to 114. Three clean processes agreed on goal boundary fingerprint
+`10e8535fa7f688a7b0be646fd7dd7aac`. That fingerprint differs from the original
+learned finalist, so both successful boundary states remain in evidence rather
+than treating minimization as identity-preserving. The retained ignored summary
+is `build/search/ordon-spring-learned-finalist-min-v1/run.summary.json`.
