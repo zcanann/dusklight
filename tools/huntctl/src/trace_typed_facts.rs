@@ -36,8 +36,11 @@ pub fn typed_facts_from_trace_record(record: &TraceRecord) -> TypedFactResponse 
         )
     };
 
-    let player_sampled = player_status == TypedFactStatus::Present;
-    let player_present = player_sampled && record.player_present();
+    let player_sampled = matches!(
+        player_status,
+        TypedFactStatus::Present | TypedFactStatus::Absent
+    );
+    let player_present = player_status == TypedFactStatus::Present && record.player_present();
     let dependent_player_status = if player_sampled {
         if player_present {
             TypedFactStatus::Present

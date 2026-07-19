@@ -7,6 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::actor_identity::PlacedActorSelector;
+use crate::trace_typed_facts::typed_facts_from_trace_record;
+use dusklight_automation_contracts::typed_facts::{
+    TypedFactActorIdentity, TypedFactId, TypedFactResponse, TypedFactStatus, TypedFactValue,
+};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -2474,12 +2478,21 @@ fn trace_channel_present(
 }
 
 fn evaluate_trace_expression(expression: &Expression, record: &crate::trace::TraceRecord) -> bool {
+    let facts = typed_facts_from_trace_record(record);
+    evaluate_trace_expression_with_facts(expression, record, &facts)
+}
+
+fn evaluate_trace_expression_with_facts(
+    expression: &Expression,
+    record: &crate::trace::TraceRecord,
+    facts: &TypedFactResponse,
+) -> bool {
     match expression {
         Expression::Compare {
             field,
             operator,
             value,
-        } => trace_field(record, *field)
+        } => trace_field(record, facts, *field)
             .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
         Expression::Query {
             fact,
@@ -2487,17 +2500,23 @@ fn evaluate_trace_expression(expression: &Expression, record: &crate::trace::Tra
             value,
         } => trace_query(record, fact)
             .is_some_and(|actual| compare_trace_values(&actual, *operator, value)),
-        Expression::Not(inner) => !evaluate_trace_expression(inner, record),
+        Expression::Not(inner) => !evaluate_trace_expression_with_facts(inner, record, facts),
         Expression::And(left, right) => {
-            evaluate_trace_expression(left, record) && evaluate_trace_expression(right, record)
+            evaluate_trace_expression_with_facts(left, record, facts)
+                && evaluate_trace_expression_with_facts(right, record, facts)
         }
         Expression::Or(left, right) => {
-            evaluate_trace_expression(left, record) || evaluate_trace_expression(right, record)
+            evaluate_trace_expression_with_facts(left, record, facts)
+                || evaluate_trace_expression_with_facts(right, record, facts)
         }
     }
 }
 
-fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value> {
+fn trace_field(
+    record: &crate::trace::TraceRecord,
+    facts: &TypedFactResponse,
+    field: Field,
+) -> Option<Value> {
     use crate::trace::TraceChannel as Channel;
     let stage = trace_channel_present(record, Channel::Stage);
     let player = trace_channel_present(record, Channel::PlayerMotion);
@@ -2510,22 +2529,22 @@ fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value
         Field::BoundaryIndex => Value::U64(record.boundary_index),
         Field::TapeFrame => Value::U64(record.tape_frame?),
         Field::BoundaryReached => Value::Bool(true),
-        Field::StageName if stage => Value::Symbol(record.stage_name.clone()),
-        Field::StageRoom if stage => Value::I32(record.room.into()),
+        Field::StageName => Value::Symbol(typed_stage_code(facts, TypedFactId::StageName)?.into()),
+        Field::StageRoom => Value::I32(typed_i32(facts, TypedFactId::StageRoom)?),
         Field::StageLayer if stage => Value::I32(record.layer.into()),
-        Field::StageSpawn if stage => Value::I32(record.point.into()),
+        Field::StageSpawn => Value::I32(typed_i32(facts, TypedFactId::StageSpawn)?),
         Field::NextStageName if stage => Value::Symbol(record.next_stage_name.clone()),
         Field::NextStageRoom if stage => Value::I32(record.next_room.into()),
         Field::NextStageLayer if stage => Value::I32(record.next_layer.into()),
         Field::NextStageSpawn if stage => Value::I32(record.next_point.into()),
         Field::NextStageEnabled if stage => Value::Bool(record.next_stage_enabled),
-        Field::PlayerExists => Value::Bool(player && record.player_present()),
-        Field::PlayerIsLink if player => Value::Bool(record.player_is_link()),
+        Field::PlayerExists => Value::Bool(typed_bool(facts, TypedFactId::PlayerExists)?),
+        Field::PlayerIsLink => Value::Bool(typed_bool(facts, TypedFactId::PlayerIsLink)?),
         Field::PlayerProcessId if player => Value::U32(record.player_session_process_id?),
         Field::PlayerActorName if player => Value::I32(record.player_actor_name.into()),
-        Field::PlayerPositionX if player => Value::F32(record.position[0]),
-        Field::PlayerPositionY if player => Value::F32(record.position[1]),
-        Field::PlayerPositionZ if player => Value::F32(record.position[2]),
+        Field::PlayerPositionX => Value::F32(typed_vec3(facts, TypedFactId::PlayerPosition)?[0]),
+        Field::PlayerPositionY => Value::F32(typed_vec3(facts, TypedFactId::PlayerPosition)?[1]),
+        Field::PlayerPositionZ => Value::F32(typed_vec3(facts, TypedFactId::PlayerPosition)?[2]),
         Field::PlayerVelocityX if player => Value::F32(record.velocity[0]),
         Field::PlayerVelocityY if player => Value::F32(record.velocity[1]),
         Field::PlayerVelocityZ if player => Value::F32(record.velocity[2]),
@@ -2541,8 +2560,8 @@ fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value
         Field::PlayerDamageWaitTimer => Value::I32(action?.damage_wait_timer.into()),
         Field::PlayerIceDamageWaitTimer => Value::I32(action?.ice_damage_wait_timer.into()),
         Field::PlayerSwordChangeWaitTimer => Value::U32(action?.sword_change_wait_timer.into()),
-        Field::EventRunning if event => Value::Bool(record.event_running()),
-        Field::EventId if event => Value::I32(record.event_id.into()),
+        Field::EventRunning => Value::Bool(typed_bool(facts, TypedFactId::EventRunning)?),
+        Field::EventId => Value::I32(typed_i32(facts, TypedFactId::EventId)?),
         Field::EventMode if event => Value::U32(record.event_mode.into()),
         Field::EventStatus if event => Value::U32(record.event_status.into()),
         Field::EventMapToolId if event => Value::U32(record.event_map_tool_id.into()),
@@ -2568,25 +2587,117 @@ fn trace_field(record: &crate::trace::TraceRecord, field: Field) -> Option<Value
         Field::CollisionGroundClearance if player => {
             Value::F32(record.position[1] - collision?.ground_height)
         }
-        Field::PlayerDoStatus => Value::U32(action?.do_status.into()),
-        Field::TalkPartnerExists => Value::Bool(action?.talk_partner.is_some()),
-        Field::TalkPartnerActorName => Value::I32(action?.talk_partner.as_ref()?.actor_name.into()),
-        Field::TalkPartnerSetId => Value::U32(action?.talk_partner.as_ref()?.set_id.into()),
-        Field::TalkPartnerHomeRoom => Value::I32(action?.talk_partner.as_ref()?.home_room.into()),
-        Field::TalkPartnerCurrentRoom => {
-            Value::I32(action?.talk_partner.as_ref()?.current_room.into())
+        Field::PlayerDoStatus => Value::U32(typed_u32(facts, TypedFactId::PlayerDoStatus)?),
+        Field::TalkPartnerExists => {
+            Value::Bool(typed_actor_exists(facts, TypedFactId::TalkPartner)?)
         }
-        Field::GrabbedActorExists => Value::Bool(action?.grabbed_actor.is_some()),
-        Field::GrabbedActorActorName => {
-            Value::I32(action?.grabbed_actor.as_ref()?.actor_name.into())
+        Field::TalkPartnerActorName => Value::I32(
+            typed_actor(facts, TypedFactId::TalkPartner)?
+                .actor_name
+                .into(),
+        ),
+        Field::TalkPartnerSetId => {
+            Value::U32(typed_actor(facts, TypedFactId::TalkPartner)?.set_id.into())
         }
-        Field::GrabbedActorSetId => Value::U32(action?.grabbed_actor.as_ref()?.set_id.into()),
-        Field::GrabbedActorHomeRoom => Value::I32(action?.grabbed_actor.as_ref()?.home_room.into()),
-        Field::GrabbedActorCurrentRoom => {
-            Value::I32(action?.grabbed_actor.as_ref()?.current_room.into())
+        Field::TalkPartnerHomeRoom => Value::I32(
+            typed_actor(facts, TypedFactId::TalkPartner)?
+                .home_room
+                .into(),
+        ),
+        Field::TalkPartnerCurrentRoom => Value::I32(
+            typed_actor(facts, TypedFactId::TalkPartner)?
+                .current_room
+                .into(),
+        ),
+        Field::GrabbedActorExists => {
+            Value::Bool(typed_actor_exists(facts, TypedFactId::GrabbedActor)?)
         }
+        Field::GrabbedActorActorName => Value::I32(
+            typed_actor(facts, TypedFactId::GrabbedActor)?
+                .actor_name
+                .into(),
+        ),
+        Field::GrabbedActorSetId => {
+            Value::U32(typed_actor(facts, TypedFactId::GrabbedActor)?.set_id.into())
+        }
+        Field::GrabbedActorHomeRoom => Value::I32(
+            typed_actor(facts, TypedFactId::GrabbedActor)?
+                .home_room
+                .into(),
+        ),
+        Field::GrabbedActorCurrentRoom => Value::I32(
+            typed_actor(facts, TypedFactId::GrabbedActor)?
+                .current_room
+                .into(),
+        ),
         _ => return None,
     })
+}
+
+fn typed_value(facts: &TypedFactResponse, id: TypedFactId) -> Option<&TypedFactValue> {
+    let entry = facts
+        .entries
+        .binary_search_by_key(&id, |entry| entry.id)
+        .ok()
+        .map(|index| &facts.entries[index])?;
+    (entry.status == TypedFactStatus::Present)
+        .then_some(entry.value.as_ref())
+        .flatten()
+}
+
+fn typed_bool(facts: &TypedFactResponse, id: TypedFactId) -> Option<bool> {
+    match typed_value(facts, id)? {
+        TypedFactValue::Boolean(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn typed_i32(facts: &TypedFactResponse, id: TypedFactId) -> Option<i32> {
+    match typed_value(facts, id)? {
+        TypedFactValue::I32(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn typed_u32(facts: &TypedFactResponse, id: TypedFactId) -> Option<u32> {
+    match typed_value(facts, id)? {
+        TypedFactValue::U32(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn typed_vec3(facts: &TypedFactResponse, id: TypedFactId) -> Option<[f32; 3]> {
+    match typed_value(facts, id)? {
+        TypedFactValue::Vec3F32(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn typed_stage_code(facts: &TypedFactResponse, id: TypedFactId) -> Option<&str> {
+    match typed_value(facts, id)? {
+        TypedFactValue::StageCode(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn typed_actor(facts: &TypedFactResponse, id: TypedFactId) -> Option<&TypedFactActorIdentity> {
+    match typed_value(facts, id)? {
+        TypedFactValue::ActorIdentity(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn typed_actor_exists(facts: &TypedFactResponse, id: TypedFactId) -> Option<bool> {
+    let entry = facts
+        .entries
+        .binary_search_by_key(&id, |entry| entry.id)
+        .ok()
+        .map(|index| &facts.entries[index])?;
+    match entry.status {
+        TypedFactStatus::Present => Some(true),
+        TypedFactStatus::Absent => Some(false),
+        _ => None,
+    }
 }
 
 fn trace_query(record: &crate::trace::TraceRecord, fact: &QueryFact) -> Option<Value> {
