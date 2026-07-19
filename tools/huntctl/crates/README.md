@@ -14,8 +14,9 @@ of obscuring production ownership. The budgets are ceilings to lower during
 extraction, not targets. The current policy caps the executable adapter and
 crate entry points at 2,500 lines and every non-test implementation module at
 3,000 lines. Bounded search, evaluation, finalist reduction, harness runtime,
-orchestration, proposal, and workbench source inventories are closed lists:
-adding a sibling module requires an explicit ownership-policy change.
+orchestration, proposal, proposer tournament, and workbench source inventories
+are closed lists: adding a sibling module requires an explicit ownership-policy
+change.
 
 ```text
 dusklight-huntctl (CLI and domain orchestration)
@@ -58,11 +59,17 @@ dusklight-huntctl (CLI and domain orchestration)
 │   ├── dusklight-finalist-reduction ──┤
 │   ├── dusklight-harness-runtime ─────┤
 │   ├── dusklight-learning ─────────────┤
+│   ├── dusklight-proposer-tournament ─┤
 │   └── dusklight-search ──────────────┤
 ├── dusklight-proposals ──────────────┤
 │   ├── dusklight-evidence ───────────┤
 │   ├── dusklight-learning ───────────┤
 │   └── dusklight-search ─────────────┤
+├── dusklight-proposer-tournament ────┤
+│   ├── dusklight-evaluation ──────────┤
+│   ├── dusklight-harness-contracts ───┤
+│   ├── dusklight-learning ─────────────┤
+│   └── dusklight-search ──────────────┤
 ├── dusklight-routes ─────────────────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-objectives ──────────┤
@@ -211,14 +218,14 @@ systems that consume them.
 
 ## `dusklight-orchestration`
 
-Owns top-level objective campaign planning, scheduling, cold replay, final
-reporting, bounded optimizer drivers, proposer tournaments, and finalist-
-reduction policy. Search drivers, tournaments, and boot/anchored-route reducers
-compose portable candidate, learner, and control transforms with the
-authenticated evaluator; evaluation cannot depend back on them. Nothing below
-orchestration may depend on it or the huntctl executable. It is not a general-
-purpose home for native execution, evaluation truth, learner implementation,
-or proposal code.
+Owns top-level objective campaign planning, conformance scheduling, cold
+replay, final reporting, and the anchored generation/learning-admission loop.
+It composes bounded-search, proposer-tournament, and finalist-reduction crates
+with the authenticated evaluator; those lower policy crates cannot depend back
+on orchestration. Nothing below orchestration may depend on it or the huntctl
+executable. It is not a general-purpose home for native execution, evaluation
+truth, learner implementation, optimizer loops, tournament policy, finalist
+reduction, or proposal code.
 
 ## `dusklight-proposals`
 
@@ -228,6 +235,15 @@ crate allowed to combine learned model outputs, immutable episode evidence,
 and portable search candidates. It cannot execute candidates, score objective
 truth, schedule campaigns, or parse CLI commands; every proposal must pass
 through the ordinary evaluator afterward.
+
+## `dusklight-proposer-tournament`
+
+Owns equal-budget proposer selection, authenticated envelope admission,
+deduplicated shared evaluation, budget accounting, replay comparison, and
+proved-finalist publication. It may consume contracts, evaluation, harness
+result contracts, action-schema identity, and portable search candidates. It
+cannot own objective-suite campaigns, novelty archives, learning policy,
+routes, workbench state, harness runtime internals, or CLI parsing.
 
 ## `dusklight-search`
 

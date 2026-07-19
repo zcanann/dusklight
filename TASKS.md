@@ -353,3 +353,13 @@ learning dependencies without an explicit architecture-policy change.
 
 **Done when:** bounded optimizer loops cannot acquire campaign, novelty,
 finalist-reduction, route, or workbench ownership by sibling-module imports.
+
+## 24. Dedicated proposer-tournament crate
+
+- [x] Extract equal-budget proposer selection, accounting, replay comparison,
+  and finalist publication from broad orchestration into a dedicated crate.
+- [x] Preserve campaign composition and the public CLI facade while ratcheting
+  the new crate's exact inventory and dependency allowlist.
+
+**Done when:** tournament policy cannot absorb campaign, objective-suite,
+novelty, route, workbench, or CLI ownership through flat sibling imports.

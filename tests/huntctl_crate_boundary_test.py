@@ -46,7 +46,7 @@ COORDINATION_FILE_LINE_BUDGETS = {
     "finalist-reduction/src/lib.rs": 250,
     "finalist-reduction/src/route.rs": 1_250,
     "orchestration/src/anchored_search.rs": 800,
-    "orchestration/src/tournament.rs": 900,
+    "proposer-tournament/src/lib.rs": 850,
 }
 
 # These integration-heavy crates are deliberately closed inventories. Adding a
@@ -71,8 +71,8 @@ EXPECTED_COORDINATION_SOURCE_FILES = {
         "harness/conformance.rs",
         "harness/mod.rs",
         "lib.rs",
-        "tournament.rs",
     },
+    "proposer-tournament": {"lib.rs"},
     "proposals": {"behavior_archive.rs", "lib.rs", "q_search.rs"},
     "workbench": {
         "draft_store.rs",
@@ -102,6 +102,7 @@ EXPECTED_MEMBERS = {
     "crates/oracles",
     "crates/orchestration",
     "crates/proposals",
+    "crates/proposer-tournament",
     "crates/routes",
     "crates/workbench",
     "crates/search",
@@ -188,6 +189,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-learning",
         "dusklight-objectives",
         "dusklight-proposals",
+        "dusklight-proposer-tournament",
         "dusklight-search",
         "dusklight-semantic-novelty",
         "dusklight-trace",
@@ -196,6 +198,13 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-automation-contracts",
         "dusklight-control",
         "dusklight-evidence",
+        "dusklight-learning",
+        "dusklight-search",
+    },
+    "dusklight-proposer-tournament": {
+        "dusklight-automation-contracts",
+        "dusklight-evaluation",
+        "dusklight-harness-contracts",
         "dusklight-learning",
         "dusklight-search",
     },

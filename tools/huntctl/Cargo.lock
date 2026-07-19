@@ -428,6 +428,7 @@ dependencies = [
  "dusklight-learning",
  "dusklight-objectives",
  "dusklight-proposals",
+ "dusklight-proposer-tournament",
  "dusklight-search",
  "dusklight-semantic-novelty",
  "dusklight-trace",
@@ -443,6 +444,20 @@ dependencies = [
  "dusklight-automation-contracts",
  "dusklight-control",
  "dusklight-evidence",
+ "dusklight-learning",
+ "dusklight-search",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-proposer-tournament"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-evaluation",
+ "dusklight-harness-contracts",
  "dusklight-learning",
  "dusklight-search",
  "serde",
