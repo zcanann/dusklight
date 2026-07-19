@@ -287,9 +287,42 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let target_goal =
                 select_goal(&segment_name, option(search_args, "--goal"), "--goal GOAL")?;
 
+            let mut progress_goals = Vec::new();
+            let mut progress_goal_ids = std::collections::BTreeSet::new();
+            for id in repeated_option(search_args, "--progress-goal") {
+                if id == source_goal.id || id == target_goal.id {
+                    return Err(format!(
+                        "route progress goal {id:?} duplicates the selected source or target goal"
+                    )
+                    .into());
+                }
+                if !progress_goal_ids.insert(id.clone()) {
+                    return Err(format!("duplicate route progress goal {id:?}").into());
+                }
+                let goal = timeline
+                    .goals
+                    .get(&id)
+                    .ok_or_else(|| format!("unknown route progress goal {id:?}"))?;
+                let available = goal.segment == segment_name
+                    || timeline
+                        .proofs
+                        .iter()
+                        .any(|proof| proof.segment == segment_name && proof.goal == goal.id);
+                if !available {
+                    return Err(format!(
+                        "segment {segment_name:?} neither defines nor proves progress goal {id:?}"
+                    )
+                    .into());
+                }
+                progress_goals.push(goal);
+            }
+
             let mut combined_program: Option<milestone_dsl::MilestoneProgram> = None;
             let mut names = std::collections::BTreeSet::new();
-            for goal in [source_goal, target_goal] {
+            for goal in std::iter::once(source_goal)
+                .chain(progress_goals.iter().copied())
+                .chain(std::iter::once(target_goal))
+            {
                 let relative = timeline
                     .goal_predicate_source(&goal.id)
                     .ok_or_else(|| format!("route goal {:?} has no predicate source", goal.id))?;
@@ -310,9 +343,14 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                         return Err("route goal predicate sources use incompatible versions".into());
                     }
                     for definition in program.definitions {
-                        if names.insert(definition.name.clone()) {
-                            combined.definitions.push(definition);
+                        if !names.insert(definition.name.clone()) {
+                            return Err(format!(
+                                "route goals select duplicate predicate {:?}",
+                                definition.name
+                            )
+                            .into());
                         }
+                        combined.definitions.push(definition);
                     }
                 } else {
                     names.insert(program.definitions[0].name.clone());
@@ -375,17 +413,22 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let parent_segment = segment.parent.as_ref().ok_or(
                 "route input golf requires a child segment with an explicit parent predicate",
             )?;
+            let anchor_segment =
+                option(search_args, "--anchor-segment").unwrap_or_else(|| parent_segment.clone());
+            if !timeline.segments.contains_key(&anchor_segment) {
+                return Err(format!("unknown route input-golf anchor {anchor_segment:?}").into());
+            }
             let prefix = huntctl::route_workbench::materialize_segment_chain(
                 &timeline,
                 artifact_root,
-                parent_segment,
+                &anchor_segment,
             )?;
             let through_goal = huntctl::route_workbench::materialize_segment_chain(
                 &timeline,
                 artifact_root,
                 &segment.id,
             )?;
-            if through_goal.steps.len() != prefix.steps.len() + 1
+            if through_goal.steps.len() <= prefix.steps.len()
                 || through_goal.steps.last().map(|step| step.segment.as_str())
                     != Some(segment_name.as_str())
                 || through_goal.steps[..prefix.steps.len()]
@@ -394,9 +437,18 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .ne(prefix.steps.iter().map(|step| step.segment.as_str()))
             {
                 return Err(format!(
-                    "segment {segment_name:?} is not an exact structural child of {parent_segment:?}"
+                    "segment {segment_name:?} is not a structural descendant of input-golf anchor {anchor_segment:?}"
                 )
                 .into());
+            }
+            if through_goal.steps[prefix.steps.len()..]
+                .iter()
+                .any(|step| timeline.segments[&step.segment].profile != segment.profile)
+            {
+                return Err(
+                    "route input golf cannot cross a segment-profile boundary after its anchor"
+                        .into(),
+                );
             }
             let suffix = InputTape {
                 boot: prefix.tape.boot.clone(),
@@ -444,7 +496,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 Ok(available[0])
             };
             let source_goal = select_goal(
-                parent_segment,
+                &anchor_segment,
                 option(search_args, "--source-goal"),
                 "--source-goal GOAL",
             )?;
@@ -510,7 +562,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     game: execution.game,
                     dvd: execution.dvd,
                     source_milestone: source_goal.predicate.clone(),
-                    source_boundary_fingerprint: timeline.segments[parent_segment]
+                    source_boundary_fingerprint: timeline.segments[&anchor_segment]
                         .end_fingerprint
                         .clone(),
                     goal_milestone: target_goal.predicate.clone(),

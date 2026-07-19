@@ -30,7 +30,7 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     let summary: serde_json::Value = serde_json::from_slice(&parsed.stdout).unwrap();
     assert_eq!(summary["valid"], true);
-    assert_eq!(summary["segments"], 10);
+    assert_eq!(summary["segments"], 11);
 
     let status = run(&[
         "timeline",
@@ -49,10 +49,10 @@ fn authored_timeline_and_content_addressed_store_round_trip() {
     );
     assert_eq!(status["workspace"]["steps"][0]["state"], "unchanged");
     assert_eq!(
-        status["workspace"]["steps"][9]["workspace_segment"],
+        status["workspace"]["steps"][10]["workspace_segment"],
         "to_ordon_spring_q129"
     );
-    assert_eq!(status["workspace"]["steps"][9]["state"], "unchanged");
+    assert_eq!(status["workspace"]["steps"][10]["state"], "unchanged");
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

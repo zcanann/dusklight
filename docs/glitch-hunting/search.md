@@ -97,10 +97,11 @@ must match the selected timeline segment.
 Every trial concatenates the same immutable prefix with one candidate suffix
 and boots that complete tape in a clean process. It does not pass `--stage`;
 any fixture origin comes from the composed tape itself.
-The native run receives the compiled milestone program and exactly the authored
-source-to-goal slice. Definitions between source and goal are ordered progress
-milestones: a source-only miss is an ordinary failure, a miss that reaches one
-or more progress milestones is a near miss, and only the goal is success. A
+The native run receives the compiled milestone program in the exact order
+selected by the command: source, each repeatable `--progress-goal`, then goal.
+Progress goals must be attached to or proved by the searched segment. A
+source-only miss is an ordinary failure, a miss that reaches one or more
+progress milestones is a near miss, and only the goal is success. A
 result is accepted only when all of the following match:
 
 - DMSP program and source/progress/goal definition digests;
@@ -126,9 +127,10 @@ miss, and ordinary failure; proof repetitions never enter training.
 The route-aware command derives the prefix, source fingerprint, source goal,
 target goal, program, and observed seed from the checked-in timeline and
 lineage. When either segment has several attached goals, pass `--source-goal`
-or `--goal` explicitly:
+or `--goal` explicitly. Add repeatable `--progress-goal` options in the order
+that defines increasing progress; no implicit timeline-map ordering is used:
 
-    huntctl search run-route --timeline "routes/Glitch Exhibition/intro.timeline" --lineage main --segment to_ordon_spring_human150 --source-goal link_control --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
+    huntctl search run-route --timeline "routes/Glitch Exhibition/intro.timeline" --lineage main --segment to_ordon_spring_q129 --source-goal link_control --progress-goal ordon_spring_exit_approach --goal ordon_spring_load_committed --game build/windows-clang-debug/dusklight.exe --dvd game.iso --output build/search/ordon-spring --generations 4 --size 16 --elites 4 --workers 8 --repetitions 3 --rng-seed 1
 
 The loose executable inputs may be replaced with `--run-request REQUEST.json`
 and `--repository-root ROOT`. The sealed request must bind the exact
@@ -200,13 +202,16 @@ resumable only through the legacy execution path.
 For short menu or dialogue segments, use the generic anchored input golfer
 instead of a stochastic optimizer:
 
-    huntctl search golf-route-inputs --timeline "routes/Glitch Exhibition/intro.timeline" --segment tolink_choose_play --game build/windows-clang-debug/dusklight.exe --dvd "orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso" --output build/search/choose-play-golf --workers 8 --repetitions 3 --candidate-budget 256
+    huntctl search golf-route-inputs --timeline "routes/Glitch Exhibition/intro.timeline" --segment tolink_choose_play --anchor-segment tolink_title_ready --source-goal title_logo_skip_ready --goal data_select_ready --game build/windows-clang-debug/dusklight.exe --dvd "orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso" --output build/search/choose-play-golf --workers 8 --repetitions 3 --candidate-budget 256
 
-The route-aware form materializes the exact parent prefix, extracts only the
-selected child suffix, and compiles the parent and child predicate sources into
-an ephemeral two-boundary objective. Predicate source files remain local to
-their own segments; the timeline does not accumulate a historical predicate
-program. If either segment exposes multiple goals, select them explicitly with
+The route-aware form anchors to the immediate parent by default. Supply
+`--anchor-segment` to materialize an earlier ancestor prefix and golf the whole
+descendant window through the selected target. This is required when an earlier
+intermediate boundary may poison downstream timings: the target predicate, not
+an unchanged descendant suffix, decides whether the repair succeeds. Predicate
+source files remain local to their own segments; the command compiles the
+anchor and target definitions into an ephemeral two-boundary objective. If
+either segment exposes multiple goals, select them explicitly with
 `--source-goal` and `--goal`.
 
 The lower-level form accepts those artifacts directly:
@@ -215,8 +220,9 @@ The lower-level form accepts those artifacts directly:
 
 `golf-inputs` edits only pure, zero-stick A/Start pulse frames in the candidate
 suffix. Each round tries removing one pulse, then moving a surviving pulse to
-an earlier free frame without changing pulse order. Proposals are deterministic
-and bounded by `--candidate-budget`; there is no random seed or model. Every
+an earlier free frame without changing pulse order, testing both its authored
+button and the A/Start alternative. Proposals are deterministic and bounded by
+`--candidate-budget`; there is no random seed or model. Every
 candidate replays the immutable prefix from a clean process and must reach the
 selected goal predicate with identical evidence in every repetition.
 

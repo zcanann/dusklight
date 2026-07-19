@@ -1020,9 +1020,10 @@ fn input_golf_proposals(
         )?;
     }
 
-    // Search every earlier free coordinate. Last-to-first makes late menu
-    // gates available early in a bounded run; descending destinations test
-    // the smallest repair before more disruptive shifts.
+    // Search every earlier free coordinate with both the authored button and
+    // its A/Start alternative. Last-to-first makes late menu gates available
+    // early in a bounded run; descending destinations test the smallest
+    // repair before more disruptive shifts.
     for pulse_index in (0..timestamps.len()).rev() {
         let old_timestamp = timestamps[pulse_index];
         let earliest = if pulse_index == 0 {
@@ -1046,7 +1047,7 @@ fn input_golf_proposals(
             tape.frames[new_index].pads[0] = pad;
             push_input_golf_candidate(
                 parent,
-                tape,
+                tape.clone(),
                 generation,
                 format!(
                     "move menu pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
@@ -1056,9 +1057,36 @@ fn input_golf_proposals(
                 &mut ids,
                 &mut proposals,
             )?;
+            if proposals.len() == budget {
+                return Ok(proposals);
+            }
+            if let Some(alternate) = alternate_menu_pulse(pad) {
+                tape.frames[new_index].pads[0] = alternate;
+                push_input_golf_candidate(
+                    parent,
+                    tape,
+                    generation,
+                    format!(
+                        "move and swap menu pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+                    ),
+                    new_timestamp,
+                    old_timestamp + 1,
+                    &mut ids,
+                    &mut proposals,
+                )?;
+            }
         }
     }
     Ok(proposals)
+}
+
+fn alternate_menu_pulse(mut pad: RawPadState) -> Option<RawPadState> {
+    pad.buttons = match pad.buttons {
+        BUTTON_A => BUTTON_START,
+        BUTTON_START => BUTTON_A,
+        _ => return None,
+    };
+    Some(pad)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1512,8 +1540,8 @@ mod tests {
             },
         };
 
-        let proposals = input_golf_proposals(&proven, 1, 3).unwrap();
-        assert_eq!(proposals.len(), 3);
+        let proposals = input_golf_proposals(&proven, 1, 4).unwrap();
+        assert_eq!(proposals.len(), 4);
         assert_eq!(
             menu_pulse_timestamps(&proposals[0].compile().unwrap()).unwrap(),
             vec![7]
@@ -1530,6 +1558,10 @@ mod tests {
             proposals[2].compile().unwrap().frames[9].pads[0].buttons,
             0x0200
         );
+        let swapped = proposals[3].compile().unwrap();
+        assert_eq!(menu_pulse_timestamps(&swapped).unwrap(), vec![3, 6]);
+        assert_eq!(swapped.frames[6].pads[0].buttons, BUTTON_A);
+        assert_eq!(swapped.frames[9].pads[0].buttons, 0x0200);
     }
 
     #[test]

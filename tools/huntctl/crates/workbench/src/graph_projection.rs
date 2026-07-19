@@ -136,7 +136,10 @@ pub fn graph_from_timeline(
                 .iter()
                 .filter(|proof| proof.status == "verified")
                 .filter_map(|proof| proof.first_hit_tick)
-                .min();
+                // A segment is complete only when its latest attached predicate has
+                // been reached. Earlier progress predicates must not replace the
+                // terminal score shown for the segment.
+                .max();
             let record_anchors = goal_proofs
                 .iter()
                 .filter(|proof| proof.status == "verified")

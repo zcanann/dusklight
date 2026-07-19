@@ -1771,7 +1771,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
     assert!(graph.predicate_program.is_none());
-    assert_eq!(graph.goals.len(), 11);
+    assert_eq!(graph.goals.len(), 12);
     assert!(graph.goals.iter().all(|goal| {
         goal.predicate_program.definitions.len() == 1
             && goal.predicate_program.definitions[0].name == goal.predicate
@@ -1867,12 +1867,18 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert!(continuation.recordable);
     assert_eq!(continuation.predicate_proof, "verified");
     assert_eq!(continuation.first_hit_tick, Some(129));
-    assert_eq!(continuation.goal_proofs.len(), 1);
-    assert_eq!(
-        continuation.goal_proofs[0].goal,
-        "ordon_spring_load_committed"
-    );
-    assert_eq!(continuation.record_anchors.len(), 1);
+    assert_eq!(continuation.goal_proofs.len(), 2);
+    assert!(continuation.goal_proofs.iter().any(|proof| {
+        proof.goal == "ordon_spring_exit_approach"
+            && proof.status == "verified"
+            && proof.first_hit_tick == Some(117)
+    }));
+    assert!(continuation.goal_proofs.iter().any(|proof| {
+        proof.goal == "ordon_spring_load_committed"
+            && proof.status == "verified"
+            && proof.first_hit_tick == Some(129)
+    }));
+    assert_eq!(continuation.record_anchors.len(), 2);
     let boot = graph.origin.as_ref().unwrap();
     assert!(boot.recordable_from_boot);
     assert_eq!(boot.id, "boot");
