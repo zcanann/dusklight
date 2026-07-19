@@ -123,10 +123,10 @@ one cheap objective without receiving a separate execution or proof path.
 
 ## 5. Narrow proposals into proved winners
 
-- [ ] Rank candidates lexicographically by objective feasibility, progress,
+- [x] Rank candidates lexicographically by objective feasibility, progress,
   first-hit tick, tape length/input complexity, and measured risk; unknown risk
   must remain unknown.
-- [ ] Preserve materially different successful boundary states long enough to
+- [x] Preserve materially different successful boundary states long enough to
   avoid narrowing onto a locally cheap but unusable result.
 - [ ] Minimize a finalist only while preserving objective evidence, boot,
   fidelity, and terminal boundary class.
