@@ -29,7 +29,9 @@ pub(super) fn stage_boot_options(
     stage: &str,
 ) -> Result<GraphStageBootOptions, WorkbenchError> {
     if !valid_stage_id(stage) {
-        return Err(WorkbenchError::new("stage ID must be 1..=8 uppercase ASCII letters, digits, or underscore"));
+        return Err(WorkbenchError::new(
+            "stage ID must be 1..=8 uppercase ASCII letters, digits, or underscore",
+        ));
     }
     let stage_dir = repository_root.join(STAGE_ROOT).join(stage);
     if !stage_dir.is_dir() {
@@ -142,7 +144,11 @@ fn room_archive_number(name: &str) -> Option<i8> {
 }
 
 fn layer_from_chunk_tag(tag: &str) -> Option<i8> {
-    if tag.len() != 4 || !["ACT", "SCO", "TRE", "Doo"].iter().any(|prefix| tag.starts_with(prefix)) {
+    if tag.len() != 4
+        || !["ACT", "SCO", "TRE", "Doo"]
+            .iter()
+            .any(|prefix| tag.starts_with(prefix))
+    {
         return None;
     }
     match tag.as_bytes()[3] {
@@ -208,7 +214,7 @@ fn friendly_stage_name(stage: &str) -> Option<&'static str> {
         "F_SP00" => "Ordon Ranch",
         "F_SP102" => "Title-screen Hyrule Field",
         "F_SP103" => "Ordon Village",
-        "F_SP104" => "Ordon Woods",
+        "F_SP104" => "Ordon Woods / Spring",
         "F_SP108" => "Faron Woods",
         "F_SP109" => "Kakariko Village",
         "F_SP110" => "Death Mountain",
@@ -251,7 +257,10 @@ mod tests {
 
     #[test]
     fn catalog_uses_disc_rooms_and_optional_read_only_inventory_choices() {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!("dusklight-stage-catalog-{nonce}"));
         let stage = root.join(STAGE_ROOT).join("F_SP103");
         fs::create_dir_all(&stage).unwrap();
@@ -269,7 +278,10 @@ mod tests {
         assert_eq!(summaries[0].friendly_name.as_deref(), Some("Ordon Village"));
         let options = stage_boot_options(&root, "F_SP103").unwrap();
         assert!(options.inventory_indexed);
-        assert_eq!(options.rooms.iter().map(|room| room.id).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(
+            options.rooms.iter().map(|room| room.id).collect::<Vec<_>>(),
+            [0, 1]
+        );
         assert_eq!(options.rooms[1].spawn_points, [7]);
         assert_eq!(options.rooms[1].layers, [-1, 3]);
 

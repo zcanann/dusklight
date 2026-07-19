@@ -887,7 +887,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "bindGraphPan",
         "Detached / invalid",
         "grid-template-rows",
-        "workspaceIcon",
+        "projectBootIcon",
+        "🫠",
         "workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null",
         "This predicate source belongs only to this goal",
         "data-capture-kind=\"project\"",
@@ -902,6 +903,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/workspace/delete",
         "id=\"bootEditor\"",
         "/api/workspace/boot",
+        "id=\"bootStageChoice\"",
+        "id=\"bootRoomChoice\"",
+        "/api/workspace/stage-options",
         "projectOccurrence",
         "childSegments",
         "segment.parent==null",
@@ -1261,22 +1265,33 @@ continue main with child after root@one
         },
     )
     .unwrap();
-    assert_eq!(fs::read_to_string(root.join("first.milestones")).unwrap(), replacement);
-    assert_eq!(fs::read_to_string(root.join("second.milestones")).unwrap(), second);
+    assert_eq!(
+        fs::read_to_string(root.join("first.milestones")).unwrap(),
+        replacement
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("second.milestones")).unwrap(),
+        second
+    );
 
     let current = source_revision(replacement.as_bytes());
     let coupled = format!("{replacement}\n{second}");
-    assert!(update_milestone_program(
-        &route,
-        &root,
-        &BrowserMilestoneProgramUpdateRequest {
-            owner: "first_goal".into(),
-            expected_revision_sha256: current,
-            source: coupled,
-        },
-    )
-    .is_err());
-    assert_eq!(fs::read_to_string(root.join("second.milestones")).unwrap(), second);
+    assert!(
+        update_milestone_program(
+            &route,
+            &root,
+            &BrowserMilestoneProgramUpdateRequest {
+                owner: "first_goal".into(),
+                expected_revision_sha256: current,
+                source: coupled,
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("second.milestones")).unwrap(),
+        second
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

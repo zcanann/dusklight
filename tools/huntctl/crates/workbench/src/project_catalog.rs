@@ -55,7 +55,10 @@ pub(super) fn load_project_catalog(
         ))
     })?;
     let canonical_root = fs::canonicalize(&root).map_err(|error| {
-        WorkbenchError::new(format!("cannot resolve workspace {}: {error}", root.display()))
+        WorkbenchError::new(format!(
+            "cannot resolve workspace {}: {error}",
+            root.display()
+        ))
     })?;
     if canonical_root.parent() != Some(canonical_repository.as_path()) {
         return Err(WorkbenchError::new("workspace root escapes the repository"));
@@ -96,7 +99,9 @@ pub(super) fn load_project_catalog(
             _ => continue,
         };
         if kind != ProjectKind::Timeline
-            && private_roots.iter().any(|private| path.starts_with(private))
+            && private_roots
+                .iter()
+                .any(|private| path.starts_with(private))
         {
             continue;
         }
@@ -108,7 +113,9 @@ pub(super) fn load_project_catalog(
         })?;
         let without_extension = relative.with_extension("");
         let id = slash_path(&without_extension)?;
-        let parent = relative.parent().unwrap_or_else(|| Path::new(PROJECT_WORKSPACE_PATH));
+        let parent = relative
+            .parent()
+            .unwrap_or_else(|| Path::new(PROJECT_WORKSPACE_PATH));
         let group = slash_path(parent)?;
         add_group_ancestry(&mut catalog.groups, parent)?;
         let fixture = (kind != ProjectKind::Timeline)
@@ -123,9 +130,15 @@ pub(super) fn load_project_catalog(
         let label = if kind == ProjectKind::Timeline {
             load_authoritative_timeline(&path)
                 .map(|timeline| human_label(&timeline.name))
-                .unwrap_or_else(|_| human_label(path.file_stem().and_then(|v| v.to_str()).unwrap_or("route")))
+                .unwrap_or_else(|_| {
+                    human_label(path.file_stem().and_then(|v| v.to_str()).unwrap_or("route"))
+                })
         } else {
-            human_label(path.file_stem().and_then(|value| value.to_str()).unwrap_or("tape"))
+            human_label(
+                path.file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("tape"),
+            )
         };
         let definition = ProjectDefinition {
             id: id.clone(),
@@ -183,9 +196,9 @@ pub(super) fn project_catalog_projection(
                     label: entry.label.clone(),
                     group: entry.group.clone(),
                     kind: "timeline".into(),
-                    active: active_timeline
-                        .as_ref()
-                        .is_some_and(|active| *active == artifact_path.canonicalize().unwrap_or_default()),
+                    active: active_timeline.as_ref().is_some_and(|active| {
+                        *active == artifact_path.canonicalize().unwrap_or_default()
+                    }),
                     boot_override,
                     artifact: GraphArtifact {
                         kind: "timeline".into(),
@@ -205,7 +218,8 @@ pub(super) fn project_catalog_projection(
             let (boot, frame_count, materialization_sha256, error) = match loaded {
                 Ok(mut tape) => {
                     let authored_boot = tape.boot.clone();
-                    if let Some(configuration) = boot_override.as_ref().filter(|value| value.enabled)
+                    if let Some(configuration) =
+                        boot_override.as_ref().filter(|value| value.enabled)
                     {
                         tape.boot = configuration.boot.clone();
                     }
@@ -247,7 +261,10 @@ pub(super) fn project_catalog_projection(
                 materialization_sha256,
                 thumbnail: None,
                 playable: error.is_none(),
-                fixture_source: entry.fixture.as_ref().map(|path| path.display().to_string()),
+                fixture_source: entry
+                    .fixture
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
                 error,
             }
         })
@@ -270,7 +287,9 @@ pub(super) fn project_materialized_playback(
         .get(project_id)
         .ok_or_else(|| WorkbenchError::new(format!("unknown workspace tape {project_id:?}")))?;
     if project.kind == ProjectKind::Timeline {
-        return Err(WorkbenchError::new("a timeline must be opened as a route graph"));
+        return Err(WorkbenchError::new(
+            "a timeline must be opened as a route graph",
+        ));
     }
     let mut tape = load_project_tape(repository_root, project)?;
     apply_boot_override(repository_root, project, &mut tape)?;
@@ -329,7 +348,10 @@ pub(super) fn active_timeline_boot_override(
 ) -> Result<Option<GraphBootOverride>, WorkbenchError> {
     let catalog = load_project_catalog(repository_root)?;
     let canonical_timeline = fs::canonicalize(timeline_path).map_err(|error| {
-        WorkbenchError::new(format!("cannot resolve {}: {error}", timeline_path.display()))
+        WorkbenchError::new(format!(
+            "cannot resolve {}: {error}",
+            timeline_path.display()
+        ))
     })?;
     let project = catalog
         .entries
@@ -494,7 +516,9 @@ pub(super) fn move_workspace_node(
         })
         .collect::<Result<Vec<_>, WorkbenchError>>()?;
     if moves.iter().any(|(_, target)| target.exists()) {
-        return Err(WorkbenchError::new("workspace move destination already exists"));
+        return Err(WorkbenchError::new(
+            "workspace move destination already exists",
+        ));
     }
     let mut completed = Vec::new();
     for (source, target) in &moves {
@@ -582,15 +606,18 @@ fn workspace_node_sources(
         WorkspaceNodeKind::Folder => {
             let source = public_workspace_group_path(repository_root, id)?;
             if id == PROJECT_WORKSPACE_PATH {
-                return Err(WorkbenchError::new("workspace root cannot be moved or deleted"));
+                return Err(WorkbenchError::new(
+                    "workspace root cannot be moved or deleted",
+                ));
             }
             Ok(vec![source])
         }
         WorkspaceNodeKind::Project => {
             let catalog = load_project_catalog(repository_root)?;
-            let project = catalog.entries.get(id).ok_or_else(|| {
-                WorkbenchError::new(format!("unknown workspace entry {id:?}"))
-            })?;
+            let project = catalog
+                .entries
+                .get(id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown workspace entry {id:?}")))?;
             let artifact = checked_artifact_path(repository_root, &project.artifact)?;
             let stem = artifact
                 .file_stem()
@@ -605,11 +632,16 @@ fn workspace_node_sources(
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| {
-                path.file_name().and_then(|value| value.to_str()).is_some_and(|name| {
-                    name == artifact.file_name().and_then(|value| value.to_str()).unwrap_or_default()
-                        || name == stem
-                        || name.starts_with(&format!("{stem}."))
-                })
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|name| {
+                        name == artifact
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or_default()
+                            || name == stem
+                            || name.starts_with(&format!("{stem}."))
+                    })
             })
             .collect::<Vec<_>>();
             sources.sort();
@@ -637,9 +669,14 @@ fn public_workspace_group_path(
 fn workspace_group_path(repository_root: &Path, id: &str) -> Result<PathBuf, WorkbenchError> {
     let relative = Path::new(id);
     if !id.starts_with(&format!("{PROJECT_WORKSPACE_PATH}/")) && id != PROJECT_WORKSPACE_PATH {
-        return Err(WorkbenchError::new("workspace folder is outside the routes root"));
+        return Err(WorkbenchError::new(
+            "workspace folder is outside the routes root",
+        ));
     }
-    if relative.components().any(|component| !matches!(component, std::path::Component::Normal(_))) {
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
         return Err(WorkbenchError::new("workspace folder path is invalid"));
     }
     let path = repository_root.join(relative);
@@ -698,16 +735,22 @@ fn load_project_tape(
                 WorkbenchError::new(format!("cannot read {}: {error}", path.display()))
             })?;
             crate::tape_dsl::parse(&source)
-                .map_err(|error| WorkbenchError::new(format!("cannot parse {}: {error}", path.display())))?
+                .map_err(|error| {
+                    WorkbenchError::new(format!("cannot parse {}: {error}", path.display()))
+                })?
                 .compile()
                 .map(|compiled| compiled.tape)
-                .map_err(|error| WorkbenchError::new(format!("cannot compile {}: {error}", path.display())))?
+                .map_err(|error| {
+                    WorkbenchError::new(format!("cannot compile {}: {error}", path.display()))
+                })?
         }
         ProjectKind::Tape => {
             InputTape::decode(&fs::read(&path).map_err(|error| {
                 WorkbenchError::new(format!("cannot read {}: {error}", path.display()))
             })?)
-            .map_err(|error| WorkbenchError::new(format!("cannot decode {}: {error}", path.display())))?
+            .map_err(|error| {
+                WorkbenchError::new(format!("cannot decode {}: {error}", path.display()))
+            })?
             .tape
         }
         ProjectKind::Timeline => {
@@ -716,15 +759,20 @@ fn load_project_tape(
     };
     if let Some(fixture_path) = &project.fixture {
         let path = checked_artifact_path(repository_root, fixture_path)?;
-        let fixture: ScenarioFixture = serde_json::from_slice(&fs::read(&path).map_err(|error| {
-            WorkbenchError::new(format!("cannot read {}: {error}", path.display()))
-        })?)
-        .map_err(|error| WorkbenchError::new(format!("cannot decode {}: {error}", path.display())))?;
+        let fixture: ScenarioFixture =
+            serde_json::from_slice(&fs::read(&path).map_err(|error| {
+                WorkbenchError::new(format!("cannot read {}: {error}", path.display()))
+            })?)
+            .map_err(|error| {
+                WorkbenchError::new(format!("cannot decode {}: {error}", path.display()))
+            })?;
         fixture.validate().map_err(|error| {
             WorkbenchError::new(format!("invalid fixture {}: {error}", path.display()))
         })?;
         match &mut tape.boot {
-            TapeBoot::Stage { fixture: target, .. } if target.is_none() => *target = Some(fixture),
+            TapeBoot::Stage {
+                fixture: target, ..
+            } if target.is_none() => *target = Some(fixture),
             TapeBoot::Stage { .. } => {
                 return Err(WorkbenchError::new(format!(
                     "workspace tape {:?} already embeds a fixture",
@@ -749,12 +797,18 @@ fn scan_workspace(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), Workbench
         directories: &mut Vec<PathBuf>,
     ) -> Result<(), WorkbenchError> {
         let mut entries = fs::read_dir(path)
-            .map_err(|error| WorkbenchError::new(format!("cannot scan {}: {error}", path.display())))?
+            .map_err(|error| {
+                WorkbenchError::new(format!("cannot scan {}: {error}", path.display()))
+            })?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| WorkbenchError::new(format!("cannot scan {}: {error}", path.display())))?;
+            .map_err(|error| {
+                WorkbenchError::new(format!("cannot scan {}: {error}", path.display()))
+            })?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            let file_type = entry.file_type().map_err(|error| WorkbenchError::new(error.to_string()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| WorkbenchError::new(error.to_string()))?;
             if file_type.is_symlink() {
                 continue;
             }
@@ -822,7 +876,11 @@ fn human_label(value: &str) -> String {
             output.extend(chars);
         }
     }
-    if output.is_empty() { value.into() } else { output }
+    if output.is_empty() {
+        value.into()
+    } else {
+        output
+    }
 }
 
 #[cfg(test)]
@@ -851,7 +909,11 @@ mod tests {
         let catalog = load_project_catalog(&repository).unwrap();
         assert!(catalog.entries.contains_key("routes/intro"));
         assert_eq!(catalog.entries["routes/intro"].kind, ProjectKind::Timeline);
-        assert!(!catalog.entries.contains_key("routes/intro/segments/golf439"));
+        assert!(
+            !catalog
+                .entries
+                .contains_key("routes/intro/segments/golf439")
+        );
         assert!(catalog.groups.contains_key("routes"));
         assert!(!catalog.groups.contains_key("routes/intro"));
     }
@@ -859,7 +921,11 @@ mod tests {
     #[test]
     fn route_private_storage_is_hidden_and_rejected_by_workspace_crud() {
         let repository = temporary_repository("private-route-storage");
-        fs::write(repository.join("routes/private.timeline"), "timeline private\n").unwrap();
+        fs::write(
+            repository.join("routes/private.timeline"),
+            "timeline private\n",
+        )
+        .unwrap();
         fs::create_dir_all(repository.join("routes/private/segments")).unwrap();
         fs::create_dir_all(repository.join("routes/private/variants")).unwrap();
 

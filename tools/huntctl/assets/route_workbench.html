@@ -35,8 +35,7 @@
     .project-row.group { color:#8f9caf; font-weight:700; }
     .project-row .arrow { width:12px; flex:0 0 12px; color:#68768a; font-size:9px; }
     .project-row .project-label { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .workspace-icon { width:14px; height:14px; flex:0 0 14px; color:#8290a4; }
-    .workspace-icon.custom { color:var(--amber); }
+    .project-row .project-icon { flex:0 0 auto; font-size:13px; line-height:1; filter:saturate(.82); }
     .project-row .project-frames { color:#657287; font-size:9px; }
     .project-indent { margin-left:13px; }
     .browser { position:relative; min-width:0; min-height:0; overflow:hidden; background-color:#0b0f15; background-image:radial-gradient(#202a38 1px,transparent 1px); background-size:22px 22px; }
@@ -153,6 +152,8 @@
     .boot-field { display:grid; gap:5px; color:var(--muted); font-size:10px; }
     .boot-field.wide { grid-column:1/-1; }
     .boot-field input,.boot-field select { width:100%; padding:7px 8px; border:1px solid var(--line); border-radius:5px; background:#090d13; color:var(--text); }
+    .boot-choice { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(76px,.65fr); gap:5px; }
+    .boot-source { color:#697689; font-size:9px; line-height:1.35; }
     .boot-field textarea { min-height:170px; }
     .boot-toggle { display:flex; align-items:flex-start; gap:9px; padding:10px; border:1px solid rgba(231,189,104,.4); border-radius:6px; color:var(--amber); font-size:11px; line-height:1.45; }
     .boot-toggle input { margin-top:2px; }
@@ -257,14 +258,13 @@
       <label class="boot-toggle"><input id="bootOverrideEnabled" type="checkbox"><span>Enable boot override for this route or standalone tape. Playback will replace the artifact's authored boot configuration.</span></label>
       <div class="boot-grid">
         <label class="boot-field"><span>Boot type</span><select id="bootKind"><option value="process">Process boot</option><option value="stage">Stage boot</option></select></label>
-        <label class="boot-field"><span>Stage</span><input id="bootStage" list="knownStages" value="F_SP103" maxlength="8"></label>
-        <label class="boot-field"><span>Room</span><input id="bootRoom" type="number" min="-128" max="127" value="1"></label>
-        <label class="boot-field"><span>Spawn point</span><input id="bootPoint" type="number" min="-32768" max="32767" value="1"></label>
-        <label class="boot-field"><span>Layer</span><input id="bootLayer" type="number" min="-128" max="127" value="-1"></label>
+        <label class="boot-field wide"><span>Stage</span><span class="boot-choice"><select id="bootStageChoice" aria-label="Known retail stage"><option value="">Custom stage...</option></select><input id="bootStage" value="F_SP103" maxlength="8" aria-label="Editable stage ID" title="Editable raw stage ID"></span><span id="bootStageSource" class="boot-source">Choose an extracted retail stage or enter any raw ID.</span></label>
+        <label class="boot-field"><span>Room</span><span class="boot-choice"><select id="bootRoomChoice" aria-label="Known room"><option value="">Custom...</option></select><input id="bootRoom" type="number" min="-128" max="127" value="1" aria-label="Editable room"></span></label>
+        <label class="boot-field"><span>Spawn point</span><span class="boot-choice"><select id="bootPointChoice" aria-label="Known spawn point"><option value="">Custom...</option></select><input id="bootPoint" type="number" min="-32768" max="32767" value="1" aria-label="Editable spawn point"></span></label>
+        <label class="boot-field"><span>Layer</span><span class="boot-choice"><select id="bootLayerChoice" aria-label="Known layer"><option value="">Custom...</option></select><input id="bootLayer" type="number" min="-128" max="127" value="-1" aria-label="Editable layer"></span></label>
         <label class="boot-field"><span>Load save slot</span><select id="bootSaveSlot"><option value="">None</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
         <label class="boot-field wide"><span>Loadout / inventory fixture JSON (blank for none)</span><textarea id="bootFixture" spellcheck="false" placeholder='{"schema":"dusklight-scenario-fixture/v1", ...}'></textarea></label>
       </div>
-      <datalist id="knownStages"><option value="F_SP103"><option value="F_SP104"><option value="F_SP108"></datalist>
       <div id="bootError" class="editor-error" role="alert"></div>
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="saveBoot" class="save" value="default" type="button">Save boot configuration</button></div>
     </form>
@@ -278,6 +278,8 @@
     let predicateEditRevision = null;
     let predicateEditOwner = null;
     let bootEditProject = null;
+    let bootStageMetadata = null;
+    let bootStageRequest = 0;
     let selection = {kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};
     let workspaceSelection = null;
     let workspaceNodeSelection = {kind:'folder',id:'routes'};
@@ -330,7 +332,7 @@
       const segments=Array.isArray(raw.segments)?raw.segments:Object.entries(raw.segments||{}).map(([id,item])=>({...item,id:item.id||id}));
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
       const projects=raw.projects||{groups:[],entries:[]};
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[]}};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,drafts:raw.drafts||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = goal => goal.predicate_program?.definitions?.find(item=>item.name===goal.predicate);
@@ -341,9 +343,10 @@
     const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
     const workspaceEntry = () => graph?.projects?.entries?.find(item=>item.id===workspaceSelection)||null;
     const standaloneWorkspaceEntry = () => { const entry=workspaceEntry(); return entry&&entry.kind!=='timeline'?entry:null; };
-    const workspaceIcon=(kind,custom=false)=>kind==='folder'
-      ? '<svg class="workspace-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1.5 3.2h5l1.2 1.4h6.8v8.2H1.5z"/><path fill="none" stroke="currentColor" d="M1.5 4.7h13"/></svg>'
-      : `<svg class="workspace-icon${custom?' custom':''}" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor"/><circle cx="5" cy="8" r="1.7" fill="none" stroke="currentColor"/><circle cx="11" cy="8" r="1.7" fill="none" stroke="currentColor"/><path d="M5 11.5h6" stroke="currentColor"/></svg>`;
+    const projectBootIcon=project=>{
+      const custom=project.boot_override?.enabled||project.boot?.kind==='stage';
+      return custom?'<span class="project-icon" title="Custom boot" aria-label="Custom boot">🫠</span>':'<span class="project-icon" title="Normal process boot" aria-label="Normal process boot">💿</span>';
+    };
     function renderProjects() {
       const root=$('projects');
       const groups=graph.projects.groups||[];
@@ -354,9 +357,9 @@
         const children=groupChildren(group.id),projects=projectChildren(group.id);
         const open=!projectCollapsed.has(group.id);
         const nested=open?[...children.map(child=>groupHtml(child,depth+1)),...projects.map(project=>projectHtml(project,depth+1))].join(''):'';
-        return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group${workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===group.id?' selected':''}" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span>${workspaceIcon('folder')}<span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
+        return `<div class="project-indent" style="margin-left:${depth?13:0}px"><button class="project-row group${workspaceNodeSelection.kind==='folder'&&workspaceNodeSelection.id===group.id?' selected':''}" type="button" data-project-group="${escapeHtml(group.id)}"><span class="arrow">${open?'▼':'▶'}</span><span class="project-label">${escapeHtml(group.label)}</span></button>${nested}</div>`;
       };
-      const projectHtml=(project,depth)=>{const custom=project.boot_override?.enabled||project.boot?.kind==='stage';return `<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span>${workspaceIcon('tape',custom)}<span class="project-label">${escapeHtml(project.label)}</span><span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;};
+      const projectHtml=(project,depth)=>`<div class="project-indent" style="margin-left:${depth*13}px"><button class="project-row${workspaceNodeSelection.kind==='project'&&workspaceNodeSelection.id===project.id?' selected':''}" type="button" data-project-id="${escapeHtml(project.id)}" ${project.playable?'':'aria-invalid="true"'}><span class="arrow">${project.playable?'':'!'}</span><span class="project-label">${escapeHtml(project.label)}</span>${projectBootIcon(project)}<span class="project-frames">${project.kind==='timeline'?'':`${project.frame_count??'—'}f`}</span></button></div>`;
       const workspaceRoot=groups.some(group=>group.id==='routes')?'routes':null;
       root.innerHTML=[...groupChildren(workspaceRoot).map(group=>groupHtml(group,0)),...projectChildren(workspaceRoot).map(project=>projectHtml(project,0))].join('')||'<div class="empty">No project tapes.</div>';
       root.querySelectorAll('[data-project-group]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.projectGroup;workspaceNodeSelection={kind:'folder',id};projectCollapsed.has(id)?projectCollapsed.delete(id):projectCollapsed.add(id);renderProjects();updateWorkspaceTools();}));
@@ -704,10 +707,46 @@
       root.querySelectorAll('[data-edit-predicate]').forEach(button=>button.addEventListener('click',()=>editPredicate(button.dataset.editPredicate)));
       root.querySelectorAll('[data-edit-boot]').forEach(button=>button.addEventListener('click',()=>editBoot(button.dataset.editBoot)));
     }
-    function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'route graph':'standalone tape'}`:`${graph.timeline} · Git timeline`;renderProjects();renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
+    function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'tape tree':'single tape'}`:`${graph.timeline} · tape tree`;renderProjects();renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
     function setBootStageFieldsEnabled() {
       const enabled=$('bootKind').value==='stage';
-      ['bootStage','bootRoom','bootPoint','bootLayer','bootSaveSlot','bootFixture'].forEach(id=>$(id).disabled=!enabled);
+      ['bootStageChoice','bootStage','bootRoomChoice','bootRoom','bootPointChoice','bootPoint','bootLayerChoice','bootLayer','bootSaveSlot','bootFixture'].forEach(id=>$(id).disabled=!enabled);
+    }
+    function fillBootChoice(id,values,current,labeler,emptyLabel='Custom...') {
+      const select=$(id),selected=String(current??'');
+      select.innerHTML=`<option value="">${escapeHtml(emptyLabel)}</option>`+values.map(value=>`<option value="${escapeHtml(value)}">${escapeHtml(labeler(value))}</option>`).join('');
+      select.value=values.map(String).includes(selected)?selected:'';
+    }
+    function populateStageChoices(current) {
+      const stages=graph.projects.stages||[],select=$('bootStageChoice');
+      select.innerHTML='<option value="">Custom stage...</option>'+stages.map(stage=>`<option value="${escapeHtml(stage.id)}">${escapeHtml(stage.friendly_name?`${stage.id} — ${stage.friendly_name}`:stage.id)}</option>`).join('');
+      select.value=stages.some(stage=>stage.id===current)?current:'';
+    }
+    function applyStageRoomChoices() {
+      const rooms=bootStageMetadata?.rooms||[],roomValue=$('bootRoom').value;
+      fillBootChoice('bootRoomChoice',rooms.map(room=>room.id),roomValue,value=>`Room ${value}`);
+      const room=rooms.find(candidate=>String(candidate.id)===String(roomValue));
+      fillBootChoice('bootPointChoice',room?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`);
+      fillBootChoice('bootLayerChoice',room?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`);
+    }
+    async function refreshStageChoices() {
+      const stage=$('bootStage').value.trim(),request=++bootStageRequest;
+      populateStageChoices(stage);bootStageMetadata=null;applyStageRoomChoices();
+      if(!(graph.projects.stages||[]).some(candidate=>candidate.id===stage)) {
+        $('bootStageSource').textContent='Custom raw stage ID; room, spawn, and layer remain manually editable.';
+        return;
+      }
+      $('bootStageSource').textContent='Reading stage choices...';
+      try {
+        const response=await fetch('/api/workspace/stage-options',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({stage})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        if(request!==bootStageRequest)return;
+        bootStageMetadata=body;applyStageRoomChoices();
+        $('bootStageSource').textContent=body.inventory_indexed?'Rooms from extracted disc; spawn points and layers from the read-only world index.':'Rooms from extracted disc; spawn and layer stay manual until this stage has a world index.';
+      } catch(error) {
+        if(request!==bootStageRequest)return;
+        $('bootStageSource').textContent=`Could not read known choices: ${error.message}`;
+      }
     }
     function editBoot(projectId) {
       const project=graph.projects.entries.find(item=>item.id===projectId);if(!project)return;
@@ -722,7 +761,7 @@
       $('bootLayer').value=String(configuration.layer??-1);
       $('bootSaveSlot').value=configuration.save_slot==null?'':String(configuration.save_slot);
       $('bootFixture').value=configuration.fixture?JSON.stringify(configuration.fixture,null,2):'';
-      $('bootError').textContent='';setBootStageFieldsEnabled();$('bootEditor').showModal();
+      $('bootError').textContent='';setBootStageFieldsEnabled();populateStageChoices($('bootStage').value);$('bootEditor').showModal();void refreshStageChoices();
     }
     function boundedInteger(id,min,max) {
       const value=Number($(id).value);
@@ -1002,7 +1041,15 @@
     $('savePredicate').addEventListener('click',savePredicate);
     $('saveBoot').addEventListener('click',saveBoot);
     $('bootKind').addEventListener('change',setBootStageFieldsEnabled);
-    $('bootEditor').addEventListener('close',()=>bootEditProject=null);
+    $('bootStageChoice').addEventListener('change',()=>{if($('bootStageChoice').value)$('bootStage').value=$('bootStageChoice').value;void refreshStageChoices();});
+    $('bootStage').addEventListener('change',refreshStageChoices);
+    $('bootRoomChoice').addEventListener('change',()=>{if($('bootRoomChoice').value)$('bootRoom').value=$('bootRoomChoice').value;applyStageRoomChoices();});
+    $('bootRoom').addEventListener('change',applyStageRoomChoices);
+    $('bootPointChoice').addEventListener('change',()=>{if($('bootPointChoice').value)$('bootPoint').value=$('bootPointChoice').value;});
+    $('bootPoint').addEventListener('change',()=>fillBootChoice('bootPointChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.spawn_points||[],$('bootPoint').value,value=>`Spawn ${value}`));
+    $('bootLayerChoice').addEventListener('change',()=>{if($('bootLayerChoice').value)$('bootLayer').value=$('bootLayerChoice').value;});
+    $('bootLayer').addEventListener('change',()=>fillBootChoice('bootLayerChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`));
+    $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootStageMetadata=null;bootStageRequest+=1;});
     $('predicateEditor').addEventListener('close',()=>{predicateEditRevision=null;predicateEditOwner=null;});
     load();
   })();

@@ -362,13 +362,16 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/workspace/boot") => {
-                    let result = serde_json::from_slice::<BrowserBootOverrideUpdateRequest>(
-                        &request.body,
-                    )
-                    .map_err(|error| {
-                        WorkbenchError::new(format!("invalid boot override request: {error}"))
-                    })
-                    .and_then(|update| update_boot_override(&config.repository_root, &update));
+                    let result =
+                        serde_json::from_slice::<BrowserBootOverrideUpdateRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid boot override request: {error}"
+                                ))
+                            })
+                            .and_then(|update| {
+                                update_boot_override(&config.repository_root, &update)
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())
@@ -377,18 +380,19 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/workspace/stage-options") => {
-                    let result = serde_json::from_slice::<BrowserStageBootOptionsRequest>(
-                        &request.body,
-                    )
-                    .map_err(|error| {
-                        WorkbenchError::new(format!("invalid stage-options request: {error}"))
-                    })
-                    .and_then(|request| {
-                        crate::stage_catalog::stage_boot_options(
-                            &config.repository_root,
-                            &request.stage,
-                        )
-                    });
+                    let result =
+                        serde_json::from_slice::<BrowserStageBootOptionsRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid stage-options request: {error}"
+                                ))
+                            })
+                            .and_then(|request| {
+                                crate::stage_catalog::stage_boot_options(
+                                    &config.repository_root,
+                                    &request.stage,
+                                )
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())
@@ -412,19 +416,20 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/workspace/move") => {
-                    let result = serde_json::from_slice::<BrowserWorkspaceMoveRequest>(
-                        &request.body,
-                    )
-                    .map_err(|error| {
-                        WorkbenchError::new(format!("invalid workspace-move request: {error}"))
-                    })
-                    .and_then(|move_request| {
-                        move_workspace_node(
-                            &config.repository_root,
-                            &config.timeline_path,
-                            &move_request,
-                        )
-                    });
+                    let result =
+                        serde_json::from_slice::<BrowserWorkspaceMoveRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid workspace-move request: {error}"
+                                ))
+                            })
+                            .and_then(|move_request| {
+                                move_workspace_node(
+                                    &config.repository_root,
+                                    &config.timeline_path,
+                                    &move_request,
+                                )
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())
@@ -433,20 +438,21 @@ pub(super) fn handle_http(
                     }
                 }
                 ("POST", "/api/workspace/delete") => {
-                    let result = serde_json::from_slice::<BrowserWorkspaceDeleteRequest>(
-                        &request.body,
-                    )
-                    .map_err(|error| {
-                        WorkbenchError::new(format!("invalid workspace-delete request: {error}"))
-                    })
-                    .and_then(|delete_request| {
-                        delete_workspace_node(
-                            &config.repository_root,
-                            &config.timeline_path,
-                            &config.state_root,
-                            &delete_request,
-                        )
-                    });
+                    let result =
+                        serde_json::from_slice::<BrowserWorkspaceDeleteRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid workspace-delete request: {error}"
+                                ))
+                            })
+                            .and_then(|delete_request| {
+                                delete_workspace_node(
+                                    &config.repository_root,
+                                    &config.timeline_path,
+                                    &config.state_root,
+                                    &delete_request,
+                                )
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())
