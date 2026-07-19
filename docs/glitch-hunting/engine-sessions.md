@@ -36,3 +36,23 @@ Reuse remains refused until every blocker is discharged in code and an A/B/A
 sequence produces cold-identical terminal, tick, boundary, tape, trace, and
 objective evidence. Removing a blocker because a second call happens not to
 crash is insufficient.
+
+## Completed-run lifecycle seam
+
+The completed native path now has a runtime-owned, ordered lifecycle instead
+of letting `main01` destroy its own dependencies:
+
+1. `pre_game_run` admits exactly one transition to `game_run_active`;
+2. the loop flushes authenticated proof, then `finish_game_run` closes mods,
+   UI, and movie state at `post_authenticated_run`;
+3. diagnostics stop before machine heaps are destroyed;
+4. machine destruction broadcasts the irreversible emulated-OS shutdown; and
+5. Discord, texture/config state, and Aurora close last as host services.
+
+Any second admission after `post_authenticated_run` is explicitly
+`RefusedResetUnproved`. This is the first precise reuse refusal boundary: proof
+for the completed request exists and Aurora/DVD hosting are still alive, but
+no world reconstruction guarantee exists. The existing shutdown order is
+preserved because moving UI, mods, logging, or threads across heap destruction
+without ownership evidence would turn the reset experiment into undefined
+lifetime behavior.

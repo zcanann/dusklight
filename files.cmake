@@ -1423,6 +1423,8 @@ set(DUSK_FILES
         src/dusk/android_frame_rate.hpp
         src/dusk/android_frame_rate.cpp
         src/dusk/asserts.cpp
+        include/dusk/runtime/lifecycle.hpp
+        src/dusk/runtime/lifecycle.cpp
         include/dusk/automation/build_identity.hpp
         src/dusk/automation/build_identity.cpp
         include/dusk/automation/actor_catalog.hpp

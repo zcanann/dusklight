@@ -61,6 +61,7 @@
 #include <nlohmann/json.hpp>
 #include "SSystem/SComponent/c_API.h"
 #include "dusk/android_frame_rate.hpp"
+#include "dusk/runtime/lifecycle.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
 #include "dusk/automation/game_state_observer.hpp"
@@ -546,8 +547,6 @@ void main01(void) {
     write_actor_catalog_on_exit();
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::ProofArtifactsWritten);
-    dusk::mods::ModLoader::instance().shutdown();
-    dusk::ui::shutdown();
 }
 
 static bool IsBackendAvailable(AuroraBackend backend) {
@@ -3613,27 +3612,17 @@ int game_main(int argc, char* argv[]) {
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::EngineReady);
 
+    if (dusk::runtime::begin_game_run() != dusk::runtime::GameRunAdmission::Admitted) {
+        DuskLog.error("Game run refused at lifecycle boundary {}",
+                      dusk::runtime::lifecycle_boundary_name());
+        return 1;
+    }
     main01();
 
-    dusk::MoviePlayerShutdown();
-
-    dusk::crash_reporting::shutdown();
-    dusk::ShutdownFileLogging();
-    fflush(stdout);
-    fflush(stderr);
-
-    mDoMch_Destroy();
-
-    // Notifies all CVs and causes threads to exit
-    OSResetSystem(OS_RESET_SHUTDOWN, 0, 0);
-
-#ifdef DUSK_DISCORD
-    dusk::discord::shutdown();
-#endif
-    dusk::ui::shutdown();
-    dusk::texture_replacements::shutdown();
-    dusk::config::shutdown();
-    aurora_shutdown();
+    dusk::runtime::finish_game_run();
+    dusk::runtime::shutdown_diagnostics();
+    dusk::runtime::destroy_emulated_machine();
+    dusk::runtime::shutdown_host_services();
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::EngineShutdown);
 
