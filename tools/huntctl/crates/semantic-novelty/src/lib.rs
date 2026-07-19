@@ -13,6 +13,11 @@ pub mod human_labels;
 pub mod minimization;
 pub mod proposal_signal;
 
+// Keep the shared wire-format owners explicit in this crate's dependency graph
+// while preserving concise module-local paths.
+pub use dusklight_automation_contracts::tape;
+pub use dusklight_trace::trace;
+
 use crate::trace::{
     DecodedTrace, TraceCollisionBackingFormat, TraceCollisionSurfaceKind, TraceRecord,
 };

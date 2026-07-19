@@ -1,7 +1,7 @@
 //! Stable semantic symptom clustering for autonomous discovery incidents.
 
 use super::{EventFact, SemanticNoveltyDescriptor, SemanticState};
-use crate::semantic_novelty::archive::DiscoveryArchivePartitionKey;
+use crate::archive::DiscoveryArchivePartitionKey;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -263,7 +263,7 @@ fn validate_sha256(label: &str, digest: &str) -> Result<(), SymptomClusterError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::archive::{DiscoveryArchivePartitionKey, DiscoveryFidelity};
+    use crate::archive::{DiscoveryArchivePartitionKey, DiscoveryFidelity};
     use crate::tape::TapeBoot;
     use crate::trace::{DecodedTrace, TraceRecord};
 

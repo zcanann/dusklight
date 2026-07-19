@@ -284,10 +284,8 @@ fn campaign_identity(spec: &OpenQuestionCampaignSpec) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::archive::{DiscoveryArchivePartitionKey, DiscoveryFidelity};
-    use crate::semantic_novelty::{
-        ContactState, EventFact, FlagState, SemanticState, SemanticStateCombination,
-    };
+    use crate::archive::{DiscoveryArchivePartitionKey, DiscoveryFidelity};
+    use crate::{ContactState, EventFact, FlagState, SemanticState, SemanticStateCombination};
 
     fn contact(destination: bool) -> ContactFact {
         ContactFact {

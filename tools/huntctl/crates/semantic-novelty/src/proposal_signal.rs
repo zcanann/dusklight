@@ -130,10 +130,8 @@ fn validate_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::catalog::{
-        RareStateCombinationReason, SEMANTIC_NOVELTY_ASSESSMENT_SCHEMA,
-    };
-    use crate::semantic_novelty::{
+    use crate::catalog::{RareStateCombinationReason, SEMANTIC_NOVELTY_ASSESSMENT_SCHEMA};
+    use crate::{
         EventFact, FlagState, SemanticState, SemanticStateCombination, StateTransitionFact,
     };
 

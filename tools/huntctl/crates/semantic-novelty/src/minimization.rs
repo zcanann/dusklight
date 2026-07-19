@@ -307,7 +307,7 @@ fn validate_boundary(boundary: &BoundaryFingerprintFact) -> Result<(), NoveltyMi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::catalog::{SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig};
+    use crate::catalog::{SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig};
     use crate::tape::InputFrame;
     use crate::tape::TapeBoot;
     use crate::trace::{DecodedTrace, TraceRecord};

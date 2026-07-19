@@ -101,6 +101,15 @@ formats. It cannot execute native runs, inspect evidence, train models, mutate
 route/workbench state, or parse CLI commands. Root adapters are responsible
 for feeding it authenticated outcomes and enforcing simulator budgets.
 
+## `dusklight-semantic-novelty`
+
+Owns portable semantic descriptors, novelty catalogs, discovery archives,
+symptom clustering, minimization predicates, and headful/human review handoff.
+It may depend on contracts and decoded traces. It cannot execute candidates,
+rank native search results, mutate routes, train models, or parse CLI commands.
+This keeps discovery semantics inspectable and independent of the evaluator
+that consumes them.
+
 ## `dusklight-world`
 
 Owns read-only archive/collision geometry, static world inventory, and bounded

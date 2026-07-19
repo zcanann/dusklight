@@ -12,7 +12,6 @@ pub mod option_golf;
 pub mod route_store;
 pub mod route_workbench;
 pub mod search_evaluator;
-pub mod semantic_novelty;
 pub mod tactic_tests;
 pub mod timeline;
 pub mod trace_diff;
@@ -33,6 +32,7 @@ pub use dusklight_evidence::{
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
 pub use dusklight_search::{bayesian_search, continuous_search, search};
+pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_trace::{trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};

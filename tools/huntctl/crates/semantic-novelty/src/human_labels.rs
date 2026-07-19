@@ -262,7 +262,7 @@ fn validate_sha256(label: &str, digest: &str) -> Result<(), HumanLabelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::archive::DiscoveryOutcomeKind;
+    use crate::archive::DiscoveryOutcomeKind;
 
     fn request() -> HumanClassificationRequest {
         HumanClassificationRequest {

@@ -277,7 +277,7 @@ fn validate_sha256(label: &str, digest: &str) -> Result<(), DiscoveryArchiveErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::catalog::{SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig};
+    use crate::catalog::{SemanticNoveltyCatalog, SemanticNoveltyCatalogConfig};
     use crate::tape::TapeBoot;
     use crate::trace::{DecodedTrace, TraceRecord};
 

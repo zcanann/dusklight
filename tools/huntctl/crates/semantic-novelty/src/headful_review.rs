@@ -393,10 +393,8 @@ fn validate_sha256(label: &str, digest: &str) -> Result<(), HeadfulReviewError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic_novelty::catalog::{
-        SEMANTIC_NOVELTY_ASSESSMENT_SCHEMA, SemanticNoveltyAssessment,
-    };
-    use crate::semantic_novelty::proposal_signal::{
+    use crate::catalog::{SEMANTIC_NOVELTY_ASSESSMENT_SCHEMA, SemanticNoveltyAssessment};
+    use crate::proposal_signal::{
         SemanticNoveltyProposalSignal, SemanticNoveltyProposalSignalConfig,
     };
 
