@@ -4370,6 +4370,21 @@ fn extract_trial_transition_corpus(
     let decoded_tape = InputTape::decode(&tape_bytes)
         .map_err(|error| error.to_string())?
         .tape;
+    let run_request = evidence
+        .harness_request
+        .as_ref()
+        .map(|path| {
+            serde_json::from_slice::<HarnessRunRequest>(
+                &fs::read(path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .transpose()?;
+    if let Some(request) = &run_request {
+        request
+            .validate()
+            .map_err(|error| format!("episode harness request is invalid: {error}"))?;
+    }
     let start_reference = learning_boundary_reference(
         &objective.identity.digest,
         &objective.identity.source_milestone,
@@ -4467,23 +4482,37 @@ fn extract_trial_transition_corpus(
     };
     let context = EpisodeContext {
         schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
-        run_identity: None,
-        run_build: RunBuildIdentity {
-            executable_sha256: objective
-                .identity
-                .game_sha256
-                .parse()
-                .map_err(|error| format!("invalid objective game digest: {error}"))?,
-            dusklight_commit: None,
-            aurora_commit: None,
-            target: Some(format!(
-                "{}-{}",
-                std::env::consts::ARCH,
-                std::env::consts::OS
-            )),
-            profile: None,
-            feature_digest: None,
-        },
+        run_identity: run_request.as_ref().map(|request| request.identity.clone()),
+        run_build: run_request.as_ref().map_or_else(
+            || {
+                Ok::<_, String>(RunBuildIdentity {
+                    executable_sha256: objective
+                        .identity
+                        .game_sha256
+                        .parse()
+                        .map_err(|error| format!("invalid objective game digest: {error}"))?,
+                    dusklight_commit: None,
+                    aurora_commit: None,
+                    target: Some(format!(
+                        "{}-{}",
+                        std::env::consts::ARCH,
+                        std::env::consts::OS
+                    )),
+                    profile: None,
+                    feature_digest: None,
+                })
+            },
+            |request| {
+                Ok(RunBuildIdentity {
+                    executable_sha256: request.executable.sha256,
+                    dusklight_commit: Some(request.build.dusklight_commit.clone()),
+                    aurora_commit: Some(request.build.aurora_commit.clone()),
+                    target: Some(request.build.target.clone()),
+                    profile: Some(request.build.profile.clone()),
+                    feature_digest: Some(request.build.feature_digest),
+                })
+            },
+        )?,
         objective: EpisodeObjectiveIdentity {
             id: format!(
                 "{}:{}",

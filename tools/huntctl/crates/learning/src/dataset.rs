@@ -5,6 +5,7 @@ use crate::episode::{EpisodeManifest, EpisodeOutcomeClass};
 use crate::tape::InputTape;
 use crate::transition_corpus::TransitionCorpus;
 use crate::transition_evidence::{EvidenceAvailability, TransitionEvidenceBundle};
+use dusklight_automation_contracts::compatibility::{CompatibilityMode, ensure_compatible};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -435,6 +436,32 @@ fn validate_inputs(
         return Err(DatasetError::new("invalid dataset build configuration"));
     }
     let mut source_ids = BTreeSet::new();
+    let identified = sources
+        .iter()
+        .filter(|source| source.episode.run_identity.is_some())
+        .count();
+    if identified != 0 && identified != sources.len() {
+        return Err(DatasetError::new(
+            "model-training inputs mix identified active episodes with legacy episodes",
+        ));
+    }
+    if let Some(expected) = sources
+        .first()
+        .and_then(|source| source.episode.run_identity.as_ref())
+    {
+        for source in &sources[1..] {
+            ensure_compatible(
+                CompatibilityMode::ModelTraining,
+                expected,
+                source
+                    .episode
+                    .run_identity
+                    .as_ref()
+                    .expect("identified count was checked"),
+            )
+            .map_err(|error| DatasetError::new(error.to_string()))?;
+        }
+    }
     for source in sources {
         source
             .episode
@@ -722,6 +749,7 @@ impl From<std::io::Error> for DatasetError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact::{ARTIFACT_SCHEMA_VERSION, ArtifactIdentity, BuildIdentity};
     use crate::episode::{
         EPISODE_CONTEXT_SCHEMA_V1, EpisodeContext, EpisodeLineage, EpisodeManifestBuild,
         EpisodeObjectiveIdentity, EpisodeOutcome, EpisodeProducerIdentity, EpisodeProducerKind,
@@ -744,6 +772,7 @@ mod tests {
         objective: &str,
         frames: usize,
         byte: u8,
+        game_byte: u8,
     ) -> DatasetSource {
         let tape = InputTape {
             boot: TapeBoot::Stage {
@@ -875,7 +904,32 @@ mod tests {
         evidence.validate(&corpus).unwrap();
         let context = EpisodeContext {
             schema: EPISODE_CONTEXT_SCHEMA_V1.into(),
-            run_identity: None,
+            run_identity: Some(ArtifactIdentity {
+                schema_version: ARTIFACT_SCHEMA_VERSION,
+                content_digest: Digest([byte; 32]),
+                build: BuildIdentity {
+                    dusklight_commit: "dusk-test".into(),
+                    aurora_commit: "aurora-test".into(),
+                    compiler: "rustc-test".into(),
+                    target: "test-target".into(),
+                    profile: "test".into(),
+                    feature_digest: Digest([0x31; 32]),
+                    game_digest: Digest([game_byte; 32]),
+                    dirty_digest: None,
+                    fidelity_profile: "headless".into(),
+                },
+                protocol_name: "test-protocol".into(),
+                protocol_version: 1,
+                protocol_capabilities_digest: Digest([0x32; 32]),
+                scenario_id: stage.into(),
+                region_digest: Digest([0x33; 32]),
+                language_assets_digest: Digest([0x34; 32]),
+                scenario_digest: Digest([byte.wrapping_add(2); 32]),
+                predicate_program_digest: Digest([0x66; 32]),
+                action_schema_digest: Digest([0x22; 32]),
+                observation_schema_digest: Digest([0x11; 32]),
+                settings_digest: Digest([0x35; 32]),
+            }),
             run_build: RunBuildIdentity {
                 executable_sha256: Digest([0x55; 32]),
                 dusklight_commit: None,
@@ -934,9 +988,9 @@ mod tests {
     #[test]
     fn grouped_splits_freeze_withheld_and_fit_normalization_on_training_only() {
         let sources = vec![
-            source("a", "STAGE_A", "family-a", "normal", 2, 1),
-            source("b", "STAGE_A", "family-a", "normal", 3, 2),
-            source("held", "STAGE_B", "family-held", "frozen", 2, 3),
+            source("a", "STAGE_A", "family-a", "normal", 2, 1, 0x36),
+            source("b", "STAGE_A", "family-a", "normal", 3, 2, 0x36),
+            source("held", "STAGE_B", "family-held", "frozen", 2, 3, 0x36),
         ];
         let manifest = DatasetManifest::build(
             &sources,
@@ -948,8 +1002,13 @@ mod tests {
         )
         .unwrap();
         manifest.validate().unwrap();
-        assert_eq!(manifest.entries[0].split, DatasetSplit::Train);
-        assert_eq!(manifest.entries[1].split, DatasetSplit::Train);
+        assert!(
+            manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.objective_id == "normal")
+                .all(|entry| entry.split == DatasetSplit::Train)
+        );
         assert_eq!(
             manifest
                 .entries
@@ -965,5 +1024,15 @@ mod tests {
         assert_eq!(manifest.report.effective_decisions, 3);
         assert!(manifest.leakage.grouped_by_scenario > 0);
         assert_eq!(manifest.leakage.cross_split_violations, 0);
+    }
+
+    #[test]
+    fn rejects_model_training_across_incompatible_episode_identities() {
+        let sources = vec![
+            source("a", "STAGE_A", "family-a", "normal", 2, 1, 0x36),
+            source("b", "STAGE_B", "family-b", "other", 2, 2, 0x37),
+        ];
+        let error = DatasetManifest::build(&sources, &DatasetBuildConfig::default()).unwrap_err();
+        assert!(error.to_string().contains("build.game_digest"));
     }
 }
