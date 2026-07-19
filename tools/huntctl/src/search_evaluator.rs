@@ -5,7 +5,7 @@ use crate::bayesian_search::{
     BayesianConfig, BayesianObservation, BayesianOptimizer, BayesianProposal, BayesianSnapshot,
 };
 use crate::behavior_archive::{BehaviorArchive, BehaviorContext, describe_behavior_with_context};
-use crate::candidate_envelope::NamedDigest;
+use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
 use crate::content_store::{ContentBlob, ContentKind, ContentStore};
 use crate::continuous_search::{
     ContinuousAxes, ContinuousMethod, ContinuousOptimizer, ContinuousOptimizerConfig,
@@ -24,7 +24,9 @@ use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessT
 use crate::learning::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
 use crate::learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use crate::learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
-use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_from_bytes};
+use crate::offline_rl::{
+    ExploratoryExtractConfig, extract_exploratory_from_bytes, movement_action_schema_digest_v2,
+};
 use crate::q_search::{QEpisode, QProposalConfig, propose_q_candidates_with_lineage};
 use crate::search::{
     Ancestry, Candidate, CandidateResult, EvolutionConfig, InterventionRange, LexicographicScore,
@@ -2366,6 +2368,17 @@ pub fn run_anchored_search(
         search.population_size,
         search.rng_seed,
     )?;
+    write_initial_proposal_envelopes(
+        &manifest,
+        &population_root,
+        NamedDigest::new(
+            prepared.identity.goal_milestone.clone(),
+            prepared.identity.digest.parse().map_err(|error| {
+                EvaluateError::InvalidResult(format!("invalid anchored objective digest: {error}"))
+            })?,
+        ),
+        search.population_size,
+    )?;
     let mut final_results = None;
     let mut training_corpora = BTreeMap::<String, TransitionCorpus>::new();
     let mut previous_dataset_generation: Option<OnlineDatasetGeneration> = None;
@@ -2754,6 +2767,70 @@ pub fn run_anchored_search(
     };
     write_json(&search.output_root.join("run.summary.json"), &summary)?;
     Ok(summary)
+}
+
+fn write_initial_proposal_envelopes(
+    manifest: &PopulationManifest,
+    population_root: &Path,
+    objective: NamedDigest,
+    population_size: usize,
+) -> Result<(), EvaluateError> {
+    let configuration = serde_json::to_vec(&(
+        "dusklight-anchored-seed-population/v1",
+        manifest.segment,
+        &manifest.boot,
+        manifest.rng_seed,
+        population_size,
+    ))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.anchored-seed-population/v1\0");
+    hasher.update((configuration.len() as u64).to_le_bytes());
+    hasher.update(configuration);
+    let configuration_sha256 = ArtifactDigest(hasher.finalize().into());
+    let mut envelopes = Vec::with_capacity(manifest.members.len());
+    for member in &manifest.members {
+        let candidate_sha256 = member.candidate_id.parse().map_err(|error| {
+            EvaluateError::InvalidManifest(format!("invalid candidate digest: {error}"))
+        })?;
+        let parent_candidate_sha256 = member
+            .ancestry
+            .parent_id
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .map_err(|error| {
+                EvaluateError::InvalidManifest(format!("invalid parent candidate digest: {error}"))
+            })?;
+        let (kind, id) = if parent_candidate_sha256.is_some() {
+            (ProposerKind::StructuredSearch, "search.seed-mutation")
+        } else {
+            (ProposerKind::Scripted, "scripted.observed-seed")
+        };
+        envelopes.push(
+            CandidateEnvelope::build(
+                candidate_sha256,
+                parent_candidate_sha256,
+                member.ancestry.generation,
+                objective.clone(),
+                NamedDigest::new("movement-action/v2", movement_action_schema_digest_v2()),
+                manifest.rng_seed,
+                ProposerIdentity {
+                    kind,
+                    id: id.into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    configuration_sha256,
+                },
+            )
+            .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?,
+        );
+    }
+    write_json(
+        &population_root.join("proposal-envelopes.json"),
+        &serde_json::json!({
+            "schema": "dusklight-candidate-envelope-set/v1",
+            "envelopes": envelopes,
+        }),
+    )
 }
 
 #[derive(Clone)]
@@ -6099,5 +6176,50 @@ milestone tunnel_crawl_start {
         let reference = contact_identity(contact_trace(1, 7, 1));
         assert_eq!(reference, contact_identity(contact_trace(1, 99, 3)));
         assert_ne!(reference, contact_identity(contact_trace(2, 7, 1)));
+    }
+
+    #[test]
+    fn initial_population_seals_scripted_and_structured_proposal_envelopes() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("huntctl-proposal-envelopes-{unique}"));
+        let manifest = write_seed_population(
+            &root,
+            Candidate::baseline(SegmentProfile::Fsp103ToFsp104),
+            4,
+            71,
+        )
+        .unwrap();
+        let objective = NamedDigest::new("entered-f-sp104", ArtifactDigest([0xa7; 32]));
+        write_initial_proposal_envelopes(&manifest, &root, objective.clone(), 4).unwrap();
+        let document: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("proposal-envelopes.json")).unwrap())
+                .unwrap();
+        let envelopes: Vec<CandidateEnvelope> =
+            serde_json::from_value(document["envelopes"].clone()).unwrap();
+        assert_eq!(envelopes.len(), manifest.members.len());
+        assert_eq!(
+            envelopes
+                .iter()
+                .filter(|envelope| envelope.proposer.kind == ProposerKind::Scripted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            envelopes
+                .iter()
+                .filter(|envelope| envelope.proposer.kind == ProposerKind::StructuredSearch)
+                .count(),
+            3
+        );
+        assert!(envelopes.iter().all(|envelope| {
+            envelope.validate().is_ok()
+                && envelope.objective == objective
+                && envelope.action_schema.sha256 == movement_action_schema_digest_v2()
+                && envelope.seed == 71
+        }));
+        fs::remove_dir_all(root).unwrap();
     }
 }

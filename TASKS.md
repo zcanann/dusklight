@@ -105,7 +105,7 @@ the authored target.
   over immutable transition batches.
 - [x] Provide structured candidate mutation and bounded search strategies with
   pre-evaluation deduplication and per-proposer budget accounting.
-- [ ] Define one candidate envelope for scripted, random, structured-search,
+- [x] Define one candidate envelope for scripted, random, structured-search,
   and learned proposals with exact parent, objective, action schema, seed, and
   proposer identity.
 - [ ] Freeze one dataset generation, train one simple baseline, and emit only

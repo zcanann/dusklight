@@ -87,9 +87,13 @@ impl CandidateEnvelope {
         {
             return Err(envelope_error("candidate lineage identity is invalid"));
         }
-        if (self.generation == 0) != self.parent_candidate_sha256.is_none() {
+        if matches!(
+            self.proposer.kind,
+            ProposerKind::StructuredSearch | ProposerKind::Learned
+        ) && self.parent_candidate_sha256.is_none()
+        {
             return Err(envelope_error(
-                "generation zero must be parentless and later generations require one exact parent",
+                "structured-search and learned proposals require one exact parent",
             ));
         }
         self.objective.validate("objective")?;
@@ -251,7 +255,7 @@ mod tests {
 
     #[test]
     fn lineage_and_required_identities_fail_closed() {
-        let mut no_parent = envelope(ProposerKind::Random);
+        let mut no_parent = envelope(ProposerKind::StructuredSearch);
         no_parent.parent_candidate_sha256 = None;
         assert!(no_parent.validate().is_err());
 
