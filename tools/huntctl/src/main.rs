@@ -55,12 +55,12 @@ use huntctl::search::{
     rank_population, write_explicit_population_with_seed, write_seed_population,
 };
 use huntctl::search_evaluator::{
-    AnchoredObjectiveConfig, AnchoredSearchRunConfig, BayesianSearchRunConfig, BeamSearchConfig,
-    BootGolfConfig, BootMinimizeConfig, BoundaryFingerprint, ContinuousSearchRunConfig,
-    EvaluateConfig, HarnessEvaluateConfig, ProposerTournamentConfig, SearchRunConfig,
-    TournamentDefinition, evaluate_population, golf_boot, minimize_boot, run_anchored_search,
-    run_bayesian_search, run_beam_search, run_continuous_search, run_proposer_tournament,
-    run_search,
+    AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig, AnchoredSearchRunConfig,
+    BayesianSearchRunConfig, BeamSearchConfig, BootGolfConfig, BootMinimizeConfig,
+    BoundaryFingerprint, ContinuousSearchRunConfig, EvaluateConfig, HarnessEvaluateConfig,
+    ProposerTournamentConfig, SearchRunConfig, TournamentDefinition, evaluate_population,
+    golf_boot, minimize_anchored_route, minimize_boot, run_anchored_search, run_bayesian_search,
+    run_beam_search, run_continuous_search, run_proposer_tournament, run_search,
 };
 use huntctl::semantic_oracle::{
     RunOutcomeEvidence, SemanticOracleProgram, SupplementalObservations,
@@ -2013,6 +2013,7 @@ fn print_usage() {
         "  huntctl search bayesian --candidate SEED.json --axes AXES.json --game PATH --dvd PATH --output DIR [--generations N] [--batch-size N] [--initial-samples N] [--acquisition-pool N] [--length-scale L] [--observation-noise N] [--exploration X] [--candidate-budget N] [--rng-seed N]\n",
         "  huntctl search tournament --definition TOURNAMENT.json --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--anchored-prefix PREFIX.tape --milestones PROGRAM.dmsp --segment ID --source-milestone NAME --source-boundary-fingerprint VALUE --goal-milestone NAME] [--workers N] [--repetitions N]\n",
         "  huntctl search prepare-tournament-lane --candidate CANDIDATE.json --proposal-envelopes ENVELOPES.json --output DIR\n",
+        "  huntctl search minimize-route --candidate FILE --anchored-prefix PREFIX.tape --milestones PROGRAM.dmsp --segment ID --source-milestone NAME --source-boundary-fingerprint VALUE --goal-milestone NAME --game PATH --dvd PATH --output DIR [--candidate-budget N] [--workers N] [--repetitions N]\n",
         "  huntctl search minimize-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-boot --candidate FILE --game PATH --dvd PATH --output DIR [--workers N] [--repetitions N]\n",
         "  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n",

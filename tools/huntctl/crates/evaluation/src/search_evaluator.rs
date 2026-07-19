@@ -1,8 +1,10 @@
 //! Native, cross-platform population evaluation and multi-generation search.
 
 mod boot_optimization;
+mod route_optimization;
 
 pub use boot_optimization::{golf_boot, minimize_boot};
+pub use route_optimization::minimize_anchored_route;
 
 #[cfg(test)]
 use boot_optimization::{BootReductionTarget, ProvenBootCandidate};
@@ -669,6 +671,58 @@ pub struct AnchoredSearchRunSummary {
     pub champion_suffix_tape: PathBuf,
     pub champion_tape: PathBuf,
     pub score: crate::search::LexicographicScore,
+    pub output_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct AnchoredRouteMinimizeConfig {
+    pub candidate: Candidate,
+    pub objective: AnchoredObjectiveConfig,
+    pub output_root: PathBuf,
+    pub working_directory: PathBuf,
+    pub game_args_prefix: Vec<String>,
+    pub workers: usize,
+    pub repetitions: u32,
+    pub candidate_budget: usize,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnchoredRouteMinimizeRound {
+    pub round: u32,
+    pub operation: String,
+    pub evaluated_candidates: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_candidate_id: Option<String>,
+    pub retained_frames: u64,
+    pub retained_actions: usize,
+    pub retained_input_complexity: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnchoredRouteMinimizeSummary {
+    pub schema: &'static str,
+    pub objective: AnchoredObjectiveIdentity,
+    pub source_candidate_id: String,
+    pub minimized_candidate_id: String,
+    pub source_frames: u64,
+    pub minimized_frames: u64,
+    pub source_actions: usize,
+    pub minimized_actions: usize,
+    pub source_input_complexity: u64,
+    pub minimized_input_complexity: u64,
+    pub goal_first_hit_tick: u64,
+    pub goal_sim_tick: u64,
+    pub goal_tape_frame: u64,
+    pub goal_boundary_fingerprint: String,
+    pub evaluated_candidates: usize,
+    pub accepted_reductions: usize,
+    pub candidate: PathBuf,
+    pub suffix_tape: PathBuf,
+    pub realized_tape: PathBuf,
+    pub source_proof: PathBuf,
+    pub final_proof: PathBuf,
+    pub reduction_history: PathBuf,
     pub output_root: PathBuf,
 }
 

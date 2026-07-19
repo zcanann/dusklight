@@ -575,6 +575,46 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("minimize-route") => {
+            let search_args = &args[1..];
+            let candidate: Candidate =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--candidate")?)?)?;
+            candidate.validate()?;
+            let execution = search_execution_config(search_args)?;
+            if execution.harness.is_some() {
+                return Err("anchored route minimization does not accept --run-request".into());
+            }
+            let objective = AnchoredObjectiveConfig {
+                segment: option(search_args, "--segment")
+                    .ok_or("route minimization requires --segment ID")?
+                    .parse()?,
+                prefix_tape: required_path(search_args, "--anchored-prefix")?,
+                milestone_program: required_path(search_args, "--milestones")?,
+                game: execution.game,
+                dvd: execution.dvd,
+                source_milestone: option(search_args, "--source-milestone")
+                    .ok_or("route minimization requires --source-milestone NAME")?,
+                source_boundary_fingerprint: option(search_args, "--source-boundary-fingerprint")
+                    .ok_or(
+                    "route minimization requires --source-boundary-fingerprint VALUE",
+                )?,
+                goal_milestone: option(search_args, "--goal-milestone")
+                    .ok_or("route minimization requires --goal-milestone NAME")?,
+            };
+            let summary = minimize_anchored_route(&AnchoredRouteMinimizeConfig {
+                candidate,
+                objective,
+                output_root: required_path(search_args, "--output")?,
+                working_directory: execution.working_directory,
+                game_args_prefix: execution.game_args_prefix,
+                workers: usize_option(search_args, "--workers", 4)?,
+                repetitions: u32_option(search_args, "--repetitions", 3)?,
+                candidate_budget: usize_option(search_args, "--candidate-budget", 256)?,
+                timeout: execution.timeout,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
         Some("minimize-boot") => {
             let search_args = &args[1..];
             let candidate: Candidate =

@@ -170,3 +170,15 @@ clean macOS checkout without hand-assembling algorithm-specific commands.
 5. [x] Rank, minimize, and cold-replay the finalists.
 6. [x] Publish one conformance/tournament report and use its measured friction
    to decide what, if anything, returns from `TASKS_DEFERRED.md`.
+
+## 7. Exact anchored-route finalist minimization
+
+- [ ] Add `huntctl search minimize-route` for a proved anchored suffix. Reduce
+  actions and durations only through the authenticated clean-boot evaluator,
+  preserving the exact objective identity, source boundary, goal tick, and
+  terminal boundary fingerprint across repeated processes.
+- [ ] Minimize the learned Ordon Spring finalist and retain a machine-readable
+  source proof, reduction history, final proof, and compact realized tape.
+
+**Done when:** route and glitch finalists can be reduced without launching a
+general search or silently changing the successful terminal state.
