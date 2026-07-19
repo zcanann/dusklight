@@ -1,10 +1,8 @@
 //! Rust control plane primitives for persistent Dusklight simulation workers.
 
 pub mod action_guidance;
-pub mod bayesian_search;
 pub mod behavior_archive;
 pub mod benchmark;
-pub mod continuous_search;
 pub mod corpus_ops;
 pub mod harness;
 pub mod intervention;
@@ -13,7 +11,6 @@ pub mod motion_path_golf;
 pub mod option_golf;
 pub mod route_store;
 pub mod route_workbench;
-pub mod search;
 pub mod search_evaluator;
 pub mod semantic_novelty;
 pub mod tactic_tests;
@@ -35,6 +32,7 @@ pub use dusklight_evidence::{
 };
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
+pub use dusklight_search::{bayesian_search, continuous_search, search};
 pub use dusklight_trace::{trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};

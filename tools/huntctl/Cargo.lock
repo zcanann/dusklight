@@ -280,6 +280,7 @@ dependencies = [
  "dusklight-learning",
  "dusklight-objectives",
  "dusklight-oracles",
+ "dusklight-search",
  "dusklight-trace",
  "dusklight-worker-protocol",
  "dusklight-world",
@@ -321,6 +322,17 @@ version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
  "dusklight-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "dusklight-search"
+version = "0.1.0"
+dependencies = [
+ "dusklight-automation-contracts",
+ "dusklight-control",
  "serde",
  "serde_json",
  "sha2",

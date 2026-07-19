@@ -93,6 +93,14 @@ launch the game, rank or mutate candidates, train models, own route state, or
 parse CLI commands. Oracle verdicts therefore remain independent of the search
 systems that consume them.
 
+## `dusklight-search`
+
+Owns portable search candidates, lexicographic ranking, mutation, and bounded
+continuous and Bayesian optimizers. It may depend on contracts and control
+formats. It cannot execute native runs, inspect evidence, train models, mutate
+route/workbench state, or parse CLI commands. Root adapters are responsible
+for feeding it authenticated outcomes and enforcing simulator budgets.
+
 ## `dusklight-world`
 
 Owns read-only archive/collision geometry, static world inventory, and bounded

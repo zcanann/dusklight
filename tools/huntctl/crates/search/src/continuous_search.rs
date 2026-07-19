@@ -1,7 +1,7 @@
 //! Seeded bounded CEM and full-covariance CMA-ES over typed candidate axes.
 
-use crate::motion_path::StickPath;
 use crate::search::{Candidate, MacroAction, SearchError};
+use dusklight_control::motion_path::StickPath;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::error::Error;

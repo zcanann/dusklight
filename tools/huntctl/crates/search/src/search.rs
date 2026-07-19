@@ -1,9 +1,9 @@
 //! Finite-sample search primitives for milestone-backed TAS optimization.
 
-use crate::game_tactic::GameTacticPlan;
-use crate::motion_path::MotionPathPlan;
-use crate::roll_option::{RollOptionPlan, RollSpacing};
-use crate::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
+use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
+use dusklight_control::game_tactic::GameTacticPlan;
+use dusklight_control::motion_path::MotionPathPlan;
+use dusklight_control::roll_option::{RollOptionPlan, RollSpacing};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::cmp::Ordering;
@@ -2038,9 +2038,32 @@ mod tests {
 
     #[test]
     fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
-        let path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../routes/intro/segments/human420.tape");
-        let tape = InputTape::decode(&fs::read(path).unwrap()).unwrap().tape;
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..421)
+                .map(|index| {
+                    let mut frame = InputFrame {
+                        owned_ports: 1,
+                        pads: [disconnected; 4],
+                        ..InputFrame::default()
+                    };
+                    frame.pads[0] = RawPadState::default();
+                    frame.pads[0].stick_y = if index < 200 {
+                        96
+                    } else if index < 400 {
+                        127
+                    } else {
+                        0
+                    };
+                    frame
+                })
+                .collect(),
+            ..InputTape::default()
+        };
         assert_eq!(tape.frames.len(), 421);
         let candidate =
             Candidate::from_absolute_tape(SegmentProfile::LinkControlToTunnelCrawlStart, &tape)
