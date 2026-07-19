@@ -890,12 +890,15 @@ native result. A search may issue one explicitly recorded initial trial before
 held-out learned evidence exists; it is capped at one candidate from each
 learned lane, is tracked independently of model lineage, and cannot bypass the
 fact, determinism, action-support, or state-coverage gates. The exception is
-consumed only when a learned candidate is actually emitted.
+consumed only when a learned candidate is actually emitted. If that proposal
+batch has more than two slots, every remaining slot rotates across structured
+counterfactual, archive-novelty, and blind-coverage lanes; the learned trial
+cap never causes silent budget loss.
 
 If any required gate is inadequate, no Q model is fitted and
 exploit/disagreement receive zero budget. Their budget is rotated across
 structured counterfactual, archive-novelty, and blind-coverage fallbacks
-instead. The v8 proposal report records every gate input and blocker, measured
+instead. The v10 proposal report records every gate input and blocker, measured
 coverage, fallback policy, and the exact lane schedule, so sparse or
 unsupported data cannot silently produce a learned proposal claim.
 
