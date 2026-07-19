@@ -1373,7 +1373,8 @@ fn parse_pin(token: &str, line: usize) -> Result<DependencyPin, TimelineError> {
     })
 }
 
-pub(crate) fn tokenize(line: &str, line_number: usize) -> Result<Vec<String>, TimelineError> {
+/// Tokenizes one authored timeline line for syntax-aware workbench rewrites.
+pub fn tokenize(line: &str, line_number: usize) -> Result<Vec<String>, TimelineError> {
     let mut output = Vec::new();
     let mut current = String::new();
     let mut quoted = false;

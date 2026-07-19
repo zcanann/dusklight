@@ -110,6 +110,15 @@ formats. It cannot execute native runs, inspect evidence, train models, mutate
 route/workbench state, or parse CLI commands. Root adapters are responsible
 for feeding it authenticated outcomes and enforcing simulator budgets.
 
+## `dusklight-routes`
+
+Owns authored timeline syntax, route validation, immutable lineages, route
+objects, and named-head persistence. It may depend on contracts, control
+formats, objective compilation, and portable search candidates. It cannot run
+the simulator, evaluate native evidence, own interactive workbench state,
+train models, or parse CLI commands. The root workbench is therefore an adapter
+over route truth instead of its owner.
+
 ## `dusklight-semantic-novelty`
 
 Owns portable semantic descriptors, novelty catalogs, discovery archives,

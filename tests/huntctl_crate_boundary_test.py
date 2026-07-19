@@ -20,6 +20,7 @@ EXPECTED_MEMBERS = {
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
+    "crates/routes",
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
@@ -57,6 +58,12 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-automation-contracts",
         "dusklight-trace",
     },
+    "dusklight-routes": {
+        "dusklight-automation-contracts",
+        "dusklight-control",
+        "dusklight-objectives",
+        "dusklight-search",
+    },
     "dusklight-search": {
         "dusklight-automation-contracts",
         "dusklight-control",
@@ -77,6 +84,7 @@ ALLOWED_INTERNAL_DEPENDENCIES = {
         "dusklight-learning",
         "dusklight-objectives",
         "dusklight-oracles",
+        "dusklight-routes",
         "dusklight-search",
         "dusklight-semantic-novelty",
         "dusklight-trace",

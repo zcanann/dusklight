@@ -18,6 +18,7 @@ dusklight-interventions = { path = "crates/interventions" }
 dusklight-learning = { path = "crates/learning" }
 dusklight-objectives = { path = "crates/objectives" }
 dusklight-oracles = { path = "crates/oracles" }
+dusklight-routes = { path = "crates/routes" }
 dusklight-search = { path = "crates/search" }
 dusklight-semantic-novelty = { path = "crates/semantic-novelty" }
 dusklight-trace = { path = "crates/trace" }
@@ -54,6 +55,7 @@ members = [
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
+    "crates/routes",
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",
@@ -70,6 +72,7 @@ default-members = [
     "crates/learning",
     "crates/objectives",
     "crates/oracles",
+    "crates/routes",
     "crates/search",
     "crates/semantic-novelty",
     "crates/trace",

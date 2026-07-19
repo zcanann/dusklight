@@ -8,11 +8,9 @@ pub mod harness;
 pub mod learning;
 pub mod motion_path_golf;
 pub mod option_golf;
-pub mod route_store;
 pub mod route_workbench;
 pub mod search_evaluator;
 pub mod tactic_tests;
-pub mod timeline;
 pub mod trace_diff;
 
 // Compatibility re-exports keep existing callers stable while the physical
@@ -31,6 +29,7 @@ pub use dusklight_evidence::{
 pub use dusklight_interventions as intervention;
 pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
+pub use dusklight_routes::{route_store, timeline};
 pub use dusklight_search::{bayesian_search, continuous_search, search};
 pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_trace::{trace, trace_typed_facts};

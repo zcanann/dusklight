@@ -1,0 +1,15 @@
+[package]
+name = "dusklight-routes"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Authored route timelines and immutable route storage for Dusklight"
+
+[dependencies]
+dusklight-automation-contracts = { path = "../contracts" }
+dusklight-control = { path = "../control" }
+dusklight-objectives = { path = "../objectives" }
+dusklight-search = { path = "../search" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
