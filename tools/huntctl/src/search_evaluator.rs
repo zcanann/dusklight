@@ -3929,10 +3929,24 @@ fn run_trial(
             .map_err(|error| error.to_string())
             .and_then(|bytes| crate::trace::decode(&bytes).map_err(|error| error.to_string()))
             .and_then(|trace| {
-                if trace.boot != trial.boot {
+                let expected_boot = evidence
+                    .realized_tape
+                    .as_ref()
+                    .map(|path| {
+                        fs::read(path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|bytes| {
+                                InputTape::decode(&bytes)
+                                    .map(|decoded| decoded.tape.boot)
+                                    .map_err(|error| error.to_string())
+                            })
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| trial.boot.clone());
+                if trace.boot != expected_boot {
                     Err(format!(
-                        "gameplay trace boot origin {:?} does not match tape origin {:?}",
-                        trace.boot, trial.boot
+                        "gameplay trace boot origin {:?} does not match realized tape origin {:?}",
+                        trace.boot, expected_boot
                     ))
                 } else if trace.capacity_exhausted {
                     Err("gameplay trace capacity was exhausted".into())
@@ -4053,12 +4067,21 @@ fn run_harness_trial(
     evidence.timed_out = result.terminal == HarnessTerminalReason::HostTimeout;
     evidence.cancelled = result.terminal == HarnessTerminalReason::Cancelled;
 
+    let score_boot = evidence
+        .realized_tape
+        .as_ref()
+        .map(|path| -> Result<TapeBoot, EvaluateError> {
+            Ok(InputTape::decode(&fs::read(path)?)?.tape.boot)
+        })
+        .transpose()?
+        .unwrap_or_else(|| trial.boot.clone());
+
     match result.terminal {
         HarnessTerminalReason::Reached | HarnessTerminalReason::Exhausted => score_harness_result(
             &result,
             &request,
             &evidence.milestone_result,
-            &trial.boot,
+            &score_boot,
             segment,
             anchored,
         ),
