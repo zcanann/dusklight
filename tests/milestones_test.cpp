@@ -5,7 +5,9 @@
 #include <array>
 #include <bit>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 
 #include <nlohmann/json.hpp>
 
@@ -127,6 +129,14 @@ constexpr std::array<std::uint8_t, 181> ValueProjectionProgram{
 
 bool noSymbols(dusk::automation::MilestoneProgramSymbolKind, std::string_view, std::uint32_t&) {
     return false;
+}
+
+std::vector<std::uint8_t> readBytes(const char* path) {
+    std::ifstream stream(path, std::ios::binary);
+    REQUIRE(stream.good());
+    const std::vector<char> bytes{
+        std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    return {bytes.begin(), bytes.end()};
 }
 
 struct BootStartOrder {
@@ -499,6 +509,75 @@ void testAuthoredObjectiveConsumesTypedFacts() {
         }
     }
     REQUIRE(!link->evaluate(MilestoneProgramContext{.observation = observation, .facts = &facts}));
+}
+
+void testCheckedInteractionProgramHasExactNativeOfflineFirstHitParity() {
+    using namespace dusk::automation;
+    std::ifstream fixtureStream(DUSK_INTERACTION_PARITY_FIXTURE_PATH);
+    REQUIRE(fixtureStream.good());
+    nlohmann::json fixture;
+    fixtureStream >> fixture;
+    REQUIRE(fixture["schema"] == "dusklight-objective-native-offline-parity/v1");
+    REQUIRE(fixture["objective_program"] ==
+            "tests/fixtures/automation/objective_interaction_parity.dmsp");
+
+    const auto bytes = readBytes(DUSK_INTERACTION_PARITY_PROGRAM_PATH);
+    MilestoneProgram program;
+    REQUIRE(decode_milestone_program(bytes, noSymbols, program) == MilestoneProgramError::None);
+    REQUIRE(program.digest() ==
+            "0759313cdc63acad7826b04daa4a106dfb3745fdc7dcdf2c98488cefd8c16cf8");
+
+    std::vector<std::string> requested;
+    for (const auto& [name, _] : fixture["expected_first_hits"].items()) {
+        requested.push_back(name);
+    }
+    MilestoneTracker tracker;
+    std::string error;
+    REQUIRE(tracker.configureNames(requested, std::nullopt, program, error));
+
+    const auto actor = [](const nlohmann::json& value) {
+        MilestoneObservation::ActorIdentity identity;
+        if (value.is_null()) return identity;
+        identity.present = true;
+        identity.runtimeGeneration = value["runtime_generation"].get<std::uint32_t>();
+        identity.actorName = value["actor_name"].get<std::int16_t>();
+        identity.setId = value["set_id"].get<std::uint16_t>();
+        identity.homeRoom = value["home_room"].get<std::int8_t>();
+        identity.currentRoom = value["current_room"].get<std::int8_t>();
+        return identity;
+    };
+    for (const auto& boundary : fixture["boundaries"]) {
+        const std::string stage = boundary["stage"].get<std::string>();
+        const auto& position = boundary["position"];
+        MilestoneObservation observation{
+            .stageName = stage.c_str(),
+            .room = boundary["room"].get<std::int8_t>(),
+            .point = boundary["spawn"].get<std::int16_t>(),
+            .playerPresent = boundary["player_exists"].get<bool>(),
+            .playerIsLink = boundary["player_is_link"].get<bool>(),
+            .playerPositionX = position[0].get<float>(),
+            .playerPositionY = position[1].get<float>(),
+            .playerPositionZ = position[2].get<float>(),
+            .playerDoStatus = boundary["do_status"].get<std::uint8_t>(),
+            .talkPartner = actor(boundary["talk_partner"]),
+            .grabbedActor = actor(boundary["grabbed_actor"]),
+            .eventRunning = boundary["event_running"].get<bool>(),
+            .eventId = boundary["event_id"].get<std::int16_t>(),
+        };
+        tracker.observeBoundary(observation, MilestoneProgramPhase::PostSim,
+            MilestoneBoundaryKind::Tick, boundary["boundary_index"].get<std::uint64_t>(),
+            boundary["simulation_tick"].get<std::uint64_t>(),
+            boundary["tape_frame"].get<std::uint64_t>());
+    }
+
+    REQUIRE(tracker.authoredHits().size() == fixture["expected_first_hits"].size());
+    for (const auto& hit : tracker.authoredHits()) {
+        REQUIRE(hit.hit);
+        REQUIRE(hit.boundaryIndex == fixture["expected_first_hits"][hit.id]);
+        const auto& boundary = fixture["boundaries"][hit.boundaryIndex - 1];
+        REQUIRE(hit.simulationTick == boundary["simulation_tick"]);
+        REQUIRE(hit.tapeFrame == boundary["tape_frame"]);
+    }
 }
 
 void testMalformedAuthoredProgramIsRejected() {
@@ -905,6 +984,7 @@ int main() {
     testGoalMustBeRequested();
     testAuthoredBootStableAndExactFirstHit();
     testAuthoredObjectiveConsumesTypedFacts();
+    testCheckedInteractionProgramHasExactNativeOfflineFirstHitParity();
     testRichV11FactsAndBitMasksEvaluateNatively();
     testV12PlacedActorGeometryAndIndexedFlagsEvaluateNatively();
     testV13SpatialRelationsAndBoundedSequencesEvaluateNatively();

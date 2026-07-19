@@ -183,6 +183,16 @@ event edge and the correct partner identity; a carry objective can use an
 ordered absent-to-present sequence and the correct object identity. Session
 process IDs are retained for diagnostics but are not objective selector facts.
 
+`objective_interaction_parity.{json,milestones,dmsp}` is the game-data-free
+cross-runtime regression fixture for this surface. Rust recompiles the source,
+requires byte-for-byte equality with the checked DMSP, decodes the fixture as a
+normal multi-record `DUSKTRCE`, and evaluates it offline. The native milestone
+test decodes that same DMSP and consumes the same JSON boundaries. Both must
+report the exact first-hit boundaries for stage readiness, stable region
+arrival, exact-NPC talk followed by event 17, and absent-to-exact-object carry.
+Earlier wrong-stage, outside-region, wrong-NPC, and wrong-object boundaries
+make the selector controls executable instead of implied.
+
 The talk-to-NPC and pick-up-object positive/control pairs do not exist yet.
 Those remain separate active tasks so an executing campaign is not mistaken
 for native conformance evidence that has not actually been authored and run.

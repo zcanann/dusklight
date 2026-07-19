@@ -1,0 +1,43 @@
+milestones 1.5
+
+milestone stage_ready_parity {
+  phase post_sim
+  stable 2
+  when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 &&
+       player.exists && player.is_link
+}
+
+milestone reach_point_parity {
+  phase post_sim
+  stable 2
+  when stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.position.x between 665.0 and 667.0 &&
+       player.in_aabb(665.0, 799.0, -2432.0, 667.0, 801.0, -2430.0)
+}
+
+milestone talk_exact_npc_parity {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.interaction.do_status == 21 && !event.running &&
+       player.interaction.talk_partner.exists &&
+       player.interaction.talk_partner.actor_name == 42 &&
+       player.interaction.talk_partner.set_id == 7 &&
+       player.interaction.talk_partner.home_room == 1 &&
+       player.interaction.talk_partner.current_room == 1
+  then stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       event.running && event.id == 17
+  within 3
+}
+
+milestone carry_exact_object_parity {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       !player.interaction.grabbed_actor.exists
+  then stage.name == "F_SP103" && stage.room == 1 && player.exists && player.is_link &&
+       player.interaction.grabbed_actor.exists &&
+       player.interaction.grabbed_actor.actor_name == 43 &&
+       player.interaction.grabbed_actor.set_id == 8 &&
+       player.interaction.grabbed_actor.home_room == 1 &&
+       player.interaction.grabbed_actor.current_room == 1
+  within 4
+}

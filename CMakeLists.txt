@@ -539,6 +539,10 @@ add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
 )
 target_include_directories(dusk_milestones_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(dusk_milestones_test PRIVATE nlohmann_json::nlohmann_json xxHash::xxhash)
+target_compile_definitions(dusk_milestones_test PRIVATE
+    DUSK_INTERACTION_PARITY_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/objective_interaction_parity.json"
+    DUSK_INTERACTION_PARITY_PROGRAM_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/objective_interaction_parity.dmsp"
+)
 set_target_properties(dusk_milestones_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_typed_facts_test EXCLUDE_FROM_ALL

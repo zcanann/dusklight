@@ -124,7 +124,9 @@ roadmap documents describe the larger target.
 - Authored predicate regression coverage includes both Rust-produced/native-
   decoded DMSP fixtures and offline evaluation over a normally decoded
   `DUSKTRCE` fixture. Missing trace channels remain unavailable rather than
-  acquiring default values.
+  acquiring default values. A shared interaction fixture drives the same
+  language-1.5 DMSP and boundary JSON through native and offline evaluators,
+  requiring identical first hits after wrong-NPC and wrong-object controls.
 - Search population/result schemas v3 record canonical compiled input
   complexity and the exact terminal-predicate verdict. Every leaderboard uses
   the declared order: feasibility, progress depth, first-hit tick, tape size,

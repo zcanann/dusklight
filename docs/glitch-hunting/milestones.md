@@ -307,6 +307,13 @@ native C++ test target. The recorded-trace fixture is first decoded through the
 normal trace wire reader before its authored predicates are evaluated, catching
 both trace-schema and predicate-semantic drift.
 
+The interaction parity fixture goes further: native and offline evaluators
+consume the same boundary JSON and compiled language-1.5 program, then assert
+identical first-hit boundary, simulation-tick, and tape-frame values. It covers
+stable stage/position predicates, exact talk-partner identity plus a subsequent
+event edge, and an absent-to-exact-grabbed-actor sequence with wrong-target
+boundaries before each interaction succeeds.
+
 ## Identity and proof invalidation
 
 Every compiled definition embeds a SHA-256 over its name, phase, stability,

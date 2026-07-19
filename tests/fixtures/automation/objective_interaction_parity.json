@@ -1,0 +1,193 @@
+{
+  "schema": "dusklight-objective-native-offline-parity/v1",
+  "objective_source": "tests/fixtures/automation/objective_interaction_parity.milestones",
+  "objective_program": "tests/fixtures/automation/objective_interaction_parity.dmsp",
+  "expected_first_hits": {
+    "stage_ready_parity": 3,
+    "reach_point_parity": 3,
+    "talk_exact_npc_parity": 5,
+    "carry_exact_object_parity": 9
+  },
+  "boundaries": [
+    {
+      "boundary_index": 1,
+      "simulation_tick": 0,
+      "tape_frame": 0,
+      "stage": "F_SP104",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [600.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 0,
+      "talk_partner": null,
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 2,
+      "simulation_tick": 1,
+      "tape_frame": 1,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 21,
+      "talk_partner": {
+        "runtime_generation": 11,
+        "actor_name": 99,
+        "set_id": 7,
+        "home_room": 1,
+        "current_room": 1
+      },
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 3,
+      "simulation_tick": 2,
+      "tape_frame": 2,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": true,
+      "event_id": 17,
+      "do_status": 21,
+      "talk_partner": {
+        "runtime_generation": 11,
+        "actor_name": 99,
+        "set_id": 7,
+        "home_room": 1,
+        "current_room": 1
+      },
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 4,
+      "simulation_tick": 3,
+      "tape_frame": 3,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 21,
+      "talk_partner": {
+        "runtime_generation": 12,
+        "actor_name": 42,
+        "set_id": 7,
+        "home_room": 1,
+        "current_room": 1
+      },
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 5,
+      "simulation_tick": 4,
+      "tape_frame": 4,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": true,
+      "event_id": 17,
+      "do_status": 21,
+      "talk_partner": {
+        "runtime_generation": 12,
+        "actor_name": 42,
+        "set_id": 7,
+        "home_room": 1,
+        "current_room": 1
+      },
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 6,
+      "simulation_tick": 5,
+      "tape_frame": 5,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 0,
+      "talk_partner": null,
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 7,
+      "simulation_tick": 6,
+      "tape_frame": 6,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 0,
+      "talk_partner": null,
+      "grabbed_actor": {
+        "runtime_generation": 13,
+        "actor_name": 99,
+        "set_id": 8,
+        "home_room": 1,
+        "current_room": 1
+      }
+    },
+    {
+      "boundary_index": 8,
+      "simulation_tick": 7,
+      "tape_frame": 7,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 0,
+      "talk_partner": null,
+      "grabbed_actor": null
+    },
+    {
+      "boundary_index": 9,
+      "simulation_tick": 8,
+      "tape_frame": 8,
+      "stage": "F_SP103",
+      "room": 1,
+      "spawn": 1,
+      "player_exists": true,
+      "player_is_link": true,
+      "position": [666.0, 800.0, -2431.0],
+      "event_running": false,
+      "event_id": -1,
+      "do_status": 0,
+      "talk_partner": null,
+      "grabbed_actor": {
+        "runtime_generation": 14,
+        "actor_name": 43,
+        "set_id": 8,
+        "home_room": 1,
+        "current_room": 1
+      }
+    }
+  ]
+}
