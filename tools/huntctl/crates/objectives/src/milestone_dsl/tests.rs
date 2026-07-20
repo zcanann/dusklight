@@ -251,6 +251,54 @@ milestone menu_ready {
 }
 
 #[test]
+fn language_1_8_exact_temporary_event_bytes_round_trip() {
+    let source = include_str!(
+        "../../../../../../tests/fixtures/automation/temporary_event_bytes.milestones"
+    );
+    let program = parse(source).unwrap();
+    let formatted = format(&program).unwrap();
+    assert_eq!(parse(&formatted).unwrap(), program);
+    assert!(formatted.contains("event.temporary_byte(0) has_all 6"));
+    assert!(formatted.contains("event.temporary_byte(1) == 165"));
+    assert!(formatted.contains("event.temporary_byte(5) has_any 192"));
+
+    let compiled = compile(&program).unwrap();
+    assert_eq!(&compiled.bytes[4..12], &[1, 0, 8, 0, 1, 0, 8, 0]);
+    assert!(
+        compiled
+            .bytes
+            .windows(4)
+            .any(|bytes| bytes == [0x02, 5, 0, 0])
+    );
+    assert!(
+        compiled
+            .bytes
+            .windows(4)
+            .any(|bytes| bytes == [0x02, 5, 1, 0])
+    );
+    assert!(
+        compiled
+            .bytes
+            .windows(4)
+            .any(|bytes| bytes == [0x02, 5, 5, 0])
+    );
+    let decoded = decode(&compiled.bytes).unwrap();
+    assert_eq!(decoded.program, program);
+    assert_eq!(compile(&decoded.program).unwrap().bytes, compiled.bytes);
+
+    for invalid in [
+        source.replace("milestones 1.8", "milestones 1.7"),
+        source.replace("temporary_byte(5)", "temporary_byte(256)"),
+        source.replace("has_all 6", "has_all 0"),
+    ] {
+        assert!(
+            parse(&invalid).is_err(),
+            "accepted invalid source: {invalid}"
+        );
+    }
+}
+
+#[test]
 fn language_1_1_types_flags_timers_hashes_rng_and_collision_facts() {
     let source = r#"milestones 1.1
 milestone rich {

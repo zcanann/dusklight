@@ -173,6 +173,11 @@ fn format_query_fact(fact: &QueryFact, output: &mut String) {
             output.push_str(&selector.index.to_string());
             output.push(')');
         }
+        QueryFact::TemporaryEventByte { index } => {
+            output.push_str("event.temporary_byte(");
+            output.push_str(&index.to_string());
+            output.push(')');
+        }
         QueryFact::PlayerInAabb { minimum, maximum } => {
             output.push_str("player.in_aabb(");
             format_f32_arguments(minimum.iter().chain(maximum), output);

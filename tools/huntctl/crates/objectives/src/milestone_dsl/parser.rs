@@ -267,10 +267,11 @@ impl Parser {
             TokenKind::Number(value) if value == "1.5" => LanguageVersion { major: 1, minor: 5 },
             TokenKind::Number(value) if value == "1.6" => LanguageVersion { major: 1, minor: 6 },
             TokenKind::Number(value) if value == "1.7" => LanguageVersion { major: 1, minor: 7 },
+            TokenKind::Number(value) if value == "1.8" => LanguageVersion { major: 1, minor: 8 },
             _ => {
                 return Err(self.at_error(
                     &version_token,
-                    "unsupported or missing language version; expected 1.0 through 1.7",
+                    "unsupported or missing language version; expected 1.0 through 1.8",
                 ));
             }
         };
@@ -730,6 +731,21 @@ impl Parser {
             validate_query_fact(&fact).map_err(|message| self.at_error(token, message))?;
             return Ok(fact);
         }
+        if path == "event.temporary_byte" {
+            self.expect(
+                TokenKind::LeftParen,
+                "expected `(` after temporary-event byte",
+            )?;
+            let index =
+                self.integer::<u16>("temporary-event byte index must be an unsigned integer")?;
+            self.expect(
+                TokenKind::RightParen,
+                "expected `)` after temporary-event byte index",
+            )?;
+            let fact = QueryFact::TemporaryEventByte { index };
+            validate_query_fact(&fact).map_err(|message| self.at_error(token, message))?;
+            return Ok(fact);
+        }
         Err(self.at_error(token, format!("unknown milestone field {path:?}")))
     }
 
@@ -1039,6 +1055,11 @@ pub(super) fn validate_query_fact(fact: &QueryFact) -> Result<(), String> {
                 ));
             }
         }
+        QueryFact::TemporaryEventByte { index } => {
+            if *index >= 256 {
+                return Err("event.temporary_byte index must be below 256".into());
+            }
+        }
         QueryFact::PlayerInAabb { minimum, maximum } => {
             for axis in 0..3 {
                 if !minimum[axis].is_finite()
@@ -1325,13 +1346,10 @@ fn validate_expression(
             operator,
             value,
         } => {
-            let required_minor = if matches!(
-                fact,
-                QueryFact::PlayerInAabb { .. } | QueryFact::PlayerPlaneSignedDistance { .. }
-            ) {
-                3
-            } else {
-                2
+            let required_minor = match fact {
+                QueryFact::TemporaryEventByte { .. } => 8,
+                QueryFact::PlayerInAabb { .. } | QueryFact::PlayerPlaneSignedDistance { .. } => 3,
+                _ => 2,
             };
             if language_minor < required_minor {
                 return Err(format!(

@@ -74,6 +74,12 @@ the same goal without demonstration-relative features.
   the same authenticated frame-440 boundary and the isolated Rust ingestion
   boundary accepted every episode with all 256 register bytes present at every
   pre-input and post-simulation observation.
+- Milestone language 1.8 exposes that bank as the bounded read-only query
+  `event.temporary_byte(INDEX)`, with equality and bit-mask comparisons. The
+  checked Rust-compiler/native-evaluator fixture proves exact offsets 0, 1,
+  and 5 across the authenticated wire format. It intentionally uses sentinel
+  byte values: the Telma/Louise success predicate must be authored from an
+  observed successful/control delta, not guessed from Skybook's address list.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome

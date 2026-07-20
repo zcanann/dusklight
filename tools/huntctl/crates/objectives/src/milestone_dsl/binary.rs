@@ -137,6 +137,10 @@ pub(super) fn encode_query_fact(fact: &QueryFact, output: &mut Vec<u8>) -> Resul
             output.push(selector.room as u8);
             push_u16(output, selector.index);
         }
+        QueryFact::TemporaryEventByte { index } => {
+            output.push(5);
+            push_u16(output, *index);
+        }
         QueryFact::PlayerInAabb { minimum, maximum } => {
             output.push(3);
             for value in minimum.iter().chain(maximum) {
@@ -566,6 +570,9 @@ pub(super) fn decode_expression(
                             }
                         }
                     }
+                    5 => QueryFact::TemporaryEventByte {
+                        index: cursor.u16()?,
+                    },
                     _ => return Err(BinaryError(format!("unknown query fact kind {kind}"))),
                 };
                 validate_query_fact(&fact).map_err(BinaryError)?;

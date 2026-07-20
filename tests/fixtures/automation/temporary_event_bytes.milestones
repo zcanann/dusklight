@@ -1,0 +1,8 @@
+milestones 1.8
+
+milestone temporary_event_register_fixture {
+  phase post_sim
+  when event.temporary_byte(0) has_all 6 &&
+   event.temporary_byte(1) == 165 &&
+   event.temporary_byte(5) has_any 192
+}

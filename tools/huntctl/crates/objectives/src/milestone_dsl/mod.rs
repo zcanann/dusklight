@@ -17,8 +17,8 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAGIC: [u8; 4] = *b"DMSP";
-pub const WIRE_VERSION: (u16, u16) = (1, 7);
-pub const LANGUAGE_VERSION: (u16, u16) = (1, 7);
+pub const WIRE_VERSION: (u16, u16) = (1, 8);
+pub const LANGUAGE_VERSION: (u16, u16) = (1, 8);
 pub const MAX_DEFINITIONS: usize = 256;
 pub const MAX_NAME_BYTES: usize = 96;
 pub const MAX_SYMBOL_BYTES: usize = 64;
@@ -147,6 +147,10 @@ pub enum QueryFact {
     },
     Flag {
         selector: FlagSelector,
+    },
+    /// Exact byte from dSv_info_c::mTmp.mEvent, not the lossy named-flag view.
+    TemporaryEventByte {
+        index: u16,
     },
     PlayerInAabb {
         minimum: [f32; 3],
@@ -416,6 +420,7 @@ impl QueryFact {
         match self {
             Self::PlacedActor { field, .. } => field.field_type(),
             Self::Flag { .. } => FieldType::Bool,
+            Self::TemporaryEventByte { .. } => FieldType::U32,
             Self::PlayerInAabb { .. } => FieldType::Bool,
             Self::PlayerPlaneSignedDistance { .. } => FieldType::F32,
         }
@@ -425,6 +430,7 @@ impl QueryFact {
         match self {
             Self::PlacedActor { field, .. } => field.path(),
             Self::Flag { selector } => selector.domain.path(),
+            Self::TemporaryEventByte { .. } => "event.temporary_byte",
             Self::PlayerInAabb { .. } => "player.in_aabb",
             Self::PlayerPlaneSignedDistance { .. } => "player.plane_signed_distance",
         }

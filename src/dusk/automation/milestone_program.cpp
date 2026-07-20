@@ -723,6 +723,15 @@ Value load_query(const MilestoneProgramDefinition::Instruction& instruction,
         value.bits = std::bit_cast<std::uint32_t>(distance == 0.0F ? 0.0F : distance);
         return value;
     }
+    if (instruction.queryKind == 5) {
+        Value value{.type = ValueType::U32, .available = observation.flagsPresent};
+        if (!value.available || instruction.queryIndex >= observation.temporaryEventBytes.size()) {
+            value.available = false;
+            return value;
+        }
+        value.bits = observation.temporaryEventBytes[instruction.queryIndex];
+        return value;
+    }
 
     Value value{.type = ValueType::Bool, .available = observation.flagsPresent};
     if (!value.available) return value;
@@ -1087,6 +1096,8 @@ MilestoneProgramError decode_milestone_program(const std::span<const std::uint8_
                 instruction.queryKind = bytes[cursor++];
                 if (instruction.queryKind >= 3 && languageMinor < 3)
                     return MilestoneProgramError::InvalidOpcode;
+                if (instruction.queryKind == 5 && languageMinor < 8)
+                    return MilestoneProgramError::InvalidOpcode;
                 ValueType type = ValueType::Bool;
                 if (instruction.queryKind == 1) {
                     if (bytecodeEnd - cursor < 14) return MilestoneProgramError::Truncated;
@@ -1145,6 +1156,13 @@ MilestoneProgramError decode_milestone_program(const std::span<const std::uint8_
                         if (lengthSquared == 0.0 || !std::isfinite(lengthSquared))
                             return MilestoneProgramError::InvalidField;
                     }
+                } else if (instruction.queryKind == 5) {
+                    if (bytecodeEnd - cursor < 2) return MilestoneProgramError::Truncated;
+                    instruction.queryIndex = read_u16(bytes.data() + cursor);
+                    cursor += 2;
+                    if (instruction.queryIndex >= 256)
+                        return MilestoneProgramError::InvalidField;
+                    type = ValueType::U32;
                 } else {
                     return MilestoneProgramError::InvalidField;
                 }
