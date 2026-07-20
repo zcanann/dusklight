@@ -2047,6 +2047,7 @@ int game_main(int argc, char* argv[]) {
             ("automation-tick-budget", "Stop after this many completed logical simulation ticks", cxxopts::value<std::uint64_t>())
             ("checkpoint-probe-source-frame", "Absolute tape frame captured as the source of an in-process A/B/A restore proof", cxxopts::value<std::size_t>())
             ("checkpoint-probe-suffix-ticks", "Number of suffix ticks in each A/B/A checkpoint proof episode", cxxopts::value<std::size_t>())
+            ("checkpoint-probe-repeat-attempts", "Restore and replay A's first suffix tick this many additional times in-process", cxxopts::value<std::size_t>())
             ("checkpoint-probe-result", "Write the versioned checkpoint A/B/A proof result", cxxopts::value<std::string>())
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
@@ -3075,11 +3076,22 @@ int game_main(int argc, char* argv[]) {
                 "Checkpoint Probe Error: source frame, suffix ticks, and result path must be supplied together\n");
         return 1;
     }
+    if (parsed_arg_options.count("checkpoint-probe-repeat-attempts") != 0 &&
+        checkpointProbeOptionCount != 3)
+    {
+        fprintf(stderr,
+                "Checkpoint Probe Error: repeat attempts require the complete checkpoint probe option set\n");
+        return 1;
+    }
     if (checkpointProbeOptionCount == 3) {
         const std::size_t sourceFrame =
             parsed_arg_options["checkpoint-probe-source-frame"].as<std::size_t>();
         const std::size_t suffixTicks =
             parsed_arg_options["checkpoint-probe-suffix-ticks"].as<std::size_t>();
+        const std::size_t repeatAttempts =
+            parsed_arg_options.count("checkpoint-probe-repeat-attempts") != 0
+                ? parsed_arg_options["checkpoint-probe-repeat-attempts"].as<std::size_t>()
+                : 0;
         const std::string resultArgument =
             parsed_arg_options["checkpoint-probe-result"].as<std::string>();
         if (!headlessMainLoop || !hasInputTape || inputTapeHasConditions || stageBootPending ||
@@ -3129,7 +3141,7 @@ int game_main(int argc, char* argv[]) {
         }
         std::string configureError;
         if (!dusk::automation::checkpoint_probe().configure(
-                sourceFrame, suffixTicks, resultPath, configureError))
+                sourceFrame, suffixTicks, repeatAttempts, resultPath, configureError))
         {
             fprintf(stderr, "Checkpoint Probe Error: %s\n", configureError.c_str());
             return 1;

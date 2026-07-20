@@ -18,7 +18,7 @@ namespace dusk::automation {
 class CheckpointProbe {
 public:
     bool configure(std::size_t sourceFrame, std::size_t suffixTicks,
-        std::filesystem::path resultPath, std::string& error);
+        std::size_t repeatAttempts, std::filesystem::path resultPath, std::string& error);
 
     /** Called at the stable boundary before InputTapePlayer::tick(). */
     bool preInput(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
@@ -41,6 +41,8 @@ public:
         B,
         RestoreA2,
         A2,
+        RestoreRepeat,
+        RepeatA,
         Complete,
         Failed,
     };
@@ -88,6 +90,8 @@ private:
     std::size_t mSourceFrame = 0;
     std::size_t mSuffixTicks = 0;
     std::size_t mEpisodeTick = 0;
+    std::size_t mRepeatAttempts = 0;
+    std::size_t mRepeatCompleted = 0;
     std::filesystem::path mResultPath;
     StateCheckpoint mCheckpoint;
     StateCheckpointImage mImage;

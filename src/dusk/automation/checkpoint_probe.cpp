@@ -57,6 +57,8 @@ std::string phase_name(const CheckpointProbe::Phase phase) {
     case CheckpointProbe::Phase::B: return "b";
     case CheckpointProbe::Phase::RestoreA2: return "restore_a2";
     case CheckpointProbe::Phase::A2: return "a2";
+    case CheckpointProbe::Phase::RestoreRepeat: return "restore_repeat";
+    case CheckpointProbe::Phase::RepeatA: return "repeat_a";
     case CheckpointProbe::Phase::Complete: return "complete";
     case CheckpointProbe::Phase::Failed: return "failed";
     }
@@ -66,7 +68,7 @@ std::string phase_name(const CheckpointProbe::Phase phase) {
 }  // namespace
 
 bool CheckpointProbe::configure(const std::size_t sourceFrame, const std::size_t suffixTicks,
-    std::filesystem::path resultPath, std::string& error) {
+    const std::size_t repeatAttempts, std::filesystem::path resultPath, std::string& error) {
     if (mEnabled) {
         error = "checkpoint probe is already configured";
         return false;
@@ -78,10 +80,11 @@ bool CheckpointProbe::configure(const std::size_t sourceFrame, const std::size_t
     mEnabled = true;
     mSourceFrame = sourceFrame;
     mSuffixTicks = suffixTicks;
+    mRepeatAttempts = repeatAttempts;
     mResultPath = std::move(resultPath);
     mA1Digests.reserve(suffixTicks);
     mA1EntryDigests.reserve(suffixTicks);
-    mRestoreMicros.reserve(2);
+    mRestoreMicros.reserve(2 + repeatAttempts);
     return true;
 }
 
@@ -190,6 +193,12 @@ bool CheckpointProbe::preInput(std::uint64_t& simulationTick, std::uint64_t& tap
             return false;
         }
         mPhase = Phase::A2;
+    } else if (mPhase == Phase::RestoreRepeat) {
+        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error)) {
+            fail(error);
+            return false;
+        }
+        mPhase = Phase::RepeatA;
     }
     return true;
 }
@@ -274,7 +283,8 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
     std::string digest;
     std::vector<StateCheckpointEntryDigest> entryDigests;
     std::vector<StateCheckpointEntryDigest>* const entryOutput =
-        mPhase == Phase::A1 || mPhase == Phase::A2 ? &entryDigests : nullptr;
+        mPhase == Phase::A1 || mPhase == Phase::A2 || mPhase == Phase::RepeatA
+            ? &entryDigests : nullptr;
     if (!captureTickDigest(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied,
             digest, entryOutput, error)) {
         fail(error);
@@ -296,7 +306,8 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
             mBDiffered = true;
             mFirstBDifference = mEpisodeTick;
         }
-    } else if (mPhase == Phase::A2 && digest != mA1Digests[mEpisodeTick]) {
+    } else if ((mPhase == Phase::A2 || mPhase == Phase::RepeatA) &&
+               digest != mA1Digests[mEpisodeTick]) {
         mFirstDivergence = mEpisodeTick;
         mExpectedDivergence = mA1Digests[mEpisodeTick];
         mActualDivergence = digest;
@@ -396,9 +407,22 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
                 }
             }
         }
-        error = "A2 diverged from A1 after checkpoint restore";
+        error = mPhase == Phase::RepeatA
+                    ? "repeated A attempt diverged from fresh-prefix A"
+                    : "A2 diverged from A1 after checkpoint restore";
         fail(error);
         return true;
+    }
+
+    if (mPhase == Phase::RepeatA) {
+        ++mRepeatCompleted;
+        if (mRepeatCompleted == mRepeatAttempts) {
+            mPhase = Phase::Complete;
+            mCompleted = true;
+            return true;
+        }
+        mPhase = Phase::RestoreRepeat;
+        return false;
     }
 
     ++mEpisodeTick;
@@ -413,9 +437,12 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
         }
         mPhase = Phase::RestoreA2;
     } else if (mPhase == Phase::A2) {
-        mPhase = Phase::Complete;
-        mCompleted = true;
-        return true;
+        if (mRepeatAttempts == 0) {
+            mPhase = Phase::Complete;
+            mCompleted = true;
+            return true;
+        }
+        mPhase = Phase::RestoreRepeat;
     }
     return false;
 }
@@ -456,6 +483,8 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"phase", phase_name(mPhase)},
         {"source_frame", mSourceFrame},
         {"suffix_ticks", mSuffixTicks},
+        {"repeat_attempts_requested", mRepeatAttempts},
+        {"repeat_attempts_completed", mRepeatCompleted},
         {"checkpoint_bytes", mCheckpoint.byteCount()},
         {"checkpoint_digest", mImage.digest},
         {"capture_micros", mCaptureMicros},
