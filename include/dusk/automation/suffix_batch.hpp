@@ -17,6 +17,7 @@ inline constexpr std::size_t SuffixBatchMaximumExpandedTicks = 8 * 1024 * 1024;
 
 struct SuffixBatchCandidate {
     std::string id;
+    bool tapePassthrough = false;
     // Fully expanded before simulation. The hot path performs one indexed load.
     std::vector<RawPadState> pads;
 };

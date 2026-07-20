@@ -111,12 +111,15 @@ bool parse_pad(const json& value, RawPadState& output) {
 
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
     SuffixBatchCandidate& output, std::string& error) {
-    constexpr std::array Keys{
+    constexpr std::array ActionKeys{
         std::string_view{"id"}, std::string_view{"actions"}};
-    if (!has_exact_keys(value, Keys) || !value["id"].is_string() ||
-        !value["actions"].is_array())
+    constexpr std::array TapeKeys{
+        std::string_view{"id"}, std::string_view{"source"}};
+    const bool actionCandidate = has_exact_keys(value, ActionKeys);
+    const bool tapeCandidate = has_exact_keys(value, TapeKeys);
+    if ((!actionCandidate && !tapeCandidate) || !value["id"].is_string())
     {
-        error = "candidate must contain exactly string id and array actions";
+        error = "candidate must contain id plus either actions or source";
         return false;
     }
     const std::string id = value["id"].get<std::string>();
@@ -130,7 +133,22 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
             return false;
         }
     }
+    if (tapeCandidate) {
+        if (!value["source"].is_string() ||
+            value["source"].get_ref<const std::string&>() != "tape")
+        {
+            error = "candidate source must be tape";
+            return false;
+        }
+        output = {.id = id, .tapePassthrough = true};
+        return true;
+    }
+
     const auto& actions = value["actions"];
+    if (!actions.is_array()) {
+        error = "candidate actions must be an array";
+        return false;
+    }
     if (actions.empty() || actions.size() > maximumTicks) {
         error = "candidate action count is empty or exceeds maximum_ticks";
         return false;
@@ -139,11 +157,11 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
     SuffixBatchCandidate parsed;
     parsed.id = id;
     parsed.pads.reserve(maximumTicks);
-    constexpr std::array ActionKeys{
+    constexpr std::array PadRunKeys{
         std::string_view{"op"}, std::string_view{"pad"}, std::string_view{"frames"}};
     for (std::size_t index = 0; index < actions.size(); ++index) {
         const json& action = actions[index];
-        if (!has_exact_keys(action, ActionKeys) || !action["op"].is_string() ||
+        if (!has_exact_keys(action, PadRunKeys) || !action["op"].is_string() ||
             action["op"].get_ref<const std::string&>() != "pad_run")
         {
             error = "candidate action " + std::to_string(index) +

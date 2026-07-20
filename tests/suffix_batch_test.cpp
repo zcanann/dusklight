@@ -53,6 +53,20 @@ void test_valid_batch_expands_before_the_hot_path() {
     REQUIRE(batch.candidates[0].pads[1] == batch.candidates[0].pads[2]);
 }
 
+void test_tape_passthrough_candidate() {
+    const std::string source = R"({
+        "schema":"dusklight-suffix-batch/v1","source_frame":440,"maximum_ticks":3,
+        "verify_state_hashes":true,
+        "candidates":[{"id":"raw-tape","source":"tape"}]
+    })";
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(batch.candidates.size() == 1);
+    REQUIRE(batch.candidates[0].tapePassthrough);
+    REQUIRE(batch.candidates[0].pads.empty());
+}
+
 void test_invalid_batches_fail_closed() {
     SuffixBatchDefinition batch;
     std::string error;
@@ -82,6 +96,7 @@ void test_invalid_batches_fail_closed() {
 
 int main() {
     test_valid_batch_expands_before_the_hot_path();
+    test_tape_passthrough_candidate();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";
     return 0;

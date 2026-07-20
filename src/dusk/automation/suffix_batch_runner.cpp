@@ -205,6 +205,7 @@ void SuffixBatchRunner::applyCandidateInput() {
         mCandidateIndex >= mDefinition.candidates.size() ||
         mCandidateTick >= mDefinition.maximumTicks)
         return;
+    if (mDefinition.candidates[mCandidateIndex].tapePassthrough) return;
     const PADStatus status = raw_pad_state_to_pad_status(
         mDefinition.candidates[mCandidateIndex].pads[mCandidateTick]);
     PADSetAutomationStatus(0, &status);
@@ -268,8 +269,12 @@ void SuffixBatchRunner::finishCandidate(
 bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame, std::string& error) {
     if (!mEnabled || mPhase != Phase::Candidate || mCompleted || mFailed) return false;
+    const auto& candidate = mDefinition.candidates[mCandidateIndex];
+    const RawPadState& expectedPad = candidate.tapePassthrough
+        ? input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0]
+        : candidate.pads[mCandidateTick];
     if (mConsumedCaptureFailed || mConsumedPads.size() != mCandidateTick + 1 ||
-        mConsumedPads.back() != mDefinition.candidates[mCandidateIndex].pads[mCandidateTick])
+        mConsumedPads.back() != expectedPad)
     {
         error = "candidate PAD state was not consumed exactly at the input boundary";
         fail(error);
