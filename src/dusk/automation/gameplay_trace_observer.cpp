@@ -329,16 +329,15 @@ int capture_selected_actor(void* candidate, void* context) {
         .health = actor->health,
         .status = actor->actor_status,
         .position = {actor->current.pos.x, actor->current.pos.y, actor->current.pos.z},
-        .currentAngle = {
-            actor->current.angle.x, actor->current.angle.y, actor->current.angle.z},
+        .currentAngle = {actor->current.angle.x, actor->current.angle.y, actor->current.angle.z},
         .shapeAngle = {actor->shape_angle.x, actor->shape_angle.y, actor->shape_angle.z},
     };
     if (output.count < output.actors.size()) {
         output.actors[output.count++] = observed;
     } else {
         output.flags |= GameplayTraceSelectedActorsTruncated;
-        auto largest = std::max_element(output.actors.begin(), output.actors.end(),
-            [](const auto& left, const auto& right) {
+        auto largest = std::max_element(
+            output.actors.begin(), output.actors.end(), [](const auto& left, const auto& right) {
                 return left.sessionProcessId < right.sessionProcessId;
             });
         if (observed.sessionProcessId < largest->sessionProcessId)
@@ -383,15 +382,70 @@ GameplayCollisionCorrectionObservation capture_gameplay_collision_correction() {
 #endif
 }
 
-void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationContext& context) {
+GameplayCollisionPlanesObservation capture_gameplay_collision_planes() {
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
-    auto& recorder = gameplay_trace_recorder();
-    if (!recorder.active())
-        return;
+    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    if (player == nullptr || fopAcM_GetName(player) != fpcNm_ALINK_e)
+        return {};
+    const auto* link = static_cast<const daAlink_c*>(player);
+    const dBgS_Acch& acch = link->mLinkAcch;
+    const u32 acchFlags = GameplayTraceCollisionReadAdapter::flags(acch);
+    const bool groundValid = (acchFlags & dBgS_Acch::FLAG_GRND_NONE) == 0 &&
+                             std::isfinite(acch.GetGroundH()) && acch.GetGroundH() != -G_CM3D_F_INF;
+    const bool roofValid = (acchFlags & dBgS_Acch::FLAG_ROOF_NONE) == 0 &&
+                           std::isfinite(acch.GetRoofHeight()) &&
+                           acch.GetRoofHeight() != G_CM3D_F_INF;
+    const bool waterValid =
+        (acchFlags & dBgS_Acch::FLAG_WATER_NONE) == 0 &&
+        (acchFlags & dBgS_Acch::FLAG_WATER_HIT) != 0 &&
+        std::isfinite(GameplayTraceCollisionReadAdapter::waterHeight(acch.m_wtr)) &&
+        GameplayTraceCollisionReadAdapter::waterHeight(acch.m_wtr) != -G_CM3D_F_INF;
+    GameplayCollisionPlanesObservation output;
+    const auto capture = [&output](const std::size_t slot, const cBgS_PolyInfo& poly) {
+        cM3dGPla plane;
+        if (dComIfG_Bgsp().GetTriPla(poly, &plane) && copy_plane(plane, output.planes[slot]))
+            output.validMask |= static_cast<std::uint8_t>(1u << slot);
+    };
+    if (groundValid)
+        capture(0, acch.m_gnd);
+    if (roofValid)
+        capture(1, acch.m_roof);
+    if (waterValid)
+        capture(2, acch.m_wtr);
+    if ((acchFlags & dBgS_Acch::FLAG_WALL_NONE) == 0) {
+        for (std::size_t wall = 0; wall < 3; ++wall) {
+            if ((GameplayTraceCollisionReadAdapter::wallFlags(link->mAcchCir[wall]) &
+                    dBgS_AcchCir::FLAG_WALL_HIT) != 0)
+            {
+                capture(wall + 3, link->mAcchCir[wall]);
+            }
+        }
+    }
+    return output;
+#else
+    return {};
+#endif
+}
 
+GameplayPlayerFormObservation capture_gameplay_player_form() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    if (player == nullptr || fopAcM_GetName(player) != fpcNm_ALINK_e)
+        return {};
+    return {
+        .present = true,
+        .wolf = static_cast<const daAlink_c*>(player)->checkWolf() != 0,
+    };
+#else
+    return {};
+#endif
+}
+
+bool capture_gameplay_trace_sample(const GameplayTraceCaptureContext& context,
+    const std::uint64_t requested, GameplayTraceSample& sample) {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
     using Channel = GameplayTraceChannel;
     using Status = GameplayTraceChannelStatus;
-    const std::uint64_t requested = recorder.requestedChannels();
     const auto wants = [requested](const Channel channel) {
         return (requested & gameplay_trace_channel_bit(channel)) != 0;
     };
@@ -400,20 +454,17 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
             std::strncpy(output.data(), input, output.size());
     };
 
-    GameplayTraceSample sample;
-    sample.core.boundaryIndex = context.simulationTick + 1;
+    sample = {};
+    sample.core.boundaryIndex = context.boundaryIndex;
     sample.core.simulationTick = context.simulationTick;
     sample.core.tapeFrame = context.tapeFrame;
     sample.core.flags = GameplayTraceSimulationTickValid;
     if (context.tapeFrame != GameplayTraceNoTapeFrame) {
         sample.core.flags |= GameplayTraceTapeFrameValid;
     }
-    sample.core.phase = GameplayTracePhase::PostSimulation;
-    sample.core.boundaryKind = GameplayTraceBoundaryKind::Tick;
-    if (context.tapeFrameApplied)
-        sample.core.inputSource |= GameplayTraceInputTape;
-    if (context.controllerFrameApplied)
-        sample.core.inputSource |= GameplayTraceInputController;
+    sample.core.phase = context.phase;
+    sample.core.boundaryKind = context.boundaryKind;
+    sample.core.inputSource = context.inputSource;
 
     if (wants(Channel::Stage)) {
         sample.stageStatus = Status::Present;
@@ -432,9 +483,7 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
 
     if (wants(Channel::AppliedPads)) {
         sample.appliedPadsStatus = Status::Present;
-        sample.appliedPads.ownedPorts = context.tapeFrameApplied       ? context.tapeOwnedPorts :
-                                        context.controllerFrameApplied ? 1 :
-                                                                         0;
+        sample.appliedPads.ownedPorts = context.ownedPorts;
         for (std::size_t port = 0; port < kInputPortCount; ++port) {
             auto& pad = sample.appliedPads.pads[port];
             pad = raw_pad_state_from_pad_status(JUTGamePad::mPadStatus[port]);
@@ -481,14 +530,13 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                 output.stableTicks = 1;
                 output.consecutiveTicks = found != tracker.hits().end() && found->hit ? 1 : 0;
                 if (found != tracker.hits().end() && found->hit) {
-                    output.flags |= GameplayTraceGoalReached |
-                                    GameplayTraceGoalFirstHitTickPresent;
+                    output.flags |= GameplayTraceGoalReached | GameplayTraceGoalFirstHitTickPresent;
                     output.firstHitTick = found->simulationTick;
                 }
             } else {
                 output.flags |= GameplayTraceGoalAuthored;
-                const auto found = std::ranges::find(
-                    tracker.authoredHits(), *goalName, &AuthoredMilestoneHit::id);
+                const auto found =
+                    std::ranges::find(tracker.authoredHits(), *goalName, &AuthoredMilestoneHit::id);
                 if (found != tracker.authoredHits().end()) {
                     output.stableTicks = found->stableTicks;
                     output.consecutiveTicks = found->consecutiveTicks;
@@ -497,8 +545,8 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                     output.sequenceWithinTicks = found->sequenceWithinTicks;
                     output.sequenceElapsedTicks = found->sequenceElapsedTicks;
                     if (found->hit) {
-                        output.flags |= GameplayTraceGoalReached |
-                                        GameplayTraceGoalFirstHitTickPresent;
+                        output.flags |=
+                            GameplayTraceGoalReached | GameplayTraceGoalFirstHitTickPresent;
                         output.firstHitTick = found->simulationTick;
                     }
                 }
@@ -593,9 +641,7 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
                 };
             }
             action.doStatus = dComIfGp_getDoStatus();
-            if (const fopAc_ac_c* partner = fopAcM_getTalkEventPartner(link);
-                partner != nullptr)
-            {
+            if (const fopAc_ac_c* partner = fopAcM_getTalkEventPartner(link); partner != nullptr) {
                 action.flags |= GameplayTraceTalkPartnerPresent;
                 action.talkPartner = capture_actor_identity(partner);
             }
@@ -979,10 +1025,42 @@ void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationCont
             sample.selectedActors.flags |= GameplayTraceSelectedActorsTruncated;
     }
 
-    recorder.record(sample);
+    return true;
 #else
     (void)context;
+    (void)requested;
+    sample = {};
+    return false;
 #endif
+}
+
+void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationContext& context) {
+    auto& recorder = gameplay_trace_recorder();
+    if (!recorder.active())
+        return;
+
+    std::uint8_t inputSource = GameplayTraceInputNone;
+    if (context.tapeFrameApplied)
+        inputSource |= GameplayTraceInputTape;
+    if (context.controllerFrameApplied)
+        inputSource |= GameplayTraceInputController;
+    const std::uint8_t ownedPorts = context.tapeFrameApplied       ? context.tapeOwnedPorts :
+                                    context.controllerFrameApplied ? 1 :
+                                                                     0;
+    GameplayTraceSample sample;
+    if (capture_gameplay_trace_sample(
+            {
+                .boundaryIndex = context.simulationTick + 1,
+                .simulationTick = context.simulationTick,
+                .tapeFrame = context.tapeFrame,
+                .phase = GameplayTracePhase::PostSimulation,
+                .inputSource = inputSource,
+                .ownedPorts = ownedPorts,
+            },
+            recorder.requestedChannels(), sample))
+    {
+        recorder.record(sample);
+    }
 }
 
 }  // namespace dusk::automation

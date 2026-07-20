@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/milestones.hpp"
 
@@ -16,10 +17,10 @@
 namespace dusk::automation {
 
 inline constexpr std::uint16_t LearningEpisodeShardVersion = 1;
-inline constexpr std::uint16_t LearningObservationVersion = 2;
+inline constexpr std::uint16_t LearningObservationVersion = 3;
 inline constexpr std::uint16_t LearningActionVersion = 2;
 inline constexpr std::uint32_t LearningEpisodeMaximumTicks = 4096;
-inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v2";
+inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v3";
 inline constexpr std::string_view LearningActionSchema = "dusklight-raw-pad-action/v2";
 inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v1";
 
@@ -67,6 +68,10 @@ struct LearningObservationContext {
     bool collisionCorrectionPresent = false;
     float collisionCorrectionX = 0.0F;
     float collisionCorrectionZ = 0.0F;
+    // Pointer-free observer copy, consumed synchronously by append_learning_observation.
+    const GameplayTraceSample* gameplayTrace = nullptr;
+    GameplayCollisionPlanesObservation collisionPlanes;
+    GameplayPlayerFormObservation playerForm;
     LearningGoalObservation goal;
 };
 

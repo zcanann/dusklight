@@ -18,6 +18,14 @@
 namespace dusk::automation {
 namespace {
 
+constexpr std::uint64_t LearningTraceChannels =
+    gameplay_trace_channel_bit(GameplayTraceChannel::Stage) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::Camera) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerAction) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::SceneExit) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
+    gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+
 std::string xxh3_128_hex(const std::string_view value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -267,6 +275,23 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         capture_controller_observation(mEpisodeControllerStorage);
     const GameplayCollisionCorrectionObservation collision =
         capture_gameplay_collision_correction();
+    GameplayTraceSample gameplayTrace;
+    if (!capture_gameplay_trace_sample(
+            {
+                .boundaryIndex = simulationTick,
+                .simulationTick = simulationTick,
+                .tapeFrame = static_cast<std::uint64_t>(
+                    mDefinition.sourceFrame + mCandidateTick),
+                .phase = GameplayTracePhase::PreInput,
+            },
+            LearningTraceChannels, gameplayTrace))
+    {
+        error = "native learning mechanics observation is unavailable";
+        return false;
+    }
+    const GameplayCollisionPlanesObservation collisionPlanes =
+        capture_gameplay_collision_planes();
+    const GameplayPlayerFormObservation playerForm = capture_gameplay_player_form();
     RawPadState previousInput{};
     if (mCandidateTick != 0) {
         previousInput = mConsumedPads.back();
@@ -288,6 +313,9 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
+        .gameplayTrace = &gameplayTrace,
+        .collisionPlanes = collisionPlanes,
+        .playerForm = playerForm,
         .goal = summarize_learning_goal(mGoalTracker),
     };
     if (!append_learning_observation(mCurrentEpisode, observation, context, error))
@@ -359,6 +387,23 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         capture_controller_observation(mEpisodeControllerStorage);
     const GameplayCollisionCorrectionObservation collision =
         capture_gameplay_collision_correction();
+    GameplayTraceSample gameplayTrace;
+    if (!capture_gameplay_trace_sample(
+            {
+                .boundaryIndex = simulationTick + 1,
+                .simulationTick = simulationTick,
+                .tapeFrame = static_cast<std::uint64_t>(
+                    mDefinition.sourceFrame + mCandidateTick),
+                .phase = GameplayTracePhase::PostSimulation,
+            },
+            LearningTraceChannels, gameplayTrace))
+    {
+        error = "native learning mechanics observation is unavailable";
+        return false;
+    }
+    const GameplayCollisionPlanesObservation collisionPlanes =
+        capture_gameplay_collision_planes();
+    const GameplayPlayerFormObservation playerForm = capture_gameplay_player_form();
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PostSimulation,
         .terminalReason = !terminal ? LearningTerminalReason::None :
@@ -377,6 +422,9 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
+        .gameplayTrace = &gameplayTrace,
+        .collisionPlanes = collisionPlanes,
+        .playerForm = playerForm,
         .goal = summarize_learning_goal(mGoalTracker),
     };
     if (!append_learning_observation(mCurrentEpisode, observation, context, error))

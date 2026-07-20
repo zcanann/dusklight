@@ -50,6 +50,9 @@ struct ObservationFixture {
     std::array<std::uint8_t, kMilestoneDungeonFlagCount> dungeonFlags{};
     std::array<std::uint8_t, kMilestoneSwitchFlagCount> switchFlags{};
     MilestoneObservation observation;
+    GameplayTraceSample gameplayTrace;
+    GameplayCollisionPlanesObservation collisionPlanes;
+    GameplayPlayerFormObservation playerForm{.present = true};
 
     ObservationFixture() {
         actors[0] = {
@@ -111,6 +114,97 @@ struct ObservationFixture {
         observation.dungeonFlags = dungeonFlags;
         observation.switchFlags = switchFlags;
         observation.switchFlagRoom = 0;
+
+        gameplayTrace.cameraStatus = GameplayTraceChannelStatus::Present;
+        gameplayTrace.camera.viewYaw = 0x1200;
+        gameplayTrace.camera.controlledYaw = 0x1000;
+        gameplayTrace.camera.bank = -20;
+        gameplayTrace.camera.eye = {-25.0F, 40.0F, 80.0F};
+        gameplayTrace.camera.center = {-1.0F, 12.0F, 3.0F};
+        gameplayTrace.camera.up = {0.0F, 1.0F, 0.0F};
+        gameplayTrace.camera.fovy = 45.0F;
+        gameplayTrace.playerActionStatus = GameplayTraceChannelStatus::Present;
+        gameplayTrace.playerAction.procedureId = 0x42;
+        gameplayTrace.playerAction.modeFlags = 0x1234;
+        gameplayTrace.playerAction.procedureContextRaw = {1, 2, 3, 4, 5, 6};
+        gameplayTrace.playerAction.damageWaitTimer = 7;
+        gameplayTrace.playerAction.swordAtUpTime = 8;
+        gameplayTrace.playerAction.iceDamageWaitTimer = 9;
+        gameplayTrace.playerAction.swordChangeWaitTimer = 10;
+        gameplayTrace.playerAction.underAnimations[0] = {0x55, 12.5F, 1.0F};
+        gameplayTrace.playerAction.upperAnimations[1] = {0x66, 4.25F, 0.5F};
+        gameplayTrace.playerAction.doStatus = 0x15;
+        gameplayTrace.sceneExitStatus = GameplayTraceChannelStatus::Present;
+        gameplayTrace.sceneExit.sessionProcessId = 44;
+        gameplayTrace.sceneExit.rawParameters = 0x00112233;
+        gameplayTrace.sceneExit.flags =
+            GameplayTraceSceneExitVolumeValid | GameplayTraceSceneExitDestinationValid;
+        gameplayTrace.sceneExit.signedDistanceToVolume = 15.5F;
+        gameplayTrace.sceneExit.actorName = 0x101;
+        gameplayTrace.sceneExit.setId = 9;
+        gameplayTrace.sceneExit.exitId = 0x33;
+        gameplayTrace.sceneExit.kind = GameplayTraceSceneExitBox;
+        gameplayTrace.sceneExit.observedCount = 2;
+        gameplayTrace.sceneExit.playerLocalPosition = {1.0F, 2.0F, 3.0F};
+        gameplayTrace.sceneExit.volumeExtent = {10.0F, 20.0F, 30.0F};
+        gameplayTrace.sceneExit.homePosition = {100.0F, 200.0F, 300.0F};
+        gameplayTrace.sceneExit.destinationStage = {'F', '_', 'S', 'P', '1', '0', '4', '\0'};
+        gameplayTrace.sceneExit.destinationRoom = 0;
+        gameplayTrace.sceneExit.destinationLayer = 1;
+        gameplayTrace.sceneExit.destinationPoint = 2;
+        gameplayTrace.sceneExit.destinationWipe = 0;
+        gameplayTrace.sceneExit.destinationWipeTime = 0;
+        gameplayTrace.sceneExit.destinationTimeHour = -1;
+        gameplayTrace.sceneExit.pathId = 0x11;
+        gameplayTrace.sceneExit.argument1 = 0x22;
+        gameplayTrace.sceneExit.switchNo = 0;
+        gameplayTrace.playerBackgroundCollisionStatus = GameplayTraceChannelStatus::Present;
+        gameplayTrace.playerBackgroundCollision.flags =
+            GameplayTraceCollisionGroundProbeValid | GameplayTraceCollisionGroundContact |
+            GameplayTraceCollisionGroundPlaneValid | GameplayTraceCollisionTrajectoryValid |
+            GameplayTraceCollisionGroundIdentityPresent;
+        gameplayTrace.playerBackgroundCollision.groundHeight = 2.0F;
+        gameplayTrace.playerBackgroundCollision.groundBgIndex = 1;
+        gameplayTrace.playerBackgroundCollision.groundPolyIndex = 17;
+        gameplayTrace.playerBackgroundCollision.groundPlane = {0.0F, 1.0F, 0.0F, -2.0F};
+        gameplayTrace.playerBackgroundCollision.oldPosition = {-1.5F, 2.0F, 3.0F};
+        gameplayTrace.playerBackgroundCollision.resolvedFrameDisplacement = {0.5F, 0.0F, 0.0F};
+        gameplayTrace.playerBackgroundCollision.finalPosition = {-1.0F, 2.0F, 3.0F};
+        gameplayTrace.playerCollisionSurfacesStatus = GameplayTraceChannelStatus::Present;
+        gameplayTrace.playerCollisionSurfaces.flags = GameplayTraceCollisionSurfaceCurrentRoomValid;
+        gameplayTrace.playerCollisionSurfaces.currentRoom = 0;
+        gameplayTrace.playerCollisionSurfaces.identityCount = 1;
+        gameplayTrace.playerCollisionSurfaces.backingCodeCount = 1;
+        auto& ground = gameplayTrace.playerCollisionSurfaces.surfaces[0];
+        ground.flags = GameplayTraceCollisionSurfaceIdentityPresent |
+                       GameplayTraceCollisionSurfaceBackingResolved |
+                       GameplayTraceCollisionSurfaceRawCodesPresent |
+                       GameplayTraceCollisionSurfaceMaterialPresent |
+                       GameplayTraceCollisionSurfaceGroupPresent |
+                       GameplayTraceCollisionSurfaceSourceRoomPresent |
+                       GameplayTraceCollisionSurfaceSourceRoomExact |
+                       GameplayTraceCollisionSurfaceGeometryPresent;
+        ground.backingFormat = GameplayTraceCollisionBackingDzb;
+        ground.rawCodePresenceMask = 0x1f;
+        ground.bgIndex = 1;
+        ground.polyIndex = 17;
+        ground.materialIndex = 4;
+        ground.groupIndex = 2;
+        ground.rawCodes = {1, 2, 3, 4, 5};
+        ground.rawExitId = 1;
+        ground.sourceRoom = 0;
+        ground.sourceGeometryIndexCount = 3;
+        ground.sourceGeometryIndices = {10, 11, 12, 0xffff, 0xffff, 0xffff};
+        collisionPlanes.validMask = 1;
+        collisionPlanes.planes[0] = {0.0F, 1.0F, 0.0F, -2.0F};
+    }
+
+    void setTraceBoundary(const GameplayTracePhase phase, const std::uint64_t boundary,
+        const std::uint64_t simulationTick, const std::uint64_t tapeFrame) {
+        gameplayTrace.core.phase = phase;
+        gameplayTrace.core.boundaryIndex = boundary;
+        gameplayTrace.core.simulationTick = simulationTick;
+        gameplayTrace.core.tapeFrame = tapeFrame;
     }
 };
 
@@ -131,8 +225,12 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .tapeFrame = 440,
         .remainingTicks = 1,
         .stateIdentity = "11111111111111111111111111111111",
+        .gameplayTrace = &fixture.gameplayTrace,
+        .collisionPlanes = fixture.collisionPlanes,
+        .playerForm = fixture.playerForm,
         .goal = {.configured = true, .requestedCount = 1},
     };
+    fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
     REQUIRE(append_learning_observation(episode, fixture.observation, pre, error));
     append_learning_action(episode, pad, pad);
     fixture.observation.playerPositionX = -0.5F;
@@ -145,8 +243,12 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .remainingTicks = 0,
         .stateIdentity = "22222222222222222222222222222222",
         .previousInput = pad,
+        .gameplayTrace = &fixture.gameplayTrace,
+        .collisionPlanes = fixture.collisionPlanes,
+        .playerForm = fixture.playerForm,
         .goal = {.configured = true, .requestedCount = 1},
     };
+    fixture.setTraceBoundary(GameplayTracePhase::PostSimulation, 11, 10, 440);
     REQUIRE(append_learning_observation(episode, fixture.observation, post, error));
     REQUIRE(finish_learning_episode(episode, 1, error));
     REQUIRE(read_little<std::uint32_t>(episode, 12) == 1);
@@ -154,6 +256,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     std::vector<std::uint8_t> successEpisode;
     fixture.observation.playerPositionX = -1.0F;
     begin_learning_episode(successEpisode);
+    fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
     REQUIRE(append_learning_observation(successEpisode, fixture.observation, pre, error));
     append_learning_action(successEpisode, pad, pad);
     fixture.observation.playerPositionX = 0.0F;
@@ -164,6 +267,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     successPost.goal.hitCount = 1;
     successPost.goal.consecutiveTicks = 1;
     successPost.goal.firstHitTick = 10;
+    fixture.setTraceBoundary(GameplayTracePhase::PostSimulation, 11, 10, 440);
     REQUIRE(append_learning_observation(successEpisode, fixture.observation, successPost, error));
     REQUIRE(finish_learning_episode(successEpisode, 1, error));
 
@@ -262,6 +366,45 @@ void test_duplicate_actor_identity_fails_closed() {
     REQUIRE(error.find("strictly ordered") != std::string::npos);
 }
 
+void test_mechanics_boundary_and_surface_identity_fail_closed() {
+    ObservationFixture fixture;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    fixture.setTraceBoundary(GameplayTracePhase::PostSimulation, 11, 10, 440);
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .phase = LearningObservationPhase::PreInput,
+            .boundaryIndex = 10,
+            .simulationTick = 10,
+            .tapeFrame = 440,
+            .remainingTicks = 1,
+            .stateIdentity = "11111111111111111111111111111111",
+            .gameplayTrace = &fixture.gameplayTrace,
+            .collisionPlanes = fixture.collisionPlanes,
+            .playerForm = {.present = true},
+        },
+        error));
+    REQUIRE(error.find("bounded channels") != std::string::npos);
+
+    fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
+    fixture.gameplayTrace.playerCollisionSurfaces.surfaces[0].flags = 0;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .phase = LearningObservationPhase::PreInput,
+            .boundaryIndex = 10,
+            .simulationTick = 10,
+            .tapeFrame = 440,
+            .remainingTicks = 1,
+            .stateIdentity = "11111111111111111111111111111111",
+            .gameplayTrace = &fixture.gameplayTrace,
+            .collisionPlanes = fixture.collisionPlanes,
+            .playerForm = {.present = true},
+        },
+        error));
+    REQUIRE(error.find("lacks a surface identity") != std::string::npos);
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -270,6 +413,7 @@ int main(const int argc, char** argv) {
         argc == 2 ? std::optional(std::filesystem::path(argv[1])) : std::nullopt);
     test_inconsistent_actor_completeness_fails_closed();
     test_duplicate_actor_identity_fails_closed();
+    test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";
     return 0;
 }

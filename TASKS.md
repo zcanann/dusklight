@@ -44,9 +44,16 @@ the same goal without demonstration-relative features.
   coarse action catalog. It is a baseline, not a completed learner.
 - The native checkpoint batch now emits independently compressed, checksummed
   episode blocks with versioned observation/action schemas. A live two-candidate
-  Ordon batch retained and Rust-decoded all 250 failed transitions: 2,803,240
-  uncompressed bytes became 42,457 compressed bytes, and both siblings began
-  from the same restored state identity.
+  Ordon batch retained and Rust-decoded all 250 failed transitions, including
+  camera, Link action/form, scene exits, collision contacts, polygon identities,
+  backing codes and resolved planes: 3,301,240 uncompressed bytes became 63,223
+  compressed bytes, and both siblings began from the same restored state
+  identity.
+- Repeating that batch in a fresh automation root exposed a framework bug: the
+  process-boot prefix reached frame 440 with fingerprint `5724e31e...ce558`
+  instead of `ac7c3278...b5b4`, while the same build and inputs passed when the
+  prior isolated memory-card artifact was present. This is a hidden boot-fixture
+  dependency to eliminate, not a reason to mine a more "robust" tape.
 - The checked-in native-writer golden shard contains both success and failure
   episodes. Cross-language tests reject action-boundary shifts, terminal labels
   in pre-input observations, malformed actor completeness, corruption, and
@@ -61,15 +68,17 @@ the same goal without demonstration-relative features.
 - [x] Capture failures and successes through the same episode contract. A
   failed attempt must no longer collapse to one terminal X/Z observation.
 - [ ] Define a canonical, versioned observation envelope containing:
-  - Link motion, facing, action/animation phase, timers, form and relevant
+  - [x] Link motion, facing, action/animation phase, timers, form and relevant
     status;
-  - recent controls and camera state;
-  - contact manifolds, collision correction, surface identity and normals;
-  - generic local clearance/geometry queries in Link-relative coordinates;
-  - active gameplay actors as a deterministically ordered variable-length set
-    with stable semantic identity, relative transform, velocity, type and
+  - [x] recent controls and camera state;
+  - [x] realized background-collision contacts, surface/polygon identity,
+    backing metadata and resolved planes/normals;
+  - [ ] generic local clearance/geometry queries in Link-relative coordinates;
+  - [ ] active gameplay actors as a deterministically ordered variable-length
+    set with stable semantic identity, relative transform, velocity, type and
     available typed components;
-  - triggers, exits, loading/event state, goal state, clocks and RNG identity.
+  - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
+    identity beyond the currently retained scene-exit and core channels.
 - [ ] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
@@ -82,6 +91,11 @@ the same goal without demonstration-relative features.
 - [ ] Buffer episodes in memory and write compact content-addressed binary
   shards, not one file per attempt or tick. Bind every shard to build, game
   data, checkpoint, observation schema, action schema, objective and fidelity.
+- [ ] Bind every process-boot dependency, including the isolated memory card,
+  save data and relevant configuration, into the boot/checkpoint identity.
+  Materializing the same declared fixture in a fresh automation root must
+  reproduce the same frame-440 state without borrowing durable state from a
+  previous run.
 - [ ] Add corpus inspection for missing channels, masks, NaNs, constants,
   discontinuities, set sizes, action coverage, outcome balance, duplicate
   trajectories, and possible identity leakage.

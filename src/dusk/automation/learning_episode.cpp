@@ -112,6 +112,219 @@ bool append_actor_identity(std::vector<std::uint8_t>& output,
            append_float(output, actor.homePositionPresent ? actor.homePositionZ : 0.0F, error);
 }
 
+template <std::size_t Size>
+bool append_float_array(
+    std::vector<std::uint8_t>& output, const std::array<float, Size>& values, std::string& error) {
+    for (const float value : values) {
+        if (!append_float(output, value, error))
+            return false;
+    }
+    return true;
+}
+
+bool append_trace_actor_identity(std::vector<std::uint8_t>& output,
+    const GameplayTraceActorIdentitySample& actor, std::string& error) {
+    append_integer(output, actor.sessionProcessId);
+    append_integer(output, actor.actorName);
+    append_integer(output, actor.setId);
+    append_integer(output, actor.homeRoom);
+    append_integer(output, actor.currentRoom);
+    append_integer<std::uint16_t>(output, 0);
+    return append_float_array(output, actor.homePosition, error);
+}
+
+bool append_mechanics_channels(std::vector<std::uint8_t>& output, const GameplayTraceSample* trace,
+    const GameplayCollisionPlanesObservation& planes, const GameplayPlayerFormObservation& form,
+    std::string& error) {
+    const GameplayTraceSample empty{};
+    const GameplayTraceSample& sample = trace == nullptr ? empty : *trace;
+    const auto valid_status = [](const GameplayTraceChannelStatus status) {
+        return status == GameplayTraceChannelStatus::NotSampled ||
+               status == GameplayTraceChannelStatus::Present ||
+               status == GameplayTraceChannelStatus::Absent ||
+               status == GameplayTraceChannelStatus::Unavailable;
+    };
+    if (!valid_status(sample.cameraStatus) || !valid_status(sample.playerActionStatus) ||
+        !valid_status(sample.sceneExitStatus) ||
+        !valid_status(sample.playerBackgroundCollisionStatus) ||
+        !valid_status(sample.playerCollisionSurfacesStatus) || (planes.validMask & ~0x3fu) != 0 ||
+        (trace == nullptr && (planes.validMask != 0 || form.present || form.wolf)) ||
+        (form.wolf && !form.present))
+    {
+        error = "learning observation has inconsistent mechanics channels";
+        return false;
+    }
+    for (std::size_t index = 0; index < sample.playerCollisionSurfaces.surfaces.size(); ++index) {
+        if ((planes.validMask & (1u << index)) != 0 &&
+            (sample.playerCollisionSurfaces.surfaces[index].flags &
+                GameplayTraceCollisionSurfaceIdentityPresent) == 0)
+        {
+            error = "learning observation collision plane lacks a surface identity";
+            return false;
+        }
+    }
+    append_integer(output, static_cast<std::uint8_t>(sample.cameraStatus));
+    append_integer(output, static_cast<std::uint8_t>(sample.playerActionStatus));
+    append_integer(output, static_cast<std::uint8_t>(sample.playerBackgroundCollisionStatus));
+    append_integer(output, static_cast<std::uint8_t>(sample.playerCollisionSurfacesStatus));
+    append_integer(output, static_cast<std::uint8_t>(sample.sceneExitStatus));
+    append_integer(output, planes.validMask);
+    const std::uint8_t formFlags = (form.present ? 1u : 0u) | (form.wolf ? 2u : 0u);
+    append_integer(output, formFlags);
+    append_integer<std::uint8_t>(output, 0);
+
+    const GameplayTraceCameraSample& camera = sample.camera;
+    append_integer(output, camera.viewYaw);
+    append_integer(output, camera.controlledYaw);
+    append_integer(output, camera.bank);
+    append_integer<std::uint16_t>(output, 0);
+    if (!append_float_array(output, camera.eye, error) ||
+        !append_float_array(output, camera.center, error) ||
+        !append_float_array(output, camera.up, error) || !append_float(output, camera.fovy, error))
+        return false;
+
+    const GameplayTracePlayerActionSample& action = sample.playerAction;
+    append_integer(output, action.procedureId);
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, action.modeFlags);
+    for (const std::int16_t value : action.procedureContextRaw)
+        append_integer(output, value);
+    append_integer(output, action.damageWaitTimer);
+    append_integer(output, action.swordAtUpTime);
+    append_integer(output, action.iceDamageWaitTimer);
+    append_integer(output, action.swordChangeWaitTimer);
+    for (std::size_t index = 0; index < 5; ++index)
+        append_integer<std::uint8_t>(output, 0);
+    for (const GameplayTraceAnimationLane& lane : action.underAnimations) {
+        append_integer(output, lane.resourceId);
+        append_integer<std::uint16_t>(output, 0);
+        if (!append_float(output, lane.frame, error) || !append_float(output, lane.rate, error))
+            return false;
+    }
+    for (const GameplayTraceAnimationLane& lane : action.upperAnimations) {
+        append_integer(output, lane.resourceId);
+        append_integer<std::uint16_t>(output, 0);
+        if (!append_float(output, lane.frame, error) || !append_float(output, lane.rate, error))
+            return false;
+    }
+    append_integer(output, action.flags);
+    append_integer(output, action.doStatus);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    if (!append_trace_actor_identity(output, action.talkPartner, error) ||
+        !append_trace_actor_identity(output, action.grabbedActor, error))
+        return false;
+
+    const GameplayTraceSceneExitSample& exit = sample.sceneExit;
+    append_integer(output, exit.sessionProcessId);
+    append_integer(output, exit.rawParameters);
+    append_integer(output, exit.flags);
+    if (!append_float(output, exit.signedDistanceToVolume, error))
+        return false;
+    append_integer(output, exit.actorName);
+    append_integer(output, exit.setId);
+    append_integer(output, exit.exitId);
+    append_integer(output, exit.pathId);
+    append_integer(output, exit.argument1);
+    append_integer(output, exit.switchNo);
+    append_integer(output, exit.kind);
+    append_integer(output, exit.observedCount);
+    append_integer(output, exit.homeRoom);
+    append_integer(output, exit.linkExitDirection);
+    append_integer(output, exit.linkExitId);
+    append_integer(output, exit.shapeYaw);
+    append_integer(output, exit.actorAction);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    if (!append_float_array(output, exit.playerLocalPosition, error) ||
+        !append_float_array(output, exit.volumeExtent, error) ||
+        !append_float_array(output, exit.homePosition, error))
+        return false;
+    output.insert(output.end(), exit.destinationStage.begin(), exit.destinationStage.end());
+    append_integer(output, exit.destinationRoom);
+    append_integer(output, exit.destinationLayer);
+    append_integer(output, exit.destinationPoint);
+    append_integer(output, exit.destinationWipe);
+    append_integer(output, exit.destinationWipeTime);
+    append_integer(output, exit.destinationTimeHour);
+    append_integer<std::uint8_t>(output, 0);
+
+    const GameplayTracePlayerBackgroundCollisionSample& background =
+        sample.playerBackgroundCollision;
+    append_integer(output, background.flags);
+    if (!append_float(output, background.groundHeight, error) ||
+        !append_float(output, background.roofHeight, error) ||
+        !append_float(output, background.waterHeight, error))
+        return false;
+    append_integer(output, background.groundBgIndex);
+    append_integer(output, background.groundPolyIndex);
+    append_integer(output, background.groundOwnerSessionProcessId);
+    if (!append_float_array(output, background.groundPlane, error))
+        return false;
+    append_integer(output, background.roofBgIndex);
+    append_integer(output, background.roofPolyIndex);
+    append_integer(output, background.roofOwnerSessionProcessId);
+    append_integer(output, background.waterBgIndex);
+    append_integer(output, background.waterPolyIndex);
+    append_integer(output, background.waterOwnerSessionProcessId);
+    for (const GameplayTraceCollisionWallSample& wall : background.walls) {
+        append_integer(output, wall.bgIndex);
+        append_integer(output, wall.polyIndex);
+        append_integer(output, wall.ownerSessionProcessId);
+        append_integer(output, wall.angleY);
+        append_integer(output, wall.flags);
+    }
+    if (!append_float_array(output, background.oldPosition, error) ||
+        !append_float_array(output, background.resolvedFrameDisplacement, error) ||
+        !append_float_array(output, background.finalPosition, error))
+        return false;
+
+    const GameplayTracePlayerCollisionSurfacesSample& surfaces = sample.playerCollisionSurfaces;
+    append_integer(output, surfaces.flags);
+    append_integer(output, surfaces.currentRoom);
+    append_integer(output, surfaces.identityCount);
+    append_integer(output, surfaces.backingCodeCount);
+    append_integer(output, surfaces.destinationCount);
+    append_integer(output, surfaces.rawLinkExit);
+    append_integer(output, surfaces.pendingStageMatchMask);
+    append_integer<std::uint8_t>(output, 0);
+    for (std::size_t index = 0; index < surfaces.surfaces.size(); ++index) {
+        const GameplayTraceCollisionSurfaceSample& surface = surfaces.surfaces[index];
+        append_integer(output, surface.flags);
+        append_integer(output, surface.kind);
+        append_integer(output, surface.wallSlot);
+        append_integer(output, surface.backingFormat);
+        append_integer(output, surface.rawCodePresenceMask);
+        append_integer(output, surface.bgIndex);
+        append_integer(output, surface.polyIndex);
+        append_integer(output, surface.ownerSessionProcessId);
+        append_integer(output, surface.materialIndex);
+        append_integer(output, surface.groupIndex);
+        for (const std::uint32_t code : surface.rawCodes)
+            append_integer(output, code);
+        append_integer(output, surface.rawExitId);
+        append_integer(output, surface.sourceRoom);
+        append_integer(output, surface.sclsSourceRoom);
+        append_integer(output, surface.destinationRoom);
+        append_integer(output, surface.destinationLayer);
+        append_integer(output, surface.destinationWipe);
+        append_integer(output, surface.destinationWipeTime);
+        append_integer(output, surface.destinationTimeHour);
+        append_integer(output, surface.destinationPoint);
+        append_integer(output, surface.sourceGeometryIndexCount);
+        append_integer<std::uint8_t>(output, 0);
+        for (const std::uint16_t geometryIndex : surface.sourceGeometryIndices)
+            append_integer(output, geometryIndex);
+        if (!append_float(output, surface.kclPrismHeight, error))
+            return false;
+        output.insert(
+            output.end(), surface.destinationStage.begin(), surface.destinationStage.end());
+        if (!append_float_array(output, planes.planes[index], error))
+            return false;
+    }
+    return true;
+}
+
 LearningActorSelectionRule actor_selection_rule(const MilestoneObservation& observation) {
     return observation.actorsTruncated ? LearningActorSelectionRule::LowestRuntimeGeneration :
                                          LearningActorSelectionRule::Complete;
@@ -153,10 +366,19 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         (context.terminalReason != LearningTerminalReason::GoalReached || context.goal.reached) &&
         (context.terminalReason != LearningTerminalReason::TickBudgetExhausted ||
             (!context.goal.reached && context.remainingTicks == 0));
+    const GameplayTracePhase expectedTracePhase =
+        context.phase == LearningObservationPhase::PreInput ? GameplayTracePhase::PreInput :
+                                                              GameplayTracePhase::PostSimulation;
+    const bool traceBoundaryIsValid =
+        context.gameplayTrace == nullptr ||
+        (context.gameplayTrace->core.phase == expectedTracePhase &&
+            context.gameplayTrace->core.boundaryIndex == context.boundaryIndex &&
+            context.gameplayTrace->core.simulationTick == context.simulationTick &&
+            context.gameplayTrace->core.tapeFrame == context.tapeFrame);
     if ((context.phase != LearningObservationPhase::PreInput &&
             context.phase != LearningObservationPhase::PostSimulation) ||
         !validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid ||
-        observation.actors.size() > kInputControllerMaximumActors ||
+        !traceBoundaryIsValid || observation.actors.size() > kInputControllerMaximumActors ||
         observation.actorObservedCount < observation.actors.size() ||
         observation.actorsTruncated !=
             (observation.actorObservedCount > observation.actors.size()) ||
@@ -286,6 +508,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             context.collisionCorrectionPresent ? context.collisionCorrectionX : 0.0F, error) ||
         !append_float(output,
             context.collisionCorrectionPresent ? context.collisionCorrectionZ : 0.0F, error))
+        return false;
+    if (!append_mechanics_channels(
+            output, context.gameplayTrace, context.collisionPlanes, context.playerForm, error))
         return false;
     append_raw_pad(output, context.previousInput);
 
