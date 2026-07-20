@@ -137,6 +137,16 @@ static int way_bg_check(bd_class* i_this) {
 static void* s_a_sub(void* i_target, void* i_bird) {
     UNUSED(i_bird);
 
+#if TARGET_PC
+    // The original callback relies on the console's fixed process layout when
+    // it reads actor-only fields from every process visited by fpcM_Search. A
+    // host allocation can otherwise turn a non-actor into a false proximity
+    // match, making the bird consume RNG according to heap layout.
+    if (!fopAcM_IsActor(i_target)) {
+        return NULL;
+    }
+#endif
+
     if ((fopAcM_IsActor(i_target) && fopAcM_GetGroup((fopAc_ac_c*)i_target) == fopAc_ENEMY_e) ||
         fopAcM_GetGroup((fopAc_ac_c*)i_target) == fopAc_NPC_e || fopAcM_GetName(i_target) == fpcNm_OBJ_KANBAN2_e ||
         fopAcM_GetName(i_target) == fpcNm_OBJ_FOOD_e)
