@@ -5,7 +5,7 @@ use crate::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v1";
+pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v2";
 const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
@@ -50,6 +50,7 @@ pub enum SuffixProposalMethod {
 pub struct NativeSuffixBatch {
     pub schema: String,
     pub source_frame: usize,
+    pub source_boundary_fingerprint: String,
     pub maximum_ticks: usize,
     pub verify_state_hashes: bool,
     pub candidates: Vec<NativeSuffixCandidate>,
@@ -64,12 +65,14 @@ pub struct NativeSuffixCandidate {
 pub fn propose_suffix_batch(
     seed: &Candidate,
     source_frame: usize,
+    source_boundary_fingerprint: &str,
     maximum_ticks: usize,
     candidate_budget: usize,
     method: SuffixProposalMethod,
 ) -> Result<NativeSuffixBatch, SearchError> {
     seed.validate()?;
     if seed.segment != SegmentProfile::Fsp103ToFsp104
+        || !valid_boundary_fingerprint(source_boundary_fingerprint)
         || maximum_ticks == 0
         || maximum_ticks > MAXIMUM_TICKS
         || candidate_budget == 0
@@ -89,6 +92,7 @@ pub fn propose_suffix_batch(
     let mut output = NativeSuffixBatch {
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame,
+        source_boundary_fingerprint: source_boundary_fingerprint.into(),
         maximum_ticks,
         verify_state_hashes: false,
         candidates: Vec::with_capacity(candidate_budget),
@@ -496,9 +500,8 @@ pub fn propose_suffix_batch(
                                 }
                                 let mut frames = base.clone();
                                 rotate_heading(&mut frames, start, outbound_window, degrees);
-                                let recovery_start = start
-                                    .saturating_add(outbound_window)
-                                    .saturating_add(gap);
+                                let recovery_start =
+                                    start.saturating_add(outbound_window).saturating_add(gap);
                                 rotate_heading(
                                     &mut frames,
                                     recovery_start,
@@ -526,9 +529,8 @@ pub fn propose_suffix_batch(
         }
         SuffixProposalMethod::PostCollision => {
             let base = source.frames[..maximum_ticks].to_vec();
-            'variants: for degrees in [
-                -2.0_f64, 2.0, -4.0, 4.0, -6.0, 6.0, -8.0, 8.0, -10.0, 10.0,
-            ] {
+            'variants: for degrees in [-2.0_f64, 2.0, -4.0, 4.0, -6.0, 6.0, -8.0, 8.0, -10.0, 10.0]
+            {
                 for window in [10_usize, 20, 30, 40] {
                     for start in [80_usize, 85, 90, 95, 100, 105, 110] {
                         if start >= maximum_ticks {
@@ -553,9 +555,8 @@ pub fn propose_suffix_batch(
         }
         SuffixProposalMethod::RecoveryBias => {
             let base = source.frames[..maximum_ticks].to_vec();
-            'variants: for recovery_degrees in [
-                -0.5_f64, -1.0, -1.5, -2.0, -2.5, -3.0, -3.5, -4.0,
-            ] {
+            'variants: for recovery_degrees in [-0.5_f64, -1.0, -1.5, -2.0, -2.5, -3.0, -3.5, -4.0]
+            {
                 for recovery_window in [5_usize, 10, 15, 20] {
                     for recovery_start in 55_usize..=75 {
                         let mut frames = base.clone();
@@ -711,6 +712,7 @@ pub fn propose_ranked_suffix_refinement(
     candidate_budget: usize,
 ) -> Result<NativeSuffixBatch, SearchError> {
     if parent.schema != NATIVE_SUFFIX_BATCH_SCHEMA
+        || !valid_boundary_fingerprint(&parent.source_boundary_fingerprint)
         || candidate_budget == 0
         || candidate_budget > MAXIMUM_CANDIDATES
         || candidate_budget.saturating_mul(parent.maximum_ticks) > MAXIMUM_EXPANDED_TICKS
@@ -805,6 +807,7 @@ pub fn propose_ranked_suffix_refinement(
     let mut output = NativeSuffixBatch {
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: parent.source_frame,
+        source_boundary_fingerprint: parent.source_boundary_fingerprint.clone(),
         maximum_ticks: parent.maximum_ticks,
         verify_state_hashes: false,
         candidates: Vec::with_capacity(candidate_budget),
@@ -905,6 +908,13 @@ pub fn propose_ranked_suffix_refinement(
         return Err(SearchError::PopulationStalled);
     }
     Ok(output)
+}
+
+fn valid_boundary_fingerprint(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn push_candidate(
@@ -1052,8 +1062,15 @@ mod tests {
 
     #[test]
     fn deletion_batch_is_exactly_bounded_and_lossless() {
-        let batch =
-            propose_suffix_batch(&seed(), 440, 4, 5, SuffixProposalMethod::Deletion).unwrap();
+        let batch = propose_suffix_batch(
+            &seed(),
+            440,
+            "ac7c32788fc3b5c59046386d95b9b5b4",
+            4,
+            5,
+            SuffixProposalMethod::Deletion,
+        )
+        .unwrap();
         assert_eq!(batch.candidates.len(), 1);
         let candidate = Candidate {
             schema: CANDIDATE_SCHEMA.into(),
@@ -1066,9 +1083,38 @@ mod tests {
     }
 
     #[test]
+    fn suffix_batch_rejects_unpinned_or_noncanonical_source_fingerprints() {
+        for fingerprint in [
+            "",
+            "ac7c32788fc3b5c59046386d95b9b5b",
+            "AC7C32788FC3B5C59046386D95B9B5B4",
+            "gc7c32788fc3b5c59046386d95b9b5b4",
+        ] {
+            assert!(
+                propose_suffix_batch(
+                    &seed(),
+                    440,
+                    fingerprint,
+                    4,
+                    5,
+                    SuffixProposalMethod::Deletion,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn heading_budget_is_filled_with_unique_exact_candidates() {
-        let batch =
-            propose_suffix_batch(&seed(), 440, 5, 8, SuffixProposalMethod::Heading).unwrap();
+        let batch = propose_suffix_batch(
+            &seed(),
+            440,
+            "ac7c32788fc3b5c59046386d95b9b5b4",
+            5,
+            8,
+            SuffixProposalMethod::Heading,
+        )
+        .unwrap();
         assert_eq!(batch.candidates.len(), 8);
         assert!(batch.candidates.iter().all(|candidate| {
             Candidate {
@@ -1085,8 +1131,15 @@ mod tests {
 
     #[test]
     fn ranked_refinement_combines_distinct_high_progress_mutations() {
-        let parent =
-            propose_suffix_batch(&seed(), 440, 5, 8, SuffixProposalMethod::Heading).unwrap();
+        let parent = propose_suffix_batch(
+            &seed(),
+            440,
+            "ac7c32788fc3b5c59046386d95b9b5b4",
+            5,
+            8,
+            SuffixProposalMethod::Heading,
+        )
+        .unwrap();
         let scores = parent
             .candidates
             .iter()
@@ -1097,6 +1150,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let refined = propose_ranked_suffix_refinement(&seed(), &parent, &scores, 6).unwrap();
+        assert_eq!(
+            refined.source_boundary_fingerprint,
+            parent.source_boundary_fingerprint
+        );
         assert!(!refined.candidates.is_empty());
         assert!(refined.candidates.iter().all(|candidate| {
             Candidate {

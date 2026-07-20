@@ -109,6 +109,16 @@ bool parse_pad(const json& value, RawPadState& output) {
     return true;
 }
 
+bool valid_boundary_fingerprint(const json& value) {
+    if (!value.is_string()) return false;
+    const auto& fingerprint = value.get_ref<const std::string&>();
+    if (fingerprint.size() != 32) return false;
+    for (const unsigned char byte : fingerprint) {
+        if (!((byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'))) return false;
+    }
+    return true;
+}
+
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
     SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
@@ -202,6 +212,7 @@ bool parse_suffix_batch(
     constexpr std::array RootKeys{
         std::string_view{"schema"},
         std::string_view{"source_frame"},
+        std::string_view{"source_boundary_fingerprint"},
         std::string_view{"maximum_ticks"},
         std::string_view{"verify_state_hashes"},
         std::string_view{"candidates"},
@@ -209,6 +220,7 @@ bool parse_suffix_batch(
     if (root.is_discarded() || !has_exact_keys(root, RootKeys) ||
         !root["schema"].is_string() ||
         root["schema"].get_ref<const std::string&>() != SuffixBatchSchema ||
+        !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
         !root["verify_state_hashes"].is_boolean() || !root["candidates"].is_array())
     {
         error = "suffix batch root or schema is invalid";
@@ -216,6 +228,8 @@ bool parse_suffix_batch(
     }
 
     SuffixBatchDefinition parsed;
+    parsed.sourceBoundaryFingerprint =
+        root["source_boundary_fingerprint"].get<std::string>();
     if (!read_integer(root["source_frame"], std::size_t{0},
             std::numeric_limits<std::size_t>::max(), parsed.sourceFrame) ||
         !read_integer(root["maximum_ticks"], std::size_t{1},

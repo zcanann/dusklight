@@ -110,6 +110,7 @@ private:
     HostSnapshot mSource;
     MilestoneTracker mGoalTracker;
     MilestoneObservationStorage mMilestoneStorage;
+    MilestoneObservationStorage mSourceMilestoneStorage;
     ControllerObservationStorage mControllerStorage;
     std::size_t mCandidateIndex = 0;
     std::size_t mCandidateTick = 0;
@@ -118,6 +119,7 @@ private:
     std::vector<CandidateResult> mResults;
     std::optional<std::size_t> mWinnerResultIndex;
     std::uint64_t mCaptureMicros = 0;
+    std::string mActualSourceBoundaryFingerprint;
     std::vector<std::uint64_t> mRestoreMicros;
     std::string mError;
 };

@@ -84,6 +84,13 @@ states, hashes, predicate evidence, and exported tape.
 - The first 107-candidate search batch completed without IPC or per-frame
   filesystem writes. Every compact terminal result included a finite collision
   correction vector, and median restore cost was 4,922 microseconds.
+- Native suffix-batch schema v2 pins the expected source boundary. The fresh
+  process in `build/search/source-boundary-v2-valid/result.json` observed the
+  expected `ac7c32788fc3b5c59046386d95b9b5b4` fingerprint before checkpoint
+  capture and completed its candidate. The paired
+  `build/search/source-boundary-v2-rejected/result.json` supplied a different
+  fingerprint and failed before checkpoint capture or candidate execution,
+  while reporting both expected and actual values.
 
 ## 3. Beat manual editing
 

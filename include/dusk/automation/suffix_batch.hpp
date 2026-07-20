@@ -9,7 +9,7 @@
 
 namespace dusk::automation {
 
-inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v1";
+inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v2";
 inline constexpr std::size_t SuffixBatchMaximumBytes = 64 * 1024 * 1024;
 inline constexpr std::size_t SuffixBatchMaximumCandidates = 16384;
 inline constexpr std::size_t SuffixBatchMaximumTicks = 4096;
@@ -24,6 +24,7 @@ struct SuffixBatchCandidate {
 
 struct SuffixBatchDefinition {
     std::size_t sourceFrame = 0;
+    std::string sourceBoundaryFingerprint;
     std::size_t maximumTicks = 0;
     bool verifyStateHashes = false;
     std::vector<SuffixBatchCandidate> candidates;

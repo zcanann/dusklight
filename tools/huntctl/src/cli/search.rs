@@ -314,6 +314,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let batch = propose_suffix_batch(
                 &candidate,
                 usize_option(search_args, "--source-frame", 440)?,
+                &option(search_args, "--source-boundary-fingerprint")
+                    .ok_or("missing required --source-boundary-fingerprint VALUE")?,
                 usize_option(search_args, "--maximum-ticks", 125)?,
                 usize_option(search_args, "--candidate-budget", 126)?,
                 method,

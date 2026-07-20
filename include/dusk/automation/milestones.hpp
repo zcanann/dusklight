@@ -281,6 +281,10 @@ std::string_view milestone_name(MilestoneId id);
  */
 std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evidence);
 
+/** Captures the standard boundary evidence from an observation and fingerprints it. */
+std::string compute_milestone_boundary_fingerprint(
+    const MilestoneObservation& observation, const TapeBoot& boot);
+
 /**
  * Computes a process-independent fingerprint of every copied gameplay field in an observation,
  * plus the tape boot identity. Unlike a checkpoint digest, this deliberately excludes host

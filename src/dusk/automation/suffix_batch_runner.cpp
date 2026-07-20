@@ -107,6 +107,24 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         error = "suffix batch capture requires synchronous simulation-thread I/O";
         return false;
     }
+    const MilestoneObservation sourceObservation =
+        capture_milestone_observation(mSourceMilestoneStorage);
+    mActualSourceBoundaryFingerprint = compute_milestone_boundary_fingerprint(
+        sourceObservation, input_tape_player().tape().boot);
+    const MilestoneDefinition* sourceMilestone =
+        find_milestone(MilestoneId::GameplayReadyFSp103);
+    if (sourceMilestone == nullptr || !sourceMilestone->predicate(sourceObservation)) {
+        error = "suffix batch source does not satisfy gameplay-ready-f-sp103; expected " +
+                mDefinition.sourceBoundaryFingerprint + ", observed " +
+                mActualSourceBoundaryFingerprint;
+        return false;
+    }
+    if (mActualSourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint) {
+        error = "suffix batch source boundary fingerprint mismatch; expected " +
+                mDefinition.sourceBoundaryFingerprint + ", observed " +
+                mActualSourceBoundaryFingerprint;
+        return false;
+    }
     mAudioCallbackQuiesced = dusk::audio::QuiesceForStateCheckpoint();
     if (!mAudioCallbackQuiesced) {
         error = "could not quiesce host audio callback for suffix batch";
@@ -364,9 +382,19 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
         });
     }
     nlohmann::json result{
-        {"schema", "dusklight-suffix-batch-result/v1"},
+        {"schema", "dusklight-suffix-batch-result/v2"},
         {"status", mCompleted ? "passed" : mFailed ? "failed" : "incomplete"},
         {"source_frame", mDefinition.sourceFrame},
+        {"source_boundary", {
+            {"milestone", milestone_name(MilestoneId::GameplayReadyFSp103)},
+            {"expected_fingerprint", mDefinition.sourceBoundaryFingerprint},
+            {"actual_fingerprint", mActualSourceBoundaryFingerprint.empty()
+                    ? nlohmann::json(nullptr) :
+                      nlohmann::json(mActualSourceBoundaryFingerprint)},
+            {"verified", !mActualSourceBoundaryFingerprint.empty() &&
+                    mActualSourceBoundaryFingerprint ==
+                        mDefinition.sourceBoundaryFingerprint},
+        }},
         {"maximum_ticks", mDefinition.maximumTicks},
         {"candidate_count", mDefinition.candidates.size()},
         {"completed_candidates", mResults.size()},

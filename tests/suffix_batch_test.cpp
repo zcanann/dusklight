@@ -20,8 +20,9 @@ void require(const bool condition, const char* expression, const int line) {
 
 std::string valid_batch() {
     return R"({
-        "schema":"dusklight-suffix-batch/v1",
+        "schema":"dusklight-suffix-batch/v2",
         "source_frame":440,
+        "source_boundary_fingerprint":"ac7c32788fc3b5c59046386d95b9b5b4",
         "maximum_ticks":3,
         "verify_state_hashes":true,
         "candidates":[
@@ -43,6 +44,7 @@ void test_valid_batch_expands_before_the_hot_path() {
     REQUIRE(parse_suffix_batch(valid_batch(), batch, error));
     REQUIRE(error.empty());
     REQUIRE(batch.sourceFrame == 440);
+    REQUIRE(batch.sourceBoundaryFingerprint == "ac7c32788fc3b5c59046386d95b9b5b4");
     REQUIRE(batch.maximumTicks == 3);
     REQUIRE(batch.verifyStateHashes);
     REQUIRE(batch.candidates.size() == 1);
@@ -55,7 +57,8 @@ void test_valid_batch_expands_before_the_hot_path() {
 
 void test_tape_passthrough_candidate() {
     const std::string source = R"({
-        "schema":"dusklight-suffix-batch/v1","source_frame":440,"maximum_ticks":3,
+        "schema":"dusklight-suffix-batch/v2","source_frame":440,
+        "source_boundary_fingerprint":"ac7c32788fc3b5c59046386d95b9b5b4","maximum_ticks":3,
         "verify_state_hashes":true,
         "candidates":[{"id":"raw-tape","source":"tape"}]
     })";
@@ -90,6 +93,13 @@ void test_invalid_batches_fail_closed() {
     REQUIRE(rootEnd != std::string::npos);
     unknownField.insert(rootEnd, ",\"surprise\":1");
     REQUIRE(!parse_suffix_batch(unknownField, batch, error));
+
+    std::string wrongFingerprint = valid_batch();
+    const std::size_t fingerprint = wrongFingerprint.find(
+        "ac7c32788fc3b5c59046386d95b9b5b4");
+    REQUIRE(fingerprint != std::string::npos);
+    wrongFingerprint.replace(fingerprint, 32, "AC7C32788FC3B5C59046386D95B9B5B4");
+    REQUIRE(!parse_suffix_batch(wrongFingerprint, batch, error));
 }
 
 }  // namespace

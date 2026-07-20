@@ -639,6 +639,11 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
     return output;
 }
 
+std::string compute_milestone_boundary_fingerprint(
+    const MilestoneObservation& observation, const TapeBoot& boot) {
+    return compute_milestone_boundary_fingerprint(capture_evidence(observation, boot));
+}
+
 std::string compute_milestone_observation_fingerprint(
     const MilestoneObservation& observation, const TapeBoot& boot) {
     const std::string boundary =

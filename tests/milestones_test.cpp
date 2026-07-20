@@ -332,6 +332,7 @@ void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
     REQUIRE(digest == baseline.boundaryFingerprint);
     REQUIRE(digest.size() == 32);
     REQUIRE(compute_milestone_boundary_fingerprint(baseline) == digest);
+    REQUIRE(compute_milestone_boundary_fingerprint(f_sp103(), baseline.boot) == digest);
 
     MilestoneEvidence changed = baseline;
     changed.rng.streams[0].callCount++;
