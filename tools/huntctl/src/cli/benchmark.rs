@@ -3,6 +3,7 @@
 use crate::{option, required_path, u32_option};
 use huntctl::benchmark::skybook::SkybookManifest;
 use huntctl::benchmark::skybook_pilot::SkybookPilot;
+use huntctl::benchmark::skybook_requirements::SkybookRequirementsIndex;
 use huntctl::benchmark::skybook_selection::{SkybookSelection, SkybookSelectionDisposition};
 use huntctl::harness::objective_suite::{
     ArtifactReference, ExpectedTerminalClass, ObjectiveBoot, ObjectiveCaseRole,
@@ -101,6 +102,60 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("index-skybook-requirements") => {
+            let index_args = &args[1..];
+            let manifest_path = required_path(index_args, "--manifest")?;
+            let output = required_path(index_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "Skybook requirements index already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let manifest: SkybookManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+            let index = SkybookRequirementsIndex::build(&manifest)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, index.to_pretty_json()?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": index.schema,
+                    "content_digest": index.content_sha256,
+                    "source_revision": index.source_git_revision,
+                    "page_count": index.entries.len(),
+                    "mechanism_counts": index.mechanism_counts,
+                    "output": output,
+                }))?
+            );
+            Ok(())
+        }
+        Some("validate-skybook-requirements") => {
+            let index_args = &args[1..];
+            let manifest_path = required_path(index_args, "--manifest")?;
+            let index_path = required_path(index_args, "--index")?;
+            let manifest: SkybookManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+            let index: SkybookRequirementsIndex =
+                serde_json::from_slice(&fs::read(&index_path)?)?;
+            index.validate_against(&manifest)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": index.schema,
+                    "content_digest": index.content_sha256,
+                    "source_revision": index.source_git_revision,
+                    "page_count": index.entries.len(),
+                    "mechanism_counts": index.mechanism_counts,
+                    "index": index_path,
+                }))?
+            );
+            Ok(())
+        }
         Some("validate-skybook-pilot") => {
             let pilot_args = &args[1..];
             let manifest_path = required_path(pilot_args, "--manifest")?;
@@ -173,7 +228,7 @@ pub(crate) fn command_benchmark(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json".into()),
+        _ => Err("benchmark command:\n  import-skybook --source CHECKOUT --output MANIFEST.json [--revision FULL_GIT_REVISION] [--repository URL]\n  index-skybook-requirements --manifest MANIFEST.json --output INDEX.json\n  validate-skybook-requirements --manifest MANIFEST.json --index INDEX.json\n  validate-skybook-selection --manifest MANIFEST.json --selection SELECTION.json\n  validate-skybook-pilot --manifest MANIFEST.json --pilot PILOT.json [--repository-root ROOT]\n  route-cold-process --timeline FILE --segment ID --goal GOAL --game PATH --dvd PATH --artifact-root RELATIVE_ROOT [--output REPORT.json] [--repository-root ROOT] [--repetitions N] [--timeout-seconds N]\n  cold-process --request REQUEST.json --artifact-root RELATIVE_ROOT --output REPORT.json [--repository-root ROOT] [--repetitions N] [--prefix-ticks N]\n  validate-cold-process --report REPORT.json".into()),
     }
 }
 

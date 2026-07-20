@@ -202,10 +202,17 @@ them is learner work.
 
 ### 0B. Use Skybook as an observation/action requirements corpus
 
-- [ ] Index the Skybook catalog by underlying mechanism: precision movement and
-  collision, floor/ceiling behavior, actor displacement, enemy interaction,
-  targeting/camera, item and animation concurrency, event/trigger/loading
-  state, RNG/timers, actor lifecycle/slots and memory/heap behavior.
+- [x] Index the Skybook catalog by underlying mechanism: precision movement and
+  collision, actor displacement/interaction, targeting/camera, item and
+  animation concurrency, event/trigger/loading state, RNG/timers, and actor
+  lifecycle/memory behavior. The revision-bound
+  `benchmarks/skybook/requirements-index.json` covers all 483 manifest pages,
+  is derived only from canonical tags, titles, and descriptions, and has
+  content digest `c610657b...9f07e`. Its validator recomputes every
+  classification and rejects stale, reordered, detached, or edited entries.
+  Location/platform/region tags are explicitly excluded as mechanism evidence,
+  and page bodies are structurally unavailable to the classifier so published
+  input sequences cannot leak into this artifact.
 - [ ] Deep-read a representative spread within each mechanism, stopping once
   the learner-facing requirements are identified. Do not reproduce the
   glitches, create setup tapes, or encode their published steps as tactics.

@@ -1,0 +1,4402 @@
+{
+  "schema": "dusklight-skybook-requirements-index/v1",
+  "content_sha256": "c610657bbf327c5f4b0a9c071598b445b1a3cb047456fa283ded0da7a8c9f07e",
+  "source_manifest_content_sha256": "bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6",
+  "source_repository_url": "https://github.com/qwertyquerty/skybook",
+  "source_git_revision": "e9104852ff6b87862b67100f58aaa729096b42dc",
+  "classification_inputs": [
+    "canonical_tags",
+    "title",
+    "description"
+  ],
+  "mechanism_counts": [
+    {
+      "mechanism": "precision_movement_collision",
+      "pages": 258
+    },
+    {
+      "mechanism": "actor_displacement_interaction",
+      "pages": 149
+    },
+    {
+      "mechanism": "targeting_camera",
+      "pages": 21
+    },
+    {
+      "mechanism": "item_animation_concurrency",
+      "pages": 131
+    },
+    {
+      "mechanism": "event_trigger_loading",
+      "pages": 197
+    },
+    {
+      "mechanism": "rng_timers",
+      "pages": 85
+    },
+    {
+      "mechanism": "actor_lifecycle_memory",
+      "pages": 118
+    },
+    {
+      "mechanism": "other_or_unclassified",
+      "pages": 14
+    }
+  ],
+  "entries": [
+    {
+      "slug": "21-20-goats",
+      "source_path": "_posts/21-20-goats.md",
+      "source_sha256": "5287683af8eaa559c1e33246cbff055d44c290d1245045898104f6a397b86b00",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "actor-corruption",
+      "source_path": "_posts/actor-corruption.md",
+      "source_sha256": "18e003c6b101cded181afb11092195fa9dfccf186aca7eb8b6ee4e18873fda16",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "air-replenish-swim-with-water-bombs",
+      "source_path": "_posts/air-replenish-swim-with-water-bombs.md",
+      "source_sha256": "7e3beee3ef6a263fe331f78f8be44eaf8da5aa6d992dbf752e590425af2af8d9",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "amazing-fly-glitch",
+      "source_path": "_posts/amazing-fly-glitch.md",
+      "source_sha256": "ca2129141cf60d1f43963f0683075b3bbc89bb1fcb40caf6df0754a37e3af6c7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-death-sword-cycle-delay",
+      "source_path": "_posts/arbiters-grounds-death-sword-cycle-delay.md",
+      "source_sha256": "c281b62b3dd398f9636ef9013e3121c09914543397d2c4b3af466199b65507a8",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-death-sword-skip",
+      "source_path": "_posts/arbiters-grounds-death-sword-skip.md",
+      "source_sha256": "c224b758d27445619c2619843043f60cddddffdc91815a883d1a7b3dccb2fabd",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-door-cutscene-queueing",
+      "source_path": "_posts/arbiters-grounds-door-cutscene-queueing.md",
+      "source_sha256": "b8b5937cfbef111bc3210f43385a3bc90c8de17caee4d2a0f03fa0def5ccd679",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-door-void",
+      "source_path": "_posts/arbiters-grounds-door-void.md",
+      "source_sha256": "994367090109ed6034e79ce1c3d6b63ed1ae81eac7139fd0c019fcb3ce688ef4",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-e-bug-alloc-warning",
+      "source_path": "_posts/arbiters-grounds-e-bug-alloc-warning.md",
+      "source_sha256": "9872a8a4d40e63994c2fb443e51c9a38bd99efd0df044914888c0f7a28f5764f",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-entrance-glitchy-ledge-grab-void",
+      "source_path": "_posts/arbiters-grounds-entrance-glitchy-ledge-grab-void.md",
+      "source_sha256": "ca54264fe7f5513746353a75e2b4133f728deb2305ea1f5503565be0b9d2fa0d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-helmsplitter-bomb-boost-stalfos-skip",
+      "source_path": "_posts/arbiters-grounds-helmsplitter-bomb-boost-stalfos-skip.md",
+      "source_sha256": "f33175c65b2ee268a97ef5bd4845da957b7a65815d2ae9a1e3e00abf24cd006b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-knee-high-ledge-clip-stalfos-skip-no-clawshot",
+      "source_path": "_posts/arbiters-grounds-knee-high-ledge-clip-stalfos-skip-no-clawshot.md",
+      "source_sha256": "891f0efb39c1c14290d1c01c65bf05a552408615447377e1f0eb65902e68f579",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-knee-high-ledge-clip-stalfos-skip",
+      "source_path": "_posts/arbiters-grounds-knee-high-ledge-clip-stalfos-skip.md",
+      "source_sha256": "4d78b56520d788d3337980149f6e0613d65ddeee68649599c30c34a70fe003ab",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-ledge-grab-into-sand",
+      "source_path": "_posts/arbiters-grounds-ledge-grab-into-sand.md",
+      "source_sha256": "23caba00148697b8cbb9bdc054ae78f766275a9f13a644466644503a5ae77e2b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-poe-2-first",
+      "source_path": "_posts/arbiters-grounds-poe-2-first.md",
+      "source_sha256": "bc7e82b938101bcfe0b0dfb95b50b666ecbcdd683379b5acb6e21ae48cd75995",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-poe-gate-clip-via-pot-displacement",
+      "source_path": "_posts/arbiters-grounds-poe-gate-clip-via-pot-displacement.md",
+      "source_sha256": "ef6e4a8368de69f959d2af943b9068575fd071aaf3528cef6a457151ed6016ca",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-poe-gate-skip-via-ledge-clip-ending-blow",
+      "source_path": "_posts/arbiters-grounds-poe-gate-skip-via-ledge-clip-ending-blow.md",
+      "source_sha256": "ff25214ae7a19e47ec89c936587e4a72b03bd513938f058c42061ccac243b5d2",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-poe-gate-wall-clip",
+      "source_path": "_posts/arbiters-grounds-poe-gate-wall-clip.md",
+      "source_sha256": "36c1743811343398feece66399aa1ec81c8497e9f4cfeff7c53bb09e7ce7541a",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-poe-soul-duping",
+      "source_path": "_posts/arbiters-grounds-poe-soul-duping.md",
+      "source_sha256": "8e42d52936ebc3208f54cfbd502100ac2697318e62c6f30fb6348c1449d383a7",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-push-cancel",
+      "source_path": "_posts/arbiters-grounds-push-cancel.md",
+      "source_sha256": "d7621c343c29a0e07763e2c7b6f8ea7b5ad65f88f2cdda8ae82e39695794dc0c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-slow-fall-clip",
+      "source_path": "_posts/arbiters-grounds-slow-fall-clip.md",
+      "source_sha256": "c42b333687929c66063249712517c47829dc9abd3d78449006a7c0bfa7ce301a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "arbiters-grounds-unknown-flag-bypass",
+      "source_path": "_posts/arbiters-grounds-unknown-flag-bypass.md",
+      "source_sha256": "24c393c99b6070088fa2f90b49f67319e1a28e12c5a675d51f02d89f32838aa9",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "armor-swap-crash",
+      "source_path": "_posts/armor-swap-crash.md",
+      "source_sha256": "1c37ca516fe713cfb3a45c31440e9da3ab935ba669e09e51c24d07694ebb90b2",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "arrow-veering",
+      "source_path": "_posts/arrow-veering.md",
+      "source_sha256": "a4d911c4a958d33b33e62b83e2673f3f28c18e5726fe53f4622d9557017152bb",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "back-in-time-equipped",
+      "source_path": "_posts/back-in-time-equipped.md",
+      "source_sha256": "b60cccac57480c75a97d9ad46cefc2d47adefbbca63d1a680fb4776b45a761e4",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time-save",
+      "source_path": "_posts/back-in-time-save.md",
+      "source_sha256": "3b79c69c8dcb62c3d229efbd989d0ff787f61c1d3c812cdcd21d928686f20d65",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time-stick-link",
+      "source_path": "_posts/back-in-time-stick-link.md",
+      "source_sha256": "27610f542aa87d56e4f26598fd1205116f13a74e31e8a9ca90d66133a00962d9",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time-via-lava-sand-death",
+      "source_path": "_posts/back-in-time-via-lava-sand-death.md",
+      "source_sha256": "3cfc60109f6264039a191b4c0c2df24775bf87c13f2fc9cb1cc066874f275532",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time-via-ooccoo-jr-sr",
+      "source_path": "_posts/back-in-time-via-ooccoo-jr-sr.md",
+      "source_sha256": "6d98aeda6e5b48eedf02e77afee96fbffe91181a0cc67d447d3e18f99632275c",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time-wrong-ooccoo-coordinates",
+      "source_path": "_posts/back-in-time-wrong-ooccoo-coordinates.md",
+      "source_sha256": "a16ff69a974418c13e58a3d30f1fab835ae4b3aadb4b9ceb32f36eb9832f10fe",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "back-in-time",
+      "source_path": "_posts/back-in-time.md",
+      "source_sha256": "e3058e94d798a42fbeff217a7dea08c465e1c9f881fddd136fa3d36ddf7a82ed",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "bad-air",
+      "source_path": "_posts/bad-air.md",
+      "source_sha256": "b6976bab34c20fdb466f7bb503f08cd1e2ceb16efaa7fcdf959d3c5fe9fb0e6f",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "bokoblin-attacks",
+      "source_path": "_posts/bokoblin-attacks.md",
+      "source_sha256": "516075d83b4a663096e77fb8f4a3a3f2f353399107f4e935771e1763dba4dac5",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "bokoblin-wall-clipping",
+      "source_path": "_posts/bokoblin-wall-clipping.md",
+      "source_sha256": "bc7958de252f020216cf4d68ff218455dd31c77243614625b98234c2097717ec",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "bombling-interrupt-for-bombs-drop-delay",
+      "source_path": "_posts/bombling-interrupt-for-bombs-drop-delay.md",
+      "source_sha256": "5e5b89ae714aae8ef46fe62450f7ab67ca478d98af5970c731011e87c5ae37cf",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "bonk-indoors",
+      "source_path": "_posts/bonk-indoors.md",
+      "source_sha256": "bc892d6681359f0c41f29221982dd5cbc3da359e86d9ec1b3189c4d0cb91f375",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "boomerang-l-slide-moonwalk",
+      "source_path": "_posts/boomerang-l-slide-moonwalk.md",
+      "source_sha256": "b13d1315e765e1b3f52bad072bfa7b7fe62f74e28478383fe6f7107cef2c6303",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "boomerang-moonwalk-and-l-slide",
+      "source_path": "_posts/boomerang-moonwalk-and-l-slide.md",
+      "source_sha256": "19788952b8fbac1ee705d39ff2beca892aa14fccf9b80f733922dbff270da055",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "boomerang-pickup-storage",
+      "source_path": "_posts/boomerang-pickup-storage.md",
+      "source_sha256": "152e246db289d5af96cbd49beff84cd37a162cd9a8e90f19303139761e6ac67d",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "boomerang-target-storage",
+      "source_path": "_posts/boomerang-target-storage.md",
+      "source_sha256": "ad1b138d236f26675d46d84e620a8474c4cf180e1c02b4c3f5463976f027d1cb",
+      "mechanisms": [
+        "targeting_camera",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "brake-sliding",
+      "source_path": "_posts/brake-sliding.md",
+      "source_sha256": "84702a9e63b35a3f6f7922b09907730848e9e1537906f66b1b9b0a32a748dbf0",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "bridge-of-eldin-vanishing-pulled-items",
+      "source_path": "_posts/bridge-of-eldin-vanishing-pulled-items.md",
+      "source_sha256": "c1858e142524cab614013e7f21f92e22846e4ba01becfaf271a051aa2597ce83",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "bridge-sliding",
+      "source_path": "_posts/bridge-sliding.md",
+      "source_sha256": "f906355600fab041c5614371de630355c2ebc717a7667c74269235546fa9887e",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "bubble-mdownpos-offset",
+      "source_path": "_posts/bubble-mdownpos-offset.md",
+      "source_sha256": "73768f65fff644abd22c94973bc475c207e19f183ef3530c6e0b5681dce91949",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "bug-boss-flying-platforms",
+      "source_path": "_posts/bug-boss-flying-platforms.md",
+      "source_sha256": "be36742b889a36ecf0445c0799fc7172bc6d97193bba09ef0ba213d3a77babbe",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "bug-boss-midna-dive-early-lakebed-temple",
+      "source_path": "_posts/bug-boss-midna-dive-early-lakebed-temple.md",
+      "source_sha256": "e0fa989b348b77d076ac4aaa6121c6d3a8136b41a8498e24dfab29f48a679193",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "bug-boss-underwater-manip",
+      "source_path": "_posts/bug-boss-underwater-manip.md",
+      "source_sha256": "967877cf475d3e54537f09bbaf4fe2ec1f411740de6878a0b353ab1543c1727d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "bug-tear-queueing",
+      "source_path": "_posts/bug-tear-queueing.md",
+      "source_sha256": "a01831848cb9ee15100c35bd5c986e37b27bb95d3a54106ad023be4d2bc80c90",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "bulbin-aggro-manipulation",
+      "source_path": "_posts/bulbin-aggro-manipulation.md",
+      "source_sha256": "2de87eca639c1354b7d50699a3fb7ac2a4abd2b34f3caa2738cdaf9d75102e96",
+      "mechanisms": [
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "bulbin-camp-fight-king-bulbin-outside-enclosure",
+      "source_path": "_posts/bulbin-camp-fight-king-bulbin-outside-enclosure.md",
+      "source_sha256": "ff8071c66198f6ef3b36829d00b7d8bd9f84147057e30c342b25b3fdb271c061",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "bulbin-camp-floating-key",
+      "source_path": "_posts/bulbin-camp-floating-key.md",
+      "source_sha256": "815a2b811595333c2112003cf3b2e439ef9e3b831a4ef4605029f7ac46741335",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "bulbin-camp-king-bulbin-early-via-map-glitch",
+      "source_path": "_posts/bulbin-camp-king-bulbin-early-via-map-glitch.md",
+      "source_sha256": "ab1f4fe5f6c798b38735671434c292908752ce2755094b022be62d899fa6cee4",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "bulbin-camp-skip-boar-gate-cutscene-with-bonk",
+      "source_path": "_posts/bulbin-camp-skip-boar-gate-cutscene-with-bonk.md",
+      "source_sha256": "f14ee82188e7049a75ae75d1b72c9f15a7323b6d8e7e7e69b7d522311b2c967a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "bulbin-camp-skip-softlock",
+      "source_path": "_posts/bulbin-camp-skip-softlock.md",
+      "source_sha256": "60492aa246bae1e99618f297e98e2c2f7845887b9b8d848758bd0f7e1d1d16f7",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-rooftops-midna-dialogue-trigger-escape",
+      "source_path": "_posts/castle-rooftops-midna-dialogue-trigger-escape.md",
+      "source_sha256": "992afe2d8ddcdd38646315c38be484a183a04dc6e0a01b5c7108de0c365ea42e",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "castle-rooftops-wind-cycle-reset",
+      "source_path": "_posts/castle-rooftops-wind-cycle-reset.md",
+      "source_sha256": "bee2067d5e5cf508a887bb204708218f2d99def6e7cd98bbed24867d84abc519",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "castle-town-agatha-bug-menu-delay",
+      "source_path": "_posts/castle-town-agatha-bug-menu-delay.md",
+      "source_sha256": "88869ae0bec8f7ac2b851a98a2879e48a448114d1d0477d59f6778be37bb0b5d",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "castle-town-fanadi-save-locking",
+      "source_path": "_posts/castle-town-fanadi-save-locking.md",
+      "source_sha256": "9d3da49a7afa6a4e6d9d758d7105cf4bfb8321e539294cfb76d62c5ab7674075",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-town-jovanis-house-as-human-link",
+      "source_path": "_posts/castle-town-jovanis-house-as-human-link.md",
+      "source_sha256": "1d95c5fe39ebf949356898f39559739a5626482c5f55a9da8587f030d3c76408",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "castle-town-louise-camera-lock",
+      "source_path": "_posts/castle-town-louise-camera-lock.md",
+      "source_sha256": "1c2a4708c0f78136e60b9279d2545ed81b299bac1201885664b24bb9cd91c0aa",
+      "mechanisms": [
+        "targeting_camera",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "castle-town-map-glitch-crash",
+      "source_path": "_posts/castle-town-map-glitch-crash.md",
+      "source_sha256": "2d80a868de31a05c5898d5d6cb1b23a150d0b6a073fa58a54f018aafd51c656b",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-town-observation-deck-actor-slot-exhaustion",
+      "source_path": "_posts/castle-town-observation-deck-actor-slot-exhaustion.md",
+      "source_sha256": "c4652688049ae116d547d27b4748329e50762a3d5c6810cf02cbfdd2135c6547",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-town-rope-skip",
+      "source_path": "_posts/castle-town-rope-skip.md",
+      "source_sha256": "d4acf4017986994c125072871858690c854c67006cce5f2dc339db6cb5b0e6b7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "castle-town-sewers-glitchy-crawlspace",
+      "source_path": "_posts/castle-town-sewers-glitchy-crawlspace.md",
+      "source_sha256": "7d07714eca4dd781921544aaeb2d58617013451dc2fc1a2973e95edc0355a789",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "castle-town-sewers-midna-dialogue-text-displacement",
+      "source_path": "_posts/castle-town-sewers-midna-dialogue-text-displacement.md",
+      "source_sha256": "11af2a0ee16b113bbcecdee57e05317da27301259dbae9f85664b292547c98c6",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "castle-town-sewers-midna-fall-dialog-skip",
+      "source_path": "_posts/castle-town-sewers-midna-fall-dialog-skip.md",
+      "source_sha256": "e7fc23d7321b4f556b0d197ac452a2d74cf7297fc205261c0d678363c2992d7f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "castle-town-squidna-cutscene-skip",
+      "source_path": "_posts/castle-town-squidna-cutscene-skip.md",
+      "source_sha256": "d462ab3316e8f365972f9887a0feef2db5f786d7e12765e6b0f23a3f1d10d78f",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-town-squidna-cutsene-skip",
+      "source_path": "_posts/castle-town-squidna-cutsene-skip.md",
+      "source_sha256": "3275a988b1391062a20ba3e0f37d180b4138bc9561836963efe453dc98c50efb",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "castle-town-squidna-heap-alloc-failure",
+      "source_path": "_posts/castle-town-squidna-heap-alloc-failure.md",
+      "source_sha256": "bff1309333152af6ccf2fd45ab781a5e7dde54d3eebe3dc02368bf3e8b733bcc",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "castle-town-star-minigame-2-without-double-clawshot",
+      "source_path": "_posts/castle-town-star-minigame-2-without-double-clawshot.md",
+      "source_sha256": "8d5701b7c344d75cad7f5f862ea953eaafa5a6b0679a143e9adca8dbeed323ae",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "castle-town-wrong-warp",
+      "source_path": "_posts/castle-town-wrong-warp.md",
+      "source_sha256": "fea31ee4648fca757044a84a9290ce3178859719e260d9540213a48e73d6eb74",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "cave-of-ordeals-floor-22-glitch",
+      "source_path": "_posts/cave-of-ordeals-floor-22-glitch.md",
+      "source_sha256": "c94e3b3c9363151b602af31d6c996e13124e2724c01367d4b436edae675bb05f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "cave-of-ordeals-room-skips",
+      "source_path": "_posts/cave-of-ordeals-room-skips.md",
+      "source_sha256": "c08d2879b678bd51e835038390219966a64b582718fe748ebcc4df40306bcc8d",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "chicken-control-water-breathing",
+      "source_path": "_posts/chicken-control-water-breathing.md",
+      "source_sha256": "72cebfc1b197eceb712685579c645f18be5b82fdaacb12041bc80502fd66f54a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-aeralfos-glitched-attack",
+      "source_path": "_posts/city-in-the-sky-aeralfos-glitched-attack.md",
+      "source_sha256": "251f82a52f072b33c082cb991234aecc319ad9192f1e5b468fa631c72bd88deb",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-aeralfos-skip",
+      "source_path": "_posts/city-in-the-sky-aeralfos-skip.md",
+      "source_sha256": "4fee1c0307a4bb27c5547c884ae1811570739ffc2cc0f3d9b7d82bea52fe36bc",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-argorok-death-cutscene-skip",
+      "source_path": "_posts/city-in-the-sky-argorok-death-cutscene-skip.md",
+      "source_sha256": "81b494f593a1b6a820d6bc10ea16948d245334f4accc9ad3520ee83633040df8",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-argorok-softlock",
+      "source_path": "_posts/city-in-the-sky-argorok-softlock.md",
+      "source_sha256": "f9bb98340cfd96617c3c4d6d7abf5be0d225048d7c1ac375c71e013f35691fb7",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-block-clipping",
+      "source_path": "_posts/city-in-the-sky-block-clipping.md",
+      "source_sha256": "a4cc919601e4392d01cec8ed26adfb0941b5db0804fb1dc01149421c554462e0",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-fan-room-void",
+      "source_path": "_posts/city-in-the-sky-fan-room-void.md",
+      "source_sha256": "23f5633b95008b3aa77571ffdd5bbfb138dfff9cd59d0d0b75d72b1449db3ef3",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-fan-unloading",
+      "source_path": "_posts/city-in-the-sky-fan-unloading.md",
+      "source_sha256": "5d1d0da19e75969f8efbc9ee088aa4cebed4b4c90605a3c5ce70bc99293b4cb4",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-gate-skip-via-pot-displacement",
+      "source_path": "_posts/city-in-the-sky-gate-skip-via-pot-displacement.md",
+      "source_sha256": "189db8166dcd425c640beb8ca0af494cbe84cdbfe160d4450309629c802e0093",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-gate-unload",
+      "source_path": "_posts/city-in-the-sky-gate-unload.md",
+      "source_sha256": "2f45013600a9169cafb152231d06c915b9e0e6cb24f03e10fdb0cda164091acc",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-kai-clip-boss-key-early",
+      "source_path": "_posts/city-in-the-sky-kai-clip-boss-key-early.md",
+      "source_sha256": "b1a8c3b0e901bc62a6b16406709d0a4bd54d0cc4e95965f77c05708de728d778",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-ledge-grab-clip",
+      "source_path": "_posts/city-in-the-sky-ledge-grab-clip.md",
+      "source_sha256": "d89992c54221f2bfc078d902e8ba6378b280dfc0f8189444842b5926e369e6ed",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-peahat-escape",
+      "source_path": "_posts/city-in-the-sky-peahat-escape.md",
+      "source_sha256": "fb1a8463c6e25d833ca8e578ea4cc9a1f09e0cda07ac885cc4f86ee1b0ff8599",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-pot-pillar-clipping",
+      "source_path": "_posts/city-in-the-sky-pot-pillar-clipping.md",
+      "source_sha256": "d17b2b89f7a9df579d1038b4d1c920f631bbd019c9d04b9f50b7eed38c92348d",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-pot-warping",
+      "source_path": "_posts/city-in-the-sky-pot-warping.md",
+      "source_sha256": "f299d59abe06d0909c622f70c5a0aad5d09017f9edd0de796031996e8aaa716a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-save-warp-malfunction-adam-glitch",
+      "source_path": "_posts/city-in-the-sky-save-warp-malfunction-adam-glitch.md",
+      "source_sha256": "39a550a61ea2f2ec91a439832affd6ae45ecabaabaaac0390d205ae677fc4b92",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-small-key-skip",
+      "source_path": "_posts/city-in-the-sky-small-key-skip.md",
+      "source_sha256": "1e7d9f67741902aedc0f3225d6767b0211fbf09da19f4d8a6486b00a1104c314",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "city-in-the-sky-tile-bug-warping",
+      "source_path": "_posts/city-in-the-sky-tile-bug-warping.md",
+      "source_sha256": "12f7f0248ec0c317a559e495ea498fe01a3d02dd6c20d106dc12a5add063e6d3",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "claw-hop",
+      "source_path": "_posts/claw-hop.md",
+      "source_sha256": "7dfc98591234ac9950b9fedb50c12fd8a475b1c421c608a7b57ac8fb17bb971d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "clawshot-actor-displacement",
+      "source_path": "_posts/clawshot-actor-displacement.md",
+      "source_sha256": "231ce1b762c19cc07d7ecb535064c00418994ec38a4f8b08fc5fbfffa004acc3",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "clawshot-l-slide",
+      "source_path": "_posts/clawshot-l-slide.md",
+      "source_sha256": "660f8d5b12d2177cd7a0c4e600e10f3a212a5ab6fcac7cd690033414d2a9cbe0",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "collectable-submenu-crashes",
+      "source_path": "_posts/collectable-submenu-crashes.md",
+      "source_sha256": "ae9228d94bf439db504d3d994a9fd9b9e40b02bf53adb7e9d202992a21642d5d",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "console-reset-cancel",
+      "source_path": "_posts/console-reset-cancel.md",
+      "source_sha256": "15c73f932d4af5e1b59cf7dd176ede126dc2c934733f058d8b27e2dfb0f788ea",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "cutscene-bomb-timer-extending",
+      "source_path": "_posts/cutscene-bomb-timer-extending.md",
+      "source_sha256": "5575cbf648f0a017f7bac6567a88836383b7fecb40fb192c4d39668b31e419df",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "cutscene-boomerang-item-dropping",
+      "source_path": "_posts/cutscene-boomerang-item-dropping.md",
+      "source_sha256": "55ce0b22cb6b06a2d753496e5fd50751d1a6f6755c92c983687889a99f3d723b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "dash-cancel",
+      "source_path": "_posts/dash-cancel.md",
+      "source_sha256": "0bd17d353d0fd0112f8ac95384b3d0f031eb9743861f750fe8ad551dd103f593",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "death-delay-extension",
+      "source_path": "_posts/death-delay-extension.md",
+      "source_sha256": "fbfcad920c47f1454b3f6a1fa2bbbbd9c0daf662c22eb26b86be97938fb8fc4a",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "death-mountain-black-meteor-cutscene",
+      "source_path": "_posts/death-mountain-black-meteor-cutscene.md",
+      "source_sha256": "dd4b29ebdbd41b12d17a2067679bf86d488e8e7c0c34f9433484f4cea5660884",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "death-mountain-cutscene-trigger-skip",
+      "source_path": "_posts/death-mountain-cutscene-trigger-skip.md",
+      "source_sha256": "c0885d88d19509b6e34b0dd3d2c558419184b40cd0db5dad5043025111c491b3",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "death-mountain-goron-limbo-3rd-person-c-up",
+      "source_path": "_posts/death-mountain-goron-limbo-3rd-person-c-up.md",
+      "source_sha256": "3d3472f847889adeaa6dbdedd00394c9128337b17580c8260e59a7a497d18008",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "death-mountain-goron-wrestle-camera-soft-lock",
+      "source_path": "_posts/death-mountain-goron-wrestle-camera-soft-lock.md",
+      "source_sha256": "fe0b9e6d64ddb9bef53ae913ab3eb80570a00356a9ad61ae9f4d1fd29e8e7f91",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "targeting_camera",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "death-mountain-goron-wrestle-escape",
+      "source_path": "_posts/death-mountain-goron-wrestle-escape.md",
+      "source_sha256": "c89bc631e2f244be0bd036364be5d906d2bde6b3f0452ce50fc089c67d8a77b2",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "death-mountain-sound-manager-crash",
+      "source_path": "_posts/death-mountain-sound-manager-crash.md",
+      "source_sha256": "08226ade7af09be0c36271f3b58dfd5ff9b20a574603eb9ba8f4343c9ee176b1",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "death-mountain-super-jump-oob",
+      "source_path": "_posts/death-mountain-super-jump-oob.md",
+      "source_sha256": "036b8ff5142be8d4c9d02a15cf61af677eb971c6dee0f34f5403a4f2d995b5d9",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "death-through-load-zones",
+      "source_path": "_posts/death-through-load-zones.md",
+      "source_sha256": "e06b1e6aecbbd103d3fe90cb4b57cef0ca872feab164cd2c18d11b6c2cd8a69d",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "deku-toad-floor-clip",
+      "source_path": "_posts/deku-toad-floor-clip.md",
+      "source_sha256": "1279ba18675fe5dfcd77b663dd989d84ce23d199d56a1105dcc6ca5304de14b5",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "despawn-armor-enemies",
+      "source_path": "_posts/despawn-armor-enemies.md",
+      "source_sha256": "482abbd34da2b8637d07f435b6262c93305b324761abfd0d27ddca0742d6fcee",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "destroyed-wolf-monkey-swing",
+      "source_path": "_posts/destroyed-wolf-monkey-swing.md",
+      "source_sha256": "d838c72b31d6e5a73869e99e1813f001aee35ac763ee917862481d0ad5fe4938",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "diababa-fused-shadow-collection-skip",
+      "source_path": "_posts/diababa-fused-shadow-collection-skip.md",
+      "source_sha256": "766a3d45e68f154145b15a55b61d47f3026d498241f71e3231b2ee94116b3464",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "diababa-soft-lock",
+      "source_path": "_posts/diababa-soft-lock.md",
+      "source_sha256": "2b763a8d05d62a325c6cd16b728fbe68a69a6f5271eb769baa3f8cc6797190fe",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "diababa-wolf-link-kill-softlock",
+      "source_path": "_posts/diababa-wolf-link-kill-softlock.md",
+      "source_sha256": "0eeb1ee52b7d275e65c65da8b371cc12cd405df07d06ea72f91b08df768a765e",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "dig-animation-interrupt",
+      "source_path": "_posts/dig-animation-interrupt.md",
+      "source_sha256": "ee7fbde7c7fff92af3739ffea8db1c3addb9508350852cef9971ddce4b2a240b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "disable-music",
+      "source_path": "_posts/disable-music.md",
+      "source_sha256": "08db68c2fc235789c787870fb773f62dc03445c2d37b061c766ae726fce5618c",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "displacement-clipping",
+      "source_path": "_posts/displacement-clipping.md",
+      "source_sha256": "4fb7ea2b175d7f5af83f4507b31d577908867d403ba138e18871ba4761b5c16e",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "dominion-rod-superjump",
+      "source_path": "_posts/dominion-rod-superjump.md",
+      "source_sha256": "3fbfe7e00e80e391e3906eec969d62d665ac74ad915bbbb91823ce0cf4b91b48",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "door-frame-grove-skip",
+      "source_path": "_posts/door-frame-grove-skip.md",
+      "source_sha256": "a15aa98072955d28bcc3d8d7eb1b624fe5607620a5eb27f5f6d62b1c5ced1e9c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "door-storage",
+      "source_path": "_posts/door-storage.md",
+      "source_sha256": "3d29f45cbebcf363207e32fe54a89e53875bfa8fd5b70b8918029b4907ce06d2",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "double-clawshot-and-spinner-skip",
+      "source_path": "_posts/double-clawshot-and-spinner-skip.md",
+      "source_sha256": "8a9db4c757694579e539cef3a5dbc74b219e9cb0fbeae220044bd5c016add386",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "double-howl-at-puzzle",
+      "source_path": "_posts/double-howl-at-puzzle.md",
+      "source_sha256": "d535a5b7d74574ee93a7a26101b73b288ffbe00efb676c61f68eef9c11791352",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "double-poe-grotto-warp",
+      "source_path": "_posts/double-poe-grotto-warp.md",
+      "source_sha256": "97a92cc8cfb433885841fbc1a47b9286ef0f5970b77fc06179f4853fa003b7f5",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "drown-warping-softlock",
+      "source_path": "_posts/drown-warping-softlock.md",
+      "source_sha256": "ae68aa493ca22aef55829f57d9ad43165f39228119f2f0e0f9cf74af6685df6c",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "early-earlier-earliest-snowpeak",
+      "source_path": "_posts/early-earlier-earliest-snowpeak.md",
+      "source_sha256": "d91d0e8e778dc7cec312ba879455a308c3e8f3e3e49f62d9f2c32a5c88a06d56",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "early-heart-piece-via-clawshot",
+      "source_path": "_posts/early-heart-piece-via-clawshot.md",
+      "source_sha256": "34fc186a3be7f2d5ea02cec4e888804d2f61bab7ddb1c26d5c6d2e52203e9ede",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "early-hidden-village-hidden-skills",
+      "source_path": "_posts/early-hidden-village-hidden-skills.md",
+      "source_sha256": "c85d9664aeec70a820dcb3d349bad0fb32ad1ae38b43f87b6515b629f2975fc0",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "early-hyrule-castle",
+      "source_path": "_posts/early-hyrule-castle.md",
+      "source_sha256": "dca5e1c07051b4f86f6c5c3fe8c3ad7506ed0bea5ce8d47387ea16a130c90535",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "early-master-sword",
+      "source_path": "_posts/early-master-sword.md",
+      "source_sha256": "2677918722aa0d2cf5f89bf6f6c73bd690c41fd091db7c5fc7ff49f8403c8c84",
+      "mechanisms": [
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "eldin-bridge-clip-via-owl-statue",
+      "source_path": "_posts/eldin-bridge-clip-via-owl-statue.md",
+      "source_sha256": "554c9e69dc2ad683915e6d9dfd4eb6421d5c99563e182840d662b238562bde7e",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "eldin-field-double-load-crash",
+      "source_path": "_posts/eldin-field-double-load-crash.md",
+      "source_sha256": "c15a57c79968df7e3e5508fff8a734601e1a58aadceac633fe004a70b307b049",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "eldin-field-oob-double-load-crash",
+      "source_path": "_posts/eldin-field-oob-double-load-crash.md",
+      "source_sha256": "07ae30bc05b23aa92d2bc695e69a0af76351c6668d99b620bb2c8968064efafa",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "eldin-twilight-well-clip",
+      "source_path": "_posts/eldin-twilight-well-clip.md",
+      "source_sha256": "6264a683184c2cc1fd7394b34c640ef0bf96e1b6620ba4bce16459b0f9b51a58",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ending-blow-wrong-warp",
+      "source_path": "_posts/ending-blow-wrong-warp.md",
+      "source_sha256": "7368d8f9a57c6a18de4d0dcb0233edd2ae7a0acfcd1ec659f5ed0f47f5303a9c",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "epona-clip-slow",
+      "source_path": "_posts/epona-clip-slow.md",
+      "source_sha256": "61b53b20fa39e7dbf93eeb57311d4c4a041b678919274db0dd7f65e12eccba28",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "epona-gorge-cross",
+      "source_path": "_posts/epona-gorge-cross.md",
+      "source_sha256": "ab2bd8306d07e2f0a9a6c229c16e7cb22d27e0551431ba8d0d4e88afc77df922",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "epona-horse-call-oob",
+      "source_path": "_posts/epona-horse-call-oob.md",
+      "source_sha256": "4e3dbf5658e0e6a6d23a9762a7663266ca6c36f9967adf32ccc99b4843417ec7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "epona-loading-zone-crash",
+      "source_path": "_posts/epona-loading-zone-crash.md",
+      "source_sha256": "cd192df65355486b607434500931a6e288fcbeaa641b87c931c6922173f41ce6",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "epona-seam-clip",
+      "source_path": "_posts/epona-seam-clip.md",
+      "source_sha256": "1867c02db286a0f4919face245c2833e233398ad0ef1cba5f9a6bf3a1a85bd3a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "epona-slide",
+      "source_path": "_posts/epona-slide.md",
+      "source_sha256": "69d64717831a51699e3980b4ab695b45d3a985cd75e1de7a94ee9d12cf19a5bb",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "epona-void-crash",
+      "source_path": "_posts/epona-void-crash.md",
+      "source_sha256": "9f14e35295dc5875bc30f51e9b46c1e0ab57df3d02ce2bbe8137c896ee5cf7e6",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "equipment-swap-reset-crash",
+      "source_path": "_posts/equipment-swap-reset-crash.md",
+      "source_sha256": "21f2170de12a823fce926a05cd108236cb79d80c8de5956a965f82cf52e13621",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "fake-poe-dupe",
+      "source_path": "_posts/fake-poe-dupe.md",
+      "source_sha256": "2c7f892e2bc846969f91ddbe3316b05246518364591033415554d07ff36d4a15",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "fake-wolf-link",
+      "source_path": "_posts/fake-wolf-link.md",
+      "source_sha256": "a5b736413a3ea19c76edc30e56696ab0eea1b8cdf847993963a484f3c90ce7ab",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "faster-mortal-draw-hits",
+      "source_path": "_posts/faster-mortal-draw-hits.md",
+      "source_sha256": "5304982d41a4037a7798c453d4e1df504a5a1c191257e2d43846f2c852120813",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "file-name-cursor-breakout",
+      "source_path": "_posts/file-name-cursor-breakout.md",
+      "source_sha256": "f2e4ce02f15d01b2028e328cbf9f12bfd0e96ddfa3ae033bf736ee7d4d3d8fd3",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "fishing-rod-duping",
+      "source_path": "_posts/fishing-rod-duping.md",
+      "source_sha256": "0f140116d698bea3e817844bab92ba40856b2c2ffdd422d2186d2182b4dfefcc",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "fishing-rod-item-obtain-dupe",
+      "source_path": "_posts/fishing-rod-item-obtain-dupe.md",
+      "source_sha256": "20675f54ec8e9fa299e22b82151a9ea8693501feb64db20646ca4f43a31ecbbd",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "flick-moonwalking",
+      "source_path": "_posts/flick-moonwalking.md",
+      "source_sha256": "304fd0da4f8d4b165c0028f27dda0e964cb4f8277d1ad5f0972a677688a71c5d",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "flight-by-fowl-for-free-lake-hylia-oob",
+      "source_path": "_posts/flight-by-fowl-for-free-lake-hylia-oob.md",
+      "source_sha256": "b78e0fff65c619eb3ae76b638bc5983fb95e04f17e4a9e7c5a375696509208eb",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "floating-sticky-heart-piece",
+      "source_path": "_posts/floating-sticky-heart-piece.md",
+      "source_sha256": "305b3d1766bc68b578b5d229cf21badb776a2d349e131d99956ff9fbfb89a8bc",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "floor-clip-ceiling",
+      "source_path": "_posts/floor-clip-ceiling.md",
+      "source_sha256": "74cd0f97315801293593693e9edb56b8744d81129c78307932e72d9da00cdc42",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "forced-heros-clothes",
+      "source_path": "_posts/forced-heros-clothes.md",
+      "source_sha256": "8ddfccf44eafac729124125328eabb593d61d63af9eef7247d200cd320c0515c",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "forest-temple-decal-texture-glitch",
+      "source_path": "_posts/forest-temple-decal-texture-glitch.md",
+      "source_sha256": "79286a5747adf8c9376c0d9276f710169105668c2de5a9c3e7798b70362b9dcc",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "forest-temple-early-gale-boomerang-bridge-clipping",
+      "source_path": "_posts/forest-temple-early-gale-boomerang-bridge-clipping.md",
+      "source_sha256": "075ca1d87c21c628a36659b5b101d7c801d6499d87b86c670dfbe855008a2d01",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "forest-temple-early-monkeys",
+      "source_path": "_posts/forest-temple-early-monkeys.md",
+      "source_sha256": "39a7ad520332e973a895250c0a449307fe146e67214793960063e8b40eec1701",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "forest-temple-invisible-monkeys",
+      "source_path": "_posts/forest-temple-invisible-monkeys.md",
+      "source_sha256": "98a0ee68cf6012b870c37db6d3a708e98de7f45000731595ad8adcbc9fe80a38",
+      "mechanisms": [
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "forest-temple-monkey-swing-with-iron-boots",
+      "source_path": "_posts/forest-temple-monkey-swing-with-iron-boots.md",
+      "source_sha256": "20e85abf8184de2816fdcbe13bc7103fb355ae27bf17e5e3d5396d5a4fec904c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "forest-temple-ook-crash",
+      "source_path": "_posts/forest-temple-ook-crash.md",
+      "source_sha256": "6eec70c23653c681bed1103abcd35b1fcd7613ed53556d912e47ad550349232a",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "forest-temple-ook-pillar-downclip",
+      "source_path": "_posts/forest-temple-ook-pillar-downclip.md",
+      "source_sha256": "7b5df3282c5cc6deb0d7449562aad17a4df81313bb9a38db08961679db31464a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "forest-temple-skulltula-skip",
+      "source_path": "_posts/forest-temple-skulltula-skip.md",
+      "source_sha256": "9cae8f64c2f53800b77ba7fd89e4d0559e0115c8c998e568fb9a4cd917fc86b2",
+      "mechanisms": [
+        "precision_movement_collision",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "forest-temple-void-at-entrance",
+      "source_path": "_posts/forest-temple-void-at-entrance.md",
+      "source_sha256": "4d0bebdaba7895566cdcdef00d9aa17c4d767efd8f5e19c87425cd35932df641",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "fyrus-fast-cycles",
+      "source_path": "_posts/fyrus-fast-cycles.md",
+      "source_sha256": "3c934827ef97d0d1181ad737c1d3390be9580590d9c407437db90991e97a7c9e",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "gate-clip-epona-gate-clip",
+      "source_path": "_posts/gate-clip-epona-gate-clip.md",
+      "source_sha256": "a143ccc1aa71a1f39e6715c6b21c3053bfcacf39723944690a488eed0702df21",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "gerudo-desert-50-rupee-chest-superjump",
+      "source_path": "_posts/gerudo-desert-50-rupee-chest-superjump.md",
+      "source_sha256": "a942b63e71223dd070e9cae6aba3c2bc6ed88bf6050bcf8f2f81fdb0a0be5dcb",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "gerudo-desert-cave-of-ordeals-superjump",
+      "source_path": "_posts/gerudo-desert-cave-of-ordeals-superjump.md",
+      "source_sha256": "943a11fdbea9cc348615897c6082ca036176ecd90def90ebd9ca1eb4611ef0be",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "gerudo-desert-fairy-duping",
+      "source_path": "_posts/gerudo-desert-fairy-duping.md",
+      "source_sha256": "4859dcd401b2bbdfa9c75b82c11095e4e6099acbf50db97c09d97d25e790554f",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "gerudo-desert-grotto-superjump",
+      "source_path": "_posts/gerudo-desert-grotto-superjump.md",
+      "source_sha256": "17621017909273ed3673211569ed6cdeefa3e5d99d61c7d2e651c839a5ebaec0",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "gerudo-desert-vanishing-items-at-mesa",
+      "source_path": "_posts/gerudo-desert-vanishing-items-at-mesa.md",
+      "source_sha256": "a48d4a0f760153214d8322222706b0223024d7ea933202849c75ebce807da45c",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "glitched-bridge-fire-cutscene",
+      "source_path": "_posts/glitched-bridge-fire-cutscene.md",
+      "source_sha256": "61f1e10a8751b366cb8e91ba30c440ad33630178c62c163ef1e2e6f138febbf5",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "glitched-mirror-cutscene",
+      "source_path": "_posts/glitched-mirror-cutscene.md",
+      "source_sha256": "7c4e4b6cad4ca3115294163e2e33216ef1e10226930b64be60cee54d7f97ce60",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "glitchy-epona-taming-as-wolf-link",
+      "source_path": "_posts/glitchy-epona-taming-as-wolf-link.md",
+      "source_sha256": "5b2ecd1bd0e267824a5e866c171147ade6ccd6f5a03b63a926474c9e28df52ef",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "glitchy-king-bulbin-1-as-wolf",
+      "source_path": "_posts/glitchy-king-bulbin-1-as-wolf.md",
+      "source_sha256": "0ee9054f166e94b1b1b81059552ddc51a2959bc998bf7ccb141c1faec68a4ac5",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "goat-gate-skip-sorta",
+      "source_path": "_posts/goat-gate-skip-sorta.md",
+      "source_sha256": "6b22d302a65230030dc0184811b2de23ff7dfc8b0f47aa5c121d268648bb714c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "golden-wolf-storage",
+      "source_path": "_posts/golden-wolf-storage.md",
+      "source_sha256": "5b946fa4518e97526bde0ee5b38618732b0309b3bce1d14d483ae49b02fee0c2",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "gorge-cave-clip",
+      "source_path": "_posts/gorge-cave-clip.md",
+      "source_sha256": "fe097b1d9bba8cc21a24d9538dc2a2263ed9a83937f1e8b4d7e122bc72641366",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "gorge-skip",
+      "source_path": "_posts/gorge-skip.md",
+      "source_sha256": "6fdcd80dcca01e1e773e99b7cac51f74fbe42ed2a7a23bf65136a7fb16ea9446",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "goron-mines-dangoro-ebf-pause-manip",
+      "source_path": "_posts/goron-mines-dangoro-ebf-pause-manip.md",
+      "source_sha256": "fe585d55a24d8df12b2297f7e7fe2e692402c1d7a301e6cc5ca2a003ca4d0a72",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "goron-mines-dangoro-lava-skip",
+      "source_path": "_posts/goron-mines-dangoro-lava-skip.md",
+      "source_sha256": "d76fc0dce38144fbd51dcec61782cafb856d8378923b0e2dbe333f1c6f25f8de",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "goron-mines-dangoro-softlock",
+      "source_path": "_posts/goron-mines-dangoro-softlock.md",
+      "source_sha256": "2b3e72e559972eb7b68259047366ee7dc185bbff110e908c97121289850423b1",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "goron-mines-early-entry",
+      "source_path": "_posts/goron-mines-early-entry.md",
+      "source_sha256": "f8ee6e1fe8919cef254247bfd7904e02bf7cb0c70f49b03e378cacc600053a9a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-fast-platform-cycle",
+      "source_path": "_posts/goron-mines-fast-platform-cycle.md",
+      "source_sha256": "4b501255f3bd3b870ddf95de8fec900b89e372dcd8d1df996f52e4890ae594cc",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "goron-mines-key-shard-skip",
+      "source_path": "_posts/goron-mines-key-shard-skip.md",
+      "source_sha256": "0ec475cc7704c48525540375d60e99b15f6e2bd63d4b4477a9e6ff18383775d0",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-kitty-climb",
+      "source_path": "_posts/goron-mines-kitty-climb.md",
+      "source_sha256": "105460982480b00cfa5085a895e148572e860c2393f5e31a17aa33a54e0fd210",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-magnet-skip",
+      "source_path": "_posts/goron-mines-magnet-skip.md",
+      "source_sha256": "3f47e69fb344a1906ec32f025651cb48375fc42d2f8fc91cf2248a0ac6df59f6",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "goron-mines-magnetic-ceiling-jumpstrike-slide",
+      "source_path": "_posts/goron-mines-magnetic-ceiling-jumpstrike-slide.md",
+      "source_sha256": "19352b566c7ef728bd0005e30b664436b4d1eeddb1713da21f7d9fcddf0d689d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-magnetic-ceiling-without-iron-boots",
+      "source_path": "_posts/goron-mines-magnetic-ceiling-without-iron-boots.md",
+      "source_sha256": "b34dbceba13ba4e95af16ebe133ce715f36ebc044f2fe427123259a88d3b0851",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-magnetic-wall-oob",
+      "source_path": "_posts/goron-mines-magnetic-wall-oob.md",
+      "source_sha256": "6a179d8fea8f197353900eae651efd77aaff46b31739081a131d5db3b331cdc5",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-pipe-jump",
+      "source_path": "_posts/goron-mines-pipe-jump.md",
+      "source_sha256": "3b79a0dffa2b539df9fc9ceedba71553b8b590325cbd99807c7b2d49634eb204",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-quick-transform-dangoro-clip",
+      "source_path": "_posts/goron-mines-quick-transform-dangoro-clip.md",
+      "source_sha256": "a2ae26351c27836218a1da02a6a93de79c5b4848807004aaf10edded38ffe68b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "goron-mines-third-flame-jet-skip",
+      "source_path": "_posts/goron-mines-third-flame-jet-skip.md",
+      "source_sha256": "b9e45647f0f09c537ed988b72426044d18735d5a069190c4770e303feec835d3",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "grotto-mist-north-web-clip",
+      "source_path": "_posts/grotto-mist-north-web-clip.md",
+      "source_sha256": "a672b3a684f9650aecf3b95b373a9f5a27cdc3142f4422a099b942ad99af64cb",
+      "mechanisms": [
+        "precision_movement_collision",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "habrenos-memory-glitch",
+      "source_path": "_posts/habrenos-memory-glitch.md",
+      "source_sha256": "538b8ee3c17f0115e8572904a81ecd6344108aba310a634f1625a8c5cdbfb72c",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "headless-link-during-aiming",
+      "source_path": "_posts/headless-link-during-aiming.md",
+      "source_sha256": "bb2a66b595780f82ad6a1ba0a7b320abf16c40c5441e5f8bdc677018aff09380",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "targeting_camera",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hidden-skill-duping",
+      "source_path": "_posts/hidden-skill-duping.md",
+      "source_sha256": "ea92c8b40576ece56bdbe6f1fd04da1bfcd4b4701352359b09a1335226b43bf4",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hidden-village-early-hidden-village-epona-seam-clip",
+      "source_path": "_posts/hidden-village-early-hidden-village-epona-seam-clip.md",
+      "source_sha256": "682ac8227fa1b0eeb843cbb55c4ca45d5037adeb885202eca8fdd05b7e879e0d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "hidden-village-transform-in-hidden-village",
+      "source_path": "_posts/hidden-village-transform-in-hidden-village.md",
+      "source_sha256": "f3531560b74e351951123545363b27c671198aecc9a2598157084c4240df6573",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "horizontal-link-warp-on-hd-in-garudo-desert",
+      "source_path": "_posts/horizontal-link-warp-on-hd-in-garudo-desert.md",
+      "source_sha256": "ece41a156ef750c25a53c260948d982257f06a48718afbae0f8b092463d427d7",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "howl-hud-storage",
+      "source_path": "_posts/howl-hud-storage.md",
+      "source_sha256": "cace86f3f4aab946adf1f9b803a28cb2a8df2196994f02947c357dc28917638d",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "howl-storage",
+      "source_path": "_posts/howl-storage.md",
+      "source_sha256": "2b1c77a1c2e7007e267f854f745e4b8a9eacfb40521aeb5737430dc4e90c82d0",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "hylia-bridge-early-100-rupee-via-door-storage",
+      "source_path": "_posts/hylia-bridge-early-100-rupee-via-door-storage.md",
+      "source_sha256": "bad977053287127a6692394ddf32713f421d2daa31189c194c46cca2aa1d0afd",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "hyrule-boss-door-crash",
+      "source_path": "_posts/hyrule-boss-door-crash.md",
+      "source_sha256": "f0f3d220e11d5f21e2a74a857d5de2cbf640b9e6d5b895a6172b43d553d9b3b1",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-beast-gannon-softlock-oob-clip",
+      "source_path": "_posts/hyrule-castle-beast-gannon-softlock-oob-clip.md",
+      "source_sha256": "9d6eb05d9b66b28889f92c463dd3b40fa0a9a4d3ef1e1ee0d9c5fa9d9a452370",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-boar-step-clip",
+      "source_path": "_posts/hyrule-castle-boar-step-clip.md",
+      "source_sha256": "34b7a0f902ae5b3217283b1b4bbabfd165fa6003b6a8e81066ebe509ca6369b8",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-cant-unload-barrier",
+      "source_path": "_posts/hyrule-castle-cant-unload-barrier.md",
+      "source_sha256": "5dc8c2dead28621895f5df14f911a639051b27fdd053b9a8d68ab1f53c781795",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-entrance-alloc-failure",
+      "source_path": "_posts/hyrule-castle-entrance-alloc-failure.md",
+      "source_sha256": "9d422801908b4d74c178a7fdccd4d3aec3541dd4cabc737ec74ad28cd132248a",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-horizontal-link-warp",
+      "source_path": "_posts/hyrule-castle-horizontal-link-warp.md",
+      "source_sha256": "57beb83b9b553c85dcb8fbb76e82f3f6caa9cc1af9f9db6958357a3c1f0b1598",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-king-bulbin-key-on-ground",
+      "source_path": "_posts/hyrule-castle-king-bulbin-key-on-ground.md",
+      "source_sha256": "0e28d3b0898e0473401460dfd0a6d157dc22846350f951b0987380a5cf3c91b2",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-mystery-warp",
+      "source_path": "_posts/hyrule-castle-mystery-warp.md",
+      "source_sha256": "8f55bda7705c2a7e9fef6730ab8cae52d052e59eb45c1c0d2e5a56e6db139359",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-rat-jump-remi-skip",
+      "source_path": "_posts/hyrule-castle-rat-jump-remi-skip.md",
+      "source_sha256": "154fed7fdc0efb64965f6504f83face32e0b04857b3b45cde8d477112d0d4537",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-stair-ledge-clip",
+      "source_path": "_posts/hyrule-castle-stair-ledge-clip.md",
+      "source_sha256": "b939644ed620b0ea3750f607cbc4cf1db7436e4c5eaa77092af3eb6342dcd5fc",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-torch-puzzle-out-of-order",
+      "source_path": "_posts/hyrule-castle-torch-puzzle-out-of-order.md",
+      "source_sha256": "5848cdca5638f8e0eb8c6a944d5aa75b6d6047c431477bbc651ada5841368c61",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "hyrule-castle-zelda-crash",
+      "source_path": "_posts/hyrule-castle-zelda-crash.md",
+      "source_sha256": "16c0a56a09e2b1e65713d499a77ac43a8fa4cad7e410c8624eb21f98f0126dcc",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "infinite-consumables",
+      "source_path": "_posts/infinite-consumables.md",
+      "source_sha256": "979fb0020c97d8ee8428564fba96ba7200139fe2643c81cf6fd17732691e6887",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "infinite-death-softlock",
+      "source_path": "_posts/infinite-death-softlock.md",
+      "source_sha256": "101049614a58f7d01b6963d3154c2a849fc55a41a236d5ec14d9b61868904dc0",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "infinite-heart-piece-dupe",
+      "source_path": "_posts/infinite-heart-piece-dupe.md",
+      "source_sha256": "3fd76ee484e90774792e85bdda9b9b31f02f05e231f508a10803334f1af11d87",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "inverted-brake-sliding",
+      "source_path": "_posts/inverted-brake-sliding.md",
+      "source_sha256": "252d1fae8b80bda2469325451b11a3de1ef7617df5b46c4a331759c0b797a691",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "invisible-b-button-item-hotkey",
+      "source_path": "_posts/invisible-b-button-item-hotkey.md",
+      "source_sha256": "3f9220b2935d8f77964cbb49d3e1cb2ebd117056cad202d710a469dddb649133",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "invisible-epona-taming",
+      "source_path": "_posts/invisible-epona-taming.md",
+      "source_sha256": "04b15edf6962db4f80585a1baf15c67f62d52e9fe35d5748da55e2056a04bfe0",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "item-dialogue-storage-in-water",
+      "source_path": "_posts/item-dialogue-storage-in-water.md",
+      "source_sha256": "16d6ba3424a2a3f6f2ec2fe5668d3c5821d4a6110bd2fe9c98f11fb6522bed06",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "item-pickup-slide",
+      "source_path": "_posts/item-pickup-slide.md",
+      "source_sha256": "3c78dcf058bcc29a35aabd6bcd7e54b33b0753671deba60d5d57cf20fd48c66b",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "item-rupee-cutscene-midna-dive",
+      "source_path": "_posts/item-rupee-cutscene-midna-dive.md",
+      "source_sha256": "e71529aa470bb9d970490bd84f5ac6ea8c03b0a0dcef65cfc2273269f9bff639",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "item-wheel-delay",
+      "source_path": "_posts/item-wheel-delay.md",
+      "source_sha256": "b9e4d0fa45f9bbf58fe900d2c9959bf5a924bfe9d6d7f841f28cfe8aa2771c7f",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "kakariko-graveyard-rutella-tunnel-warp",
+      "source_path": "_posts/kakariko-graveyard-rutella-tunnel-warp.md",
+      "source_sha256": "8071d7a60e8b5a769cf63df8dc22542963ed13947b5526d9ce9a9441ab0ff172",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "kakariko-sanctuary-cannon-room-save-glitch",
+      "source_path": "_posts/kakariko-sanctuary-cannon-room-save-glitch.md",
+      "source_sha256": "53fd7e4ca3d569d84e8613bf5a4a0dec42f5dd1b1b35314e3396d5e2d56a2679",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "kakariko-sanctuary-early-city-in-the-sky",
+      "source_path": "_posts/kakariko-sanctuary-early-city-in-the-sky.md",
+      "source_sha256": "dc917e09d909942bfacf7834fd3099f305737bdbb441ed4ac9337bd02a911504",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "kakariko-village-barns-oob",
+      "source_path": "_posts/kakariko-village-barns-oob.md",
+      "source_sha256": "3583d1417d2f49c03e5c8ce7c6ddbd5acb4422621cc0abe319ddb44e21b69fd7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "kakariko-village-basement-bug-manip",
+      "source_path": "_posts/kakariko-village-basement-bug-manip.md",
+      "source_sha256": "9dc50ed8d80c996c86664c08bfd6dd8389b67c949cc27d02899644ec4d4e9755",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "kakariko-village-bomb-house-ooccoo-softlock",
+      "source_path": "_posts/kakariko-village-bomb-house-ooccoo-softlock.md",
+      "source_sha256": "2e23d03305c9458c28fbabc420b4b2116a62521b849efc3297b7a6a73bcf687f",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "kakariko-village-bomb-house-skip",
+      "source_path": "_posts/kakariko-village-bomb-house-skip.md",
+      "source_sha256": "d8c115c71ee4af2aec4f7bfca88030aefb644696ccc89a17805d57da93d45ced",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "kakariko-village-malo-mart-bug-manip",
+      "source_path": "_posts/kakariko-village-malo-mart-bug-manip.md",
+      "source_sha256": "b50d20982bf892416a44fa8601a6d42a4f26556e6556e52865e03cbc6cb76d5f",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "kakariko-village-nan-coords",
+      "source_path": "_posts/kakariko-village-nan-coords.md",
+      "source_sha256": "f3dd89ee12767616f34cd84b4666fd0715734a0beffdedbf2a732f4372b99090",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "kakariko-village-rupee-bed-clip",
+      "source_path": "_posts/kakariko-village-rupee-bed-clip.md",
+      "source_sha256": "7713352ee1243406e86078fadce66d8abfbb5a967db1ed064ab0d6ae7098e7f4",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "kakariko-village-rutella-warp",
+      "source_path": "_posts/kakariko-village-rutella-warp.md",
+      "source_sha256": "5a38ead57409adbf95861c6206f26745fb2bc3a0ff2dbf174c6edaf6e2e0063c",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "kakariko-village-twilight-fence-escape-transform-clip",
+      "source_path": "_posts/kakariko-village-twilight-fence-escape-transform-clip.md",
+      "source_sha256": "c57c0b583078ccd3307c98e08dbcfc49aa604fe64e24dffdde66dfe4fc6e3f77",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "kakariko-village-twilight-gate-escape-superjump",
+      "source_path": "_posts/kakariko-village-twilight-gate-escape-superjump.md",
+      "source_sha256": "e87aee8618c7438599a48b6af50d25212b0e88c52bff6fbea05fd1d69d0bf201",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "kakariko-village-wooden-statue-without-zora-armor-crash",
+      "source_path": "_posts/kakariko-village-wooden-statue-without-zora-armor-crash.md",
+      "source_sha256": "cdc75572efc4e305d973bf33470178c2f7ad3dce4cfeccb62656cc8319633850",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "keep-gale-boomerang-target",
+      "source_path": "_posts/keep-gale-boomerang-target.md",
+      "source_sha256": "73ba3190fa29d719a3504a19914ea003c55387b240aea150c5d09b25f75ba188",
+      "mechanisms": [
+        "targeting_camera",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "knockback-clipping",
+      "source_path": "_posts/knockback-clipping.md",
+      "source_sha256": "0e240e082e8798e36b22ab29fe306d827017d5404fb909f76876c97b4f180fb2",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lake-hylia-auru-duping",
+      "source_path": "_posts/lake-hylia-auru-duping.md",
+      "source_sha256": "2861ce81d0699cacde5064e02ec9e74349abcdac422f2e739a564a7a267f7508",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lake-hylia-boat-void-softlock",
+      "source_path": "_posts/lake-hylia-boat-void-softlock.md",
+      "source_sha256": "e92afa02dd406583c4f91de44837b1bb78a952f753ff90724d302a85ad2ef0ab",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lake-hylia-bridge-fire-bypass-epona-slide",
+      "source_path": "_posts/lake-hylia-bridge-fire-bypass-epona-slide.md",
+      "source_sha256": "e74773d33510e9dc4fc807688b1b3406905e14567e35dd39bd28f05c98b07e75",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lake-hylia-bridge-fire-bypass-shield",
+      "source_path": "_posts/lake-hylia-bridge-fire-bypass-shield.md",
+      "source_sha256": "79e9b754b03a74c6c8ce33b730ad2f66b4b0dcf555a4966aefb2c324d60e6553",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lake-hylia-bridge-fire-cutscene-warp",
+      "source_path": "_posts/lake-hylia-bridge-fire-cutscene-warp.md",
+      "source_sha256": "f883088161effc5487c42be1772b0162b9abd715979a41895549924075b252b1",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lake-hylia-bridge-fire-death-durring-ooccoo",
+      "source_path": "_posts/lake-hylia-bridge-fire-death-durring-ooccoo.md",
+      "source_sha256": "ddc60101451badd6c716793d263791153b11cf24dda587953eca0fb6a77efa03",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lake-hylia-bug-boss-early-cycle",
+      "source_path": "_posts/lake-hylia-bug-boss-early-cycle.md",
+      "source_sha256": "c87515cfeca30d9ab02fa0ae6497b461c6b958ddadb31996f23a9d0e11aa02af",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "lake-hylia-early-lakebed-temple-various-methods",
+      "source_path": "_posts/lake-hylia-early-lakebed-temple-various-methods.md",
+      "source_sha256": "e9259d56a957f1ddde748ebc70da18a9e4c86465bcc63007f9f5be600ca64c69",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lake-hylia-empty-lake-hylia",
+      "source_path": "_posts/lake-hylia-empty-lake-hylia.md",
+      "source_sha256": "e6a1673f87f09c39eecbf11837acf37a8864ba903bedb015d56dd64c4de66695",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lake-hylia-falbi-dive-out-of-bounds",
+      "source_path": "_posts/lake-hylia-falbi-dive-out-of-bounds.md",
+      "source_sha256": "a40ffd75acf18b1f1bdd3199af5cc5e16e4f65c8cfff49aba8b5eb940be0ec42",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lake-hylia-flight-by-fowl-wall-clip",
+      "source_path": "_posts/lake-hylia-flight-by-fowl-wall-clip.md",
+      "source_sha256": "58ab1ef1b4fd86b888538c2c21b8c5554cfbb000d8a1fbd887acc6d2a39b4f8d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lake-hylia-free-cannon",
+      "source_path": "_posts/lake-hylia-free-cannon.md",
+      "source_sha256": "b42eb8e57179230e6d27e5960f43b84b114c0bd7e7b31c9e18c4ba21e2f2200e",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lake-hylia-hd-nan-wolf",
+      "source_path": "_posts/lake-hylia-hd-nan-wolf.md",
+      "source_sha256": "77d0756302f1899ec79602e59a8dd9cb35e864abba60e094fbdf93861692f25c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lake-hylia-kargorak-glitches",
+      "source_path": "_posts/lake-hylia-kargorak-glitches.md",
+      "source_sha256": "f09aba80bc1a6ca1808a5b8db491f787a1b375c11b87b5029b9e3f2dfd0a8a04",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lake-hylia-king-bulbin-2-bridge-clip",
+      "source_path": "_posts/lake-hylia-king-bulbin-2-bridge-clip.md",
+      "source_sha256": "2ce716500ce9ef2fb256bd2c28d988a68b4055e74899ec89bed2e4c910a26575",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lake-hylia-king-bulbin-2-skip-wagon-void-abuse",
+      "source_path": "_posts/lake-hylia-king-bulbin-2-skip-wagon-void-abuse.md",
+      "source_sha256": "1ce90e7ab5be07ac76fd48bf5ebc006531bd199cc9220cbd14fa5ca49f0fe1d0",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lake-hylia-king-bulbin-2-softlock",
+      "source_path": "_posts/lake-hylia-king-bulbin-2-softlock.md",
+      "source_sha256": "17a632c4c8969dfd8f9c1d26d7fe97ef345b7443c0ca451267c377b786c226ca",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lake-hylia-ledge-hanging-clip",
+      "source_path": "_posts/lake-hylia-ledge-hanging-clip.md",
+      "source_sha256": "0f1bd64a0dcbef08b779225362a68c29af03f56df1988b4f42abbd5811a0ce9e",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lake-hylia-no-water-under-bug-boss",
+      "source_path": "_posts/lake-hylia-no-water-under-bug-boss.md",
+      "source_sha256": "247f2b8fe77e6f21622b1419c19c2edcb377b372fe55453bc3b5e144bd790f26",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lake-hylia-plumm-skip",
+      "source_path": "_posts/lake-hylia-plumm-skip.md",
+      "source_sha256": "941c318ab7f9caeb119dd091d38e7d248dca9275089e10108893cc1543db2d56",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "lake-hylia-swim-softlock-animation-glitch",
+      "source_path": "_posts/lake-hylia-swim-softlock-animation-glitch.md",
+      "source_sha256": "9a8cd225c46b7aa56b709039692a8f8f77281ab3763edd211cc2a447d92e91ea",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lake-hylia-wrong-warp",
+      "source_path": "_posts/lake-hylia-wrong-warp.md",
+      "source_sha256": "bb218b82490acba2061d9283ea3c0555f2a682b59c93d3177552ea91ba8a5caa",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-boss-key-door-skip",
+      "source_path": "_posts/lakebed-temple-boss-key-door-skip.md",
+      "source_sha256": "17b851d5f36827b92f8a9009e8423cb333e47e3b5eca99d150e3ce0d0d0a59b1",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-boss-key-trap-door-skip",
+      "source_path": "_posts/lakebed-temple-boss-key-trap-door-skip.md",
+      "source_sha256": "a0ca020785ff64bdfea8f379d170a48946b643b2f18f15fcdd4f8c5e02e979ac",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-central-room-air-swim",
+      "source_path": "_posts/lakebed-temple-central-room-air-swim.md",
+      "source_sha256": "82e1a5a97d5eeacf7e2a049b4a3233cf875f05a8892b8e7f68438447e948624a",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-chu-clipping",
+      "source_path": "_posts/lakebed-temple-chu-clipping.md",
+      "source_sha256": "d8dadfef68a151e82a1c677a8fdfd0d9258b8dd52097d033d528c3c4c1bf64e4",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-early-deku-toad",
+      "source_path": "_posts/lakebed-temple-early-deku-toad.md",
+      "source_sha256": "7e5cad5432e4ce176120680115edf0eb9fee88bf2dfe5ca1761c1a24200a6c2e",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-first-stalactite-room-ledge-clip-oob",
+      "source_path": "_posts/lakebed-temple-first-stalactite-room-ledge-clip-oob.md",
+      "source_sha256": "8462ef059ec8eb5f00a2b0c94bbf089a2fb25918a4f4d4bdcda73114e78cb8a7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-fish-fly-climb-west-supply-room",
+      "source_path": "_posts/lakebed-temple-fish-fly-climb-west-supply-room.md",
+      "source_sha256": "debdc17308929524f7cd7ab27989589dc265e409f0a27bc03c11e48fa93c39fc",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-lakebed-gate-clip",
+      "source_path": "_posts/lakebed-temple-lakebed-gate-clip.md",
+      "source_sha256": "8a5a7f299975f5dc8ca992aa18742a866615e90dc686db96cececc7084da7cc9",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-morpheel-cutscene-softlock",
+      "source_path": "_posts/lakebed-temple-morpheel-cutscene-softlock.md",
+      "source_sha256": "7071e01f017925e8f8b34b9d04e7643a7284ee8610c8ca64bb291d09fe5f07f4",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-morpheel-without-zora-armor",
+      "source_path": "_posts/lakebed-temple-morpheel-without-zora-armor.md",
+      "source_sha256": "ca840ec5c0996ec30a66a031a94b4e35d5def22b91460aa74d5ba226fe50fb22",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-stalactite-drifting",
+      "source_path": "_posts/lakebed-temple-stalactite-drifting.md",
+      "source_sha256": "00e3871b952b180ad43b010b3388318f9ea5b1df76965b727ee16a51ab070e05",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-stalactite-no-scopes",
+      "source_path": "_posts/lakebed-temple-stalactite-no-scopes.md",
+      "source_sha256": "84e8831e0865298e2f20832e07f947126263a86e956d27b84ca1b84fa59773d5",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-vine-clip-oob",
+      "source_path": "_posts/lakebed-temple-vine-clip-oob.md",
+      "source_sha256": "ccbd6709d4b6211044748fac8cbb49e4db174d11448b44e9556a0987c0e3aa98",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-white-midna-glitch",
+      "source_path": "_posts/lakebed-temple-white-midna-glitch.md",
+      "source_sha256": "db7f1a7c4cd4c2cdda2540032573fcd4ceae8d69315d792852e359f677235186",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "lakebed-temple-wolf-link-wheel-clip",
+      "source_path": "_posts/lakebed-temple-wolf-link-wheel-clip.md",
+      "source_sha256": "557e13e9032d730fa3c7f994e31f50f94dbee077e2e5cb2eda51801adf9603ec",
+      "mechanisms": [
+        "precision_movement_collision",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "lanaryu-gate-clip-early-lanaryu",
+      "source_path": "_posts/lanaryu-gate-clip-early-lanaryu.md",
+      "source_sha256": "c03c529e5d36fe3a2e3fc04df2705b4412608dcca17a19abb9a0a42bcd6be5ac",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "lanayru-ice-cave-puzzle-skips",
+      "source_path": "_posts/lanayru-ice-cave-puzzle-skips.md",
+      "source_sha256": "f24a8ee33668499b57acd0fe60eee21287272ee819287771d24d4ca0cadfe116",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ledge-climb-item-drop-clip",
+      "source_path": "_posts/ledge-climb-item-drop-clip.md",
+      "source_sha256": "18fa90712aa8338d3bda6b922f4bca95fcda0cb84161296bbeaa3d15bd5d410e",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "ledge-hanging-clip-visual-only",
+      "source_path": "_posts/ledge-hanging-clip-visual-only.md",
+      "source_sha256": "5738ffce4b55f0bb933dc1947f8008777c75bf49d3008151409cc8e48216f333",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "link-stuck-walking-during-beast-gannon",
+      "source_path": "_posts/link-stuck-walking-during-beast-gannon.md",
+      "source_sha256": "950be2e4e5d54b96ec0013484e81bc640ec43c4154d733b03acbd9eb06ad11a7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "links-house-squirrel-text-displacement-softlock",
+      "source_path": "_posts/links-house-squirrel-text-displacement-softlock.md",
+      "source_sha256": "ece16f5630758bffd424eedaf43074641aa367664f234f310d37e227c4f8d4f8",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "links-house-sword-mini-game-escape",
+      "source_path": "_posts/links-house-sword-mini-game-escape.md",
+      "source_sha256": "2f401550b668f94d85880a8b969209ccc1c39cf1c5c3b9f89c800cc3683e666f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "links-house-wooden-sword-dialog-range-glitch",
+      "source_path": "_posts/links-house-wooden-sword-dialog-range-glitch.md",
+      "source_sha256": "db4ed2188c0aaaa02daf1ba2b0e9879528dcb759927f8a4bdc23715f3cadf668",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "long-jump-attack-lja",
+      "source_path": "_posts/long-jump-attack-lja.md",
+      "source_sha256": "f9d78ca00dbcdf28558291797f8c317ec2e9ee06fe8c9c44012f4f878f339695",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "long-jump-attack-minor-time-save",
+      "source_path": "_posts/long-jump-attack-minor-time-save.md",
+      "source_sha256": "7d4daaf79311f9667f39d4787456b7258a836b45453b9a97ef00722220e96b78",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "low-x-y-route",
+      "source_path": "_posts/low-x-y-route.md",
+      "source_sha256": "e38d596ab8ae513b8839b3305816c38a6d0653e81707a133cf155414758eebad",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "lower-eldin-field-gorge-enemy-drowns-on-land",
+      "source_path": "_posts/lower-eldin-field-gorge-enemy-drowns-on-land.md",
+      "source_sha256": "e817cddbab7e541a2753ec1305d5aa2b3190aec923a36897689030826f2f42d4",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "lower-eldin-field-gorge-rupee-roll",
+      "source_path": "_posts/lower-eldin-field-gorge-rupee-roll.md",
+      "source_sha256": "91cfcbcd32612e1d3f042934dcbbd7d6a1fed2d6601daaa8a4dc48f9a2926a99",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "lower-eldin-field-gorge-warp-into-void",
+      "source_path": "_posts/lower-eldin-field-gorge-warp-into-void.md",
+      "source_sha256": "2e3b88baa81214b3ea020d730e719b7d8feccf6cf54c94dab1a4555f5054cb42",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "map-glitch-cutscene-cancelling",
+      "source_path": "_posts/map-glitch-cutscene-cancelling.md",
+      "source_sha256": "fb1433b3a62a6e366913a86c2e1887ddf33e36bb087f0189f2c064e65ff30228",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "map-glitch-warp-method",
+      "source_path": "_posts/map-glitch-warp-method.md",
+      "source_sha256": "fe512af94edbdcd77b69e6aa5e74092c4be3ae1758f6512c3ae1c2b597202267",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "map-warp-restriction-cancelling",
+      "source_path": "_posts/map-warp-restriction-cancelling.md",
+      "source_sha256": "beeb8ef7163b8bc584e7343907436767a3fcdc08c5db85ca1f2aa776d041b049",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "marble-mini-game-victory-glitch",
+      "source_path": "_posts/marble-mini-game-victory-glitch.md",
+      "source_sha256": "d0a6ad311a2861c84a83c9c38a8018170d7cf5c8185b57e113d353bd401202be",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "master-sword-puzzle-skip-via-displacement-clip",
+      "source_path": "_posts/master-sword-puzzle-skip-via-displacement-clip.md",
+      "source_sha256": "d17c9962fe8c4bc44fb3bb9aa4a96ca89431cad6410e7dffb6fa0805faf4dd9d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "master-sword-puzzle-skip-via-lja",
+      "source_path": "_posts/master-sword-puzzle-skip-via-lja.md",
+      "source_sha256": "f371c5fe063d637ef8556dbd65e355b490a096d9611208208b84e81f4636bd64",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "midna-heart-proxy",
+      "source_path": "_posts/midna-heart-proxy.md",
+      "source_sha256": "eb946157ec749587bbf23f317b29074733e88e3928a6191528a1d9443a3b6200",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "midna-on-back-animation-skip",
+      "source_path": "_posts/midna-on-back-animation-skip.md",
+      "source_sha256": "dcda2e2dfe5adc1d8c54c5be10fc105fb5d2c74136eb3ab5be6973c0d7c2f726",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "midna-text-skip",
+      "source_path": "_posts/midna-text-skip.md",
+      "source_sha256": "0f3aedd457e7ea95c229b9f91a5f21d0480889b3341c477ce263bbab01c667b7",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "mistargeted-dma",
+      "source_path": "_posts/mistargeted-dma.md",
+      "source_sha256": "7ac3f6b95ce2ba38ca9eabe95f3a47cd089cfa2b31c6fcfe0350231421fbab61",
+      "mechanisms": [
+        "targeting_camera",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "moon-boots",
+      "source_path": "_posts/moon-boots.md",
+      "source_sha256": "74817126563029e4457a37f819ef034afc781128ba47fbe18b341e57fc7c4828",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "mystery-loading-zone-crash",
+      "source_path": "_posts/mystery-loading-zone-crash.md",
+      "source_sha256": "eb27719214de4f0fe0bfa31a24a7831e825cfeda06aef3113605f1f2ceba4ede",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "mystery-teleport",
+      "source_path": "_posts/mystery-teleport.md",
+      "source_sha256": "b62cc68252541499cb3571f30fc9b5555eacefe21512e9858be76cc02fe9da50",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "normal-bomb-goron-rescue-norgor",
+      "source_path": "_posts/normal-bomb-goron-rescue-norgor.md",
+      "source_sha256": "86cdef42958e66c7c6289718ad0ac52f3e5002ac10294159a8fd451c09a63da6",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "normal-bombs-underwater",
+      "source_path": "_posts/normal-bombs-underwater.md",
+      "source_sha256": "900c2009861beeabc59a2d345881a88588e9900ff51f94ea6aed77dfffbce899",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "north-faron-early-forest-temple-epona-clip",
+      "source_path": "_posts/north-faron-early-forest-temple-epona-clip.md",
+      "source_sha256": "2a44a46b43720f8bc233e66aa1d716009664d672fac34b5a2cfa12969d5df34a",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "north-faron-early-forest-temple-escape",
+      "source_path": "_posts/north-faron-early-forest-temple-escape.md",
+      "source_sha256": "65b50b222d769ff2542cd68805b5a1f8284a68321d5011af3f24f0fe4dc59f31",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "north-faron-shadow-beasts-void",
+      "source_path": "_posts/north-faron-shadow-beasts-void.md",
+      "source_sha256": "27fd382fd5388208d5369ac138f0fa217ef52cbe4f35982b004bb1195f424f74",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "null-object-throw-crash",
+      "source_path": "_posts/null-object-throw-crash.md",
+      "source_sha256": "4c8a1b3eed66386ec91f5af036264d907593ef1a50a06a463ca1c9e21f065e16",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "oil-bar-visible-as-wolf",
+      "source_path": "_posts/oil-bar-visible-as-wolf.md",
+      "source_sha256": "686b8c4c9c33d6e80a810348fc26fc2cc98c3df935616e5e22fac19fb0f48af8",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ooccoo-cutscene-skip",
+      "source_path": "_posts/ooccoo-cutscene-skip.md",
+      "source_sha256": "9252004850085bce1b281ac4e2cdb20efd1c6474614dca4bbc460622d72ee7df",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ooccoo-slide-pot-push-skipping-rope-bridge",
+      "source_path": "_posts/ooccoo-slide-pot-push-skipping-rope-bridge.md",
+      "source_sha256": "68a0367c01fdc787aecea2c85e7a3dfc2390b9efa7c6a00e54388c03e8d429bc",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "ooccoo-slide",
+      "source_path": "_posts/ooccoo-slide.md",
+      "source_sha256": "745f61f37c5cfaa994d1911e2e592b74b638e189400d714bf003e500647982cd",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ooccoo-stuck-to-links-arm",
+      "source_path": "_posts/ooccoo-stuck-to-links-arm.md",
+      "source_sha256": "4bc0d3b85934c4fc44fe72de8087fd44291aa019200338addccbba37ecda4698",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ooccoo-text-displacement-corruption",
+      "source_path": "_posts/ooccoo-text-displacement-corruption.md",
+      "source_sha256": "866ff872a849baddade7d16678722c00f4f006a6af1494e7f476c926d82173f1",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordon-springs-sword-shield-skip",
+      "source_path": "_posts/ordon-springs-sword-shield-skip.md",
+      "source_sha256": "f993d52d7c7b20c14ce161c801f7f8fce04f71699ecbe446de7ab0e142a83b59",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-springs-tiny-cutscene-trigger",
+      "source_path": "_posts/ordon-springs-tiny-cutscene-trigger.md",
+      "source_sha256": "8cf4b65765873c6e3393239b2fafd72a19b62b1aa638190a8c3fc79b8a4c3462",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-village-approach-uli-as-wolf-link",
+      "source_path": "_posts/ordon-village-approach-uli-as-wolf-link.md",
+      "source_sha256": "ac418923addfe377ba46b70e17fb0279280ba8bb9d5896f0fe97b77fee5db7ab",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-village-cat-warp-invisible-fish-for-cat",
+      "source_path": "_posts/ordon-village-cat-warp-invisible-fish-for-cat.md",
+      "source_sha256": "bf62e53ea99c94f5089de9cf3000c1df8493ec61dcb447ebda95e2093e228912",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-village-cat-warp",
+      "source_path": "_posts/ordon-village-cat-warp.md",
+      "source_sha256": "480a761cda9b884669dfa6a8141b576e7c511fad27cfcc0a4ef686969df7b7e4",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-village-fish-for-cat-softlock",
+      "source_path": "_posts/ordon-village-fish-for-cat-softlock.md",
+      "source_sha256": "12c9d98a98700a4a28348d9154e9656e371187c0c10395f0dbc1c02c09370684",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordon-village-flying-pumpkin-glitch",
+      "source_path": "_posts/ordon-village-flying-pumpkin-glitch.md",
+      "source_sha256": "ae5fdb16be8ec6a26bc76d8e2bb403901f9f7a3bacb0f5753ab64745191e3e3f",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordon-village-hawk-skip",
+      "source_path": "_posts/ordon-village-hawk-skip.md",
+      "source_sha256": "7773d8aff0ea3e5775298958f91f901f9cc34ae4325546b423199eae566bbfb8",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ordon-village-midna-first-jump-skip",
+      "source_path": "_posts/ordon-village-midna-first-jump-skip.md",
+      "source_sha256": "915c1fa649f16203959804b3edc0ddda428a0bc6523f200f474273e49646ef07",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ordon-village-missing-cat-softlock",
+      "source_path": "_posts/ordon-village-missing-cat-softlock.md",
+      "source_sha256": "100e3f1e35108edfbe51996696faa2d6dd4b011fe09c0002df5dfa0415537993",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordon-village-night-npc-respawn",
+      "source_path": "_posts/ordon-village-night-npc-respawn.md",
+      "source_sha256": "18d3a518897e2e66e77f10a0a8fd0795d19bcf45b8908457c87ed19ebaa9eb75",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordon-village-smashing-pumpkins-temp-flag-storage",
+      "source_path": "_posts/ordon-village-smashing-pumpkins-temp-flag-storage.md",
+      "source_sha256": "a80c2dd538a443cda38b510bf4e8fdaa92915d4804b58e03563c93c6c22ab4d9",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "ordon-village-uli-cradle-turn-in-interrupt",
+      "source_path": "_posts/ordon-village-uli-cradle-turn-in-interrupt.md",
+      "source_sha256": "2f5813ab9a56f7eecec9b3f047385e20e5789c29c2a6bcda667a4740bdef634b",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "ordon-village-vine-clip",
+      "source_path": "_posts/ordon-village-vine-clip.md",
+      "source_sha256": "2f0382b136a0551300963d79a7916f6367ba7bd9c17762a39f24f59b9fe2f86e",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "ordon-village-vine-man-skip-and-softlock",
+      "source_path": "_posts/ordon-village-vine-man-skip-and-softlock.md",
+      "source_sha256": "bc0756fdb866fa56e8a15a51bf856208976d8cd3ec20eabbac17ddb3220ae346",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "ordona-spirit-water-epona-oob",
+      "source_path": "_posts/ordona-spirit-water-epona-oob.md",
+      "source_sha256": "74f47210d78303bd573901f2f6bb6c34dfecf631c465f1497892c3910908b2f8",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "outside-links-house-malo-crash",
+      "source_path": "_posts/outside-links-house-malo-crash.md",
+      "source_sha256": "5d2a5128784f141aee7e48c4e56645600a51f1669f54719343fe1c09d2bab718",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "palace-of-twilight-fake-early-zant",
+      "source_path": "_posts/palace-of-twilight-fake-early-zant.md",
+      "source_sha256": "6456531a0588008d978a9eb272b627c52f2f99de26dc503b694225376b2ace0c",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "palace-of-twilight-sol-platform-roll-long-jump-attack",
+      "source_path": "_posts/palace-of-twilight-sol-platform-roll-long-jump-attack.md",
+      "source_sha256": "f53e8de5c3caed8d3df5047898d5c2aeaf7965a6660939ffc92592235bd8fe12",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "palace-of-twilight-sol-sliding",
+      "source_path": "_posts/palace-of-twilight-sol-sliding.md",
+      "source_sha256": "38a5447b76a3150ef3fe6ae218f6c419a0d68641a5172916edb8813eac6e7c8a",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "palace-of-twilight-west-wing-superjump",
+      "source_path": "_posts/palace-of-twilight-west-wing-superjump.md",
+      "source_sha256": "391052aae3b35914564a7e7ace996769f5f26d183aa6839dbfaf8b3a91582ac1",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "palace-of-twilight-zant-iron-boots-1-cycle",
+      "source_path": "_posts/palace-of-twilight-zant-iron-boots-1-cycle.md",
+      "source_sha256": "28382b86d3f6913a15cdb4d07dcc7ee943a38203a7ef9a23876c2865b6365c5a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "permanent-desert-state-8-cinematic",
+      "source_path": "_posts/permanent-desert-state-8-cinematic.md",
+      "source_sha256": "ea99acc653799c3c59071052249929b2436bee1527179f24c30623dfefc615b3",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "piece-of-heart-superjump",
+      "source_path": "_posts/piece-of-heart-superjump.md",
+      "source_sha256": "e5bf42c13c15f18fa7803aa5067fea7a944d43c34fb64b24a8e4f8f16c991426",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "plumm-skip-no-transforms",
+      "source_path": "_posts/plumm-skip-no-transforms.md",
+      "source_sha256": "63c0d579a7e3cf022b836c5c8b2ef795b4bb1eeb1a013e64295a5eb55c7a4589",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "poe-sliding",
+      "source_path": "_posts/poe-sliding.md",
+      "source_sha256": "1d8f33bc9e5b2356217762a325f4e4c4abae6523bf3d3cc52eef38a13ba434b2",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "poe-softlock",
+      "source_path": "_posts/poe-softlock.md",
+      "source_sha256": "6d5ed9b5815f81065a63061d975304bbb392c1d7ac58c327906422f9e670edc0",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "poe-soul-rip-animation-cancel",
+      "source_path": "_posts/poe-soul-rip-animation-cancel.md",
+      "source_sha256": "54d54452b76b753f12331c7163610a2823ddf6691fc3ac55e6584bf38f1a755b",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "poe-soul-rupee-wolf-nan-warp",
+      "source_path": "_posts/poe-soul-rupee-wolf-nan-warp.md",
+      "source_sha256": "790df5ab40ec0ea8ed652532c10cecb0a3abf0401394a7c93f75c87e5d20515d",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "poe-soul-text-cancelling",
+      "source_path": "_posts/poe-soul-text-cancelling.md",
+      "source_sha256": "b6ef1a573a80e1d9d9b00a5a2bc1a4f08b4f0264206e7753dadc98974e16f844",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "post-warp-map-glitch",
+      "source_path": "_posts/post-warp-map-glitch.md",
+      "source_sha256": "bfbef48a3b5eb3bb083a4c0d09be5198fa59bf6deaa63d081cf0bd04c8b30cc0",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "postman-falls-off-cliff",
+      "source_path": "_posts/postman-falls-off-cliff.md",
+      "source_sha256": "7db48a2798bfb065bb27117e5a89122bc2938bb319c9d64a028365340eb0d61d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "postman-runs-to-nowhere",
+      "source_path": "_posts/postman-runs-to-nowhere.md",
+      "source_sha256": "9ded5cba3e0230aae0a005fe47d268c7be0e63eaaedb333184c20fc3a6098b7e",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "pot-crash",
+      "source_path": "_posts/pot-crash.md",
+      "source_sha256": "af13462b4c9c55e686a3d6e23332114f2a41e3e0037769e996a4c46d4094fa7f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "pre-boss-room-soft-lock",
+      "source_path": "_posts/pre-boss-room-soft-lock.md",
+      "source_sha256": "79db75f49701b1e24d803aa5d976c70c32782c683d6ce7bd925bdb1b3e78f804",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "quick-climb",
+      "source_path": "_posts/quick-climb.md",
+      "source_sha256": "466a7b2bdd41bbfbe8573a01366f1bb45a23c1721251c1ad7e87c13add6ceb8c",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "random-number-generation",
+      "source_path": "_posts/random-number-generation.md",
+      "source_sha256": "fb0b2b7054665d555a5e5868a82f2f16aab69a7afa20ddece3ddaab1daad6863",
+      "mechanisms": [
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "reverse-epona-slide",
+      "source_path": "_posts/reverse-epona-slide.md",
+      "source_sha256": "6e74d0510ca1804cd6f34d661db3127de167589026ea77fe1e1642098ac50ffa",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "rocket-link",
+      "source_path": "_posts/rocket-link.md",
+      "source_sha256": "58f9a8e5d80202f0ee385879a270ac61728502f66033bec42fa7d089423d97f9",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "rocks-in-sacred-grove-puzzle",
+      "source_path": "_posts/rocks-in-sacred-grove-puzzle.md",
+      "source_sha256": "e13523574b01c466f9bfc22581961a97caa63ad1b9e37076adfa94175cbbfb6f",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "rod-dupe-in-grotto-5",
+      "source_path": "_posts/rod-dupe-in-grotto-5.md",
+      "source_sha256": "28016c381ec6f6c2240b00bce287d32e09fe5e71248456acb819b4a2f1dede04",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "rooftop-cat-softlock",
+      "source_path": "_posts/rooftop-cat-softlock.md",
+      "source_sha256": "79a3035a46a958f13fa67f9e4817b5ebf471b42d78dd2f339c75cb0667a4d29b",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "rupee-ledge-grab-softlock",
+      "source_path": "_posts/rupee-ledge-grab-softlock.md",
+      "source_sha256": "34b7f91c576a4d6a929c7e9129364e7d635d449e00241d04d2c27283641dbd7d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "rupee-rocket-link",
+      "source_path": "_posts/rupee-rocket-link.md",
+      "source_sha256": "907c223983ff06432ef5f202da287ab5c42ac10702c3ad625e00022e0bafd8ce",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "sacred-grove-early-skull-kid-trigger",
+      "source_path": "_posts/sacred-grove-early-skull-kid-trigger.md",
+      "source_sha256": "e1d1f2a98ebf11f7d9d0c7b00758337faf36359d4da0f4bfa4c159cd02486110",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "sacred-grove-grove-2-skip",
+      "source_path": "_posts/sacred-grove-grove-2-skip.md",
+      "source_sha256": "27ea4ed7929c6ed93f8fef498a1dac844f75930bbc8a8ff11969df7e43eedf6c",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "sacred-grove-oob-loading-zone-bypass",
+      "source_path": "_posts/sacred-grove-oob-loading-zone-bypass.md",
+      "source_sha256": "6d387f2e902a099633e5996e2dd122133b5e685be4f6a961d781e65086bc57df",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "sacred-grove-wall-clip",
+      "source_path": "_posts/sacred-grove-wall-clip.md",
+      "source_sha256": "8346833710a14f4470004af6bfb6a51cacdd74f2808559f1bf2f7e9963a854f5",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "sand-snow-jump-with-shield-attack",
+      "source_path": "_posts/sand-snow-jump-with-shield-attack.md",
+      "source_sha256": "dbc0a463141dd171c5eef041b1920abd1eb96a62ff4e733028203c4ca03b210d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "sand-void-out-cancel",
+      "source_path": "_posts/sand-void-out-cancel.md",
+      "source_sha256": "0e38922f7ac507d34d685a77147d4c70abdca76465cbd258f7a2265d3b96e77b",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "save-leak-act",
+      "source_path": "_posts/save-leak-act.md",
+      "source_sha256": "84a80f54fee84500771820f7a97c0ccac09857a2ec542f9a98138c9ea632228c",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "save-leak-j2d",
+      "source_path": "_posts/save-leak-j2d.md",
+      "source_sha256": "9f5cb9b7e6ba6f497e3ed5a2abe6a33a9130747577d05a6a9a11744b074df3e0",
+      "mechanisms": [
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "scale-room-railing",
+      "source_path": "_posts/scale-room-railing.md",
+      "source_sha256": "b29bbee3c5e7fb7732e2bf12e4f40a6d00f61f89bb3c7576dd0e8a88836f8b63",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "shadow-beast-wall-animation-glitch",
+      "source_path": "_posts/shadow-beast-wall-animation-glitch.md",
+      "source_sha256": "110c00a22654efdaf9024af82ce4a7ce22e56ad231e59204b2591ce8751b40c1",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "shield-arrow-accumulation",
+      "source_path": "_posts/shield-arrow-accumulation.md",
+      "source_sha256": "4cf8e30fdd24e2ea0321597da3b60c49710aa3c7eab42c504c3b39a1c1f4d01c",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "shield-obtained-dialogue-skip-softlock",
+      "source_path": "_posts/shield-obtained-dialogue-skip-softlock.md",
+      "source_sha256": "a4f2b7ce1a995fc4828cdbeac3280cb3670fa21608268e4de607db94e50008b6",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "shield-through-jump-attack",
+      "source_path": "_posts/shield-through-jump-attack.md",
+      "source_sha256": "0c3a6a551429218c982a4a6f4937135db9505346b6e160f37cd0f26b254e46a5",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "shield-with-held-clawshot-out",
+      "source_path": "_posts/shield-with-held-clawshot-out.md",
+      "source_sha256": "a29cac0fdf42ae97bc710ef19f573409233d46a505600bad84be3ef1853d5ac8",
+      "mechanisms": [
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "skip-digging-bugs",
+      "source_path": "_posts/skip-digging-bugs.md",
+      "source_sha256": "91ee822832f451b409739760ba9d8edf06813f02e8de86cb71fe057d142a64af",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "skip-the-final-cutscene",
+      "source_path": "_posts/skip-the-final-cutscene.md",
+      "source_sha256": "b1d077b9817ec774d1638ca194d09d51173a400398691af0004a3946bd8da471",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "skullkid-phase-2-grove-2-softlock-amethyste-glitch",
+      "source_path": "_posts/skullkid-phase-2-grove-2-softlock-amethyste-glitch.md",
+      "source_sha256": "229b1679eb5d0290e413c1af4f780300693dbfac63626349f7a1589b232795b2",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "slingshot-mini-game-partial-completion",
+      "source_path": "_posts/slingshot-mini-game-partial-completion.md",
+      "source_sha256": "da9e4083950e2d43b3cb08e2ae86c90496f4d1821a574a8ddae3593079d1837a",
+      "mechanisms": [
+        "targeting_camera",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "slingshot-mini-game-reaction-skip",
+      "source_path": "_posts/slingshot-mini-game-reaction-skip.md",
+      "source_sha256": "03e82ddc1fb49a0cdb2986ce6bf673726dd070d6480064a75c949f6fe6442c3b",
+      "mechanisms": [
+        "targeting_camera",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "slingshot-recoil-glitch",
+      "source_path": "_posts/slingshot-recoil-glitch.md",
+      "source_sha256": "59ea6c475226ff372aa13719676263d8d5a6244757a172cf7fbf0eb095c57610",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-long-jump-attack-out-of-bounds",
+      "source_path": "_posts/snowpeak-mountains-long-jump-attack-out-of-bounds.md",
+      "source_sha256": "2144a7c6b0b23f52eddc73d93a21585b1096c3ab9177c21a0214829644352cd4",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-sled-race-ball-chain-crash",
+      "source_path": "_posts/snowpeak-mountains-sled-race-ball-chain-crash.md",
+      "source_sha256": "867dc24b44922c85a9d1cbc6588cc97a5bcebb262ff2e1af3b066afa326f535d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-sled-race-item-pull-crash",
+      "source_path": "_posts/snowpeak-mountains-sled-race-item-pull-crash.md",
+      "source_sha256": "164d9194b5a1ae552331674f7c9b4c93cf84a5da72dbc759aa764a9f9e2bc4fd",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-snowpeak-ruins-early-map-glitch",
+      "source_path": "_posts/snowpeak-mountains-snowpeak-ruins-early-map-glitch.md",
+      "source_sha256": "1630ec5d1391074645e36e134e5daadfaa4e75e8a481d8584cb4be3bf2d3cc19",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-snowpeak-ruins-early-no-warp-umd",
+      "source_path": "_posts/snowpeak-mountains-snowpeak-ruins-early-no-warp-umd.md",
+      "source_sha256": "ebb5151b8525ebb9d823bf3b3ba611c82fd1485edc2ffda972d62ffc5e539390",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "snowpeak-mountains-snowpeak-ruins-early-superjump",
+      "source_path": "_posts/snowpeak-mountains-snowpeak-ruins-early-superjump.md",
+      "source_sha256": "d45fb1abf0cd0082999b4f1f90893fc8714dda32e47265cd23d283c156d6ef56",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-better-freezard-2-skip",
+      "source_path": "_posts/snowpeak-ruins-better-freezard-2-skip.md",
+      "source_sha256": "ec3603650940f634e56f1a27a7bb86f58ad7cd7704e488ed4ba55337ddf63876",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-clawshot-floor-clip",
+      "source_path": "_posts/snowpeak-ruins-clawshot-floor-clip.md",
+      "source_sha256": "026d8a11c09b18130af53c6c25edb5fa145cc81ab053d96747127e4d41eee93d",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-courtyard-wolfos-superjump",
+      "source_path": "_posts/snowpeak-ruins-courtyard-wolfos-superjump.md",
+      "source_sha256": "72271e701886dee61d8aeb778ab68eef171ceceee85f3d88f871048f9a8d1e70",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-early-void-room-heart-piece-lja",
+      "source_path": "_posts/snowpeak-ruins-early-void-room-heart-piece-lja.md",
+      "source_sha256": "bf525643c5b57bdbc671c9551a2167f186a1d5942a52895a1db6d35efa95c399",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-freezard-1-skip",
+      "source_path": "_posts/snowpeak-ruins-freezard-1-skip.md",
+      "source_sha256": "7486de21c60d0dc71871ae0a67b5751d4feb11a3ebd55c99fb4237203631f258",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-freezard-2-skip",
+      "source_path": "_posts/snowpeak-ruins-freezard-2-skip.md",
+      "source_sha256": "cabdec32faf11bb4a2b932685d61097ed008304c34e750d7349e4639872ac17a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-hallway-ledge-void",
+      "source_path": "_posts/snowpeak-ruins-hallway-ledge-void.md",
+      "source_sha256": "5c3f9a5ae14246f197f203d5e752c16ba18db8b1ea43323d6ec051247f2d175f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-infinite-yeta-death",
+      "source_path": "_posts/snowpeak-ruins-infinite-yeta-death.md",
+      "source_sha256": "2b3c6f6edd8af7840c0ed8b5146603ae64f3fe45b85ec0d20cf15209b9a08d11",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-iron-boots-softlock",
+      "source_path": "_posts/snowpeak-ruins-iron-boots-softlock.md",
+      "source_sha256": "ecc6a6c4e2d30c8b2fa758cd7b6f8e4a5d1b130afdaf4f8f0e58ea7a89e090c4",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-transform-ice-wall-clip",
+      "source_path": "_posts/snowpeak-ruins-transform-ice-wall-clip.md",
+      "source_sha256": "063b17545f2d648147d6066632b1872717f145bb284d7a65ca82e1fa4c163675",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-transform-ice-wall-regular-wall-clip",
+      "source_path": "_posts/snowpeak-ruins-transform-ice-wall-regular-wall-clip.md",
+      "source_sha256": "c023b43e71a2361413e9c1a7db650f83276b1f86bfce7d5215e285099f19daae",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "snowpeak-ruins-wrong-door-softlock",
+      "source_path": "_posts/snowpeak-ruins-wrong-door-softlock.md",
+      "source_sha256": "38cca646022e93ab8b67f1ceb30bb2edce1a515066bb8c64e181b6c8f0732266",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "south-castle-town-rupee-chest-superjump",
+      "source_path": "_posts/south-castle-town-rupee-chest-superjump.md",
+      "source_sha256": "5519a0fbfb3fbfbd6e70f840c8277b6f1b1199d9df0373202032b454229bdc23",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "south-faron-coro-spirit-text-skip",
+      "source_path": "_posts/south-faron-coro-spirit-text-skip.md",
+      "source_sha256": "3941d4285bd65de52631885686aed8055d29973a92b19c6534897aa85d7d7385",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-faron-coro-text-displacement",
+      "source_path": "_posts/south-faron-coro-text-displacement.md",
+      "source_sha256": "4af67ebb19af0a066ac18ba8e45b12bc71fec9c93d92c3e5191be97789bc2b72",
+      "mechanisms": [
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "south-faron-early-midna-jump",
+      "source_path": "_posts/south-faron-early-midna-jump.md",
+      "source_sha256": "93b38dd19050de0181f72ee002bb9a73a296572bf205bfd6c0d58a95a7174101",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-faron-faron-escape",
+      "source_path": "_posts/south-faron-faron-escape.md",
+      "source_sha256": "b1a483f7d9d455ff5f7a0224b97f85ee6bd9b07d4238abf5d7594e4b18746e93",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "south-faron-faron-spirit-double-map",
+      "source_path": "_posts/south-faron-faron-spirit-double-map.md",
+      "source_sha256": "abd504ddc8c5c2b2a2b11c631843d315d00d1c410234565b31e4455c78c6fc31",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "south-faron-faron-spirit-text-skip",
+      "source_path": "_posts/south-faron-faron-spirit-text-skip.md",
+      "source_sha256": "63f7b151ddac86e438ca4ee6211790fba4587600914d405a8157039ae72c36de",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-faron-lantern-dupe",
+      "source_path": "_posts/south-faron-lantern-dupe.md",
+      "source_sha256": "049be5f04b317f30d0b3f55e1b26032ebac5ccbc86c7bb2437c38aed27b9324d",
+      "mechanisms": [
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "south-faron-monkey-pushing",
+      "source_path": "_posts/south-faron-monkey-pushing.md",
+      "source_sha256": "75eef77397e1e5188409fdc7d0a7eed5ccbb12efc45c2b31491f47d61d931593",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "south-faron-monkeyless-twilight-mist",
+      "source_path": "_posts/south-faron-monkeyless-twilight-mist.md",
+      "source_sha256": "5c3d944e7abb3d194c517884a76042956ce5bad0eea455d9027a3033275f2fd2",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "south-faron-nut-duping",
+      "source_path": "_posts/south-faron-nut-duping.md",
+      "source_sha256": "debb18f7ead7d61a42520e7761c73f6002faaaf6f2758166dbba80a609704c7a",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "south-faron-vessel-midna-text-skip",
+      "source_path": "_posts/south-faron-vessel-midna-text-skip.md",
+      "source_sha256": "23cfd3667d9ee9aa4c9a962060032ec4bdcb9154d1cefa7c91c003074fbf1e31",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-boar-past-barrier",
+      "source_path": "_posts/south-hyrule-field-boar-past-barrier.md",
+      "source_sha256": "961cd7e80d74713cc13ed5357ccd774abef983451f37055f07a0bf2c7c9af91a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-camera-zoom-glitch",
+      "source_path": "_posts/south-hyrule-field-camera-zoom-glitch.md",
+      "source_sha256": "6f346a8b10ebbbc8440336ab448d2cc84dbe1ff350158758ec82f5552840f9be",
+      "mechanisms": [
+        "targeting_camera",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-changeroom-crash",
+      "source_path": "_posts/south-hyrule-field-changeroom-crash.md",
+      "source_sha256": "9e04485a9a3343750454dde58da0c373e56a8ec9cdbb0386c23835548775f242",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-epona-rock-clip-softlocks",
+      "source_path": "_posts/south-hyrule-field-epona-rock-clip-softlocks.md",
+      "source_sha256": "813dddbffdca90ad588eb715f6bd2cc790006e867e12c896a7c5747a89535490",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-ice-cave-save-warp-to-eldin",
+      "source_path": "_posts/south-hyrule-field-ice-cave-save-warp-to-eldin.md",
+      "source_sha256": "118003990c878b333ffb1942fe6b0ac513eed1658e9784aa18b4738bcaab3818",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-ilias-bag-sliding",
+      "source_path": "_posts/south-hyrule-field-ilias-bag-sliding.md",
+      "source_sha256": "8507986a87d288b5a033876c6a62d574abe907510542986ae3e69ec4ae230a93",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-music-manip-glitches",
+      "source_path": "_posts/south-hyrule-field-music-manip-glitches.md",
+      "source_sha256": "f914392cab1b6844c67ac72433d621eaf0a95c8bc9086ef2190058899e77ada6",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-postman-skip",
+      "source_path": "_posts/south-hyrule-field-postman-skip.md",
+      "source_sha256": "28f8ff92181aec161b69f07c9b636d645514a897de07d1660d33bdb8783a7c9a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-rupee-bridge-clip",
+      "source_path": "_posts/south-hyrule-field-rupee-bridge-clip.md",
+      "source_sha256": "88e6174d8d1a832e9178f8cdddcb8ed6b35fd61d57552d627e7f7c34db4d1645",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-spirit-postman",
+      "source_path": "_posts/south-hyrule-field-spirit-postman.md",
+      "source_sha256": "f59c0571c6ffdba7a2c471369be6255e2530bbdeabbca01ea91969b8a071011b",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "south-hyrule-field-wagon-end-trigger-skip",
+      "source_path": "_posts/south-hyrule-field-wagon-end-trigger-skip.md",
+      "source_sha256": "d6079be7bcac553959439b7e8d52fe1ab309e094358841b320cb35bace2f4095",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "stable-destroyed-wolf",
+      "source_path": "_posts/stable-destroyed-wolf.md",
+      "source_sha256": "0715e63dd5c7f1b2061ba423b9d4e93bd875c5656f4a2a6d636acdf3bcfec3d7",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "stacked-rupee-dialogues",
+      "source_path": "_posts/stacked-rupee-dialogues.md",
+      "source_sha256": "c3e50882051ca0a9aa83c6c3dfefe589338fc2fb4bd6cf8c46a2f77dad629beb",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "stallord-boss-room-reset-glitch",
+      "source_path": "_posts/stallord-boss-room-reset-glitch.md",
+      "source_sha256": "a2a52bd262e5563e440fde247e5319cf5ef1c20ef65db4aad28634a29214d525",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "stallord-spinner-floor-clip",
+      "source_path": "_posts/stallord-spinner-floor-clip.md",
+      "source_sha256": "f8d4f85b73d5b7b26b4bd203d8fdd5d79092b2309fde8dedb0afa7561d0f0e34",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "stallord-spinner-on-wrong-side-of-track",
+      "source_path": "_posts/stallord-spinner-on-wrong-side-of-track.md",
+      "source_sha256": "724708ca5c831caac481de6b9674563bf2c710e66b39ca390d8b8567a702d3f1",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "state-calculation",
+      "source_path": "_posts/state-calculation.md",
+      "source_sha256": "37b2c33186468525aa0cf04925b239399d9997eb0a4a79a06d9d27126d2bfdb6",
+      "mechanisms": [
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "step-clip",
+      "source_path": "_posts/step-clip.md",
+      "source_sha256": "adc1bbf8f941075ade16c4486ae04cb0046ea03a8cca5f8995c2f1597f71b76a",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "sticky-rang-item-stuck-to-link",
+      "source_path": "_posts/sticky-rang-item-stuck-to-link.md",
+      "source_sha256": "20eff525ceec62da0c5b64085a3e9e9a7c6a2cd4e6022c00748bd2977a1932df",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "sticky-rang",
+      "source_path": "_posts/sticky-rang.md",
+      "source_sha256": "8bd9ca821a2bcd236e9cb14635fa30f56973a9d9ca2aa517b7bf42d8f508d3ff",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "swim-with-sword-and-shield-out",
+      "source_path": "_posts/swim-with-sword-and-shield-out.md",
+      "source_sha256": "518ad8f799d16af14a4f6c27a7eebb77419bccbd1a3cc523afe26d8ec5b655b0",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "talo-cutscene-storage",
+      "source_path": "_posts/talo-cutscene-storage.md",
+      "source_sha256": "cbe1307305f22d709da3a64d44b8c3e5bfac85df53258bc3af87506715d4c432",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "telma-dialog-skip-grants-text-displacement",
+      "source_path": "_posts/telma-dialog-skip-grants-text-displacement.md",
+      "source_sha256": "81d0c05d90f3708d7e028f9ad9f719abb5ac784332a2bc1c025f43dbc420c4af",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "telmas-bar-broken-pot-cancel",
+      "source_path": "_posts/telmas-bar-broken-pot-cancel.md",
+      "source_sha256": "dd09a98d019e66ffc1f662b498d5b36fb37465019078607b8e548776fd76111f",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "temple-of-time-armogoma-teleport",
+      "source_path": "_posts/temple-of-time-armogoma-teleport.md",
+      "source_sha256": "93ac1cd4b3622060d1c48992011b58a6ea9c11db6b80ec6e9b4d116d5f3ff864",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "temple-of-time-big-key-with-jump-strike-moon-boots",
+      "source_path": "_posts/temple-of-time-big-key-with-jump-strike-moon-boots.md",
+      "source_sha256": "8e4e78d1706cd42cd9b0a683f2b4a3a5720fdc9a26ecb4e5cb787d68ac9fb255",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temple-of-time-big-key-without-spinner-or-hidden-skills",
+      "source_path": "_posts/temple-of-time-big-key-without-spinner-or-hidden-skills.md",
+      "source_sha256": "4a33b31e2c139c1d1c675f30ceb9573e26cadb87a2c5ebfe3ef770948bacd08f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temple-of-time-chest-cutscene-skip",
+      "source_path": "_posts/temple-of-time-chest-cutscene-skip.md",
+      "source_sha256": "026446f9db686e6b923478162f07a7c4a4a866cba0b98957b7af6b61a48fcd56",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "temple-of-time-darknut-statue-cutscene-overlap",
+      "source_path": "_posts/temple-of-time-darknut-statue-cutscene-overlap.md",
+      "source_sha256": "ab595ba93b079c4c3ddcefb81eb7c0aa740a251ae408fed18908c2adf2cd28cb",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "temple-of-time-early-poe",
+      "source_path": "_posts/temple-of-time-early-poe.md",
+      "source_sha256": "462c7cc481579e8aa85604f77c8dc4670a1c7b6770799c253b6887829a511b2e",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temple-of-time-electric-gate-skip-via-lja",
+      "source_path": "_posts/temple-of-time-electric-gate-skip-via-lja.md",
+      "source_sha256": "0c6e16645128e6699b75e534c386dc3d9788fc5a46e88c2db41b648c9a11fca3",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temple-of-time-first-room-door-skip",
+      "source_path": "_posts/temple-of-time-first-room-door-skip.md",
+      "source_sha256": "d6883c223c413c958e3df31fd06761e731c183c999dae605bb9e4c8c49a4b823",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "temple-of-time-first-room-midna-text-skip-via-cutscene-drop",
+      "source_path": "_posts/temple-of-time-first-room-midna-text-skip-via-cutscene-drop.md",
+      "source_sha256": "fee443a95f74f9b8461a27334cd1cc4eab4f134796048147a733f1a80e4802e6",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "temple-of-time-gate-2-puzzle-skip-bomb-boost-method",
+      "source_path": "_posts/temple-of-time-gate-2-puzzle-skip-bomb-boost-method.md",
+      "source_sha256": "0956fac1e4bb3ae446200274ecc3e9fb557027fce08107aed5a99fdd9414e505",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "temple-of-time-gate-puzzle-skips-jump-attack-method",
+      "source_path": "_posts/temple-of-time-gate-puzzle-skips-jump-attack-method.md",
+      "source_sha256": "349f20411793a2bee5fcf99f90ae7f75b435225e84d42ac038c0c24575d891ec",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temple-of-time-heart-piece-chest-without-control-rod",
+      "source_path": "_posts/temple-of-time-heart-piece-chest-without-control-rod.md",
+      "source_sha256": "23587f108535d8280eb68ddc06f32247f4fb26abff2df1e3f9a04c016a9b4b61",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "temple-of-time-lizalfos-bomb-arrow-crash",
+      "source_path": "_posts/temple-of-time-lizalfos-bomb-arrow-crash.md",
+      "source_sha256": "9da5ccee9ffb20ed50db8f6c2b59caed4e9ba45738d32b0f97b6f8dd4c75c68e",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "temple-of-time-lizard-clipping",
+      "source_path": "_posts/temple-of-time-lizard-clipping.md",
+      "source_sha256": "c2a4702c26bb056860f54a3d922e59e294bac3b1ef387a6c145d5b285afda053",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction"
+      ]
+    },
+    {
+      "slug": "temple-of-time-second-small-statue-skip",
+      "source_path": "_posts/temple-of-time-second-small-statue-skip.md",
+      "source_sha256": "7fa4cb8c6f0869ef8f541b234becddd8f535b062f1b747ed93362673d626ad89",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "temple-of-time-third-staircase-armos-skip-with-bsmb-bb",
+      "source_path": "_posts/temple-of-time-third-staircase-armos-skip-with-bsmb-bb.md",
+      "source_sha256": "1abf4d99574e84537103e0954a9303c7953e5c726c527ba6b49181ee12944762",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "temporary-unequipped-rod-statue-control",
+      "source_path": "_posts/temporary-unequipped-rod-statue-control.md",
+      "source_sha256": "dc77414c059e2c93fe3943ebff99bfe9dee2908d008b9a78f39cfafb52e3407d",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "text-displacement",
+      "source_path": "_posts/text-displacement.md",
+      "source_sha256": "e1a15e08b39bc30d2da1a513f9e9b7abb6103f5145abf47801a1367496c6d262",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "text-storage-via-skippable-cutscene",
+      "source_path": "_posts/text-storage-via-skippable-cutscene.md",
+      "source_sha256": "e6087cd465b61fbcb435d8c31b7bb67d8351cfe3d2d3e733cbadf5b250b9fcbe",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "theoretical-credits-warp",
+      "source_path": "_posts/theoretical-credits-warp.md",
+      "source_sha256": "d8ed9c2dedad3de92fe1e80f45090d60d65f8ff2e3e1530edba06c464a49af9f",
+      "mechanisms": [
+        "targeting_camera",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "throw-the-master-sword",
+      "source_path": "_posts/throw-the-master-sword.md",
+      "source_sha256": "009b969fb2ea3cc9a557c90325da2a0b4449b35a74f263440ecd21265f59aa77",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "transfer-fish-on-text-across-loads",
+      "source_path": "_posts/transfer-fish-on-text-across-loads.md",
+      "source_sha256": "d79db7a160c51d544c7b7ad198cb3babf37826d50b3384e7ca4a8bd90721623f",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "under-izas-house-map-glitch-crash",
+      "source_path": "_posts/under-izas-house-map-glitch-crash.md",
+      "source_sha256": "873b57f7226f1b68ac335c3e5ddbf25d68eb443278ff14553d0d47abbc462dc2",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "universal-map-delay-umd",
+      "source_path": "_posts/universal-map-delay-umd.md",
+      "source_sha256": "aa17c9f4ee4394cb0560cc96fc71b5e1ae2176454dd906327bd09cc5e7263ce8",
+      "mechanisms": [
+        "event_trigger_loading",
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "unsinking-moon-boots",
+      "source_path": "_posts/unsinking-moon-boots.md",
+      "source_sha256": "57388563d94245ce668232aa1d8b412229026c838c316a20acf39da2f050a5f1",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "unsolved-intro-cutscene-skip",
+      "source_path": "_posts/unsolved-intro-cutscene-skip.md",
+      "source_sha256": "c8e5b8ca8e3b186a3df9c32f44843820a1c127194779270674f2fd02bf99e0ab",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "upper-eldin-field-hyrule-bridge-melted-postman",
+      "source_path": "_posts/upper-eldin-field-hyrule-bridge-melted-postman.md",
+      "source_sha256": "59dc9c29b4e08a188ca2386abac4e10ad8548b494d0856989e57dcb2d3266f50",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "upper-lanayru-field-railing-clip",
+      "source_path": "_posts/upper-lanayru-field-railing-clip.md",
+      "source_sha256": "8b4385033e740da44609240b8ff4431db6d242c24c12202e5cf321754911bd4b",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "vertical-angle-manipulation",
+      "source_path": "_posts/vertical-angle-manipulation.md",
+      "source_sha256": "06da83d8e6d529d52e2ea57baa525446788cc5a57b5411b862b53af915cb5ab6",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "vine-clipping",
+      "source_path": "_posts/vine-clipping.md",
+      "source_sha256": "1891ccfbc12c4e2338af7e461da19a7098f291f00ee803bea088c7e8bc31facb",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "wall-correct-sort",
+      "source_path": "_posts/wall-correct-sort.md",
+      "source_sha256": "89742ad5b78698805d3e75a4e2e1769b222dd8122ae60724de765e6fb6f5204b",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "warp-on-top-of-water",
+      "source_path": "_posts/warp-on-top-of-water.md",
+      "source_sha256": "20c5f05cfe82c3ae4a1888a592b80bfda134b7ed20c42fafc7f40f5d59bb2e03",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "water-super-slide",
+      "source_path": "_posts/water-super-slide.md",
+      "source_sha256": "ccce47ab04854d3a01cea8b794f4f15eaa883748cbe09e463abc0642b62c671f",
+      "mechanisms": [
+        "precision_movement_collision",
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "wolf-dig-clipping",
+      "source_path": "_posts/wolf-dig-clipping.md",
+      "source_sha256": "ad8ad2164a9d683e999b8a6f9ad9350049ec99534bf9d8fa4ef5979c3292b949",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "wolf-link-super-jump",
+      "source_path": "_posts/wolf-link-super-jump.md",
+      "source_sha256": "cedc22676691682cc12fe6ddfb51dfc6e63875d6b3e26265b460673cf4288436",
+      "mechanisms": [
+        "precision_movement_collision",
+        "targeting_camera"
+      ]
+    },
+    {
+      "slug": "wrestling-rng",
+      "source_path": "_posts/wrestling-rng.md",
+      "source_sha256": "08ca3c98fec3c13fb17865852e5465b6eae057e8b9ccd721d3e8fd8c24f70d1f",
+      "mechanisms": [
+        "rng_timers"
+      ]
+    },
+    {
+      "slug": "zora-river-iza-1-skip-with-parallel-universe",
+      "source_path": "_posts/zora-river-iza-1-skip-with-parallel-universe.md",
+      "source_sha256": "6eec260a102c992257a63b9f007f8d4d507ed16e261ab84cfcffda65f30c9777",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "zora-river-iza-2-jar-crash",
+      "source_path": "_posts/zora-river-iza-2-jar-crash.md",
+      "source_sha256": "6d21a03b67053db259d973fedd256cdbfcc00a3635486c4e67f0749c11c1ce96",
+      "mechanisms": [
+        "event_trigger_loading",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "zora-river-iza-wall-bomb-without-arrows-using-boomerang",
+      "source_path": "_posts/zora-river-iza-wall-bomb-without-arrows-using-boomerang.md",
+      "source_sha256": "cedc0a25790b3875c686d4d46d7f45824621f8b178bce076ec492e5ca998ed39",
+      "mechanisms": [
+        "precision_movement_collision",
+        "actor_displacement_interaction",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "zoras-domain-out-of-bounds",
+      "source_path": "_posts/zoras-domain-out-of-bounds.md",
+      "source_sha256": "6053000a4b650be83368a7878400fd7f88730139ba5c5de6a1a86a0eb4cddfcf",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "zoras-domain-underwater-air-pockets",
+      "source_path": "_posts/zoras-domain-underwater-air-pockets.md",
+      "source_sha256": "540841827d60fd022ff7710e4c0aa61b5a23aee3ce10e963093a65722e18d619",
+      "mechanisms": [
+        "precision_movement_collision",
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "zoras-domain-unwarpable-meteor-devil-ben-glitch",
+      "source_path": "_posts/zoras-domain-unwarpable-meteor-devil-ben-glitch.md",
+      "source_sha256": "1c06a130a975a1c7e3614d379835c3aa0ead159d4c0d1c93f82353b859f37aab",
+      "mechanisms": [
+        "event_trigger_loading"
+      ]
+    },
+    {
+      "slug": "zoras-river-fishing-hole-fish-out-of-water",
+      "source_path": "_posts/zoras-river-fishing-hole-fish-out-of-water.md",
+      "source_sha256": "2b663a59aee1395faa931149e01cb01666f9a706d7311b77a56526c5e4522641",
+      "mechanisms": [
+        "actor_displacement_interaction",
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "zoras-river-fishing-hole-softlock",
+      "source_path": "_posts/zoras-river-fishing-hole-softlock.md",
+      "source_sha256": "975681affd6cbdf8646958b5ae8b1f8cd16121261ada6eb78f496f6d696b9968",
+      "mechanisms": [
+        "item_animation_concurrency",
+        "actor_lifecycle_memory"
+      ]
+    },
+    {
+      "slug": "zoras-river-hena-anger-storage",
+      "source_path": "_posts/zoras-river-hena-anger-storage.md",
+      "source_sha256": "5fd325737a9283aa137389e2e2d31a4cb8e25c884da2e157e4e2357edd141c66",
+      "mechanisms": [
+        "other_or_unclassified"
+      ]
+    },
+    {
+      "slug": "zoras-river-infinite-bomb-arrows-on-new-file",
+      "source_path": "_posts/zoras-river-infinite-bomb-arrows-on-new-file.md",
+      "source_sha256": "4c918337ff9ce65b8bdba944d0c48e0ed250bba8eff5d1a4f8a44cd4f9b53bc6",
+      "mechanisms": [
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "zoras-river-infinite-bomb-arrows",
+      "source_path": "_posts/zoras-river-infinite-bomb-arrows.md",
+      "source_sha256": "4187be60d61a9584c5a0251ffc11f89af79dadac906c8abfdd77513924bd37b3",
+      "mechanisms": [
+        "item_animation_concurrency"
+      ]
+    },
+    {
+      "slug": "zoras-river-kargarok-bonk-glitch",
+      "source_path": "_posts/zoras-river-kargarok-bonk-glitch.md",
+      "source_sha256": "5859baf65dc55f18afded1892af18cc2c6e4fee66fb9f0eba87ceb60426adea8",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "zoras-river-kargorak-first-bug-ignore",
+      "source_path": "_posts/zoras-river-kargorak-first-bug-ignore.md",
+      "source_sha256": "208f698dcaa210843dbd8557f77e1072217e377c80d8544868abb278c57ca276",
+      "mechanisms": [
+        "precision_movement_collision"
+      ]
+    },
+    {
+      "slug": "zoras-river-steal-lent-bomb-bag-black-rupee",
+      "source_path": "_posts/zoras-river-steal-lent-bomb-bag-black-rupee.md",
+      "source_sha256": "f6c68929735ef649cb3e8c2a3ad2f1d5773df5e7b5afa07e783afc2f0fcc929b",
+      "mechanisms": [
+        "item_animation_concurrency"
+      ]
+    }
+  ]
+}

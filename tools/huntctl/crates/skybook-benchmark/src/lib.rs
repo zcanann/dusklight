@@ -2,4 +2,5 @@
 
 pub mod manifest;
 pub mod pilot;
+pub mod requirements;
 pub mod selection;
