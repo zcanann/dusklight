@@ -1,0 +1,13 @@
+[package]
+name = "dusklight-route-planner"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Version-scoped causal route planning contracts for Twilight Princess"
+
+[dependencies]
+dusklight-automation-contracts = { path = "../contracts" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+

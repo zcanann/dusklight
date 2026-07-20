@@ -1313,7 +1313,7 @@ evidenced overlays over the generated base rather than silent edits to it.
       digests, available language bundles, and stable content IDs.
 - [ ] Audit how language/configuration is selected, persisted, changed, and used
       to select message or other resource variants.
-- [ ] Define the supported-input policy: pre-generated known fact packs for normal
+- [x] Define the supported-input policy: pre-generated known fact packs for normal
       use, optional `orig/` extraction for verification/new inputs, and explicit
       unsupported behavior for unknown identities.
 - [ ] Inventory extracted world-data schemas and their missing fields.
@@ -1340,9 +1340,9 @@ Deliverable: an evidence index and a list of explicit unknowns.
 
 ### Phase 1 — Typed semantic IR
 
-- [ ] Define exact content identities, mutable runtime locale/configuration,
+- [x] Define exact content identities, mutable runtime locale/configuration,
       selectors, groups, and proven-equivalence sets.
-- [ ] Define deterministic fact-pack manifests with input, executable, resource,
+- [x] Define deterministic fact-pack manifests with input, executable, resource,
       extractor, schema, coverage, and output digests.
 - [ ] Define execution environment, runtime-file identity, backing attachment,
       and serialization policy independently.
@@ -1360,7 +1360,7 @@ Deliverable: an evidence index and a list of explicit unknowns.
 - [ ] Define interaction obligations over required/excluded volumes and poses.
 - [ ] Define goals, path constraints, costs, and evidence status.
 - [ ] Define refinement pack manifests, conflicts, and deterministic precedence.
-- [ ] Prevent a raw binding or fact observed for one exact context from becoming
+- [x] Prevent a raw binding or fact observed for one exact context from becoming
       universal without an explicit, evidenced equivalence declaration.
 - [ ] Add strict schema validation and stable IDs.
 
