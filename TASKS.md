@@ -137,6 +137,16 @@ them is learner work.
   the complete active actor population. Inventory all actor profiles and all
   generally available enemy metadata; enemies are sparse enough that this data
   should always be retained rather than selected by proximity.
+  - [x] Aggregate each ready case's authenticated end-of-probe actor snapshot
+    into a sealed stage/profile report, rejecting missing, truncated,
+    count-mismatched and duplicate-process artifacts explicitly. The 16-case
+    D_MN01 smoke report verified every snapshot and found 58 profiles across
+    64-145 active actors per entry (`d23a7f78...1ffa`). This inventories the
+    expected population; it does not pretend the bounded trace actor selection
+    is a complete learner observation.
+  - [ ] Retain a complete native learning observation for the generic probe and
+    compare its actor generations against the authenticated actor snapshot for
+    every ready case.
 - [ ] Audit universal actor information: stable runtime identity and spawn
   generation, authored placement identity, transform, velocity, scale,
   collision/body information, action/procedure and animation state,

@@ -1,6 +1,7 @@
 //! Resumable all-stage observation survey commands.
 
 use crate::{option, repeated_option, required_path, u32_option, u64_option, usize_option};
+use huntctl::stage_actor_coverage::StageActorCoverageReport;
 use huntctl::stage_boot_catalog::StageBootCatalog;
 use huntctl::stage_survey::{
     STAGE_SURVEY_FIDELITY, StageSurveyExecutionConfig, StageSurveyLedger, StageSurveyPolicy,
@@ -23,8 +24,34 @@ pub(crate) fn command_survey(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("init") => command_init(&args[1..]),
         Some("status") => command_status(&args[1..]),
         Some("run") => command_run(&args[1..]),
-        _ => Err("survey commands: init, status, run".into()),
+        Some("actor-coverage") => command_actor_coverage(&args[1..]),
+        _ => Err("survey commands: init, status, run, actor-coverage".into()),
     }
+}
+
+fn command_actor_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog_path = required_path(args, "--catalog")?;
+    let ledger_path = required_path(args, "--ledger")?;
+    let state_root = required_path(args, "--state-root")?;
+    let output = required_path(args, "--output")?;
+    let catalog = load_catalog(&catalog_path)?;
+    let ledger = load_ledger(&ledger_path, &catalog)?;
+    let report = StageActorCoverageReport::build(&catalog, &ledger, &state_root)?;
+    write_ledger(&output, &report.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "report_sha256": report.report_sha256,
+            "ready_cases": report.ready_case_count,
+            "verified_cases": report.verified_case_count,
+            "rejected_cases": report.rejected_case_count,
+            "stages": report.stages.len(),
+            "profiles": report.profiles.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn command_init(args: &[String]) -> Result<(), Box<dyn Error>> {

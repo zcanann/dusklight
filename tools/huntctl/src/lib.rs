@@ -23,6 +23,7 @@ pub use dusklight_objectives::milestone_dsl;
 pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle};
 pub use dusklight_orchestration as search_evaluator;
 pub use dusklight_orchestration::harness;
+pub use dusklight_orchestration::stage_actor_coverage;
 pub use dusklight_orchestration::stage_survey;
 pub use dusklight_proposals::behavior_archive;
 pub use dusklight_route_workbench as route_workbench;

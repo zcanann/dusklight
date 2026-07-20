@@ -115,6 +115,8 @@ pub struct StageSurveyAttempt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_origin: Option<StageSurveyObservedOrigin>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_final: Option<StageSurveyObservedOrigin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostic_code: Option<String>,
 }
 
@@ -482,7 +484,7 @@ pub fn execute_stage_survey_attempt(
         ));
     }
 
-    let case_digest = domain_digest(b"dusklight-stage-survey-case/v1\0", candidate.id.as_bytes());
+    let case_digest = stage_survey_case_storage_id(&candidate.id);
     let case_root = config
         .state_root
         .join("cases")
@@ -738,6 +740,13 @@ fn validate_successful_probe(
             layer: origin.layer,
             player_ready: true,
         }),
+        observed_final: Some(StageSurveyObservedOrigin {
+            stage: Some(final_observation.stage_name.clone()),
+            room: final_observation.room,
+            point: final_observation.point,
+            layer: final_observation.layer,
+            player_ready: final_observation.player_session_process_id.is_some(),
+        }),
         diagnostic_code: None,
     })
 }
@@ -761,6 +770,7 @@ fn failed_attempt(
         actor_catalog_truncated: None,
         state_sequence_sha256: None,
         observed_origin: None,
+        observed_final: None,
         diagnostic_code: Some(diagnostic.into()),
     }
 }
@@ -798,6 +808,10 @@ fn domain_digest(domain: &[u8], payload: &[u8]) -> Digest {
     Digest(hasher.finalize().into())
 }
 
+pub fn stage_survey_case_storage_id(candidate_id: &str) -> Digest {
+    domain_digest(b"dusklight-stage-survey-case/v1\0", candidate_id.as_bytes())
+}
+
 #[cfg(windows)]
 fn configure_hidden_child(command: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -821,6 +835,17 @@ fn validate_attempt(attempt: &StageSurveyAttempt) -> Result<(), StageSurveyError
             .observed_origin
             .as_ref()
             .and_then(|origin| origin.stage.as_deref())
+            .is_some_and(|stage| {
+                stage.is_empty()
+                    || stage.len() > 8
+                    || !stage.bytes().all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            })
+        || attempt
+            .observed_final
+            .as_ref()
+            .and_then(|final_state| final_state.stage.as_deref())
             .is_some_and(|stage| {
                 stage.is_empty()
                     || stage.len() > 8
@@ -1038,6 +1063,7 @@ mod tests {
             actor_catalog_truncated: None,
             state_sequence_sha256: None,
             observed_origin: None,
+            observed_final: None,
             diagnostic_code: Some("test_failure".into()),
         }
     }
@@ -1055,6 +1081,13 @@ mod tests {
             actor_catalog_truncated: Some(false),
             state_sequence_sha256: Some(digest(10)),
             observed_origin: Some(StageSurveyObservedOrigin {
+                stage: Some("F_SP103".into()),
+                room: 0,
+                point: 0,
+                layer: 3,
+                player_ready: true,
+            }),
+            observed_final: Some(StageSurveyObservedOrigin {
                 stage: Some("F_SP103".into()),
                 room: 0,
                 point: 0,
