@@ -1784,7 +1784,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         graph
             .segments
             .iter()
-            .find(|segment| segment.id == "to_ordon_spring_q129")
+            .find(|segment| segment.id == "to_ordon_spring_q128")
             .and_then(|segment| segment.parent.as_deref()),
         Some("tolink_link_control")
     );
@@ -1861,12 +1861,12 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let continuation = graph
         .segments
         .iter()
-        .find(|segment| segment.id == "to_ordon_spring_q129")
+        .find(|segment| segment.id == "to_ordon_spring_q128")
         .unwrap();
     assert!(continuation.playable);
     assert!(continuation.recordable);
     assert_eq!(continuation.predicate_proof, "verified");
-    assert_eq!(continuation.first_hit_tick, Some(129));
+    assert_eq!(continuation.first_hit_tick, Some(128));
     assert_eq!(continuation.goal_proofs.len(), 2);
     assert!(continuation.goal_proofs.iter().any(|proof| {
         proof.goal == "ordon_spring_exit_approach"
@@ -1876,7 +1876,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert!(continuation.goal_proofs.iter().any(|proof| {
         proof.goal == "ordon_spring_load_committed"
             && proof.status == "verified"
-            && proof.first_hit_tick == Some(129)
+            && proof.first_hit_tick == Some(128)
     }));
     assert_eq!(continuation.record_anchors.len(), 2);
     let boot = graph.origin.as_ref().unwrap();
@@ -1932,7 +1932,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     }
 
     let (segment_id, expected_output) =
-        ("to_ordon_spring_q129", "65c12a65a2dd3d3566b0f0d9149fa8db");
+        ("to_ordon_spring_q128", "5aa5cbdf1883adb60fa8b5b08578bd2e");
     let segment = &route.segments[segment_id];
     assert_eq!(segment.end_fingerprint, expected_output);
     let card = graph
@@ -1943,9 +1943,9 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     assert!(card.playable);
     assert_eq!(card.parent.as_deref(), Some("tolink_link_control"));
     let continuation = load_segment_tape(segment, artifact_root).unwrap();
-    assert_eq!(continuation.frames.len(), 130);
+    assert_eq!(continuation.frames.len(), 128);
     let playback = materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
-    assert_eq!(playback.tape.frames.len(), 570);
+    assert_eq!(playback.tape.frames.len(), 568);
     assert_eq!(
         segment_parent_frame_count(
             &route,
