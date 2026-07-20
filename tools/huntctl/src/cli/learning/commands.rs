@@ -21,6 +21,8 @@ use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
 };
+use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
+use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
@@ -540,6 +542,40 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "lineage": artifact.lineage,
                 }))?
             );
+            Ok(())
+        }
+        Some("inspect-native") => {
+            let learn_args = &args[1..];
+            let inputs = repeated_option(learn_args, "--input");
+            if inputs.is_empty() || inputs.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn inspect-native requires 1..={MAX_LEARN_INPUT_CORPORA} --input SHARD"
+                )
+                .into());
+            }
+            let shards = inputs
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let report = inspect_native_episode_corpus(&shards);
+            let bytes = serde_json::to_vec_pretty(&report)?;
+            if let Some(output) = option(learn_args, "--output").map(PathBuf::from) {
+                if output.exists() {
+                    return Err(format!(
+                        "native corpus inspection output already exists: {}",
+                        output.display()
+                    )
+                    .into());
+                }
+                if let Some(parent) = output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(output, &bytes)?;
+            }
+            println!("{}", String::from_utf8(bytes)?);
             Ok(())
         }
         Some("inspect") => {

@@ -14,8 +14,8 @@ pub use dusklight_control::{
     roll_option, tactic_tests, tape_chain, tape_dsl, tape_edit, tape_program,
 };
 pub use dusklight_evidence::{
-    content_store, corpus, episode, episode_store, semantic_state_hash, trace_diff,
-    transition_corpus, transition_evidence,
+    content_store, corpus, episode, episode_store, native_corpus_inspection, native_episode_shard,
+    semantic_state_hash, trace_diff, transition_corpus, transition_evidence,
 };
 pub use dusklight_interventions as intervention;
 pub use dusklight_learning as learning;

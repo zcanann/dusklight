@@ -64,6 +64,15 @@ the same goal without demonstration-relative features.
   sides fail closed on incomplete actor metadata. A live two-candidate,
   250-tick F_SP103 checkpoint batch emitted v4 under the immutable process-boot
   card fixture and passed the same Rust invariant checks.
+- `huntctl learn inspect-native` now audits authenticated native shards before
+  learner ingestion: channel/mask presence and flag-bit variation, constant
+  core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
+  balance, exact payload duplicates, same-source/same-input determinism
+  conflicts, and outcome-separating identity candidates. The live Ordon v4
+  shard reports 47-48 actors, 28 actor types, 60 exact consumed PAD states, all
+  structured mechanics and flag channels present, no truncation or determinism
+  conflict, and the expected warning that its two retained candidates are both
+  failures.
 
 ## 1. Turn every attempt into learning experience
 
@@ -111,7 +120,7 @@ the same goal without demonstration-relative features.
   `635ded69...3ae0`, reached Link control at frame 439 and the Ordon Springs
   load at frame 567 with identical v6 boundary fingerprints, and left the
   source GCI byte-for-byte unchanged.
-- [ ] Add corpus inspection for missing channels, masks, NaNs, constants,
+- [x] Add corpus inspection for missing channels, masks, NaNs, constants,
   discontinuities, set sizes, action coverage, outcome balance, duplicate
   trajectories, and possible identity leakage.
 - [ ] Prove observation on/off parity and raw-PAD/state-hash equivalence with

@@ -16,6 +16,43 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn native_corpus_inspection_reports_complete_cpp_shard() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v4.dseps");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "inspect-native", "--input"])
+        .arg(fixture)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-native-corpus-inspection/v1");
+    assert_eq!(report["episode_count"], 2);
+    assert_eq!(report["success_count"], 1);
+    assert_eq!(report["failure_count"], 1);
+    assert_eq!(report["actor_set_sizes"]["minimum"], 257);
+    assert_eq!(report["actor_set_sizes"]["maximum"], 257);
+    assert_eq!(report["truncated_actor_observations"], 0);
+    assert_eq!(report["action_coverage"]["chosen_consumed_mismatches"], 0);
+    assert_eq!(
+        report["flag_mask_coverage"]["event_flags"]["widths"]["minimum"],
+        822
+    );
+    assert_eq!(
+        report["duplicate_trajectory_groups"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(report["determinism_conflicts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn trace_extraction_requires_complete_episode_context() {
     let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args([
