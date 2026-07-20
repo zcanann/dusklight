@@ -111,22 +111,24 @@ struct ObservationFixture {
             .currentAngleY = 100,
             .shapeAngleY = 90,
             .attentionPresent = true,
-            .attention = {
-                .flags = 0x20000002,
-                .positionX = 11.0F,
-                .positionY = 4.0F,
-                .positionZ = -7.0F,
-                .distanceIndices = {1, 2, 3, 4, 5, 6, 7, 8, 9},
-                .auxiliary = -4,
-            },
+            .attention =
+                {
+                    .flags = 0x20000002,
+                    .positionX = 11.0F,
+                    .positionY = 4.0F,
+                    .positionZ = -7.0F,
+                    .distanceIndices = {1, 2, 3, 4, 5, 6, 7, 8, 9},
+                    .auxiliary = -4,
+                },
             .eventParticipationPresent = true,
-            .eventParticipation = {
-                .command = 1,
-                .condition = 3,
-                .eventId = 27,
-                .mapToolId = 8,
-                .index = 2,
-            },
+            .eventParticipation =
+                {
+                    .command = 1,
+                    .condition = 3,
+                    .eventId = 27,
+                    .mapToolId = 8,
+                    .index = 2,
+                },
         };
         dynamicColliders[0] = {
             .registrationIndex = 0,
@@ -196,6 +198,38 @@ struct ObservationFixture {
         observation.nextPoint = -1;
         observation.rng.streams[0].id = GameRngStreamId::Primary;
         observation.rng.streams[1].id = GameRngStreamId::Secondary;
+        observation.playerResourcesPresent = true;
+        observation.playerResources.maximumLife = 20;
+        observation.playerResources.life = 16;
+        observation.playerResources.rupees = 123;
+        observation.playerResources.rupeeCapacity = 600;
+        observation.playerResources.maximumOil = 1200;
+        observation.playerResources.oil = 875;
+        observation.playerResources.maximumMagic = 32;
+        observation.playerResources.magic = 17;
+        observation.playerResources.wallet = 1;
+        observation.playerResources.transformStatus = 0;
+        observation.playerResources.worldTime = 210.5F;
+        observation.playerResources.date = 3;
+        observation.playerResources.arrows = 22;
+        observation.playerResources.arrowCapacity = 30;
+        observation.playerResources.pachinko = 11;
+        observation.playerResources.poeSouls = 4;
+        observation.playerResources.smallKeys = 2;
+        observation.playerResources.dungeonMap = true;
+        observation.playerResources.dungeonBossKey = true;
+        observation.playerResources.inventory[1] = 0x48;
+        observation.playerResources.inventory[4] = 0x43;
+        observation.playerResources.selectedItems = {1, 4, 0xff, 0xff};
+        observation.playerResources.mixedItems = {0xff, 0xff, 0xff, 0xff};
+        observation.playerResources.equipment = {0x2e, 0x28, 0x2a, 0xff, 0x28, 0xff};
+        observation.playerResources.bombCounts = {12, 0, 0};
+        observation.playerResources.bombCapacities = {30, 0, 0};
+        observation.playerResources.bottleQuantities = {1, 0, 0, 0};
+        observation.playerResources.acquiredItemBits[8] = 0x04;
+        observation.playerResources.collectItemBits[0] = 0x03;
+        observation.playerResources.collectedCrystalBits = 0x02;
+        observation.playerResources.collectedMirrorBits = 0x01;
         observation.actors = actors;
         observation.actorObservedCount = 1;
         observation.dynamicColliders = dynamicColliders;
@@ -304,15 +338,14 @@ struct ObservationFixture {
 void test_episode_and_shard_are_compact_and_self_delimiting(
     const std::optional<std::filesystem::path>& fixturePath) {
     ObservationFixture fixture;
-    std::vector<MilestoneObservation::Actor> completeActors(kInputControllerMaximumActors + 1,
-        fixture.actors[0]);
+    std::vector<MilestoneObservation::Actor> completeActors(
+        kInputControllerMaximumActors + 1, fixture.actors[0]);
     for (std::size_t index = 0; index < completeActors.size(); ++index)
         completeActors[index].runtimeGeneration = index + 1;
     completeActors.back().attentionPresent = false;
     completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
-    fixture.observation.actorObservedCount =
-        static_cast<std::uint32_t>(completeActors.size());
+    fixture.observation.actorObservedCount = static_cast<std::uint32_t>(completeActors.size());
     RawPadState pad;
     pad.buttons = 0x0100;
     pad.stickX = 100;
@@ -396,8 +429,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .cardFixtureIdentity = "card-fixture:xxh3-128:22222222222222222222222222222222",
         .actorProfileCatalogIdentity =
             "actor-profile-catalog:xxh3-128:33333333333333333333333333333333",
-        .worldContextSha256 =
-            "4444444444444444444444444444444444444444444444444444444444444444",
+        .worldContextSha256 = "4444444444444444444444444444444444444444444444444444444444444444",
     };
     LearningEpisodeShardWriter writer;
     LearningEpisodeShardMetadata invalidMetadata = metadata;
@@ -466,8 +498,8 @@ void test_inconsistent_actor_completeness_fails_closed() {
 
 void test_actor_population_is_not_limited_by_controller_capacity() {
     ObservationFixture fixture;
-    std::vector<MilestoneObservation::Actor> actors(kInputControllerMaximumActors + 1,
-        fixture.actors[0]);
+    std::vector<MilestoneObservation::Actor> actors(
+        kInputControllerMaximumActors + 1, fixture.actors[0]);
     for (std::size_t index = 0; index < actors.size(); ++index)
         actors[index].runtimeGeneration = index + 1;
     fixture.observation.actors = actors;
@@ -504,6 +536,20 @@ void test_duplicate_actor_identity_fails_closed() {
 void test_temporary_event_register_bank_is_required() {
     ObservationFixture fixture;
     fixture.observation.temporaryEventBytes = {};
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+}
+
+void test_player_resources_presence_matches_player_presence() {
+    ObservationFixture fixture;
+    fixture.observation.playerResourcesPresent = false;
     std::vector<std::uint8_t> bytes;
     begin_learning_episode(bytes);
     std::string error;
@@ -564,6 +610,7 @@ int main(const int argc, char** argv) {
     test_actor_population_is_not_limited_by_controller_capacity();
     test_duplicate_actor_identity_fails_closed();
     test_temporary_event_register_bank_is_required();
+    test_player_resources_presence_matches_player_presence();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";
     return 0;

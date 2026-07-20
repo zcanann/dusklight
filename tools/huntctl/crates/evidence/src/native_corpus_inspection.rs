@@ -13,7 +13,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V2: &str = "dusklight-native-corpus-inspection/v2";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V3: &str = "dusklight-native-corpus-inspection/v3";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -535,6 +535,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ),
                         ("scene_exit", observation.scene_exit_status),
                         ("dynamic_colliders", observation.dynamic_colliders_status),
+                        ("player_resources", observation.player_resources_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -544,6 +545,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         .map_or(0, |surfaces| surfaces.surfaces.len());
                     surface_sizes.push(surface_count);
                     dynamic_collider_sizes.push(observation.dynamic_colliders.len());
+                    let resources = observation.player_resources.as_ref();
                     for (name, values) in [
                         ("event_flags", observation.event_flags.as_deref()),
                         ("temporary_flags", observation.temporary_flags.as_deref()),
@@ -553,6 +555,14 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ),
                         ("dungeon_flags", observation.dungeon_flags.as_deref()),
                         ("switch_flags", observation.switch_flags.as_deref()),
+                        (
+                            "acquired_item_bits",
+                            resources.map(|value| value.acquired_item_bits.as_slice()),
+                        ),
+                        (
+                            "collect_item_bits",
+                            resources.map(|value| value.collect_item_bits.as_slice()),
+                        ),
                     ] {
                         *missing_mask_counts.entry(name.into()).or_default() +=
                             u64::from(values.is_none());
@@ -652,7 +662,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V2.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V3.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -789,5 +799,28 @@ mod tests {
         assert!(coverage.ever_set_indices.contains(&0));
         assert!(coverage.ever_set_indices.contains(&1));
         assert!(coverage.ever_set_indices.contains(&5));
+    }
+
+    #[test]
+    fn audits_v9_player_resource_and_inventory_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V3);
+        assert_eq!(
+            report.channel_coverage["player_resources"].present,
+            report.observation_count
+        );
+        assert_eq!(report.missing_mask_counts["acquired_item_bits"], 0);
+        assert_eq!(report.missing_mask_counts["collect_item_bits"], 0);
+        assert_eq!(
+            report.flag_mask_coverage["acquired_item_bits"].widths.minimum,
+            32
+        );
+        assert_eq!(
+            report.flag_mask_coverage["collect_item_bits"].widths.minimum,
+            8
+        );
     }
 }

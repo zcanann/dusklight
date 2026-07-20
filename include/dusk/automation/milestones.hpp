@@ -9,8 +9,8 @@
 #include <string_view>
 #include <vector>
 
-#include "dusk/automation/milestone_program.hpp"
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/milestone_program.hpp"
 #include "dusk/automation/rng.hpp"
 
 namespace dusk::automation {
@@ -113,6 +113,54 @@ struct MilestoneObservation {
     std::int16_t nextPoint = -1;
 
     GameRngSnapshot rng;
+
+    // Typed, read-only gameplay resources. This deliberately exposes semantic
+    // save-state fields rather than copying dSv_player_c bytes or host padding.
+    // The component is unavailable before an active player exists.
+    struct PlayerResources {
+        static constexpr std::size_t InventorySlotCount = 24;
+        static constexpr std::size_t SelectItemCount = 4;
+        static constexpr std::size_t EquipmentCount = 6;
+        static constexpr std::size_t BombBagCount = 3;
+        static constexpr std::size_t BottleCount = 4;
+        static constexpr std::size_t AcquiredItemByteCount = 32;
+        static constexpr std::size_t CollectItemByteCount = 8;
+
+        std::uint16_t maximumLife = 0;
+        std::uint16_t life = 0;
+        std::uint16_t rupees = 0;
+        std::uint16_t rupeeCapacity = 0;
+        std::uint16_t maximumOil = 0;
+        std::uint16_t oil = 0;
+        std::uint8_t maximumMagic = 0;
+        std::uint8_t magic = 0;
+        std::uint8_t wallet = 0;
+        std::uint8_t transformStatus = 0;
+        float worldTime = 0.0F;
+        std::uint16_t date = 0;
+        std::uint8_t arrows = 0;
+        std::uint8_t arrowCapacity = 0;
+        std::uint8_t pachinko = 0;
+        std::uint8_t poeSouls = 0;
+        std::uint8_t smallKeys = 0;
+        bool dungeonMap = false;
+        bool dungeonCompass = false;
+        bool dungeonBossKey = false;
+        bool dungeonWarp = false;
+        std::array<std::uint8_t, InventorySlotCount> inventory{};
+        std::array<std::uint8_t, SelectItemCount> selectedItems{};
+        std::array<std::uint8_t, SelectItemCount> mixedItems{};
+        std::array<std::uint8_t, EquipmentCount> equipment{};
+        std::array<std::uint8_t, BombBagCount> bombCounts{};
+        std::array<std::uint8_t, BombBagCount> bombCapacities{};
+        std::array<std::uint8_t, BottleCount> bottleQuantities{};
+        std::array<std::uint8_t, AcquiredItemByteCount> acquiredItemBits{};
+        std::array<std::uint8_t, CollectItemByteCount> collectItemBits{};
+        std::uint8_t collectedCrystalBits = 0;
+        std::uint8_t collectedMirrorBits = 0;
+    };
+    PlayerResources playerResources;
+    bool playerResourcesPresent = false;
 
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.

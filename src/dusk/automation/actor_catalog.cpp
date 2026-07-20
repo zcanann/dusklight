@@ -147,8 +147,8 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
     if (actor.attentionPresent) {
         attention = {
             {"flags", actor.attention.flags},
-            {"position", position_json(actor.attention.positionX,
-                             actor.attention.positionY, actor.attention.positionZ)},
+            {"position", position_json(actor.attention.positionX, actor.attention.positionY,
+                             actor.attention.positionZ)},
             {"distance_indices", actor.attention.distanceIndices},
             {"auxiliary", actor.attention.auxiliary},
         };
@@ -187,25 +187,21 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
         {"heap_present", actor.heapPresent},
         {"model_present", actor.modelPresent},
         {"joint_collision_present", actor.jointCollisionPresent},
-        {"home_position", position_json(actor.homePositionX,
-                              actor.homePositionY, actor.homePositionZ)},
-        {"old_position", position_json(actor.oldPositionX,
-                             actor.oldPositionY, actor.oldPositionZ)},
-        {"current_position", position_json(actor.positionX,
-                                 actor.positionY, actor.positionZ)},
+        {"home_position",
+            position_json(actor.homePositionX, actor.homePositionY, actor.homePositionZ)},
+        {"old_position", position_json(actor.oldPositionX, actor.oldPositionY, actor.oldPositionZ)},
+        {"current_position", position_json(actor.positionX, actor.positionY, actor.positionZ)},
         {"velocity", position_json(actor.velocityX, actor.velocityY, actor.velocityZ)},
         {"forward_speed", actor.forwardSpeed},
         {"scale", position_json(actor.scaleX, actor.scaleY, actor.scaleZ)},
         {"gravity", actor.gravity},
         {"max_fall_speed", actor.maxFallSpeed},
-        {"eye_position", position_json(actor.eyePositionX,
-                             actor.eyePositionY, actor.eyePositionZ)},
+        {"eye_position", position_json(actor.eyePositionX, actor.eyePositionY, actor.eyePositionZ)},
         {"home_angle", angle_json(actor.homeAngleX, actor.homeAngleY, actor.homeAngleZ)},
         {"old_angle", angle_json(actor.oldAngleX, actor.oldAngleY, actor.oldAngleZ)},
-        {"current_angle", angle_json(actor.currentAngleX,
-                              actor.currentAngleY, actor.currentAngleZ)},
-        {"shape_angle", angle_json(actor.shapeAngleX,
-                            actor.shapeAngleY, actor.shapeAngleZ)},
+        {"current_angle",
+            angle_json(actor.currentAngleX, actor.currentAngleY, actor.currentAngleZ)},
+        {"shape_angle", angle_json(actor.shapeAngleX, actor.shapeAngleY, actor.shapeAngleZ)},
         {"health", actor.health},
         {"status", actor.status},
         {"attention", std::move(attention)},
@@ -214,11 +210,10 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
 }
 
 json learning_collider_json(const MilestoneObservation::DynamicCollider& collider) {
-    const char* shape = collider.shape == MilestoneObservation::DynamicColliderShape::Sphere
-                            ? "sphere"
-                        : collider.shape == MilestoneObservation::DynamicColliderShape::Cylinder
-                            ? "cylinder"
-                            : "unknown";
+    const char* shape =
+        collider.shape == MilestoneObservation::DynamicColliderShape::Sphere   ? "sphere" :
+        collider.shape == MilestoneObservation::DynamicColliderShape::Cylinder ? "cylinder" :
+                                                                                 "unknown";
     const auto optionalGeneration = [](const bool present, const std::uint32_t generation) {
         return present ? json(generation) : json(nullptr);
     };
@@ -226,15 +221,13 @@ json learning_collider_json(const MilestoneObservation::DynamicCollider& collide
         {"registration_index", collider.registrationIndex},
         {"owner_runtime_generation",
             optionalGeneration(collider.ownerPresent, collider.ownerRuntimeGeneration)},
-        {"attack_hit_owner_runtime_generation",
-            optionalGeneration(collider.attackHitOwnerPresent,
-                collider.attackHitOwnerRuntimeGeneration)},
-        {"target_hit_owner_runtime_generation",
-            optionalGeneration(collider.targetHitOwnerPresent,
-                collider.targetHitOwnerRuntimeGeneration)},
+        {"attack_hit_owner_runtime_generation", optionalGeneration(collider.attackHitOwnerPresent,
+                                                    collider.attackHitOwnerRuntimeGeneration)},
+        {"target_hit_owner_runtime_generation", optionalGeneration(collider.targetHitOwnerPresent,
+                                                    collider.targetHitOwnerRuntimeGeneration)},
         {"correction_hit_owner_runtime_generation",
-            optionalGeneration(collider.correctionHitOwnerPresent,
-                collider.correctionHitOwnerRuntimeGeneration)},
+            optionalGeneration(
+                collider.correctionHitOwnerPresent, collider.correctionHitOwnerRuntimeGeneration)},
         {"status_present", collider.statusPresent},
         {"shape_present", collider.shapePresent},
         {"shape", shape},
@@ -262,6 +255,43 @@ json learning_collider_json(const MilestoneObservation::DynamicCollider& collide
         {"aabb_max", position_json(collider.aabbMaxX, collider.aabbMaxY, collider.aabbMaxZ)},
         {"correction",
             position_json(collider.correctionX, collider.correctionY, collider.correctionZ)},
+    };
+}
+
+json learning_player_resources_json(const MilestoneObservation::PlayerResources& resources) {
+    return {
+        {"maximum_life", resources.maximumLife},
+        {"life", resources.life},
+        {"rupees", resources.rupees},
+        {"rupee_capacity", resources.rupeeCapacity},
+        {"maximum_oil", resources.maximumOil},
+        {"oil", resources.oil},
+        {"maximum_magic", resources.maximumMagic},
+        {"magic", resources.magic},
+        {"wallet", resources.wallet},
+        {"transform_status", resources.transformStatus},
+        {"world_time", resources.worldTime},
+        {"date", resources.date},
+        {"arrows", resources.arrows},
+        {"arrow_capacity", resources.arrowCapacity},
+        {"pachinko", resources.pachinko},
+        {"poe_souls", resources.poeSouls},
+        {"small_keys", resources.smallKeys},
+        {"dungeon_map", resources.dungeonMap},
+        {"dungeon_compass", resources.dungeonCompass},
+        {"dungeon_boss_key", resources.dungeonBossKey},
+        {"dungeon_warp", resources.dungeonWarp},
+        {"inventory", resources.inventory},
+        {"selected_items", resources.selectedItems},
+        {"mixed_items", resources.mixedItems},
+        {"equipment", resources.equipment},
+        {"bomb_counts", resources.bombCounts},
+        {"bomb_capacities", resources.bombCapacities},
+        {"bottle_quantities", resources.bottleQuantities},
+        {"acquired_item_bits", resources.acquiredItemBits},
+        {"collect_item_bits", resources.collectItemBits},
+        {"collected_crystal_bits", resources.collectedCrystalBits},
+        {"collected_mirror_bits", resources.collectedMirrorBits},
     };
 }
 
@@ -322,8 +352,7 @@ bool write_actor_catalog(
     // artifact lets the host prove that the learner did not silently inherit
     // the controller's bounded selection rule. Both adapters are read-only.
     MilestoneObservationStorage learningStorage;
-    const MilestoneObservation learningObservation =
-        capture_milestone_observation(learningStorage);
+    const MilestoneObservation learningObservation = capture_milestone_observation(learningStorage);
     json learningActors = json::array();
     for (const MilestoneObservation::Actor& actor : learningObservation.actors)
         learningActors.push_back(learning_actor_json(actor));
@@ -334,11 +363,10 @@ bool write_actor_catalog(
 
     const auto& nameEntryObserver = name_entry_observer();
     const BuildIdentity build = current_build_identity(
-        nameEntryObserver.cursorBreakoutShadowEnabled()
-            ? "cursor_breakout_shadow"
-            : "observe_only");
+        nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
+                                                          "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v4"},
+        {"schema", "dusklight.actor-catalog.v5"},
         {"build",
             {
                 {"version", build.version},
@@ -382,6 +410,14 @@ bool write_actor_catalog(
                 {"retained_collider_count", learningObservation.dynamicColliders.size()},
                 {"truncated", learningObservation.dynamicCollidersTruncated},
                 {"colliders", std::move(learningColliders)},
+            }},
+        {"learning_player_resources",
+            {
+                {"source_schema", LearningObservationSchema},
+                {"present", learningObservation.playerResourcesPresent},
+                {"value", learningObservation.playerResourcesPresent ?
+                              learning_player_resources_json(learningObservation.playerResources) :
+                              json(nullptr)},
             }},
     };
 

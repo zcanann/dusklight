@@ -383,9 +383,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         observation.actors.size() > std::numeric_limits<std::uint16_t>::max() ||
         observation.dynamicColliders.size() > std::numeric_limits<std::uint16_t>::max() ||
         observation.actorObservedCount != observation.actors.size() ||
-        observation.actorsTruncated ||
-        observation.dynamicCollidersTruncated ||
+        observation.actorsTruncated || observation.dynamicCollidersTruncated ||
         (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) ||
+        observation.playerResourcesPresent != observation.playerPresent ||
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
@@ -588,16 +588,13 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
 
         const auto& attention = actor.attention;
         append_integer(output, actor.attentionPresent ? attention.flags : 0u);
-        if (!append_float(
-                output, actor.attentionPresent ? attention.positionX : 0.0F, error) ||
-            !append_float(
-                output, actor.attentionPresent ? attention.positionY : 0.0F, error) ||
-            !append_float(
-                output, actor.attentionPresent ? attention.positionZ : 0.0F, error))
+        if (!append_float(output, actor.attentionPresent ? attention.positionX : 0.0F, error) ||
+            !append_float(output, actor.attentionPresent ? attention.positionY : 0.0F, error) ||
+            !append_float(output, actor.attentionPresent ? attention.positionZ : 0.0F, error))
             return false;
         if (actor.attentionPresent) {
-            output.insert(output.end(), attention.distanceIndices.begin(),
-                attention.distanceIndices.end());
+            output.insert(
+                output.end(), attention.distanceIndices.begin(), attention.distanceIndices.end());
         } else {
             output.insert(output.end(), attention.distanceIndices.size(), std::uint8_t{0});
         }
@@ -605,16 +602,16 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         append_integer<std::uint8_t>(output, 0);
 
         const auto& participation = actor.eventParticipation;
-        append_integer(output,
-            actor.eventParticipationPresent ? participation.command : std::uint16_t{0});
-        append_integer(output,
-            actor.eventParticipationPresent ? participation.condition : std::uint16_t{0});
-        append_integer(output,
-            actor.eventParticipationPresent ? participation.eventId : std::int16_t{0});
-        append_integer(output,
-            actor.eventParticipationPresent ? participation.mapToolId : std::uint8_t{0});
-        append_integer(output,
-            actor.eventParticipationPresent ? participation.index : std::uint8_t{0});
+        append_integer(
+            output, actor.eventParticipationPresent ? participation.command : std::uint16_t{0});
+        append_integer(
+            output, actor.eventParticipationPresent ? participation.condition : std::uint16_t{0});
+        append_integer(
+            output, actor.eventParticipationPresent ? participation.eventId : std::int16_t{0});
+        append_integer(
+            output, actor.eventParticipationPresent ? participation.mapToolId : std::uint8_t{0});
+        append_integer(
+            output, actor.eventParticipationPresent ? participation.index : std::uint8_t{0});
 
         std::uint8_t backingMask = 0;
         backingMask |= actor.heapPresent ? 1u << 0 : 0;
@@ -645,13 +642,10 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             append_integer(output, value);
     }
 
-    append_integer(output, static_cast<std::uint8_t>(
-                               observation.dynamicCollidersPresent ? 1 : 3));
+    append_integer(output, static_cast<std::uint8_t>(observation.dynamicCollidersPresent ? 1 : 3));
     append_integer<std::uint8_t>(output, 0);
     append_integer(output, static_cast<std::uint16_t>(observation.dynamicColliders.size()));
-    for (const MilestoneObservation::DynamicCollider& collider :
-        observation.dynamicColliders)
-    {
+    for (const MilestoneObservation::DynamicCollider& collider : observation.dynamicColliders) {
         std::uint16_t colliderFlags = 0;
         colliderFlags |= collider.ownerPresent ? 1u << 0 : 0;
         colliderFlags |= collider.statusPresent ? 1u << 1 : 0;
@@ -685,7 +679,8 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
                  collider.aabbMinZ, collider.aabbMaxX, collider.aabbMaxY, collider.aabbMaxZ,
                  collider.correctionX, collider.correctionY, collider.correctionZ})
         {
-            if (!append_float(output, value, error)) return false;
+            if (!append_float(output, value, error))
+                return false;
         }
     }
 
@@ -700,6 +695,45 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         output.insert(output.end(), observation.switchFlags.begin(), observation.switchFlags.end());
     }
     append_integer(output, observation.switchFlagRoom);
+
+    const MilestoneObservation::PlayerResources emptyResources{};
+    const auto& resources =
+        observation.playerResourcesPresent ? observation.playerResources : emptyResources;
+    append_integer(output, static_cast<std::uint8_t>(observation.playerResourcesPresent ? 1 : 3));
+    append_integer<std::uint8_t>(output, 0);
+    for (const std::uint16_t value : {resources.maximumLife, resources.life, resources.rupees,
+             resources.rupeeCapacity, resources.maximumOil, resources.oil})
+        append_integer(output, value);
+    append_integer(output, resources.maximumMagic);
+    append_integer(output, resources.magic);
+    append_integer(output, resources.wallet);
+    append_integer(output, resources.transformStatus);
+    if (!append_float(output, resources.worldTime, error))
+        return false;
+    append_integer(output, resources.date);
+    append_integer(output, resources.arrows);
+    append_integer(output, resources.arrowCapacity);
+    append_integer(output, resources.pachinko);
+    append_integer(output, resources.poeSouls);
+    append_integer(output, resources.smallKeys);
+    const std::uint8_t dungeonItems =
+        (resources.dungeonMap ? 1u << 0 : 0) | (resources.dungeonCompass ? 1u << 1 : 0) |
+        (resources.dungeonBossKey ? 1u << 2 : 0) | (resources.dungeonWarp ? 1u << 3 : 0);
+    append_integer(output, dungeonItems);
+    append_integer<std::uint16_t>(output, 0);
+    output.insert(output.end(), resources.inventory.begin(), resources.inventory.end());
+    output.insert(output.end(), resources.selectedItems.begin(), resources.selectedItems.end());
+    output.insert(output.end(), resources.mixedItems.begin(), resources.mixedItems.end());
+    output.insert(output.end(), resources.equipment.begin(), resources.equipment.end());
+    output.insert(output.end(), resources.bombCounts.begin(), resources.bombCounts.end());
+    output.insert(output.end(), resources.bombCapacities.begin(), resources.bombCapacities.end());
+    output.insert(
+        output.end(), resources.bottleQuantities.begin(), resources.bottleQuantities.end());
+    output.insert(
+        output.end(), resources.acquiredItemBits.begin(), resources.acquiredItemBits.end());
+    output.insert(output.end(), resources.collectItemBits.begin(), resources.collectItemBits.end());
+    append_integer(output, resources.collectedCrystalBits);
+    append_integer(output, resources.collectedMirrorBits);
     return true;
 }
 
@@ -745,8 +779,8 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
         !is_lower_hex(metadata.gameDataSha256, 64) ||
         !metadata.cardFixtureIdentity.starts_with("card-fixture:") ||
         !metadata.actorProfileCatalogIdentity.starts_with("actor-profile-catalog:") ||
-        !is_lower_hex(metadata.worldContextSha256, 64) ||
-        metadata.maximumTicks == 0 || metadata.maximumTicks > LearningEpisodeMaximumTicks)
+        !is_lower_hex(metadata.worldContextSha256, 64) || metadata.maximumTicks == 0 ||
+        metadata.maximumTicks > LearningEpisodeMaximumTicks)
     {
         error = "learning episode shard metadata is incomplete";
         return false;

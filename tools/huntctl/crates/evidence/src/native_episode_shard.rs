@@ -28,6 +28,7 @@ const OBSERVATION_VERSION_V5: u16 = 5;
 const OBSERVATION_VERSION_V6: u16 = 6;
 const OBSERVATION_VERSION_V7: u16 = 7;
 const OBSERVATION_VERSION_V8: u16 = 8;
+const OBSERVATION_VERSION_V9: u16 = 9;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -43,6 +44,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation/v6";
 pub const LEARNING_OBSERVATION_SCHEMA_V7: &str = "dusklight-learning-observation/v7";
 pub const LEARNING_OBSERVATION_SCHEMA_V8: &str = "dusklight-learning-observation/v8";
+pub const LEARNING_OBSERVATION_SCHEMA_V9: &str = "dusklight-learning-observation/v9";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -358,6 +360,42 @@ pub struct NativeDynamicColliderObservation {
     pub correction: [f32; 3],
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativePlayerResourcesObservation {
+    pub maximum_life: u16,
+    pub life: u16,
+    pub rupees: u16,
+    pub rupee_capacity: u16,
+    pub maximum_oil: u16,
+    pub oil: u16,
+    pub maximum_magic: u8,
+    pub magic: u8,
+    pub wallet: u8,
+    pub transform_status: u8,
+    pub world_time: f32,
+    pub date: u16,
+    pub arrows: u8,
+    pub arrow_capacity: u8,
+    pub pachinko: u8,
+    pub poe_souls: u8,
+    pub small_keys: u8,
+    pub dungeon_map: bool,
+    pub dungeon_compass: bool,
+    pub dungeon_boss_key: bool,
+    pub dungeon_warp: bool,
+    pub inventory: [u8; 24],
+    pub selected_items: [u8; 4],
+    pub mixed_items: [u8; 4],
+    pub equipment: [u8; 6],
+    pub bomb_counts: [u8; 3],
+    pub bomb_capacities: [u8; 3],
+    pub bottle_quantities: [u8; 4],
+    pub acquired_item_bits: [u8; 32],
+    pub collect_item_bits: [u8; 8],
+    pub collected_crystal_bits: u8,
+    pub collected_mirror_bits: u8,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGoalObservation {
     pub configured: bool,
@@ -515,6 +553,8 @@ pub struct NativeLearningObservation {
     pub actors: Vec<NativeActorObservation>,
     pub dynamic_colliders_status: NativeChannelStatus,
     pub dynamic_colliders: Vec<NativeDynamicColliderObservation>,
+    pub player_resources_status: NativeChannelStatus,
+    pub player_resources: Option<NativePlayerResourcesObservation>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     /// Exact 256-byte dSv_info_c::mTmp.mEvent register bank (v5+).
@@ -582,6 +622,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V6
                 | OBSERVATION_VERSION_V7
                 | OBSERVATION_VERSION_V8
+                | OBSERVATION_VERSION_V9
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -704,6 +745,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V6 => LEARNING_OBSERVATION_SCHEMA_V6,
         OBSERVATION_VERSION_V7 => LEARNING_OBSERVATION_SCHEMA_V7,
         OBSERVATION_VERSION_V8 => LEARNING_OBSERVATION_SCHEMA_V8,
+        OBSERVATION_VERSION_V9 => LEARNING_OBSERVATION_SCHEMA_V9,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -992,6 +1034,94 @@ fn decode_channel_status(
             "invalid collision channel status",
         )),
     }
+}
+
+fn decode_player_resources(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, NativePlayerResourcesObservation), NativeEpisodeShardError> {
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero player-resources reserved byte",
+        ));
+    }
+    let maximum_life = reader.u16()?;
+    let life = reader.u16()?;
+    let rupees = reader.u16()?;
+    let rupee_capacity = reader.u16()?;
+    let maximum_oil = reader.u16()?;
+    let oil = reader.u16()?;
+    let maximum_magic = reader.u8()?;
+    let magic = reader.u8()?;
+    let wallet = reader.u8()?;
+    let transform_status = reader.u8()?;
+    let world_time = reader.f32()?;
+    let date = reader.u16()?;
+    let arrows = reader.u8()?;
+    let arrow_capacity = reader.u8()?;
+    let pachinko = reader.u8()?;
+    let poe_souls = reader.u8()?;
+    let small_keys = reader.u8()?;
+    let dungeon_items = reader.u8()?;
+    if dungeon_items & !0x0f != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "invalid player-resources flags or reserved bytes",
+        ));
+    }
+    let resources = NativePlayerResourcesObservation {
+        maximum_life,
+        life,
+        rupees,
+        rupee_capacity,
+        maximum_oil,
+        oil,
+        maximum_magic,
+        magic,
+        wallet,
+        transform_status,
+        world_time,
+        date,
+        arrows,
+        arrow_capacity,
+        pachinko,
+        poe_souls,
+        small_keys,
+        dungeon_map: dungeon_items & (1 << 0) != 0,
+        dungeon_compass: dungeon_items & (1 << 1) != 0,
+        dungeon_boss_key: dungeon_items & (1 << 2) != 0,
+        dungeon_warp: dungeon_items & (1 << 3) != 0,
+        inventory: reader.bytes(24)?.try_into().expect("exact inventory length"),
+        selected_items: reader.bytes(4)?.try_into().expect("exact selected-item length"),
+        mixed_items: reader.bytes(4)?.try_into().expect("exact mixed-item length"),
+        equipment: reader.bytes(6)?.try_into().expect("exact equipment length"),
+        bomb_counts: reader.bytes(3)?.try_into().expect("exact bomb-count length"),
+        bomb_capacities: reader
+            .bytes(3)?
+            .try_into()
+            .expect("exact bomb-capacity length"),
+        bottle_quantities: reader
+            .bytes(4)?
+            .try_into()
+            .expect("exact bottle-quantity length"),
+        acquired_item_bits: reader
+            .bytes(32)?
+            .try_into()
+            .expect("exact acquired-item length"),
+        collect_item_bits: reader
+            .bytes(8)?
+            .try_into()
+            .expect("exact collect-item length"),
+        collected_crystal_bits: reader.u8()?,
+        collected_mirror_bits: reader.u8()?,
+    };
+    if status != NativeChannelStatus::Present
+        && resources != NativePlayerResourcesObservation::default()
+    {
+        return Err(NativeEpisodeShardError::new(
+            "player-resources payload is present for an unavailable channel",
+        ));
+    }
+    Ok((status, resources))
 }
 
 fn decode_camera(
@@ -1764,7 +1894,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V5
         | OBSERVATION_VERSION_V6
         | OBSERVATION_VERSION_V7
-        | OBSERVATION_VERSION_V8 => {
+        | OBSERVATION_VERSION_V8
+        | OBSERVATION_VERSION_V9 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2178,6 +2309,19 @@ fn decode_observation(
     let dungeon_flags = flags_present.then(|| reader.vec(64)).transpose()?;
     let switch_flags = flags_present.then(|| reader.vec(240)).transpose()?;
     let switch_flag_room = reader.i8()?;
+    let (player_resources_status, player_resources) =
+        if observation_version >= OBSERVATION_VERSION_V9 {
+            let (status, resources) = decode_player_resources(reader)?;
+            let player_present = flags & 1 != 0;
+            if (status == NativeChannelStatus::Present) != player_present {
+                return Err(NativeEpisodeShardError::new(
+                    "player-resources presence disagrees with player presence",
+                ));
+            }
+            (status, (status == NativeChannelStatus::Present).then_some(resources))
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -2246,6 +2390,8 @@ fn decode_observation(
         actors,
         dynamic_colliders_status,
         dynamic_colliders,
+        player_resources_status,
+        player_resources,
         event_flags,
         temporary_flags,
         temporary_event_bytes,
@@ -2471,6 +2617,10 @@ mod tests {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v8.dseps")
     }
 
+    fn golden_v9() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps")
+    }
+
     #[test]
     fn authored_objective_identity_binds_program_and_definition() {
         assert_eq!(
@@ -2521,6 +2671,10 @@ mod tests {
 
     fn mutate_first_v7_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
         mutate_first_episode_in(golden_v7(), mutator)
+    }
+
+    fn mutate_first_v9_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        mutate_first_episode_in(golden_v9(), mutator)
     }
 
     fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
@@ -2859,6 +3013,70 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v9_typed_player_resources() {
+        let shard = NativeEpisodeShard::decode(golden_v9()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V9
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            assert_eq!(
+                observation.player_resources_status,
+                NativeChannelStatus::Present
+            );
+            let resources = observation.player_resources.as_ref().unwrap();
+            assert_eq!(resources.maximum_life, 20);
+            assert_eq!(resources.life, 16);
+            assert_eq!(resources.rupees, 123);
+            assert_eq!(resources.rupee_capacity, 600);
+            assert_eq!(resources.maximum_oil, 1200);
+            assert_eq!(resources.oil, 875);
+            assert_eq!(resources.maximum_magic, 32);
+            assert_eq!(resources.magic, 17);
+            assert_eq!(resources.world_time, 210.5);
+            assert_eq!(resources.date, 3);
+            assert_eq!(resources.arrows, 22);
+            assert_eq!(resources.arrow_capacity, 30);
+            assert_eq!(resources.inventory[1], 0x48);
+            assert_eq!(resources.inventory[4], 0x43);
+            assert_eq!(resources.selected_items, [1, 4, 0xff, 0xff]);
+            assert_eq!(resources.bomb_counts, [12, 0, 0]);
+            assert_eq!(resources.bomb_capacities, [30, 0, 0]);
+            assert_eq!(resources.acquired_item_bits[8], 0x04);
+            assert_eq!(resources.collect_item_bits[0], 0x03);
+            assert!(resources.dungeon_map);
+            assert!(!resources.dungeon_compass);
+            assert!(resources.dungeon_boss_key);
+            assert!(!resources.dungeon_warp);
+        }
+    }
+
+    #[test]
+    fn rejects_player_resource_payload_when_channel_is_unavailable() {
+        let shard = mutate_first_v9_episode(|expanded| {
+            let prefix = [
+                1, 0, 20, 0, 16, 0, 123, 0, 88, 2, 176, 4, 107, 3, 32, 17, 1, 0,
+            ];
+            let offset = expanded
+                .windows(prefix.len())
+                .position(|candidate| candidate == prefix)
+                .expect("v9 player-resources header");
+            expanded[offset] = 3;
+        });
+        assert!(
+            NativeEpisodeShard::decode(&shard)
+                .unwrap_err()
+                .to_string()
+                .contains("payload is present for an unavailable channel")
+        );
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -2981,6 +3199,7 @@ mod tests {
                                 | LEARNING_OBSERVATION_SCHEMA_V6
                                 | LEARNING_OBSERVATION_SCHEMA_V7
                                 | LEARNING_OBSERVATION_SCHEMA_V8
+                                | LEARNING_OBSERVATION_SCHEMA_V9
                         ) || [&step.pre_input, &step.post_simulation].iter().all(
                             |observation| {
                                 observation
@@ -3016,6 +3235,7 @@ mod tests {
                 | LEARNING_OBSERVATION_SCHEMA_V6
                 | LEARNING_OBSERVATION_SCHEMA_V7
                 | LEARNING_OBSERVATION_SCHEMA_V8
+                | LEARNING_OBSERVATION_SCHEMA_V9
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode

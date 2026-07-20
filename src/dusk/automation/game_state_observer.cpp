@@ -6,8 +6,8 @@
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
-#include "d/d_s_play.h"
 #include "d/d_s_name.h"
+#include "d/d_s_play.h"
 #include "dusk/automation/file_select_observer.hpp"
 #include "dusk/automation/menu_state_observer.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
@@ -24,7 +24,8 @@ namespace dusk::automation {
 
 TitleMenuObservation MenuStateObserver::captureTitle() {
     const auto* title = static_cast<const daTitle_c*>(fopAcM_SearchByName(fpcNm_TITLE_e));
-    if (title == nullptr) return {};
+    if (title == nullptr)
+        return {};
     return {
         .present = true,
         .procedure = title->mProcID,
@@ -34,9 +35,9 @@ TitleMenuObservation MenuStateObserver::captureTitle() {
 }
 
 NameSceneMenuObservation MenuStateObserver::captureNameScene() {
-    const auto* scene = reinterpret_cast<const dScnName_c*>(
-        fpcM_SearchByName(fpcNm_NAME_SCENE_e));
-    if (scene == nullptr) return {};
+    const auto* scene = reinterpret_cast<const dScnName_c*>(fpcM_SearchByName(fpcNm_NAME_SCENE_e));
+    if (scene == nullptr)
+        return {};
     const dFile_select_c* fileSelect = scene->dFs_c;
     return {
         .present = true,
@@ -89,10 +90,9 @@ int capture_milestone_actor(void* candidate, void* context) {
     auto* storage = static_cast<MilestoneObservationStorage*>(context);
     if (storage->actorObservedCount != std::numeric_limits<std::uint32_t>::max())
         ++storage->actorObservedCount;
-    const std::uint64_t runtimeGeneration =
-        static_cast<std::uint32_t>(fopAcM_GetID(actor));
+    const std::uint64_t runtimeGeneration = static_cast<std::uint32_t>(fopAcM_GetID(actor));
     static_assert(sizeof(actor->attention_info.distances) ==
-        MilestoneObservation::Actor::AttentionDistanceCount);
+                  MilestoneObservation::Actor::AttentionDistanceCount);
     const bool attentionPresent = actor->attention_info.flags != 0;
     const bool eventParticipationPresent =
         actor->eventInfo.mCommand != dEvtCmd_NONE_e ||
@@ -182,14 +182,14 @@ int capture_milestone_actor(void* candidate, void* context) {
 
 std::pair<bool, std::uint32_t> collider_owner(cCcD_Obj* collider) {
     fopAc_ac_c* actor = collider == nullptr ? nullptr : collider->GetAc();
-    return actor == nullptr
-               ? std::pair{false, std::uint32_t{0xffffffff}}
-               : std::pair{true, static_cast<std::uint32_t>(fopAcM_GetID(actor))};
+    return actor == nullptr ? std::pair{false, std::uint32_t{0xffffffff}} :
+                              std::pair{true, static_cast<std::uint32_t>(fopAcM_GetID(actor))};
 }
 
 void capture_dynamic_colliders(MilestoneObservationStorage& storage, const bool gameplayPresent) {
     storage.dynamicColliders.clear();
-    if (!gameplayPresent) return;
+    if (!gameplayPresent)
+        return;
 
     // cCcS::Move retains the processed object pointers and their count in
     // field_0x2812 after clearing the registration counters. Reading that
@@ -197,7 +197,8 @@ void capture_dynamic_colliders(MilestoneObservationStorage& storage, const bool 
     // collision pass without invoking collision code or mutating game state.
     cCcS* collision = dComIfG_Ccsp();
     const std::size_t count = collision->field_0x2812;
-    if (count > std::size(collision->mpObj)) return;
+    if (count > std::size(collision->mpObj))
+        return;
     storage.dynamicColliders.reserve(count);
     for (std::size_t index = 0; index < count; ++index) {
         cCcD_Obj* object = collision->mpObj[index];
@@ -211,23 +212,24 @@ void capture_dynamic_colliders(MilestoneObservationStorage& storage, const bool 
         const bool targetHit = object->ChkTgHit() != 0;
         const bool correctionHit = object->ChkCoHit() != 0;
         const auto [attackHitOwnerPresent, attackHitOwnerRuntimeGeneration] =
-            attackHit ? collider_owner(object->GetAtHitObj())
-                      : std::pair{false, std::uint32_t{0xffffffff}};
+            attackHit ? collider_owner(object->GetAtHitObj()) :
+                        std::pair{false, std::uint32_t{0xffffffff}};
         const auto [targetHitOwnerPresent, targetHitOwnerRuntimeGeneration] =
-            targetHit ? collider_owner(object->GetTgHitObj())
-                      : std::pair{false, std::uint32_t{0xffffffff}};
+            targetHit ? collider_owner(object->GetTgHitObj()) :
+                        std::pair{false, std::uint32_t{0xffffffff}};
         const auto [correctionHitOwnerPresent, correctionHitOwnerRuntimeGeneration] =
-            correctionHit ? collider_owner(object->GetCoHitObj())
-                          : std::pair{false, std::uint32_t{0xffffffff}};
+            correctionHit ? collider_owner(object->GetCoHitObj()) :
+                            std::pair{false, std::uint32_t{0xffffffff}};
         cCcD_Stts* status = object->GetStts();
         cCcD_ShapeAttr* shape = object->GetShapeAttr();
         cCcD_ShapeAttr::Shape shapeAccess{};
-        if (shape != nullptr) shape->getShapeAccess(&shapeAccess);
-        const auto shapeKind = shape == nullptr || shapeAccess._0 == 2
-                                   ? MilestoneObservation::DynamicColliderShape::Unknown
-                               : shapeAccess._0 == 0
-                                   ? MilestoneObservation::DynamicColliderShape::Sphere
-                                   : MilestoneObservation::DynamicColliderShape::Cylinder;
+        if (shape != nullptr)
+            shape->getShapeAccess(&shapeAccess);
+        const auto shapeKind = shape == nullptr || shapeAccess._0 == 2 ?
+                                   MilestoneObservation::DynamicColliderShape::Unknown :
+                               shapeAccess._0 == 0 ?
+                                   MilestoneObservation::DynamicColliderShape::Sphere :
+                                   MilestoneObservation::DynamicColliderShape::Cylinder;
         const cXyz correction = status == nullptr ? cXyz::Zero : *status->GetCCMoveP();
         const cM3dGAab* aabb = shape == nullptr ? nullptr : &shape->GetWorkAab();
         storage.dynamicColliders.push_back({
@@ -298,8 +300,8 @@ ControllerObservation capture_controller_observation(ControllerObservationStorag
         observation.playerY = player->current.pos.y;
         observation.playerZ = player->current.pos.z;
         constexpr float AngleToRadians = 3.14159265358979323846F / 32768.0F;
-        const float yaw = static_cast<float>(static_cast<std::int16_t>(player->current.angle.y)) *
-                          AngleToRadians;
+        const float yaw =
+            static_cast<float>(static_cast<std::int16_t>(player->current.angle.y)) * AngleToRadians;
         if (std::isfinite(yaw)) {
             observation.playerYawPresent = true;
             observation.playerYawRadians = yaw;
@@ -359,10 +361,9 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         }
         return identity;
     };
-    const MilestoneObservation::ActorIdentity talkPartner = actorIdentity(
-        link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link));
-    const fpc_ProcID grabbedId =
-        link == nullptr ? fpcM_ERROR_PROCESS_ID_e : link->getGrabActorID();
+    const MilestoneObservation::ActorIdentity talkPartner =
+        actorIdentity(link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link));
+    const fpc_ProcID grabbedId = link == nullptr ? fpcM_ERROR_PROCESS_ID_e : link->getGrabActorID();
     const MilestoneObservation::ActorIdentity grabbedActor = actorIdentity(
         grabbedId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(grabbedId));
     MilestoneObservation observation{
@@ -396,14 +397,13 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .playerShapeAngleZ =
             static_cast<std::int16_t>(player == nullptr ? 0 : player->shape_angle.z),
         .playerModeFlags = link == nullptr ? 0 : link->mModeFlg,
-        .playerDamageWaitTimer = static_cast<std::int16_t>(
-            link == nullptr ? 0 : link->getDamageWaitTimer()),
-        .playerIceDamageWaitTimer = static_cast<std::int16_t>(
-            link == nullptr ? 0 : link->getIceDamageWaitTimer()),
-        .playerSwordChangeWaitTimer = static_cast<std::uint8_t>(
-            link == nullptr ? 0 : link->getSwordChangeWaitTimer()),
-        .playerDoStatus = static_cast<std::uint8_t>(
-            link == nullptr ? 0 : dComIfGp_getDoStatus()),
+        .playerDamageWaitTimer =
+            static_cast<std::int16_t>(link == nullptr ? 0 : link->getDamageWaitTimer()),
+        .playerIceDamageWaitTimer =
+            static_cast<std::int16_t>(link == nullptr ? 0 : link->getIceDamageWaitTimer()),
+        .playerSwordChangeWaitTimer =
+            static_cast<std::uint8_t>(link == nullptr ? 0 : link->getSwordChangeWaitTimer()),
+        .playerDoStatus = static_cast<std::uint8_t>(link == nullptr ? 0 : dComIfGp_getDoStatus()),
         .talkPartner = talkPartner,
         .grabbedActor = grabbedActor,
         .playerGroundContact = link != nullptr && link->mLinkAcch.ChkGroundHit(),
@@ -412,9 +412,11 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .playerWaterContact = link != nullptr && link->mLinkAcch.ChkWaterHit(),
         .playerWaterIn = link != nullptr && link->mLinkAcch.ChkWaterIn(),
         .playerGroundHeightPresent = link != nullptr &&
-            std::isfinite(link->mLinkAcch.GetGroundH()) && link->mLinkAcch.GetGroundH() != -G_CM3D_F_INF,
+                                     std::isfinite(link->mLinkAcch.GetGroundH()) &&
+                                     link->mLinkAcch.GetGroundH() != -G_CM3D_F_INF,
         .playerRoofHeightPresent = link != nullptr &&
-            std::isfinite(link->mLinkAcch.GetRoofHeight()) && link->mLinkAcch.GetRoofHeight() != G_CM3D_F_INF,
+                                   std::isfinite(link->mLinkAcch.GetRoofHeight()) &&
+                                   link->mLinkAcch.GetRoofHeight() != G_CM3D_F_INF,
         .playerGroundHeight = link == nullptr ? 0.0F : link->mLinkAcch.GetGroundH(),
         .playerRoofHeight = link == nullptr ? 0.0F : link->mLinkAcch.GetRoofHeight(),
         .eventRunning = dComIfGp_event_runCheck() != 0,
@@ -432,8 +434,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .titleLogoSkipReady = titleMenu.logoSkipReady,
         .titleStartReady = titleMenu.startReady,
         .nameEntryActive = nameEntryActive,
-        .nameEntryCharacterSelectReady =
-            nameEntryInputReady && nameEntry.selectionProcedure == 0,
+        .nameEntryCharacterSelectReady = nameEntryInputReady && nameEntry.selectionProcedure == 0,
         .nameEntryInputReady = nameEntryInputReady,
         .nameEntrySelectionProcedure = nameEntry.selectionProcedure,
         .fileSelectNoSaveReady = fileSelect.noSavePromptReady(),
@@ -453,9 +454,63 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .rng = capture_game_rng_snapshot(),
     };
 
+    if (player != nullptr) {
+        auto& resources = observation.playerResources;
+        auto& savedPlayer = g_dComIfG_gameInfo.info.getPlayer();
+        auto& status = savedPlayer.getPlayerStatusA();
+        auto& items = savedPlayer.getItem();
+        auto& collect = savedPlayer.getCollect();
+        resources.maximumLife = status.getMaxLife();
+        resources.life = status.getLife();
+        resources.rupees = status.getRupee();
+        resources.rupeeCapacity = status.getRupeeMax();
+        resources.maximumOil = status.getMaxOil();
+        resources.oil = status.getOil();
+        resources.maximumMagic = status.getMaxMagic();
+        resources.magic = status.getMagic();
+        resources.wallet = status.getWalletSize();
+        resources.transformStatus = status.getTransformStatus();
+        resources.worldTime = dComIfGs_getTime();
+        resources.date = dComIfGs_getDate();
+        resources.arrows = dComIfGs_getArrowNum();
+        resources.arrowCapacity = dComIfGs_getArrowMax();
+        resources.pachinko = dComIfGs_getPachinkoNum();
+        resources.poeSouls = dComIfGs_getPohSpiritNum();
+        resources.smallKeys = dComIfGs_getKeyNum();
+        resources.dungeonMap = dComIfGs_isDungeonItemMap() != 0;
+        resources.dungeonCompass = dComIfGs_isDungeonItemCompass() != 0;
+        resources.dungeonBossKey = dComIfGs_isDungeonItemBossKey() != 0;
+        resources.dungeonWarp = dComIfGs_isDungeonItemWarp() != 0;
+        for (std::size_t index = 0; index < resources.inventory.size(); ++index)
+            resources.inventory[index] = items.getItem(static_cast<int>(index), false);
+        for (std::size_t index = 0; index < resources.selectedItems.size(); ++index) {
+            resources.selectedItems[index] = status.getSelectItemIndex(static_cast<int>(index));
+            resources.mixedItems[index] = status.getMixItemIndex(static_cast<int>(index));
+        }
+        for (std::size_t index = 0; index < resources.equipment.size(); ++index)
+            resources.equipment[index] = status.getSelectEquip(static_cast<int>(index));
+        for (std::size_t index = 0; index < resources.bombCounts.size(); ++index) {
+            resources.bombCounts[index] = dComIfGs_getBombNum(static_cast<std::uint8_t>(index));
+            resources.bombCapacities[index] =
+                dComIfGs_getBombMax(resources.inventory[SLOT_15 + index]);
+        }
+        for (std::size_t index = 0; index < resources.bottleQuantities.size(); ++index)
+            resources.bottleQuantities[index] =
+                dComIfGs_getBottleNum(static_cast<std::uint8_t>(index));
+        for (std::size_t item = 0; item < resources.acquiredItemBits.size() * 8; ++item) {
+            if (dComIfGs_isItemFirstBit(static_cast<std::uint8_t>(item)) != 0)
+                resources.acquiredItemBits[item / 8] |= static_cast<std::uint8_t>(1u << (item % 8));
+        }
+        std::copy(
+            std::begin(collect.mItem), std::end(collect.mItem), resources.collectItemBits.begin());
+        resources.collectedCrystalBits = collect.mCrystal;
+        resources.collectedMirrorBits = collect.mMirror;
+        observation.playerResourcesPresent = true;
+    }
+
     fopAcIt_Executor(capture_milestone_actor, &storage);
-    std::sort(storage.actors.begin(), storage.actors.end(),
-        [](const auto& left, const auto& right) {
+    std::sort(
+        storage.actors.begin(), storage.actors.end(), [](const auto& left, const auto& right) {
             return left.runtimeGeneration < right.runtimeGeneration;
         });
     observation.actors = storage.actors;
@@ -464,8 +519,8 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
 
     capture_dynamic_colliders(storage, player != nullptr);
     observation.dynamicColliders = storage.dynamicColliders;
-    observation.dynamicCollidersPresent = player != nullptr &&
-        storage.dynamicColliders.size() == dComIfG_Ccsp()->field_0x2812;
+    observation.dynamicCollidersPresent =
+        player != nullptr && storage.dynamicColliders.size() == dComIfG_Ccsp()->field_0x2812;
     observation.dynamicCollidersTruncated = false;
 
     for (std::size_t index = 0; index < storage.eventFlags.size(); ++index) {
@@ -487,8 +542,8 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     }
     observation.switchFlagRoom = observation.room;
     for (std::size_t index = 0; index < storage.switchFlags.size(); ++index) {
-        storage.switchFlags[index] = static_cast<std::uint8_t>(
-            dComIfGs_isSwitch(index, observation.switchFlagRoom) != 0);
+        storage.switchFlags[index] =
+            static_cast<std::uint8_t>(dComIfGs_isSwitch(index, observation.switchFlagRoom) != 0);
     }
     observation.eventFlags = storage.eventFlags;
     observation.temporaryFlags = storage.temporaryFlags;
