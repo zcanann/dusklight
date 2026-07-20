@@ -519,6 +519,10 @@ if (MSVC)
     )
 endif ()
 target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
+target_sources(dusklight PRIVATE
+    src/dusk/automation/suffix_batch.cpp
+    src/dusk/automation/suffix_batch_runner.cpp
+)
 if (ENABLE_ASAN)
     target_sources(dusklight PRIVATE src/dusk/asan_options.c)
 endif ()
