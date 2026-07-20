@@ -120,10 +120,16 @@ them is learner work.
   unreadable inventory (`D_MN09`) instead of silently dropping it. The ignored
   retail-data test reproduces `build/stage-survey/boot-catalog.json`; its cases
   remain unverified until the survey below classifies their runtime outcomes.
-- [ ] Build a resumable native survey that boots every catalogued entry, waits
+- [x] Build a resumable native survey that boots every catalogued entry, waits
   for a semantic ready boundary, observes a bounded interval and records boot
   success, timeout, crash, invalid combination, conditional setup or unmet
   prerequisite rather than retrying forever. Do not author a tape per map.
+  `huntctl survey` binds the canonical catalog, executable, disc, empty-card
+  fixture, observer schema, fixed-step settings and policy into a resumable
+  ledger; each case gets bounded isolated attempts and a generic neutral probe.
+  A live observer-enabled run classified `D_MN01/room/0/point/0/layer/-1` as
+  ready after 30 post-readiness ticks, retained all 75 observed actors without
+  truncation, and sealed the exact trace, actor snapshot and state sequence.
 - [ ] For every successful entry, prove that the learner observation contains
   the complete active actor population. Inventory all actor profiles and all
   generally available enemy metadata; enemies are sparse enough that this data

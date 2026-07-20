@@ -12,6 +12,7 @@ pub mod milestone;
 pub mod observation;
 pub mod oracle;
 pub mod search;
+pub mod survey;
 pub mod tape;
 pub mod timeline;
 pub mod trace;
