@@ -1,128 +1,113 @@
-# Route optimization proof
+# Active task: beat the Ordon Springs segment
 
-The immediate job is narrow:
+The only current framework objective is:
 
-> Improve the existing Link-control-to-Ordon-Springs segment faster than a
-> human can improve it frame by frame, then prove the result from cold boot.
+> Starting at first Link control, automatically find a valid input sequence
+> that reaches `ordon_spring_load_committed` faster than the 125-tick
+> incumbent, then replay it deterministically from boot.
 
-This file is an execution queue, not a product wishlist.
+This is a proof task, not the complete glitch-hunting product plan.
 
-## Rules
+## Invariants
 
-- Playback must be deterministic. A mismatch is a framework bug, never a cue
-  to search for a more tolerant tape.
-- Score game ticks only. Startup, rendering, shaders, host I/O, and training
-  time are throughput costs, not route time.
-- Normal playback may read game state and supply controller input; it may not
-  patch gameplay state.
-- Checkpoints accelerate experiments but do not prove a route. Every promoted
-  result must replay as an ordinary input tape from cold boot.
-- Keep per-tick observation and control native. Rust may configure a batch and
-  collect its result, but it must not sit in the frame loop.
-- Do not choose an algorithm by name. Compare methods under the same simulated
-  tick budget and retain the one that produces better candidates.
+- Identical tape plus identical initial state must produce identical per-tick
+  state. Any disagreement is a framework bug; do not hide it by mining a more
+  tolerant tape.
+- Route time is simulated game ticks. Shader compilation, rendering, host I/O,
+  prefix replay, and search time affect throughput but never the score.
+- Ordinary playback supplies controller input and may inspect game state. It
+  does not patch gameplay state.
+- Checkpoint restore is allowed only as an experiment accelerator. A result is
+  proven by an ordinary input-only replay from cold boot.
+- The per-tick experiment loop belongs in native code. Out-of-process tooling
+  may configure a batch and collect results, but it does not drive every frame.
+- Add observations and actions when a concrete experiment requires them. Do
+  not harvest the whole game in advance.
 
-## Done: freeze the benchmark
+## Completed benchmark setup
 
 - [x] Fix the source boundary at first controllable Link input.
-- [x] Fix `ordon_spring_load_committed` as the terminal predicate.
-- [x] Retain the human route and the current 125-tick incumbent.
-- [x] Measure cold-process throughput, prefix cost, process launches, CPU,
-  simulator idle time, and artifact I/O.
-- [x] Report route defects from authenticated per-tick state: excess distance,
-  heading error, collision loss, corner duration, and roll timing.
+- [x] Fix `ordon_spring_load_committed` as the terminal authority.
+- [x] Preserve the human reference and 125-tick incumbent.
+- [x] Measure the existing cold-process experiment cost.
+- [x] Add authenticated route diagnostics for position, heading, collision,
+  action state, and roll timing.
 
-The frozen source fingerprint is `ac7c32788fc3b5c59046386d95b9b5b4`.
-The human reference is `intro/segments/to_ordon_spring_human150.tape`.
-Benchmark details live in `docs/glitch-hunting/throughput.md`.
+Source fingerprint: `ac7c32788fc3b5c59046386d95b9b5b4`
 
-## Next: remove experiment overhead
+Human reference: `intro/segments/to_ordon_spring_human150.tape`
 
-- [ ] Keep one game process alive and replay the prefix once for a batch.
-- [ ] Capture a checkpoint at the source boundary.
-- [ ] Restore every state component that affects subsequent simulation,
-  including game memory, RNG, clocks, controller state, and required host-side
-  engine state.
-- [ ] Prove restore correctness with A/B/A suffix runs and per-tick hashes.
-- [ ] Compare checkpointed suffixes with fresh boot-and-prefix runs.
-- [ ] Stop a worker at its first divergent tick and retain evidence for that
-  divergence.
-- [ ] Keep routine candidates and results in memory; do not create a trace,
-  database, screenshot, or directory per attempt.
-- [ ] Measure full checkpoint copies before building a clever incremental
-  snapshot system.
+Measurements: `docs/glitch-hunting/throughput.md`
 
-**Gate:** one worker completes 1,000 short suffix attempts without relaunching
-or replaying the prefix, with zero checkpoint or cold-run divergence.
+## 1. Prove a reusable source checkpoint
 
-## Then: evaluate decisions inside the game loop
+- [ ] Capture the complete simulation state at the source boundary.
+- [ ] Restore it without relaunching or replaying the boot prefix.
+- [ ] Run A/B/A suffixes and compare every tick, including controller history,
+  RNG/clocks, game memory, and required host-side engine state.
+- [ ] Stop at the first mismatch and identify the state component responsible.
+- [ ] Compare checkpointed suffixes against fresh boot-and-prefix execution.
+- [ ] Measure restore cost before attempting incremental or copy-on-write
+  checkpoints.
 
-- [ ] Add a native episode boundary immediately before controller input is
-  consumed: observe, choose input, advance one tick, score.
-- [ ] Upload one candidate tape or small policy program per attempt or batch;
-  allow no per-frame IPC or filesystem traffic.
-- [ ] Preserve the exact consumed pad state each tick so every candidate can be
-  exported as an ordinary tape.
-- [ ] Surface only the state needed to optimize this segment initially:
-  position, velocity, facing, action/roll state, camera heading, collision
-  correction, transition state, prior input, and RNG/clock identity needed to
-  validate restores.
-- [ ] Support exact raw pad states plus a small set of generic route actions:
-  timed heading, button edge, roll, seek point/opening, and short waypoint or
-  curve sequences.
-- [ ] Keep actions deterministic and composable, with explicit ownership of
-  sticks and buttons when they overlap.
+**Pass condition:** one process executes 1,000 short checkpointed attempts with
+zero A/B/A or cold-run divergence.
 
-Do not encode this route's coordinates, corner frames, or roll spacing into
-the primitives.
+## 2. Run candidates in-process
 
-**Gate:** a raw tape and a policy choosing the same inputs produce the same
-consumed pad states, per-tick hashes, terminal predicate, and realized tape.
+- [ ] Add an episode boundary immediately before controller input is consumed.
+- [ ] Accept a batch of candidate input programs once, then execute and score
+  them without per-frame IPC or filesystem traffic.
+- [ ] Keep routine results in memory: success, first predicate-hit tick, final
+  fingerprint, and compact diagnostics for failures.
+- [ ] Record the exact pad state consumed each tick so any successful attempt
+  can be exported as an ordinary tape.
+- [ ] Initially expose only what this route needs: Link position, velocity,
+  facing/action/roll state, camera heading, collision correction, transition
+  state, prior input, and restore-validation identity.
 
-## Then: prove which search works
+**Pass condition:** replaying an exported candidate consumes the same pad state
+and produces the same state hash and predicate result on every tick.
 
-- [ ] From an identical checkpoint, compare input deletion, local button/frame
-  search, structured action search, and continuous parameter search under an
-  equal candidate-tick budget.
-- [ ] Use terminal success and first-hit tick as authority. Keep shaped progress
-  scores separate and inspectable.
-- [ ] Preserve successful terminal states that differ materially; a faster
-  intermediate result is not automatically the best continuation.
-- [ ] Add replay/value learning only if the measured baselines leave a gap it
-  can plausibly close. Judge it by candidate ordering and route wins, not loss
-  curves or the presence of a DQN label.
-- [ ] Permit bounded lookahead or continuation repair so an early improvement
-  is not rejected solely because the old suffix no longer fits.
+## 3. Establish useful search baselines
 
-**Gate:** one automated method consistently finds better valid candidates than
-manual/local tape mutation for the same simulated tick budget.
+- [ ] Search exact button-edge timing, held-input deletion, stick heading,
+  heading duration, corner timing, and roll timing from the same checkpoint.
+- [ ] Add only the smallest structured actions needed to express those trials;
+  raw per-frame pad input remains authoritative.
+- [ ] Compare methods under the same number of simulated candidate ticks.
+- [ ] Use terminal success and first-hit tick as the objective. Any shaped
+  progress signal is diagnostic and cannot declare a winner.
+- [ ] Preserve materially different successful terminal states instead of
+  assuming the locally fastest state is always the best continuation.
+- [ ] Try a small replay/value learner only after these samples exist, and keep
+  it only if it orders candidates or finds wins better than the measured
+  mutation baselines.
 
-## Finish: promote one real improvement
+**Pass condition:** an automated lane repeatedly finds better valid candidates
+than manual frame-by-frame editing for the same simulation budget.
 
-- [ ] Export the best candidate as an absolute boot-to-terminal tape.
-- [ ] Remove redundant inputs only when exact playback preserves first-hit tick,
-  terminal predicate, and terminal fingerprint.
-- [ ] Exhaust the obvious local neighborhood around its input edges, headings,
-  action durations, corners, and rolls.
-- [ ] Cold replay it five times with identical per-tick hashes and evidence.
-- [ ] Record incumbent and winner ticks, simulated-tick budget, throughput,
-  checkpoint cost, methods compared, and the decisions responsible for the
-  gain.
+## 4. Promote the first win
 
-**Gate:** a cold-replayable tape reaches Ordon Springs multiple ticks earlier
-than the incumbent, with the gain attributable to tested inputs rather than
-nondeterminism.
+- [ ] Export the best candidate into the absolute boot tape.
+- [ ] Exhaust its obvious neighboring input timings and headings.
+- [ ] Replay it from cold boot five times with identical per-tick hashes,
+  first-hit tick, terminal predicate, and terminal fingerprint.
+- [ ] Record the incumbent and winner scores, candidate-tick budget, attempts
+  per second, checkpoint cost, methods compared, and source of the frame gain.
 
-## Explicitly out of scope
+**Done condition:** a deterministic cold-boot tape reaches Ordon Springs at
+least one tick faster than the 125-tick incumbent.
 
-- Blindly reproducing the Skybook glitch catalog.
-- A general-purpose visualization or agent-observation workbench.
-- Harvesting every actor, object, polygon, or metadata field in advance.
-- Building DDQN, Q-learning, or any other named model before the experiment
-  loop and comparison baselines justify it.
-- Save-state sophistication, multi-process orchestration, or distributed
-  training beyond what the route benchmark demonstrates is necessary.
-- Gameplay patches presented as automation, proof, or glitch reproduction.
+## Not current work
 
-Future work earns a place here only when this benchmark exposes a concrete
-missing capability or after this proof is complete.
+- Replicating the Skybook catalog. Individual documented glitches may become
+  later benchmarks when explicitly selected; they are not a blind backlog.
+- A general visualization workbench.
+- A complete actor, object, collision, or map-information API.
+- A named large learning architecture chosen before baseline data exists.
+- Distributed orchestration or elaborate checkpoint machinery without a
+  measured need from this benchmark.
+
+After the proof, the next task is chosen from the bottleneck the experiment
+actually reveals—not from the full eventual wishlist.
