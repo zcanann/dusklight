@@ -102,6 +102,13 @@ This comes before selecting another glitch to reproduce. The purpose is to
 collect and validate information that a learner could use, not for a human or
 scripted controller to perform the documented technique.
 
+**Research boundary:** a catalog entry may contribute observation fields,
+action capabilities, temporal requirements, or a read-only success oracle. It
+must not become an authored setup, attempted reproduction, route, tactic,
+checkpoint, reward corridor, or frame sequence. Researchers stop at specifying
+what information and authority a learner would need; discovering how to use
+them is learner work.
+
 ### 0A. Survey every bootable world entry
 
 - [x] Generate a canonical catalog of stage, room, layer and spawn candidates
@@ -149,8 +156,9 @@ scripted controller to perform the documented technique.
   collision, floor/ceiling behavior, actor displacement, enemy interaction,
   targeting/camera, item and animation concurrency, event/trigger/loading
   state, RNG/timers, actor lifecycle/slots and memory/heap behavior.
-- [ ] Deep-read a representative spread within each mechanism. Do not reproduce
-  the glitches, create setup tapes, or encode their published steps as tactics.
+- [ ] Deep-read a representative spread within each mechanism, stopping once
+  the learner-facing requirements are identified. Do not reproduce the
+  glitches, create setup tapes, or encode their published steps as tactics.
 - [ ] For each studied glitch, ask only what a learner would require:
   - which ordinary controller actions must be expressible;
   - which pre-action state could contain useful signal;
