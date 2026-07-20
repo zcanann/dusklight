@@ -136,7 +136,7 @@ impl ActorProfileCatalog {
                 ));
             }
         }
-        if self.identity != self.compute_identity()? {
+        if self.identity != self.computed_identity()? {
             return Err(ActorProfileCatalogError::invalid(
                 "actor profile catalog identity does not match its contents",
             ));
@@ -155,7 +155,7 @@ impl ActorProfileCatalog {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }
 
-    fn compute_identity(&self) -> Result<String, ActorProfileCatalogError> {
+    pub fn computed_identity(&self) -> Result<String, ActorProfileCatalogError> {
         if self.profiles.len() > u32::MAX as usize {
             return Err(ActorProfileCatalogError::invalid(
                 "actor profile count overflowed",
@@ -220,7 +220,7 @@ mod tests {
                 cull_type: Some(4),
             }],
         };
-        catalog.identity = catalog.compute_identity().unwrap();
+        catalog.identity = catalog.computed_identity().unwrap();
         catalog
     }
 
@@ -256,7 +256,7 @@ mod tests {
         catalog.profiles[0].status = None;
         catalog.profiles[0].group = None;
         catalog.profiles[0].cull_type = None;
-        catalog.identity = catalog.compute_identity().unwrap();
+        catalog.identity = catalog.computed_identity().unwrap();
         catalog.validate().unwrap();
     }
 }

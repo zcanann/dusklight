@@ -4,6 +4,7 @@ use super::MAX_LEARN_INPUT_CORPORA;
 use crate::cli;
 use crate::{option, repeated_option, required_path, u64_option, usage_error, usize_option};
 use huntctl::Digest;
+use huntctl::actor_profile_catalog::ActorProfileCatalog;
 use huntctl::calibration::calibrate_fitted_q;
 use huntctl::content_store::{ContentKind, ContentStore};
 use huntctl::dataset::{
@@ -21,6 +22,7 @@ use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
 };
+use huntctl::native_actor_view::NativeEpisodeActorView;
 use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
 use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
@@ -653,6 +655,57 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "room_unavailable": room_unavailable,
                     "probes": view.observations.iter()
                         .map(|observation| observation.probes.len()).sum::<usize>(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("actor-view") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let catalog_path = required_path(learn_args, "--actor-profile-catalog")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("actor view output already exists: {}", output.display()).into(),
+                );
+            }
+            let shard = NativeEpisodeShard::read(&input)?;
+            let catalog = ActorProfileCatalog::read_canonical(&catalog_path)?;
+            let view = NativeEpisodeActorView::build(&shard, &catalog)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeActorView)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "actor_profile_catalog_identity": view.actor_profile_catalog_identity,
+                    "actor_profile_catalog_sha256": view.actor_profile_catalog_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "observations": view.observations.len(),
+                    "actor_nodes": view.observations.iter()
+                        .map(|observation| observation.actors.len()).sum::<usize>(),
+                    "camera_frames": view.observations.iter()
+                        .filter(|observation| observation.camera_frame_present).count(),
+                    "player_frames": view.observations.iter()
+                        .filter(|observation| observation.player_present).count(),
+                    "parent_relations": view.observations.iter()
+                        .flat_map(|observation| &observation.actors)
+                        .filter(|actor| actor.parent_relative_position.is_some()).count(),
                 }))?
             );
             Ok(())

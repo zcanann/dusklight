@@ -333,6 +333,28 @@ The model representation rotates closest-point offsets, surface normals, and
 actor headings into Link-relative coordinates; changing those semantics bumped
 the fixed representation contract to v2.
 
+Derive a complete actor-relation sidecar from the same authenticated shard and
+the executable's exact profile catalog:
+
+```console
+huntctl learn actor-view --input attempts.episodes.dseps \
+  --actor-profile-catalog build/world/actor-profiles.json \
+  --output build/world/attempts.actors.json \
+  --artifact-store build/world/content
+```
+
+The source shard remains authoritative for raw dynamic actor state. The sealed
+sidecar references that shard and profile-catalog content, preserves every
+actor and all ambiguous profile-slot matches, and derives Link-local,
+camera-local, and resolvable parent-relative transforms with explicit
+missingness. It rejects legacy/unbound shards, the wrong profile catalog,
+noncanonical bytes, missing profiles, nonfinite relations, and actor-order or
+seal tampering. A live mixed-outcome Ordon shard yielded 24,335 actor nodes over
+512 observations, 512 camera frames, and 2,560 parent relations in view
+`dcb396bb...fae3a` (content `11aad6d5...6c52`). This does not claim that
+actor-class-specific private components are available; those require explicit
+read-only adapters and their own masks.
+
 ## Content-addressed corpus
 
 Initialize and populate an append-only local corpus with:

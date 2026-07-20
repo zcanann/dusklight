@@ -133,8 +133,17 @@ the same goal without demonstration-relative features.
   - [x] active gameplay actors as a complete, deterministically ordered
     variable-length set with raw semantic identity fields, transform, velocity
     and type/profile metadata;
-  - [ ] derive Link-/camera-/goal-relative actor features and expose available
-    typed actor components without changing the canonical raw actor set;
+  - [x] derive Link-, camera-, and structural parent-relative actor features
+    without changing the canonical raw actor set. `learn actor-view` binds the
+    exact native shard and pointer-free profile catalog, retains complete actor
+    identity/profile joins, and derives explicit-missing absolute-to-relative
+    transforms offline. The live mixed-outcome Ordon shard produced 24,335
+    actor nodes across all 512 observations, with 512 valid camera frames and
+    2,560 resolvable parent relations, in sealed view
+    `dcb396bb...fae3a` / content blob `11aad6d5...6c52`;
+  - [ ] expose available typed actor components and goal-relative actor
+    features without adding gameplay writes or making optional components look
+    universally present;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
 - [x] Store immutable map geometry, placements, and type metadata once per
