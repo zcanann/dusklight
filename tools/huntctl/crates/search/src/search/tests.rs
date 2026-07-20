@@ -300,6 +300,52 @@ fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
 }
 
 #[test]
+fn coordinated_timing_edits_shift_complete_a_pulses_and_enumerate_deletions() {
+    let disconnected = RawPadState {
+        connected: false,
+        error: -1,
+        ..RawPadState::default()
+    };
+    let tape = InputTape {
+        frames: (0..8)
+            .map(|index| {
+                let mut frame = InputFrame {
+                    owned_ports: 1,
+                    pads: [disconnected; 4],
+                    ..InputFrame::default()
+                };
+                frame.pads[0] = RawPadState::default();
+                frame.pads[0].stick_y = 127;
+                if (2..4).contains(&index) {
+                    frame.pads[0].buttons = BUTTON_A;
+                }
+                frame
+            })
+            .collect(),
+        ..InputTape::default()
+    };
+    let candidate = Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+    let edits = coordinated_imported_timing_edits(&candidate, 3).unwrap();
+    let earlier = edits
+        .iter()
+        .find(|edit| edit.ancestry.mutation.as_deref() == Some("pad_shift_a_pulse[2..4]_earlier"))
+        .unwrap();
+    let shifted = earlier.compile().unwrap();
+    assert_eq!(shifted.frames[1].pads[0].buttons & BUTTON_A, BUTTON_A);
+    assert_eq!(shifted.frames[2].pads[0].buttons & BUTTON_A, BUTTON_A);
+    assert_eq!(shifted.frames[3].pads[0].buttons & BUTTON_A, 0);
+    assert_eq!(earlier.ancestry.generation, 3);
+    assert!(edits.iter().any(|edit| {
+        edit.frame_count() == 7
+            && edit
+                .ancestry
+                .mutation
+                .as_deref()
+                .is_some_and(|mutation| mutation.starts_with("pad_delete_frame["))
+    }));
+}
+
+#[test]
 fn boot_mutation_directly_targets_press_gaps() {
     let parent = Candidate::baseline(SegmentProfile::BootToFsp103);
     let mut rng = SplitMix64::new(0x5eed);

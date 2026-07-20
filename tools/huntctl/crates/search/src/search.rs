@@ -1169,6 +1169,16 @@ pub fn evolve_population_with_retained_and_proposals(
             next.push(proposal.clone());
         }
     }
+    if next.len() < config.population_size {
+        for candidate in coordinated_imported_timing_edits(&elites[0], generation)? {
+            if next.len() >= config.population_size {
+                break;
+            }
+            if ids.insert(candidate.id()?) {
+                next.push(candidate);
+            }
+        }
+    }
     let mut rng = SplitMix64::new(config.rng_seed);
     let mut attempts = 0;
     while next.len() < config.population_size {
@@ -1183,6 +1193,119 @@ pub fn evolve_population_with_retained_and_proposals(
         }
     }
     write_population(output, source.segment, generation, config.rng_seed, next)
+}
+
+/// Enumerate coherent local timing edits from the current champion before
+/// spending the remaining population on random mutations. These edits are
+/// deliberately represented as ordinary candidates: their authenticated
+/// outcomes become training data for the learned proposer on the next
+/// generation.
+fn coordinated_imported_timing_edits(
+    parent: &Candidate,
+    generation: u32,
+) -> Result<Vec<Candidate>, SearchError> {
+    if !parent
+        .actions
+        .iter()
+        .any(|action| matches!(action, MacroAction::PadRun { .. }))
+    {
+        return Ok(Vec::new());
+    }
+    let parent_id = parent.id()?;
+    let parent_tape = parent.compile()?;
+    let mut edits = Vec::new();
+    let mut pulses = Vec::new();
+    let mut frame = 0;
+    while frame < parent_tape.frames.len() {
+        if parent_tape.frames[frame].pads[0].buttons & BUTTON_A == 0 {
+            frame += 1;
+            continue;
+        }
+        let start = frame;
+        while frame < parent_tape.frames.len()
+            && parent_tape.frames[frame].pads[0].buttons & BUTTON_A != 0
+        {
+            frame += 1;
+        }
+        pulses.push((start, frame));
+    }
+    if !pulses.is_empty() {
+        let rotation = generation as usize % pulses.len();
+        pulses.rotate_left(rotation);
+    }
+    for (start, end) in pulses {
+        for delta in [-1_isize, 1] {
+            let shifted_start = start as isize + delta;
+            let shifted_end = end as isize + delta;
+            if shifted_start < 0 || shifted_end > parent_tape.frames.len() as isize {
+                continue;
+            }
+            let shifted_start = shifted_start as usize;
+            let shifted_end = shifted_end as usize;
+            let mut tape = parent_tape.clone();
+            for input in &mut tape.frames[start..end] {
+                input.pads[0].buttons &= !BUTTON_A;
+            }
+            for input in &mut tape.frames[shifted_start..shifted_end] {
+                input.pads[0].buttons |= BUTTON_A;
+            }
+            let direction = if delta < 0 { "earlier" } else { "later" };
+            edits.push(candidate_from_imported_tape_edit(
+                parent,
+                &parent_id,
+                &parent_tape,
+                tape,
+                generation,
+                format!("pad_shift_a_pulse[{start}..{end}]_{direction}"),
+            )?);
+        }
+    }
+
+    let mut deletion_frames = (0..parent_tape.frames.len()).collect::<Vec<_>>();
+    if !deletion_frames.is_empty() {
+        let rotation = (generation as usize * 17) % deletion_frames.len();
+        deletion_frames.rotate_left(rotation);
+    }
+    deletion_frames.sort_by_key(|index| {
+        let redundant = *index > 0 && parent_tape.frames[*index] == parent_tape.frames[*index - 1];
+        !redundant
+    });
+    for frame in deletion_frames {
+        if parent_tape.frames.len() <= 1 {
+            break;
+        }
+        let mut tape = parent_tape.clone();
+        tape.frames.remove(frame);
+        edits.push(candidate_from_imported_tape_edit(
+            parent,
+            &parent_id,
+            &parent_tape,
+            tape,
+            generation,
+            format!("pad_delete_frame[{frame}]"),
+        )?);
+    }
+    Ok(edits)
+}
+
+fn candidate_from_imported_tape_edit(
+    parent: &Candidate,
+    parent_id: &str,
+    parent_tape: &InputTape,
+    tape: InputTape,
+    generation: u32,
+    description: String,
+) -> Result<Candidate, SearchError> {
+    let mut child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+    let child_tape = child.compile()?;
+    child.ancestry = Ancestry {
+        generation,
+        parent_id: Some(parent_id.to_owned()),
+        mutation: Some(description),
+        intervention: intervention_range(parent_tape, &child_tape),
+    };
+    child.validate()?;
+    Ok(child)
 }
 
 fn validate_pair(
@@ -1575,8 +1698,7 @@ fn mutate(
                 }
             }
             child = Candidate::from_absolute_tape(parent.segment, &tape)?;
-            description =
-                format!("pad_roll_cadence[period={period},phase={phase},hold={hold}]");
+            description = format!("pad_roll_cadence[period={period},phase={phase},hold={hold}]");
         }
         12 if imported && parent_tape.frames.len() > 1 => {
             let mut tape = parent_tape.clone();
@@ -1587,29 +1709,51 @@ fn mutate(
         }
         13 if imported => {
             let mut tape = parent_tape.clone();
-            let rising_edges = (1..tape.frames.len())
+            let rising_edges = (0..tape.frames.len())
                 .filter(|frame| {
                     tape.frames[*frame].pads[0].buttons & BUTTON_A != 0
-                        && tape.frames[*frame - 1].pads[0].buttons & BUTTON_A == 0
+                        && (*frame == 0 || tape.frames[*frame - 1].pads[0].buttons & BUTTON_A == 0)
                 })
                 .collect::<Vec<_>>();
             if rising_edges.is_empty() {
-                return mutate(parent, generation, rng);
-            }
-            let source = rising_edges[rng.usize(rising_edges.len())];
-            let earlier = rng.usize(2) == 0;
-            let target = if earlier {
-                source.saturating_sub(1)
+                let frame = rng.usize(tape.frames.len());
+                tape.frames[frame].pads[0].buttons ^= BUTTON_A;
+                child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+                description = format!("pad_toggle_a[{frame}]");
             } else {
-                (source + 1).min(tape.frames.len() - 1)
-            };
-            if target == source {
-                return mutate(parent, generation, rng);
+                let source = rising_edges[rng.usize(rising_edges.len())];
+                let end = (source..tape.frames.len())
+                    .find(|frame| tape.frames[*frame].pads[0].buttons & BUTTON_A == 0)
+                    .unwrap_or(tape.frames.len());
+                if source == 0 && end == tape.frames.len() {
+                    let frame = rng.usize(tape.frames.len());
+                    tape.frames[frame].pads[0].buttons &= !BUTTON_A;
+                    child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+                    description = format!("pad_toggle_a[{frame}]");
+                } else {
+                    let earlier = if source == 0 {
+                        false
+                    } else if end == tape.frames.len() {
+                        true
+                    } else {
+                        rng.usize(2) == 0
+                    };
+                    let (target, target_end) = if earlier {
+                        (source - 1, end - 1)
+                    } else {
+                        (source + 1, end + 1)
+                    };
+                    for input in &mut tape.frames[source..end] {
+                        input.pads[0].buttons &= !BUTTON_A;
+                    }
+                    for input in &mut tape.frames[target..target_end] {
+                        input.pads[0].buttons |= BUTTON_A;
+                    }
+                    child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+                    description =
+                        format!("pad_shift_a_pulse[{source}..{end}->{target}..{target_end}]");
+                }
             }
-            tape.frames[source].pads[0].buttons &= !BUTTON_A;
-            tape.frames[target].pads[0].buttons |= BUTTON_A;
-            child = Candidate::from_absolute_tape(parent.segment, &tape)?;
-            description = format!("pad_shift_a[{source}->{target}]");
         }
         _ => {
             let neutral: Vec<_> = child

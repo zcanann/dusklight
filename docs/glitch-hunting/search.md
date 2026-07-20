@@ -18,6 +18,15 @@ cannot declare success. The longer horizon is what lets the learner replace a
 noisy series of one-frame steering corrections with a coherent straight or
 turn instead of requiring dozens of independently lucky mutations.
 
+Imported TAS suffixes also receive a bounded deterministic timing lane before
+random mutation. It shifts each complete GameCube A pulse one frame earlier or
+later, preserving the full hold duration, and enumerates exact single-frame
+deletions with duplicate input frames first. These candidates have no special
+scoring authority: they replay through the same repeated native predicate
+evaluator, and their success, near-miss, or failure transitions feed the next
+fitted-Q generation. This gives the learner dense evidence about roll phase and
+removable timing without teaching it a hard-coded route.
+
 Observation consumers resolve current movement-state features by their stable
 semantic names. Behavior archive cells, Q coverage, procedures, positions,
 and window phase must never use numeric offsets copied from an older feature
