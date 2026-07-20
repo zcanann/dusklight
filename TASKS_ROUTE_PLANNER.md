@@ -218,6 +218,27 @@ The solver can work backward from the consumer's raw bit predicate to every know
 producer, including Coro, Auru, Yeta, Ooccoo, and hypothetical interruption
 routes, while preserving their distinct spatial and timing requirements.
 
+### 2.11 Exact content and language-dependent routes
+
+Given a recognized disc/data extraction, the planner resolves an exact content
+identity from metadata and digests rather than trusting a user-entered label such
+as `PAL`. The selected message language and other mutable configuration remain
+part of the execution environment because one disc can contain several resource
+variants and a route may be able to change the active selection.
+
+Generated facts for that identity can be cached and distributed as a derived fact
+pack where licensing permits, so ordinary planner users do not necessarily need
+an `orig/` directory. Supplying `orig/` is an opt-in path for reproducible
+extraction, verification, unsupported revisions, and new research.
+
+A comparison of PAL language variants should expose the commonly reported French
+cannon-payment divergence through the extracted message-flow graphs and their
+actual reads, writes, and branches. If the French flow reaches the launch path
+without the ordinary 300-rupee guard or debit, the solver derives that cheaper
+route; it does not consume a hand-authored `french_cannon_skip` Boolean. Any
+timing, positioning, or interruption requirement that data alone cannot prove is
+still an explicit obstruction or unknown obligation.
+
 ---
 
 ## 3. Core semantic laws
@@ -287,13 +308,14 @@ A fact can be extracted from a build, observed in a trace, reported by a route
 pack, or proposed in a what-if overlay. Its truth status and provenance must be
 visible and queryable.
 
-### 3.9 Exact builds are the primitive
+### 3.9 Exact content identities are the primitive
 
-Rules target concrete platform/region/revision builds. Friendly groups such as
-`GCN`, `Wii`, or `HD` expand to exact builds. Shared Auru item-state mechanics may
-apply broadly while the long-range activation setup remains HD-specific; version
-scope belongs on each fact, obstruction, and resolver rather than only on the
-friendly trick name.
+Rules target concrete platform/region/revision content identities plus any
+relevant runtime configuration predicate. Friendly groups such as `GCN`, `Wii`,
+or `HD` expand to exact identities; language is selected independently where the
+content permits it. Shared Auru item-state mechanics may apply broadly while the
+long-range activation setup remains HD-specific. Context scope belongs on each
+fact, obstruction, and resolver rather than only on the friendly trick name.
 
 ### 3.10 Collapse preserves proofs; it does not merge states
 
@@ -331,6 +353,18 @@ control are modeled at the granularity needed by a technique. Normal flow and an
 interrupted flow are alternative ordered transitions with different resulting
 stores. A verified microtrace may summarize frame-level behavior, but it must
 declare its exact pre-state, timing obligation, preserved state, and post-state.
+
+### 3.15 Universality must be demonstrated
+
+Raw offsets, actor parameters, map records, message node IDs, and flow graphs are
+facts about exact content, not universal truths. Stable semantic names may bind
+to different raw representations in different builds or selected languages.
+
+A rule can be promoted to a shared build group only after equivalence is
+established across a declared set of exact identities. Observing one build leaves
+the others unsupported, not implicitly equal. Implementations may store common
+bases plus regional, revision, and language deltas, but queries always resolve a
+complete exact context before search.
 
 ---
 
@@ -383,6 +417,13 @@ The current code shows:
 - Message-flow event `010` writes parameterized temporary flags and event `011`
   clears them. Event cleanup clears the shared message-progress subset on only
   particular completion paths, while NPC actors may also clear individual bits.
+- The decompilation enumerates platform/region/revision builds separately, while
+  runtime disc detection currently recognizes `GZ2E` and `GZ2P`; a friendly disc
+  code alone therefore does not establish every revision or extracted-data fact.
+- Existing world-context generation already requires a game-data SHA-256, giving
+  the planner a content-addressed foundation for reproducible derived facts.
+- PAL code paths also read the selected PAL language at runtime. Region and
+  language must therefore be separate axes even when many rules are shared.
 - Auru's actor separates proximity behavior, a pending presentation actor ID,
   normal memo creation, and generic `DEFAULT_GETITEM` execution. These are
   distinct state sites and ordered actions.
@@ -403,6 +444,11 @@ Primary source anchors:
 - `src/d/d_msg_flow.cpp`: message nodes that write and clear temporary flags.
 - `src/d/actor/d_a_npc_rafrel.cpp`: Auru proximity, talk, message-flow, pending
   presentation actor, and get-item handoff.
+- `include/global.h`, `include/dusk/version.hpp`, and `src/dusk/version.cpp`:
+  compile-time build catalogue and current runtime disc detection.
+- `tools/huntctl/src/cli/world.rs`: content-addressed world-context construction.
+- `src/d/d_file_sel_info.cpp`: an example of PAL behavior depending on selected
+  language in addition to region.
 
 This evidence establishes the generic storage and write-gate mechanics. The exact
 player-facing exploit sequence, duration, version support, and Ooccoo setup still
@@ -428,6 +474,11 @@ Before claiming completeness, inventory:
   as an executable HD build supplied by this repository.
 - Message-flow asset format, node graph, branch predicates, temporary-bit
   writes/clears, terminal cleanup, and actor-specific flow selection.
+- Exact disc/executable/resource digests, available language bundles, language
+  selection lifetime, and semantic equivalence across supported revisions.
+- The PAL French cannon-payment flow versus other PAL language flows: exact graph
+  divergence, rupee guard/debit behavior, entry conditions, and whether any
+  remaining exploit-specific obligation exists.
 - Known dialogue interruption windows, input/control constraints, and which
   cleanup operations each interruption avoids.
 - Goron Mines entrance actor placements, invisible-wall/elevator/NPC control
@@ -457,13 +508,56 @@ Keep five artifacts separate:
 
 Route books consume the knowledge base but do not define reachability truth.
 
+#### 5.1.1 Content identity and generated fact packs
+
+Separate immutable input identity from mutable runtime selection:
+
+```text
+ContentIdentity
+  platform / region / revision
+  disc and executable identifiers
+  executable digest
+  game-data/resource-manifest digest
+
+FactPackIdentity
+  content identity
+  extractor and schema versions
+  output digest
+  coverage manifest
+
+ExecutionContext
+  content identity
+  selected language and configuration
+  active runtime state
+```
+
+Detection reads disc metadata and hashes the relevant inputs. A user-supplied
+version name is a selection hint that must agree with those observations, not an
+authority that overrides them. An unknown digest either requires a local
+extraction/audit or remains unsupported; it must never silently inherit a nearby
+build's facts.
+
+The extractor consumes user-provided `orig/` data and emits deterministic,
+content-addressed derived facts. The planner can consume those generated packs
+without access to the original game assets when the pack's contents may be
+redistributed. Packs record provenance down to the source artifact where
+practical, distinguish unavailable extraction coverage from false facts, and can
+be compared structurally across builds and languages. Original assets remain
+outside the pack and repository.
+
+The system may compact storage as `common base + exact deltas`, but this is an
+implementation detail. A solver query sees one fully resolved context. A
+portable-route query uses only semantic rules proven equivalent across its
+declared contexts and validates the resulting plan independently in every one;
+it is not a union of convenient rules.
+
 ### 5.2 Execution environment
 
 A search node is an execution environment, not merely a set of progression flags:
 
 ```text
 ExecutionEnvironment
-  build
+  content identity and selected language/configuration
   active runtime file
   persistent slot set
   current scene / room / layer / spawn
@@ -575,7 +669,8 @@ binding: Stage(ForestTemple)
 Friendly facts are views:
 
 ```text
-interpret(build, component_kind, binding, offset, mask) -> FriendlyFact
+interpret(content_identity, runtime_config, component_kind, binding, offset, mask)
+  -> FriendlyFact
 ```
 
 After a hypothetical rebind:
@@ -589,7 +684,9 @@ Forest Temple aliases cease to be the active interpretation and Temple of Time
 aliases become active. Raw offsets remain inspectable, including unknown bits.
 
 Bindings may be stage-, room-, zone-, dungeon-, runtime-file-, or actor-contextual.
-Aliases must be exact-build aware and may be incomplete or contested.
+Aliases must be exact-content and language aware and may be incomplete or
+contested. Language selection is modeled as state when the game can change it,
+not frozen permanently into the build label.
 
 ### 5.5 Component transformations and state splices
 
@@ -716,9 +813,9 @@ Derived facts are rules over ground facts:
 - `save_location_write_suppressed`
 - `ordinary_ordon_rod_quest_reachable`
 
-The fact catalogue maps raw locations to friendly names, descriptions, build
-scope, confidence, and citations. Unknown raw bits remain addressable. Friendly
-names never replace raw identity in saved data or proofs.
+The fact catalogue maps raw locations to friendly names, descriptions, exact
+content/runtime scope, confidence, and citations. Unknown raw bits remain
+addressable. Friendly names never replace raw identity in saved data or proofs.
 
 ### 5.9 Transition pipeline
 
@@ -824,7 +921,7 @@ InteractionObligation
   player-control and form predicate
   current actor/cutscene/message phase
   temporal window where applicable
-  exact build/layer
+  exact content/configuration/layer scope
 ```
 
 The authoring system may initially encode a qualitative relation such as “no
@@ -908,7 +1005,7 @@ A technique is a transition provider:
 ```text
 Technique
   id and friendly name
-  exact build scope
+  exact content/configuration scope
   input state predicate
   spatial setup / approach
   component operations
@@ -972,7 +1069,8 @@ The state graph is an AND/OR graph:
 
 Search operates over concrete-enough environment states, with:
 
-- Exact build and enabled packs in the cache key.
+- Exact content identity, runtime configuration, and enabled packs in the cache
+  key.
 - Component payload/binding/provenance where relevant.
 - Dominance checks that preserve continuation-relevant differences.
 - Cycle detection across save/load, void, title, and cross-file operations.
@@ -1056,8 +1154,8 @@ Apply data in a deterministic stack:
 5. Route-local overrides.
 6. Ephemeral what-if overlay.
 
-Every refinement has an ID, exact build scope, author/source, version, confidence,
-and replacement/conflict policy.
+Every refinement has an ID, exact content/configuration scope, author/source,
+version, confidence, and replacement/conflict policy.
 
 Supported hypothesis operations:
 
@@ -1100,13 +1198,24 @@ At every selected node show:
 - Component provenance and active hypotheses.
 - Diff from the previous node.
 
+#### Build and language inspector
+
+- Show detected platform, region, revision, disc/executable/data digests, selected
+  language, fact-pack digest, extractor version, and extraction coverage.
+- Compare two resolved contexts by semantic rule while retaining their distinct
+  raw bindings, message graphs, actors, geometry, and unknowns.
+- Warn when a route or refinement uses a fact observed on only one build through
+  an over-broad selector.
+- Offer exact-context, proven-portable multi-context, and explicit theorycraft
+  query modes; never silently fall back to a neighboring build.
+
 #### Requirement/obstruction inspector
 
 - Friendly explanation.
 - Raw predicate.
 - Producers or resolvers.
 - Why each alternative is currently unavailable.
-- Evidence and build scope.
+- Evidence and exact context scope.
 
 #### Theorycraft editor
 
@@ -1125,7 +1234,7 @@ At every selected node show:
 4. Collapse uninteresting regions.
 5. Expand unusual proofs and inspect state diffs.
 6. Add a route annotation or create a refinement if mechanics data is missing.
-7. Validate build scope, evidence, and regressions.
+7. Validate exact context scope, evidence, and regressions.
 
 ### 5.19 Automation and human refinement boundary
 
@@ -1165,7 +1274,13 @@ evidenced overlays over the generated base rather than silent edits to it.
 
 ### Phase 0 — Evidence inventory and terminology
 
-- [ ] Catalogue exact supported builds and stable build IDs.
+- [ ] Catalogue exact supported builds, revisions, disc/executable/resource
+      digests, available language bundles, and stable content IDs.
+- [ ] Audit how language/configuration is selected, persisted, changed, and used
+      to select message or other resource variants.
+- [ ] Define the supported-input policy: pre-generated known fact packs for normal
+      use, optional `orig/` extraction for verification/new inputs, and explicit
+      unsupported behavior for unknown identities.
 - [ ] Inventory extracted world-data schemas and their missing fields.
 - [ ] Catalogue all save/runtime components and reset boundaries.
 - [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
@@ -1190,7 +1305,10 @@ Deliverable: an evidence index and a list of explicit unknowns.
 
 ### Phase 1 — Typed semantic IR
 
-- [ ] Define exact build selectors and groups.
+- [ ] Define exact content identities, mutable runtime locale/configuration,
+      selectors, groups, and proven-equivalence sets.
+- [ ] Define deterministic fact-pack manifests with input, executable, resource,
+      extractor, schema, coverage, and output digests.
 - [ ] Define execution environment, runtime-file identity, backing attachment,
       and serialization policy independently.
 - [ ] Define typed components, bindings, lifetimes, and serialization owners.
@@ -1207,6 +1325,8 @@ Deliverable: an evidence index and a list of explicit unknowns.
 - [ ] Define interaction obligations over required/excluded volumes and poses.
 - [ ] Define goals, path constraints, costs, and evidence status.
 - [ ] Define refinement pack manifests, conflicts, and deterministic precedence.
+- [ ] Prevent a raw binding or fact observed for one exact context from becoming
+      universal without an explicit, evidenced equivalence declaration.
 - [ ] Add strict schema validation and stable IDs.
 
 Deliverable: one validated runtime representation independent of authoring format.
@@ -1229,13 +1349,21 @@ Deliverable: replayable state evidence that can validate transition rules.
 
 ### Phase 3 — Base mechanisms and upper-bound graph
 
+- [ ] Build the deterministic `orig/` extraction pipeline and cache/reuse its
+      content-addressed derived fact packs without requiring original assets at
+      planner runtime.
+- [ ] Auto-detect and verify supported inputs; reject label/digest disagreement
+      and represent unknown inputs as unsupported rather than guessing.
 - [ ] Import maps, rooms, layers, spawns, SCLS, placements, and actor transitions.
 - [ ] Model ordinary item/NPC/event producers.
 - [ ] Implement normal bank commit/load and binding changes.
 - [ ] Derive bound small-key counts and dungeon items from per-stage memory.
 - [ ] Import hard door/actor guards and their state operations where decidable.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
-      predicates, normal cleanup, and item/event handoffs where decidable.
+      predicates, normal cleanup, and item/event handoffs from the selected
+      language resources where decidable.
+- [ ] Produce semantic/raw build and language diffs, with explicit unknown or
+      uncovered fields rather than assumed equivalence.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle.
 - [ ] Implement save/load/title/runtime-file operations.
@@ -1296,7 +1424,9 @@ Deliverable: researchers can extend the model without editing core code.
 - [ ] Combine it with forward stateful feasibility from the start.
 - [ ] Support OR producers, AND requirements, and ordered writer/gate/read setups.
 - [ ] Implement state hashing, dominance, cycles, and continuation-safe merging.
-- [ ] Support exact build, evidence, technique, runtime-file, and path constraints.
+- [ ] Support exact content/language, evidence, technique, runtime-file, and path
+      constraints; validate portable plans independently over every selected
+      context using only appropriately scoped/equivalent rules.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [ ] Return reachable, unreachable-under-model, or unknown.
 - [ ] Report minimal missing obligations/assumptions where practical.
@@ -1325,7 +1455,10 @@ Deliverable: every route and failure is inspectable rather than magical.
 - [ ] Add raw flag catalogue search and friendly aliases.
 - [ ] Add obstruction and requirement inspectors.
 - [ ] Add theorycraft component-transfer and bypass editor.
-- [ ] Show active packs, overlays, exact build, confidence, and route costs.
+- [ ] Show active packs, overlays, exact content identity, mutable language/config,
+      provenance, coverage, confidence, and route costs.
+- [ ] Add semantic build/language comparison and prevent silent closest-build
+      fallback.
 - [ ] Keep route annotation separate from mechanics refinement.
 
 Deliverable: one UI suitable for both simple routes and deep research.
@@ -1516,12 +1649,31 @@ Deliverable: route confidence is mechanically explainable.
 - [ ] Preserve promising unexplained results as reproducible research cases rather
       than automatically suppressing them.
 
+#### 11N. Build/language fact-pack comparison
+
+- [ ] Generate, serialize, reload, and deterministically reproduce fact packs for
+      at least two exact content identities from verified `orig/` inputs.
+- [ ] Generate separate resolved contexts for PAL English and PAL French resources
+      without pretending they are different discs or universally equivalent.
+- [ ] Audit the cannon-payment message flows and express any route divergence as
+      graph guards/writes/effects plus remaining feasibility obligations, not a
+      named version-skip Boolean.
+- [ ] Verify an exact PAL French query can use only its evidenced divergence, an
+      exact PAL English query cannot inherit it, and a portable multi-context
+      query excludes it or supplies a distinct valid witness for every context.
+- [ ] Remove the source `orig/` inputs and verify the planner can reproduce the
+      same queries from the derived packs and their recorded provenance.
+- [ ] Perturb an input digest, fact-pack schema version, and extractor version in
+      fixtures; each mismatch must invalidate or migrate explicitly rather than
+      reuse stale facts.
+
 ---
 
 ## 7. Regression and acceptance matrix
 
-Every fixture specifies exact build, start environment, active packs, query,
-expected classification, and key proof facts.
+Every fixture specifies exact content identity, selected language/configuration,
+start environment, active packs, query, expected classification, and key proof
+facts.
 
 | Fixture | Required assertion |
 | --- | --- |
@@ -1563,7 +1715,11 @@ expected classification, and key proof facts.
 | Suspicious early state | Implausible reachability produces a reproducible proof and triage classification. |
 | Overlay isolation | Disabling an overlay restores identical base results. |
 | Unknown geometry | Query returns unknown, not impossible or reachable. |
-| Exact build scope | Unsupported techniques never appear through group leakage. |
+| Exact context scope | Unsupported techniques and language-specific facts never appear through group leakage. |
+| Verified fact-pack identity | User labels cannot override input digests; unknown or stale packs do not silently load. |
+| PAL language split | French-only message-flow behavior does not leak into English or proven-portable queries. |
+| Derived-pack replay | Exact queries reproduce without `orig/` once the matching generated pack exists. |
+| Cross-context semantic binding | Friendly facts compare across contexts while retaining exact raw bindings and provenance. |
 
 Also require:
 
@@ -1574,6 +1730,7 @@ Also require:
 - Property tests that no undeclared component survives a boundary.
 - Property tests that collapsed plan regions preserve all valid continuations.
 - Conflict tests for competing aliases, refinements, and obstruction claims.
+- Determinism tests for extraction and resolved common-base-plus-delta packs.
 
 ---
 
@@ -1598,6 +1755,10 @@ These should remain explicit unknowns until evidence closes them:
   visible in SD source.
 - Exact mappings from message-flow assets to the shared temporary progress bits,
   and every abnormal exit that preserves or clears them.
+- Complete executable/resource digest catalogue and semantic equivalence matrix
+  across supported revisions and selectable languages.
+- Exact PAL French cannon-flow divergence, payment guard/debit behavior, language
+  switching constraints, and any residual physical or temporal setup.
 - Exact one-frame interruption windows and player-control/input behavior across
   GCN, Wii, and externally documented HD routes.
 - Exact Gor Coron displaced predicate, entrance event/switch effects, live NPC
@@ -1641,8 +1802,13 @@ The first serious release is complete when:
   flow consumer before resolving the remaining world obstructions.
 - Users can author versioned refinement packs and ephemeral what-if scenarios
   without mutating base data.
-- The solver supports alternative producers, ordered setups, exact builds,
-  path constraints, costs, and honest unknowns.
+- Exact content is digest-verified; language/configuration is an independent
+  runtime dimension; deterministic derived fact packs support normal use without
+  requiring `orig/` and never silently substitute an unverified build.
+- Shared semantic names retain exact per-context raw bindings, and portable routes
+  contain only facts proven equivalent across their selected contexts.
+- The solver supports alternative producers, ordered setups, exact
+  content/language contexts, path constraints, costs, and honest unknowns.
 - The UI scales from a collapsed milestone route to raw flags, component history,
   and full proof graphs.
 - Fishing Rod, BiT/file 0, EMS/obstructions, local-bank rebind, Fanadi locking, and
