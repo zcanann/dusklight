@@ -210,6 +210,31 @@ family—produced the improvement.
 the goal and world state alone. Its speed may initially trail the optimized
 lane; discovery, not parity with the 125-tick demonstration, is the gate.
 
+### 5C. Thin Skybook-supported setup
+
+- [ ] Boot directly into Telma's Bar with declared post-twilight game flags
+  that place both Telma and Louise in the bar. Record the complete boot
+  identity so the fixture is reproducible and all gameplay after tick zero
+  remains input-only.
+- [ ] Acquire text displacement by talking to Louise while entering Telma's
+  dialogue trigger, causing Louise's meow cutscene to interrupt Telma's
+  dialogue.
+- [ ] Observe the fixed shared text-progression bits needed to distinguish the
+  displaced state from an ordinary interrupted event. These are read-only
+  learner observations and semantic proof, never gameplay writes.
+- [ ] Confirm the consequence by speaking to Telma afterward and advancing one
+  dialogue box at a time through text that normally would have progressed
+  during the interrupted cutscene.
+- [ ] Retain normal control cases—Telma alone, Louise alone, and failed overlap
+  timing—so the learner can distinguish the successful event ownership and
+  text-state transition from nearby failures.
+- [ ] Export and cold-replay the exact raw PAD sequence with identical actor,
+  event, text-progression, and terminal evidence.
+
+**Gate 5C:** from the declared post-twilight Telma's Bar fixture, the system
+repeatedly acquires text displacement and proves the one-box-at-a-time Telma
+behavior without a gameplay write or a human-specified successful input frame.
+
 ## 6. Prepare for narrow-basin glitch discovery
 
 Only after gates 1-5 work end to end:
@@ -222,10 +247,6 @@ Only after gates 1-5 work end to end:
   but never prove a glitch.
 - [ ] Mine recurring successful action sequences as candidate reusable options
   while retaining raw-PAD refinement.
-- [ ] Select one bounded, explicitly requested thin-success-manifold benchmark
-  to test precise continuous setup plus synchronized actions. Choose it from
-  observed framework gaps at that time; do not pre-commit to the Skybook
-  catalog or a particular glitch here.
 - [ ] Require an input-only deterministic proof for every claimed outcome.
 
 **Gate 6:** the system can retain and revisit rare physically interesting
@@ -236,8 +257,6 @@ narrow-basin outcome without a human supplying its successful frame sequence.
 
 - Enumerating every stage, room, layer or spawn before the learning loop works.
 - Triaging or reproducing the entire Skybook catalog.
-- Preselecting a distant glitch benchmark before Ordon exposes the next real
-  limitation.
 - A general visualization workbench.
 - Route-specific waypoint rewards or hard-coded wall-follow instructions
   presented as learning.
