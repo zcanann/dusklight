@@ -1,6 +1,7 @@
 #include "dusk/automation/suffix_batch_runner.hpp"
 
 #include "dusk/automation/build_identity.hpp"
+#include "dusk/automation/card_fixture.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
@@ -189,7 +190,7 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         .auroraRevision = std::string(build.auroraRevision),
         .featureDigest = std::string(build.featureDigest),
         .fidelityProfile = std::string(build.fidelityProfile),
-        .gameDataIdentity = {},
+        .gameDataIdentity = std::string(active_automation_card_fixture_identity()),
     };
     if (!mEpisodeShard.begin(mEpisodeShardPath, metadata, error))
         return false;

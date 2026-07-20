@@ -32,6 +32,8 @@ pub struct Origin {
     pub predicate: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predicate_source: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_fixture: Option<PathBuf>,
     #[serde(skip)]
     line: usize,
 }
@@ -1427,11 +1429,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_origin(&mut self, tokens: &[String], line: usize) -> Result<(), TimelineError> {
-        if tokens.len() != 4 && tokens.len() != 6 {
+        if tokens.len() != 4 && tokens.len() != 6 && tokens.len() != 8 {
             return Err(TimelineError::at(
                 line,
                 1,
-                "expected origin boot predicate PREDICATE [source PATH]",
+                "expected origin boot predicate PREDICATE [source PATH [card_fixture PATH]]",
             ));
         }
         if tokens[1] != "boot" {
@@ -1442,7 +1444,7 @@ impl<'a> Parser<'a> {
             ));
         }
         expect(tokens, 2, "predicate", line)?;
-        let predicate_source = if tokens.len() == 6 {
+        let predicate_source = if tokens.len() >= 6 {
             expect(tokens, 4, "source", line)?;
             Some(parse_contained_relative_path(
                 &tokens[5],
@@ -1452,10 +1454,21 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        let card_fixture = if tokens.len() == 8 {
+            expect(tokens, 6, "card_fixture", line)?;
+            Some(parse_contained_relative_path(
+                &tokens[7],
+                line,
+                "card fixture",
+            )?)
+        } else {
+            None
+        };
         let origin = Origin {
             id: tokens[1].clone(),
             predicate: tokens[3].clone(),
             predicate_source,
+            card_fixture,
             line,
         };
         if self.origin.replace(origin).is_some() {
@@ -2071,6 +2084,24 @@ continue rolls with exit_rolls after boot_safe@control-rng1
                 .unwrap()
                 .relation_to_reference,
             DominanceRelation::Faster
+        );
+    }
+
+    #[test]
+    fn parses_declared_process_boot_card_fixture() {
+        let source = ROUTE.replace(
+            "origin boot predicate process_boot",
+            "origin boot predicate process_boot source process_boot.milestones card_fixture fixtures/process_boot.card",
+        );
+        let timeline = Timeline::parse(&source).unwrap();
+        let origin = timeline.origin.as_ref().unwrap();
+        assert_eq!(
+            origin.predicate_source.as_deref(),
+            Some(Path::new("process_boot.milestones"))
+        );
+        assert_eq!(
+            origin.card_fixture.as_deref(),
+            Some(Path::new("fixtures/process_boot.card"))
         );
     }
 

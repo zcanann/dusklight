@@ -91,11 +91,17 @@ the same goal without demonstration-relative features.
 - [ ] Buffer episodes in memory and write compact content-addressed binary
   shards, not one file per attempt or tick. Bind every shard to build, game
   data, checkpoint, observation schema, action schema, objective and fidelity.
-- [ ] Bind every process-boot dependency, including the isolated memory card,
+- [x] Bind every process-boot dependency, including the isolated memory card,
   save data and relevant configuration, into the boot/checkpoint identity.
   Materializing the same declared fixture in a fresh automation root must
   reproduce the same frame-440 state without borrowing durable state from a
-  previous run.
+  previous run. The canonical card fixture is copied into a fresh writable
+  root for every process-boot run and identified as
+  `card-fixture:xxh3-128:4a704aa81ab84bbda55e25a04b341996`. Two cold
+  568-boundary replays produced the identical semantic-state series
+  `635ded69...3ae0`, reached Link control at frame 439 and the Ordon Springs
+  load at frame 567 with identical v6 boundary fingerprints, and left the
+  source GCI byte-for-byte unchanged.
 - [ ] Add corpus inspection for missing channels, masks, NaNs, constants,
   discontinuities, set sizes, action coverage, outcome balance, duplicate
   trajectories, and possible identity leakage.

@@ -273,6 +273,12 @@ pub(super) fn launch_materialized(
             .arg(&thumbnail.path);
     }
     let artifact_root = configured_artifact_root(config)?;
+    append_origin_card_fixture_arg(
+        timeline,
+        &config.repository_root,
+        &materialized.tape.boot,
+        &mut command,
+    )?;
     append_authored_milestone_args(timeline, &artifact_root, &state_root, &mut command, None)?;
     let child = command
         .spawn()
@@ -396,6 +402,12 @@ pub(super) fn capture_thumbnail(
             },
         },
     );
+    append_origin_card_fixture_arg(
+        timeline,
+        &config.repository_root,
+        &materialized.tape.boot,
+        &mut command,
+    )?;
     append_native_oracle_args(&mut command, &session_root, materialized.native_oracle);
     command
         .arg("--unpaced")
@@ -716,6 +728,28 @@ pub(super) fn append_playback_args(
     if let Some(stage) = options.seed_stage {
         command.arg("--stage").arg(stage);
     }
+}
+
+fn append_origin_card_fixture_arg(
+    timeline: &Timeline,
+    repository_root: &Path,
+    boot: &TapeBoot,
+    command: &mut Command,
+) -> Result<(), WorkbenchError> {
+    if !matches!(boot, TapeBoot::Process) {
+        return Ok(());
+    }
+    let Some(relative) = timeline
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.card_fixture.as_deref())
+    else {
+        return Ok(());
+    };
+    command
+        .arg("--automation-card-fixture")
+        .arg(validated_card_fixture_root(relative, repository_root)?);
+    Ok(())
 }
 
 fn append_native_oracle_args(
@@ -1046,6 +1080,12 @@ pub(super) fn record_continuation(
         .arg("backend.wasPresetChosen=true")
         .arg("--cvar")
         .arg("game.enableMenuPointer=false");
+    append_origin_card_fixture_arg(
+        timeline,
+        &config.repository_root,
+        &materialized.tape.boot,
+        &mut command,
+    )?;
     append_fixed_step_pacing(&mut command, request.speed_percent);
     if record_from_boot {
         command.arg("--record-input-start-milestone").arg(
@@ -2074,6 +2114,58 @@ pub(super) fn playback_fast_forward_frames(playback: PlaybackSettings, frames: u
 #[cfg(test)]
 mod native_fidelity_tests {
     use super::*;
+
+    #[test]
+    fn process_boot_launches_bind_the_declared_repository_card_fixture() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repository = std::env::temp_dir().join(format!(
+            "dusklight-workbench-card-fixture-{}-{nonce}",
+            std::process::id()
+        ));
+        let fixture = repository.join("orig/process-boot");
+        fs::create_dir_all(&fixture).unwrap();
+        let timeline = Timeline::parse(
+            "timeline test\norigin boot predicate process_boot source predicate.milestones card_fixture orig/process-boot\n",
+        )
+        .unwrap();
+
+        let mut process = Command::new("dusklight");
+        append_origin_card_fixture_arg(&timeline, &repository, &TapeBoot::Process, &mut process)
+            .unwrap();
+        let arguments = process
+            .get_args()
+            .map(std::ffi::OsStr::to_os_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                std::ffi::OsString::from("--automation-card-fixture"),
+                fs::canonicalize(&fixture).unwrap().into_os_string(),
+            ]
+        );
+
+        let mut stage = Command::new("dusklight");
+        append_origin_card_fixture_arg(
+            &timeline,
+            &repository,
+            &TapeBoot::Stage {
+                stage: "F_SP103".into(),
+                room: 0,
+                point: 0,
+                layer: -1,
+                save_slot: None,
+                fixture: None,
+            },
+            &mut stage,
+        )
+        .unwrap();
+        assert_eq!(stage.get_args().count(), 0);
+
+        fs::remove_dir_all(repository).unwrap();
+    }
 
     #[test]
     fn eye_shredder_oracle_supplies_trace_and_oracle_arguments() {

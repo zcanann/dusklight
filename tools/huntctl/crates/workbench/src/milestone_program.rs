@@ -144,6 +144,64 @@ pub(super) fn validated_predicate_source_path(
     Ok(resolved)
 }
 
+pub(super) fn validated_card_fixture_root(
+    relative: &Path,
+    root: &Path,
+) -> Result<PathBuf, WorkbenchError> {
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(WorkbenchError::new(
+            "configured card fixture is not a contained relative path",
+        ));
+    }
+    let root = fs::canonicalize(root).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve card fixture root {}: {error}",
+            root.display()
+        ))
+    })?;
+    let mut candidate = root.clone();
+    for component in relative.components() {
+        candidate.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            WorkbenchError::new(format!(
+                "cannot inspect configured card fixture path {}: {error}",
+                candidate.display()
+            ))
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(WorkbenchError::new(format!(
+                "configured card fixture path {} contains a symbolic link",
+                candidate.display()
+            )));
+        }
+    }
+    if !candidate.is_dir() {
+        return Err(WorkbenchError::new(format!(
+            "configured card fixture {} is not a directory",
+            candidate.display()
+        )));
+    }
+    let resolved = fs::canonicalize(&candidate).map_err(|error| {
+        WorkbenchError::new(format!(
+            "cannot resolve configured card fixture {}: {error}",
+            candidate.display()
+        ))
+    })?;
+    if !resolved.starts_with(&root) {
+        return Err(WorkbenchError::new(format!(
+            "configured card fixture {} escapes root {}",
+            resolved.display(),
+            root.display()
+        )));
+    }
+    Ok(resolved)
+}
+
 fn owned_predicate_program_projection(
     root: &Path,
     relative: &Path,

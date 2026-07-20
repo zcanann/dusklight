@@ -20,7 +20,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+struct TemporaryCardRoot {
+    path: PathBuf,
+}
+
+impl TemporaryCardRoot {
+    fn create(state_root: &Path) -> Result<Self, Box<dyn Error>> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = state_root.join(format!(
+            ".memory-card-session-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for TemporaryCardRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
 
 pub(crate) fn command_tape(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
@@ -250,6 +275,12 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     let game = required_path(args, "--game")?;
     let dvd = required_path(args, "--dvd")?;
     let state_root = required_path(args, "--state-root")?;
+    let card_fixture = option(args, "--card-fixture").map(PathBuf::from);
+    if let Some(path) = &card_fixture
+        && !path.is_dir()
+    {
+        return Err(format!("card fixture is not a directory: {}", path.display()).into());
+    }
     let decoded = InputTape::decode(&fs::read(&input)?)?;
     if decoded.tape.frames.is_empty() {
         return Err("tape run requires at least one input frame".into());
@@ -257,6 +288,7 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     let logical_tick_budget = u64::try_from(decoded.tape.frames.len())
         .map_err(|_| "tape run input length does not fit u64")?;
     fs::create_dir_all(&state_root)?;
+    let card_root = TemporaryCardRoot::create(&state_root)?;
     let renderer_cache = state_root
         .parent()
         .unwrap_or_else(|| std::path::Path::new(""))
@@ -297,6 +329,8 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         .arg(logical_tick_budget.to_string())
         .arg("--automation-data-root")
         .arg(&state_root)
+        .arg("--automation-card-root")
+        .arg(&card_root.path)
         .arg("--renderer-cache-root")
         .arg(&renderer_cache)
         .arg("--cvar")
@@ -309,6 +343,9 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         .arg("game.enableMenuPointer=false")
         .arg("--fixed-step")
         .arg("--exit-after-tape");
+    if let Some(path) = &card_fixture {
+        command.arg("--automation-card-fixture").arg(path);
+    }
     if !flag(args, "--headful") {
         command.arg("--headless");
     }
@@ -371,6 +408,7 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
             "exit_code": status.code(),
             "elapsed_millis": started.elapsed().as_millis(),
             "state_root": state_root,
+            "card_fixture": card_fixture,
             "milestone_result": milestones.is_some().then_some(milestone_result),
             "gameplay_trace": gameplay_trace,
         }))?
@@ -924,7 +962,9 @@ fn evaluate_minimize_tape(
         let supported_boundary = (fingerprint.schema == "dusklight.milestone-boundary/v4"
             && fingerprint.canonical_encoding == "little-endian-fixed-v4")
             || (fingerprint.schema == "dusklight.milestone-boundary/v5"
-                && fingerprint.canonical_encoding == "little-endian-fixed-v5");
+                && fingerprint.canonical_encoding == "little-endian-fixed-v5")
+            || (fingerprint.schema == "dusklight.milestone-boundary/v6"
+                && fingerprint.canonical_encoding == "little-endian-fixed-v6");
         if !supported_boundary || fingerprint.algorithm != "xxh3-128" {
             return Err("minimization received an unsupported boundary fingerprint".into());
         }

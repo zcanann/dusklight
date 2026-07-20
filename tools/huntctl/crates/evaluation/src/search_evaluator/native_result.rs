@@ -772,7 +772,9 @@ fn validate_fingerprint(fingerprint: &BoundaryFingerprint) -> Result<(), Evaluat
         || (fingerprint.schema == "dusklight.milestone-boundary/v4"
             && fingerprint.canonical_encoding == "little-endian-fixed-v4")
         || (fingerprint.schema == "dusklight.milestone-boundary/v5"
-            && fingerprint.canonical_encoding == "little-endian-fixed-v5");
+            && fingerprint.canonical_encoding == "little-endian-fixed-v5")
+        || (fingerprint.schema == "dusklight.milestone-boundary/v6"
+            && fingerprint.canonical_encoding == "little-endian-fixed-v6");
     if !supported_contract
         || fingerprint.algorithm != "xxh3-128"
         || fingerprint.digest.len() != 32

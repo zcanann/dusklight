@@ -32,6 +32,10 @@ pub fn graph_from_timeline(
         GraphOrigin {
             id: origin.id.clone(),
             predicate: origin.predicate.clone(),
+            card_fixture: origin
+                .card_fixture
+                .as_ref()
+                .map(|path| path.display().to_string()),
             predicate_program: program.clone(),
             recordable_from_boot: program
                 .definitions

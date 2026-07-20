@@ -1,4 +1,11 @@
 {
-  "schema": "dusklight-scenario-fixture/v1",
-  "name": "Clean process boot"
+  "schema": "dusklight-automation-card-fixture/v1",
+  "name": "Canonical process boot",
+  "root": "orig/automation-card-fixtures/process-boot",
+  "files": [
+    {
+      "path": "USA/Card A/01-GZ2E-gczelda2.gci",
+      "sha256": "89e1737bde8fd9b66e9c44822991b64347f1c92a2154cce758df8c0c99ec3c60"
+    }
+  ]
 }

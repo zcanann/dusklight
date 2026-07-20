@@ -2,27 +2,27 @@
 # sibling segments with the same parent. Subgraphs only collapse coherent runs
 # in the workbench; goals and proofs remain metadata on terminal segments.
 timeline intro
-origin boot predicate process_boot source intro/predicates/process_boot.milestones
+origin boot predicate process_boot source intro/predicates/process_boot.milestones card_fixture orig/automation-card-fixtures/process-boot
 
-segment tolink_title_ready root profile boot_to_fsp103 uses tas intro/segments/tolink/01-title-ready.tas starts process-clean-v1 produces c6bd28836964d9c38e39f77eaaf1cf13
+segment tolink_title_ready root profile boot_to_fsp103 uses tas intro/segments/tolink/01-title-ready.tas starts process-clean-v1 produces 20e342b0ab9baddadc2be132bfbad2e8
 label tolink_title_ready "Title ready"
-segment tolink_open_title after tolink_title_ready profile boot_to_fsp103 uses tas intro/segments/tolink/02-open-title.tas starts c6bd28836964d9c38e39f77eaaf1cf13 produces 200a41930f0404850924a537b0f5bf0a
+segment tolink_open_title after tolink_title_ready profile boot_to_fsp103 uses tas intro/segments/tolink/02-open-title.tas starts 20e342b0ab9baddadc2be132bfbad2e8 produces 83d9e69ef9a33d661e85a51b3eef7fbe
 label tolink_open_title "Open title"
-segment tolink_choose_play after tolink_open_title profile boot_to_fsp103 uses tas intro/segments/tolink/03-choose-play.tas starts 200a41930f0404850924a537b0f5bf0a produces e28ad8c22c60d64494a974584310e990
+segment tolink_choose_play after tolink_open_title profile boot_to_fsp103 uses tas intro/segments/tolink/03-choose-play.tas starts 83d9e69ef9a33d661e85a51b3eef7fbe produces 04fb5fb6c4095f9a9227d1e64cdfaa4b
 label tolink_choose_play "Choose Play"
-segment tolink_continue_no_save after tolink_choose_play profile boot_to_fsp103 uses tas intro/segments/tolink/04-continue-without-saving.tas starts e28ad8c22c60d64494a974584310e990 produces b08f3f319e428560cb899587324fb1fb
+segment tolink_continue_no_save after tolink_choose_play profile boot_to_fsp103 uses tas intro/segments/tolink/04-continue-without-saving.tas starts 04fb5fb6c4095f9a9227d1e64cdfaa4b produces 7c0d407f158f7f18be422ea9da66d09a
 label tolink_continue_no_save "Continue without saving"
-segment tolink_accept_link after tolink_continue_no_save profile boot_to_fsp103 uses tas intro/segments/tolink/05-accept-default-link.tas starts b08f3f319e428560cb899587324fb1fb produces 86a9b820eb32faca0c98ea4cf5281008
+segment tolink_accept_link after tolink_continue_no_save profile boot_to_fsp103 uses tas intro/segments/tolink/05-accept-default-link.tas starts 7c0d407f158f7f18be422ea9da66d09a produces 7683a2a4071e1a3b7c8d99c470739b8e
 label tolink_accept_link "Accept Link"
-segment tolink_choose_epona after tolink_accept_link profile boot_to_fsp103 uses tas intro/segments/tolink/06-choose-default-epona.tas starts 86a9b820eb32faca0c98ea4cf5281008 produces 58bc4fea7d3175d0a49db64c069d18a6
+segment tolink_choose_epona after tolink_accept_link profile boot_to_fsp103 uses tas intro/segments/tolink/06-choose-default-epona.tas starts 7683a2a4071e1a3b7c8d99c470739b8e produces ec1df60d97f14ea7865f6e2a85fd42b9
 label tolink_choose_epona "Choose Epona"
-segment tolink_accept_epona after tolink_choose_epona profile boot_to_fsp103 uses tas intro/segments/tolink/07-accept-default-epona.tas starts 58bc4fea7d3175d0a49db64c069d18a6 produces e8a6a5ad3f4706a7c424079264ddfa88
+segment tolink_accept_epona after tolink_choose_epona profile boot_to_fsp103 uses tas intro/segments/tolink/07-accept-default-epona.tas starts ec1df60d97f14ea7865f6e2a85fd42b9 produces 009053bca7d155b0a5637b035b546f18
 label tolink_accept_epona "Accept Epona"
-segment tolink_wait_opening_event after tolink_accept_epona profile boot_to_fsp103 uses tas intro/segments/tolink/08-wait-opening-event.tas starts e8a6a5ad3f4706a7c424079264ddfa88 produces 8b8fbc43077696294a47ca5082bb2245
+segment tolink_wait_opening_event after tolink_accept_epona profile boot_to_fsp103 uses tas intro/segments/tolink/08-wait-opening-event.tas starts 009053bca7d155b0a5637b035b546f18 produces cebb02bd4324e6163b0b312971be12a3
 label tolink_wait_opening_event "Wait for opening event"
-segment tolink_skip_event after tolink_wait_opening_event profile boot_to_fsp103 uses tas intro/segments/tolink/09-skip-opening-event.tas starts 8b8fbc43077696294a47ca5082bb2245 produces bd1cdaa3d29d09ff02fe1703d8897426
+segment tolink_skip_event after tolink_wait_opening_event profile boot_to_fsp103 uses tas intro/segments/tolink/09-skip-opening-event.tas starts cebb02bd4324e6163b0b312971be12a3 produces c0b2d34565942e9a20df2ecc782ef346
 label tolink_skip_event "Skip opening event"
-segment tolink_link_control after tolink_skip_event profile boot_to_fsp103 uses tas intro/segments/tolink/10-skip-opening-cutscene.tas starts bd1cdaa3d29d09ff02fe1703d8897426 produces ac7c32788fc3b5c59046386d95b9b5b4
+segment tolink_link_control after tolink_skip_event profile boot_to_fsp103 uses tas intro/segments/tolink/10-skip-opening-cutscene.tas starts c0b2d34565942e9a20df2ecc782ef346 produces 4786d70e77b31416d02864783434c7dc
 label tolink_link_control "Link control"
 
 subgraph tolink root entry tolink_title_ready exit tolink_link_control
@@ -38,12 +38,12 @@ subgraph_member tolink segment tolink_wait_opening_event
 subgraph_member tolink segment tolink_skip_event
 subgraph_member tolink segment tolink_link_control
 
-segment to_ordon_spring_q125 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_q125.tape starts ac7c32788fc3b5c59046386d95b9b5b4 produces 5f0db2cd758da9d20bffd7c7def9af70
+segment to_ordon_spring_q125 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_q125.tape starts 4786d70e77b31416d02864783434c7dc produces d02b3fd3b7e0f49f600bcf412b34da71
 label to_ordon_spring_q125 "ToOrdonSprings 125f"
 
 # Review-only native failure retained from the checkpoint suffix search. Its
 # endpoint missed the exit edge by 2.781320 units and carries no goal proof.
-segment to_ordon_spring_near_miss_2p781 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_near_miss_2p781.tape starts ac7c32788fc3b5c59046386d95b9b5b4 produces review-fb093f861a6aaa68
+segment to_ordon_spring_near_miss_2p781 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_near_miss_2p781.tape starts 4786d70e77b31416d02864783434c7dc produces review-fb093f861a6aaa68
 label to_ordon_spring_near_miss_2p781 "Best near miss (2.7813, unproved)"
 
 goal link_control on tolink_link_control predicate link_control source intro/predicates/link_control.milestones
@@ -74,13 +74,13 @@ proof to_ordon_spring_q125 satisfies ordon_spring_load_committed program b8cbfaf
 
 continuation main starts root@process-clean-v1
 continue main with tolink_title_ready after root@process-clean-v1
-continue main with tolink_open_title after tolink_title_ready@c6bd28836964d9c38e39f77eaaf1cf13
-continue main with tolink_choose_play after tolink_open_title@200a41930f0404850924a537b0f5bf0a
-continue main with tolink_continue_no_save after tolink_choose_play@e28ad8c22c60d64494a974584310e990
-continue main with tolink_accept_link after tolink_continue_no_save@b08f3f319e428560cb899587324fb1fb
-continue main with tolink_choose_epona after tolink_accept_link@86a9b820eb32faca0c98ea4cf5281008
-continue main with tolink_accept_epona after tolink_choose_epona@58bc4fea7d3175d0a49db64c069d18a6
-continue main with tolink_wait_opening_event after tolink_accept_epona@e8a6a5ad3f4706a7c424079264ddfa88
-continue main with tolink_skip_event after tolink_wait_opening_event@8b8fbc43077696294a47ca5082bb2245
-continue main with tolink_link_control after tolink_skip_event@bd1cdaa3d29d09ff02fe1703d8897426
-continue main with to_ordon_spring_q125 after tolink_link_control@ac7c32788fc3b5c59046386d95b9b5b4
+continue main with tolink_open_title after tolink_title_ready@20e342b0ab9baddadc2be132bfbad2e8
+continue main with tolink_choose_play after tolink_open_title@83d9e69ef9a33d661e85a51b3eef7fbe
+continue main with tolink_continue_no_save after tolink_choose_play@04fb5fb6c4095f9a9227d1e64cdfaa4b
+continue main with tolink_accept_link after tolink_continue_no_save@7c0d407f158f7f18be422ea9da66d09a
+continue main with tolink_choose_epona after tolink_accept_link@7683a2a4071e1a3b7c8d99c470739b8e
+continue main with tolink_accept_epona after tolink_choose_epona@ec1df60d97f14ea7865f6e2a85fd42b9
+continue main with tolink_wait_opening_event after tolink_accept_epona@009053bca7d155b0a5637b035b546f18
+continue main with tolink_skip_event after tolink_wait_opening_event@cebb02bd4324e6163b0b312971be12a3
+continue main with tolink_link_control after tolink_skip_event@c0b2d34565942e9a20df2ecc782ef346
+continue main with to_ordon_spring_q125 after tolink_link_control@4786d70e77b31416d02864783434c7dc

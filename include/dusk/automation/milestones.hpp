@@ -15,7 +15,7 @@
 namespace dusk::automation {
 
 inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
-inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 5;
+inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 6;
 inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 3;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
@@ -170,6 +170,7 @@ struct MilestoneDefinition {
 
 struct MilestoneEvidence {
     TapeBoot boot;
+    std::string cardFixtureIdentity;
     std::string stageName;
     std::int8_t room = -1;
     std::int8_t layer = -1;

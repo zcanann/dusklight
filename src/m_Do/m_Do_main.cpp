@@ -64,6 +64,7 @@
 #include "dusk/runtime/lifecycle.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
+#include "dusk/automation/card_fixture.hpp"
 #include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/game_state_observer.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
@@ -2111,6 +2112,7 @@ int game_main(int argc, char* argv[]) {
             ("automation-phase-timing", "Write monotonic native lifecycle phase timing as JSON", cxxopts::value<std::string>())
             ("renderer-cache-root", "Use an explicit persistent renderer-only shader and pipeline cache", cxxopts::value<std::string>())
             ("automation-card-root", "Use an explicit memory-card root for this automation run", cxxopts::value<std::string>())
+            ("automation-card-fixture", "Materialize a hashed immutable GCI tree into the fresh automation card root", cxxopts::value<std::string>())
             ("name-entry-trace", "Write a versioned name-entry observer trace when the game loop exits", cxxopts::value<std::string>())
             ("gameplay-trace", "Write compact per-tick stage, player motion, and input telemetry", cxxopts::value<std::string>())
             ("gameplay-trace-channels", "Comma-separated trace channels (default diagnostic set; use all for every channel)", cxxopts::value<std::string>())
@@ -2814,8 +2816,10 @@ int game_main(int argc, char* argv[]) {
     }
 
     std::filesystem::path automationCardRoot;
+    std::filesystem::path automationCardFixture;
     std::filesystem::path automationDataRoot;
     std::filesystem::path rendererCacheRoot;
+    bool automationRequiresEmptyCard = recordInputFromBoot || (hasInputController && !hasInputTape);
     if (parsed_arg_options.count("automation-data-root")) {
         if (!hasAutomationInput && !recordInputFromBoot) {
             fprintf(stderr,
@@ -2860,6 +2864,29 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
     }
+    if (parsed_arg_options.count("automation-card-fixture")) {
+        if (!hasAutomationInput && !recordInputFromBoot) {
+            fprintf(stderr,
+                    "Memory Card Error: --automation-card-fixture requires automation input or --record-input-from-boot\n");
+            return 1;
+        }
+        automationCardFixture = std::filesystem::u8path(
+            parsed_arg_options["automation-card-fixture"].as<std::string>());
+        std::error_code fixtureError;
+        if (!std::filesystem::is_directory(automationCardFixture, fixtureError)) {
+            fprintf(stderr,
+                    "Memory Card Error: automation card fixture '%s' is not a directory%s%s\n",
+                    dusk::io::fs_path_to_string(automationCardFixture).c_str(),
+                    fixtureError ? ": " : "", fixtureError ? fixtureError.message().c_str() : "");
+            return 1;
+        }
+        automationCardFixture = std::filesystem::absolute(automationCardFixture, fixtureError);
+        if (fixtureError) {
+            fprintf(stderr, "Memory Card Error: cannot resolve automation card fixture: %s\n",
+                    fixtureError.message().c_str());
+            return 1;
+        }
+    }
     if (parsed_arg_options.count("renderer-cache-root")) {
         rendererCacheRoot =
             std::filesystem::u8path(parsed_arg_options["renderer-cache-root"].as<std::string>());
@@ -2878,12 +2905,6 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
     }
-    if (!automationDataRoot.empty() && !automationCardRoot.empty()) {
-        fprintf(stderr,
-                "Automation State Error: --automation-data-root and --automation-card-root are mutually exclusive\n");
-        return 1;
-    }
-
     const std::string inputTapeEnd = parsed_arg_options["input-tape-end"].as<std::string>();
     if (inputTapeEnd == "release") {
         inputTapeEndBehavior = dusk::automation::TapeEndBehavior::Release;
@@ -3045,6 +3066,7 @@ int game_main(int argc, char* argv[]) {
                 return 1;
             }
         } else {
+            automationRequiresEmptyCard = true;
             dusk::automation::clear_scenario_fixture_runtime();
         }
         dusk::automation::milestone_tracker().setBootOrigin(inputTape.boot);
@@ -3109,6 +3131,63 @@ int game_main(int argc, char* argv[]) {
             fprintf(stderr, "Input Tape Error: failed to start '%s'\n", inputTapePath.c_str());
             return 1;
         }
+    }
+    if (automationCardRoot.empty() && !automationDataRoot.empty()) {
+        automationCardRoot = automationDataRoot / "automation-card";
+        std::error_code cardRootError;
+        if (!std::filesystem::exists(automationCardRoot, cardRootError)) {
+            std::filesystem::create_directory(automationCardRoot, cardRootError);
+        }
+        if (cardRootError || !std::filesystem::is_directory(automationCardRoot, cardRootError)) {
+            fprintf(stderr,
+                    "Memory Card Error: cannot create isolated automation card root '%s'%s%s\n",
+                    dusk::io::fs_path_to_string(automationCardRoot).c_str(),
+                    cardRootError ? ": " : "",
+                    cardRootError ? cardRootError.message().c_str() : "");
+            return 1;
+        }
+        automationCardRoot = std::filesystem::absolute(automationCardRoot, cardRootError);
+        if (cardRootError) {
+            fprintf(stderr, "Memory Card Error: cannot resolve isolated card root: %s\n",
+                    cardRootError.message().c_str());
+            return 1;
+        }
+    }
+    if (!automationCardFixture.empty()) {
+        if (automationCardRoot.empty()) {
+            fprintf(stderr,
+                    "Memory Card Error: --automation-card-fixture requires --automation-data-root or --automation-card-root\n");
+            return 1;
+        }
+        dusk::automation::AutomationCardFixtureResult fixtureResult;
+        std::string fixtureError;
+        if (!dusk::automation::materialize_automation_card_fixture(
+                automationCardFixture, automationCardRoot, fixtureResult, fixtureError))
+        {
+            fprintf(stderr, "Memory Card Error: cannot materialize fixture: %s\n",
+                    fixtureError.c_str());
+            return 1;
+        }
+        dusk::automation::set_active_automation_card_fixture_identity(fixtureResult.identity);
+    } else if (automationRequiresEmptyCard) {
+        if (automationCardRoot.empty()) {
+            fprintf(stderr,
+                    "Memory Card Error: process-boot automation requires an isolated empty card root; pass --automation-data-root or --automation-card-root\n");
+            return 1;
+        }
+        std::error_code cardRootError;
+        const bool empty = std::filesystem::is_empty(automationCardRoot, cardRootError);
+        if (cardRootError || !empty) {
+            fprintf(stderr,
+                    "Memory Card Error: canonical process boot requires an empty card root, but '%s' is %s%s%s\n",
+                    dusk::io::fs_path_to_string(automationCardRoot).c_str(),
+                    cardRootError ? "unreadable" : "not empty",
+                    cardRootError ? ": " : "",
+                    cardRootError ? cardRootError.message().c_str() : "");
+            return 1;
+        }
+        dusk::automation::set_active_automation_card_fixture_identity(
+            std::string(dusk::automation::EmptyAutomationCardFixtureIdentity));
     }
 
     const unsigned checkpointProbeOptionCount =
@@ -3817,6 +3896,8 @@ int game_main(int argc, char* argv[]) {
         CARDSetBasePath(reinterpret_cast<const char*>(cardRootUtf8.c_str()), -1);
         DuskLog.info("Automation memory-card root: {}",
                      dusk::io::fs_path_to_string(automationCardRoot));
+        DuskLog.info("Automation memory-card fixture: {}",
+                     dusk::automation::active_automation_card_fixture_identity());
     }
 
 #if DUSK_ENABLE_SENTRY_NATIVE

@@ -152,6 +152,13 @@ frame neutral
     assert_eq!(run_summary["boot"]["kind"], "stage");
     assert_eq!(run_summary["exit_code"], 0);
     assert!(state_root.join("milestones.json").is_file());
+    assert!(fs::read_dir(&state_root).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".memory-card-session-")
+    }));
 
     let proof_root = directory.join("proof-state");
     let prove = Command::new(executable)

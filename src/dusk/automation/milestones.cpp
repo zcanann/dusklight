@@ -1,5 +1,7 @@
 #include "dusk/automation/milestones.hpp"
 
+#include "dusk/automation/card_fixture.hpp"
+
 #include "dusk/automation/typed_facts.hpp"
 
 #include <algorithm>
@@ -7,6 +9,7 @@
 #include <bit>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <system_error>
 #include <tuple>
 #include <type_traits>
@@ -96,6 +99,7 @@ MilestoneEvidence capture_evidence(
     const MilestoneObservation& observation, const TapeBoot& boot) {
     return {
         .boot = boot,
+        .cardFixtureIdentity = std::string(active_automation_card_fixture_identity()),
         .stageName = observation.stageName == nullptr ? "" : observation.stageName,
         .room = observation.room,
         .layer = observation.layer,
@@ -426,6 +430,8 @@ json value_projections_json(
 json evidence_json(const MilestoneEvidence& evidence) {
     return {
         {"boot", boot_json(evidence.boot)},
+        {"card_fixture_identity",
+            evidence.cardFixtureIdentity.empty() ? json(nullptr) : json(evidence.cardFixtureIdentity)},
         {"stage",
             {
                 {"name", evidence.stageName},
@@ -512,9 +518,9 @@ json evidence_json(const MilestoneEvidence& evidence) {
             }},
         {"boundary_fingerprint",
             {
-                {"schema", "dusklight.milestone-boundary/v5"},
+                {"schema", "dusklight.milestone-boundary/v6"},
                 {"algorithm", "xxh3-128"},
-                {"canonical_encoding", "little-endian-fixed-v5"},
+                {"canonical_encoding", "little-endian-fixed-v6"},
                 {"digest", evidence.boundaryFingerprint},
             }},
     };
@@ -546,6 +552,12 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
     canonical.reserve(256);
     append_integer(canonical, MilestoneBoundaryFingerprintVersion);
     append_integer(canonical, static_cast<std::uint8_t>(evidence.boot.kind));
+    if (evidence.cardFixtureIdentity.size() > std::numeric_limits<std::uint16_t>::max())
+        return {};
+    append_integer(
+        canonical, static_cast<std::uint16_t>(evidence.cardFixtureIdentity.size()));
+    canonical.insert(canonical.end(), evidence.cardFixtureIdentity.begin(),
+        evidence.cardFixtureIdentity.end());
     append_fixed_string(canonical, evidence.boot.stage);
     append_integer(canonical, evidence.boot.room);
     append_integer(canonical, evidence.boot.layer);

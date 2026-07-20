@@ -2154,6 +2154,13 @@ mod tests {
         };
         let shard = NativeEpisodeShard::read(path).expect("decode live native episode shard");
         assert!(!shard.episodes.is_empty());
+        if let Some(expected) = std::env::var_os("DUSK_EXPECTED_GAME_DATA_IDENTITY") {
+            assert_eq!(
+                shard.metadata.game_data_identity.as_deref(),
+                expected.to_str(),
+                "live shard did not bind the declared game-data fixture identity"
+            );
+        }
         assert!(shard.episodes.iter().all(|episode| {
             episode.steps.len() == episode.ticks_executed as usize
                 && episode

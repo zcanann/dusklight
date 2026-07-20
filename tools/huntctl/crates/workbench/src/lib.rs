@@ -475,6 +475,8 @@ struct DraftLaunch {
 pub struct GraphOrigin {
     pub id: String,
     pub predicate: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_fixture: Option<String>,
     pub predicate_program: GraphPredicateProgram,
     pub recordable_from_boot: bool,
     pub configurations: Vec<TapeBoot>,

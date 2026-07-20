@@ -1427,6 +1427,8 @@ set(DUSK_FILES
         src/dusk/runtime/lifecycle.cpp
         include/dusk/automation/build_identity.hpp
         src/dusk/automation/build_identity.cpp
+        include/dusk/automation/card_fixture.hpp
+        src/dusk/automation/card_fixture.cpp
         src/dusk/automation/checkpoint_probe.cpp
         include/dusk/automation/actor_catalog.hpp
         src/dusk/automation/actor_catalog.cpp

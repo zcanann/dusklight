@@ -579,6 +579,14 @@ target_include_directories(dusk_state_checkpoint_test PRIVATE
 target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
 set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_card_fixture_test EXCLUDE_FROM_ALL
+    tests/card_fixture_test.cpp
+    src/dusk/automation/card_fixture.cpp
+)
+target_include_directories(dusk_card_fixture_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(dusk_card_fixture_test PRIVATE xxHash::xxhash)
+set_target_properties(dusk_card_fixture_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_suffix_batch_test EXCLUDE_FROM_ALL
     tests/suffix_batch_test.cpp
     src/dusk/automation/suffix_batch.cpp
@@ -653,6 +661,7 @@ set_target_properties(dusk_eye_shredder_oracle_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_milestones_test EXCLUDE_FROM_ALL
     tests/milestones_test.cpp
+    src/dusk/automation/card_fixture.cpp
     src/dusk/automation/milestones.cpp
     src/dusk/automation/milestone_program.cpp
     src/dusk/automation/typed_facts.cpp

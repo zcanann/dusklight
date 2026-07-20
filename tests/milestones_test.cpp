@@ -1,3 +1,4 @@
+#include "dusk/automation/card_fixture.hpp"
 #include "dusk/automation/input_recording.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/typed_facts.hpp"
@@ -260,6 +261,8 @@ void testExitRequiresCommittedExactDestination() {
 
 void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
     using namespace dusk::automation;
+    set_active_automation_card_fixture_identity(
+        std::string(EmptyAutomationCardFixtureIdentity));
     MilestoneTracker tracker;
     constexpr MilestoneId requested[]{
         MilestoneId::GameplayReadyFSp103,
@@ -311,7 +314,9 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][0]["state"][0] == 11);
     REQUIRE(result["milestones"][1]["evidence"]["rng"]["streams"][1]["call_count"] == 200);
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["schema"] ==
-            "dusklight.milestone-boundary/v5");
+            "dusklight.milestone-boundary/v6");
+    REQUIRE(result["milestones"][1]["evidence"]["card_fixture_identity"] ==
+            std::string(EmptyAutomationCardFixtureIdentity));
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["algorithm"] == "xxh3-128");
     REQUIRE(result["milestones"][1]["evidence"]["boundary_fingerprint"]["digest"]
                 .get<std::string>()
@@ -322,6 +327,8 @@ void testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence() {
 
 void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
     using namespace dusk::automation;
+    set_active_automation_card_fixture_identity(
+        std::string(EmptyAutomationCardFixtureIdentity));
     MilestoneTracker tracker;
     constexpr MilestoneId requested[]{MilestoneId::GameplayReadyFSp103};
     std::string error;
@@ -335,6 +342,9 @@ void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
     REQUIRE(compute_milestone_boundary_fingerprint(f_sp103(), baseline.boot) == digest);
 
     MilestoneEvidence changed = baseline;
+    changed.cardFixtureIdentity = "card-fixture:xxh3-128:0123456789abcdef0123456789abcdef";
+    REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
+    changed = baseline;
     changed.rng.streams[0].callCount++;
     REQUIRE(compute_milestone_boundary_fingerprint(changed) != digest);
     changed = baseline;
@@ -502,7 +512,7 @@ void testCheckedStageSmokeFingerprintV4() {
         .callCount = 0,
     };
     REQUIRE(compute_milestone_boundary_fingerprint(evidence) ==
-            "cf5035320998bac915a8d76bfe787d2e");
+            "0e0a9c07641c6ed6e02c8a28cdf36c68");
 }
 
 void testGoalMustBeRequested() {
