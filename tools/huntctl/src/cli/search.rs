@@ -229,7 +229,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
             let method = match option(search_args, "--method")
                 .ok_or(
-                    "missing required --method deletion|button-edge|heading|corner|corner-wide|timing",
+                    "missing required --method deletion|button-edge|heading|corner|corner-wide|timing|path|terminal",
                 )?
                 .as_str()
             {
@@ -239,6 +239,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "corner" => SuffixProposalMethod::Corner,
                 "corner-wide" => SuffixProposalMethod::CornerWide,
                 "timing" => SuffixProposalMethod::Timing,
+                "path" => SuffixProposalMethod::Path,
+                "terminal" => SuffixProposalMethod::Terminal,
                 value => return Err(format!("unknown suffix proposal method {value:?}").into()),
             };
             let batch = propose_suffix_batch(

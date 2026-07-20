@@ -12,10 +12,16 @@ const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
 const BUTTON_A: u16 = 0x0100;
 const ORDON_EXIT_EDGE_X: f64 = -1708.04;
 const ORDON_EXIT_EDGE_Z: f64 = -4166.06;
-const ORDON_EXIT_EDGE_DZ_DX: f64 = 15.9506 / -198.4406;
+const ORDON_EXIT_LEFT_EDGE_DZ_DX: f64 = 15.9506 / -198.4406;
+const ORDON_EXIT_RIGHT_EDGE_DZ_DX: f64 = -3.93 / 67.4398;
 
 pub fn ordon_exit_edge_distance(x: f64, z: f64) -> f64 {
-    z - (ORDON_EXIT_EDGE_Z + ORDON_EXIT_EDGE_DZ_DX * (x - ORDON_EXIT_EDGE_X))
+    let slope = if x < ORDON_EXIT_EDGE_X {
+        ORDON_EXIT_LEFT_EDGE_DZ_DX
+    } else {
+        ORDON_EXIT_RIGHT_EDGE_DZ_DX
+    };
+    z - (ORDON_EXIT_EDGE_Z + slope * (x - ORDON_EXIT_EDGE_X))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,6 +32,8 @@ pub enum SuffixProposalMethod {
     Corner,
     CornerWide,
     Timing,
+    Path,
+    Terminal,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -303,6 +311,84 @@ pub fn propose_suffix_batch(
                 }
             }
         }
+        SuffixProposalMethod::Path => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            let anchors = [0_usize, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110];
+            'variants: for (window, degrees) in [
+                (10_usize, -1.0_f64),
+                (10, 1.0),
+                (20, -1.0),
+                (20, 1.0),
+                (30, -1.0),
+                (30, 1.0),
+                (10, -2.0),
+                (10, 2.0),
+                (20, -2.0),
+                (20, 2.0),
+            ] {
+                for start in anchors {
+                    if start >= maximum_ticks {
+                        continue;
+                    }
+                    let mut frames = base.clone();
+                    rotate_heading(&mut frames, start, window, degrees);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("path-{start}-w{window}-{degrees:+.0}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::Terminal => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            let anchors = [90_usize, 95, 100, 105, 110, 115, 120];
+            'variants: for (window, degrees) in [
+                (5_usize, -2.0_f64),
+                (5, 2.0),
+                (10, -2.0),
+                (10, 2.0),
+                (15, -2.0),
+                (15, 2.0),
+                (20, -2.0),
+                (20, 2.0),
+                (10, -4.0),
+                (10, 4.0),
+                (15, -4.0),
+                (15, 4.0),
+                (20, -4.0),
+                (20, 4.0),
+                (10, -6.0),
+                (10, 6.0),
+                (20, -6.0),
+                (20, 6.0),
+            ] {
+                for start in anchors {
+                    if start >= maximum_ticks {
+                        continue;
+                    }
+                    let mut frames = base.clone();
+                    rotate_heading(&mut frames, start, window, degrees);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("terminal-{start}-w{window}-{degrees:+.0}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
     }
     if output.candidates.is_empty() {
         return Err(SearchError::PopulationStalled);
@@ -363,7 +449,8 @@ pub fn propose_ranked_suffix_refinement(
             .total_cmp(&ordon_exit_edge_distance(right.1, right.2))
             .then_with(|| left.0.cmp(&right.0))
     });
-    // Sixteen variables keep exhaustive subset ranking bounded at 65,535.
+    // Sixteen variables keep exhaustive pair/triple ranking bounded. Larger
+    // combinations were measurably non-additive in Link's facing dynamics.
     let selected_ids = ranked
         .into_iter()
         .take(16)
@@ -419,7 +506,7 @@ pub fn propose_ranked_suffix_refinement(
     let mut seen = HashSet::new();
     let mut ranked_subsets = Vec::new();
     for mask in 1_u64..(1_u64 << mutations.len()) {
-        if mask.count_ones() < 2 {
+        if !(2..=3).contains(&mask.count_ones()) {
             continue;
         }
         let mut predicted_x = baseline_x;
@@ -430,7 +517,7 @@ pub fn propose_ranked_suffix_refinement(
                 predicted_z += mutation.3;
             }
         }
-        let lane_penalty = if !(-1906.4806..=-1708.04).contains(&predicted_x) {
+        let lane_penalty = if !(-1906.4806..=-1640.6002).contains(&predicted_x) {
             10_000.0
         } else {
             0.0
