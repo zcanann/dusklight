@@ -758,11 +758,14 @@ pairs, unsupported required facts, nondeterministic repetitions, insufficient
 action/state coverage, or inadequate held-out native performance disable Q
 proposals for that generation rather than weakening evaluation. Remaining
 slots use the unmasked structured, archive, and blind-coverage operators. The
-only bootstrap exception is one recorded trial capped at two candidates, one
-per learned lane; it cannot bypass fact, determinism, or coverage gates and is
-consumed only after a learned candidate is emitted. Larger initial proposal
-batches rotate all remaining slots across the safe structured, archive, and
-blind lanes, so the learned cap does not discard budget.
+only bootstrap exception is one recorded bounded trial. It cannot bypass fact,
+determinism, or coverage gates and is consumed only after a learned candidate
+is emitted. A trial with at least six slots reserves one direct sample for each
+safe structured, archive, and blind lane, then distributes every remaining slot
+round-robin across guided, temporal-consensus, and disagreement learning. Thus
+a nine-slot trial evaluates six learned repairs and three safe controls instead
+of trying to judge learning from one candidate per learned lane. Smaller trials
+remain entirely learned so that admission can be measured at all.
 
 The versioned `dusklight-action-guidance/movement-v2` mask is an advisory prior
 over the 68 movement-v2 action classes. Normal gameplay recommends all actions;
@@ -801,7 +804,7 @@ from outranking a longer successful route without rewriting collected evidence.
 The step and terminal schemas and values are part of both model lineage and
 proposer configuration identity.
 
-Each generation writes `q-proposals.json` v12 with its training size, complete
+Each generation writes `q-proposals.json` v13 with its training size, complete
 readiness and coverage gates, step/terminal-reward and progress-parent policies,
 guidance schema, masked-state count, guided and
 unmasked action evaluation counts, unmasked probe-state count, intervention
