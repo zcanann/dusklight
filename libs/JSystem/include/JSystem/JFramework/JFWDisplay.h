@@ -11,6 +11,11 @@ class JKRHeap;
 
 typedef void (*JFWDisplayUnkFunc)(void);
 
+struct JFWDisplayCheckpointState {
+    u32 previousRetrace = 0;
+    bool previousRetraceInitialized = false;
+};
+
 /**
  * @ingroup jsystem-jframework
  * 
@@ -70,6 +75,8 @@ public:
     virtual ~JFWDisplay();
 
     static JFWDisplay* getManager() { return sManager; }
+    static JFWDisplayCheckpointState captureCheckpointState();
+    static void restoreCheckpointState(const JFWDisplayCheckpointState& state);
 
     static JFWDisplay* createManager(JKRHeap* i_heap, JUTXfb::EXfbNumber i_xfbNum, bool param_2) {
         return createManager(NULL, i_heap, i_xfbNum, param_2);

@@ -69,6 +69,13 @@ struct JASGenericMemPool {
     /* 0x0C */ u32 usedMemCount;
 };
 
+struct JASGenericMemPoolState {
+    void* freeList;
+    u32 freeMemCount;
+    u32 totalMemCount;
+    u32 usedMemCount;
+};
+
 namespace JASThreadingModel {
     template <typename A0>
     struct InterruptsDisable {
@@ -140,6 +147,19 @@ public:
     u32 getTotalMemCount() const {
         typename JASThreadingModel::SingleThreaded<JASMemPool<T> >::Lock lock(*this);
         return JASGenericMemPool::getTotalMemCount();
+    }
+
+    JASGenericMemPoolState captureCheckpointState() const {
+        typename JASThreadingModel::SingleThreaded<JASMemPool<T> >::Lock lock(*this);
+        return {field_0x0, freeMemCount, totalMemCount, usedMemCount};
+    }
+
+    void restoreCheckpointState(const JASGenericMemPoolState& state) {
+        typename JASThreadingModel::SingleThreaded<JASMemPool<T> >::Lock lock(*this);
+        field_0x0 = state.freeList;
+        freeMemCount = state.freeMemCount;
+        totalMemCount = state.totalMemCount;
+        usedMemCount = state.usedMemCount;
     }
 };
 
@@ -333,6 +353,20 @@ public:
         return memPool_.getTotalMemCount();
     }
 
+    static JASGenericMemPoolState captureCheckpointState() {
+#if PLATFORM_GCN
+        JASMemPool<T>& memPool_ = getMemPool_();
+#endif
+        return memPool_.captureCheckpointState();
+    }
+
+    static void restoreCheckpointState(const JASGenericMemPoolState& state) {
+#if PLATFORM_GCN
+        JASMemPool<T>& memPool_ = getMemPool_();
+#endif
+        memPool_.restoreCheckpointState(state);
+    }
+
 private:
     // Fakematch? Is memPool_ both an in-function static and an out-of-function static?
     static JASMemPool<T> memPool_;
@@ -376,6 +410,19 @@ public:
         JASThreadingModel::ObjectLevelLockable<OSMutex>::Lock lock(mutex);
         JASGenericMemPool::free(ptr, param_1);
     }
+
+    JASGenericMemPoolState captureCheckpointState() const {
+        JASThreadingModel::ObjectLevelLockable<OSMutex>::Lock lock(mutex);
+        return {field_0x0, freeMemCount, totalMemCount, usedMemCount};
+    }
+
+    void restoreCheckpointState(const JASGenericMemPoolState& state) {
+        JASThreadingModel::ObjectLevelLockable<OSMutex>::Lock lock(mutex);
+        field_0x0 = state.freeList;
+        freeMemCount = state.freeMemCount;
+        totalMemCount = state.totalMemCount;
+        usedMemCount = state.usedMemCount;
+    }
 #else
     void newMemPool(int param_0) {
         typename JASThreadingModel::InterruptsDisable<JASMemPool_MultiThreaded<T> >::Lock lock(*this);
@@ -390,6 +437,20 @@ public:
     void free(void* ptr, u32 param_1) {
         typename JASThreadingModel::InterruptsDisable<JASMemPool_MultiThreaded<T> >::Lock lock(*this);
         JASGenericMemPool::free(ptr, param_1);
+    }
+
+
+    JASGenericMemPoolState captureCheckpointState() const {
+        typename JASThreadingModel::InterruptsDisable<JASMemPool_MultiThreaded<T> >::Lock lock(*this);
+        return {field_0x0, freeMemCount, totalMemCount, usedMemCount};
+    }
+
+    void restoreCheckpointState(const JASGenericMemPoolState& state) {
+        typename JASThreadingModel::InterruptsDisable<JASMemPool_MultiThreaded<T> >::Lock lock(*this);
+        field_0x0 = state.freeList;
+        freeMemCount = state.freeMemCount;
+        totalMemCount = state.totalMemCount;
+        usedMemCount = state.usedMemCount;
     }
 #endif
 };
@@ -435,6 +496,20 @@ public:
         JASMemPool_MultiThreaded<T>& memPool_ = getMemPool();
 #endif
         memPool_.newMemPool(n);
+    }
+
+    static JASGenericMemPoolState captureCheckpointState() {
+#if PLATFORM_GCN
+        JASMemPool_MultiThreaded<T>& memPool_ = getMemPool();
+#endif
+        return memPool_.captureCheckpointState();
+    }
+
+    static void restoreCheckpointState(const JASGenericMemPoolState& state) {
+#if PLATFORM_GCN
+        JASMemPool_MultiThreaded<T>& memPool_ = getMemPool();
+#endif
+        memPool_.restoreCheckpointState(state);
     }
 
 private:

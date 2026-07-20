@@ -3,10 +3,20 @@
 #include "dusk/automation/jut_gamepad_state.hpp"
 #include "dusk/automation/vi_state.hpp"
 
+#include "JSystem/JAudio2/JAISe.h"
+#include "JSystem/JAudio2/JAISeq.h"
+#include "JSystem/JAudio2/JAISoundChild.h"
+#include "JSystem/JAudio2/JAIStream.h"
+#include "JSystem/JAudio2/JASChannel.h"
+#include "JSystem/JAudio2/JASTrack.h"
+#include "JSystem/JFramework/JFWDisplay.h"
 #include "JSystem/JKernel/JKRHeap.h"
+#include "Z2AudioLib/Z2Audience.h"
+#include "Z2AudioLib/Z2SoundHandles.h"
 
 #include <cstring>
 #include <cstdio>
+#include <type_traits>
 
 #include <dolphin/ar.h>
 #include <dolphin/gx/GXAurora.h>
@@ -15,6 +25,55 @@
 
 namespace dusk::automation {
 namespace {
+
+static_assert(std::is_trivially_copyable_v<JASGenericMemPoolState>);
+static_assert(std::is_trivially_copyable_v<JFWDisplayCheckpointState>);
+
+template <typename T>
+bool capture_audio_pool(void*, const std::span<std::byte> output) {
+    if (output.size() != sizeof(JASGenericMemPoolState)) {
+        return false;
+    }
+    const JASGenericMemPoolState state = T::captureCheckpointState();
+    std::memcpy(output.data(), &state, sizeof(state));
+    return true;
+}
+
+template <typename T>
+bool restore_audio_pool(void*, const std::span<const std::byte> input) {
+    if (input.size() != sizeof(JASGenericMemPoolState)) {
+        return false;
+    }
+    JASGenericMemPoolState state{};
+    std::memcpy(&state, input.data(), sizeof(state));
+    T::restoreCheckpointState(state);
+    return true;
+}
+
+template <typename T>
+StateCheckpointError add_audio_pool(StateCheckpoint& checkpoint, const char* const name) {
+    return checkpoint.addComponent(name, sizeof(JASGenericMemPoolState), nullptr,
+        capture_audio_pool<T>, restore_audio_pool<T>);
+}
+
+bool capture_jfw_display(void*, const std::span<std::byte> output) {
+    if (output.size() != sizeof(JFWDisplayCheckpointState)) {
+        return false;
+    }
+    const JFWDisplayCheckpointState state = JFWDisplay::captureCheckpointState();
+    std::memcpy(output.data(), &state, sizeof(state));
+    return true;
+}
+
+bool restore_jfw_display(void*, const std::span<const std::byte> input) {
+    if (input.size() != sizeof(JFWDisplayCheckpointState)) {
+        return false;
+    }
+    JFWDisplayCheckpointState state{};
+    std::memcpy(&state, input.data(), sizeof(state));
+    JFWDisplay::restoreCheckpointState(state);
+    return true;
+}
 
 struct JKRHeapSelectionState {
     JKRHeap* currentHeap = nullptr;
@@ -198,6 +257,29 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
     if (error != StateCheckpointError::None) {
         return error;
     }
+    error = checkpoint.addComponent("jfw_display", sizeof(JFWDisplayCheckpointState), nullptr,
+        capture_jfw_display, restore_jfw_display);
+    if (error != StateCheckpointError::None) {
+        return error;
+    }
+    error = add_audio_pool<Z2Audible>(checkpoint, "audio_pool_z2_audible");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<Z2SoundHandlePool>(checkpoint, "audio_pool_z2_sound_handle");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JAISe>(checkpoint, "audio_pool_jai_se");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JAISeq>(checkpoint, "audio_pool_jai_seq");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JAIStream>(checkpoint, "audio_pool_jai_stream");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JAISoundChild>(checkpoint, "audio_pool_jai_sound_child");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JASTrack>(checkpoint, "audio_pool_jas_track");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JASTrack::TChannelMgr>(checkpoint, "audio_pool_jas_channel_mgr");
+    if (error != StateCheckpointError::None) return error;
+    error = add_audio_pool<JASChannel>(checkpoint, "audio_pool_jas_channel");
+    if (error != StateCheckpointError::None) return error;
     return checkpoint.addComponent("jut_gamepad", sizeof(JUTGamePadState), nullptr,
         capture_jut_gamepad, restore_jut_gamepad);
 }

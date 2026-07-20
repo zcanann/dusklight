@@ -12,6 +12,9 @@
 #include "global.h"
 #include <stdint.h>
 
+static u32 sCheckpointPreviousRetrace;
+static bool sCheckpointPreviousRetraceInitialized;
+
 #ifdef TARGET_PC
 #include "dusk/dusk.h"
 #include "dusk/game_clock.h"
@@ -350,13 +353,27 @@ void JFWDisplay::endFrame() {
     }
 
     if (field_0x40) {
-        static u32 prevFrame = VIGetRetraceCount();
-        ;
+        if (!sCheckpointPreviousRetraceInitialized) {
+            sCheckpointPreviousRetrace = VIGetRetraceCount();
+            sCheckpointPreviousRetraceInitialized = true;
+        }
         u32 retrace_cnt = VIGetRetraceCount();
-        u32 r28 = retrace_cnt - prevFrame;
-        JUTProcBar::getManager()->setCostFrame(retrace_cnt - prevFrame);
-        prevFrame = retrace_cnt;
+        u32 r28 = retrace_cnt - sCheckpointPreviousRetrace;
+        JUTProcBar::getManager()->setCostFrame(retrace_cnt - sCheckpointPreviousRetrace);
+        sCheckpointPreviousRetrace = retrace_cnt;
     }
+}
+
+JFWDisplayCheckpointState JFWDisplay::captureCheckpointState() {
+    return {
+        .previousRetrace = sCheckpointPreviousRetrace,
+        .previousRetraceInitialized = sCheckpointPreviousRetraceInitialized,
+    };
+}
+
+void JFWDisplay::restoreCheckpointState(const JFWDisplayCheckpointState& state) {
+    sCheckpointPreviousRetrace = state.previousRetrace;
+    sCheckpointPreviousRetraceInitialized = state.previousRetraceInitialized;
 }
 
 void JFWDisplay::waitBlanking(int param_0) {
