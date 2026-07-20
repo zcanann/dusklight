@@ -230,6 +230,69 @@ struct ObservationFixture {
         observation.playerResources.collectItemBits[0] = 0x03;
         observation.playerResources.collectedCrystalBits = 0x02;
         observation.playerResources.collectedMirrorBits = 0x01;
+        observation.runtimeFile.status = MilestoneObservation::ChannelStatus::Present;
+        observation.runtimeFile.backingAttachmentStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.runtimeFile.dataNumRaw = 1;
+        observation.runtimeFile.attachedPhysicalSlot = 2;
+        for (std::size_t index = 0; index < observation.runtimeFile.physicalSlots.size(); ++index) {
+            observation.runtimeFile.physicalSlots[index].number =
+                static_cast<std::uint8_t>(index + 1);
+            observation.runtimeFile.physicalSlots[index].contentStatus =
+                MilestoneObservation::ChannelStatus::NotSampled;
+        }
+        observation.runtimeFile.physicalSlots[1].attachedToRuntime = true;
+        observation.returnPlace.status = MilestoneObservation::ChannelStatus::Present;
+        observation.returnPlace.stage = {'F', '_', 'S', 'P', '1', '0', '3', '\0'};
+        observation.returnPlace.room = 0;
+        observation.returnPlace.playerStatus = 2;
+        observation.restart.status = MilestoneObservation::ChannelStatus::Present;
+        observation.restart.room = 1;
+        observation.restart.startPoint = 3;
+        observation.restart.angleY = 0x1200;
+        observation.restart.positionX = 10.0F;
+        observation.restart.positionY = 20.0F;
+        observation.restart.positionZ = 30.0F;
+        observation.restart.roomParam = 0x01020304;
+        observation.restart.lastSpeed = 4.5F;
+        observation.restart.lastMode = 0x05060708;
+        observation.restart.lastAngleY = -0x1200;
+        observation.eventHandoff.status = MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.preItemNo = 0x48;
+        observation.eventHandoff.getItemNo = 0x43;
+        observation.eventHandoff.eventFlags = 0x11;
+        observation.eventHandoff.secondaryFlags = 0x22;
+        observation.eventHandoff.hindFlags = 0x44;
+        observation.eventHandoff.talkXyType = 2;
+        observation.eventHandoff.compulsory = 1;
+        observation.eventHandoff.roomInfoSet = true;
+        observation.eventHandoff.skipTimer = 7;
+        observation.eventHandoff.skipParameter = 9;
+        observation.eventHandoff.itemPartner = {
+            .present = true,
+            .runtimeGeneration = 7,
+            .actorName = 0x123,
+            .setId = 4,
+            .homeRoom = 0,
+            .currentRoom = 0,
+            .homePositionPresent = true,
+            .homePositionX = 10.0F,
+            .homePositionY = 2.0F,
+            .homePositionZ = -10.0F,
+        };
+        observation.eventHandoff.eventNameStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.eventName =
+            {'D', 'E', 'F', 'A', 'U', 'L', 'T', '_', 'G', 'E', 'T', 'I', 'T', 'E', 'M', '\0'};
+        observation.eventHandoff.messageFlowStatus =
+            MilestoneObservation::ChannelStatus::Unavailable;
+        observation.eventHandoff.pendingCleanupStatus =
+            MilestoneObservation::ChannelStatus::Unavailable;
+        observation.eventHandoff.playerControlStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.playerControlModeFlags = 0x1234;
+        observation.eventHandoff.playerControlDoStatus = 0x15;
+        observation.eventHandoff.noTelopStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.noTelop = true;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -594,6 +657,21 @@ void test_player_resources_presence_matches_player_presence() {
     REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
 }
 
+void test_runtime_file_attachment_fails_closed() {
+    ObservationFixture fixture;
+    fixture.observation.runtimeFile.backingAttachmentStatus =
+        MilestoneObservation::ChannelStatus::Unavailable;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent runtime-file backing") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -658,6 +736,7 @@ int main(const int argc, char** argv) {
     test_duplicate_actor_identity_fails_closed();
     test_temporary_event_register_bank_is_required();
     test_player_resources_presence_matches_player_presence();
+    test_runtime_file_attachment_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";

@@ -7,6 +7,12 @@
 
 class fopAc_ac_c;
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+struct MilestoneEventManagerReadAdapter;
+}
+#endif
+
 class dEvent_exception_c {
 public:
     dEvent_exception_c() { mEventInfoIdx = -1; }
@@ -113,6 +119,12 @@ public:
     #endif
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: exposes immutable event identity
+    // to fork instrumentation without adding a gameplay query or side effect.
+    friend struct dusk::automation::MilestoneEventManagerReadAdapter;
+#endif
+
     /* 0x000 */ dEvDtBase_c mEventList[BASE_MAX];
     /* 0x18C */ int mCameraPlay;
     /* 0x190 */ dEvent_exception_c mException;

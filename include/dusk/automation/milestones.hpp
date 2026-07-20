@@ -27,6 +27,13 @@ enum class MilestoneId : std::uint8_t {
 };
 
 struct MilestoneObservation {
+    enum class ChannelStatus : std::uint8_t {
+        NotSampled = 0,
+        Present = 1,
+        Absent = 2,
+        Unavailable = 3,
+    };
+
     struct ActorIdentity {
         bool present = false;
         std::uint32_t runtimeGeneration = 0xffffffff;
@@ -212,6 +219,78 @@ struct MilestoneObservation {
     };
     PlayerCollisionSolver playerCollisionSolver;
     bool playerCollisionSolverPresent = false;
+
+    // Planner-facing save/runtime state is deliberately kept separate from
+    // PlayerResources. mDataNum identifies the selected zero-based card slot,
+    // while mNoFile is a distinct legacy marker whose nonzero meanings differ
+    // between supported ports. Preserve both raw values and only claim an
+    // attachment when the live engine state makes it unambiguous.
+    struct PhysicalSlot {
+        std::uint8_t number = 0;
+        ChannelStatus contentStatus = ChannelStatus::NotSampled;
+        bool attachedToRuntime = false;
+    };
+    struct RuntimeFileState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        ChannelStatus backingAttachmentStatus = ChannelStatus::NotSampled;
+        std::uint8_t noFileRaw = 0;
+        std::uint8_t dataNumRaw = 0;
+        std::int8_t attachedPhysicalSlot = -1;
+        std::array<PhysicalSlot, 3> physicalSlots{};
+    };
+    RuntimeFileState runtimeFile;
+
+    struct ReturnPlaceState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::array<char, 8> stage{};
+        std::int8_t room = -1;
+        std::uint8_t playerStatus = 0;
+    };
+    ReturnPlaceState returnPlace;
+
+    struct RestartState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::int8_t room = -1;
+        std::int16_t startPoint = -1;
+        std::int16_t angleY = 0;
+        float positionX = 0.0F;
+        float positionY = 0.0F;
+        float positionZ = 0.0F;
+        std::uint32_t roomParam = 0;
+        float lastSpeed = 0.0F;
+        std::uint32_t lastMode = 0;
+        std::int16_t lastAngleY = 0;
+    };
+    RestartState restart;
+
+    struct EventHandoffState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint8_t preItemNo = 0;
+        std::uint8_t getItemNo = 0;
+        std::uint16_t eventFlags = 0;
+        std::uint16_t secondaryFlags = 0;
+        std::uint16_t hindFlags = 0;
+        std::uint8_t talkXyType = 0;
+        std::uint8_t compulsory = 0;
+        bool roomInfoSet = false;
+        std::int32_t skipTimer = 0;
+        std::int32_t skipParameter = 0;
+        ActorIdentity itemPartner;
+        ChannelStatus eventNameStatus = ChannelStatus::NotSampled;
+        std::array<char, 64> eventName{};
+        ChannelStatus messageFlowStatus = ChannelStatus::Unavailable;
+        std::uint16_t messageFlowId = 0;
+        std::uint16_t messageNodeIndex = 0;
+        std::uint32_t messageCutHash = 0;
+        ChannelStatus pendingCleanupStatus = ChannelStatus::Unavailable;
+        std::uint32_t pendingCleanupFlags = 0;
+        ChannelStatus playerControlStatus = ChannelStatus::NotSampled;
+        std::uint32_t playerControlModeFlags = 0;
+        std::uint8_t playerControlDoStatus = 0;
+        ChannelStatus noTelopStatus = ChannelStatus::NotSampled;
+        bool noTelop = false;
+    };
+    EventHandoffState eventHandoff;
 
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.

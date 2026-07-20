@@ -431,6 +431,19 @@ The current code shows:
 - Auru's actor separates proximity behavior, a pending presentation actor ID,
   normal memo creation, and generic `DEFAULT_GETITEM` execution. These are
   distinct state sites and ordered actions.
+- Native learning observation v12 now records `mDataNum` and `mNoFile` as
+  separate raw values, a separately statused backing attachment, and three
+  distinct physical-slot descriptors. It does not infer a slotless file from a
+  nonzero `mNoFile`, because the PC command-line load path overloads that field.
+- The same v12 channel records exact `PlayerReturnPlace`, restart state,
+  `mPreItemNo`, `mGtItm`, item-partner identity, event-control flags, exact
+  running-event name when bounded, `NO_TELOP`, and player-control state. Generic
+  message-flow/node/cut and pending-cleanup discovery remain explicitly
+  `Unavailable` until actor/flow instrumentation can observe them safely.
+- Physical slot contents remain `NotSampled`: the live process exposes the
+  active runtime and selected slot number, not trustworthy simultaneous payloads
+  for all three card slots. A future card-boundary observer must populate those
+  descriptors without copying the active runtime into them.
 
 Primary source anchors:
 
@@ -1378,7 +1391,7 @@ Deliverable: one validated runtime representation independent of authoring forma
       pending cleanup, item partner, event name, and player-control transitions.
 - [ ] Produce semantic and raw diffs across room load, stage load, save, load,
       void, title, BiT, and BiTE boundaries.
-- [ ] Make unsupported/unobserved fields explicit rather than defaulting false.
+- [x] Make unsupported/unobserved fields explicit rather than defaulting false.
 
 Deliverable: replayable state evidence that can validate transition rules.
 

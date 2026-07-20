@@ -342,6 +342,123 @@ bool append_string16(
     return true;
 }
 
+bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto validStatus = [](const Status status) {
+        return status == Status::NotSampled || status == Status::Present ||
+               status == Status::Absent || status == Status::Unavailable;
+    };
+    const auto statusByte = [](const Status status) { return static_cast<std::uint8_t>(status); };
+    const auto& runtime = observation.runtimeFile;
+    const bool attached = runtime.backingAttachmentStatus == Status::Present;
+    std::uint8_t attachedSlotMask = 0;
+    for (std::size_t index = 0; index < runtime.physicalSlots.size(); ++index) {
+        const auto& slot = runtime.physicalSlots[index];
+        if (slot.number != index + 1 || !validStatus(slot.contentStatus)) {
+            error = "learning observation has invalid physical-slot state";
+            return false;
+        }
+        if (slot.attachedToRuntime)
+            attachedSlotMask |= static_cast<std::uint8_t>(1u << index);
+    }
+    if (runtime.status != Status::Present || !validStatus(runtime.backingAttachmentStatus) ||
+        (attached && (runtime.noFileRaw != 0 || runtime.dataNumRaw >= 3 ||
+                        runtime.attachedPhysicalSlot != runtime.dataNumRaw + 1 ||
+                        attachedSlotMask != (1u << runtime.dataNumRaw))) ||
+        (!attached && (runtime.attachedPhysicalSlot != -1 || attachedSlotMask != 0)))
+    {
+        error = "learning observation has inconsistent runtime-file backing";
+        return false;
+    }
+
+    const auto& returnPlace = observation.returnPlace;
+    const auto& restart = observation.restart;
+    const auto& handoff = observation.eventHandoff;
+    const auto fixedStringIsCanonical = [](const auto& value) {
+        const auto terminator = std::ranges::find(value, '\0');
+        return terminator == value.end() ||
+               std::ranges::all_of(terminator, value.end(), [](const char byte) { return byte == 0; });
+    };
+    if (returnPlace.status != Status::Present || restart.status != Status::Present ||
+        !fixedStringIsCanonical(returnPlace.stage) || !validStatus(handoff.status) ||
+        !validStatus(handoff.eventNameStatus) || !validStatus(handoff.messageFlowStatus) ||
+        !validStatus(handoff.pendingCleanupStatus) ||
+        !validStatus(handoff.playerControlStatus) || !validStatus(handoff.noTelopStatus) ||
+        (handoff.eventNameStatus == Status::Present &&
+            !fixedStringIsCanonical(handoff.eventName)) ||
+        (handoff.messageFlowStatus != Status::Present &&
+            (handoff.messageFlowId != 0 || handoff.messageNodeIndex != 0 ||
+                handoff.messageCutHash != 0)) ||
+        (handoff.pendingCleanupStatus != Status::Present && handoff.pendingCleanupFlags != 0) ||
+        (handoff.playerControlStatus != Status::Present &&
+            (handoff.playerControlModeFlags != 0 || handoff.playerControlDoStatus != 0)) ||
+        handoff.noTelopStatus != Status::Present)
+    {
+        error = "learning observation has inconsistent planner runtime channels";
+        return false;
+    }
+
+    append_integer(output, statusByte(runtime.status));
+    append_integer(output, statusByte(runtime.backingAttachmentStatus));
+    append_integer(output, runtime.noFileRaw);
+    append_integer(output, runtime.dataNumRaw);
+    append_integer(output, runtime.attachedPhysicalSlot);
+    append_integer(output, attachedSlotMask);
+    for (const auto& slot : runtime.physicalSlots)
+        append_integer(output, statusByte(slot.contentStatus));
+    append_integer<std::uint8_t>(output, 0);
+
+    append_integer(output, statusByte(returnPlace.status));
+    append_integer(output, returnPlace.room);
+    append_integer(output, returnPlace.playerStatus);
+    append_integer<std::uint8_t>(output, 0);
+    output.insert(output.end(), returnPlace.stage.begin(), returnPlace.stage.end());
+
+    append_integer(output, statusByte(restart.status));
+    append_integer(output, restart.room);
+    append_integer(output, restart.startPoint);
+    append_integer(output, restart.angleY);
+    append_integer(output, restart.lastAngleY);
+    for (const float value :
+        {restart.positionX, restart.positionY, restart.positionZ, restart.lastSpeed})
+    {
+        if (!append_float(output, value, error))
+            return false;
+    }
+    append_integer(output, restart.roomParam);
+    append_integer(output, restart.lastMode);
+
+    for (const Status status : {handoff.status, handoff.eventNameStatus,
+             handoff.messageFlowStatus, handoff.pendingCleanupStatus,
+             handoff.playerControlStatus, handoff.noTelopStatus})
+        append_integer(output, statusByte(status));
+    append_integer(output, handoff.preItemNo);
+    append_integer(output, handoff.getItemNo);
+    append_integer(output, handoff.talkXyType);
+    append_integer(output, handoff.compulsory);
+    append_integer(output, static_cast<std::uint8_t>(handoff.roomInfoSet));
+    append_integer(output, static_cast<std::uint8_t>(handoff.noTelop));
+    append_integer(output, handoff.eventFlags);
+    append_integer(output, handoff.secondaryFlags);
+    append_integer(output, handoff.hindFlags);
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, handoff.skipTimer);
+    append_integer(output, handoff.skipParameter);
+    append_integer(output, handoff.messageFlowId);
+    append_integer(output, handoff.messageNodeIndex);
+    append_integer(output, handoff.messageCutHash);
+    append_integer(output, handoff.pendingCleanupFlags);
+    append_integer(output, handoff.playerControlModeFlags);
+    append_integer(output, handoff.playerControlDoStatus);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    if (!append_actor_identity(output, handoff.itemPartner, error))
+        return false;
+    output.insert(output.end(), handoff.eventName.begin(), handoff.eventName.end());
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -837,7 +954,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             !append_float(output, wall.realizedRadius, error))
             return false;
     }
-    return true;
+    return append_planner_runtime_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

@@ -64,6 +64,25 @@ struct MilestoneCollisionReadAdapter {
     static const cM3dGCir& realizedCircle(const dBgS_AcchCir& value) { return value.m_cir; }
 };
 
+struct MilestoneEventManagerReadAdapter {
+    static const char* runningEventName(const dEvent_manager_c& manager) {
+        if (manager.mCurrentEvId == -1)
+            return nullptr;
+        const int eventType = manager.mCurrentEvId >> 8;
+        const int eventIndex = manager.mCurrentEvId & 0xff;
+        if (eventType <= dEvent_manager_c::BASE_NULL || eventType >= dEvent_manager_c::BASE_MAX)
+            return nullptr;
+        const dEvDtBase_c& base = manager.mEventList[eventType];
+        if (base.mHeaderP == nullptr || base.mEventP == nullptr || eventIndex < 0 ||
+            eventIndex >= base.mHeaderP->eventNum)
+        {
+            return nullptr;
+        }
+        const dEvDtEvent_c& event = base.mEventP[eventIndex];
+        return event.mEventState == dEvDt_State_START_e ? event.mName : nullptr;
+    }
+};
+
 TitleMenuObservation MenuStateObserver::captureTitle() {
     const auto* title = static_cast<const daTitle_c*>(fopAcM_SearchByName(fpcNm_TITLE_e));
     if (title == nullptr)
@@ -467,8 +486,9 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .eventStatus = static_cast<std::uint8_t>(event == nullptr ? 0 : event->mEventStatus),
         .eventMapToolId =
             static_cast<std::uint8_t>(event == nullptr ? 0xff : event->getMapToolId()),
-        // Event-name identity is deliberately unavailable. The only existing
-        // accessor is non-const and traverses private manager state.
+        // The legacy hash channel remains unavailable. Observation v10 copies
+        // the exact bounded run-event name into the planner handoff channel
+        // below, avoiding an unauditable hash or an escaping game pointer.
         .eventNameHashPresent = false,
         .eventNameHash = 0,
         .titlePresent = titleMenu.present,
@@ -495,6 +515,101 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         .nextPoint = dComIfGp_getNextStagePoint(),
         .rng = capture_game_rng_snapshot(),
     };
+
+    const auto copyFixedName = [](auto& destination, const char* source) {
+        destination.fill('\0');
+        if (source == nullptr)
+            return;
+        for (std::size_t index = 0;
+             index < destination.size() && source[index] != '\0'; ++index)
+            destination[index] = source[index];
+    };
+
+    auto& runtimeFile = observation.runtimeFile;
+    runtimeFile.status = MilestoneObservation::ChannelStatus::Present;
+    runtimeFile.noFileRaw = dComIfGs_getNoFile();
+    runtimeFile.dataNumRaw = dComIfGs_getDataNum();
+    for (std::size_t index = 0; index < runtimeFile.physicalSlots.size(); ++index) {
+        runtimeFile.physicalSlots[index].number = static_cast<std::uint8_t>(index + 1);
+        // The active game state does not retain a trustworthy copy of all
+        // three card payloads. Their existence is explicit, but their contents
+        // are not fabricated from the live runtime file.
+        runtimeFile.physicalSlots[index].contentStatus =
+            MilestoneObservation::ChannelStatus::NotSampled;
+    }
+    if (player != nullptr && runtimeFile.noFileRaw == 0 && runtimeFile.dataNumRaw < 3) {
+        runtimeFile.backingAttachmentStatus = MilestoneObservation::ChannelStatus::Present;
+        runtimeFile.attachedPhysicalSlot = static_cast<std::int8_t>(runtimeFile.dataNumRaw + 1);
+        runtimeFile.physicalSlots[runtimeFile.dataNumRaw].attachedToRuntime = true;
+    } else {
+        // Nonzero mNoFile denotes a slotless runtime in the original flow, but
+        // the PC command-line loader also writes 1..3 here. Title/menu defaults
+        // can likewise resemble slot zero before an active player exists.
+        // Preserve the raw values and require exact-build/lifecycle rules to
+        // interpret either ambiguity.
+        runtimeFile.backingAttachmentStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
+    auto& returnPlace = observation.returnPlace;
+    auto& savedReturnPlace = g_dComIfG_gameInfo.info.getPlayer().getPlayerReturnPlace();
+    returnPlace.status = MilestoneObservation::ChannelStatus::Present;
+    copyFixedName(returnPlace.stage, savedReturnPlace.getName());
+    returnPlace.room = savedReturnPlace.getRoomNo();
+    returnPlace.playerStatus = savedReturnPlace.getPlayerStatus();
+
+    auto& restart = observation.restart;
+    const cXyz& restartPosition = dComIfGs_getRestartRoomPos();
+    restart.status = MilestoneObservation::ChannelStatus::Present;
+    restart.room = dComIfGs_getRestartRoomNo();
+    restart.startPoint = dComIfGs_getStartPoint();
+    restart.angleY = dComIfGs_getRestartRoomAngleY();
+    restart.positionX = restartPosition.x;
+    restart.positionY = restartPosition.y;
+    restart.positionZ = restartPosition.z;
+    restart.roomParam = dComIfGs_getRestartRoomParam();
+    restart.lastSpeed = dComIfGs_getLastSceneSpeedF();
+    restart.lastMode = dComIfGs_getLastSceneMode();
+    restart.lastAngleY = dComIfGs_getLastSceneAngleY();
+
+    auto& handoff = observation.eventHandoff;
+    handoff.noTelopStatus = MilestoneObservation::ChannelStatus::Present;
+    handoff.noTelop = dComIfGs_isTmpBit(dSv_event_tmp_flag_c::NO_TELOP) != 0;
+    handoff.playerControlStatus = link == nullptr ? MilestoneObservation::ChannelStatus::Absent :
+                                                     MilestoneObservation::ChannelStatus::Present;
+    handoff.playerControlModeFlags = link == nullptr ? 0 : link->mModeFlg;
+    handoff.playerControlDoStatus =
+        static_cast<std::uint8_t>(link == nullptr ? 0 : dComIfGp_getDoStatus());
+    if (event != nullptr) {
+        handoff.status = MilestoneObservation::ChannelStatus::Present;
+        handoff.preItemNo = event->mPreItemNo;
+        handoff.getItemNo = event->mGtItm;
+        handoff.eventFlags = event->mEventFlag;
+        handoff.secondaryFlags = event->mFlag2;
+        handoff.hindFlags = event->mHindFlag;
+        handoff.talkXyType = event->mTalkXyType;
+        handoff.compulsory = event->mCompulsory;
+        handoff.roomInfoSet = event->mRoomInfoSet;
+        handoff.skipTimer = event->mSkipTimer;
+        handoff.skipParameter = event->mSkipParameter;
+        handoff.itemPartner = actorIdentity(dComIfGp_event_getItemPartner());
+        if (observation.eventRunning) {
+            const char* eventName =
+                MilestoneEventManagerReadAdapter::runningEventName(dComIfGp_getEventManager());
+            const std::size_t eventNameLength = eventName == nullptr ? 0 : std::strlen(eventName);
+            if (eventName != nullptr && eventNameLength < handoff.eventName.size()) {
+                copyFixedName(handoff.eventName, eventName);
+                handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Present;
+            } else {
+                // A truncated event name cannot serve as exact evidence.
+                handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Unavailable;
+            }
+        } else {
+            handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Absent;
+        }
+    } else {
+        handoff.status = MilestoneObservation::ChannelStatus::Unavailable;
+        handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    }
 
     if (player != nullptr) {
         auto& resources = observation.playerResources;
