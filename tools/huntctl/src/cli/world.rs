@@ -4,6 +4,7 @@ use crate::{flag, option, repeated_option, required_path, usage_error, usize_opt
 use huntctl::Digest;
 use huntctl::actor_profile_catalog::ActorProfileCatalog;
 use huntctl::content_store::{ContentKind, ContentStore};
+use huntctl::stage_boot_catalog::{StageBootCatalog, StageInventoryStatus};
 use huntctl::world_context::WorldContext;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
 use huntctl::world_inventory::WorldInventory;
@@ -18,6 +19,49 @@ use std::path::{Path, PathBuf};
 
 pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("boot-catalog") => {
+            let stage_root = required_path(&args[1..], "--stage-root")?;
+            let known_loader = option(&args[1..], "--known-loader").map(PathBuf::from);
+            let output = required_path(&args[1..], "--output")?;
+            let catalog = StageBootCatalog::build(&stage_root, known_loader.as_deref())?;
+            let bytes = catalog.canonical_bytes()?;
+            let digest = catalog.digest()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::StageBootCatalog)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": catalog.schema,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "sha256": digest,
+                    "bytes": bytes.len(),
+                    "stages": catalog.stages.len(),
+                    "complete_stages": catalog.stages.iter()
+                        .filter(|stage| stage.inventory_status == StageInventoryStatus::Complete)
+                        .count(),
+                    "unreadable_stages": catalog.stages.iter()
+                        .filter(|stage| stage.inventory_status == StageInventoryStatus::Unreadable)
+                        .count(),
+                    "loader_only_stages": catalog.stages.iter()
+                        .filter(|stage| stage.inventory_status == StageInventoryStatus::LoaderOnly)
+                        .count(),
+                    "candidates": catalog.candidates.len(),
+                }))?
+            );
+            Ok(())
+        }
         Some("inventory") => {
             let stage_dir = required_path(&args[1..], "--stage-dir")?;
             let stage = option(&args[1..], "--stage").ok_or("missing required --stage ID")?;

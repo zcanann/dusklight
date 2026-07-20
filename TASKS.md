@@ -104,12 +104,19 @@ scripted controller to perform the documented technique.
 
 ### 0A. Survey every bootable world entry
 
-- [ ] Generate an authoritative catalog of stage, room, layer and spawn
-  combinations from extracted game data and loader metadata. Classify invalid,
-  conditional and crashing entries rather than retrying them indefinitely.
+- [x] Generate a canonical catalog of stage, room, layer and spawn candidates
+  from extracted game data and known loader metadata. `world boot-catalog`
+  retains retail `PLYR` provenance, loader provenance, source inventory
+  identity and unreadable stages rather than depending on whichever workbench
+  cache files happen to exist. The real GZ2E01 pass produced 79 stages and
+  9,084 candidate boots: 78 complete retail inventories and one explicitly
+  unreadable inventory (`D_MN09`) instead of silently dropping it. The ignored
+  retail-data test reproduces `build/stage-survey/boot-catalog.json`; its cases
+  remain unverified until the survey below classifies their runtime outcomes.
 - [ ] Build a resumable native survey that boots every catalogued entry, waits
   for a semantic ready boundary, observes a bounded interval and records boot
-  success, timeout, crash or unmet prerequisite. Do not author a tape per map.
+  success, timeout, crash, invalid combination, conditional setup or unmet
+  prerequisite rather than retrying forever. Do not author a tape per map.
 - [ ] For every successful entry, prove that the learner observation contains
   the complete active actor population. Inventory all actor profiles and all
   generally available enemy metadata; enemies are sparse enough that this data
