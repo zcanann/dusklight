@@ -2,6 +2,7 @@
 
 mod anchored_search;
 pub mod harness;
+pub mod stage_survey;
 
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,

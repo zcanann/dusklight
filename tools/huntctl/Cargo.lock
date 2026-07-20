@@ -436,6 +436,7 @@ dependencies = [
  "dusklight-search",
  "dusklight-semantic-novelty",
  "dusklight-trace",
+ "dusklight-world",
  "serde",
  "serde_json",
  "sha2",
