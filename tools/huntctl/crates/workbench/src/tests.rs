@@ -410,6 +410,61 @@ fn launches_use_the_compiled_authored_program_and_native_result_stream() {
 }
 
 #[test]
+fn launches_merge_owned_predicates_across_compatible_language_minors() {
+    let root = temporary_root("mixed-milestone-language-minors");
+    fs::write(
+        root.join("boot.milestones"),
+        r#"milestones 1.3
+
+milestone boot {
+  phase pre_input
+  when boundary.kind == "boot"
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("goal.milestones"),
+        r#"milestones 1.7
+
+milestone review {
+  phase post_sim
+  when stage.name == "F_SP103" && player.exists
+}
+"#,
+    )
+    .unwrap();
+    let route = Timeline::parse(
+        r#"
+timeline mixed
+origin boot predicate boot source boot.milestones
+segment first root profile boot_to_fsp103 uses tape first.tape starts clean produces endpoint
+goal review on first predicate review source goal.milestones
+"#,
+    )
+    .unwrap();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    let mut command = Command::new("game");
+
+    append_authored_milestone_args(&route, &root, &state, &mut command, None).unwrap();
+
+    let decoded = milestone_dsl::decode(&fs::read(state.join("route-milestones.dmsp")).unwrap())
+        .unwrap();
+    assert_eq!(decoded.program.version.major, 1);
+    assert_eq!(decoded.program.version.minor, 7);
+    assert_eq!(
+        decoded
+            .definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>(),
+        ["boot", "review"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn graph_exposes_timeline_shape_and_scrub_ranges() {
     let root = temporary_root("graph");
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
@@ -1784,7 +1839,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         graph
             .segments
             .iter()
-            .find(|segment| segment.id == "to_ordon_spring_q128")
+            .find(|segment| segment.id == "to_ordon_spring_q125")
             .and_then(|segment| segment.parent.as_deref()),
         Some("tolink_link_control")
     );
@@ -1861,22 +1916,22 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let continuation = graph
         .segments
         .iter()
-        .find(|segment| segment.id == "to_ordon_spring_q128")
+        .find(|segment| segment.id == "to_ordon_spring_q125")
         .unwrap();
     assert!(continuation.playable);
     assert!(continuation.recordable);
     assert_eq!(continuation.predicate_proof, "verified");
-    assert_eq!(continuation.first_hit_tick, Some(128));
+    assert_eq!(continuation.first_hit_tick, Some(125));
     assert_eq!(continuation.goal_proofs.len(), 2);
     assert!(continuation.goal_proofs.iter().any(|proof| {
         proof.goal == "ordon_spring_exit_approach"
             && proof.status == "verified"
-            && proof.first_hit_tick == Some(117)
+            && proof.first_hit_tick == Some(113)
     }));
     assert!(continuation.goal_proofs.iter().any(|proof| {
         proof.goal == "ordon_spring_load_committed"
             && proof.status == "verified"
-            && proof.first_hit_tick == Some(128)
+            && proof.first_hit_tick == Some(125)
     }));
     assert_eq!(continuation.record_anchors.len(), 2);
     let boot = graph.origin.as_ref().unwrap();
@@ -1932,7 +1987,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     }
 
     let (segment_id, expected_output) =
-        ("to_ordon_spring_q128", "5aa5cbdf1883adb60fa8b5b08578bd2e");
+        ("to_ordon_spring_q125", "5f0db2cd758da9d20bffd7c7def9af70");
     let segment = &route.segments[segment_id];
     assert_eq!(segment.end_fingerprint, expected_output);
     let card = graph
@@ -1943,9 +1998,9 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     assert!(card.playable);
     assert_eq!(card.parent.as_deref(), Some("tolink_link_control"));
     let continuation = load_segment_tape(segment, artifact_root).unwrap();
-    assert_eq!(continuation.frames.len(), 128);
+    assert_eq!(continuation.frames.len(), 126);
     let playback = materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
-    assert_eq!(playback.tape.frames.len(), 568);
+    assert_eq!(playback.tape.frames.len(), 566);
     assert_eq!(
         segment_parent_frame_count(
             &route,
@@ -1958,6 +2013,20 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         440
     );
     assert_eq!(playback.lineage, None);
+
+    let review_id = "to_ordon_spring_near_miss_2p781";
+    let review = graph
+        .segments
+        .iter()
+        .find(|candidate| candidate.id == review_id)
+        .unwrap();
+    assert!(review.playable);
+    assert!(!review.recordable);
+    assert!(review.goal_proofs.is_empty());
+    assert!(review.record_anchors.is_empty());
+    let review_playback =
+        materialize_segment_playback(&route, artifact_root, review_id, None).unwrap();
+    assert_eq!(review_playback.tape.frames.len(), 565);
     assert_eq!(playback.segment.as_deref(), Some(segment_id));
     assert_eq!(
         &playback.tape.frames[..prefix.tape.frames.len()],

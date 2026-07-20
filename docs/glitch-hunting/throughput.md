@@ -202,9 +202,11 @@ approximately 11.8-unit signed exit-edge miss to 4.0807 after path/corner
 repairs, 3.0181 after a measured lane shift, 2.9324 after a local clipped-stick
 change, and 2.7813 after fine ranked combinations. The native terminal result
 remained authoritative throughout: every retained candidate still reported
-`success: false`, so none is a valid route improvement and no tape was
-promoted. The proof is blocked pending a measured non-local proposal family;
-repeating the exhausted local neighborhoods would not satisfy the gate.
+`success: false`, so none is a valid route improvement or proof promotion. The
+best 2.7813-unit near miss is checked in only as the unproved
+`to_ordon_spring_near_miss_2p781` workbench sibling for visual review. The proof
+is blocked pending a measured non-local proposal family; repeating the
+exhausted local neighborhoods would not satisfy the gate.
 
 A bounded non-local follow-up used the existing native reactive controller to
 derive world-coordinate waypoint policies from the successful incumbent trace.

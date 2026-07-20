@@ -128,6 +128,9 @@ overrode native success and no candidate reached `ordon_spring_load_committed`
 early. Evidence is retained under `build/search/ordon-q124-*`; aggregate counts
 come from their passed `result.json` files. Continuing now requires a new,
 measured non-local proposal family rather than another obvious local neighbor.
+The 2.7813-unit near miss is also checked in as the explicitly unproved
+`to_ordon_spring_near_miss_2p781` workbench sibling for visual review; that
+review artifact has no promotion authority and does not satisfy gate 4.
 
 A bounded non-local follow-up derived native world-coordinate waypoint policies
 from the successful 125-tick incumbent trace while retaining its seven roll

@@ -616,11 +616,12 @@ pub(super) fn append_authored_milestone_args(
             ))
         })?;
         if let Some(combined) = &mut combined {
-            if combined.version != program.version {
+            if combined.version.major != program.version.major {
                 return Err(WorkbenchError::new(
                     "owned predicate sources use incompatible language versions",
                 ));
             }
+            combined.version.minor = combined.version.minor.max(program.version.minor);
             for definition in program.definitions.drain(..) {
                 if !definition_names.insert(definition.name.clone()) {
                     return Err(WorkbenchError::new(format!(

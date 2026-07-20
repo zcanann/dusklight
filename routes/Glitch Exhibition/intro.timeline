@@ -41,6 +41,11 @@ subgraph_member tolink segment tolink_link_control
 segment to_ordon_spring_q125 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_q125.tape starts ac7c32788fc3b5c59046386d95b9b5b4 produces 5f0db2cd758da9d20bffd7c7def9af70
 label to_ordon_spring_q125 "ToOrdonSprings 125f"
 
+# Review-only native failure retained from the checkpoint suffix search. Its
+# endpoint missed the exit edge by 2.781320 units and carries no goal proof.
+segment to_ordon_spring_near_miss_2p781 after tolink_link_control profile fsp103_to_fsp104 uses tape intro/segments/to_ordon_spring_near_miss_2p781.tape starts ac7c32788fc3b5c59046386d95b9b5b4 produces review-fb093f861a6aaa68
+label to_ordon_spring_near_miss_2p781 "Best near miss (2.7813, unproved)"
+
 goal link_control on tolink_link_control predicate link_control source intro/predicates/link_control.milestones
 goal title_logo_skip_ready on tolink_title_ready predicate title_logo_skip_ready source intro/predicates/title_logo_skip_ready.milestones
 goal title_start_ready on tolink_open_title predicate title_start_ready source intro/predicates/title_start_ready.milestones
