@@ -1,0 +1,78 @@
+{
+  "schema": "dusklight-scenario-fixture/v1",
+  "name": "Post-twilight Telma and Louise in Telma's Bar",
+  "form": "human",
+  "rng": [
+    {
+      "stream": "primary",
+      "state0": 100,
+      "state1": 100,
+      "state2": 100,
+      "call_count": 0
+    },
+    {
+      "stream": "secondary",
+      "state0": 12,
+      "state1": 123,
+      "state2": 70,
+      "call_count": 0
+    }
+  ],
+  "flags": [
+    {
+      "domain": "event",
+      "index": 68,
+      "value": true
+    },
+    {
+      "domain": "event",
+      "index": 78,
+      "value": true
+    },
+    {
+      "domain": "event",
+      "index": 104,
+      "value": true
+    },
+    {
+      "domain": "event",
+      "index": 250,
+      "value": true
+    },
+    {
+      "domain": "event",
+      "index": 264,
+      "value": true
+    },
+    {
+      "domain": "event",
+      "index": 269,
+      "value": false
+    },
+    {
+      "domain": "event",
+      "index": 271,
+      "value": false
+    },
+    {
+      "domain": "event",
+      "index": 276,
+      "value": false
+    },
+    {
+      "domain": "event",
+      "index": 287,
+      "value": false
+    },
+    {
+      "domain": "event",
+      "index": 295,
+      "value": false
+    },
+    {
+      "domain": "event",
+      "index": 387,
+      "value": false
+    }
+  ]
+}

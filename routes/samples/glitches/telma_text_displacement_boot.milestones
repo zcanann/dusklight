@@ -1,0 +1,15 @@
+milestones 1.2
+
+# This proves the declared story state and stable stage readiness. Telma and
+# Louise are layer-4 placed actors; their live presence is audited separately
+# from the complete learner actor population before this becomes a 5C source.
+milestone telma_louise_fixture_ready {
+  phase post_sim
+  stable 30
+  when stage.name == "R_SP116" && stage.room == 5 && stage.layer == 4 &&
+   stage.spawn == 0 && player.exists && player.is_link && !event.running &&
+   flag.event(68) && flag.event(78) && flag.event(104) && flag.event(250) &&
+   flag.event(264) && !flag.event(269) && !flag.event(271) &&
+   !flag.event(276) && !flag.event(287) && !flag.event(295) &&
+   !flag.event(387)
+}

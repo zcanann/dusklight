@@ -80,6 +80,13 @@ the same goal without demonstration-relative features.
   and 5 across the authenticated wire format. It intentionally uses sentinel
   byte values: the Telma/Louise success predicate must be authored from an
   observed successful/control delta, not guessed from Skybook's address list.
+- The checked-in Telma/Louise fixture boots directly to `R_SP116`, room 5,
+  layer 4, spawn 0 with an explicit post-twilight flag and RNG identity. Two
+  fresh cold roots reached its 30-tick stable predicate at tape frame 148 with
+  identical state at all 149 compared boundaries and the same v6 fingerprint
+  `72c607ff...f27b2`. Native creation evidence confirms both Telma (profile
+  627) and Louise (profile 263) are live; no gameplay write occurs after the
+  declared tick-zero fixture is applied.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
@@ -323,7 +330,7 @@ lane; discovery, not parity with the 125-tick demonstration, is the gate.
 
 ### 5C. Thin Skybook-supported setup
 
-- [ ] Boot directly into Telma's Bar with declared post-twilight game flags
+- [x] Boot directly into Telma's Bar with declared post-twilight game flags
   that place both Telma and Louise in the bar. Record the complete boot
   identity so the fixture is reproducible and all gameplay after tick zero
   remains input-only.

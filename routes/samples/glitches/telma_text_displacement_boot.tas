@@ -1,0 +1,10 @@
+dusktape 1
+boot stage R_SP116 5 0 4
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+# Post-twilight Telma's Bar setup. The companion fixture establishes story
+# state before the play scene; every frame after tick zero is input-only.
+repeat 179 neutral
