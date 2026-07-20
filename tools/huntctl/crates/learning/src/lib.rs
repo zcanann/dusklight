@@ -37,6 +37,7 @@ pub mod local_dynamics;
 pub mod low_data_baselines;
 pub mod model_ownership;
 pub mod model_representation;
+pub mod native_actor_features;
 pub mod native_actor_view;
 pub mod native_geometry_view;
 pub mod offline_rl;
