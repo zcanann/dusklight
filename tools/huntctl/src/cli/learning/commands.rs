@@ -24,7 +24,8 @@ use huntctl::low_data_baselines::{
 use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
-    extract_exploratory_v2_from_bytes, movement_feature_schema_digest_v1,
+    extract_exploratory_v2_from_bytes, extract_exploratory_v3_from_bytes,
+    movement_feature_schema_digest_v1,
 };
 use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
 use huntctl::tape::InputTape;
@@ -378,6 +379,8 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let end_is_terminal = learn_args.iter().any(|arg| arg == "--terminal");
             let feature_view =
                 option(learn_args, "--view").unwrap_or_else(|| "movement-state/v1".into());
+            let action_view =
+                option(learn_args, "--action-view").unwrap_or_else(|| "movement-action/v2".into());
             let extract_config = ExploratoryExtractConfig {
                 episode_digest,
                 start_tape_frame,
@@ -386,16 +389,19 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 terminal_reference: None,
                 end_is_terminal,
             };
-            let corpus = match feature_view.as_str() {
-                "movement-state/v1" => {
+            let corpus = match (feature_view.as_str(), action_view.as_str()) {
+                ("movement-state/v1", "movement-action/v2") => {
                     extract_exploratory_from_bytes(&trace_bytes, &tape_bytes, extract_config)?
                 }
-                MOVEMENT_STATE_V2_ID => {
+                (MOVEMENT_STATE_V2_ID, "movement-action/v2") => {
                     extract_exploratory_v2_from_bytes(&trace_bytes, &tape_bytes, extract_config)?
                 }
-                _ => {
+                (MOVEMENT_STATE_V2_ID, "movement-action/v3") => {
+                    extract_exploratory_v3_from_bytes(&trace_bytes, &tape_bytes, extract_config)?
+                }
+                (feature, actions) => {
                     return Err(format!(
-                        "unknown --view {feature_view:?}; expected movement-state/v1 or {MOVEMENT_STATE_V2_ID}"
+                        "unsupported observation/action view pair {feature:?}/{actions:?}; expected movement-state/v1 with movement-action/v2, or {MOVEMENT_STATE_V2_ID} with movement-action/v2 or movement-action/v3"
                     )
                     .into());
                 }

@@ -15,7 +15,10 @@ pub use crate::harness::evaluation::{AnchoredObjectiveIdentity, BoundaryFingerpr
 use crate::harness::execution::execute_request;
 use crate::harness::objective_suite::{ArtifactReference, ObjectiveSeed};
 use crate::harness::run_contract::{HarnessRunRequest, HarnessRunResult, HarnessTerminalReason};
-use crate::offline_rl::{ExploratoryExtractConfig, extract_exploratory_v2_from_bytes};
+use crate::offline_rl::{
+    ExploratoryExtractConfig, extract_exploratory_v2_from_bytes, extract_exploratory_v3_from_bytes,
+    movement_action_schema_digest_v2, movement_action_schema_digest_v3,
+};
 use crate::search::{
     Ancestry, Candidate, CandidateResult, LeaderboardEntry, LexicographicScore, POPULATION_SCHEMA,
     PopulationManifest, RESULTS_SCHEMA, SearchResults, SegmentProfile, rank_population,

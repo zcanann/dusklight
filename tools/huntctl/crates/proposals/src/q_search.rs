@@ -10,7 +10,8 @@ use super::training_guard::{
     OnlineTrainingHealth, TrainingGuardConfig,
 };
 use crate::action_guidance::{
-    ACTION_GUIDANCE_SCHEMA_V2, AdvisoryActionMask, movement_action_mask_v2,
+    ACTION_GUIDANCE_SCHEMA_V2, ACTION_GUIDANCE_SCHEMA_V3, AdvisoryActionMask,
+    movement_action_mask_v2, movement_action_mask_v3,
 };
 use crate::artifact::Digest;
 use crate::candidate_envelope::{CandidateEnvelope, NamedDigest, ProposerIdentity, ProposerKind};
@@ -19,10 +20,7 @@ use crate::fqi::{
     FITTED_Q_MODEL_SCHEMA_V2, FittedQ, FqiConfig, QEstimate, Transition as FqiTransition,
 };
 use crate::observation_view::movement_state_v2_spec;
-use crate::offline_rl::{
-    MOVEMENT_ACTION_COUNT_V2, MOVEMENT_REWARD_SCHEMA_V2, canonical_movement_pad_v2,
-    movement_action_id_v2, movement_action_schema_digest_v2,
-};
+use crate::offline_rl::{MOVEMENT_REWARD_SCHEMA_V2, MovementActionSchema};
 use crate::search::{Ancestry, Candidate, InterventionRange};
 use crate::transition_corpus::TransitionCorpus;
 use serde::Serialize;
@@ -41,6 +39,24 @@ const Q_FAILURE_TERMINAL_ADJUSTMENT: f32 = -512.0;
 const LEARNED_PARENT_POLICY_V2: &str = "authenticated-progress-repair/v2";
 const INITIAL_TRIAL_BUDGET_POLICY_V4: &str =
     "sparse-actions-collect-long-horizon-coverage-before-learned-majority/v4";
+
+fn action_guidance(
+    schema: MovementActionSchema,
+    state: &[f32],
+) -> Result<AdvisoryActionMask, QSearchError> {
+    match schema {
+        MovementActionSchema::V2 => movement_action_mask_v2(state),
+        MovementActionSchema::V3 => movement_action_mask_v3(state),
+    }
+    .map_err(|error| QSearchError::new(error.to_string()))
+}
+
+const fn action_guidance_schema(schema: MovementActionSchema) -> &'static str {
+    match schema {
+        MovementActionSchema::V2 => ACTION_GUIDANCE_SCHEMA_V2,
+        MovementActionSchema::V3 => ACTION_GUIDANCE_SCHEMA_V3,
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct QEpisode {
@@ -255,6 +271,7 @@ struct RouteQTrainingConfig<'a> {
 #[derive(Serialize)]
 struct ProposalConfigurationIdentity {
     schema: &'static str,
+    action_schema: &'static str,
     step_reward_schema: &'static str,
     terminal_reward_schema: &'static str,
     goal_terminal_adjustment_bits: u32,
@@ -322,7 +339,10 @@ fn propose_q_candidates_internal(
     let feature_schema = observation_spec
         .digest()
         .map_err(|error| QSearchError::new(error.to_string()))?;
-    let action_schema = movement_action_schema_digest_v2();
+    let action_catalog = MovementActionSchema::from_digest(training_corpora[0].action_schema)
+        .ok_or_else(|| QSearchError::new("Q proposal corpus uses an unknown action schema"))?;
+    let action_schema = action_catalog.digest();
+    let action_count = action_catalog.action_count();
     let mut transitions = Vec::new();
     let mut episode_groups = Vec::new();
     let mut actions = BTreeSet::new();
@@ -457,7 +477,7 @@ fn propose_q_candidates_internal(
 
     let aligned = episodes
         .iter()
-        .map(validate_episode_alignment)
+        .map(|episode| validate_episode_alignment(episode, action_catalog))
         .collect::<Result<Vec<_>, _>>()?;
     let total_states: usize = aligned
         .iter()
@@ -501,7 +521,7 @@ fn propose_q_candidates_internal(
                 .or_default() += 1;
             counts
         });
-    let mut balanced_actions: Vec<u32> = (0..MOVEMENT_ACTION_COUNT_V2).collect();
+    let mut balanced_actions: Vec<u32> = (0..action_count).collect();
     balanced_actions
         .sort_by_key(|action| (action_support.get(action).copied().unwrap_or(0), *action));
     for (episode_index, episode) in aligned.iter().enumerate() {
@@ -512,11 +532,9 @@ fn propose_q_candidates_internal(
                 continue;
             }
             considered += 1;
-            let guidance = movement_action_mask_v2(&transition.state)
-                .map_err(|error| QSearchError::new(error.to_string()))?;
-            state_masked += usize::from(
-                (0..MOVEMENT_ACTION_COUNT_V2).any(|action| !guidance.recommends(action)),
-            );
+            let guidance = action_guidance(action_catalog, &transition.state)?;
+            state_masked +=
+                usize::from((0..action_count).any(|action| !guidance.recommends(action)));
             if let Some(model) = &model
                 && learned_parent_eligible(
                     episodes[episode_index].outcome,
@@ -608,9 +626,9 @@ fn propose_q_candidates_internal(
                 width: [4, 8, 16][(ordinal + 2) % 3],
             });
             let random_word = mix_probe(config.seed, ordinal as u64);
-            let mut random_action = (random_word % u64::from(MOVEMENT_ACTION_COUNT_V2)) as u32;
+            let mut random_action = (random_word % u64::from(action_count)) as u32;
             if random_action == transition.action.action_id {
-                random_action = (random_action + 1) % MOVEMENT_ACTION_COUNT_V2;
+                random_action = (random_action + 1) % action_count;
             }
             random.push(Intervention {
                 episode: episode_index,
@@ -621,12 +639,12 @@ fn propose_q_candidates_internal(
                 width: [1, 4, 8][(random_word as usize >> 8) % 3],
             });
             let stratum = considered - 1;
-            let mut latin_action = ((stratum * MOVEMENT_ACTION_COUNT_V2 as usize
+            let mut latin_action = ((stratum * action_count as usize
                 / total_states.clamp(1, MAX_PROPOSAL_STATES))
                 + config.seed as usize)
-                % MOVEMENT_ACTION_COUNT_V2 as usize;
+                % action_count as usize;
             if latin_action as u32 == transition.action.action_id {
-                latin_action = (latin_action + 1) % MOVEMENT_ACTION_COUNT_V2 as usize;
+                latin_action = (latin_action + 1) % action_count as usize;
             }
             latin_hypercube.push(Intervention {
                 episode: episode_index,
@@ -649,6 +667,7 @@ fn propose_q_candidates_internal(
                     model,
                     episode_index,
                     episode.corpus,
+                    action_catalog,
                 )?);
             }
         }
@@ -676,7 +695,7 @@ fn propose_q_candidates_internal(
                 .map_err(|error| QSearchError::new(error.to_string()))
         })
         .collect::<Result<HashSet<_>, _>>()?;
-    let sparse_action_coverage = actions.len() * 2 < MOVEMENT_ACTION_COUNT_V2 as usize;
+    let sparse_action_coverage = actions.len() * 2 < action_count as usize;
     let (collection_cycle_offset, budgets, schedule_policy) =
         if proposal_gate.learned_policy_enabled && sparse_action_coverage {
             (
@@ -738,6 +757,7 @@ fn propose_q_candidates_internal(
                     1,
                     &aligned,
                     episodes,
+                    action_catalog,
                     config.generation,
                     &mut ids,
                     &mut candidates,
@@ -766,7 +786,7 @@ fn propose_q_candidates_internal(
         })
         .collect();
 
-    let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len())?;
+    let policy_collapse_audit = policy_collapse_audit(&candidates, episodes.len(), action_catalog)?;
     let objective = &episodes[0].objective;
     if episodes
         .iter()
@@ -776,14 +796,14 @@ fn propose_q_candidates_internal(
             "Q proposal parents do not share one exact objective identity",
         ));
     }
-    let configuration_sha256 = proposal_configuration_sha256(&config, lineage)?;
+    let configuration_sha256 = proposal_configuration_sha256(&config, lineage, action_catalog)?;
     let envelopes = candidates
         .iter()
         .map(|candidate| {
             candidate_envelope(
                 candidate,
                 objective.clone(),
-                action_schema,
+                action_catalog,
                 config.seed,
                 configuration_sha256,
             )
@@ -808,7 +828,7 @@ fn propose_q_candidates_internal(
             initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V4,
             learned_parent_episodes,
             learned_parent_states,
-            action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
+            action_guidance_schema: action_guidance_schema(action_catalog),
             state_masked_proposal_states: state_masked,
             guided_action_evaluations,
             unmasked_action_evaluations,
@@ -883,16 +903,18 @@ fn learned_parent_eligible(
 fn proposal_configuration_sha256(
     config: &QProposalConfig,
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
+    action_catalog: MovementActionSchema,
 ) -> Result<Digest, QSearchError> {
     let identity = ProposalConfigurationIdentity {
         schema: "dusklight-q-proposals/v14",
+        action_schema: action_catalog.id(),
         step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
         terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
         goal_terminal_adjustment_bits: Q_GOAL_TERMINAL_ADJUSTMENT.to_bits(),
         failure_terminal_adjustment_bits: Q_FAILURE_TERMINAL_ADJUSTMENT.to_bits(),
         learned_parent_policy: LEARNED_PARENT_POLICY_V2,
         initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V4,
-        action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
+        action_guidance_schema: action_guidance_schema(action_catalog),
         generation: config.generation,
         max_proposals: config.max_proposals,
         iterations: config.iterations,
@@ -918,7 +940,7 @@ fn proposal_configuration_sha256(
 fn candidate_envelope(
     candidate: &Candidate,
     objective: NamedDigest,
-    action_schema_sha256: Digest,
+    action_schema: MovementActionSchema,
     seed: u64,
     configuration_sha256: Digest,
 ) -> Result<CandidateEnvelope, QSearchError> {
@@ -961,7 +983,7 @@ fn candidate_envelope(
         parent_candidate_sha256,
         candidate.ancestry.generation,
         objective,
-        NamedDigest::new("movement-action/v2", action_schema_sha256),
+        NamedDigest::new(action_schema.id(), action_schema.digest()),
         seed,
         ProposerIdentity {
             kind,
@@ -978,7 +1000,10 @@ struct AlignedEpisode<'a> {
     tape: crate::tape::InputTape,
 }
 
-fn validate_episode_alignment(episode: &QEpisode) -> Result<AlignedEpisode<'_>, QSearchError> {
+fn validate_episode_alignment(
+    episode: &QEpisode,
+    action_schema: MovementActionSchema,
+) -> Result<AlignedEpisode<'_>, QSearchError> {
     episode
         .corpus
         .validate()
@@ -1001,8 +1026,9 @@ fn validate_episode_alignment(episode: &QEpisode) -> Result<AlignedEpisode<'_>, 
             pad.buttons as i16,
         ];
         if transition.duration_ticks != 1
+            || transition.action.macro_kind != action_schema.macro_kind()
             || transition.action.parameters != expected
-            || movement_action_id_v2(pad) != Some(transition.action.action_id)
+            || action_schema.action_id(pad) != Some(transition.action.action_id)
         {
             return Err(QSearchError::new(format!(
                 "Q parent episode action {index} is not aligned with its candidate tape"
@@ -1071,13 +1097,13 @@ fn temporal_consensus_interventions(
     model: &FittedQ,
     episode: usize,
     corpus: &TransitionCorpus,
+    action_schema: MovementActionSchema,
 ) -> Result<Vec<Intervention>, QSearchError> {
     const HORIZONS: [usize; 4] = [8, 16, 32, 64];
     let actions = model.actions();
     let mut advantages = Vec::with_capacity(corpus.transitions.len());
     for transition in &corpus.transitions {
-        let guidance = movement_action_mask_v2(&transition.state)
-            .map_err(|error| QSearchError::new(error.to_string()))?;
+        let guidance = action_guidance(action_schema, &transition.state)?;
         let ranked = model
             .rank_actions(&transition.state)
             .map_err(|error| QSearchError::new(error.to_string()))?;
@@ -1141,6 +1167,7 @@ fn append_interventions(
     budget: usize,
     aligned: &[AlignedEpisode<'_>],
     episodes: &[QEpisode],
+    action_schema: MovementActionSchema,
     generation: u32,
     ids: &mut HashSet<String>,
     candidates: &mut Vec<Candidate>,
@@ -1151,7 +1178,8 @@ fn append_interventions(
             break;
         }
         let mut tape = aligned[intervention.episode].tape.clone();
-        let pad = canonical_movement_pad_v2(intervention.action)
+        let pad = action_schema
+            .canonical_pad(intervention.action)
             .ok_or_else(|| QSearchError::new("probe selected an unknown movement action"))?;
         let end = intervention
             .frame
@@ -1322,6 +1350,7 @@ fn mix_probe(seed: u64, ordinal: u64) -> u64 {
 fn policy_collapse_audit(
     candidates: &[Candidate],
     available_parent_episodes: usize,
+    action_schema: MovementActionSchema,
 ) -> Result<PolicyCollapseAudit, QSearchError> {
     let parents: BTreeSet<_> = candidates
         .iter()
@@ -1340,7 +1369,7 @@ fn policy_collapse_audit(
         if let Some(action) = tape
             .frames
             .get(frame)
-            .and_then(|frame| movement_action_id_v2(frame.pads[0]))
+            .and_then(|frame| action_schema.action_id(frame.pads[0]))
         {
             actions.insert(action);
         }
@@ -1349,7 +1378,7 @@ fn policy_collapse_audit(
         unique_parent_episodes: parents.len(),
         available_parent_episodes,
         unique_proposed_actions: actions.len(),
-        action_catalog_size: MOVEMENT_ACTION_COUNT_V2,
+        action_catalog_size: action_schema.action_count(),
         single_parent_collapse: candidates.len() > 1
             && available_parent_episodes > 1
             && parents.len() <= 1,
@@ -1391,6 +1420,10 @@ mod tests {
     use crate::action_guidance::{ACTION_GUIDANCE_SCHEMA_V2, movement_action_mask_v2};
     use crate::artifact::Digest;
     use crate::evaluation_isolation::{EvaluationAttemptInput, EvaluationGenerationSeal};
+    use crate::offline_rl::{
+        canonical_movement_pad_v2, canonical_movement_pad_v3, movement_action_id_v3,
+        movement_action_schema_digest_v2, movement_action_schema_digest_v3,
+    };
     use crate::search::SegmentProfile;
     use crate::tape::{InputFrame, InputTape, RawPadState};
     use crate::transition_corpus::{MacroAction, StateReference, StateReferenceKind, Transition};
@@ -1409,6 +1442,13 @@ mod tests {
     }
 
     fn corpus_for(candidate: &Candidate) -> TransitionCorpus {
+        corpus_for_schema(candidate, MovementActionSchema::V2)
+    }
+
+    fn corpus_for_schema(
+        candidate: &Candidate,
+        action_schema: MovementActionSchema,
+    ) -> TransitionCorpus {
         let observation_spec = movement_state_v2_spec();
         let feature_count = observation_spec.feature_count();
         let player_present = observation_spec.feature_index("player.present").unwrap();
@@ -1434,7 +1474,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, frame)| {
-                let action_id = movement_action_id_v2(frame.pads[0]).unwrap();
+                let action_id = action_schema.action_id(frame.pads[0]).unwrap();
                 let mut state = vec![0.0; feature_count as usize];
                 state[player_present] = 1.0;
                 state[player_is_link] = 1.0;
@@ -1458,7 +1498,7 @@ mod tests {
                     state,
                     action: MacroAction {
                         action_id,
-                        macro_kind: 2,
+                        macro_kind: action_schema.macro_kind(),
                         parameters: vec![
                             i16::from(frame.pads[0].stick_x),
                             i16::from(frame.pads[0].stick_y),
@@ -1478,7 +1518,7 @@ mod tests {
             .collect();
         TransitionCorpus::new(
             observation_spec.digest().unwrap(),
-            movement_action_schema_digest_v2(),
+            action_schema.digest(),
             feature_count,
             transitions,
         )
@@ -1651,6 +1691,85 @@ mod tests {
                 .sum::<usize>(),
             config.max_proposals
         );
+    }
+
+    #[test]
+    fn v3_collection_proposes_executable_l_targeting_actions() {
+        const BUTTON_L: u16 = 0x0040;
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..80)
+                .map(|_| InputFrame {
+                    owned_ports: 1,
+                    pads: [
+                        canonical_movement_pad_v3(0).unwrap(),
+                        disconnected,
+                        disconnected,
+                        disconnected,
+                    ],
+                    ..InputFrame::default()
+                })
+                .collect(),
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let corpus = corpus_for_schema(&candidate, MovementActionSchema::V3);
+        let episodes = [QEpisode {
+            candidate,
+            corpus: corpus.clone(),
+            outcome: EpisodeOutcomeClass::Successful,
+            objective: objective(),
+        }];
+        let batch = propose_q_candidates(
+            &[corpus],
+            &episodes,
+            QProposalConfig {
+                generation: 1,
+                max_proposals: 480,
+                iterations: 1,
+                trees_per_action: 1,
+                seed: 7,
+                readiness: QProposalReadinessEvidence {
+                    required_facts_supported: false,
+                    determinism_proved: false,
+                    held_out_performance_adequate: false,
+                    initial_bounded_trial: false,
+                },
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            batch.summary.action_guidance_schema,
+            ACTION_GUIDANCE_SCHEMA_V3
+        );
+        assert_eq!(batch.summary.policy_collapse_audit.action_catalog_size, 136);
+        assert!(batch.envelopes.iter().all(|envelope| {
+            envelope.action_schema.id == "movement-action/v3"
+                && envelope.action_schema.sha256 == movement_action_schema_digest_v3()
+        }));
+        assert!(batch.candidates.iter().any(|candidate| {
+            candidate
+                .compile()
+                .unwrap()
+                .frames
+                .iter()
+                .any(|frame| frame.pads[0].buttons & BUTTON_L != 0)
+        }));
+        for candidate in &batch.candidates {
+            for frame in candidate.compile().unwrap().frames {
+                let action = movement_action_id_v3(frame.pads[0]).unwrap();
+                assert_eq!(
+                    canonical_movement_pad_v3(action).unwrap().buttons,
+                    frame.pads[0].buttons
+                );
+            }
+        }
     }
 
     #[test]

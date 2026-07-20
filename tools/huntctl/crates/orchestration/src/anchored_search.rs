@@ -19,7 +19,7 @@ use dusklight_learning::evaluation_isolation::{
     EvaluationAttemptInput, EvaluationGenerationSeal, EvaluationOutcomeCollection,
     EvaluationOutcomeInput,
 };
-use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
+use dusklight_learning::offline_rl::movement_action_schema_digest_v3;
 use dusklight_learning::online_lineage::{OnlineDatasetGeneration, OnlineModelLineage};
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, BehaviorContext, describe_behavior_with_context,
@@ -184,6 +184,15 @@ pub fn run_anchored_search(
             prepared.identity().digest.parse().map_err(|error| {
                 EvaluateError::InvalidResult(format!("invalid anchored objective digest: {error}"))
             })?,
+        ),
+        search.harness.as_ref().map_or_else(
+            || NamedDigest::new("movement-action/v3", movement_action_schema_digest_v3()),
+            |harness| {
+                NamedDigest::new(
+                    harness.request_template.action_schema.id.clone(),
+                    harness.request_template.action_schema.sha256,
+                )
+            },
         ),
         search.population_size,
     )?;
@@ -624,6 +633,7 @@ fn write_initial_proposal_envelopes(
     manifest: &PopulationManifest,
     population_root: &Path,
     objective: NamedDigest,
+    action_schema: NamedDigest,
     population_size: usize,
 ) -> Result<(), EvaluateError> {
     let configuration = serde_json::to_vec(&(
@@ -663,7 +673,7 @@ fn write_initial_proposal_envelopes(
                 parent_candidate_sha256,
                 member.ancestry.generation,
                 objective.clone(),
-                NamedDigest::new("movement-action/v2", movement_action_schema_digest_v2()),
+                action_schema.clone(),
                 manifest.rng_seed,
                 ProposerIdentity {
                     kind,
@@ -700,7 +710,14 @@ mod tests {
         )
         .unwrap();
         let objective = NamedDigest::new("entered-f-sp104", ArtifactDigest([0xa7; 32]));
-        write_initial_proposal_envelopes(&manifest, &root, objective.clone(), 4).unwrap();
+        write_initial_proposal_envelopes(
+            &manifest,
+            &root,
+            objective.clone(),
+            NamedDigest::new("movement-action/v3", movement_action_schema_digest_v3()),
+            4,
+        )
+        .unwrap();
         let document: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("proposal-envelopes.json")).unwrap())
                 .unwrap();
@@ -724,7 +741,7 @@ mod tests {
         assert!(envelopes.iter().all(|envelope| {
             envelope.validate().is_ok()
                 && envelope.objective == objective
-                && envelope.action_schema.sha256 == movement_action_schema_digest_v2()
+                && envelope.action_schema.sha256 == movement_action_schema_digest_v3()
                 && envelope.seed == 71
         }));
         fs::remove_dir_all(root).unwrap();

@@ -9,7 +9,9 @@ use std::error::Error;
 use std::fmt;
 
 pub const ACTION_GUIDANCE_SCHEMA_V2: &str = "dusklight-action-guidance/movement-v2";
+pub const ACTION_GUIDANCE_SCHEMA_V3: &str = "dusklight-action-guidance/movement-v3";
 pub const MOVEMENT_ACTION_COUNT_V2: u32 = 68;
+pub const MOVEMENT_ACTION_COUNT_V3: u32 = 136;
 
 // Exact movement-state/v2 feature slots. Keep this small prior versioned with
 // the observation layout; interpreting the old v1 offsets against v2 made
@@ -82,6 +84,32 @@ impl Error for GuidanceError {}
 /// live Link it prefers neutral-stick button states, and a pad error prefers a
 /// completely neutral pad. These are proposal priors only.
 pub fn movement_action_mask_v2(state: &[f32]) -> Result<AdvisoryActionMask, GuidanceError> {
+    movement_action_mask(
+        state,
+        ACTION_GUIDANCE_SCHEMA_V2,
+        MOVEMENT_ACTION_COUNT_V2,
+        4,
+    )
+}
+
+/// The movement-v3 prior covers all A/B/L subsets. It remains advisory: in
+/// ordinary gameplay all 136 actions are eligible, including targeted lateral
+/// and backward movement required for sidehops and backflips.
+pub fn movement_action_mask_v3(state: &[f32]) -> Result<AdvisoryActionMask, GuidanceError> {
+    movement_action_mask(
+        state,
+        ACTION_GUIDANCE_SCHEMA_V3,
+        MOVEMENT_ACTION_COUNT_V3,
+        8,
+    )
+}
+
+fn movement_action_mask(
+    state: &[f32],
+    schema: &'static str,
+    action_count: u32,
+    button_modes: u32,
+) -> Result<AdvisoryActionMask, GuidanceError> {
     if state.len() < REQUIRED_FEATURE_COUNT {
         return Err(GuidanceError::FeatureCount {
             expected_at_least: REQUIRED_FEATURE_COUNT,
@@ -110,19 +138,19 @@ pub fn movement_action_mask_v2(state: &[f32]) -> Result<AdvisoryActionMask, Guid
     };
     let recommended_actions = match state_class {
         GuidanceState::PadUnavailable => vec![0],
-        GuidanceState::PlayerUnavailable => vec![0, 17, 34, 51],
+        GuidanceState::PlayerUnavailable => (0..button_modes).map(|mode| mode * 17).collect(),
         GuidanceState::EventRunning => {
             let mut actions = (0..17).collect::<Vec<_>>();
-            actions.extend([17, 34, 51]);
+            actions.extend((1..button_modes).map(|mode| mode * 17));
             actions
         }
-        GuidanceState::Gameplay => (0..MOVEMENT_ACTION_COUNT_V2).collect(),
+        GuidanceState::Gameplay => (0..action_count).collect(),
     };
     Ok(AdvisoryActionMask {
-        schema: ACTION_GUIDANCE_SCHEMA_V2,
+        schema,
         advisory: true,
         state: state_class,
-        action_count: MOVEMENT_ACTION_COUNT_V2,
+        action_count,
         recommended_actions,
     })
 }
@@ -168,5 +196,21 @@ mod tests {
                 .recommended_actions,
             [0]
         );
+    }
+
+    #[test]
+    fn v3_guidance_exposes_targeting_catalog_in_gameplay() {
+        let gameplay = movement_action_mask_v3(&state()).unwrap();
+        assert_eq!(gameplay.schema, ACTION_GUIDANCE_SCHEMA_V3);
+        assert_eq!(gameplay.action_count, 136);
+        assert_eq!(gameplay.recommended_actions.len(), 136);
+        assert!(gameplay.recommends(4 * 17 + 9));
+        assert!(gameplay.recommends(7 * 17 + 16));
+
+        let mut event = state();
+        event[EVENT_RUNNING_FEATURE] = 1.0;
+        let event = movement_action_mask_v3(&event).unwrap();
+        assert!(event.recommends(4 * 17));
+        assert!(!event.recommends(4 * 17 + 1));
     }
 }

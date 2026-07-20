@@ -31,8 +31,10 @@ use std::fmt;
 const TRACE_HEADER_SIZE: usize = 36;
 const BUTTON_A: u16 = 0x0100;
 const BUTTON_B: u16 = 0x0200;
+const BUTTON_L: u16 = 0x0040;
 const BUTTON_A_B: u16 = BUTTON_A | BUTTON_B;
 const ACTION_MACRO_KIND_PAD_FRAME_V2: u16 = 2;
+const ACTION_MACRO_KIND_PAD_FRAME_V3: u16 = 3;
 pub const MOVEMENT_REWARD_SCHEMA_V2: &str =
     "dusklight.offline-rl.route-goal-progress-reward/v2;step=-1;new_authenticated_predicate=64";
 const GOAL_PROGRESS_STEP_REWARD_V2: f32 = 64.0;
@@ -93,6 +95,83 @@ pub const MOVEMENT_ACTION_SCHEMA_V2: &str = concat!(
     "parameters=raw_stick_x_i16,raw_stick_y_i16,buttons_i16"
 );
 pub const MOVEMENT_ACTION_COUNT_V2: u32 = 68;
+
+/// Append-only expansion of movement-action/v2 with GameCube L-targeting.
+/// IDs 0..=67 deliberately retain their exact v2 meaning. The four new
+/// 17-direction banks add L, A+L, B+L, and A+B+L respectively, which exposes
+/// targeting movement (including sidehops/backflips) without invalidating or
+/// silently reinterpreting an existing v2 corpus/model.
+pub const MOVEMENT_ACTION_SCHEMA_V3: &str = concat!(
+    "dusklight.offline-rl.pad-frame/v3;duration=1;",
+    "action_id=button_mode*17+direction;",
+    "button_mode=0:none,1:a,2:b,3:a+b,4:l,5:a+l,6:b+l,7:a+b+l;",
+    "v2_action_ids_0_through_67_preserved=true;",
+    "direction=0:clamped_neutral,1+k:nearest_heading_k;",
+    "k=0..15;heading_x=round(sin(k*pi/8)*127);",
+    "heading_y=round(cos(k*pi/8)*127);",
+    "parameters=raw_stick_x_i16,raw_stick_y_i16,buttons_i16"
+);
+pub const MOVEMENT_ACTION_COUNT_V3: u32 = 136;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MovementActionSchema {
+    V2,
+    V3,
+}
+
+impl MovementActionSchema {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::V2 => "movement-action/v2",
+            Self::V3 => "movement-action/v3",
+        }
+    }
+
+    pub const fn action_count(self) -> u32 {
+        match self {
+            Self::V2 => MOVEMENT_ACTION_COUNT_V2,
+            Self::V3 => MOVEMENT_ACTION_COUNT_V3,
+        }
+    }
+
+    pub const fn macro_kind(self) -> u16 {
+        match self {
+            Self::V2 => ACTION_MACRO_KIND_PAD_FRAME_V2,
+            Self::V3 => ACTION_MACRO_KIND_PAD_FRAME_V3,
+        }
+    }
+
+    pub fn digest(self) -> Digest {
+        match self {
+            Self::V2 => movement_action_schema_digest_v2(),
+            Self::V3 => movement_action_schema_digest_v3(),
+        }
+    }
+
+    pub fn from_digest(value: Digest) -> Option<Self> {
+        if value == movement_action_schema_digest_v2() {
+            Some(Self::V2)
+        } else if value == movement_action_schema_digest_v3() {
+            Some(Self::V3)
+        } else {
+            None
+        }
+    }
+
+    pub fn action_id(self, pad: RawPadState) -> Option<u32> {
+        match self {
+            Self::V2 => movement_action_id_v2(pad),
+            Self::V3 => movement_action_id_v3(pad),
+        }
+    }
+
+    pub fn canonical_pad(self, action_id: u32) -> Option<RawPadState> {
+        match self {
+            Self::V2 => canonical_movement_pad_v2(action_id),
+            Self::V3 => canonical_movement_pad_v3(action_id),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExploratoryExtractConfig {
@@ -385,6 +464,10 @@ pub fn movement_action_schema_digest_v2() -> Digest {
     digest(MOVEMENT_ACTION_SCHEMA_V2.as_bytes())
 }
 
+pub fn movement_action_schema_digest_v3() -> Digest {
+    digest(MOVEMENT_ACTION_SCHEMA_V3.as_bytes())
+}
+
 /// Decodes and validates both artifacts before extracting exploratory data.
 /// Unlike `trace::decode`, this also validates the trace header tick rate.
 pub fn extract_exploratory_from_bytes(
@@ -412,6 +495,19 @@ pub fn extract_exploratory_v2_from_bytes(
     extract_exploratory_v2(&decoded_trace, &decoded_tape.tape, config)
 }
 
+/// Extracts movement-state/v2 observations using the append-only
+/// movement-action/v3 catalog, including GameCube L-targeting combinations.
+pub fn extract_exploratory_v3_from_bytes(
+    trace_bytes: &[u8],
+    tape_bytes: &[u8],
+    config: ExploratoryExtractConfig,
+) -> Result<TransitionCorpus, OfflineRlError> {
+    validate_trace_rate(trace_bytes)?;
+    let decoded_trace = trace::decode(trace_bytes)?;
+    let decoded_tape = InputTape::decode(tape_bytes)?;
+    extract_exploratory_v3(&decoded_trace, &decoded_tape.tape, config)
+}
+
 /// Lower-level bridge for callers which already decoded and rate-validated a
 /// trace. Prefer `extract_exploratory_from_bytes` for untrusted artifacts.
 pub fn extract_exploratory(
@@ -419,7 +515,13 @@ pub fn extract_exploratory(
     tape: &InputTape,
     config: ExploratoryExtractConfig,
 ) -> Result<TransitionCorpus, OfflineRlError> {
-    extract_exploratory_with_view(decoded_trace, tape, config, MovementView::V1)
+    extract_exploratory_with_view(
+        decoded_trace,
+        tape,
+        config,
+        MovementView::V1,
+        MovementActionSchema::V2,
+    )
 }
 
 pub fn extract_exploratory_v2(
@@ -429,7 +531,29 @@ pub fn extract_exploratory_v2(
 ) -> Result<TransitionCorpus, OfflineRlError> {
     let spec = movement_state_v2_spec();
     debug_assert!(spec.validate().is_ok());
-    extract_exploratory_with_view(decoded_trace, tape, config, MovementView::V2(&spec))
+    extract_exploratory_with_view(
+        decoded_trace,
+        tape,
+        config,
+        MovementView::V2(&spec),
+        MovementActionSchema::V2,
+    )
+}
+
+pub fn extract_exploratory_v3(
+    decoded_trace: &DecodedTrace,
+    tape: &InputTape,
+    config: ExploratoryExtractConfig,
+) -> Result<TransitionCorpus, OfflineRlError> {
+    let spec = movement_state_v2_spec();
+    debug_assert!(spec.validate().is_ok());
+    extract_exploratory_with_view(
+        decoded_trace,
+        tape,
+        config,
+        MovementView::V2(&spec),
+        MovementActionSchema::V3,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -443,6 +567,7 @@ fn extract_exploratory_with_view(
     tape: &InputTape,
     config: ExploratoryExtractConfig,
     view: MovementView<'_>,
+    action_schema: MovementActionSchema,
 ) -> Result<TransitionCorpus, OfflineRlError> {
     if decoded_trace.capacity_exhausted {
         return Err(OfflineRlError::CapacityExhausted);
@@ -507,7 +632,7 @@ fn extract_exploratory_with_view(
         let action_index =
             usize::try_from(action_frame).map_err(|_| OfflineRlError::FrameIndexOverflow)?;
         let input_frame = &tape.frames[action_index];
-        let action = classify_action(input_frame, action_frame)?;
+        let action = classify_action(input_frame, action_frame, action_schema)?;
         verify_applied_input(input_frame, next, action_frame)?;
         let state =
             movement_features_for_view(prior, first_state_frame, config.end_tape_frame, view)?;
@@ -566,7 +691,7 @@ fn extract_exploratory_with_view(
 
     Ok(TransitionCorpus::new(
         feature_schema,
-        movement_action_schema_digest_v2(),
+        action_schema.digest(),
         feature_count,
         transitions,
     )?)
@@ -928,7 +1053,11 @@ fn record_at<'a>(
         .ok_or(OfflineRlError::MissingTraceFrame(frame))
 }
 
-fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, OfflineRlError> {
+fn classify_action(
+    frame: &InputFrame,
+    frame_index: u64,
+    action_schema: MovementActionSchema,
+) -> Result<MacroAction, OfflineRlError> {
     if frame.wait_condition != WaitCondition::None || frame.wait_timeout_ticks != 0 {
         return Err(OfflineRlError::ReactiveFrame(frame_index));
     }
@@ -966,16 +1095,18 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
         return Err(OfflineRlError::UnsupportedPrimaryPad(frame_index));
     }
 
-    let action_id = movement_action_id_v2(pad).ok_or(OfflineRlError::UnsupportedAction {
-        frame: frame_index,
-        buttons: pad.buttons,
-        stick_x: pad.stick_x,
-        stick_y: pad.stick_y,
-    })?;
+    let action_id = action_schema
+        .action_id(pad)
+        .ok_or(OfflineRlError::UnsupportedAction {
+            frame: frame_index,
+            buttons: pad.buttons,
+            stick_x: pad.stick_x,
+            stick_y: pad.stick_y,
+        })?;
 
     Ok(MacroAction {
         action_id,
-        macro_kind: ACTION_MACRO_KIND_PAD_FRAME_V2,
+        macro_kind: action_schema.macro_kind(),
         parameters: vec![
             i16::from(pad.stick_x),
             i16::from(pad.stick_y),
@@ -987,6 +1118,16 @@ fn classify_action(frame: &InputFrame, frame_index: u64) -> Result<MacroAction, 
 /// Maps an exact raw primary pad state into the learned v2 class while keeping
 /// quantization semantics shared by extraction and proposal validation.
 pub fn movement_action_id_v2(pad: RawPadState) -> Option<u32> {
+    movement_action_id(pad, MovementActionSchema::V2)
+}
+
+/// Maps an exact raw primary pad state into movement-action/v3. The original
+/// v2 A/B-only classes preserve their IDs; L-bearing classes occupy 68..136.
+pub fn movement_action_id_v3(pad: RawPadState) -> Option<u32> {
+    movement_action_id(pad, MovementActionSchema::V3)
+}
+
+fn movement_action_id(pad: RawPadState, schema: MovementActionSchema) -> Option<u32> {
     if pad.substick_x != 0
         || pad.substick_y != 0
         || pad.trigger_left != 0
@@ -1003,6 +1144,10 @@ pub fn movement_action_id_v2(pad: RawPadState) -> Option<u32> {
         BUTTON_A => 1,
         BUTTON_B => 2,
         BUTTON_A_B => 3,
+        BUTTON_L if schema == MovementActionSchema::V3 => 4,
+        value if schema == MovementActionSchema::V3 && value == BUTTON_A | BUTTON_L => 5,
+        value if schema == MovementActionSchema::V3 && value == BUTTON_B | BUTTON_L => 6,
+        value if schema == MovementActionSchema::V3 && value == BUTTON_A_B | BUTTON_L => 7,
         _ => return None,
     };
     let clamped = pad_clamp_main_stick(pad.stick_x, pad.stick_y);
@@ -1092,7 +1237,16 @@ fn heading_stick(heading: u32) -> (i8, i8) {
 /// transitions retain their exact raw parameters; this representative is used
 /// only when a policy proposes a class which was not copied from an episode.
 pub fn canonical_movement_pad_v2(action_id: u32) -> Option<RawPadState> {
-    if action_id >= 4 * 17 {
+    canonical_movement_pad(action_id, MovementActionSchema::V2)
+}
+
+/// Canonical executable pad state for one v3 learned action class.
+pub fn canonical_movement_pad_v3(action_id: u32) -> Option<RawPadState> {
+    canonical_movement_pad(action_id, MovementActionSchema::V3)
+}
+
+fn canonical_movement_pad(action_id: u32, schema: MovementActionSchema) -> Option<RawPadState> {
+    if action_id >= schema.action_count() {
         return None;
     }
     let button_mode = action_id / 17;
@@ -1102,6 +1256,10 @@ pub fn canonical_movement_pad_v2(action_id: u32) -> Option<RawPadState> {
         1 => BUTTON_A,
         2 => BUTTON_B,
         3 => BUTTON_A_B,
+        4 => BUTTON_L,
+        5 => BUTTON_A | BUTTON_L,
+        6 => BUTTON_B | BUTTON_L,
+        7 => BUTTON_A_B | BUTTON_L,
         _ => unreachable!("button mode was range checked"),
     };
     let (stick_x, stick_y) = if direction == 0 {
@@ -2097,9 +2255,54 @@ mod tests {
                 ],
                 ..InputFrame::default()
             };
-            assert_eq!(classify_action(&frame, 1).unwrap().action_id, action_id);
+            assert_eq!(
+                classify_action(&frame, 1, MovementActionSchema::V2)
+                    .unwrap()
+                    .action_id,
+                action_id
+            );
         }
         assert!(canonical_movement_pad_v2(68).is_none());
+    }
+
+    #[test]
+    fn v3_is_an_append_only_l_targeting_expansion() {
+        assert_ne!(
+            movement_action_schema_digest_v2(),
+            movement_action_schema_digest_v3()
+        );
+        for action_id in 0..MOVEMENT_ACTION_COUNT_V2 {
+            let legacy = canonical_movement_pad_v2(action_id).unwrap();
+            assert_eq!(canonical_movement_pad_v3(action_id), Some(legacy));
+            assert_eq!(movement_action_id_v2(legacy), Some(action_id));
+            assert_eq!(movement_action_id_v3(legacy), Some(action_id));
+        }
+        for action_id in MOVEMENT_ACTION_COUNT_V2..MOVEMENT_ACTION_COUNT_V3 {
+            let pad = canonical_movement_pad_v3(action_id).unwrap();
+            assert_ne!(pad.buttons & BUTTON_L, 0);
+            assert_eq!(movement_action_id_v3(pad), Some(action_id));
+            assert_eq!(movement_action_id_v2(pad), None);
+        }
+        assert!(canonical_movement_pad_v3(MOVEMENT_ACTION_COUNT_V3).is_none());
+    }
+
+    #[test]
+    fn v3_classification_accepts_targeting_without_changing_v2_decoding() {
+        let mut frame = fixture().1.frames[1].clone();
+        frame.pads[0].stick_y = -127;
+        frame.pads[0].buttons = BUTTON_A | BUTTON_L;
+
+        let legacy_error = classify_action(&frame, 1, MovementActionSchema::V2).unwrap_err();
+        assert!(
+            matches!(
+                legacy_error,
+                OfflineRlError::UnsupportedAction { frame: 1, .. }
+            ),
+            "unexpected legacy classification error: {legacy_error:?}"
+        );
+        let action = classify_action(&frame, 1, MovementActionSchema::V3).unwrap();
+        assert_eq!(action.action_id, 5 * 17 + 9);
+        assert_eq!(action.macro_kind, 3);
     }
 
     #[test]

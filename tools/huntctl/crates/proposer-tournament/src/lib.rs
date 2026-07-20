@@ -13,7 +13,7 @@ use dusklight_evaluation::{
     evaluate_prepared_anchored_population, prepare_anchored_evaluator,
 };
 use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
-use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
+use dusklight_learning::offline_rl::movement_action_schema_digest_v3;
 use dusklight_search::search::{
     Candidate, LexicographicScore, POPULATION_SCHEMA, PopulationManifest, SearchResults,
     SegmentProfile, rank_population, write_explicit_population,
@@ -483,8 +483,15 @@ pub fn run_proposer_tournament(
                 EvaluateError::InvalidResult(format!("invalid anchored objective digest: {error}"))
             })?,
         );
-        let expected_action_schema =
-            NamedDigest::new("movement-action/v2", movement_action_schema_digest_v2());
+        let expected_action_schema = config.harness.as_ref().map_or_else(
+            || NamedDigest::new("movement-action/v3", movement_action_schema_digest_v3()),
+            |harness| {
+                NamedDigest::new(
+                    harness.request_template.action_schema.id.clone(),
+                    harness.request_template.action_schema.sha256,
+                )
+            },
+        );
         validate_anchored_harness_request(
             config.harness.as_ref(),
             identity,

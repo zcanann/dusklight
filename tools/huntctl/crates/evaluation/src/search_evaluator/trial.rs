@@ -743,18 +743,29 @@ fn extract_trial_transition_corpus(
         &trial.candidate_id,
         &trace_bytes,
     );
-    let corpus = extract_exploratory_v2_from_bytes(
-        &trace_bytes,
-        &tape_bytes,
-        ExploratoryExtractConfig {
-            episode_digest,
-            start_tape_frame,
-            end_tape_frame,
-            start_reference: Some(start_reference),
-            terminal_reference,
-            end_is_terminal: evidence.goal_reached,
-        },
-    )
+    let extract_config = ExploratoryExtractConfig {
+        episode_digest,
+        start_tape_frame,
+        end_tape_frame,
+        start_reference: Some(start_reference),
+        terminal_reference,
+        end_is_terminal: evidence.goal_reached,
+    };
+    let corpus = match run_request.as_ref().map(|request| {
+        (
+            request.action_schema.id.as_str(),
+            request.action_schema.sha256,
+        )
+    }) {
+        Some(("movement-action/v2", digest)) if digest == movement_action_schema_digest_v2() => {
+            extract_exploratory_v2_from_bytes(&trace_bytes, &tape_bytes, extract_config)
+        }
+        Some(("movement-action/v3", digest)) if digest == movement_action_schema_digest_v3() => {
+            extract_exploratory_v3_from_bytes(&trace_bytes, &tape_bytes, extract_config)
+        }
+        None => extract_exploratory_v3_from_bytes(&trace_bytes, &tape_bytes, extract_config),
+        Some((id, _)) => return Err(format!("unsupported episode action schema {id:?}")),
+    }
     .map_err(|error| error.to_string())?;
     let count = u64::try_from(corpus.transitions.len())
         .map_err(|_| "transition count does not fit u64".to_string())?;

@@ -2,7 +2,9 @@
 
 use crate::search_evaluator::{AnchoredObjectiveIdentity, EvaluateError, HarnessEvaluateConfig};
 use dusklight_automation_contracts::candidate_envelope::NamedDigest;
-use dusklight_learning::offline_rl::movement_action_schema_digest_v2;
+use dusklight_learning::offline_rl::{
+    movement_action_schema_digest_v2, movement_action_schema_digest_v3,
+};
 
 /// Require a sealed request to name the exact objective executed by an
 /// anchored evaluator and the movement action schema accepted by its suffixes.
@@ -44,8 +46,10 @@ fn anchored_identity_parts_match(
 ) -> bool {
     request_objective.id == anchored_goal
         && request_objective.sha256.to_string() == anchored_program_sha256
-        && request_action_schema.id == "movement-action/v2"
-        && request_action_schema.sha256 == movement_action_schema_digest_v2()
+        && ((request_action_schema.id == "movement-action/v2"
+            && request_action_schema.sha256 == movement_action_schema_digest_v2())
+            || (request_action_schema.id == "movement-action/v3"
+                && request_action_schema.sha256 == movement_action_schema_digest_v3()))
 }
 
 #[cfg(test)]
@@ -61,6 +65,14 @@ mod tests {
         assert!(anchored_identity_parts_match(
             &request_objective,
             &action,
+            "goal",
+            &program.to_string(),
+        ));
+        let expanded_action =
+            NamedDigest::new("movement-action/v3", movement_action_schema_digest_v3());
+        assert!(anchored_identity_parts_match(
+            &request_objective,
+            &expanded_action,
             "goal",
             &program.to_string(),
         ));
