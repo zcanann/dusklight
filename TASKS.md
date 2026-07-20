@@ -79,6 +79,15 @@ the same goal without demonstration-relative features.
   case, with the component present in all 16 and zero coverage rejections
   (`1a16c1c4...d9bb274`). This is generic state collection, not a route,
   reward, tactic, or gameplay write.
+- Learning-observation v10 resolves eleven Link-rooted semantic relationship
+  roles—target, ride, held/grabbed actors, retained item actors and attention
+  hint/catch/look targets—to the stable generations in the complete actor set.
+  No pointer is serialized. Native and Rust reject unjoinable identities,
+  noncanonical absence and player/type status disagreement. A neutral 16-entry
+  D_MN01 survey emitted actor-catalog v6 with the component available in every
+  case and zero coverage rejections (`aa36f22e...ff7c281`); all roles were
+  correctly empty in that idle slice, so generic action probes are still
+  required to measure role variation.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
@@ -172,7 +181,7 @@ them is learner work.
     complete read-only population: process/actor type, condition and lifecycle
     phase, room history, pause/cull/demo/carry state, heap/model/joint-collision
     presence, old/current/home/eye transforms, scale, gravity and fall speed.
-    Learning observation v7 (retained by current v9) is decoded into actor view
+    Learning observation v7 (retained by current v10) is decoded into actor view
     v4 with explicit
     `None` for pre-v7 recordings rather than fabricated zeroes. Actor-catalog
     v4 independently captures and bit-compares the same fields. A fresh
@@ -180,6 +189,14 @@ them is learner work.
     58 profiles and 64-145 actors per entry with zero rejected cases in sealed
     report `95b05ccb...4ee6`. Procedure, animation and concrete collision-body
     state still require typed extensions, so the parent audit remains open.
+  - [x] Capture Link-rooted relationships as named, optional, pointer-free actor
+    identities: targeted, ride, held, grabbed, thrown-boomerang, copy-rod,
+    hookshot-roof-wait, chain-grab, and attention hint/catch/look actors.
+    Observation v10 requires every present role to join the complete actor
+    population at the same boundary. Actor-catalog v6 independently exposes
+    the roles, and a neutral 16-entry D_MN01 batch verified component presence
+    and actor invariants in all 16/16 cases (`aa36f22e...ff7c281`). The parent
+    remains open for non-player ownership/attachment and typed actor state.
 - [ ] Audit environment information: static and moving collision, nearby
   terrain triangles, contact normals and correction, materials, ceilings,
   floors, walls, triggers, exits, switches, event state and inactive authored
@@ -292,6 +309,9 @@ human-authored successful setup.
   - [x] typed player resources, inventory/equipment selections, ammunition,
     dungeon possessions and stable acquisition/collection bitsets, with
     explicit presence rather than fabricated zeroes;
+  - [x] named Link-rooted target, ride, held/grabbed, retained-item and
+    attention relationships, joined by stable generation to the complete actor
+    set rather than exposing process pointers;
   - [x] recent controls and camera state;
   - [x] realized background-collision contacts, surface/polygon identity,
     backing metadata and resolved planes/normals;
