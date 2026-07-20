@@ -103,6 +103,103 @@ impl SiblingTraceDiff {
             ),
         );
         domains.insert(
+            "input".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::AppliedPads).and_then(|record| {
+                        serde_json::to_value(json!({
+                            "input_source": record.input_source,
+                            "applied_pads": record.applied_pads,
+                        }))
+                        .ok()
+                    })
+                },
+            ),
+        );
+        domains.insert(
+            "stage".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::Stage).map(|record| {
+                        json!({
+                            "stage_name": record.stage_name,
+                            "room": record.room,
+                            "layer": record.layer,
+                            "point": record.point,
+                            "next_stage_name": record.next_stage_name,
+                            "next_room": record.next_room,
+                            "next_layer": record.next_layer,
+                            "next_point": record.next_point,
+                            "next_stage_enabled": record.next_stage_enabled,
+                        })
+                    })
+                },
+            ),
+        );
+        domains.insert(
+            "player_motion".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::PlayerMotion).map(|record| {
+                        json!({
+                            "session_process_id": record.player_session_process_id,
+                            "actor_name": record.player_actor_name,
+                            "position": record.position,
+                            "velocity": record.velocity,
+                            "forward_speed": record.forward_speed,
+                            "current_angle": record.current_angle,
+                            "shape_angle": record.shape_angle,
+                        })
+                    })
+                },
+            ),
+        );
+        domains.insert(
+            "camera".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::Camera)
+                        .and_then(|record| serde_json::to_value(&record.camera).ok())
+                },
+            ),
+        );
+        domains.insert(
+            "player_action".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::PlayerAction)
+                        .and_then(|record| serde_json::to_value(&record.player_action).ok())
+                },
+            ),
+        );
+        domains.insert(
+            "scene_exit".into(),
+            compare_domain(
+                &boundaries,
+                &success_records,
+                &failure_records,
+                |record, _| {
+                    available_channel(record, TraceChannel::SceneExit)
+                        .and_then(|record| serde_json::to_value(&record.scene_exit).ok())
+                },
+            ),
+        );
+        domains.insert(
             "event".into(),
             compare_domain(&boundaries, &success_records, &failure_records, |record, _| {
                 available_channel(record, TraceChannel::Event).map(|record| {
@@ -371,7 +468,9 @@ impl Error for TraceDiffError {}
 mod tests {
     use super::*;
     use crate::tape::TapeBoot;
-    use crate::trace::{TraceGoalProgress, TracePhase, TraceRngSnapshot, TraceRngStream};
+    use crate::trace::{
+        TraceAppliedPads, TraceGoalProgress, TracePhase, TraceRngSnapshot, TraceRngStream,
+    };
 
     fn trace(record: TraceRecord) -> DecodedTrace {
         DecodedTrace {
@@ -451,5 +550,51 @@ mod tests {
             DiffCoverage::Unavailable
         );
         assert!(diff.domains["allocation"].limitation.is_some());
+    }
+
+    #[test]
+    fn reports_applied_input_and_player_motion_divergence() {
+        let record = |stick_x, position_x| {
+            let mut record = TraceRecord {
+                boundary_index: 9,
+                simulation_tick: 8,
+                input_source: 1,
+                applied_pads: Some(TraceAppliedPads {
+                    valid_ports: 1,
+                    owned_ports: 1,
+                    pads: [
+                        crate::tape::RawPadState {
+                            connected: true,
+                            stick_x,
+                            ..crate::tape::RawPadState::default()
+                        },
+                        crate::tape::RawPadState::default(),
+                        crate::tape::RawPadState::default(),
+                        crate::tape::RawPadState::default(),
+                    ],
+                }),
+                player_session_process_id: Some(7),
+                player_actor_name: 253,
+                position: [position_x, 2.0, 3.0],
+                ..TraceRecord::default()
+            };
+            record
+                .channel_status
+                .insert(TraceChannel::AppliedPads, TraceChannelStatus::Present);
+            record
+                .channel_status
+                .insert(TraceChannel::PlayerMotion, TraceChannelStatus::Present);
+            record
+        };
+        let success = trace(record(10, 1.0));
+        let failure = trace(record(11, 1.5));
+        let diff =
+            SiblingTraceDiff::compare(&success, b"success", &failure, b"failure", None, None)
+                .unwrap();
+        assert_eq!(diff.domains["input"].first_difference_boundary, Some(9));
+        assert_eq!(
+            diff.domains["player_motion"].first_difference_boundary,
+            Some(9)
+        );
     }
 }
