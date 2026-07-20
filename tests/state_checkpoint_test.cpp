@@ -76,6 +76,12 @@ void test_round_trip_and_integrity() {
     REQUIRE(memory[4] == std::byte{0});
     REQUIRE(component.value == 0x12345678);
 
+    memory.fill(std::byte{0xee});
+    component.value = 7;
+    REQUIRE(checkpoint.restoreTrusted(image) == StateCheckpointError::None);
+    REQUIRE(memory[3] == std::byte{0x7a});
+    REQUIRE(component.value == 0x12345678);
+
     image.entries[0].bytes[0] = std::byte{1};
     REQUIRE(checkpoint.restore(image) == StateCheckpointError::DigestMismatch);
 }

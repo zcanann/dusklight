@@ -187,6 +187,15 @@ StateCheckpointError StateCheckpoint::capture(StateCheckpointImage& image) const
 }
 
 StateCheckpointError StateCheckpoint::restore(const StateCheckpointImage& image) const {
+    return restoreImpl(image, true);
+}
+
+StateCheckpointError StateCheckpoint::restoreTrusted(const StateCheckpointImage& image) const {
+    return restoreImpl(image, false);
+}
+
+StateCheckpointError StateCheckpoint::restoreImpl(
+    const StateCheckpointImage& image, const bool validateDigest) const {
     if (image.entries.size() != mEntries.size()) {
         return StateCheckpointError::ManifestMismatch;
     }
@@ -198,7 +207,7 @@ StateCheckpointError StateCheckpoint::restore(const StateCheckpointImage& image)
             return StateCheckpointError::ManifestMismatch;
         }
     }
-    if (image.digest.empty() || checkpoint_digest(image) != image.digest) {
+    if (validateDigest && (image.digest.empty() || checkpoint_digest(image) != image.digest)) {
         return StateCheckpointError::DigestMismatch;
     }
     for (std::size_t index = 0; index < mEntries.size(); ++index) {

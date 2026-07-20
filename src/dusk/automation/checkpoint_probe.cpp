@@ -130,9 +130,12 @@ bool CheckpointProbe::captureSource(const std::uint64_t simulationTick,
 }
 
 bool CheckpointProbe::restoreSource(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
-    std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error) {
+    std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, const bool trustedImage,
+    std::string& error) {
     const auto start = std::chrono::steady_clock::now();
-    const StateCheckpointError checkpointError = mCheckpoint.restore(mImage);
+    const StateCheckpointError checkpointError = trustedImage
+                                                     ? mCheckpoint.restoreTrusted(mImage)
+                                                     : mCheckpoint.restore(mImage);
     const auto end = std::chrono::steady_clock::now();
     mRestoreMicros.push_back(static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()));
@@ -141,8 +144,9 @@ bool CheckpointProbe::restoreSource(std::uint64_t& simulationTick, std::uint64_t
         return false;
     }
     std::string restoredDigest;
-    if (mCheckpoint.currentDigest(restoredDigest) != StateCheckpointError::None ||
-        restoredDigest != mImage.digest)
+    if (!trustedImage &&
+        (mCheckpoint.currentDigest(restoredDigest) != StateCheckpointError::None ||
+            restoredDigest != mImage.digest))
     {
         error = "restored checkpoint bytes do not match the captured image";
         return false;
@@ -182,19 +186,22 @@ bool CheckpointProbe::preInput(std::uint64_t& simulationTick, std::uint64_t& tap
         return true;
     }
     if (mPhase == Phase::RestoreB) {
-        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error)) {
+        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, false,
+                error)) {
             fail(error);
             return false;
         }
         mPhase = Phase::B;
     } else if (mPhase == Phase::RestoreA2) {
-        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error)) {
+        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, false,
+                error)) {
             fail(error);
             return false;
         }
         mPhase = Phase::A2;
     } else if (mPhase == Phase::RestoreRepeat) {
-        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error)) {
+        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, true,
+                error)) {
             fail(error);
             return false;
         }
@@ -485,6 +492,8 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"suffix_ticks", mSuffixTicks},
         {"repeat_attempts_requested", mRepeatAttempts},
         {"repeat_attempts_completed", mRepeatCompleted},
+        {"validated_restore_count", std::min<std::size_t>(2, mRestoreMicros.size())},
+        {"trusted_restore_count", mRestoreMicros.size() > 2 ? mRestoreMicros.size() - 2 : 0},
         {"checkpoint_bytes", mCheckpoint.byteCount()},
         {"checkpoint_digest", mImage.digest},
         {"capture_micros", mCaptureMicros},

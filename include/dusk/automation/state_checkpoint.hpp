@@ -69,6 +69,14 @@ public:
 
     [[nodiscard]] StateCheckpointError capture(StateCheckpointImage& image) const;
     [[nodiscard]] StateCheckpointError restore(const StateCheckpointImage& image) const;
+    /**
+     * Restores a previously validated image without rehashing its bytes.
+     *
+     * The caller must retain the image privately and keep it immutable after
+     * capture or a successful checked restore. The manifest is still checked.
+     */
+    [[nodiscard]] StateCheckpointError restoreTrusted(
+        const StateCheckpointImage& image) const;
     /** Hashes the registered live state without copying direct memory regions. */
     [[nodiscard]] StateCheckpointError currentDigest(std::string& digest,
         std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;
@@ -88,6 +96,8 @@ private:
 
     [[nodiscard]] StateCheckpointError validateNameAndSize(
         std::string_view name, std::size_t size) const;
+    [[nodiscard]] StateCheckpointError restoreImpl(
+        const StateCheckpointImage& image, bool validateDigest) const;
 
     std::vector<Entry> mEntries;
 };

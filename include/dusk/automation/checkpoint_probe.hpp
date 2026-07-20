@@ -77,7 +77,8 @@ private:
     bool captureSource(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& error);
     bool restoreSource(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
-        std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error);
+        std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, bool trustedImage,
+        std::string& error);
     bool captureTickDigest(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
         std::vector<StateCheckpointEntryDigest>* entryDigests, std::string& error);
