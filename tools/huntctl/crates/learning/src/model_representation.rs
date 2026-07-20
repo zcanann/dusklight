@@ -6,14 +6,14 @@ use crate::artifact::Digest;
 use crate::observation_view::{MissingnessPolicy, ObservationSpec};
 use crate::trace::TraceSelectedActors;
 use crate::world_spatial::WorldPointQueryReport;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const FIXED_MODEL_REPRESENTATION_SCHEMA_V1: &str = "dusklight-fixed-model-representation/v1";
+pub const FIXED_MODEL_REPRESENTATION_SCHEMA_V2: &str = "dusklight-fixed-model-representation/v2";
 pub const DEFAULT_CATEGORICAL_EMBEDDING_WIDTH: usize = 4;
 pub const DEFAULT_ACTOR_SLOTS: usize = 4;
 pub const DEFAULT_GEOMETRY_SLOTS: usize = 4;
@@ -22,7 +22,8 @@ const MAX_CATEGORIES_PER_FIELD: usize = 4096;
 const ACTOR_SLOT_WIDTH: usize = 17;
 const GEOMETRY_SLOT_WIDTH: usize = 14;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalGeometryProbe {
     pub stable_id: String,
     pub attribute: u16,
@@ -72,7 +73,7 @@ impl LocalGeometryProbe {
             .collect()
     }
 
-    fn validate(&self) -> Result<(), ModelRepresentationError> {
+    pub(crate) fn validate(&self) -> Result<(), ModelRepresentationError> {
         if self.stable_id.is_empty()
             || self
                 .closest_point
@@ -258,7 +259,7 @@ impl FixedModelRepresentationEncoder {
             + 3
             + DEFAULT_GEOMETRY_SLOTS * GEOMETRY_SLOT_WIDTH;
         let mut encoder = Self {
-            schema: FIXED_MODEL_REPRESENTATION_SCHEMA_V1,
+            schema: FIXED_MODEL_REPRESENTATION_SCHEMA_V2,
             observation_schema_sha256,
             base_features,
             categorical_embeddings,
@@ -413,7 +414,7 @@ impl FixedModelRepresentationEncoder {
             encoded.push(distance / 8192.0);
             encoded.push(f32::from(actor.health) / 32768.0);
             encoded.push(actor.status as f32 / u32::MAX as f32);
-            let yaw = yaw_radians(actor.current_angle[1]);
+            let yaw = yaw_radians(actor.current_angle[1].wrapping_sub(context.player_yaw));
             encoded.extend([yaw.sin(), yaw.cos()]);
             debug_assert_eq!(encoded.len(), self.actor_slot_width);
             append_masked(values, masks, &encoded, true);
@@ -460,6 +461,7 @@ impl FixedModelRepresentationEncoder {
                 context.player_position,
                 context.player_yaw,
             );
+            let relative_normal = direction_local(probe.normal, context.player_yaw);
             let mut encoded = vec![1.0];
             encoded.extend(token_embedding(
                 b"surface-id",
@@ -470,7 +472,7 @@ impl FixedModelRepresentationEncoder {
             encoded.extend(relative.map(|value| value / 8192.0));
             encoded.push(probe.distance / 8192.0);
             encoded.push(probe.signed_plane_distance / 8192.0);
-            encoded.extend(probe.normal);
+            encoded.extend(relative_normal);
             encoded.push(f32::from(probe.load_trigger));
             debug_assert_eq!(encoded.len(), self.geometry_slot_width);
             append_masked(values, masks, &encoded, true);
@@ -494,7 +496,7 @@ impl FixedModelRepresentationEncoder {
         ))
         .map_err(|error| ModelRepresentationError::Serialization(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.fixed-model-representation/v1\0");
+        hasher.update(b"dusklight.fixed-model-representation/v2\0");
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
@@ -542,6 +544,16 @@ fn relative_local(target: [f32; 3], origin: [f32; 3], yaw: i16) -> [f32; 3] {
         cos * delta[0] - sin * delta[2],
         delta[1],
         sin * delta[0] + cos * delta[2],
+    ]
+}
+
+fn direction_local(direction: [f32; 3], yaw: i16) -> [f32; 3] {
+    let yaw = yaw_radians(yaw);
+    let (sin, cos) = yaw.sin_cos();
+    [
+        cos * direction[0] - sin * direction[2],
+        direction[1],
+        sin * direction[0] + cos * direction[2],
     ]
 }
 
@@ -778,6 +790,50 @@ milestone target_room {
                 .iter()
                 .all(|mask| *mask == 0.0)
         );
+    }
+
+    #[test]
+    fn geometry_position_and_normal_rotate_into_player_local_space() {
+        let (encoder, state, objective) = fixture();
+        let mut geometry = vec![probe("surface", 10.0)];
+        geometry[0].normal = [1.0, 0.0, 0.0];
+        let encode = |player_yaw| {
+            encoder
+                .encode(RepresentationContext {
+                    state: &state,
+                    objective: &objective,
+                    player_position: [0.0; 3],
+                    player_yaw,
+                    player_session_process_id: None,
+                    selected_actors: None,
+                    geometry: Some(&geometry),
+                })
+                .unwrap()
+        };
+        let world_aligned = encode(0);
+        let quarter_turn = encode(0x4000);
+        let base_width = encoder
+            .base_features
+            .iter()
+            .map(|feature| {
+                if feature.categorical {
+                    encoder.categorical_embedding_width
+                } else {
+                    1
+                }
+            })
+            .sum::<usize>();
+        let geometry_start = base_width
+            + encoder.objective_width
+            + 3
+            + encoder.actor_slots * encoder.actor_slot_width
+            + 3;
+        assert!((world_aligned.values[geometry_start + 5] - 10.0 / 8192.0).abs() < 1.0e-6);
+        assert!((world_aligned.values[geometry_start + 10] - 1.0).abs() < 1.0e-6);
+        assert!(quarter_turn.values[geometry_start + 5].abs() < 1.0e-6);
+        assert!((quarter_turn.values[geometry_start + 7] - 10.0 / 8192.0).abs() < 1.0e-6);
+        assert!(quarter_turn.values[geometry_start + 10].abs() < 1.0e-6);
+        assert!((quarter_turn.values[geometry_start + 12] - 1.0).abs() < 1.0e-6);
     }
 
     #[test]

@@ -110,7 +110,13 @@ the same goal without demonstration-relative features.
   - [x] recent controls and camera state;
   - [x] realized background-collision contacts, surface/polygon identity,
     backing metadata and resolved planes/normals;
-  - [ ] generic local clearance/geometry queries in Link-relative coordinates;
+  - [x] generic local clearance/geometry queries in Link-relative coordinates.
+    `learn geometry-view` now joins authenticated native pre/post observations
+    to immutable stage inventories entirely offline, retaining bounded nearest
+    surfaces and explicit missingness rather than copying a map per tick or
+    calling live collision code. The fixed model representation v2 rotates
+    closest-point offsets and surface normals into Link space (and actor yaw
+    relative to Link) before inference;
   - [x] active gameplay actors as a complete, deterministically ordered
     variable-length set with raw semantic identity fields, transform, velocity
     and type/profile metadata;
@@ -132,9 +138,13 @@ the same goal without demonstration-relative features.
     `370675af...01e7f`; its independently stored spatial index is
     `2ad975ee...e73834`, and an artifact-only room-1 query reproduced prism
     2187 as the nearest surface.
-  - [ ] Bind the appropriate static-world artifact set and actor type/profile
-    catalog to each episode/shard identity, then derive per-state local geometry
-    and placement views by reference rather than embedding the map per tick.
+  - [x] Bind each derived local-geometry view to its source shard and exact
+    inventory/spatial-index digests, then derive per-state probes by reference.
+    A live 125-step Ordon shard produced 250 fully covered pre/post observations
+    and 8,000 bounded probes in view `8e46dfc0...c3c7013`, bound to native shard
+    `a849e3b9...1b014` and F_SP103 inventory `370675af...01e7f`.
+  - [ ] Bind the actor type/profile catalog and complete required static-world
+    set directly to episode/shard identity, including multi-stage trajectories.
 - [x] Remove arbitrary learner-facing actor truncation. Learning-observation v4
   requires the complete process actor set and rejects inconsistent counts,
   truncation markers, or a non-complete selection rule. The separate controller

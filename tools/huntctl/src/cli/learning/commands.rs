@@ -23,6 +23,9 @@ use huntctl::low_data_baselines::{
 };
 use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
 use huntctl::native_episode_shard::NativeEpisodeShard;
+use huntctl::native_geometry_view::{
+    GeometryObservationStatus, NativeEpisodeGeometryView, NativeGeometryViewConfiguration,
+};
 use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
@@ -37,6 +40,7 @@ use huntctl::transition_evidence::{
     ImmutableEpisodeArtifact, TerminalReasonEvidence, TransitionEvidenceBuild,
     TransitionEvidenceBundle,
 };
+use huntctl::world_inventory::WorldInventory;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -576,6 +580,81 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::write(output, &bytes)?;
             }
             println!("{}", String::from_utf8(bytes)?);
+            Ok(())
+        }
+        Some("geometry-view") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let inventory_paths = repeated_option(learn_args, "--world-inventory");
+            if inventory_paths.is_empty() || inventory_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn geometry-view requires 1..={MAX_LEARN_INPUT_CORPORA} --world-inventory INVENTORY.json"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("geometry view output already exists: {}", output.display()).into(),
+                );
+            }
+            let defaults = NativeGeometryViewConfiguration::default();
+            let configuration = NativeGeometryViewConfiguration {
+                maximum_distance: option(learn_args, "--maximum-distance")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.maximum_distance),
+                surface_limit: usize_option(learn_args, "--surface-limit", defaults.surface_limit)?,
+            };
+            let shard = NativeEpisodeShard::read(&input)?;
+            let inventories = inventory_paths
+                .iter()
+                .map(|path| WorldInventory::read_canonical(Path::new(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let view = NativeEpisodeGeometryView::build(&shard, &inventories, configuration)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeGeometryView)?;
+            let present = view
+                .observations
+                .iter()
+                .filter(|observation| observation.status == GeometryObservationStatus::Present)
+                .count();
+            let player_absent = view
+                .observations
+                .iter()
+                .filter(|observation| observation.status == GeometryObservationStatus::PlayerAbsent)
+                .count();
+            let room_unavailable = view.observations.len() - present - player_absent;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "worlds": view.worlds,
+                    "configuration": view.configuration,
+                    "observations": view.observations.len(),
+                    "present": present,
+                    "player_absent": player_absent,
+                    "room_unavailable": room_unavailable,
+                    "probes": view.observations.iter()
+                        .map(|observation| observation.probes.len()).sum::<usize>(),
+                }))?
+            );
             Ok(())
         }
         Some("inspect") => {

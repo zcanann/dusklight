@@ -278,6 +278,23 @@ geometry, and load-trigger joins that do not reproduce from the authored KCL
 and SCLS records. This keeps static world context out of per-tick episodes while
 allowing learner views to be regenerated from a stable inventory digest.
 
+Join an authenticated native episode shard to one or more stage inventories
+without issuing any extra live-game collision queries:
+
+```console
+huntctl learn geometry-view --input attempts.episodes.dseps \
+  --world-inventory build/world/F_SP103.inventory.json \
+  --output build/world/attempts.geometry.json \
+  --maximum-distance 512 --surface-limit 32
+```
+
+The sealed view binds the source shard, inventory, and spatial-index digests and
+retains bounded nearest-surface probes for every pre-input and post-simulation
+observation. Missing players and unavailable room geometry are explicit masks.
+The model representation rotates closest-point offsets, surface normals, and
+actor headings into Link-relative coordinates; changing those semantics bumped
+the fixed representation contract to v2.
+
 ## Content-addressed corpus
 
 Initialize and populate an append-only local corpus with:

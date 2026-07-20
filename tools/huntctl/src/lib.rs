@@ -36,8 +36,8 @@ pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};
 
 pub use dusklight_learning::{
-    action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines, offline_rl,
-    reward_shaping,
+    action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines,
+    native_geometry_view, offline_rl, reward_shaping,
 };
 pub use dusklight_proposals::q_search;
 
