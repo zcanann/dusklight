@@ -758,12 +758,16 @@ mod tests {
 
     #[test]
     fn shifted_boot_pulse_can_swap_between_a_and_start() {
-        let mut tape = InputTape {
-            frames: vec![Default::default(); 5],
-            ..InputTape::default()
-        };
-        tape.frames[3].pads[0].buttons = BUTTON_START;
-        let candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape).unwrap();
+        let mut candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
+        candidate.actions = vec![
+            MacroAction::Neutral { frames: 3 },
+            MacroAction::Press {
+                buttons: vec![dusklight_search::search::ControllerButton::Start],
+                hold_frames: 1,
+                neutral_frames: 1,
+            },
+        ];
+        let tape = candidate.compile().unwrap();
         let parent = ProvenBootCandidate {
             candidate,
             tape,
