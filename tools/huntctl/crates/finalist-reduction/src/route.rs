@@ -73,10 +73,11 @@ impl RouteReductionTarget {
 
 /// Golf a single, predicate-bounded suffix without guessing at game state.
 ///
-/// Proposals are intentionally small and deterministic: remove one pure
-/// A/Start pulse, or move one such pulse to an earlier free frame while
-/// preserving pulse order. Every proposal is replayed from the immutable
-/// prefix and must produce identical predicate evidence across repetitions.
+/// Proposals are intentionally small and deterministic: remove one isolated
+/// A/Start pulse, or move one such pulse to an earlier button-free frame while
+/// preserving the frame's movement/analog state and pulse order. Every
+/// proposal is replayed from the immutable prefix and must produce identical
+/// predicate evidence across repetitions.
 /// The ordering is goal tick first, then fewer inputs, then an earlier/smaller
 /// tape; this permits parity-preserving repairs that unlock a later frame win.
 pub fn golf_anchored_inputs(
@@ -116,10 +117,10 @@ pub fn golf_anchored_inputs(
         )
     })?;
     let source_goal_tick = source.goal_sim_tick;
-    let source_pulse_timestamps = menu_pulse_timestamps(&source.tape)?;
+    let source_pulse_timestamps = button_pulse_timestamps(&source.tape)?;
     if source_pulse_timestamps.is_empty() {
         return Err(EvaluateError::InvalidConfig(
-            "anchored input golf requires at least one pure A/Start pulse in the suffix".into(),
+            "anchored input golf requires at least one isolated A/Start pulse in the suffix".into(),
         ));
     }
 
@@ -165,7 +166,7 @@ pub fn golf_anchored_inputs(
         } else {
             (None, None)
         };
-        let pulses = menu_pulse_timestamps(&current.tape)?;
+        let pulses = button_pulse_timestamps(&current.tape)?;
         history.push(AnchoredInputGolfRound {
             round,
             evaluated_candidates: evaluated_count,
@@ -253,7 +254,7 @@ pub fn golf_anchored_inputs(
         source_goal_tick,
         goal_tick: golfed.goal_sim_tick,
         source_pulse_timestamps,
-        golfed_pulse_timestamps: menu_pulse_timestamps(&golfed.tape)?,
+        golfed_pulse_timestamps: button_pulse_timestamps(&golfed.tape)?,
         evaluated_candidates: proposal_evaluations + 2,
         accepted_edits,
         candidate: candidate_path,
@@ -947,7 +948,7 @@ fn evaluate_input_golf_batch(
 }
 
 fn input_golf_quality(candidate: &ProvenRouteCandidate) -> Result<InputGolfQuality, EvaluateError> {
-    let timestamps = menu_pulse_timestamps(&candidate.tape)?;
+    let timestamps = button_pulse_timestamps(&candidate.tape)?;
     Ok(InputGolfQuality {
         goal_sim_tick: candidate.goal_sim_tick,
         pulse_count: timestamps.len(),
@@ -965,11 +966,11 @@ fn timestamps_sum(timestamps: &[u64]) -> Result<u64, EvaluateError> {
     })
 }
 
-fn menu_pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
+fn button_pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
     tape.frames
         .iter()
         .enumerate()
-        .filter(|(_, frame)| is_pure_menu_pulse(&frame.pads[0]))
+        .filter(|(_, frame)| is_isolated_button_pulse(&frame.pads[0]))
         .map(|(index, _)| {
             u64::try_from(index).map_err(|_| {
                 EvaluateError::InvalidResult("pulse timestamp does not fit in u64".into())
@@ -978,17 +979,8 @@ fn menu_pulse_timestamps(tape: &InputTape) -> Result<Vec<u64>, EvaluateError> {
         .collect()
 }
 
-fn is_pure_menu_pulse(pad: &RawPadState) -> bool {
-    pad.buttons != 0
-        && pad.buttons & !MENU_BUTTONS == 0
-        && pad.stick_x == 0
-        && pad.stick_y == 0
-        && pad.substick_x == 0
-        && pad.substick_y == 0
-        && pad.trigger_left == 0
-        && pad.trigger_right == 0
-        && pad.analog_a == 0
-        && pad.analog_b == 0
+fn is_isolated_button_pulse(pad: &RawPadState) -> bool {
+    pad.buttons != 0 && pad.buttons & !MENU_BUTTONS == 0
 }
 
 fn input_golf_proposals(
@@ -996,23 +988,23 @@ fn input_golf_proposals(
     generation: u32,
     budget: usize,
 ) -> Result<Vec<Candidate>, EvaluateError> {
-    let timestamps = menu_pulse_timestamps(&parent.tape)?;
+    let timestamps = button_pulse_timestamps(&parent.tape)?;
     let mut proposals = Vec::new();
     let mut ids = BTreeSet::new();
 
-    // Deletions come first: if a menu press is useless, simplicity should win
-    // before timing perturbations spend the bounded rollout budget.
+    // Deletions come first: remove only the button pulse. Movement and analog
+    // state are independent authored inputs and must remain at their frames.
     for (pulse_index, timestamp) in timestamps.iter().copied().enumerate() {
         if proposals.len() == budget {
             return Ok(proposals);
         }
         let mut tape = parent.tape.clone();
-        tape.frames[timestamp as usize].pads[0] = RawPadState::default();
+        tape.frames[timestamp as usize].pads[0].buttons &= !MENU_BUTTONS;
         push_input_golf_candidate(
             parent,
             tape,
             generation,
-            format!("delete menu pulse {pulse_index} at frame {timestamp}"),
+            format!("delete button pulse {pulse_index} at frame {timestamp}"),
             timestamp,
             timestamp + 1,
             &mut ids,
@@ -1035,7 +1027,7 @@ fn input_golf_proposals(
             parent,
             tape,
             generation,
-            format!("swap menu pulse {pulse_index} at frame {timestamp}"),
+            format!("swap button pulse {pulse_index} at frame {timestamp}"),
             timestamp,
             timestamp + 1,
             &mut ids,
@@ -1061,19 +1053,19 @@ fn input_golf_proposals(
                 return Ok(proposals);
             }
             let new_index = new_timestamp as usize;
-            if parent.tape.frames[new_index].pads[0] != RawPadState::default() {
+            if parent.tape.frames[new_index].pads[0].buttons != 0 {
                 continue;
             }
             let mut tape = parent.tape.clone();
             let pad = tape.frames[old_timestamp as usize].pads[0];
-            tape.frames[old_timestamp as usize].pads[0] = RawPadState::default();
-            tape.frames[new_index].pads[0] = pad;
+            tape.frames[old_timestamp as usize].pads[0].buttons &= !MENU_BUTTONS;
+            tape.frames[new_index].pads[0].buttons = pad.buttons & MENU_BUTTONS;
             push_input_golf_candidate(
                 parent,
                 tape.clone(),
                 generation,
                 format!(
-                    "move menu pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+                    "move button pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
                 ),
                 new_timestamp,
                 old_timestamp + 1,
@@ -1084,13 +1076,13 @@ fn input_golf_proposals(
                 return Ok(proposals);
             }
             if let Some(alternate) = alternate_menu_pulse(pad) {
-                tape.frames[new_index].pads[0] = alternate;
+                tape.frames[new_index].pads[0].buttons = alternate.buttons;
                 push_input_golf_candidate(
                     parent,
                     tape,
                     generation,
                     format!(
-                        "move and swap menu pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+                        "move and swap button pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
                     ),
                     new_timestamp,
                     old_timestamp + 1,
@@ -1532,12 +1524,23 @@ mod tests {
     }
 
     #[test]
-    fn menu_input_golf_proposes_deletions_then_bounded_earlier_repairs() {
+    fn route_input_golf_preserves_movement_while_editing_button_pulses() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
         let mut tape = InputTape {
             boot: TapeBoot::Process,
             frames: vec![
                 InputFrame {
-                    owned_ports: 0x0f,
+                    owned_ports: 0x01,
+                    pads: [
+                        RawPadState::default(),
+                        disconnected,
+                        disconnected,
+                        disconnected
+                    ],
                     ..InputFrame::default()
                 };
                 10
@@ -1545,10 +1548,17 @@ mod tests {
             ..InputTape::default()
         };
         tape.frames[3].pads[0].buttons = BUTTON_A;
+        tape.frames[3].pads[0].stick_x = 40;
+        tape.frames[3].pads[0].connected = true;
+        tape.frames[6].pads[0].stick_y = 50;
+        tape.frames[6].pads[0].connected = true;
         tape.frames[7].pads[0].buttons = BUTTON_START;
+        tape.frames[7].pads[0].stick_x = 60;
+        tape.frames[7].pads[0].connected = true;
         // A non-menu input is deliberately outside the edit surface.
         tape.frames[9].pads[0].buttons = 0x0200;
-        let candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape).unwrap();
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
         let proven = ProvenRouteCandidate {
             tape,
             candidate,
@@ -1566,20 +1576,28 @@ mod tests {
         let proposals = input_golf_proposals(&proven, 1, 6).unwrap();
         assert_eq!(proposals.len(), 6);
         assert_eq!(
-            menu_pulse_timestamps(&proposals[0].compile().unwrap()).unwrap(),
+            button_pulse_timestamps(&proposals[0].compile().unwrap()).unwrap(),
             vec![7]
         );
         assert_eq!(
-            menu_pulse_timestamps(&proposals[1].compile().unwrap()).unwrap(),
+            proposals[0].compile().unwrap().frames[3].pads[0].stick_x,
+            40
+        );
+        assert_eq!(
+            button_pulse_timestamps(&proposals[1].compile().unwrap()).unwrap(),
             vec![3]
         );
         assert_eq!(
-            menu_pulse_timestamps(&proposals[2].compile().unwrap()).unwrap(),
+            button_pulse_timestamps(&proposals[2].compile().unwrap()).unwrap(),
             vec![3, 7]
         );
         assert_eq!(
             proposals[2].compile().unwrap().frames[3].pads[0].buttons,
             BUTTON_START
+        );
+        assert_eq!(
+            proposals[2].compile().unwrap().frames[3].pads[0].stick_x,
+            40
         );
         assert_eq!(
             proposals[3].compile().unwrap().frames[7].pads[0].buttons,
@@ -1590,13 +1608,15 @@ mod tests {
             0x0200
         );
         let swapped = proposals[5].compile().unwrap();
-        assert_eq!(menu_pulse_timestamps(&swapped).unwrap(), vec![3, 6]);
+        assert_eq!(button_pulse_timestamps(&swapped).unwrap(), vec![3, 6]);
         assert_eq!(swapped.frames[6].pads[0].buttons, BUTTON_A);
+        assert_eq!(swapped.frames[6].pads[0].stick_y, 50);
+        assert_eq!(swapped.frames[7].pads[0].stick_x, 60);
         assert_eq!(swapped.frames[9].pads[0].buttons, 0x0200);
     }
 
     #[test]
-    fn menu_input_quality_prefers_goal_tick_then_simplicity_then_earlier_pulses() {
+    fn route_input_quality_prefers_goal_tick_then_simplicity_then_earlier_pulses() {
         let make = |tick: u64, pulse_frames: &[usize]| {
             let mut tape = InputTape {
                 frames: vec![
