@@ -665,6 +665,7 @@ impl Error for NativeActorFeatureError {}
 mod tests {
     use super::*;
     use crate::native_actor_view::NativeEpisodeActorView;
+    use crate::trainable_set_encoder::TypedSetSample;
     use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeLearningObservation};
     use dusklight_world::actor_profile_catalog::{
         ACTOR_PROFILE_CATALOG_SCHEMA, ActorProfileCatalog, ActorProfileEntry,
@@ -768,6 +769,36 @@ mod tests {
         assert_eq!(
             NativeActorFeatureView::decode_canonical(&bytes).unwrap(),
             view
+        );
+    }
+
+    #[test]
+    fn sealed_feature_observation_materializes_a_complete_trainable_set() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v7.dseps"
+        ));
+        let view = NativeActorFeatureView::build(&source, ActorFeatureSpec::all()).unwrap();
+        let sample = TypedSetSample::from_native_actor_observation(
+            &view,
+            0,
+            Digest([9; 32]),
+            vec![1.0],
+            vec![true],
+            0.5,
+        )
+        .unwrap();
+        assert_eq!(
+            sample.actor_feature_schema_sha256,
+            view.feature_schema_sha256
+        );
+        assert_eq!(sample.nodes.len(), view.observations[0].actors.len());
+        assert_eq!(
+            sample.nodes[0].categorical,
+            view.observations[0].actors[0].categorical
+        );
+        assert_eq!(
+            sample.nodes[0].continuous_present.len(),
+            view.columns.continuous.len() + view.columns.goal_anchor_count * 3
         );
     }
 

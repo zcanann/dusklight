@@ -51,5 +51,6 @@ pub mod rainbow;
 pub mod reward_shaping;
 pub mod rl_readiness;
 pub mod semantic_goal_input;
+pub mod trainable_set_encoder;
 pub mod training_guard;
 pub mod transfer_learning;

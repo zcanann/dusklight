@@ -517,8 +517,20 @@ PAD and gameplay sequence as ordinary playback.
     attention, event participation and goal-relative positions. V7 and legacy
     V6 cross-language fixtures prove exact base-state values versus explicit
     absence, distinct schemas for channel ablations, canonical round trips and
-    tamper rejection. A trainable set/graph encoder and held-out comparison are
-    still required before completing the parent item.
+    tamper rejection. A trainable graph encoder and native held-out comparison
+    are still required before completing the parent item.
+  - [x] Add an actual trainable complete-set baseline instead of treating
+    summary statistics as DeepSets. The deterministic encoder learns a shared
+    per-actor transform, masked mean/max pooling and nonlinear prediction head;
+    exact categorical training values use non-ordinal channels, optional
+    values retain masks, runtime generations remain structural only, and the
+    sealed native actor-feature view materializes directly without dropping
+    actors. A 257-node regression exceeds controller capacity, seeded refits
+    are byte-identical, and a content-disjoint synthetic overflow task compares
+    the model to a fixed-slot MLP with identical rows and optimizer steps. Both
+    learned model identities and metrics bind the comparison artifact. This
+    proves the trainable path and failure-detection experiment, not a live-corpus
+    promotion; the equal-budget native held-out comparison remains open.
 - [ ] Keep immutable world geometry out of the per-tick flat vector. Supply
   bounded spatial queries, connectivity and semantic surface/trigger tokens by
   reference to the authenticated world artifact, with a graph path for models
