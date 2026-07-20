@@ -243,6 +243,26 @@ struct ObservationFixture {
             .homePositionY = 2.0F,
             .homePositionZ = -10.0F,
         };
+        observation.playerCollisionSolverPresent = true;
+        observation.playerCollisionSolver.flags = 0x2020;
+        observation.playerCollisionSolver.wallTableSize = 3;
+        observation.playerCollisionSolver.waterMode = 1;
+        observation.playerCollisionSolver.lineStart = {-1.5F, 2.0F, 3.0F};
+        observation.playerCollisionSolver.lineEnd = {-1.0F, 2.0F, 3.0F};
+        observation.playerCollisionSolver.wallCylinderCenter = {-1.0F, 2.0F, 3.0F};
+        observation.playerCollisionSolver.wallCylinderRadius = 35.0F;
+        observation.playerCollisionSolver.wallCylinderHeight = 70.0F;
+        observation.playerCollisionSolver.groundCheckOffset = 10.0F;
+        observation.playerCollisionSolver.roofCorrectionHeight = 5.0F;
+        observation.playerCollisionSolver.waterCheckOffset = 15.0F;
+        observation.playerCollisionSolver.wallCircles[0].flags = 2;
+        observation.playerCollisionSolver.wallCircles[0].angleY = 0x1200;
+        observation.playerCollisionSolver.wallCircles[0].wallRadiusSquared = 1225.0F;
+        observation.playerCollisionSolver.wallCircles[0].wallHeight = 35.0F;
+        observation.playerCollisionSolver.wallCircles[0].wallRadius = 35.0F;
+        observation.playerCollisionSolver.wallCircles[0].directWallHeight = 30.0F;
+        observation.playerCollisionSolver.wallCircles[0].realizedCenter = {-1.0F, 37.0F, 3.0F};
+        observation.playerCollisionSolver.wallCircles[0].realizedRadius = 35.0F;
         observation.actors = actors;
         observation.actorObservedCount = 1;
         observation.dynamicColliders = dynamicColliders;

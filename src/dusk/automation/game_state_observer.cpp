@@ -22,6 +22,48 @@
 
 namespace dusk::automation {
 
+struct MilestoneCollisionReadAdapter {
+    static constexpr u32 KnownFlags = dBgS_Acch::FLAG_GRND_NONE |
+                                      dBgS_Acch::FLAG_WALL_NONE |
+                                      dBgS_Acch::FLAG_ROOF_NONE |
+                                      dBgS_Acch::FLAG_WALL_HIT |
+                                      dBgS_Acch::FLAG_GROUND_HIT |
+                                      dBgS_Acch::FLAG_GROUND_FIND |
+                                      dBgS_Acch::FLAG_GROUND_LANDING |
+                                      dBgS_Acch::FLAG_GROUND_AWAY |
+                                      dBgS_Acch::FLAG_ROOF_HIT |
+                                      dBgS_Acch::FLAG_WATER_NONE |
+                                      dBgS_Acch::FLAG_WATER_HIT |
+                                      dBgS_Acch::FLAG_WATER_IN |
+                                      dBgS_Acch::FLAG_LINE_CHECK |
+                                      dBgS_Acch::FLAG_LINE_CHECK_NONE |
+                                      dBgS_Acch::FLAG_CLR_SPEED_Y |
+                                      dBgS_Acch::FLAG_LINE_CHECK_HIT |
+                                      dBgS_Acch::FLAG_MOVE_BG_ONLY |
+                                      dBgS_Acch::FLAG_GND_THIN_CELLING_OFF |
+                                      dBgS_Acch::FLAG_WALL_SORT |
+                                      dBgS_Acch::FLAG_LINE_DOWN;
+
+    static u32 flags(const dBgS_Acch& value) { return value.m_flags & KnownFlags; }
+    static int wallTableSize(const dBgS_Acch& value) { return value.m_tbl_size; }
+    static u8 waterMode(const dBgS_Acch& value) { return value.m_wtr_mode; }
+    static const cM3dGLin& line(const dBgS_Acch& value) { return value.m_lin; }
+    static const cM3dGCyl& wallCylinder(const dBgS_Acch& value) { return value.m_wall_cyl; }
+    static float groundCheckOffset(const dBgS_Acch& value) { return value.m_gnd_chk_offset; }
+    static float roofCorrectionHeight(const dBgS_Acch& value) {
+        return value.m_roof_crr_height;
+    }
+    static float waterCheckOffset(const dBgS_Acch& value) { return value.m_wtr_chk_offset; }
+
+    static u32 wallFlags(const dBgS_AcchCir& value) { return value.m_flags & 0x6u; }
+    static s16 wallAngleY(const dBgS_AcchCir& value) { return value.m_wall_angle_y; }
+    static float wallRadiusSquared(const dBgS_AcchCir& value) { return value.m_wall_rr; }
+    static float wallHeight(const dBgS_AcchCir& value) { return value.m_wall_h; }
+    static float wallRadius(const dBgS_AcchCir& value) { return value.m_wall_r; }
+    static float directWallHeight(const dBgS_AcchCir& value) { return value.m_wall_h_direct; }
+    static const cM3dGCir& realizedCircle(const dBgS_AcchCir& value) { return value.m_cir; }
+};
+
 TitleMenuObservation MenuStateObserver::captureTitle() {
     const auto* title = static_cast<const daTitle_c*>(fopAcM_SearchByName(fpcNm_TITLE_e));
     if (title == nullptr)
@@ -526,6 +568,40 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         relationships.attentionCatchActor = actorIdentity(dComIfGp_att_getCatghTarget());
         relationships.attentionLookActor = actorIdentity(dComIfGp_att_getLookTarget());
         observation.playerRelationshipsPresent = true;
+
+        const dBgS_Acch& collision = link->mLinkAcch;
+        auto& solver = observation.playerCollisionSolver;
+        solver.flags = MilestoneCollisionReadAdapter::flags(collision);
+        solver.wallTableSize = MilestoneCollisionReadAdapter::wallTableSize(collision);
+        solver.waterMode = MilestoneCollisionReadAdapter::waterMode(collision);
+        const cM3dGLin& line = MilestoneCollisionReadAdapter::line(collision);
+        solver.lineStart = {line.GetStart().x, line.GetStart().y, line.GetStart().z};
+        solver.lineEnd = {line.GetEnd().x, line.GetEnd().y, line.GetEnd().z};
+        const cM3dGCyl& cylinder = MilestoneCollisionReadAdapter::wallCylinder(collision);
+        solver.wallCylinderCenter = {
+            cylinder.GetC().x, cylinder.GetC().y, cylinder.GetC().z};
+        solver.wallCylinderRadius = cylinder.GetR();
+        solver.wallCylinderHeight = cylinder.GetH();
+        solver.groundCheckOffset = MilestoneCollisionReadAdapter::groundCheckOffset(collision);
+        solver.roofCorrectionHeight =
+            MilestoneCollisionReadAdapter::roofCorrectionHeight(collision);
+        solver.waterCheckOffset = MilestoneCollisionReadAdapter::waterCheckOffset(collision);
+        for (std::size_t index = 0; index < solver.wallCircles.size(); ++index) {
+            const dBgS_AcchCir& source = link->mAcchCir[index];
+            auto& destination = solver.wallCircles[index];
+            destination.flags = MilestoneCollisionReadAdapter::wallFlags(source);
+            destination.angleY = MilestoneCollisionReadAdapter::wallAngleY(source);
+            destination.wallRadiusSquared =
+                MilestoneCollisionReadAdapter::wallRadiusSquared(source);
+            destination.wallHeight = MilestoneCollisionReadAdapter::wallHeight(source);
+            destination.wallRadius = MilestoneCollisionReadAdapter::wallRadius(source);
+            destination.directWallHeight =
+                MilestoneCollisionReadAdapter::directWallHeight(source);
+            const cM3dGCir& circle = MilestoneCollisionReadAdapter::realizedCircle(source);
+            destination.realizedCenter = {circle.GetCx(), circle.GetHeight(), circle.GetCy()};
+            destination.realizedRadius = circle.GetR();
+        }
+        observation.playerCollisionSolverPresent = true;
     }
 
     fopAcIt_Executor(capture_milestone_actor, &storage);

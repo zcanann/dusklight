@@ -387,6 +387,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) ||
         observation.playerResourcesPresent != observation.playerPresent ||
         observation.playerRelationshipsPresent != observation.playerIsLink ||
+        observation.playerCollisionSolverPresent != observation.playerIsLink ||
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
@@ -426,6 +427,17 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             (!observation.playerRelationshipsPresent && identity->present) || !joined)
         {
             error = "learning observation player relationship is inconsistent with actor set";
+            return false;
+        }
+    }
+    constexpr std::uint32_t knownSolverFlags = 0x00f1fffeu;
+    if ((observation.playerCollisionSolver.flags & ~knownSolverFlags) != 0) {
+        error = "learning observation player collision solver has unknown flags";
+        return false;
+    }
+    for (const auto& wall : observation.playerCollisionSolver.wallCircles) {
+        if ((wall.flags & ~0x6u) != 0) {
+            error = "learning observation player collision solver wall has unknown flags";
             return false;
         }
     }
@@ -786,6 +798,43 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         })
     {
         if (!append_actor_identity(output, *identity, error))
+            return false;
+    }
+
+    const MilestoneObservation::PlayerCollisionSolver emptySolver{};
+    const auto& solver = observation.playerCollisionSolverPresent ?
+                             observation.playerCollisionSolver :
+                             emptySolver;
+    const std::uint8_t solverStatus = observation.playerCollisionSolverPresent ? 1 :
+                                      observation.playerPresent                 ? 3 :
+                                                                                  2;
+    append_integer(output, solverStatus);
+    append_integer(output, static_cast<std::uint8_t>(solver.wallCircles.size()));
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, solver.flags);
+    append_integer(output, solver.wallTableSize);
+    append_integer(output, solver.waterMode);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    if (!append_float_array(output, solver.lineStart, error) ||
+        !append_float_array(output, solver.lineEnd, error) ||
+        !append_float_array(output, solver.wallCylinderCenter, error) ||
+        !append_float(output, solver.wallCylinderRadius, error) ||
+        !append_float(output, solver.wallCylinderHeight, error) ||
+        !append_float(output, solver.groundCheckOffset, error) ||
+        !append_float(output, solver.roofCorrectionHeight, error) ||
+        !append_float(output, solver.waterCheckOffset, error))
+        return false;
+    for (const auto& wall : solver.wallCircles) {
+        append_integer(output, wall.flags);
+        append_integer(output, wall.angleY);
+        append_integer<std::uint16_t>(output, 0);
+        if (!append_float(output, wall.wallRadiusSquared, error) ||
+            !append_float(output, wall.wallHeight, error) ||
+            !append_float(output, wall.wallRadius, error) ||
+            !append_float(output, wall.directWallHeight, error) ||
+            !append_float_array(output, wall.realizedCenter, error) ||
+            !append_float(output, wall.realizedRadius, error))
             return false;
     }
     return true;

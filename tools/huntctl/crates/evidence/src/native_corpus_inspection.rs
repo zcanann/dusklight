@@ -542,6 +542,10 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                             "player_relationships",
                             observation.player_relationships_status,
                         ),
+                        (
+                            "player_collision_solver",
+                            observation.player_collision_solver_status,
+                        ),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -552,6 +556,18 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                     surface_sizes.push(surface_count);
                     dynamic_collider_sizes.push(observation.dynamic_colliders.len());
                     let resources = observation.player_resources.as_ref();
+                    let solver_flags = observation
+                        .player_collision_solver
+                        .as_ref()
+                        .map(|solver| solver.flags.to_le_bytes());
+                    let solver_wall_flags =
+                        observation.player_collision_solver.as_ref().map(|solver| {
+                            solver
+                                .wall_circles
+                                .iter()
+                                .flat_map(|wall| wall.flags.to_le_bytes())
+                                .collect::<Vec<_>>()
+                        });
                     if let Some(relationships) = observation.player_relationships.as_ref() {
                         for (role, identity) in [
                             ("targeted_actor", &relationships.targeted_actor),
@@ -596,6 +612,14 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         (
                             "collect_item_bits",
                             resources.map(|value| value.collect_item_bits.as_slice()),
+                        ),
+                        (
+                            "player_collision_solver_flags",
+                            solver_flags.as_ref().map(|value| value.as_slice()),
+                        ),
+                        (
+                            "player_collision_solver_wall_flags",
+                            solver_wall_flags.as_deref(),
                         ),
                     ] {
                         *missing_mask_counts.entry(name.into()).or_default() +=
@@ -879,5 +903,33 @@ mod tests {
             report.observation_count
         );
         assert_eq!(report.player_relationship_role_presence["ride_actor"], 0);
+    }
+
+    #[test]
+    fn audits_v11_player_collision_solver_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v11.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report.channel_coverage["player_collision_solver"].present,
+            report.observation_count
+        );
+        assert_eq!(
+            report.missing_mask_counts["player_collision_solver_flags"],
+            0
+        );
+        assert_eq!(
+            report.flag_mask_coverage["player_collision_solver_flags"]
+                .widths
+                .minimum,
+            4
+        );
+        assert_eq!(
+            report.flag_mask_coverage["player_collision_solver_wall_flags"]
+                .widths
+                .minimum,
+            12
+        );
     }
 }

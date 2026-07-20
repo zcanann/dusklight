@@ -181,6 +181,38 @@ struct MilestoneObservation {
     PlayerRelationships playerRelationships;
     bool playerRelationshipsPresent = false;
 
+    // Cached Link background-collision solver state. This is copied after the
+    // game has run its own solver; observation never invokes a collision query.
+    struct PlayerCollisionSolver {
+        static constexpr std::size_t WallCircleCount = 3;
+
+        struct WallCircle {
+            std::uint32_t flags = 0;
+            std::int16_t angleY = 0;
+            float wallRadiusSquared = 0.0F;
+            float wallHeight = 0.0F;
+            float wallRadius = 0.0F;
+            float directWallHeight = 0.0F;
+            std::array<float, 3> realizedCenter{};
+            float realizedRadius = 0.0F;
+        };
+
+        std::uint32_t flags = 0;
+        std::int32_t wallTableSize = 0;
+        std::uint8_t waterMode = 0;
+        std::array<float, 3> lineStart{};
+        std::array<float, 3> lineEnd{};
+        std::array<float, 3> wallCylinderCenter{};
+        float wallCylinderRadius = 0.0F;
+        float wallCylinderHeight = 0.0F;
+        float groundCheckOffset = 0.0F;
+        float roofCorrectionHeight = 0.0F;
+        float waterCheckOffset = 0.0F;
+        std::array<WallCircle, WallCircleCount> wallCircles{};
+    };
+    PlayerCollisionSolver playerCollisionSolver;
+    bool playerCollisionSolverPresent = false;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

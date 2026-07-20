@@ -16,6 +16,7 @@ class fopAc_ac_c;
 // DUSKLIGHT OBSERVATION-ONLY APERTURE: declaration only; adapter body lives in automation.
 namespace dusk::automation {
 struct GameplayTraceCollisionReadAdapter;
+struct MilestoneCollisionReadAdapter;
 }
 #endif
 
@@ -24,6 +25,7 @@ private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // DUSKLIGHT OBSERVATION-ONLY APERTURE: const cached-result reads only.
     friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+    friend struct dusk::automation::MilestoneCollisionReadAdapter;
 #endif
     /* 0x10 */ u32 m_flags;
     /* 0x14 */ cM3dGCir m_cir;
@@ -212,6 +214,7 @@ private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // DUSKLIGHT OBSERVATION-ONLY APERTURE: const cached-result reads only.
     friend struct dusk::automation::GameplayTraceCollisionReadAdapter;
+    friend struct dusk::automation::MilestoneCollisionReadAdapter;
 #endif
     /* 0x02C */ u32 m_flags;
     /* 0x030 */ cXyz* pm_pos;

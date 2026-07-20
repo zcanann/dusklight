@@ -31,6 +31,7 @@ const OBSERVATION_VERSION_V7: u16 = 7;
 const OBSERVATION_VERSION_V8: u16 = 8;
 const OBSERVATION_VERSION_V9: u16 = 9;
 const OBSERVATION_VERSION_V10: u16 = 10;
+const OBSERVATION_VERSION_V11: u16 = 11;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -48,6 +49,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V7: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V8: &str = "dusklight-learning-observation/v8";
 pub const LEARNING_OBSERVATION_SCHEMA_V9: &str = "dusklight-learning-observation/v9";
 pub const LEARNING_OBSERVATION_SCHEMA_V10: &str = "dusklight-learning-observation/v10";
+pub const LEARNING_OBSERVATION_SCHEMA_V11: &str = "dusklight-learning-observation/v11";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -414,6 +416,34 @@ pub struct NativePlayerRelationshipsObservation {
     pub attention_look_actor: Option<NativeActorIdentity>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativePlayerCollisionSolverWall {
+    pub flags: u32,
+    pub angle_y: i16,
+    pub wall_radius_squared: f32,
+    pub wall_height: f32,
+    pub wall_radius: f32,
+    pub direct_wall_height: f32,
+    pub realized_center: [f32; 3],
+    pub realized_radius: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativePlayerCollisionSolverObservation {
+    pub flags: u32,
+    pub wall_table_size: i32,
+    pub water_mode: u8,
+    pub line_start: [f32; 3],
+    pub line_end: [f32; 3],
+    pub wall_cylinder_center: [f32; 3],
+    pub wall_cylinder_radius: f32,
+    pub wall_cylinder_height: f32,
+    pub ground_check_offset: f32,
+    pub roof_correction_height: f32,
+    pub water_check_offset: f32,
+    pub wall_circles: [NativePlayerCollisionSolverWall; 3],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGoalObservation {
     pub configured: bool,
@@ -575,6 +605,8 @@ pub struct NativeLearningObservation {
     pub player_resources: Option<NativePlayerResourcesObservation>,
     pub player_relationships_status: NativeChannelStatus,
     pub player_relationships: Option<NativePlayerRelationshipsObservation>,
+    pub player_collision_solver_status: NativeChannelStatus,
+    pub player_collision_solver: Option<NativePlayerCollisionSolverObservation>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     /// Exact 256-byte dSv_info_c::mTmp.mEvent register bank (v5+).
@@ -644,6 +676,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V8
                 | OBSERVATION_VERSION_V9
                 | OBSERVATION_VERSION_V10
+                | OBSERVATION_VERSION_V11
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -768,6 +801,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V8 => LEARNING_OBSERVATION_SCHEMA_V8,
         OBSERVATION_VERSION_V9 => LEARNING_OBSERVATION_SCHEMA_V9,
         OBSERVATION_VERSION_V10 => LEARNING_OBSERVATION_SCHEMA_V10,
+        OBSERVATION_VERSION_V11 => LEARNING_OBSERVATION_SCHEMA_V11,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1246,6 +1280,86 @@ fn validate_player_relationship_joins(
         ));
     }
     Ok(())
+}
+
+fn decode_player_collision_solver(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, NativePlayerCollisionSolverObservation), NativeEpisodeShardError>
+{
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 3 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "invalid player-collision-solver wall count or reserved bytes",
+        ));
+    }
+    let flags = reader.u32()?;
+    if flags & !0x00f1_fffe != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "player collision solver has unknown flags",
+        ));
+    }
+    let wall_table_size = reader.i32()?;
+    let water_mode = reader.u8()?;
+    if reader.u8()? != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero player-collision-solver reserved bytes",
+        ));
+    }
+    let line_start = reader.f32x3()?;
+    let line_end = reader.f32x3()?;
+    let wall_cylinder_center = reader.f32x3()?;
+    let wall_cylinder_radius = reader.f32()?;
+    let wall_cylinder_height = reader.f32()?;
+    let ground_check_offset = reader.f32()?;
+    let roof_correction_height = reader.f32()?;
+    let water_check_offset = reader.f32()?;
+    let mut walls = Vec::with_capacity(3);
+    for _ in 0..3 {
+        let wall_flags = reader.u32()?;
+        if wall_flags & !0x6 != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "player collision solver wall has unknown flags",
+            ));
+        }
+        let angle_y = reader.i16()?;
+        if reader.u16()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "nonzero player-collision-solver wall reserved bytes",
+            ));
+        }
+        walls.push(NativePlayerCollisionSolverWall {
+            flags: wall_flags,
+            angle_y,
+            wall_radius_squared: reader.f32()?,
+            wall_height: reader.f32()?,
+            wall_radius: reader.f32()?,
+            direct_wall_height: reader.f32()?,
+            realized_center: reader.f32x3()?,
+            realized_radius: reader.f32()?,
+        });
+    }
+    let solver = NativePlayerCollisionSolverObservation {
+        flags,
+        wall_table_size,
+        water_mode,
+        line_start,
+        line_end,
+        wall_cylinder_center,
+        wall_cylinder_radius,
+        wall_cylinder_height,
+        ground_check_offset,
+        roof_correction_height,
+        water_check_offset,
+        wall_circles: walls
+            .try_into()
+            .expect("exact player-collision-solver wall count"),
+    };
+    if status != NativeChannelStatus::Present && solver != Default::default() {
+        return Err(NativeEpisodeShardError::new(
+            "player-collision-solver payload is present for an unavailable channel",
+        ));
+    }
+    Ok((status, solver))
 }
 
 fn decode_camera(
@@ -2020,7 +2134,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V7
         | OBSERVATION_VERSION_V8
         | OBSERVATION_VERSION_V9
-        | OBSERVATION_VERSION_V10 => {
+        | OBSERVATION_VERSION_V10
+        | OBSERVATION_VERSION_V11 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2475,6 +2590,30 @@ fn decode_observation(
         } else {
             (NativeChannelStatus::NotSampled, None)
         };
+    let (player_collision_solver_status, player_collision_solver) =
+        if observation_version >= OBSERVATION_VERSION_V11 {
+            let (status, solver) = decode_player_collision_solver(reader)?;
+            let player_present = flags & 1 != 0;
+            let player_is_link = flags & (1 << 1) != 0;
+            let expected_status = if player_is_link {
+                NativeChannelStatus::Present
+            } else if player_present {
+                NativeChannelStatus::Unavailable
+            } else {
+                NativeChannelStatus::Absent
+            };
+            if status != expected_status {
+                return Err(NativeEpisodeShardError::new(
+                    "player-collision-solver status disagrees with player type",
+                ));
+            }
+            (
+                status,
+                (status == NativeChannelStatus::Present).then_some(solver),
+            )
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -2547,6 +2686,8 @@ fn decode_observation(
         player_resources,
         player_relationships_status,
         player_relationships,
+        player_collision_solver_status,
+        player_collision_solver,
         event_flags,
         temporary_flags,
         temporary_event_bytes,
@@ -2778,6 +2919,10 @@ mod tests {
 
     fn golden_v10() -> &'static [u8] {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps")
+    }
+
+    fn golden_v11() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v11.dseps")
     }
 
     #[test]
@@ -3289,6 +3434,37 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v11_player_collision_solver_state() {
+        let shard = NativeEpisodeShard::decode(golden_v11()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V11
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            assert_eq!(
+                observation.player_collision_solver_status,
+                NativeChannelStatus::Present
+            );
+            let solver = observation.player_collision_solver.as_ref().unwrap();
+            assert_eq!(solver.flags, 0x2020);
+            assert_eq!(solver.wall_table_size, 3);
+            assert_eq!(solver.water_mode, 1);
+            assert_eq!(solver.line_start, [-1.5, 2.0, 3.0]);
+            assert_eq!(solver.wall_cylinder_radius, 35.0);
+            assert_eq!(solver.ground_check_offset, 10.0);
+            assert_eq!(solver.wall_circles[0].flags, 2);
+            assert_eq!(solver.wall_circles[0].angle_y, 0x1200);
+            assert_eq!(solver.wall_circles[0].realized_center, [-1.0, 37.0, 3.0]);
+            assert_eq!(solver.wall_circles[0].realized_radius, 35.0);
+        }
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -3413,6 +3589,7 @@ mod tests {
                                 | LEARNING_OBSERVATION_SCHEMA_V8
                                 | LEARNING_OBSERVATION_SCHEMA_V9
                                 | LEARNING_OBSERVATION_SCHEMA_V10
+                                | LEARNING_OBSERVATION_SCHEMA_V11
                         ) || [&step.pre_input, &step.post_simulation].iter().all(
                             |observation| {
                                 observation
@@ -3450,6 +3627,7 @@ mod tests {
                 | LEARNING_OBSERVATION_SCHEMA_V8
                 | LEARNING_OBSERVATION_SCHEMA_V9
                 | LEARNING_OBSERVATION_SCHEMA_V10
+                | LEARNING_OBSERVATION_SCHEMA_V11
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode

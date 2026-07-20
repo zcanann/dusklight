@@ -505,7 +505,7 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.runtime_generation)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v6"
+    if snapshot.schema != "dusklight.actor-catalog.v7"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -519,7 +519,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != "dusklight-learning-observation/v10"
+    if learning.source_schema != "dusklight-learning-observation/v11"
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -743,11 +743,11 @@ mod tests {
                 "old_angle": [10, 11, 12]}),
         ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v6", "simulation_tick": 29,
+            "schema": "dusklight.actor-catalog.v7", "simulation_tick": 29,
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": "dusklight-learning-observation/v10",
+                "source_schema": "dusklight-learning-observation/v11",
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }

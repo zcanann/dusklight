@@ -333,6 +333,37 @@ json learning_player_relationships_json(
     };
 }
 
+json learning_player_collision_solver_json(
+    const MilestoneObservation::PlayerCollisionSolver& solver) {
+    json wallCircles = json::array();
+    for (const auto& wall : solver.wallCircles) {
+        wallCircles.push_back({
+            {"flags", wall.flags},
+            {"angle_y", wall.angleY},
+            {"wall_radius_squared", wall.wallRadiusSquared},
+            {"wall_height", wall.wallHeight},
+            {"wall_radius", wall.wallRadius},
+            {"direct_wall_height", wall.directWallHeight},
+            {"realized_center", wall.realizedCenter},
+            {"realized_radius", wall.realizedRadius},
+        });
+    }
+    return {
+        {"flags", solver.flags},
+        {"wall_table_size", solver.wallTableSize},
+        {"water_mode", solver.waterMode},
+        {"line_start", solver.lineStart},
+        {"line_end", solver.lineEnd},
+        {"wall_cylinder_center", solver.wallCylinderCenter},
+        {"wall_cylinder_radius", solver.wallCylinderRadius},
+        {"wall_cylinder_height", solver.wallCylinderHeight},
+        {"ground_check_offset", solver.groundCheckOffset},
+        {"roof_correction_height", solver.roofCorrectionHeight},
+        {"water_check_offset", solver.waterCheckOffset},
+        {"wall_circles", std::move(wallCircles)},
+    };
+}
+
 }  // namespace
 
 bool write_actor_catalog(
@@ -404,7 +435,7 @@ bool write_actor_catalog(
         nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
                                                           "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v6"},
+        {"schema", "dusklight.actor-catalog.v7"},
         {"build",
             {
                 {"version", build.version},
@@ -464,6 +495,15 @@ bool write_actor_catalog(
                 {"value", learningObservation.playerRelationshipsPresent ?
                               learning_player_relationships_json(
                                   learningObservation.playerRelationships) :
+                              json(nullptr)},
+            }},
+        {"learning_player_collision_solver",
+            {
+                {"source_schema", LearningObservationSchema},
+                {"present", learningObservation.playerCollisionSolverPresent},
+                {"value", learningObservation.playerCollisionSolverPresent ?
+                              learning_player_collision_solver_json(
+                                  learningObservation.playerCollisionSolver) :
                               json(nullptr)},
             }},
     };
