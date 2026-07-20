@@ -178,3 +178,30 @@ of horizontal loss, and a longest seven-tick turn episode at the default
 512-s16 threshold. Roll starts occurred at frames 440, 460, 480, 500, 520, 540,
 and 560: exact 20-tick spacing with each A edge applied on the reconstructed
 roll-start frame.
+
+## Sub-125 suffix search outcome
+
+On 2026-07-20, the checkpointed native suffix loop retained 73 passed search
+batches totaling 18,867 candidates and 2,358,375 simulated suffix ticks. None
+reached the `F_SP103` to `F_SP104` terminal predicate within the 125-tick batch
+limit. Median trusted restore time in the later large batches stayed near 4.6
+milliseconds; for example, the 1,000-candidate independent stick-component
+batch reported 4,646 microseconds.
+
+The equal-budget comparison assigned 107 candidates and 13,375 simulated ticks
+each to deletion, earliest button-edge, heading, corner, timing, and structured
+ranked proposals. Later batches exhausted all unique single-frame deletions,
+fixed-length delete-and-hold shifts, the neighboring 18–22 tick roll cadences,
+fine and broad heading changes, duration copies, corner and collision windows,
+long path windows, symmetric and
+asymmetric lane shifts, magnitude/clipping changes, measured pair/triple
+combinations, and 1,000 independent X/Y stick-component edits.
+
+Geometry remained diagnostic only. It guided the failed-route lineage from an
+approximately 11.8-unit signed exit-edge miss to 4.0807 after path/corner
+repairs, 3.0181 after a measured lane shift, 2.9324 after a local clipped-stick
+change, and 2.7813 after fine ranked combinations. The native terminal result
+remained authoritative throughout: every retained candidate still reported
+`success: false`, so none is a valid route improvement and no tape was
+promoted. The proof is blocked pending a measured non-local proposal family;
+repeating the exhausted local neighborhoods would not satisfy the gate.

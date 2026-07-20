@@ -92,26 +92,44 @@ states, hashes, predicate evidence, and exported tape.
   fingerprint and failed before checkpoint capture or candidate execution,
   while reporting both expected and actual values.
 
-## 3. Beat manual editing
+## 3. Beat manual editing — blocked
 
-- [ ] Under equal simulated-tick budgets, compare:
+- [x] Under equal simulated-tick budgets, compare:
   - deletion and earliest-valid button-edge search;
   - local stick-heading, duration, corner, and roll-timing mutation;
   - one structured or learned candidate ranker if the collected samples can
     support it.
-- [ ] Judge methods by valid route improvements found, not model labels or
+- [x] Judge methods by valid route improvements found, not model labels or
   training loss.
-- [ ] Use terminal success and first-hit tick as authority. Keep progress
+- [x] Use terminal success and first-hit tick as authority. Keep progress
   shaping diagnostic and separate.
-- [ ] Allow bounded suffix repair when an earlier improvement invalidates the
+- [x] Allow bounded suffix repair when an earlier improvement invalidates the
   old continuation.
 - [ ] Preserve materially different successful end states instead of assuming
-  the locally fastest one has the best continuation.
+  the locally fastest one has the best continuation. **Blocked:** no candidate
+  reached the terminal predicate within 125 executed suffix ticks, so there is
+  no successful end state to preserve.
 
 **Gate:** automation repeatedly finds a valid improvement that local manual
 tape editing misses under the same simulated-tick budget.
 
-## 4. Promote the result
+**Blocked evidence (2026-07-20):** 73 retained passed native batches evaluated
+18,867 candidates (2,358,375 simulated suffix ticks) with zero terminal
+successes. The initial equal-budget comparison gave deletion, earliest button
+edges, heading, corner, timing, and structured ranking 107 candidates / 13,375
+simulated ticks each. Later exhaustive and repair batches covered all unique
+single-frame deletions, fixed-length delete-and-hold duration shifts, exact
+20-tick roll cadence neighbors, local and broad heading windows, corner/contact
+windows, symmetric and
+asymmetric lane shifts, magnitude/clipping, measured pair/triple combinations,
+and 1,000 independent stick-component neighbors. Progress shaping reduced the
+signed exit-edge miss from about 11.8 to 2.7813 world units, but shaping never
+overrode native success and no candidate reached `ordon_spring_load_committed`
+early. Evidence is retained under `build/search/ordon-q124-*`; aggregate counts
+come from their passed `result.json` files. Continuing now requires a new,
+measured non-local proposal family rather than another obvious local neighbor.
+
+## 4. Promote the result — blocked by gate 3
 
 - [ ] Export the winner as an absolute boot-to-Ordon-Springs tape.
 - [ ] Exhaust its obvious neighboring input timings and headings.
@@ -119,6 +137,10 @@ tape editing misses under the same simulated-tick budget.
   evidence.
 - [ ] Record incumbent/winner ticks, candidate-tick budget, throughput, restore
   cost, methods compared, and the input decisions responsible for the gain.
+
+There is no winner to export or cold-prove. Promotion remains blocked until a
+candidate reaches the native terminal predicate in at most 125 executed suffix
+ticks (first-hit tick 124 or earlier).
 
 **Done:** a repeatable cold-boot tape beats 125 ticks, and the win is caused by
 its inputs rather than nondeterminism.

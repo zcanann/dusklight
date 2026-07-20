@@ -287,11 +287,12 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
             let method = match option(search_args, "--method")
                 .ok_or(
-                    "missing required --method deletion|button-edge|heading|corner|corner-wide|collision|fine-heading|fine-terminal|lane-shift|fine-lane-shift|early-lane-shift|magnitude|asymmetric-lane-shift|post-collision|recovery-bias|timing|path|terminal",
+                    "missing required --method deletion|delete-hold|button-edge|heading|corner|corner-wide|collision|fine-heading|fine-terminal|lane-shift|fine-lane-shift|early-lane-shift|magnitude|asymmetric-lane-shift|post-collision|recovery-bias|timing|path|terminal",
                 )?
                 .as_str()
             {
                 "deletion" => SuffixProposalMethod::Deletion,
+                "delete-hold" => SuffixProposalMethod::DeleteHold,
                 "button-edge" => SuffixProposalMethod::ButtonEdge,
                 "heading" => SuffixProposalMethod::Heading,
                 "corner" => SuffixProposalMethod::Corner,

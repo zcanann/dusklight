@@ -27,6 +27,7 @@ pub fn ordon_exit_edge_distance(x: f64, z: f64) -> f64 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SuffixProposalMethod {
     Deletion,
+    DeleteHold,
     ButtonEdge,
     Heading,
     Corner,
@@ -115,6 +116,29 @@ pub fn propose_suffix_batch(
                     seed,
                     frames,
                     format!("delete-{deleted}"),
+                    candidate_budget,
+                )?;
+                if output.candidates.len() == candidate_budget {
+                    break;
+                }
+            }
+        }
+        SuffixProposalMethod::DeleteHold => {
+            if maximum_ticks < 2 {
+                return Err(SearchError::InvalidPopulation);
+            }
+            let base = source.frames[..maximum_ticks].to_vec();
+            let final_pad = base.last().cloned().ok_or(SearchError::InvalidPopulation)?;
+            for deleted in 0..maximum_ticks - 1 {
+                let mut frames = base.clone();
+                frames.remove(deleted);
+                frames.push(final_pad.clone());
+                push_candidate(
+                    &mut output,
+                    &mut seen,
+                    seed,
+                    frames,
+                    format!("delete-hold-{deleted}"),
                     candidate_budget,
                 )?;
                 if output.candidates.len() == candidate_budget {
@@ -1080,6 +1104,63 @@ mod tests {
             ancestry: Ancestry::default(),
         };
         assert_eq!(candidate.compile().unwrap().frames.len(), 4);
+    }
+
+    #[test]
+    fn delete_hold_shifts_input_without_changing_candidate_length() {
+        let mut distinct = seed();
+        distinct.actions = (0_i8..5)
+            .map(|offset| MacroAction::PadRun {
+                pad: SearchPadState {
+                    buttons: 0,
+                    stick_x: 100 + offset,
+                    stick_y: 50,
+                    substick_x: 0,
+                    substick_y: 0,
+                    trigger_left: 0,
+                    trigger_right: 0,
+                    analog_a: 0,
+                    analog_b: 0,
+                    connected: true,
+                    error: 0,
+                },
+                frames: 1,
+            })
+            .collect();
+        let batch = propose_suffix_batch(
+            &distinct,
+            440,
+            "ac7c32788fc3b5c59046386d95b9b5b4",
+            5,
+            5,
+            SuffixProposalMethod::DeleteHold,
+        )
+        .unwrap();
+        assert_eq!(batch.candidates.len(), 4);
+        let first = Candidate {
+            schema: CANDIDATE_SCHEMA.into(),
+            segment: SegmentProfile::Fsp103ToFsp104,
+            boot: TapeBoot::Process,
+            actions: batch.candidates[0].actions.clone(),
+            ancestry: Ancestry::default(),
+        }
+        .compile()
+        .unwrap();
+        assert_eq!(first.frames.len(), 5);
+        assert_eq!(first.frames[0].pads[0].stick_x, 101);
+        assert_eq!(first.frames[3].pads[0].stick_x, 104);
+        assert_eq!(first.frames[4].pads[0].stick_x, 104);
+        assert!(batch.candidates.iter().all(|candidate| {
+            Candidate {
+                schema: CANDIDATE_SCHEMA.into(),
+                segment: SegmentProfile::Fsp103ToFsp104,
+                boot: TapeBoot::Process,
+                actions: candidate.actions.clone(),
+                ancestry: Ancestry::default(),
+            }
+            .compile()
+            .is_ok_and(|tape| tape.frames.len() == 5)
+        }));
     }
 
     #[test]
