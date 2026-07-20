@@ -31,6 +31,16 @@ pub enum SuffixProposalMethod {
     Heading,
     Corner,
     CornerWide,
+    Collision,
+    FineHeading,
+    FineTerminal,
+    LaneShift,
+    FineLaneShift,
+    EarlyLaneShift,
+    Magnitude,
+    AsymmetricLaneShift,
+    PostCollision,
+    RecoveryBias,
     Timing,
     Path,
     Terminal,
@@ -278,6 +288,301 @@ pub fn propose_suffix_batch(
                 }
             }
         }
+        SuffixProposalMethod::Collision => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            // Native collision observations put the largest correction losses
+            // in this short approach window. Exhaust the local neighborhood
+            // around the best measured edit instead of perturbing the route's
+            // unrelated turns.
+            let anchors = 75_usize..=81;
+            'variants: for degrees in [-1.0_f64, -2.0, -3.0, -4.0, 1.0, 2.0] {
+                for window in 2_usize..=7 {
+                    for start in anchors.clone() {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, start, window, degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("collision-{start}-w{window}-{degrees:+.0}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::FineHeading => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            // Sub-degree rotations become single stick-unit changes after
+            // quantization. Walk backward from the exit so a bounded batch
+            // covers terminal input first, then earlier path-shaping frames.
+            'variants: for degrees in [-0.25_f64, 0.25, -0.5, 0.5, -1.0, 1.0] {
+                for ordinal in 0..maximum_ticks {
+                    let start = maximum_ticks - 1 - ordinal.wrapping_mul(37) % maximum_ticks;
+                    let mut frames = base.clone();
+                    rotate_heading(&mut frames, start, 1, degrees);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("fine-heading-{start}-{degrees:+.2}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::FineTerminal => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            let end = maximum_ticks.min(113);
+            let start = end.saturating_sub(25);
+            'variants: for half_degrees in 1_i32..=10 {
+                for sign in [-1.0_f64, 1.0] {
+                    let degrees = sign * f64::from(half_degrees) * 0.5;
+                    for frame_index in start..end {
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, frame_index, 1, degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("fine-terminal-{frame_index}-{degrees:+.1}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::LaneShift => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            // Shift the approach laterally before the measured wall contact,
+            // then apply the opposite steering bias to recover the exit line.
+            'variants: for degrees in [-2.0_f64, 2.0, -4.0, 4.0, -6.0, 6.0] {
+                for window in [5_usize, 10, 15, 20] {
+                    for start in 50_usize..=75 {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, start, window, degrees);
+                        rotate_heading(&mut frames, start.saturating_add(window), window, -degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("lane-shift-{start}-w{window}-{degrees:+.0}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::FineLaneShift => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            'variants: for degrees in [-0.25_f64, 0.25, -0.5, 0.5, -1.0, 1.0] {
+                for window in 8_usize..=12 {
+                    for start in 45_usize..=60 {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, start, window, degrees);
+                        rotate_heading(&mut frames, start.saturating_add(window), window, -degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("fine-lane-shift-{start}-w{window}-{degrees:+.2}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::EarlyLaneShift => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            'variants: for degrees in [-1.0_f64, 1.0, -2.0, 2.0] {
+                for window in [5_usize, 10, 15, 20] {
+                    for start in 20_usize..=50 {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, start, window, degrees);
+                        rotate_heading(&mut frames, start.saturating_add(window), window, -degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("early-lane-shift-{start}-w{window}-{degrees:+.0}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::Magnitude => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            for percent in [80_i32, 90, 95, 105, 110, 120, 130, 140, 150] {
+                let mut frames = base.clone();
+                scale_stick_magnitude(&mut frames, 0, maximum_ticks, percent);
+                push_candidate(
+                    &mut output,
+                    &mut seen,
+                    seed,
+                    frames,
+                    format!("magnitude-global-{percent}"),
+                    candidate_budget,
+                )?;
+            }
+            'variants: for percent in [80_i32, 90, 95, 105, 110, 120, 140] {
+                for window in [5_usize, 10, 20] {
+                    for start in (20_usize..=110).step_by(5) {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        scale_stick_magnitude(&mut frames, start, window, percent);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("magnitude-{start}-w{window}-{percent}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::AsymmetricLaneShift => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            'variants: for degrees in [-2.0_f64, 2.0] {
+                for outbound_window in [5_usize, 10] {
+                    for gap in [0_usize, 5, 10] {
+                        for recovery_window in [5_usize, 10, 15] {
+                            for start in 40_usize..=55 {
+                                if start >= maximum_ticks {
+                                    continue;
+                                }
+                                let mut frames = base.clone();
+                                rotate_heading(&mut frames, start, outbound_window, degrees);
+                                let recovery_start = start
+                                    .saturating_add(outbound_window)
+                                    .saturating_add(gap);
+                                rotate_heading(
+                                    &mut frames,
+                                    recovery_start,
+                                    recovery_window,
+                                    -degrees,
+                                );
+                                push_candidate(
+                                    &mut output,
+                                    &mut seen,
+                                    seed,
+                                    frames,
+                                    format!(
+                                        "asymmetric-lane-{start}-o{outbound_window}-g{gap}-r{recovery_window}-{degrees:+.0}"
+                                    ),
+                                    candidate_budget,
+                                )?;
+                                if output.candidates.len() == candidate_budget {
+                                    break 'variants;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::PostCollision => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            'variants: for degrees in [
+                -2.0_f64, 2.0, -4.0, 4.0, -6.0, 6.0, -8.0, 8.0, -10.0, 10.0,
+            ] {
+                for window in [10_usize, 20, 30, 40] {
+                    for start in [80_usize, 85, 90, 95, 100, 105, 110] {
+                        if start >= maximum_ticks {
+                            continue;
+                        }
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, start, window, degrees);
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!("post-collision-{start}-w{window}-{degrees:+.0}"),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::RecoveryBias => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            'variants: for recovery_degrees in [
+                -0.5_f64, -1.0, -1.5, -2.0, -2.5, -3.0, -3.5, -4.0,
+            ] {
+                for recovery_window in [5_usize, 10, 15, 20] {
+                    for recovery_start in 55_usize..=75 {
+                        let mut frames = base.clone();
+                        rotate_heading(&mut frames, 50, 10, 2.0);
+                        rotate_heading(
+                            &mut frames,
+                            recovery_start,
+                            recovery_window,
+                            recovery_degrees,
+                        );
+                        push_candidate(
+                            &mut output,
+                            &mut seen,
+                            seed,
+                            frames,
+                            format!(
+                                "recovery-bias-{recovery_start}-w{recovery_window}-{recovery_degrees:+.1}"
+                            ),
+                            candidate_budget,
+                        )?;
+                        if output.candidates.len() == candidate_budget {
+                            break 'variants;
+                        }
+                    }
+                }
+            }
+        }
         SuffixProposalMethod::Timing => {
             let base = source.frames[..maximum_ticks].to_vec();
             let starts = (28_usize..=45).chain(60..=90).collect::<Vec<_>>();
@@ -449,11 +754,12 @@ pub fn propose_ranked_suffix_refinement(
             .total_cmp(&ordon_exit_edge_distance(right.1, right.2))
             .then_with(|| left.0.cmp(&right.0))
     });
-    // Sixteen variables keep exhaustive pair/triple ranking bounded. Larger
-    // combinations were measurably non-additive in Link's facing dynamics.
+    // Retain enough individually measured variables for a cumulative fine-edit
+    // lane. Pair/triple enumeration below remains capped at sixteen because
+    // coarse heading changes were measurably non-additive in Link's dynamics.
     let selected_ids = ranked
         .into_iter()
-        .take(16)
+        .take(64)
         .map(|sample| sample.0)
         .collect::<Vec<_>>();
 
@@ -504,14 +810,45 @@ pub fn propose_ranked_suffix_refinement(
         candidates: Vec::with_capacity(candidate_budget),
     };
     let mut seen = HashSet::new();
+    let baseline_distance = ordon_exit_edge_distance(baseline_x, baseline_z);
+    let mut greedy_frames = base.clone();
+    let mut greedy_touched = HashSet::new();
+    let mut greedy_count = 0_usize;
+    for mutation in &mutations {
+        if ordon_exit_edge_distance(baseline_x + mutation.2, baseline_z + mutation.3)
+            >= baseline_distance
+            || mutation
+                .1
+                .iter()
+                .any(|(frame_index, _)| greedy_touched.contains(frame_index))
+        {
+            continue;
+        }
+        for (frame_index, frame) in &mutation.1 {
+            greedy_touched.insert(*frame_index);
+            greedy_frames[*frame_index] = frame.clone();
+        }
+        greedy_count += 1;
+        if greedy_count >= 2 {
+            push_candidate(
+                &mut output,
+                &mut seen,
+                seed,
+                greedy_frames.clone(),
+                format!("greedy-{greedy_count}"),
+                candidate_budget,
+            )?;
+        }
+    }
     let mut ranked_subsets = Vec::new();
-    for mask in 1_u64..(1_u64 << mutations.len()) {
+    let combination_count = mutations.len().min(16);
+    for mask in 1_u64..(1_u64 << combination_count) {
         if !(2..=3).contains(&mask.count_ones()) {
             continue;
         }
         let mut predicted_x = baseline_x;
         let mut predicted_z = baseline_z;
-        for (index, mutation) in mutations.iter().enumerate() {
+        for (index, mutation) in mutations.iter().take(combination_count).enumerate() {
             if mask & (1_u64 << index) != 0 {
                 predicted_x += mutation.2;
                 predicted_z += mutation.3;
@@ -647,6 +984,19 @@ fn rotate_heading(frames: &mut [InputFrame], start: usize, window: usize, degree
         }
         frame.pads[0].stick_x = (x * cos + y * sin).round().clamp(-127.0, 127.0) as i8;
         frame.pads[0].stick_y = (y * cos - x * sin).round().clamp(-127.0, 127.0) as i8;
+    }
+}
+
+fn scale_stick_magnitude(frames: &mut [InputFrame], start: usize, window: usize, percent: i32) {
+    let end = start.saturating_add(window).min(frames.len());
+    for frame in &mut frames[start..end] {
+        let scale = f64::from(percent) / 100.0;
+        frame.pads[0].stick_x = (f64::from(frame.pads[0].stick_x) * scale)
+            .round()
+            .clamp(-127.0, 127.0) as i8;
+        frame.pads[0].stick_y = (f64::from(frame.pads[0].stick_y) * scale)
+            .round()
+            .clamp(-127.0, 127.0) as i8;
     }
 }
 

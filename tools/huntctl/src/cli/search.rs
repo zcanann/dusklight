@@ -93,6 +93,64 @@ fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("suffix-select") => {
+            let search_args = &args[1..];
+            let candidate_path = required_path(search_args, "--candidate")?;
+            let batch_path = required_path(search_args, "--batch")?;
+            let selected_id = option(search_args, "--id").ok_or("missing required --id")?;
+            let output = required_path(search_args, "--output")?;
+            let seed: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
+            let batch: NativeSuffixBatch = serde_json::from_slice(&fs::read(batch_path)?)?;
+            let selected = batch
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == selected_id)
+                .ok_or("selected suffix candidate is absent from its batch")?;
+            let candidate = Candidate {
+                schema: huntctl::search::CANDIDATE_SCHEMA.into(),
+                segment: seed.segment,
+                boot: seed.boot.clone(),
+                actions: selected.actions.clone(),
+                ancestry: huntctl::search::Ancestry {
+                    generation: seed.ancestry.generation.saturating_add(1),
+                    parent_id: Some(seed.id()?),
+                    mutation: Some(format!("selected native suffix {selected_id}")),
+                    intervention: None,
+                },
+            };
+            candidate.validate()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&candidate)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!("selected {selected_id} into {}", output.display());
+            Ok(())
+        }
+        Some("candidate-to-tape") => {
+            let search_args = &args[1..];
+            let input = required_path(search_args, "--input")?;
+            let output = required_path(search_args, "--output")?;
+            let candidate: Candidate = serde_json::from_slice(&fs::read(input)?)?;
+            let tape = candidate.compile()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, tape.encode()?)?;
+            println!(
+                "wrote {} candidate frames to {}",
+                tape.frames.len(),
+                output.display()
+            );
+            Ok(())
+        }
         Some("suffix-promote-failure") => {
             let search_args = &args[1..];
             let candidate_path = required_path(search_args, "--candidate")?;
@@ -229,7 +287,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
             let method = match option(search_args, "--method")
                 .ok_or(
-                    "missing required --method deletion|button-edge|heading|corner|corner-wide|timing|path|terminal",
+                    "missing required --method deletion|button-edge|heading|corner|corner-wide|collision|fine-heading|fine-terminal|lane-shift|fine-lane-shift|early-lane-shift|magnitude|asymmetric-lane-shift|post-collision|recovery-bias|timing|path|terminal",
                 )?
                 .as_str()
             {
@@ -238,6 +296,16 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 "heading" => SuffixProposalMethod::Heading,
                 "corner" => SuffixProposalMethod::Corner,
                 "corner-wide" => SuffixProposalMethod::CornerWide,
+                "collision" => SuffixProposalMethod::Collision,
+                "fine-heading" => SuffixProposalMethod::FineHeading,
+                "fine-terminal" => SuffixProposalMethod::FineTerminal,
+                "lane-shift" => SuffixProposalMethod::LaneShift,
+                "fine-lane-shift" => SuffixProposalMethod::FineLaneShift,
+                "early-lane-shift" => SuffixProposalMethod::EarlyLaneShift,
+                "magnitude" => SuffixProposalMethod::Magnitude,
+                "asymmetric-lane-shift" => SuffixProposalMethod::AsymmetricLaneShift,
+                "post-collision" => SuffixProposalMethod::PostCollision,
+                "recovery-bias" => SuffixProposalMethod::RecoveryBias,
                 "timing" => SuffixProposalMethod::Timing,
                 "path" => SuffixProposalMethod::Path,
                 "terminal" => SuffixProposalMethod::Terminal,
