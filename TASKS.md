@@ -64,29 +64,12 @@ the same goal without demonstration-relative features.
   sides fail closed on incomplete actor metadata. A live two-candidate,
   250-tick F_SP103 checkpoint batch emitted v4 under the immutable process-boot
   card fixture and passed the same Rust invariant checks.
-- Learning-observation v5 adds the exact 256-byte
-  `dSv_info_c::mTmp.mEvent` register bank without modifying gameplay code.
-  This preserves the console-backed bytes documented at `0x80406F98`,
-  `0x80406F99`, and `0x80406F9D`; the older 185-entry temporary-flag view
-  collapses register-style `0xff` labels to booleans and cannot prove text
-  displacement by itself. A C++-writer/Rust-reader golden shard checks offsets
-  0, 1, and 5 byte-for-byte. A live mixed-outcome Ordon batch emitted v5 from
-  the same authenticated frame-440 boundary and the isolated Rust ingestion
-  boundary accepted every episode with all 256 register bytes present at every
-  pre-input and post-simulation observation.
-- Milestone language 1.8 exposes that bank as the bounded read-only query
-  `event.temporary_byte(INDEX)`, with equality and bit-mask comparisons. The
-  checked Rust-compiler/native-evaluator fixture proves exact offsets 0, 1,
-  and 5 across the authenticated wire format. It intentionally uses sentinel
-  byte values: the Telma/Louise success predicate must be authored from an
-  observed successful/control delta, not guessed from Skybook's address list.
-- The checked-in Telma/Louise fixture boots directly to `R_SP116`, room 5,
-  layer 4, spawn 0 with an explicit post-twilight flag and RNG identity. Two
-  fresh cold roots reached its 30-tick stable predicate at tape frame 148 with
-  identical state at all 149 compared boundaries and the same v6 fingerprint
-  `72c607ff...f27b2`. Native creation evidence confirms both Telma (profile
-  627) and Louise (profile 263) are live; no gameplay write occurs after the
-  declared tick-zero fixture is applied.
+- Learning-observation v5 and milestone language 1.8 retain and query the exact
+  256-byte temporary-event register bank through the authenticated read-only
+  observation boundary. A Telma/Louise boot fixture was used to verify actor,
+  event-byte and cold-boot observation plumbing. That is coverage evidence only;
+  the fixture is not an active glitch target, successful setup, demonstration,
+  or justification for specializing the learner around that interaction.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
@@ -108,6 +91,80 @@ the same goal without demonstration-relative features.
   process-boot tape then reached `exit-f-sp103-to-f-sp104` at frame 567 in two
   fresh cold replays without a controller, model, or checkpoint, producing the
   identical v6 boundary fingerprint `545c3127...ca155`.
+
+## 0. Audit whether a learner can see enough of the game
+
+This comes before selecting another glitch to reproduce. The purpose is to
+collect and validate information that a learner could use, not for a human or
+scripted controller to perform the documented technique.
+
+### 0A. Survey every bootable world entry
+
+- [ ] Generate an authoritative catalog of stage, room, layer and spawn
+  combinations from extracted game data and loader metadata. Classify invalid,
+  conditional and crashing entries rather than retrying them indefinitely.
+- [ ] Build a resumable native survey that boots every catalogued entry, waits
+  for a semantic ready boundary, observes a bounded interval and records boot
+  success, timeout, crash or unmet prerequisite. Do not author a tape per map.
+- [ ] For every successful entry, prove that the learner observation contains
+  the complete active actor population. Inventory all actor profiles and all
+  generally available enemy metadata; enemies are sparse enough that this data
+  should always be retained rather than selected by proximity.
+- [ ] Audit universal actor information: stable runtime identity and spawn
+  generation, authored placement identity, transform, velocity, scale,
+  collision/body information, action/procedure and animation state,
+  health/status, room/layer, target, ownership, parent/child relationships and
+  lifecycle events.
+- [ ] Audit environment information: static and moving collision, nearby
+  terrain triangles, contact normals and correction, materials, ceilings,
+  floors, walls, triggers, exits, switches, event state and inactive authored
+  placements.
+- [ ] Audit player, camera, inventory, timers, RNG, loading and other global
+  channels across maps and forms. Record explicit missingness and phase rather
+  than treating zero as unavailable.
+- [ ] Run short generic observation probes where safe—idle, movement, camera,
+  targeting, contact, basic actions, actor activation and loading—and use them
+  only to expose changing fields. They are not route or glitch attempts.
+- [ ] Visually inspect a stratified sample and reconcile visible actors,
+  collision, triggers and state transitions against captured data.
+- [ ] Publish a machine-readable coverage matrix by stage and actor profile:
+  present, varying, absent, ambiguous, truncated, or requiring a typed
+  extension. The survey must distinguish "not in this scene" from "not seen by
+  the observer."
+
+### 0B. Use Skybook as an observation/action requirements corpus
+
+- [ ] Index the Skybook catalog by underlying mechanism: precision movement and
+  collision, floor/ceiling behavior, actor displacement, enemy interaction,
+  targeting/camera, item and animation concurrency, event/trigger/loading
+  state, RNG/timers, actor lifecycle/slots and memory/heap behavior.
+- [ ] Deep-read a representative spread within each mechanism. Do not reproduce
+  the glitches, create setup tapes, or encode their published steps as tactics.
+- [ ] For each studied glitch, ask only what a learner would require:
+  - which ordinary controller actions must be expressible;
+  - which pre-action state could contain useful signal;
+  - which temporal history, actor relationships, collision relationships or
+    hidden counters may matter;
+  - what minimal read-only outcome predicate or generic invariant violation
+    could prove success without encoding the technique;
+  - whether the result could ultimately be proven by an exact cold-replayed
+    input tape.
+- [ ] Classify each case as sufficiently observable/action-expressible, missing
+  observations, missing action authority, missing a proof oracle, or outside
+  the current deterministic model. This is a learner-readiness classification,
+  not a claim that we know how to trigger it.
+- [ ] Turn discovered gaps into stable universal channels or explicitly typed
+  optional extensions. A map- or boss-specific extension must remain masked
+  elsewhere and must not reorder or invalidate the cross-map schema.
+- [ ] Produce a learner-readiness matrix linking mechanism requirements to
+  captured channels, actions and proof oracles. Do not select a specific
+  Skybook glitch as an optimization target until this audit is reviewed.
+
+**Gate 0:** we can quantify what the learner receives at every bootable world
+entry and explain, across representative Skybook mechanisms, whether the
+observation/action boundary contains enough information and authority for a
+learner to attempt discovery. The gate produces coverage evidence, not a
+human-authored successful setup.
 
 ## 1. Turn every attempt into learning experience
 
@@ -356,38 +413,6 @@ family—produced the improvement.
 the goal and world state alone. Its speed may initially trail the optimized
 lane; discovery, not parity with the 125-tick demonstration, is the gate.
 
-### 5C. Thin Skybook-supported setup
-
-- This is a learner-discovery benchmark, not a route-replication exercise. The
-  checked-in artifact supplies only the deterministic starting distribution,
-  read-only observations, control outcomes, and semantic terminal criterion.
-  It must not supply a successful trajectory, interaction frame, waypoint,
-  privileged distance reward, or hand-authored controller that encodes the
-  setup.
-- [x] Boot directly into Telma's Bar with declared post-twilight game flags
-  that place both Telma and Louise in the bar. Record the complete boot
-  identity so the fixture is reproducible and all gameplay after tick zero
-  remains input-only.
-- [ ] Have the learner acquire text displacement by talking to Louise while
-  entering Telma's dialogue trigger, causing Louise's meow cutscene to
-  interrupt Telma's dialogue. Exploration policy, reusable tactics, and the
-  learned corpus—not a demonstrated route—must produce the overlap.
-- [ ] Observe the fixed shared text-progression bits needed to distinguish the
-  displaced state from an ordinary interrupted event. These are read-only
-  learner observations and semantic proof, never gameplay writes.
-- [ ] Confirm the consequence by speaking to Telma afterward and advancing one
-  dialogue box at a time through text that normally would have progressed
-  during the interrupted cutscene.
-- [ ] Retain normal control cases—Telma alone, Louise alone, and failed overlap
-  timing—so the learner can distinguish the successful event ownership and
-  text-state transition from nearby failures.
-- [ ] Export and cold-replay the exact raw PAD sequence with identical actor,
-  event, text-progression, and terminal evidence.
-
-**Gate 5C:** from the declared post-twilight Telma's Bar fixture, the system
-repeatedly acquires text displacement and proves the one-box-at-a-time Telma
-behavior without a gameplay write or a human-specified successful input frame.
-
 ## 6. Prepare for narrow-basin glitch discovery
 
 Only after gates 1-5 work end to end:
@@ -408,8 +433,9 @@ narrow-basin outcome without a human supplying its successful frame sequence.
 
 ## Explicitly not current work
 
-- Enumerating every stage, room, layer or spawn before the learning loop works.
-- Triaging or reproducing the entire Skybook catalog.
+- Manually reproducing Skybook entries during the information-coverage audit.
+- Turning documented glitch procedures into routes, tactics, checkpoints or
+  shaping rewards for the learner.
 - A general visualization workbench.
 - Route-specific waypoint rewards or hard-coded wall-follow instructions
   presented as learning.
