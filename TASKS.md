@@ -42,14 +42,23 @@ the same goal without demonstration-relative features.
 - The older Q path retained some trajectories, but its inspected campaign used
   only 3,489 transitions from 12 episodes, sparse terminal-only progress, and a
   coarse action catalog. It is a baseline, not a completed learner.
+- The native checkpoint batch now emits independently compressed, checksummed
+  episode blocks with versioned observation/action schemas. A live two-candidate
+  Ordon batch retained and Rust-decoded all 250 failed transitions: 2,803,240
+  uncompressed bytes became 42,457 compressed bytes, and both siblings began
+  from the same restored state identity.
+- The checked-in native-writer golden shard contains both success and failure
+  episodes. Cross-language tests reject action-boundary shifts, terminal labels
+  in pre-input observations, malformed actor completeness, corruption, and
+  phase discontinuity before a shard can enter learner code.
 
 ## 1. Turn every attempt into learning experience
 
-- [ ] Extend the native checkpoint batch loop to retain, for every candidate
+- [x] Extend the native checkpoint batch loop to retain, for every candidate
   tick: pre-action observation, chosen action and exact consumed PAD,
   post-action observation, predicate/event changes, terminal status, remaining
   tick budget, and deterministic state identity.
-- [ ] Capture failures and successes through the same episode contract. A
+- [x] Capture failures and successes through the same episode contract. A
   failed attempt must no longer collapse to one terminal X/Z observation.
 - [ ] Define a canonical, versioned observation envelope containing:
   - Link motion, facing, action/animation phase, timers, form and relevant
@@ -67,7 +76,7 @@ the same goal without demonstration-relative features.
 - [ ] Remove arbitrary learner-facing actor truncation. If capture is bounded
   for measured performance reasons, record the selection rule and omitted
   count so the sample cannot masquerade as complete.
-- [ ] Enforce decision-phase correctness: model input may contain only state
+- [x] Enforce decision-phase correctness: model input may contain only state
   realized before its chosen action. Add explicit tests against one-frame and
   terminal-label leakage.
 - [ ] Buffer episodes in memory and write compact content-addressed binary

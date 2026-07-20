@@ -87,6 +87,8 @@ int capture_controller_actor(void* candidate, void* context) {
 int capture_milestone_actor(void* candidate, void* context) {
     const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto* storage = static_cast<MilestoneObservationStorage*>(context);
+    if (storage->actorObservedCount != std::numeric_limits<std::uint32_t>::max())
+        ++storage->actorObservedCount;
     const std::uint64_t runtimeGeneration =
         static_cast<std::uint32_t>(fopAcM_GetID(actor));
     const MilestoneObservation::Actor snapshot{
@@ -100,6 +102,24 @@ int capture_milestone_actor(void* candidate, void* context) {
         .positionZ = actor->current.pos.z,
         .health = actor->health,
         .status = actor->actor_status,
+        .parentRuntimeGeneration = static_cast<std::uint32_t>(actor->parentActorID),
+        .parameters = fopAcM_GetParam(actor),
+        .profileName = static_cast<std::int16_t>(fopAcM_GetProfName(actor)),
+        .group = actor->group,
+        .argument = actor->argument,
+        .homePositionX = actor->home.pos.x,
+        .homePositionY = actor->home.pos.y,
+        .homePositionZ = actor->home.pos.z,
+        .velocityX = actor->speed.x,
+        .velocityY = actor->speed.y,
+        .velocityZ = actor->speed.z,
+        .forwardSpeed = actor->speedF,
+        .currentAngleX = actor->current.angle.x,
+        .currentAngleY = actor->current.angle.y,
+        .currentAngleZ = actor->current.angle.z,
+        .shapeAngleX = actor->shape_angle.x,
+        .shapeAngleY = actor->shape_angle.y,
+        .shapeAngleZ = actor->shape_angle.z,
     };
     if (storage->actorCount < storage->actors.size()) {
         storage->actors[storage->actorCount++] = snapshot;
@@ -293,6 +313,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         });
     observation.actors = std::span<const MilestoneObservation::Actor>(
         storage.actors.data(), storage.actorCount);
+    observation.actorObservedCount = storage.actorObservedCount;
     observation.actorsTruncated = storage.actorsTruncated;
 
     for (std::size_t index = 0; index < storage.eventFlags.size(); ++index) {

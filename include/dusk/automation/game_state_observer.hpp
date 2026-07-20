@@ -26,6 +26,7 @@ inline constexpr std::size_t kMilestoneSwitchFlagCount = 240;
 struct MilestoneObservationStorage {
     std::array<MilestoneObservation::Actor, kInputControllerMaximumActors> actors{};
     std::size_t actorCount = 0;
+    std::uint32_t actorObservedCount = 0;
     bool actorsTruncated = false;
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};

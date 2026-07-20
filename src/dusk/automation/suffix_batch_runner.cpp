@@ -1,5 +1,6 @@
 #include "dusk/automation/suffix_batch_runner.hpp"
 
+#include "dusk/automation/build_identity.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
@@ -92,7 +93,11 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     mDefinition = std::move(definition);
     mResultPath = std::move(resultPath);
     mWinnerTapePath = std::move(winnerTapePath);
+    mEpisodeShardPath = mResultPath;
+    mEpisodeShardPath += ".episodes.dseps";
     mConsumedPads.reserve(mDefinition.maximumTicks);
+    mCurrentEpisode.reserve(
+        std::min<std::size_t>(mDefinition.maximumTicks * 4096, 16 * 1024 * 1024));
     if (mDefinition.verifyStateHashes)
         mStateDigestMaterial.reserve(mDefinition.maximumTicks * 32);
     mResults.reserve(mDefinition.candidates.size());
@@ -159,7 +164,61 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     const std::array goal{MilestoneId::ExitFSp103ToFSp104};
     if (!mGoalTracker.configure(goal, MilestoneId::ExitFSp103ToFSp104, error)) return false;
     mGoalTracker.setBootOrigin(input_tape_player().tape().boot);
+
+    const BuildIdentity build = current_build_identity("native-read-only-checkpoint-batch");
+    const std::string objective(milestone_name(MilestoneId::ExitFSp103ToFSp104));
+    std::string objectiveIdentityMaterial(build.revision);
+    objectiveIdentityMaterial.push_back('\0');
+    objectiveIdentityMaterial += objective;
+    LearningEpisodeShardMetadata metadata{
+        .sourceFrame = mDefinition.sourceFrame,
+        .maximumTicks = mDefinition.maximumTicks,
+        .sourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint,
+        .checkpointIdentity = mImage.digest,
+        .objective = objective,
+        .objectiveIdentity = xxh3_128_hex(objectiveIdentityMaterial),
+        .buildRevision = std::string(build.revision),
+        .auroraRevision = std::string(build.auroraRevision),
+        .featureDigest = std::string(build.featureDigest),
+        .fidelityProfile = std::string(build.fidelityProfile),
+        .gameDataIdentity = {},
+    };
+    if (!mEpisodeShard.begin(mEpisodeShardPath, metadata, error))
+        return false;
     return true;
+}
+
+LearningGoalObservation summarize_learning_goal(const MilestoneTracker& tracker) {
+    LearningGoalObservation result;
+    result.configured = tracker.goalConfigured();
+    result.reached = tracker.goalReached();
+    result.requestedCount = static_cast<std::uint16_t>(std::min<std::size_t>(
+        tracker.hits().size() + tracker.authoredHits().size(), 0xffff));
+    result.hitCount = static_cast<std::uint16_t>(std::min<std::size_t>(
+        std::ranges::count(tracker.hits(), true, &MilestoneHit::hit) +
+            std::ranges::count(tracker.authoredHits(), true, &AuthoredMilestoneHit::hit),
+        0xffff));
+    if (const auto goal = tracker.goal(); goal.has_value()) {
+        const auto found = std::ranges::find(tracker.hits(), *goal, &MilestoneHit::id);
+        result.stableTicks = 1;
+        result.consecutiveTicks = found != tracker.hits().end() && found->hit ? 1 : 0;
+        if (found != tracker.hits().end() && found->hit)
+            result.firstHitTick = found->simulationTick;
+    } else if (const auto name = tracker.goalName(); name.has_value()) {
+        const auto found = std::ranges::find(tracker.authoredHits(), *name,
+            &AuthoredMilestoneHit::id);
+        if (found != tracker.authoredHits().end()) {
+            result.stableTicks = found->stableTicks;
+            result.consecutiveTicks = found->consecutiveTicks;
+            result.sequenceSteps = found->sequenceSteps;
+            result.sequenceNextStep = found->sequenceNextStep;
+            result.sequenceWithinTicks = found->sequenceWithinTicks;
+            result.sequenceElapsedTicks = found->sequenceElapsedTicks;
+            if (found->hit)
+                result.firstHitTick = found->simulationTick;
+        }
+    }
+    return result;
 }
 
 bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
@@ -190,6 +249,50 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     mConsumedPads.clear();
     mStateDigestMaterial.clear();
     mConsumedCaptureFailed = false;
+    mEpisodePreInputCaptured = false;
+    return true;
+}
+
+bool SuffixBatchRunner::captureEpisodePreInput(
+    const std::uint64_t simulationTick, std::string& error) {
+    if (mEpisodePreInputCaptured || mCandidateTick >= mDefinition.maximumTicks) {
+        error = "learning episode pre-input boundary was captured twice or out of range";
+        return false;
+    }
+    if (mCandidateTick == 0)
+        begin_learning_episode(mCurrentEpisode);
+    const MilestoneObservation observation =
+        capture_milestone_observation(mEpisodeMilestoneStorage);
+    const ControllerObservation controller =
+        capture_controller_observation(mEpisodeControllerStorage);
+    const GameplayCollisionCorrectionObservation collision =
+        capture_gameplay_collision_correction();
+    RawPadState previousInput{};
+    if (mCandidateTick != 0) {
+        previousInput = mConsumedPads.back();
+    } else if (mSource.pad.active[0]) {
+        previousInput = raw_pad_state_from_pad_status(mSource.pad.status[0]);
+    }
+    const LearningObservationContext context{
+        .phase = LearningObservationPhase::PreInput,
+        .boundaryIndex = simulationTick,
+        .simulationTick = simulationTick,
+        .tapeFrame = static_cast<std::uint64_t>(mDefinition.sourceFrame + mCandidateTick),
+        .remainingTicks = static_cast<std::uint32_t>(
+            mDefinition.maximumTicks - mCandidateTick),
+        .stateIdentity = compute_milestone_observation_fingerprint(
+            observation, input_tape_player().tape().boot),
+        .previousInput = previousInput,
+        .cameraPresent = controller.cameraPresent,
+        .cameraYawRadians = controller.cameraYawRadians,
+        .collisionCorrectionPresent = collision.present,
+        .collisionCorrectionX = collision.x,
+        .collisionCorrectionZ = collision.z,
+        .goal = summarize_learning_goal(mGoalTracker),
+    };
+    if (!append_learning_observation(mCurrentEpisode, observation, context, error))
+        return false;
+    mEpisodePreInputCaptured = true;
     return true;
 }
 
@@ -216,6 +319,10 @@ bool SuffixBatchRunner::preInput(std::uint64_t& simulationTick, std::uint64_t& t
         }
         mPhase = Phase::Candidate;
     }
+    if (mPhase == Phase::Candidate && !captureEpisodePreInput(simulationTick, error)) {
+        fail(error);
+        return false;
+    }
     return true;
 }
 
@@ -240,8 +347,49 @@ void SuffixBatchRunner::recordConsumedPads(
     mConsumedPads.push_back(raw_pad_state_from_pad_status(statuses[0]));
 }
 
-void SuffixBatchRunner::finishCandidate(
-    const MilestoneObservation& observation, const bool success) {
+bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& observation,
+    const RawPadState& chosenPad, const std::uint64_t simulationTick, const bool terminal,
+    std::string& error) {
+    if (!mEpisodePreInputCaptured || mConsumedPads.size() != mCandidateTick + 1) {
+        error = "learning episode post-simulation boundary lacks its pre-input action";
+        return false;
+    }
+    append_learning_action(mCurrentEpisode, chosenPad, mConsumedPads.back());
+    const ControllerObservation controller =
+        capture_controller_observation(mEpisodeControllerStorage);
+    const GameplayCollisionCorrectionObservation collision =
+        capture_gameplay_collision_correction();
+    const LearningObservationContext context{
+        .phase = LearningObservationPhase::PostSimulation,
+        .terminalReason = !terminal ? LearningTerminalReason::None :
+            (mGoalTracker.goalReached() ? LearningTerminalReason::GoalReached :
+                                         LearningTerminalReason::TickBudgetExhausted),
+        .boundaryIndex = simulationTick + 1,
+        .simulationTick = simulationTick,
+        .tapeFrame = static_cast<std::uint64_t>(mDefinition.sourceFrame + mCandidateTick),
+        .remainingTicks = static_cast<std::uint32_t>(
+            mDefinition.maximumTicks - (mCandidateTick + 1)),
+        .stateIdentity = compute_milestone_observation_fingerprint(
+            observation, input_tape_player().tape().boot),
+        .previousInput = mConsumedPads.back(),
+        .cameraPresent = controller.cameraPresent,
+        .cameraYawRadians = controller.cameraYawRadians,
+        .collisionCorrectionPresent = collision.present,
+        .collisionCorrectionX = collision.x,
+        .collisionCorrectionZ = collision.z,
+        .goal = summarize_learning_goal(mGoalTracker),
+    };
+    if (!append_learning_observation(mCurrentEpisode, observation, context, error))
+        return false;
+    mEpisodePreInputCaptured = false;
+    if (!terminal)
+        return true;
+    return finish_learning_episode(
+        mCurrentEpisode, static_cast<std::uint32_t>(mCandidateTick + 1), error);
+}
+
+bool SuffixBatchRunner::finishCandidate(
+    const MilestoneObservation& observation, const bool success, std::string& error) {
     CandidateResult result;
     result.id = mDefinition.candidates[mCandidateIndex].id;
     result.success = success;
@@ -280,6 +428,19 @@ void SuffixBatchRunner::finishCandidate(
     terminal.previousInput = mConsumedPads.back();
     if (success) result.successfulConsumedPads = mConsumedPads;
 
+    const LearningEpisodeDescriptor episode{
+        .id = result.id,
+        .success = success,
+        .ticksExecuted = static_cast<std::uint32_t>(result.ticksExecuted),
+        .firstHitTick = result.firstHitTick.has_value() ?
+            std::optional<std::uint32_t>(static_cast<std::uint32_t>(*result.firstHitTick)) :
+            std::nullopt,
+        .remainingTicks = static_cast<std::uint32_t>(
+            mDefinition.maximumTicks - result.ticksExecuted),
+    };
+    if (!mEpisodeShard.append(episode, mCurrentEpisode, error))
+        return false;
+
     mResults.push_back(std::move(result));
     const std::size_t resultIndex = mResults.size() - 1;
     if (success && (!mWinnerResultIndex.has_value() ||
@@ -288,6 +449,7 @@ void SuffixBatchRunner::finishCandidate(
     {
         mWinnerResultIndex = resultIndex;
     }
+    return true;
 }
 
 bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
@@ -319,14 +481,26 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     mGoalTracker.observe(observation, simulationTick, tapeFrame);
     const bool success = mGoalTracker.goalReached();
     const bool exhausted = mCandidateTick + 1 == mDefinition.maximumTicks;
+    if (!appendEpisodePostSimulation(
+            observation, expectedPad, simulationTick, success || exhausted, error)) {
+        fail(error);
+        return true;
+    }
     if (!success && !exhausted) {
         ++mCandidateTick;
         return false;
     }
 
-    finishCandidate(observation, success);
+    if (!finishCandidate(observation, success, error)) {
+        fail(error);
+        return true;
+    }
     ++mCandidateIndex;
     if (mCandidateIndex == mDefinition.candidates.size()) {
+        if (!mEpisodeShard.finish(error)) {
+            fail(error);
+            return true;
+        }
         mPhase = Phase::Complete;
         mCompleted = true;
         return true;
@@ -405,6 +579,15 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
         {"capture_micros", mCaptureMicros},
         {"restore_micros", mRestoreMicros},
         {"audio_callback_quiesced", mAudioCallbackQuiesced},
+        {"episode_shard", {
+            {"schema", LearningEpisodeShardSchema},
+            {"path", mEpisodeShardPath.string()},
+            {"observation_schema", LearningObservationSchema},
+            {"action_schema", LearningActionSchema},
+            {"episode_count", mEpisodeShard.episodeCount()},
+            {"uncompressed_bytes", mEpisodeShard.uncompressedBytes()},
+            {"compressed_bytes", mEpisodeShard.compressedBytes()},
+        }},
         {"winner_id", mWinnerResultIndex.has_value()
                 ? nlohmann::json(mResults[*mWinnerResultIndex].id) : nlohmann::json(nullptr)},
         {"candidates", std::move(candidates)},

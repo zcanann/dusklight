@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dusk/automation/game_state_observer.hpp"
+#include "dusk/automation/learning_episode.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/state_checkpoint.hpp"
 #include "dusk/automation/suffix_batch.hpp"
@@ -93,7 +94,12 @@ private:
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& error);
     bool restoreSource(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
         std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error);
-    void finishCandidate(const MilestoneObservation& observation, bool success);
+    bool captureEpisodePreInput(std::uint64_t simulationTick, std::string& error);
+    bool appendEpisodePostSimulation(const MilestoneObservation& observation,
+        const RawPadState& chosenPad, std::uint64_t simulationTick, bool terminal,
+        std::string& error);
+    bool finishCandidate(
+        const MilestoneObservation& observation, bool success, std::string& error);
     void fail(std::string message);
 
     bool mEnabled = false;
@@ -105,6 +111,7 @@ private:
     SuffixBatchDefinition mDefinition;
     std::filesystem::path mResultPath;
     std::filesystem::path mWinnerTapePath;
+    std::filesystem::path mEpisodeShardPath;
     StateCheckpoint mCheckpoint;
     StateCheckpointImage mImage;
     HostSnapshot mSource;
@@ -112,9 +119,14 @@ private:
     MilestoneObservationStorage mMilestoneStorage;
     MilestoneObservationStorage mSourceMilestoneStorage;
     ControllerObservationStorage mControllerStorage;
+    MilestoneObservationStorage mEpisodeMilestoneStorage;
+    ControllerObservationStorage mEpisodeControllerStorage;
     std::size_t mCandidateIndex = 0;
     std::size_t mCandidateTick = 0;
     std::vector<RawPadState> mConsumedPads;
+    std::vector<std::uint8_t> mCurrentEpisode;
+    bool mEpisodePreInputCaptured = false;
+    LearningEpisodeShardWriter mEpisodeShard;
     std::string mStateDigestMaterial;
     std::vector<CandidateResult> mResults;
     std::optional<std::size_t> mWinnerResultIndex;

@@ -520,6 +520,7 @@ if (MSVC)
 endif ()
 target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
 target_sources(dusklight PRIVATE
+    src/dusk/automation/learning_episode.cpp
     src/dusk/automation/suffix_batch.cpp
     src/dusk/automation/suffix_batch_runner.cpp
 )
@@ -585,6 +586,19 @@ add_executable(dusk_suffix_batch_test EXCLUDE_FROM_ALL
 target_include_directories(dusk_suffix_batch_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(dusk_suffix_batch_test PRIVATE nlohmann_json::nlohmann_json)
 set_target_properties(dusk_suffix_batch_test PROPERTIES FOLDER "Tests")
+
+add_executable(dusk_learning_episode_test EXCLUDE_FROM_ALL
+    tests/learning_episode_test.cpp
+    src/dusk/automation/input_pad.cpp
+    src/dusk/automation/learning_episode.cpp
+)
+target_include_directories(dusk_learning_episode_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/extern/aurora/include
+)
+target_compile_definitions(dusk_learning_episode_test PRIVATE TARGET_PC=1 AURORA=1)
+target_link_libraries(dusk_learning_episode_test PRIVATE zstd::libzstd xxHash::xxhash)
+set_target_properties(dusk_learning_episode_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_native_state_region_test EXCLUDE_FROM_ALL
     tests/native_state_region_test.cpp

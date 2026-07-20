@@ -411,6 +411,7 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     observation.playerGroundHeightPresent = true;
     observation.playerGroundHeight = 800.0F;
     observation.actors = actors;
+    observation.actorObservedCount = 2;
     observation.eventFlags = eventFlags;
     observation.temporaryFlags = temporaryFlags;
     observation.dungeonFlags = dungeonFlags;
@@ -434,6 +435,15 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
     changed = observation;
     changed.playerGroundContact = false;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changed = observation;
+    changed.actorObservedCount = 3;
+    changed.actorsTruncated = true;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changed = observation;
+    std::array<MilestoneObservation::Actor, 2> changedActorMetadata = actors;
+    changedActorMetadata[0].parameters = 0x12345678;
+    changed.actors = changedActorMetadata;
     REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
     actors[0].positionX += 1.0F;
     changed = observation;

@@ -16,7 +16,7 @@ namespace dusk::automation {
 
 inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
 inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 5;
-inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 1;
+inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 3;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -124,8 +124,30 @@ struct MilestoneObservation {
         float positionZ = 0.0f;
         std::int16_t health = 0;
         std::uint32_t status = 0;
+        std::uint32_t parentRuntimeGeneration = 0xffffffff;
+        std::uint32_t parameters = 0;
+        std::int16_t profileName = -1;
+        std::uint8_t group = 0;
+        std::int8_t argument = 0;
+        float homePositionX = 0.0f;
+        float homePositionY = 0.0f;
+        float homePositionZ = 0.0f;
+        float velocityX = 0.0f;
+        float velocityY = 0.0f;
+        float velocityZ = 0.0f;
+        float forwardSpeed = 0.0f;
+        std::int16_t currentAngleX = 0;
+        std::int16_t currentAngleY = 0;
+        std::int16_t currentAngleZ = 0;
+        std::int16_t shapeAngleX = 0;
+        std::int16_t shapeAngleY = 0;
+        std::int16_t shapeAngleZ = 0;
     };
     std::span<const Actor> actors;
+    // Total actor population visited by the observer before bounded retention.
+    // When this exceeds actors.size(), the retained set is the lowest runtime
+    // generations in stable order and actorsTruncated is true.
+    std::uint32_t actorObservedCount = 0;
     bool actorsTruncated = false;
 
     // Indexed flag snapshots are immutable copies captured at the same phase

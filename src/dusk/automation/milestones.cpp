@@ -695,16 +695,35 @@ std::string compute_milestone_observation_fingerprint(
     append_integer<std::uint64_t>(canonical, actors.size());
     for (const MilestoneObservation::Actor& actor : actors) {
         append_integer(canonical, actor.runtimeGeneration);
+        append_integer(canonical, actor.parentRuntimeGeneration);
+        append_integer(canonical, actor.parameters);
+        append_integer(canonical, actor.status);
         append_integer(canonical, actor.actorName);
+        append_integer(canonical, actor.profileName);
         append_integer(canonical, actor.setId);
         append_integer(canonical, actor.homeRoom);
         append_integer(canonical, actor.currentRoom);
+        append_integer(canonical, actor.group);
+        append_integer(canonical, actor.argument);
+        append_integer(canonical, actor.health);
         append_float(canonical, actor.positionX);
         append_float(canonical, actor.positionY);
         append_float(canonical, actor.positionZ);
-        append_integer(canonical, actor.health);
-        append_integer(canonical, actor.status);
+        append_float(canonical, actor.homePositionX);
+        append_float(canonical, actor.homePositionY);
+        append_float(canonical, actor.homePositionZ);
+        append_float(canonical, actor.velocityX);
+        append_float(canonical, actor.velocityY);
+        append_float(canonical, actor.velocityZ);
+        append_float(canonical, actor.forwardSpeed);
+        append_integer(canonical, actor.currentAngleX);
+        append_integer(canonical, actor.currentAngleY);
+        append_integer(canonical, actor.currentAngleZ);
+        append_integer(canonical, actor.shapeAngleX);
+        append_integer(canonical, actor.shapeAngleY);
+        append_integer(canonical, actor.shapeAngleZ);
     }
+    append_integer(canonical, observation.actorObservedCount);
     append_integer<std::uint8_t>(canonical, observation.actorsTruncated ? 1 : 0);
 
     const auto appendBytes = [&canonical](const std::span<const std::uint8_t> bytes) {
