@@ -59,10 +59,11 @@ the same goal without demonstration-relative features.
   in pre-input observations, malformed actor completeness, corruption, and
   phase discontinuity before a shard can enter learner code.
 - Learning-observation v4 separates the complete learner actor population from
-  the bounded controller hot path. Its checked C++-writer/Rust-reader fixture
-  carries 257 actors, and both sides fail closed on incomplete actor metadata.
-  A live two-candidate, 250-tick F_SP103 checkpoint batch emitted v4 under the
-  immutable process-boot card fixture and passed the same Rust invariant checks.
+  the bounded controller hot path. A native encoder test carries 257 actors,
+  the checked C++-writer/Rust-reader fixture proves the v4 contract, and both
+  sides fail closed on incomplete actor metadata. A live two-candidate,
+  250-tick F_SP103 checkpoint batch emitted v4 under the immutable process-boot
+  card fixture and passed the same Rust invariant checks.
 
 ## 1. Turn every attempt into learning experience
 
@@ -79,9 +80,11 @@ the same goal without demonstration-relative features.
   - [x] realized background-collision contacts, surface/polygon identity,
     backing metadata and resolved planes/normals;
   - [ ] generic local clearance/geometry queries in Link-relative coordinates;
-  - [ ] active gameplay actors as a deterministically ordered variable-length
-    set with stable semantic identity, relative transform, velocity, type and
-    available typed components;
+  - [x] active gameplay actors as a complete, deterministically ordered
+    variable-length set with raw semantic identity fields, transform, velocity
+    and type/profile metadata;
+  - [ ] derive Link-/camera-/goal-relative actor features and expose available
+    typed actor components without changing the canonical raw actor set;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
 - [ ] Store immutable map geometry, placements, and type metadata once per
