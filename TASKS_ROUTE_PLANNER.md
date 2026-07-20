@@ -1347,7 +1347,7 @@ Deliverable: an evidence index and a list of explicit unknowns.
 - [x] Define execution environment, runtime-file identity, backing attachment,
       and serialization policy independently.
 - [x] Define typed components, bindings, lifetimes, and serialization owners.
-- [ ] Define raw/friendly fact catalogue and derived-rule IR.
+- [x] Define raw/friendly fact catalogue and derived-rule IR.
 - [ ] Define component operation and boundary-policy IR.
 - [ ] Define transition, writer, gate, reader, technique, obstruction, and resolver
       schemas.

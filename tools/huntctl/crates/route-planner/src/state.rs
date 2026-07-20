@@ -1,7 +1,7 @@
 //! Typed execution environments and independently owned state components.
 
 use crate::artifact::Digest;
-use crate::identity::{ExactContext, require_digest};
+use crate::identity::{RuntimeConfiguration, require_digest};
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -248,7 +248,7 @@ pub struct LiveWorldObject {
 #[serde(deny_unknown_fields)]
 pub struct ExecutionEnvironment {
     pub schema: String,
-    pub context: ExactContext,
+    pub runtime_configuration: RuntimeConfiguration,
     pub active_runtime_file: RuntimeFile,
     pub physical_slots: Vec<PhysicalSlot>,
     pub location: SceneLocation,
@@ -376,11 +376,7 @@ impl ExecutionEnvironment {
         if self.schema != EXECUTION_ENVIRONMENT_SCHEMA {
             return Err(PlannerContractError::new("schema", "is unsupported"));
         }
-        require_digest("context.content_sha256", self.context.content_sha256)?;
-        require_digest(
-            "context.runtime_configuration_sha256",
-            self.context.runtime_configuration_sha256,
-        )?;
+        self.runtime_configuration.validate()?;
         self.active_runtime_file.validate()?;
         validate_location(&self.location)?;
         validate_player(&self.player)?;
@@ -711,6 +707,7 @@ fn validate_sorted_collection<T, K: Ord>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
 
     fn provenance(source_id: &str) -> ComponentProvenance {
         ComponentProvenance {
@@ -742,9 +739,11 @@ mod tests {
     fn file_zero_environment() -> ExecutionEnvironment {
         ExecutionEnvironment {
             schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
-            context: ExactContext {
+            runtime_configuration: RuntimeConfiguration {
+                schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
                 content_sha256: Digest([1; 32]),
-                runtime_configuration_sha256: Digest([2; 32]),
+                language: "en".into(),
+                settings: BTreeMap::new(),
             },
             active_runtime_file: RuntimeFile {
                 id: "file-0".into(),
