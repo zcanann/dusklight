@@ -39,7 +39,7 @@ const Q_TERMINAL_REWARD_SCHEMA_V1: &str = "dusklight-route-q-terminal-reward/v1"
 const Q_GOAL_TERMINAL_ADJUSTMENT: f32 = 512.0;
 const Q_FAILURE_TERMINAL_ADJUSTMENT: f32 = -512.0;
 const LEARNED_PARENT_POLICY_V2: &str = "authenticated-progress-repair/v2";
-const INITIAL_TRIAL_BUDGET_POLICY_V2: &str = "two-learned-then-safe-fallback/v2";
+const INITIAL_TRIAL_BUDGET_POLICY_V3: &str = "safe-lane-floor-then-learned-round-robin/v3";
 
 #[derive(Clone, Debug)]
 pub struct QEpisode {
@@ -680,7 +680,7 @@ fn propose_q_candidates_internal(
             (
                 0,
                 split_initial_learned_budget(config.max_proposals),
-                "bounded_exploration_floor_three_learned_then_safe_fallback",
+                "bounded_exploration_safe_floor_then_learned_round_robin",
             )
         } else if proposal_gate.learned_policy_enabled {
             let offset = config.generation as usize % 6;
@@ -782,7 +782,7 @@ fn propose_q_candidates_internal(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v12",
+            schema: "dusklight-q-proposals/v13",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
@@ -796,7 +796,7 @@ fn propose_q_candidates_internal(
             goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
             failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
             learned_parent_policy: LEARNED_PARENT_POLICY_V2,
-            initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V2,
+            initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V3,
             learned_parent_episodes,
             learned_parent_states,
             action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
@@ -876,13 +876,13 @@ fn proposal_configuration_sha256(
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
 ) -> Result<Digest, QSearchError> {
     let identity = ProposalConfigurationIdentity {
-        schema: "dusklight-q-proposals/v12",
+        schema: "dusklight-q-proposals/v13",
         step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
         terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
         goal_terminal_adjustment_bits: Q_GOAL_TERMINAL_ADJUSTMENT.to_bits(),
         failure_terminal_adjustment_bits: Q_FAILURE_TERMINAL_ADJUSTMENT.to_bits(),
         learned_parent_policy: LEARNED_PARENT_POLICY_V2,
-        initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V2,
+        initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V3,
         action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
         generation: config.generation,
         max_proposals: config.max_proposals,
@@ -1015,16 +1015,19 @@ fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 6] {
 }
 
 fn split_initial_learned_budget(total: usize) -> [usize; 6] {
-    let mut budgets = [
-        usize::from(total > 0),
-        usize::from(total > 1),
-        usize::from(total > 2),
-        0,
-        0,
-        0,
-    ];
-    for ordinal in 3..total {
-        budgets[3 + (ordinal - 3) % 3] += 1;
+    let mut budgets = [0; 6];
+
+    // A bounded trial must retain direct evidence from every safe-search lane,
+    // but the trial is supposed to measure learned proposals. Reserve one slot
+    // for each safe lane when the budget permits, then spend the remaining
+    // capacity across all three learned lanes. Small budgets remain entirely
+    // learned so that admission can still be measured at all.
+    let safe_floor = total.saturating_sub(3).min(3);
+    for ordinal in 0..safe_floor {
+        budgets[3 + ordinal] += 1;
+    }
+    for ordinal in 0..total - safe_floor {
+        budgets[ordinal % 3] += 1;
     }
     budgets
 }
@@ -1522,7 +1525,7 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v12");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v13");
         assert_eq!(first.summary.step_reward_schema, MOVEMENT_REWARD_SCHEMA_V2);
         assert_eq!(
             first.summary.terminal_reward_schema,
@@ -1534,7 +1537,7 @@ mod tests {
         );
         assert_eq!(
             first.summary.initial_trial_budget_policy,
-            INITIAL_TRIAL_BUDGET_POLICY_V2
+            INITIAL_TRIAL_BUDGET_POLICY_V3
         );
         assert_eq!(first.summary.learned_parent_episodes, 1);
         assert_eq!(first.summary.learned_parent_states, 8);
@@ -2000,7 +2003,11 @@ mod tests {
         .unwrap();
         let admitted = LearnedProposalGate::evaluate(&ready_coverage, true, true, false, true);
         assert!(admitted.learned_policy_enabled);
-        assert_eq!(split_initial_learned_budget(64), [1, 1, 1, 21, 20, 20]);
+        assert_eq!(split_initial_learned_budget(2), [1, 1, 0, 0, 0, 0]);
+        assert_eq!(split_initial_learned_budget(3), [1, 1, 1, 0, 0, 0]);
+        assert_eq!(split_initial_learned_budget(6), [1, 1, 1, 1, 1, 1]);
+        assert_eq!(split_initial_learned_budget(9), [2, 2, 2, 1, 1, 1]);
+        assert_eq!(split_initial_learned_budget(64), [21, 20, 20, 1, 1, 1]);
 
         let unsupported = LearnedProposalGate::evaluate(&ready_coverage, false, true, false, true);
         assert!(!unsupported.learned_policy_enabled);
