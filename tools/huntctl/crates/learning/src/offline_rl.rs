@@ -33,6 +33,9 @@ const BUTTON_A: u16 = 0x0100;
 const BUTTON_B: u16 = 0x0200;
 const BUTTON_A_B: u16 = BUTTON_A | BUTTON_B;
 const ACTION_MACRO_KIND_PAD_FRAME_V2: u16 = 2;
+pub const MOVEMENT_REWARD_SCHEMA_V2: &str =
+    "dusklight.offline-rl.route-goal-progress-reward/v2;step=-1;new_authenticated_predicate=64";
+const GOAL_PROGRESS_STEP_REWARD_V2: f32 = 64.0;
 
 /// Stable descriptor hashed into every corpus produced by this bridge.
 ///
@@ -196,6 +199,10 @@ pub enum OfflineRlError {
         frame: u64,
         index: usize,
     },
+    InvalidGoalProgress {
+        frame: u64,
+        message: &'static str,
+    },
     FrameIndexOverflow,
 }
 
@@ -328,6 +335,12 @@ impl fmt::Display for OfflineRlError {
                 formatter,
                 "trace frame {frame} produced non-finite feature {index}"
             ),
+            Self::InvalidGoalProgress { frame, message } => {
+                write!(
+                    formatter,
+                    "trace frame {frame} has invalid goal progress: {message}"
+                )
+            }
             Self::FrameIndexOverflow => {
                 formatter.write_str("tape frame cannot be represented on this host")
             }
@@ -543,7 +556,7 @@ fn extract_exploratory_with_view(
             state,
             action,
             duration_ticks: 1,
-            reward: -1.0,
+            reward: transition_reward(prior, next, action_frame, view)?,
             next: next_reference,
             next_state,
             terminal: config.end_is_terminal && action_frame == config.end_tape_frame,
@@ -557,6 +570,63 @@ fn extract_exploratory_with_view(
         feature_count,
         transitions,
     )?)
+}
+
+fn transition_reward(
+    prior: &TraceRecord,
+    next: &TraceRecord,
+    frame: u64,
+    view: MovementView<'_>,
+) -> Result<f32, OfflineRlError> {
+    let MovementView::V2(_) = view else {
+        return Ok(-1.0);
+    };
+    let prior_progress =
+        prior
+            .goal_progress
+            .as_ref()
+            .ok_or(OfflineRlError::InvalidGoalProgress {
+                frame: frame.saturating_sub(1),
+                message: "payload is missing",
+            })?;
+    let next_progress = next
+        .goal_progress
+        .as_ref()
+        .ok_or(OfflineRlError::InvalidGoalProgress {
+            frame,
+            message: "payload is missing",
+        })?;
+    if !prior_progress.configured || !next_progress.configured {
+        return Err(OfflineRlError::InvalidGoalProgress {
+            frame,
+            message: "route objective is not configured",
+        });
+    }
+    if !prior_progress.authored || !next_progress.authored {
+        return Err(OfflineRlError::InvalidGoalProgress {
+            frame,
+            message: "route objective is not authored",
+        });
+    }
+    if prior_progress.goal_name_hash != next_progress.goal_name_hash
+        || prior_progress.requested_count != next_progress.requested_count
+        || prior_progress.requested_count == 0
+    {
+        return Err(OfflineRlError::InvalidGoalProgress {
+            frame,
+            message: "objective identity or predicate count changed within the episode",
+        });
+    }
+    if next_progress.hit_count < prior_progress.hit_count
+        || next_progress.hit_count > next_progress.requested_count
+    {
+        return Err(OfflineRlError::InvalidGoalProgress {
+            frame,
+            message: "authenticated predicate depth regressed or exceeded its objective",
+        });
+    }
+    let newly_reached = next_progress.hit_count - prior_progress.hit_count;
+    Ok(-1.0 + f32::from(newly_reached) * GOAL_PROGRESS_STEP_REWARD_V2)
 }
 
 fn validate_movement_trace_format(trace: &DecodedTrace) -> Result<(), OfflineRlError> {
@@ -708,6 +778,7 @@ fn validate_movement_observation_v2(
         || record.player_action.is_none()
         || record.player_background_collision.is_none()
         || record.player_collision_surfaces.is_none()
+        || record.goal_progress.is_none()
     {
         return Err(OfflineRlError::MissingObservationChannel {
             frame,
@@ -1282,12 +1353,24 @@ fn movement_features_v2(
         .player_action
         .as_ref()
         .expect("v2 validation requires player action");
+    let progress = record
+        .goal_progress
+        .as_ref()
+        .expect("v2 validation requires goal progress");
+    let progress_fraction = if progress.configured && progress.requested_count > 0 {
+        f32::from(progress.hit_count) / f32::from(progress.requested_count)
+    } else {
+        0.0
+    };
     features.extend([
         f32::from(action.procedure_id),
         action.mode_flags as f32 / u32::MAX as f32,
         f32::from(action.damage_wait_timer),
         f32::from(action.sword_at_up_time),
         f32::from(action.ice_damage_wait_timer),
+        bool_feature(progress.configured),
+        bool_feature(progress.reached),
+        progress_fraction,
         (frame - first_state_frame) as f32 / 1024.0,
         end_tape_frame.saturating_sub(frame) as f32 / 1024.0,
     ]);
@@ -1437,7 +1520,7 @@ mod tests {
     use crate::observation_view::movement_state_v2_spec;
     use crate::trace::{
         TraceAnimationLane, TraceAppliedPads, TraceCamera, TraceChannelWireFormat,
-        TraceCollisionSurface, TraceCollisionSurfaceKind, TracePlayerAction,
+        TraceCollisionSurface, TraceCollisionSurfaceKind, TraceGoalProgress, TracePlayerAction,
         TracePlayerBackgroundCollision, TracePlayerCollisionSurfaces, TraceRngSnapshot,
         TraceRngStream,
     };
@@ -1568,6 +1651,7 @@ mod tests {
             (TraceChannel::PlayerAction, 3, 160),
             (TraceChannel::PlayerBackgroundCollision, 1, 128),
             (TraceChannel::PlayerCollisionSurfaces, 1, 496),
+            (TraceChannel::GoalProgress, 1, 32),
         ]
         .into_iter()
         .map(|(channel, version, stride)| (channel, TraceChannelWireFormat { version, stride }))
@@ -1579,6 +1663,7 @@ mod tests {
                 TraceChannel::PlayerAction,
                 TraceChannel::PlayerBackgroundCollision,
                 TraceChannel::PlayerCollisionSurfaces,
+                TraceChannel::GoalProgress,
             ] {
                 record
                     .channel_status
@@ -1695,6 +1780,23 @@ mod tests {
                     empty_surface(TraceCollisionSurfaceKind::Wall, 2),
                 ],
             });
+            record.goal_progress = Some(TraceGoalProgress {
+                configured: true,
+                reached: false,
+                authored: true,
+                goal_name_hash: Some(0x1234_5678),
+                requested_count: 3,
+                hit_count: u16::try_from(record.tape_frame.unwrap_or_default())
+                    .unwrap_or(u16::MAX)
+                    .min(2),
+                stable_ticks: 0,
+                consecutive_ticks: 0,
+                sequence_steps: 0,
+                sequence_next_step: 0,
+                sequence_within_ticks: 0,
+                sequence_elapsed_ticks: 0,
+                first_hit_tick: None,
+            });
         }
         (trace, tape)
     }
@@ -1782,7 +1884,27 @@ mod tests {
         assert_eq!(&state[39..41], &[0.0, 0.0]);
         assert_eq!(state[45], 0.0, "scene-exit presence mask");
         assert_eq!(&state[46..54], &[0.0; 8]);
+        assert_eq!(
+            corpus.transitions[0].reward,
+            -1.0 + GOAL_PROGRESS_STEP_REWARD_V2
+        );
+        assert_eq!(
+            corpus.transitions[1].reward,
+            -1.0 + GOAL_PROGRESS_STEP_REWARD_V2
+        );
         assert!(state.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn movement_state_v2_rejects_regressing_authenticated_progress() {
+        let (mut trace, tape) = fixture_v2();
+        trace.records[1].goal_progress.as_mut().unwrap().hit_count = 2;
+        trace.records[2].goal_progress.as_mut().unwrap().hit_count = 1;
+        let error = extract_exploratory_v2(&trace, &tape, config(2, 2)).unwrap_err();
+        assert!(matches!(
+            error,
+            OfflineRlError::InvalidGoalProgress { frame: 2, .. }
+        ));
     }
 
     #[test]

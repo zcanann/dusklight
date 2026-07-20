@@ -769,17 +769,28 @@ proof acceptance do not import or consult the mask. Consequently a
 glitch-producing input that looks invalid to the prior remains an ordinary
 executable and promotable proof candidate.
 
-The immutable transition corpus keeps its native `-1` step reward and terminal
-bit. Before fitting the route critic, the proposal layer projects every bounded
+Movement-state v2 transition corpora use the authenticated
+`dusklight.offline-rl.route-goal-progress-reward/v2` step reward: every frame
+costs `-1`, while each newly satisfied predicate in the configured route goal
+adds `+64`. The goal-progress trace channel, objective identity, predicate
+count, and monotonic depth are validated before extraction; missing,
+unauthored, changing, or regressing progress fails closed. This lets a critic
+distinguish an early approach/load-zone near miss from a tape that made no
+useful progress without inferring progress from coordinates or modifying game
+state. The three goal-progress observation features and reward schema are
+authenticated into corpus and model identity, so older v2 corpora cannot be
+silently mixed with them.
+
+Before fitting the route critic, the proposal layer also projects every bounded
 tape ending to a terminal decision and applies the authenticated
 `dusklight-route-q-terminal-reward/v1` adjustment: `+512` for reaching the
 objective and `-512` for ending without it. This prevents a short failed tape
 from outranking a longer successful route without rewriting collected evidence.
-The projection schema and values are part of both model lineage and proposer
-configuration identity.
+The step and terminal schemas and values are part of both model lineage and
+proposer configuration identity.
 
-Each generation writes `q-proposals.json` v10 with its training size, complete
-readiness and coverage gates, terminal-reward and successful-parent policies,
+Each generation writes `q-proposals.json` v11 with its training size, complete
+readiness and coverage gates, step/terminal-reward and successful-parent policies,
 guidance schema, masked-state count, guided and
 unmasked action evaluation counts, unmasked probe-state count, intervention
 counts, exact collection schedule, and proposal count (or an explicit

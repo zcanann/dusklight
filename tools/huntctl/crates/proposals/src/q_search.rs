@@ -20,8 +20,8 @@ use crate::fqi::{
 };
 use crate::observation_view::movement_state_v2_spec;
 use crate::offline_rl::{
-    MOVEMENT_ACTION_COUNT_V2, canonical_movement_pad_v2, movement_action_id_v2,
-    movement_action_schema_digest_v2,
+    MOVEMENT_ACTION_COUNT_V2, MOVEMENT_REWARD_SCHEMA_V2, canonical_movement_pad_v2,
+    movement_action_id_v2, movement_action_schema_digest_v2,
 };
 use crate::search::{Ancestry, Candidate, InterventionRange};
 use crate::transition_corpus::TransitionCorpus;
@@ -79,6 +79,7 @@ pub struct QProposalSummary {
     pub training_health: Option<OnlineTrainingHealth>,
     pub proposal_states: usize,
     pub terminal_reward_schema: &'static str,
+    pub step_reward_schema: &'static str,
     pub goal_terminal_adjustment: f32,
     pub failure_terminal_adjustment: f32,
     pub learned_parent_policy: &'static str,
@@ -242,6 +243,7 @@ impl MovementFeatureIndices {
 #[derive(Serialize)]
 struct RouteQTrainingConfig<'a> {
     fqi: &'a FqiConfig,
+    step_reward_schema: &'static str,
     terminal_reward_schema: &'static str,
     goal_terminal_adjustment: f32,
     failure_terminal_adjustment: f32,
@@ -250,6 +252,7 @@ struct RouteQTrainingConfig<'a> {
 #[derive(Serialize)]
 struct ProposalConfigurationIdentity {
     schema: &'static str,
+    step_reward_schema: &'static str,
     terminal_reward_schema: &'static str,
     goal_terminal_adjustment_bits: u32,
     failure_terminal_adjustment_bits: u32,
@@ -396,6 +399,7 @@ fn propose_q_candidates_internal(
         .transpose()?;
     let lineage_training_config = RouteQTrainingConfig {
         fqi: &fqi_config,
+        step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
         terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
         goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
         failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
@@ -764,7 +768,7 @@ fn propose_q_candidates_internal(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v10",
+            schema: "dusklight-q-proposals/v11",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
@@ -773,6 +777,7 @@ fn propose_q_candidates_internal(
             proposal_gate,
             training_health,
             proposal_states: considered,
+            step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
             terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
             goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
             failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
@@ -835,7 +840,8 @@ fn proposal_configuration_sha256(
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
 ) -> Result<Digest, QSearchError> {
     let identity = ProposalConfigurationIdentity {
-        schema: "dusklight-q-proposals/v10",
+        schema: "dusklight-q-proposals/v11",
+        step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
         terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
         goal_terminal_adjustment_bits: Q_GOAL_TERMINAL_ADJUSTMENT.to_bits(),
         failure_terminal_adjustment_bits: Q_FAILURE_TERMINAL_ADJUSTMENT.to_bits(),
@@ -1472,7 +1478,8 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v10");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v11");
+        assert_eq!(first.summary.step_reward_schema, MOVEMENT_REWARD_SCHEMA_V2);
         assert_eq!(
             first.summary.terminal_reward_schema,
             Q_TERMINAL_REWARD_SCHEMA_V1

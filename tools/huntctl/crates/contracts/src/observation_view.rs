@@ -1149,6 +1149,33 @@ pub fn movement_state_v2_spec() -> ObservationSpec {
             Required,
         ),
         (
+            "objective.progress_configured",
+            Boolean,
+            NoUnits,
+            NoSpace,
+            Identity,
+            true,
+            Required,
+        ),
+        (
+            "objective.progress_reached",
+            Boolean,
+            NoUnits,
+            NoSpace,
+            Identity,
+            true,
+            Required,
+        ),
+        (
+            "objective.progress_fraction",
+            Float,
+            NoUnits,
+            NoSpace,
+            Identity,
+            false,
+            Required,
+        ),
+        (
             "window.elapsed",
             UnsignedInteger,
             Ticks,
@@ -1221,6 +1248,7 @@ pub fn movement_state_v2_spec() -> ObservationSpec {
             channel("player_action", 3, 160, Present),
             channel("player_background_collision", 1, 128, Present),
             channel("player_collision_surfaces", 1, 496, Present),
+            channel("goal_progress", 1, 32, Present),
         ],
         features,
     }
@@ -1234,14 +1262,14 @@ mod tests {
     fn built_in_spec_is_valid_and_canonical() {
         let spec = movement_state_v2_spec();
         spec.validate().unwrap();
-        assert_eq!(spec.feature_count(), 98);
+        assert_eq!(spec.feature_count(), 101);
         assert_eq!(
             spec.canonical_bytes().unwrap(),
             spec.canonical_bytes().unwrap()
         );
         assert_eq!(
             spec.digest().unwrap().to_string(),
-            "4bc4cc410fbe8747bca7564661759239884a49ee6658dd1e7d332f6302069218"
+            "9e6c33f9c9bbd60981689c43b75478d326fa8f3625f9597c8ae82fc3d9c5832e"
         );
         assert_eq!(spec.features.first().unwrap().name, "stage.byte0");
         assert_eq!(spec.features.last().unwrap().name, "window.remaining");
