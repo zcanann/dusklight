@@ -41,6 +41,37 @@ pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation/v6";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
+/// Reproduces the native writer's canonical identity for an exact authored
+/// milestone definition. Both SHA-256 digests are part of the domain-separated
+/// preimage; changing predicate code or only one definition changes the goal.
+pub fn authored_milestone_objective_identity(
+    program_sha256: &str,
+    definition_sha256: &str,
+) -> Result<String, NativeEpisodeShardError> {
+    for (label, digest) in [
+        ("program SHA-256", program_sha256),
+        ("definition SHA-256", definition_sha256),
+    ] {
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(NativeEpisodeShardError::new(format!(
+                "authored milestone {label} is not canonical lowercase hex"
+            )));
+        }
+    }
+
+    let mut material = Vec::with_capacity(19 + 1 + 64 + 1 + 64);
+    material.extend_from_slice(b"authored-milestone");
+    material.push(0);
+    material.extend_from_slice(program_sha256.as_bytes());
+    material.push(0);
+    material.extend_from_slice(definition_sha256.as_bytes());
+    Ok(format!("{:032x}", xxhash_rust::xxh3::xxh3_128(&material)))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeEpisodeShardMetadata {
     pub shard_schema: String,
@@ -555,6 +586,23 @@ impl NativeEpisodeShard {
             compressed_bytes: compressed_total,
         })
     }
+
+    /// Fail closed unless this shard was produced for the supplied exact
+    /// authored predicate program and definition.
+    pub fn verify_authored_objective(
+        &self,
+        program_sha256: &str,
+        definition_sha256: &str,
+    ) -> Result<(), NativeEpisodeShardError> {
+        let expected = authored_milestone_objective_identity(program_sha256, definition_sha256)?;
+        if self.metadata.objective_identity != expected {
+            return Err(NativeEpisodeShardError::new(format!(
+                "native episode objective identity {} does not match authored milestone {}",
+                self.metadata.objective_identity, expected
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn decode_metadata(
@@ -814,17 +862,47 @@ fn validate_step(
             "action is not aligned to its observation boundaries",
         ));
     }
-    if let Some(prior) = prior
-        && (prior.post_simulation.state_identity != pre.state_identity
-            || prior.post_simulation.boundary_index != pre.boundary_index
-            || prior.post_simulation.remaining_ticks != pre.remaining_ticks
-            || prior.post_simulation.simulation_tick + 1 != pre.simulation_tick
-            || prior.post_simulation.tape_frame + 1 != pre.tape_frame
-            || prior.consumed_pad != pre.previous_input)
-    {
-        return Err(NativeEpisodeShardError::new(
-            "adjacent transition boundaries are discontinuous",
-        ));
+    if let Some(prior) = prior {
+        let mut mismatches = Vec::new();
+        if prior.post_simulation.state_identity != pre.state_identity {
+            mismatches.push(format!(
+                "state_identity {:02x?} != {:02x?}",
+                prior.post_simulation.state_identity, pre.state_identity
+            ));
+        }
+        if prior.post_simulation.boundary_index != pre.boundary_index {
+            mismatches.push(format!(
+                "boundary_index {} != {}",
+                prior.post_simulation.boundary_index, pre.boundary_index
+            ));
+        }
+        if prior.post_simulation.remaining_ticks != pre.remaining_ticks {
+            mismatches.push(format!(
+                "remaining_ticks {} != {}",
+                prior.post_simulation.remaining_ticks, pre.remaining_ticks
+            ));
+        }
+        if prior.post_simulation.simulation_tick + 1 != pre.simulation_tick {
+            mismatches.push(format!(
+                "simulation_tick {} + 1 != {}",
+                prior.post_simulation.simulation_tick, pre.simulation_tick
+            ));
+        }
+        if prior.post_simulation.tape_frame + 1 != pre.tape_frame {
+            mismatches.push(format!(
+                "tape_frame {} + 1 != {}",
+                prior.post_simulation.tape_frame, pre.tape_frame
+            ));
+        }
+        if prior.consumed_pad != pre.previous_input {
+            mismatches.push("consumed_pad != previous_input".to_owned());
+        }
+        if !mismatches.is_empty() {
+            return Err(NativeEpisodeShardError::new(format!(
+                "adjacent transition boundaries are discontinuous: {}",
+                mismatches.join(", ")
+            )));
+        }
     }
     Ok(())
 }
@@ -2092,6 +2170,11 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
 
+    const ORDON_PROGRAM_SHA256: &str =
+        "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169";
+    const ORDON_DEFINITION_SHA256: &str =
+        "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57";
+
     fn golden() -> &'static [u8] {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v2.dseps")
     }
@@ -2110,6 +2193,30 @@ mod tests {
 
     fn golden_v6() -> &'static [u8] {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v6.dseps")
+    }
+
+    #[test]
+    fn authored_objective_identity_binds_program_and_definition() {
+        assert_eq!(
+            authored_milestone_objective_identity(ORDON_PROGRAM_SHA256, ORDON_DEFINITION_SHA256)
+                .unwrap(),
+            "d0d98dc29bd4190312933ff7d10d9c11"
+        );
+
+        let mut changed_definition = ORDON_DEFINITION_SHA256.to_owned();
+        changed_definition.replace_range(63..64, "8");
+        assert_ne!(
+            authored_milestone_objective_identity(ORDON_PROGRAM_SHA256, &changed_definition)
+                .unwrap(),
+            "d0d98dc29bd4190312933ff7d10d9c11"
+        );
+        assert!(
+            authored_milestone_objective_identity(
+                &ORDON_PROGRAM_SHA256.to_uppercase(),
+                ORDON_DEFINITION_SHA256
+            )
+            .is_err()
+        );
     }
 
     fn read_u16(bytes: &[u8], offset: usize) -> u16 {

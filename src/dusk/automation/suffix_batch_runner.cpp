@@ -181,15 +181,49 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         return false;
     }
 
-    const std::array goal{MilestoneId::ExitFSp103ToFSp104};
-    if (!mGoalTracker.configure(goal, MilestoneId::ExitFSp103ToFSp104, error)) return false;
+    const MilestoneTracker& configuredTracker = milestone_tracker();
+    if (configuredTracker.goalConfigured()) {
+        mGoalTracker = configuredTracker;
+        mGoalTracker.reset();
+        if (!mGoalTracker.goal().has_value()) {
+            const auto goalName = mGoalTracker.goalName();
+            const auto authored = goalName.has_value()
+                ? std::ranges::find(mGoalTracker.authoredHits(), *goalName,
+                      &AuthoredMilestoneHit::id)
+                : mGoalTracker.authoredHits().end();
+            if (authored == mGoalTracker.authoredHits().end() ||
+                authored->phase != MilestoneProgramPhase::PostSim ||
+                authored->definitionDigest.size() != 64 ||
+                authored->programDigest.size() != 64)
+            {
+                error = "suffix batch authored goals must be exact post-simulation definitions";
+                return false;
+            }
+        }
+    } else {
+        const std::array goal{MilestoneId::ExitFSp103ToFSp104};
+        if (!mGoalTracker.configure(goal, MilestoneId::ExitFSp103ToFSp104, error)) return false;
+    }
     mGoalTracker.setBootOrigin(input_tape_player().tape().boot);
 
     const BuildIdentity build = current_build_identity("native-read-only-checkpoint-batch");
-    const std::string objective(milestone_name(MilestoneId::ExitFSp103ToFSp104));
-    std::string objectiveIdentityMaterial(build.revision);
-    objectiveIdentityMaterial.push_back('\0');
-    objectiveIdentityMaterial += objective;
+    const std::string objective(*mGoalTracker.goalName());
+    std::string objectiveIdentityMaterial;
+    if (mGoalTracker.goal().has_value()) {
+        objectiveIdentityMaterial = "builtin-milestone";
+        objectiveIdentityMaterial.push_back('\0');
+        objectiveIdentityMaterial += build.revision;
+        objectiveIdentityMaterial.push_back('\0');
+        objectiveIdentityMaterial += objective;
+    } else {
+        const auto authored = std::ranges::find(mGoalTracker.authoredHits(), objective,
+            &AuthoredMilestoneHit::id);
+        objectiveIdentityMaterial = "authored-milestone";
+        objectiveIdentityMaterial.push_back('\0');
+        objectiveIdentityMaterial += authored->programDigest;
+        objectiveIdentityMaterial.push_back('\0');
+        objectiveIdentityMaterial += authored->definitionDigest;
+    }
     LearningEpisodeShardMetadata metadata{
         .sourceFrame = mDefinition.sourceFrame,
         .maximumTicks = mDefinition.maximumTicks,
@@ -564,6 +598,10 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
             fail(error);
             return true;
         }
+        // Preserve the final candidate's ordinary milestone result for the
+        // standard artifact writer. Every candidate retains its own complete
+        // predicate evidence in the aggregate suffix result and episode shard.
+        milestone_tracker() = mGoalTracker;
         mPhase = Phase::Complete;
         mCompleted = true;
         return true;

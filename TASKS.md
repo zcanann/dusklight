@@ -79,18 +79,22 @@ the same goal without demonstration-relative features.
   structured mechanics and flag channels present, no truncation or determinism
   conflict, and the expected warning that its two retained candidates are both
   failures.
-- A single native Ordon suffix batch from the authenticated frame-440 source
-  now retains a known 127-tick load-zone success and a 128-tick neutral-input
-  failure through the same episode contract. `huntctl learn inspect-native`
-  accepted all 256 transitions and 512 observations with complete 47-48 actor
-  sets, two RNG streams, six collision surfaces, exact chosen/consumed PAD
-  agreement, both terminal observations, no non-finite values, discontinuity,
-  truncation, duplicate trajectory, determinism conflict, or warning. The
-  authenticated shard is `d44d8eed...2fa2f`; its success and failure state
-  sequences are `95fe103f...ba74` and `8cd6bba5...047e`. The promoted full
-  process-boot tape then reached `exit-f-sp103-to-f-sp104` at frame 567 in two
-  fresh cold replays without a controller, model, or checkpoint, producing the
-  identical v6 boundary fingerprint `545c3127...ca155`.
+- Native suffix execution now evaluates the exact selected authored milestone,
+  rather than silently substituting a built-in Ordon exit. A live frame-440
+  batch bound program `b8cbfafa...0c169` and definition
+  `631b025f...11e57` to objective identity `d0d98dc2...d9c11`, retained a
+  known 127-tick `ordon_spring_load_committed` success and a 128-tick neutral
+  failure, and finalized shard `39e3171b...8e35`. `huntctl learn
+  inspect-native` accepted all 256 transitions and 512 observations with
+  complete 47-48 actor sets, two RNG streams, six collision surfaces, exact
+  chosen/consumed PAD agreement, both terminal observations, and zero
+  non-finite values, discontinuities, truncation, duplicate trajectories,
+  determinism conflicts, or warnings. The independent host identity function
+  reproduces the native XXH3-128 domain separation and rejects a changed or
+  noncanonical predicate digest. The promoted full process-boot tape had
+  already reached the same load at frame 567 in two fresh cold replays without
+  a controller, model, or checkpoint, producing the identical v6 boundary
+  fingerprint `545c3127...ca155`.
 
 ## 0. Audit whether a learner can see enough of the game
 
@@ -171,7 +175,11 @@ human-authored successful setup.
 - [x] Extend the native checkpoint batch loop to retain, for every candidate
   tick: pre-action observation, chosen action and exact consumed PAD,
   post-action observation, predicate/event changes, terminal status, remaining
-  tick budget, and deterministic state identity.
+  tick budget, and deterministic state identity. The batch runner now consumes
+  the selected authored post-simulation definition instead of silently
+  replacing it with the Ordon exit goal; shard metadata domain-separates and
+  binds the exact program and definition digests, and Rust can verify that
+  identity before ingestion.
 - [x] Capture failures and successes through the same episode contract. A
   failed attempt must no longer collapse to one terminal X/Z observation.
 - [ ] Define a canonical, versioned observation envelope containing:
@@ -263,6 +271,10 @@ human-authored successful setup.
   data, memory-card fixture, actor-profile catalog and world context are distinct
   declared identities. The live two-candidate shard compressed 3,531,036 bytes
   to 51,761 bytes without creating per-tick or per-attempt files.
+  Authored objectives use a domain-separated identity over the exact compiled
+  program and selected definition digests; native suffix execution clones and
+  resets that authored tracker at the source checkpoint, while Rust can
+  independently recompute and verify the binding.
 - [x] Bind every process-boot dependency, including the isolated memory card,
   save data and relevant configuration, into the boot/checkpoint identity.
   Materializing the same declared fixture in a fresh automation root must

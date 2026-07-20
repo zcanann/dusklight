@@ -37,6 +37,8 @@ public:
         std::string& error);
 
     [[nodiscard]] bool enabled() const { return mEnabled; }
+    /** True only for a simulation tick belonging to a checkpoint-restored candidate. */
+    [[nodiscard]] bool executingCandidate() const { return mPhase == Phase::Candidate; }
     [[nodiscard]] bool completed() const { return mCompleted; }
     [[nodiscard]] bool failed() const { return mFailed; }
     [[nodiscard]] bool writeArtifacts(std::string& error) const;

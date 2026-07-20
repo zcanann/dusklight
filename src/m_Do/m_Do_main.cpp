@@ -458,14 +458,12 @@ void main01(void) {
                     if (!finish_simulation_tick()) {
                         break;
                     }
-                    if (finish_suffix_batch_tick() || finish_checkpoint_probe_tick()) {
-                        break;
-                    }
-                    if (finish_automation_oracle_tick()) {
-                        break;
-                    }
-                    if (finish_input_tape_tick()) {
-                        break;
+                    if (dusk::automation::suffix_batch_runner().executingCandidate()) {
+                        if (finish_suffix_batch_tick()) break;
+                    } else {
+                        if (finish_checkpoint_probe_tick()) break;
+                        if (finish_automation_oracle_tick()) break;
+                        if (finish_input_tape_tick()) break;
                     }
                 }
             }
@@ -501,9 +499,11 @@ void main01(void) {
                 dusk::audio::AdvanceDeterministicAutomationTick();
                 mDoAud_Execute();
                 if (finish_simulation_tick()) {
-                    if (!finish_suffix_batch_tick() && !finish_checkpoint_probe_tick() &&
-                        !finish_automation_oracle_tick()) {
-                        finish_input_tape_tick();
+                    if (dusk::automation::suffix_batch_runner().executingCandidate()) {
+                        finish_suffix_batch_tick();
+                    } else if (!finish_checkpoint_probe_tick() &&
+                               !finish_automation_oracle_tick()) {
+                            finish_input_tape_tick();
                     }
                 }
             }
@@ -1706,13 +1706,20 @@ static bool finish_suffix_batch_tick() {
     auto& batch = dusk::automation::suffix_batch_runner();
     if (!batch.enabled()) return false;
     std::string error;
-    if (!batch.postSimulation(automationSimulationTick, automationTapeFrame, error)) return false;
+    const bool terminal = batch.postSimulation(automationSimulationTick, automationTapeFrame, error);
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
-    // The ordinary post-simulation path records this tick after batch handling. A completed
-    // batch exits before reaching that path, so retain its terminal witness here exactly once.
-    // Batch finalization is read-only with respect to gameplay and controller state.
+    // Suffix execution exclusively owns post-simulation handling while active;
+    // retain each ordinary trace sample here exactly once, including the final
+    // candidate witness. Batch finalization is read-only with respect to game
+    // and controller state.
     record_gameplay_trace_tick();
 #endif
+    // Candidate ticks bypass finish_automation_oracle_tick(), which ordinarily
+    // advances this host-side logical counter. Keep checkpoint-restored episode
+    // boundaries aligned without evaluating the process-global milestone
+    // tracker a second time.
+    ++automationSimulationTick;
+    if (!terminal) return false;
     if (batch.failed()) {
         suffixBatchFailed = true;
         DuskLog.error("Suffix batch failed: {}", error);
@@ -3334,7 +3341,6 @@ int game_main(int argc, char* argv[]) {
             hasRealizedInputTape || exitAfterInputTape || automationLogicalTickBudget != 0 ||
             frameCaptureEnabled || playbackThumbnailCaptureEnabled || hasAutomationOracle ||
             hasNameEntryTrace || parsed_arg_options.count("actor-catalog") != 0 ||
-            parsed_arg_options.count("milestones") != 0 ||
             parsed_arg_options.count("automation-phase-timing") != 0 ||
             parsed_arg_options.count("stage") != 0 ||
             parsed_arg_options["load-save"].as<std::uint8_t>() != 0 ||
@@ -3344,6 +3350,11 @@ int game_main(int argc, char* argv[]) {
         {
             fprintf(stderr,
                     "Suffix Batch Error: batch execution requires a headless absolute default boot tape with release-at-end and no competing stateful automation mode; read-only gameplay tracing is allowed\n");
+            return 1;
+        }
+        if (hasMilestones && !hasMilestoneGoal) {
+            fprintf(stderr,
+                    "Suffix Batch Error: an authored milestone set requires --milestone-goal\n");
             return 1;
         }
         const std::string batchArgument =
