@@ -129,6 +129,15 @@ early. Evidence is retained under `build/search/ordon-q124-*`; aggregate counts
 come from their passed `result.json` files. Continuing now requires a new,
 measured non-local proposal family rather than another obvious local neighbor.
 
+A bounded non-local follow-up derived native world-coordinate waypoint policies
+from the successful 125-tick incumbent trace while retaining its seven roll
+edges. Six cold 125-tick controllers spanning waypoint interval, phase,
+lookahead, and terminal extension all reproduced the source fingerprint and
+missed the terminal predicate. Their best signed exit-edge distance was
+66.6412, far worse than the retained exact-input near miss at 2.7813, so the
+family was rejected without adding machinery. Evidence is under
+`build/search/ordon-waypoint-*-e500/`.
+
 ## 4. Promote the result — blocked by gate 3
 
 - [ ] Export the winner as an absolute boot-to-Ordon-Springs tape.

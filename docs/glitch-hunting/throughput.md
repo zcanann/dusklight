@@ -205,3 +205,12 @@ remained authoritative throughout: every retained candidate still reported
 `success: false`, so none is a valid route improvement and no tape was
 promoted. The proof is blocked pending a measured non-local proposal family;
 repeating the exhausted local neighborhoods would not satisfy the gate.
+
+A bounded non-local follow-up used the existing native reactive controller to
+derive world-coordinate waypoint policies from the successful incumbent trace.
+Six cold 125-tick policies varied waypoint interval, phase, lookahead, and
+terminal extension while retaining the seven roll edges. Every run reproduced
+source fingerprint `ac7c32788fc3b5c59046386d95b9b5b4`, none reached the
+terminal predicate, and the best endpoint remained 66.6412 signed units from
+the exit edge. Because that is far worse than the retained 2.7813-unit exact
+input near miss, the family was rejected without new controller code.
