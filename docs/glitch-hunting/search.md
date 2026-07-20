@@ -9,6 +9,28 @@ deliberately not an end-to-end pixel DDQN: with tens of clients, deterministic
 specialists provide useful priors while the learned layer can test movements
 outside their hand-authored neighborhood.
 
+The fitted-Q proposer includes temporally extended consensus actions. For each
+successful parent trace it ranks a single controller action over 8, 16, 32,
+and 64-tick windows by mean fitted-Q advantage, then submits the resulting
+held-action tape to the native evaluator. These are ordinary, fallible
+counterfactual proposals: the model does not simulate their next states and
+cannot declare success. The longer horizon is what lets the learner replace a
+noisy series of one-frame steering corrections with a coherent straight or
+turn instead of requiring dozens of independently lucky mutations.
+
+Observation consumers resolve current movement-state features by their stable
+semantic names. Behavior archive cells, Q coverage, procedures, positions,
+and window phase must never use numeric offsets copied from an older feature
+schema. Legacy movement-state/v1 corpora retain an explicit versioned layout;
+unknown schemas fail closed.
+
+Poor learned-proposal performance reduces subsequent learned allocation to a
+three-candidate exploration floor (greedy, temporal consensus, and uncertainty)
+rather than permanently switching learning off. Missing native facts,
+insufficient corpus coverage, or unproved determinism still disable learned
+proposals. This distinction prevents one weak batch from trapping the search
+at the incumbent while preserving the framework's evidence gates.
+
 C++ is the scoring authority: it reports the first simulation tick and complete
 boundary fingerprint for each memory-backed milestone. Rust owns candidates,
 compact tape compilation, native process scheduling, evidence, ranking, and
