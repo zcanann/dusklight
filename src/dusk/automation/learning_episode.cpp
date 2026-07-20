@@ -381,8 +381,11 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         !validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid ||
         !traceBoundaryIsValid ||
         observation.actors.size() > std::numeric_limits<std::uint16_t>::max() ||
+        observation.dynamicColliders.size() > std::numeric_limits<std::uint16_t>::max() ||
         observation.actorObservedCount != observation.actors.size() ||
         observation.actorsTruncated ||
+        observation.dynamicCollidersTruncated ||
+        (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) ||
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
@@ -400,6 +403,12 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     {
         error = "learning observation actor set is not strictly ordered";
         return false;
+    }
+    for (std::size_t index = 0; index < observation.dynamicColliders.size(); ++index) {
+        if (observation.dynamicColliders[index].registrationIndex != index) {
+            error = "learning observation collider set is not canonically ordered";
+            return false;
+        }
     }
     std::array<std::uint8_t, 16> stateIdentity{};
     if (!decode_hex_128(context.stateIdentity, stateIdentity)) {
@@ -634,6 +643,50 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         for (const std::int16_t value : {actor.homeAngleX, actor.homeAngleY, actor.homeAngleZ,
                  actor.oldAngleX, actor.oldAngleY, actor.oldAngleZ})
             append_integer(output, value);
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(
+                               observation.dynamicCollidersPresent ? 1 : 3));
+    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, static_cast<std::uint16_t>(observation.dynamicColliders.size()));
+    for (const MilestoneObservation::DynamicCollider& collider :
+        observation.dynamicColliders)
+    {
+        std::uint16_t colliderFlags = 0;
+        colliderFlags |= collider.ownerPresent ? 1u << 0 : 0;
+        colliderFlags |= collider.statusPresent ? 1u << 1 : 0;
+        colliderFlags |= collider.shapePresent ? 1u << 2 : 0;
+        colliderFlags |= collider.attackSet ? 1u << 3 : 0;
+        colliderFlags |= collider.targetSet ? 1u << 4 : 0;
+        colliderFlags |= collider.correctionSet ? 1u << 5 : 0;
+        colliderFlags |= collider.attackHit ? 1u << 6 : 0;
+        colliderFlags |= collider.targetHit ? 1u << 7 : 0;
+        colliderFlags |= collider.correctionHit ? 1u << 8 : 0;
+        colliderFlags |= collider.attackHitOwnerPresent ? 1u << 9 : 0;
+        colliderFlags |= collider.targetHitOwnerPresent ? 1u << 10 : 0;
+        colliderFlags |= collider.correctionHitOwnerPresent ? 1u << 11 : 0;
+        append_integer(output, collider.registrationIndex);
+        append_integer(output, colliderFlags);
+        append_integer(output, collider.ownerRuntimeGeneration);
+        append_integer(output, collider.attackHitOwnerRuntimeGeneration);
+        append_integer(output, collider.targetHitOwnerRuntimeGeneration);
+        append_integer(output, collider.correctionHitOwnerRuntimeGeneration);
+        for (const std::uint32_t value : {collider.attackType, collider.targetType,
+                 collider.attackSourceParameters, collider.attackResultParameters,
+                 collider.targetSourceParameters, collider.targetResultParameters,
+                 collider.correctionSourceParameters, collider.correctionResultParameters})
+            append_integer(output, value);
+        append_integer(output, collider.attackPower);
+        append_integer(output, collider.weight);
+        append_integer(output, collider.damage);
+        append_integer(output, static_cast<std::uint8_t>(collider.shape));
+        for (const float value : {collider.centerX, collider.centerY, collider.centerZ,
+                 collider.radius, collider.height, collider.aabbMinX, collider.aabbMinY,
+                 collider.aabbMinZ, collider.aabbMaxX, collider.aabbMaxY, collider.aabbMaxZ,
+                 collider.correctionX, collider.correctionY, collider.correctionZ})
+        {
+            if (!append_float(output, value, error)) return false;
+        }
     }
 
     if (observation.flagsPresent) {

@@ -31,6 +31,7 @@ struct MilestoneObservationStorage {
     // contract and must never silently constrain the training corpus.
     std::vector<MilestoneObservation::Actor> actors;
     std::uint32_t actorObservedCount = 0;
+    std::vector<MilestoneObservation::DynamicCollider> dynamicColliders;
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryEventByteCount> temporaryEventBytes{};

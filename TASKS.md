@@ -145,13 +145,13 @@ them is learner work.
     expected population; it does not pretend the bounded trace actor selection
     is a complete learner observation.
   - [x] Retain the exact complete actor vector supplied to native learning
-    observation v7 at the generic probe's terminal boundary and compare it
+    observation v8 at the generic probe's terminal boundary and compare it
     against an independent actor-catalog walk at that same tick. Actor-catalog
-    v3 records both read-only populations; the sealed coverage report rejects
+    v4 records both read-only populations; the sealed coverage report rejects
     missingness, truncation, duplicate generations, count drift, ordering
     drift, or any shared identity/state-field mismatch. A fresh eight-client,
     16-entry D_MN01 batch verified 64-145 learner actors per case, all 16 cases
-    and 58 profiles with zero rejections (`95b05ccb...4ee6`). This proves the
+    and 58 profiles with zero rejections (`061ed9a4...cb0a`). This proves the
     capture path on the surveyed slice; the parent item remains open until all
     successful catalog entries have equivalent evidence.
 - [ ] Audit universal actor information: stable runtime identity and spawn
@@ -163,9 +163,10 @@ them is learner work.
     complete read-only population: process/actor type, condition and lifecycle
     phase, room history, pause/cull/demo/carry state, heap/model/joint-collision
     presence, old/current/home/eye transforms, scale, gravity and fall speed.
-    Learning observation v7 is decoded into actor view v4 with explicit
+    Learning observation v7 (retained by current v8) is decoded into actor view
+    v4 with explicit
     `None` for pre-v7 recordings rather than fabricated zeroes. Actor-catalog
-    v3 independently captures and bit-compares the same fields. A fresh
+    v4 independently captures and bit-compares the same fields. A fresh
     eight-client D_MN01 survey verified all 1,432 actors across 16/16 entries,
     58 profiles and 64-145 actors per entry with zero rejected cases in sealed
     report `95b05ccb...4ee6`. Procedure, animation and concrete collision-body
@@ -174,6 +175,18 @@ them is learner work.
   terrain triangles, contact normals and correction, materials, ceilings,
   floors, walls, triggers, exits, switches, event state and inactive authored
   placements.
+  - [x] Retain the complete dynamic collision set processed by the immediately
+    preceding collision pass without calling collision code: registration
+    identity, owning actor, attack/target/correction enable and hit state, hit
+    partner owners, raw type/source/result masks, attack power, weight, damage,
+    correction vector, shape parameters and realized AABB. Learning observation
+    v8 and the cross-language fixture fail closed on noncanonical ordering,
+    presence/payload disagreement and nonfinite geometry. A generic 16-entry
+    D_MN01 survey retained 1,031 owner-joined bodies (0-91 per entry), comprising
+    500 spheres, 529 cylinders and two explicitly unknown shapes, with no
+    truncation, crash or rejected case; its actor-parity report is
+    `061ed9a4...cb0a`. This exposes interaction geometry but supplies no
+    interaction target, tactic, route or reward.
 - [ ] Audit player, camera, inventory, timers, RNG, loading and other global
   channels across maps and forms. Record explicit missingness and phase rather
   than treating zero as unavailable.

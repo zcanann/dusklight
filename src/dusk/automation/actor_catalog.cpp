@@ -213,6 +213,58 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
     };
 }
 
+json learning_collider_json(const MilestoneObservation::DynamicCollider& collider) {
+    const char* shape = collider.shape == MilestoneObservation::DynamicColliderShape::Sphere
+                            ? "sphere"
+                        : collider.shape == MilestoneObservation::DynamicColliderShape::Cylinder
+                            ? "cylinder"
+                            : "unknown";
+    const auto optionalGeneration = [](const bool present, const std::uint32_t generation) {
+        return present ? json(generation) : json(nullptr);
+    };
+    return {
+        {"registration_index", collider.registrationIndex},
+        {"owner_runtime_generation",
+            optionalGeneration(collider.ownerPresent, collider.ownerRuntimeGeneration)},
+        {"attack_hit_owner_runtime_generation",
+            optionalGeneration(collider.attackHitOwnerPresent,
+                collider.attackHitOwnerRuntimeGeneration)},
+        {"target_hit_owner_runtime_generation",
+            optionalGeneration(collider.targetHitOwnerPresent,
+                collider.targetHitOwnerRuntimeGeneration)},
+        {"correction_hit_owner_runtime_generation",
+            optionalGeneration(collider.correctionHitOwnerPresent,
+                collider.correctionHitOwnerRuntimeGeneration)},
+        {"status_present", collider.statusPresent},
+        {"shape_present", collider.shapePresent},
+        {"shape", shape},
+        {"attack_set", collider.attackSet},
+        {"target_set", collider.targetSet},
+        {"correction_set", collider.correctionSet},
+        {"attack_hit", collider.attackHit},
+        {"target_hit", collider.targetHit},
+        {"correction_hit", collider.correctionHit},
+        {"attack_type", collider.attackType},
+        {"target_type", collider.targetType},
+        {"attack_source_parameters", collider.attackSourceParameters},
+        {"attack_result_parameters", collider.attackResultParameters},
+        {"target_source_parameters", collider.targetSourceParameters},
+        {"target_result_parameters", collider.targetResultParameters},
+        {"correction_source_parameters", collider.correctionSourceParameters},
+        {"correction_result_parameters", collider.correctionResultParameters},
+        {"attack_power", collider.attackPower},
+        {"weight", collider.weight},
+        {"damage", collider.damage},
+        {"center", position_json(collider.centerX, collider.centerY, collider.centerZ)},
+        {"radius", collider.radius},
+        {"height", collider.height},
+        {"aabb_min", position_json(collider.aabbMinX, collider.aabbMinY, collider.aabbMinZ)},
+        {"aabb_max", position_json(collider.aabbMaxX, collider.aabbMaxY, collider.aabbMaxZ)},
+        {"correction",
+            position_json(collider.correctionX, collider.correctionY, collider.correctionZ)},
+    };
+}
+
 }  // namespace
 
 bool write_actor_catalog(
@@ -275,6 +327,10 @@ bool write_actor_catalog(
     json learningActors = json::array();
     for (const MilestoneObservation::Actor& actor : learningObservation.actors)
         learningActors.push_back(learning_actor_json(actor));
+    json learningColliders = json::array();
+    for (const MilestoneObservation::DynamicCollider& collider :
+        learningObservation.dynamicColliders)
+        learningColliders.push_back(learning_collider_json(collider));
 
     const auto& nameEntryObserver = name_entry_observer();
     const BuildIdentity build = current_build_identity(
@@ -282,7 +338,7 @@ bool write_actor_catalog(
             ? "cursor_breakout_shadow"
             : "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v3"},
+        {"schema", "dusklight.actor-catalog.v4"},
         {"build",
             {
                 {"version", build.version},
@@ -318,6 +374,14 @@ bool write_actor_catalog(
                 {"retained_actor_count", learningObservation.actors.size()},
                 {"truncated", learningObservation.actorsTruncated},
                 {"actors", std::move(learningActors)},
+            }},
+        {"learning_dynamic_collision_population",
+            {
+                {"source_schema", LearningObservationSchema},
+                {"present", learningObservation.dynamicCollidersPresent},
+                {"retained_collider_count", learningObservation.dynamicColliders.size()},
+                {"truncated", learningObservation.dynamicCollidersTruncated},
+                {"colliders", std::move(learningColliders)},
             }},
     };
 

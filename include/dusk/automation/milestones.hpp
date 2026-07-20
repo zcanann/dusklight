@@ -209,6 +209,64 @@ struct MilestoneObservation {
     std::uint32_t actorObservedCount = 0;
     bool actorsTruncated = false;
 
+    enum class DynamicColliderShape : std::uint8_t {
+        Unknown = 0,
+        Sphere = 1,
+        Cylinder = 2,
+    };
+
+    struct DynamicCollider {
+        std::uint16_t registrationIndex = 0;
+        std::uint32_t ownerRuntimeGeneration = 0xffffffff;
+        std::uint32_t attackHitOwnerRuntimeGeneration = 0xffffffff;
+        std::uint32_t targetHitOwnerRuntimeGeneration = 0xffffffff;
+        std::uint32_t correctionHitOwnerRuntimeGeneration = 0xffffffff;
+        bool ownerPresent = false;
+        bool statusPresent = false;
+        bool shapePresent = false;
+        bool attackSet = false;
+        bool targetSet = false;
+        bool correctionSet = false;
+        bool attackHit = false;
+        bool targetHit = false;
+        bool correctionHit = false;
+        bool attackHitOwnerPresent = false;
+        bool targetHitOwnerPresent = false;
+        bool correctionHitOwnerPresent = false;
+        DynamicColliderShape shape = DynamicColliderShape::Unknown;
+        std::uint32_t attackType = 0;
+        std::uint32_t targetType = 0;
+        std::uint32_t attackSourceParameters = 0;
+        std::uint32_t attackResultParameters = 0;
+        std::uint32_t targetSourceParameters = 0;
+        std::uint32_t targetResultParameters = 0;
+        std::uint32_t correctionSourceParameters = 0;
+        std::uint32_t correctionResultParameters = 0;
+        std::uint8_t attackPower = 0;
+        std::uint8_t weight = 0;
+        std::uint8_t damage = 0;
+        float centerX = 0.0f;
+        float centerY = 0.0f;
+        float centerZ = 0.0f;
+        float radius = 0.0f;
+        float height = 0.0f;
+        float aabbMinX = 0.0f;
+        float aabbMinY = 0.0f;
+        float aabbMinZ = 0.0f;
+        float aabbMaxX = 0.0f;
+        float aabbMaxY = 0.0f;
+        float aabbMaxZ = 0.0f;
+        float correctionX = 0.0f;
+        float correctionY = 0.0f;
+        float correctionZ = 0.0f;
+    };
+    // Complete dynamic collision set processed by the immediately preceding
+    // collision pass. At a pre-input boundary this is the prior tick; at a
+    // post-simulation boundary it is the just-completed tick.
+    std::span<const DynamicCollider> dynamicColliders;
+    bool dynamicCollidersPresent = false;
+    bool dynamicCollidersTruncated = false;
+
     // Indexed flag snapshots are immutable copies captured at the same phase
     // as the scalar observation. Switches cover exactly switchFlagRoom; an
     // off-room query evaluates as unavailable rather than reading live state.

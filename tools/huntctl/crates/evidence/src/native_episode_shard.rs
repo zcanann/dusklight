@@ -27,6 +27,7 @@ const OBSERVATION_VERSION_V4: u16 = 4;
 const OBSERVATION_VERSION_V5: u16 = 5;
 const OBSERVATION_VERSION_V6: u16 = 6;
 const OBSERVATION_VERSION_V7: u16 = 7;
+const OBSERVATION_VERSION_V8: u16 = 8;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -41,6 +42,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation/v5";
 pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation/v6";
 pub const LEARNING_OBSERVATION_SCHEMA_V7: &str = "dusklight-learning-observation/v7";
+pub const LEARNING_OBSERVATION_SCHEMA_V8: &str = "dusklight-learning-observation/v8";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -314,6 +316,48 @@ pub struct NativeActorEventParticipationComponent {
     pub index: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeDynamicColliderShape {
+    Unknown,
+    Sphere,
+    Cylinder,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeDynamicColliderObservation {
+    pub registration_index: u16,
+    pub owner_runtime_generation: Option<u32>,
+    pub attack_hit_owner_runtime_generation: Option<u32>,
+    pub target_hit_owner_runtime_generation: Option<u32>,
+    pub correction_hit_owner_runtime_generation: Option<u32>,
+    pub status_present: bool,
+    pub shape_present: bool,
+    pub attack_set: bool,
+    pub target_set: bool,
+    pub correction_set: bool,
+    pub attack_hit: bool,
+    pub target_hit: bool,
+    pub correction_hit: bool,
+    pub shape: NativeDynamicColliderShape,
+    pub attack_type: u32,
+    pub target_type: u32,
+    pub attack_source_parameters: u32,
+    pub attack_result_parameters: u32,
+    pub target_source_parameters: u32,
+    pub target_result_parameters: u32,
+    pub correction_source_parameters: u32,
+    pub correction_result_parameters: u32,
+    pub attack_power: u8,
+    pub weight: u8,
+    pub damage: u8,
+    pub center: [f32; 3],
+    pub radius: f32,
+    pub height: f32,
+    pub aabb_min: [f32; 3],
+    pub aabb_max: [f32; 3],
+    pub correction: [f32; 3],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGoalObservation {
     pub configured: bool,
@@ -469,6 +513,8 @@ pub struct NativeLearningObservation {
     pub grabbed_actor: NativeActorIdentity,
     pub goal: NativeGoalObservation,
     pub actors: Vec<NativeActorObservation>,
+    pub dynamic_colliders_status: NativeChannelStatus,
+    pub dynamic_colliders: Vec<NativeDynamicColliderObservation>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     /// Exact 256-byte dSv_info_c::mTmp.mEvent register bank (v5+).
@@ -535,6 +581,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V5
                 | OBSERVATION_VERSION_V6
                 | OBSERVATION_VERSION_V7
+                | OBSERVATION_VERSION_V8
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -656,6 +703,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V5 => LEARNING_OBSERVATION_SCHEMA_V5,
         OBSERVATION_VERSION_V6 => LEARNING_OBSERVATION_SCHEMA_V6,
         OBSERVATION_VERSION_V7 => LEARNING_OBSERVATION_SCHEMA_V7,
+        OBSERVATION_VERSION_V8 => LEARNING_OBSERVATION_SCHEMA_V8,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1715,7 +1763,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V4
         | OBSERVATION_VERSION_V5
         | OBSERVATION_VERSION_V6
-        | OBSERVATION_VERSION_V7 => {
+        | OBSERVATION_VERSION_V7
+        | OBSERVATION_VERSION_V8 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -1984,6 +2033,142 @@ fn decode_observation(
             "actor set is not strictly ordered",
         ));
     }
+    let (dynamic_colliders_status, dynamic_colliders) = if observation_version
+        >= OBSERVATION_VERSION_V8
+    {
+        let status = decode_channel_status(reader)?;
+        if reader.u8()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "nonzero dynamic-collider reserved byte",
+            ));
+        }
+        let count = usize::from(reader.u16()?);
+        if status != NativeChannelStatus::Present && count != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "dynamic-collider payload is present for an unavailable channel",
+            ));
+        }
+        let mut colliders = Vec::with_capacity(count);
+        for expected_index in 0..count {
+            let registration_index = reader.u16()?;
+            let collider_flags = reader.u16()?;
+            if usize::from(registration_index) != expected_index || collider_flags & !0x0fff != 0 {
+                return Err(NativeEpisodeShardError::new(
+                    "dynamic-collider set is not canonical",
+                ));
+            }
+            let owner = reader.u32()?;
+            let attack_owner = reader.u32()?;
+            let target_owner = reader.u32()?;
+            let correction_owner = reader.u32()?;
+            let optional_owner = |bit: u16, value: u32| {
+                if collider_flags & bit != 0 {
+                    Ok(Some(value))
+                } else if value == u32::MAX {
+                    Ok(None)
+                } else {
+                    Err(NativeEpisodeShardError::new(
+                        "absent dynamic-collider owner has a payload",
+                    ))
+                }
+            };
+            let owner_runtime_generation = optional_owner(1 << 0, owner)?;
+            let attack_hit_owner_runtime_generation = optional_owner(1 << 9, attack_owner)?;
+            let target_hit_owner_runtime_generation = optional_owner(1 << 10, target_owner)?;
+            let correction_hit_owner_runtime_generation =
+                optional_owner(1 << 11, correction_owner)?;
+            if collider_flags & (1 << 9) != 0 && collider_flags & (1 << 6) == 0
+                || collider_flags & (1 << 10) != 0 && collider_flags & (1 << 7) == 0
+                || collider_flags & (1 << 11) != 0 && collider_flags & (1 << 8) == 0
+            {
+                return Err(NativeEpisodeShardError::new(
+                    "dynamic-collider hit owner is present without a hit",
+                ));
+            }
+            let attack_type = reader.u32()?;
+            let target_type = reader.u32()?;
+            let attack_source_parameters = reader.u32()?;
+            let attack_result_parameters = reader.u32()?;
+            let target_source_parameters = reader.u32()?;
+            let target_result_parameters = reader.u32()?;
+            let correction_source_parameters = reader.u32()?;
+            let correction_result_parameters = reader.u32()?;
+            let attack_power = reader.u8()?;
+            let weight = reader.u8()?;
+            let damage = reader.u8()?;
+            let shape = match reader.u8()? {
+                0 => NativeDynamicColliderShape::Unknown,
+                1 => NativeDynamicColliderShape::Sphere,
+                2 => NativeDynamicColliderShape::Cylinder,
+                _ => {
+                    return Err(NativeEpisodeShardError::new(
+                        "invalid dynamic-collider shape",
+                    ));
+                }
+            };
+            let center = reader.f32x3()?;
+            let radius = reader.f32()?;
+            let height = reader.f32()?;
+            let aabb_min = reader.f32x3()?;
+            let aabb_max = reader.f32x3()?;
+            let correction = reader.f32x3()?;
+            let shape_present = collider_flags & (1 << 2) != 0;
+            if !shape_present
+                && (shape != NativeDynamicColliderShape::Unknown
+                    || center != [0.0; 3]
+                    || radius != 0.0
+                    || height != 0.0
+                    || aabb_min != [0.0; 3]
+                    || aabb_max != [0.0; 3])
+            {
+                return Err(NativeEpisodeShardError::new(
+                    "absent dynamic-collider shape has a payload",
+                ));
+            }
+            let status_present = collider_flags & (1 << 1) != 0;
+            if !status_present && (weight != 0 || damage != 0 || correction != [0.0; 3]) {
+                return Err(NativeEpisodeShardError::new(
+                    "absent dynamic-collider status has a payload",
+                ));
+            }
+            colliders.push(NativeDynamicColliderObservation {
+                registration_index,
+                owner_runtime_generation,
+                attack_hit_owner_runtime_generation,
+                target_hit_owner_runtime_generation,
+                correction_hit_owner_runtime_generation,
+                status_present,
+                shape_present,
+                attack_set: collider_flags & (1 << 3) != 0,
+                target_set: collider_flags & (1 << 4) != 0,
+                correction_set: collider_flags & (1 << 5) != 0,
+                attack_hit: collider_flags & (1 << 6) != 0,
+                target_hit: collider_flags & (1 << 7) != 0,
+                correction_hit: collider_flags & (1 << 8) != 0,
+                shape,
+                attack_type,
+                target_type,
+                attack_source_parameters,
+                attack_result_parameters,
+                target_source_parameters,
+                target_result_parameters,
+                correction_source_parameters,
+                correction_result_parameters,
+                attack_power,
+                weight,
+                damage,
+                center,
+                radius,
+                height,
+                aabb_min,
+                aabb_max,
+                correction,
+            });
+        }
+        (status, colliders)
+    } else {
+        (NativeChannelStatus::NotSampled, Vec::new())
+    };
     let flags_present = flags & (1 << 6) != 0;
     let event_flags = flags_present.then(|| reader.vec(822)).transpose()?;
     let temporary_flags = flags_present.then(|| reader.vec(185)).transpose()?;
@@ -2059,6 +2244,8 @@ fn decode_observation(
         grabbed_actor,
         goal,
         actors,
+        dynamic_colliders_status,
+        dynamic_colliders,
         event_flags,
         temporary_flags,
         temporary_event_bytes,
@@ -2278,6 +2465,10 @@ mod tests {
 
     fn golden_v7() -> &'static [u8] {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v7.dseps")
+    }
+
+    fn golden_v8() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v8.dseps")
     }
 
     #[test]
@@ -2620,6 +2811,54 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v8_complete_dynamic_collision_set() {
+        let shard = NativeEpisodeShard::decode(golden_v8()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V8
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            assert_eq!(
+                observation.dynamic_colliders_status,
+                NativeChannelStatus::Present
+            );
+            assert_eq!(observation.dynamic_colliders.len(), 1);
+            let collider = &observation.dynamic_colliders[0];
+            assert_eq!(collider.registration_index, 0);
+            assert_eq!(collider.owner_runtime_generation, Some(7));
+            assert_eq!(collider.attack_hit_owner_runtime_generation, Some(9));
+            assert_eq!(collider.target_hit_owner_runtime_generation, None);
+            assert!(collider.status_present);
+            assert!(collider.shape_present);
+            assert!(collider.attack_set && collider.target_set && collider.correction_set);
+            assert!(collider.attack_hit && !collider.target_hit && !collider.correction_hit);
+            assert_eq!(collider.shape, NativeDynamicColliderShape::Cylinder);
+            assert_eq!(collider.attack_type, 0x20);
+            assert_eq!(collider.target_type, 0xd8fbfdff);
+            assert_eq!(collider.attack_source_parameters, 0x101);
+            assert_eq!(collider.attack_result_parameters, 0x202);
+            assert_eq!(collider.target_source_parameters, 0x303);
+            assert_eq!(collider.target_result_parameters, 0x404);
+            assert_eq!(collider.correction_source_parameters, 0x505);
+            assert_eq!(collider.correction_result_parameters, 0x606);
+            assert_eq!(collider.attack_power, 4);
+            assert_eq!(collider.weight, 120);
+            assert_eq!(collider.damage, 3);
+            assert_eq!(collider.center, [12.5, 2.0, -8.0]);
+            assert_eq!(collider.radius, 35.0);
+            assert_eq!(collider.height, 80.0);
+            assert_eq!(collider.aabb_min, [-22.5, 2.0, -43.0]);
+            assert_eq!(collider.aabb_max, [47.5, 82.0, 27.0]);
+            assert_eq!(collider.correction, [0.25, 0.0, -0.5]);
+        }
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -2741,6 +2980,7 @@ mod tests {
                             LEARNING_OBSERVATION_SCHEMA_V5
                                 | LEARNING_OBSERVATION_SCHEMA_V6
                                 | LEARNING_OBSERVATION_SCHEMA_V7
+                                | LEARNING_OBSERVATION_SCHEMA_V8
                         ) || [&step.pre_input, &step.post_simulation].iter().all(
                             |observation| {
                                 observation
@@ -2775,6 +3015,7 @@ mod tests {
                 | LEARNING_OBSERVATION_SCHEMA_V5
                 | LEARNING_OBSERVATION_SCHEMA_V6
                 | LEARNING_OBSERVATION_SCHEMA_V7
+                | LEARNING_OBSERVATION_SCHEMA_V8
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode

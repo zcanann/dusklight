@@ -13,7 +13,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V1: &str = "dusklight-native-corpus-inspection/v1";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V2: &str = "dusklight-native-corpus-inspection/v2";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -95,6 +95,7 @@ pub struct NativeCorpusInspection {
     pub actor_set_sizes: SetSizeSummary,
     pub rng_stream_set_sizes: SetSizeSummary,
     pub collision_surface_set_sizes: SetSizeSummary,
+    pub dynamic_collider_set_sizes: SetSizeSummary,
     pub unique_actor_types: usize,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -382,6 +383,10 @@ fn observation_constants(observation: &NativeLearningObservation) -> Vec<(&'stat
                 .map_or(0, |surfaces| surfaces.surfaces.len())
                 .to_string(),
         ),
+        (
+            "dynamic_collider_count",
+            observation.dynamic_colliders.len().to_string(),
+        ),
         ("goal_configured", observation.goal.configured.to_string()),
         ("goal_reached", observation.goal.reached.to_string()),
         ("goal_hit_count", observation.goal.hit_count.to_string()),
@@ -407,6 +412,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut actor_sizes = SetAccumulator::default();
     let mut rng_sizes = SetAccumulator::default();
     let mut surface_sizes = SetAccumulator::default();
+    let mut dynamic_collider_sizes = SetAccumulator::default();
     let mut identities = BTreeMap::<String, IdentityValues>::new();
     let mut episode_count = 0_u64;
     let mut success_count = 0_u64;
@@ -528,6 +534,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                             observation.player_collision_surfaces_status,
                         ),
                         ("scene_exit", observation.scene_exit_status),
+                        ("dynamic_colliders", observation.dynamic_colliders_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -536,6 +543,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         .as_ref()
                         .map_or(0, |surfaces| surfaces.surfaces.len());
                     surface_sizes.push(surface_count);
+                    dynamic_collider_sizes.push(observation.dynamic_colliders.len());
                     for (name, values) in [
                         ("event_flags", observation.event_flags.as_deref()),
                         ("temporary_flags", observation.temporary_flags.as_deref()),
@@ -644,7 +652,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V1.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V2.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -666,6 +674,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         actor_set_sizes: actor_sizes.finish(),
         rng_stream_set_sizes: rng_sizes.finish(),
         collision_surface_set_sizes: surface_sizes.finish(),
+        dynamic_collider_set_sizes: dynamic_collider_sizes.finish(),
         unique_actor_types: actor_types.len(),
         channel_coverage,
         missing_mask_counts,

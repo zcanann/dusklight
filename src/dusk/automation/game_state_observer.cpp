@@ -180,6 +180,104 @@ int capture_milestone_actor(void* candidate, void* context) {
     return 1;
 }
 
+std::pair<bool, std::uint32_t> collider_owner(cCcD_Obj* collider) {
+    fopAc_ac_c* actor = collider == nullptr ? nullptr : collider->GetAc();
+    return actor == nullptr
+               ? std::pair{false, std::uint32_t{0xffffffff}}
+               : std::pair{true, static_cast<std::uint32_t>(fopAcM_GetID(actor))};
+}
+
+void capture_dynamic_colliders(MilestoneObservationStorage& storage, const bool gameplayPresent) {
+    storage.dynamicColliders.clear();
+    if (!gameplayPresent) return;
+
+    // cCcS::Move retains the processed object pointers and their count in
+    // field_0x2812 after clearing the registration counters. Reading that
+    // retained set gives both observation phases the most recently completed
+    // collision pass without invoking collision code or mutating game state.
+    cCcS* collision = dComIfG_Ccsp();
+    const std::size_t count = collision->field_0x2812;
+    if (count > std::size(collision->mpObj)) return;
+    storage.dynamicColliders.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        cCcD_Obj* object = collision->mpObj[index];
+        if (object == nullptr) {
+            storage.dynamicColliders.clear();
+            return;
+        }
+
+        const auto [ownerPresent, ownerRuntimeGeneration] = collider_owner(object);
+        const bool attackHit = object->ChkAtHit() != 0;
+        const bool targetHit = object->ChkTgHit() != 0;
+        const bool correctionHit = object->ChkCoHit() != 0;
+        const auto [attackHitOwnerPresent, attackHitOwnerRuntimeGeneration] =
+            attackHit ? collider_owner(object->GetAtHitObj())
+                      : std::pair{false, std::uint32_t{0xffffffff}};
+        const auto [targetHitOwnerPresent, targetHitOwnerRuntimeGeneration] =
+            targetHit ? collider_owner(object->GetTgHitObj())
+                      : std::pair{false, std::uint32_t{0xffffffff}};
+        const auto [correctionHitOwnerPresent, correctionHitOwnerRuntimeGeneration] =
+            correctionHit ? collider_owner(object->GetCoHitObj())
+                          : std::pair{false, std::uint32_t{0xffffffff}};
+        cCcD_Stts* status = object->GetStts();
+        cCcD_ShapeAttr* shape = object->GetShapeAttr();
+        cCcD_ShapeAttr::Shape shapeAccess{};
+        if (shape != nullptr) shape->getShapeAccess(&shapeAccess);
+        const auto shapeKind = shape == nullptr || shapeAccess._0 == 2
+                                   ? MilestoneObservation::DynamicColliderShape::Unknown
+                               : shapeAccess._0 == 0
+                                   ? MilestoneObservation::DynamicColliderShape::Sphere
+                                   : MilestoneObservation::DynamicColliderShape::Cylinder;
+        const cXyz correction = status == nullptr ? cXyz::Zero : *status->GetCCMoveP();
+        const cM3dGAab* aabb = shape == nullptr ? nullptr : &shape->GetWorkAab();
+        storage.dynamicColliders.push_back({
+            .registrationIndex = static_cast<std::uint16_t>(index),
+            .ownerRuntimeGeneration = ownerRuntimeGeneration,
+            .attackHitOwnerRuntimeGeneration = attackHitOwnerRuntimeGeneration,
+            .targetHitOwnerRuntimeGeneration = targetHitOwnerRuntimeGeneration,
+            .correctionHitOwnerRuntimeGeneration = correctionHitOwnerRuntimeGeneration,
+            .ownerPresent = ownerPresent,
+            .statusPresent = status != nullptr,
+            .shapePresent = shape != nullptr,
+            .attackSet = object->ChkAtSet() != 0,
+            .targetSet = object->ChkTgSet() != 0,
+            .correctionSet = object->ChkCoSet() != 0,
+            .attackHit = attackHit,
+            .targetHit = targetHit,
+            .correctionHit = correctionHit,
+            .attackHitOwnerPresent = attackHitOwnerPresent,
+            .targetHitOwnerPresent = targetHitOwnerPresent,
+            .correctionHitOwnerPresent = correctionHitOwnerPresent,
+            .shape = shapeKind,
+            .attackType = object->GetAtType(),
+            .targetType = static_cast<std::uint32_t>(object->GetTgType()),
+            .attackSourceParameters = static_cast<std::uint32_t>(object->GetObjAt().getSPrm()),
+            .attackResultParameters = static_cast<std::uint32_t>(object->GetObjAt().getRPrm()),
+            .targetSourceParameters = static_cast<std::uint32_t>(object->GetObjTg().getSPrm()),
+            .targetResultParameters = static_cast<std::uint32_t>(object->GetObjTg().getRPrm()),
+            .correctionSourceParameters = static_cast<std::uint32_t>(object->GetObjCo().getSPrm()),
+            .correctionResultParameters = static_cast<std::uint32_t>(object->GetObjCo().getRPrm()),
+            .attackPower = object->GetAtAtp(),
+            .weight = status == nullptr ? std::uint8_t{0} : status->GetWeightUc(),
+            .damage = status == nullptr ? std::uint8_t{0} : status->GetDmg(),
+            .centerX = shape == nullptr ? 0.0F : shapeAccess._4.x,
+            .centerY = shape == nullptr ? 0.0F : shapeAccess._4.y,
+            .centerZ = shape == nullptr ? 0.0F : shapeAccess._4.z,
+            .radius = shape == nullptr ? 0.0F : shapeAccess._10,
+            .height = shape == nullptr ? 0.0F : shapeAccess._14,
+            .aabbMinX = aabb == nullptr ? 0.0F : aabb->GetMinX(),
+            .aabbMinY = aabb == nullptr ? 0.0F : aabb->GetMinY(),
+            .aabbMinZ = aabb == nullptr ? 0.0F : aabb->GetMinZ(),
+            .aabbMaxX = aabb == nullptr ? 0.0F : aabb->GetMaxX(),
+            .aabbMaxY = aabb == nullptr ? 0.0F : aabb->GetMaxY(),
+            .aabbMaxZ = aabb == nullptr ? 0.0F : aabb->GetMaxZ(),
+            .correctionX = correction.x,
+            .correctionY = correction.y,
+            .correctionZ = correction.z,
+        });
+    }
+}
+
 }  // namespace
 
 bool game_state_observers_enabled() {
@@ -363,6 +461,12 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     observation.actors = storage.actors;
     observation.actorObservedCount = storage.actorObservedCount;
     observation.actorsTruncated = false;
+
+    capture_dynamic_colliders(storage, player != nullptr);
+    observation.dynamicColliders = storage.dynamicColliders;
+    observation.dynamicCollidersPresent = player != nullptr &&
+        storage.dynamicColliders.size() == dComIfG_Ccsp()->field_0x2812;
+    observation.dynamicCollidersTruncated = false;
 
     for (std::size_t index = 0; index < storage.eventFlags.size(); ++index) {
         storage.eventFlags[index] = static_cast<std::uint8_t>(

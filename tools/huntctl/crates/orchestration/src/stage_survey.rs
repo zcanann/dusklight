@@ -166,6 +166,7 @@ struct ActorCatalogSummary {
     retained_actor_count: u32,
     truncated: bool,
     learning_actor_population: LearningActorPopulationSummary,
+    learning_dynamic_collision_population: LearningDynamicCollisionPopulationSummary,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +175,15 @@ struct LearningActorPopulationSummary {
     observed_actor_count: u32,
     retained_actor_count: u32,
     truncated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct LearningDynamicCollisionPopulationSummary {
+    source_schema: String,
+    present: bool,
+    retained_collider_count: u32,
+    truncated: bool,
+    colliders: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -720,7 +730,7 @@ fn validate_successful_probe(
     let actor_catalog: ActorCatalogSummary =
         serde_json::from_slice(&actor_bytes).map_err(|_| "actor_catalog_decode_failed")?;
     let final_observation = decoded.records.last().ok_or("trace_empty")?;
-    if actor_catalog.schema != "dusklight.actor-catalog.v3"
+    if actor_catalog.schema != "dusklight.actor-catalog.v4"
         || actor_catalog.simulation_tick != final_observation.simulation_tick
         || actor_catalog.stage != final_observation.stage_name
         || actor_catalog.room != final_observation.room
@@ -728,12 +738,31 @@ fn validate_successful_probe(
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
         || actor_catalog.learning_actor_population.source_schema
-            != "dusklight-learning-observation/v7"
+            != "dusklight-learning-observation/v8"
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
         || actor_catalog.learning_actor_population.retained_actor_count
             != actor_catalog.retained_actor_count
+        || actor_catalog
+            .learning_dynamic_collision_population
+            .source_schema
+            != "dusklight-learning-observation/v8"
+        || !actor_catalog.learning_dynamic_collision_population.present
+        || actor_catalog
+            .learning_dynamic_collision_population
+            .truncated
+        || actor_catalog
+            .learning_dynamic_collision_population
+            .retained_collider_count
+            > 0x500
+        || actor_catalog
+            .learning_dynamic_collision_population
+            .retained_collider_count as usize
+            != actor_catalog
+                .learning_dynamic_collision_population
+                .colliders
+                .len()
     {
         return Err("actor_catalog_incomplete");
     }

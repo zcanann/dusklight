@@ -45,6 +45,7 @@ std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
 
 struct ObservationFixture {
     std::array<MilestoneObservation::Actor, 1> actors{};
+    std::array<MilestoneObservation::DynamicCollider, 1> dynamicColliders{};
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryEventByteCount> temporaryEventBytes{};
@@ -127,6 +128,44 @@ struct ObservationFixture {
                 .index = 2,
             },
         };
+        dynamicColliders[0] = {
+            .registrationIndex = 0,
+            .ownerRuntimeGeneration = 7,
+            .attackHitOwnerRuntimeGeneration = 9,
+            .ownerPresent = true,
+            .statusPresent = true,
+            .shapePresent = true,
+            .attackSet = true,
+            .targetSet = true,
+            .correctionSet = true,
+            .attackHit = true,
+            .attackHitOwnerPresent = true,
+            .shape = MilestoneObservation::DynamicColliderShape::Cylinder,
+            .attackType = 0x20,
+            .targetType = 0xd8fbfdff,
+            .attackSourceParameters = 0x101,
+            .attackResultParameters = 0x202,
+            .targetSourceParameters = 0x303,
+            .targetResultParameters = 0x404,
+            .correctionSourceParameters = 0x505,
+            .correctionResultParameters = 0x606,
+            .attackPower = 4,
+            .weight = 120,
+            .damage = 3,
+            .centerX = 12.5F,
+            .centerY = 2.0F,
+            .centerZ = -8.0F,
+            .radius = 35.0F,
+            .height = 80.0F,
+            .aabbMinX = -22.5F,
+            .aabbMinY = 2.0F,
+            .aabbMinZ = -43.0F,
+            .aabbMaxX = 47.5F,
+            .aabbMaxY = 82.0F,
+            .aabbMaxZ = 27.0F,
+            .correctionX = 0.25F,
+            .correctionZ = -0.5F,
+        };
         eventFlags[3] = 1;
         temporaryEventBytes[0] = 0x06;
         temporaryEventBytes[1] = 0xa5;
@@ -159,6 +198,8 @@ struct ObservationFixture {
         observation.rng.streams[1].id = GameRngStreamId::Secondary;
         observation.actors = actors;
         observation.actorObservedCount = 1;
+        observation.dynamicColliders = dynamicColliders;
+        observation.dynamicCollidersPresent = true;
         observation.flagsPresent = true;
         observation.eventFlags = eventFlags;
         observation.temporaryFlags = temporaryFlags;
