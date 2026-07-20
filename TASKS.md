@@ -70,6 +70,15 @@ the same goal without demonstration-relative features.
   event-byte and cold-boot observation plumbing. That is coverage evidence only;
   the fixture is not an active glitch target, successful setup, demonstration,
   or justification for specializing the learner around that interaction.
+- Learning-observation v9 adds a typed, read-only player-resource component:
+  health and capacities, currencies, time, ammunition, dungeon state,
+  inventory/equipment selection, bottle and bomb quantities, and stable
+  acquisition/collection bitsets. The checked native-writer/Rust-reader
+  fixture proves exact values and rejects presence disagreement. A neutral
+  16-entry D_MN01 survey emitted actor-catalog v5 and observation v9 for every
+  case, with the component present in all 16 and zero coverage rejections
+  (`1a16c1c4...d9bb274`). This is generic state collection, not a route,
+  reward, tactic, or gameplay write.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
@@ -163,7 +172,7 @@ them is learner work.
     complete read-only population: process/actor type, condition and lifecycle
     phase, room history, pause/cull/demo/carry state, heap/model/joint-collision
     presence, old/current/home/eye transforms, scale, gravity and fall speed.
-    Learning observation v7 (retained by current v8) is decoded into actor view
+    Learning observation v7 (retained by current v9) is decoded into actor view
     v4 with explicit
     `None` for pre-v7 recordings rather than fabricated zeroes. Actor-catalog
     v4 independently captures and bit-compares the same fields. A fresh
@@ -180,7 +189,8 @@ them is learner work.
     identity, owning actor, attack/target/correction enable and hit state, hit
     partner owners, raw type/source/result masks, attack power, weight, damage,
     correction vector, shape parameters and realized AABB. Learning observation
-    v8 and the cross-language fixture fail closed on noncanonical ordering,
+    v8 (retained unchanged by v9) and the cross-language fixture fail closed on
+    noncanonical ordering,
     presence/payload disagreement and nonfinite geometry. A generic 16-entry
     D_MN01 survey retained 1,031 owner-joined bodies (0-91 per entry), comprising
     500 spheres, 529 cylinders and two explicitly unknown shapes, with no
@@ -190,6 +200,15 @@ them is learner work.
 - [ ] Audit player, camera, inventory, timers, RNG, loading and other global
   channels across maps and forms. Record explicit missingness and phase rather
   than treating zero as unavailable.
+  - [x] Capture player resources and inventory as a typed semantic component,
+    rather than a raw save-memory dump: health/capacities, currencies, time,
+    ammunition, dungeon possessions, inventory/equipment selections, bottle
+    and bomb quantities, and acquisition/collection bitsets. Observation v9,
+    corpus-inspection v3 and actor-catalog v5 preserve explicit channel status,
+    canonicalize unavailable payloads, and reject disagreement with player
+    presence. A neutral eight-client D_MN01 batch verified all 16/16 entries
+    with zero rejected cases in sealed report `1a16c1c4...d9bb274`. The parent
+    remains open for timers, loading state and cross-map/form variation.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
@@ -213,10 +232,14 @@ them is learner work.
   Location/platform/region tags are explicitly excluded as mechanism evidence,
   and page bodies are structurally unavailable to the classifier so published
   input sequences cannot leak into this artifact.
-- [ ] Deep-read a representative spread within each mechanism, stopping once
+- [x] Deep-read a representative spread within each mechanism, stopping once
   the learner-facing requirements are identified. Do not reproduce the
   glitches, create setup tapes, or encode their published steps as tactics.
-- [ ] For each studied glitch, ask only what a learner would require:
+  The revision-bound review covers 20 pages across collision, actor
+  interaction, targeting/items, events/loading, timers and lifecycle/capacity;
+  only its controlled capability findings appear in
+  `docs/glitch-hunting/learner-readiness-audit.md`.
+- [x] For each studied glitch, ask only what a learner would require:
   - which ordinary controller actions must be expressible;
   - which pre-action state could contain useful signal;
   - which temporal history, actor relationships, collision relationships or
@@ -225,16 +248,19 @@ them is learner work.
     could prove success without encoding the technique;
   - whether the result could ultimately be proven by an exact cold-replayed
     input tape.
-- [ ] Classify each case as sufficiently observable/action-expressible, missing
+- [x] Classify each case as sufficiently observable/action-expressible, missing
   observations, missing action authority, missing a proof oracle, or outside
   the current deterministic model. This is a learner-readiness classification,
   not a claim that we know how to trigger it.
 - [ ] Turn discovered gaps into stable universal channels or explicitly typed
   optional extensions. A map- or boss-specific extension must remain masked
   elsewhere and must not reorder or invalidate the cross-map schema.
-- [ ] Produce a learner-readiness matrix linking mechanism requirements to
+- [x] Produce a learner-readiness matrix linking mechanism requirements to
   captured channels, actions and proof oracles. Do not select a specific
-  Skybook glitch as an optimization target until this audit is reviewed.
+  Skybook glitch as an optimization target until this audit is reviewed. The
+  current matrix intentionally classifies all 20 representative cases as
+  missing observations: exact PAD authority exists, while the missing typed
+  state/history prevents a defensible claim of learner readiness.
 
 **Gate 0:** we can quantify what the learner receives at every bootable world
 entry and explain, across representative Skybook mechanisms, whether the
@@ -263,6 +289,9 @@ human-authored successful setup.
   padding and host-only implementation state are not observation features.
   - [x] Link motion, facing, action/animation phase, timers, form and relevant
     status;
+  - [x] typed player resources, inventory/equipment selections, ammunition,
+    dungeon possessions and stable acquisition/collection bitsets, with
+    explicit presence rather than fabricated zeroes;
   - [x] recent controls and camera state;
   - [x] realized background-collision contacts, surface/polygon identity,
     backing metadata and resolved planes/normals;
