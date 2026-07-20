@@ -9,6 +9,7 @@ pub mod continuous_search;
 pub mod motion_path_golf;
 pub mod option_golf;
 pub mod search;
+pub mod suffix_batch;
 
 // Keep module-local paths stable while their owners remain explicit external
 // crates in this manifest.

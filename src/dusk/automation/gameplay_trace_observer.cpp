@@ -359,6 +359,30 @@ bool gameplay_trace_observer_enabled() {
 #endif
 }
 
+GameplayCollisionCorrectionObservation capture_gameplay_collision_correction() {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    const fopAc_ac_c* player = dComIfGp_getPlayer(0);
+    if (player == nullptr || fopAcM_GetName(player) != fpcNm_ALINK_e)
+        return {};
+    const auto* link = static_cast<const daAlink_c*>(player);
+    const cXyz* oldPosition = GameplayTraceCollisionReadAdapter::oldPosition(link->mLinkAcch);
+    if (oldPosition == nullptr || !finite_xyz(*oldPosition) || !finite_xyz(link->current.pos) ||
+        !std::isfinite(link->speed.x) || !std::isfinite(link->speed.z))
+    {
+        return {};
+    }
+    const float resolvedX = link->current.pos.x - oldPosition->x;
+    const float resolvedZ = link->current.pos.z - oldPosition->z;
+    return {
+        .present = true,
+        .x = resolvedX - link->speed.x,
+        .z = resolvedZ - link->speed.z,
+    };
+#else
+    return {};
+#endif
+}
+
 void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationContext& context) {
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     auto& recorder = gameplay_trace_recorder();

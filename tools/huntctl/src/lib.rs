@@ -27,7 +27,7 @@ pub use dusklight_proposals::behavior_archive;
 pub use dusklight_route_workbench as route_workbench;
 pub use dusklight_routes::{route_store, timeline};
 pub use dusklight_search::{
-    bayesian_search, continuous_search, motion_path_golf, option_golf, search,
+    bayesian_search, continuous_search, motion_path_golf, option_golf, search, suffix_batch,
 };
 pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_throughput_benchmark as throughput_benchmark;

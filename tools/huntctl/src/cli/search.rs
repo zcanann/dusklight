@@ -29,6 +29,7 @@ use huntctl::search_evaluator::{
     run_bayesian_search, run_beam_search, run_continuous_search, run_proposer_tournament,
     run_search,
 };
+use huntctl::suffix_batch::{SuffixProposalMethod, propose_suffix_batch};
 use huntctl::tape::InputTape;
 use serde_json::{Value, json};
 use std::error::Error;
@@ -89,6 +90,44 @@ fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("suffix-batch") => {
+            let search_args = &args[1..];
+            let candidate_path = required_path(search_args, "--candidate")?;
+            let output = required_path(search_args, "--output")?;
+            let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
+            let method = match option(search_args, "--method")
+                .ok_or("missing required --method deletion|button-edge|heading")?
+                .as_str()
+            {
+                "deletion" => SuffixProposalMethod::Deletion,
+                "button-edge" => SuffixProposalMethod::ButtonEdge,
+                "heading" => SuffixProposalMethod::Heading,
+                value => return Err(format!("unknown suffix proposal method {value:?}").into()),
+            };
+            let batch = propose_suffix_batch(
+                &candidate,
+                usize_option(search_args, "--source-frame", 440)?,
+                usize_option(search_args, "--maximum-ticks", 125)?,
+                usize_option(search_args, "--candidate-budget", 126)?,
+                method,
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&batch)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!(
+                "wrote {} native suffix candidates ({} ticks each) to {}",
+                batch.candidates.len(),
+                batch.maximum_ticks,
+                output.display()
+            );
+            Ok(())
+        }
         Some("candidate-from-tape") => {
             if args.len() < 2 {
                 return usage_error();

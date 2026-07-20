@@ -1,6 +1,7 @@
 #include "dusk/automation/suffix_batch_runner.hpp"
 
 #include "dusk/automation/io_mode.hpp"
+#include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
 
 #include <chrono>
@@ -253,6 +254,11 @@ void SuffixBatchRunner::finishCandidate(
     terminal.nextStage = observation.nextStageName;
     terminal.nextRoom = observation.nextRoom;
     terminal.nextPoint = observation.nextPoint;
+    const GameplayCollisionCorrectionObservation collision =
+        capture_gameplay_collision_correction();
+    terminal.collisionCorrectionPresent = collision.present;
+    terminal.collisionCorrectionX = collision.x;
+    terminal.collisionCorrectionZ = collision.z;
     terminal.previousInput = mConsumedPads.back();
     if (success) result.successfulConsumedPads = mConsumedPads;
 

@@ -16,7 +16,14 @@ struct GameplayTracePostSimulationContext {
     bool controllerFrameApplied = false;
 };
 
+struct GameplayCollisionCorrectionObservation {
+    bool present = false;
+    float x = 0.0F;
+    float z = 0.0F;
+};
+
 bool gameplay_trace_observer_enabled();
+GameplayCollisionCorrectionObservation capture_gameplay_collision_correction();
 void record_gameplay_trace_post_simulation(const GameplayTracePostSimulationContext& context);
 
 }  // namespace dusk::automation

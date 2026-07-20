@@ -197,7 +197,7 @@ fn print_usage() {
         "  huntctl search golf-boot --candidate FILE --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--workers N] [--repetitions N] [--resume]\n",
         "  huntctl search golf-option --plan ROLL.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--heading-step N] [--magnitude-step N] [--duration-step N] [--phase-step N] [--button-step N] [--cancellation-step N]\n",
         "  huntctl search golf-path --plan PATH.json --execution EXECUTION.json --tape INPUT.tape --output PROPOSALS.json [--cancellation-tick N --condition-index N] [--point-step N] [--duration-step N] [--phase-step N] [--cancellation-step N]\n",
-        "  huntctl search candidate-from-tape --input INPUT.tape --output CANDIDATE.json --segment ID [--start N] [--frames N] [--normalize-port-one]"
+        "  huntctl search candidate-from-tape --input INPUT.tape --output CANDIDATE.json --segment ID [--start N] [--frames N] [--normalize-port-one]\n  huntctl search suffix-batch --candidate CANDIDATE.json --output BATCH.json --method deletion|button-edge|heading [--source-frame N] [--maximum-ticks N] [--candidate-budget N]"
     ));
     eprintln!(
         "  huntctl search run-route --timeline FILE --lineage NAME --segment TIMELINE_SEGMENT [--source-goal GOAL] [--progress-goal GOAL ...] [--goal GOAL] [--candidate FILE] --output DIR (--run-request REQUEST.json [--repository-root DIR] | --game PATH --dvd PATH) [--generations N] [--size N] [--elites N] [--workers N] [--repetitions N]"
