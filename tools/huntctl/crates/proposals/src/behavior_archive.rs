@@ -7,6 +7,9 @@
 use crate::q_search::QEpisode;
 use crate::search::LexicographicScore;
 use crate::transition_corpus::TransitionCorpus;
+use crate::{
+    observation_view::movement_state_v2_spec, offline_rl::movement_feature_schema_digest_v1,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
@@ -14,6 +17,53 @@ use std::fmt;
 
 pub const MAX_BEHAVIOR_ARCHIVE_ENTRIES: usize = 256;
 const POSITION_BIN_WORLD_UNITS: f32 = 256.0;
+
+#[derive(Clone, Copy)]
+struct MovementFeatureLayout {
+    position: [usize; 3],
+    procedure: usize,
+    exit_present: usize,
+    exit_distance: usize,
+}
+
+fn movement_feature_layout(
+    corpus: &TransitionCorpus,
+) -> Result<MovementFeatureLayout, BehaviorArchiveError> {
+    let v2 = movement_state_v2_spec();
+    let v2_digest = v2
+        .digest()
+        .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+    if corpus.feature_schema == v2_digest {
+        let index = |name: &str| {
+            v2.feature_index(name).ok_or_else(|| {
+                BehaviorArchiveError::new(format!(
+                    "movement observation is missing required feature {name:?}"
+                ))
+            })
+        };
+        return Ok(MovementFeatureLayout {
+            position: [
+                index("player.position_x")?,
+                index("player.position_y")?,
+                index("player.position_z")?,
+            ],
+            procedure: index("player.procedure")?,
+            exit_present: index("scene_exit.present")?,
+            exit_distance: index("scene_exit.signed_distance")?,
+        });
+    }
+    if corpus.feature_schema == movement_feature_schema_digest_v1() {
+        return Ok(MovementFeatureLayout {
+            position: [17, 18, 19],
+            procedure: 16,
+            exit_present: 41,
+            exit_distance: 46,
+        });
+    }
+    Err(BehaviorArchiveError::new(
+        "behavior descriptor received an unknown movement feature schema",
+    ))
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BehaviorContext {
@@ -255,11 +305,12 @@ pub fn describe_behavior_with_context(
     corpus
         .validate()
         .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
-    if corpus.feature_count < 49 || corpus.transitions.is_empty() {
+    if corpus.transitions.is_empty() {
         return Err(BehaviorArchiveError::new(
             "behavior descriptors require a nonempty movement-state corpus",
         ));
     }
+    let layout = movement_feature_layout(corpus)?;
     validate_context(context)?;
     let midpoint = &corpus.transitions[corpus.transitions.len() / 2].next_state;
     let terminal_transition = corpus.transitions.last().expect("nonempty was checked");
@@ -274,7 +325,7 @@ pub fn describe_behavior_with_context(
     let mut previous_procedure = None;
     let mut previous_route_bin = None;
     for transition in &corpus.transitions {
-        let route_bin = position_bin(&transition.next_state);
+        let route_bin = position_bin(&transition.next_state, layout);
         if previous_route_bin != Some(route_bin) {
             for coordinate in route_bin {
                 route_signature ^= coordinate as u32 as u64;
@@ -283,11 +334,14 @@ pub fn describe_behavior_with_context(
             previous_route_bin = Some(route_bin);
         }
         for state in [&transition.state, &transition.next_state] {
-            if state[41] == 1.0 {
-                closest_exit =
-                    Some(closest_exit.map_or(state[46], |distance| distance.min(state[46])));
+            if state[layout.exit_present] == 1.0 {
+                closest_exit = Some(
+                    closest_exit.map_or(state[layout.exit_distance], |distance| {
+                        distance.min(state[layout.exit_distance])
+                    }),
+                );
             }
-            let procedure = state[16].round() as i32;
+            let procedure = state[layout.procedure].round() as i32;
             if previous_procedure != Some(procedure) {
                 signature ^= procedure as u32 as u64;
                 signature = signature.wrapping_mul(0x100000001b3);
@@ -310,9 +364,9 @@ pub fn describe_behavior_with_context(
         terminal_stage: stage,
         terminal_room: terminal[8].round() as i16,
         terminal_layer: terminal[9].round() as i16,
-        terminal_player_procedure: terminal[16].round() as i32,
-        midpoint_position_bin: position_bin(midpoint),
-        terminal_position_bin: position_bin(terminal),
+        terminal_player_procedure: terminal[layout.procedure].round() as i32,
+        midpoint_position_bin: position_bin(midpoint, layout),
+        terminal_position_bin: position_bin(terminal, layout),
         closest_exit_distance_bin: closest_exit
             .map_or(-1, |distance| (distance * 8192.0 / 128.0).round() as i32),
         route_signature,
@@ -349,12 +403,10 @@ fn validate_context(context: &BehaviorContext) -> Result<(), BehaviorArchiveErro
     Ok(())
 }
 
-fn position_bin(state: &[f32]) -> [i32; 3] {
-    [
-        (state[17] * 8192.0 / POSITION_BIN_WORLD_UNITS).round() as i32,
-        (state[18] * 8192.0 / POSITION_BIN_WORLD_UNITS).round() as i32,
-        (state[19] * 8192.0 / POSITION_BIN_WORLD_UNITS).round() as i32,
-    ]
+fn position_bin(state: &[f32], layout: MovementFeatureLayout) -> [i32; 3] {
+    layout
+        .position
+        .map(|index| (state[index] * 8192.0 / POSITION_BIN_WORLD_UNITS).round() as i32)
 }
 
 fn novelty(

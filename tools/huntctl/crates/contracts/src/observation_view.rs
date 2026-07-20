@@ -226,6 +226,16 @@ impl ObservationSpec {
         self.features.len() as u32
     }
 
+    /// Resolve a feature by its stable semantic name rather than by its
+    /// current serialized position. Consumers which interpret observation
+    /// vectors must use this lookup: adding a feature to a versioned view
+    /// must not silently make an old numeric offset mean something else.
+    pub fn feature_index(&self, name: &str) -> Option<usize> {
+        self.features
+            .iter()
+            .position(|feature| feature.name == name)
+    }
+
     pub fn categorical_features(&self) -> Vec<usize> {
         self.features
             .iter()

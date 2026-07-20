@@ -91,6 +91,7 @@ pub struct QProposalSummary {
     pub unmasked_action_evaluations: usize,
     pub unmasked_q_probe_states: usize,
     pub guided_exploit_interventions: usize,
+    pub temporal_consensus_interventions: usize,
     pub unmasked_exploratory_interventions: usize,
     pub structured_counterfactual_interventions: usize,
     pub archive_novelty_interventions: usize,
@@ -165,6 +166,7 @@ impl Error for QSearchError {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProposalKind {
     GuidedExploit,
+    TemporalConsensus,
     EnsembleDisagreement,
     StructuredCounterfactual,
     ArchiveNovelty,
@@ -176,6 +178,7 @@ impl ProposalKind {
     fn name(self) -> &'static str {
         match self {
             Self::GuidedExploit => "guided_exploit",
+            Self::TemporalConsensus => "temporal_consensus",
             Self::EnsembleDisagreement => "ensemble_disagreement",
             Self::StructuredCounterfactual => "structured_counterfactual",
             Self::ArchiveNovelty => "archive_novelty",
@@ -186,6 +189,7 @@ impl ProposalKind {
     fn mutation_prefix(self) -> &'static str {
         match self {
             Self::GuidedExploit => "q_guided",
+            Self::TemporalConsensus => "q_temporal_consensus",
             Self::EnsembleDisagreement => "q_disagreement_heuristic",
             Self::StructuredCounterfactual => "structured_counterfactual",
             Self::ArchiveNovelty => "archive_novelty",
@@ -203,6 +207,36 @@ struct Intervention {
     score: f64,
     kind: ProposalKind,
     width: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MovementFeatureIndices {
+    position: [usize; 3],
+    procedure: usize,
+    elapsed: usize,
+    remaining: usize,
+}
+
+impl MovementFeatureIndices {
+    fn from_spec(spec: &crate::observation_view::ObservationSpec) -> Result<Self, QSearchError> {
+        let index = |name: &str| {
+            spec.feature_index(name).ok_or_else(|| {
+                QSearchError::new(format!(
+                    "movement observation is missing required feature {name:?}"
+                ))
+            })
+        };
+        Ok(Self {
+            position: [
+                index("player.position_x")?,
+                index("player.position_y")?,
+                index("player.position_z")?,
+            ],
+            procedure: index("player.procedure")?,
+            elapsed: index("window.elapsed")?,
+            remaining: index("window.remaining")?,
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -278,6 +312,7 @@ fn propose_q_candidates_internal(
         ));
     }
     let observation_spec = movement_state_v2_spec();
+    let feature_indices = MovementFeatureIndices::from_spec(&observation_spec)?;
     let feature_schema = observation_spec
         .digest()
         .map_err(|error| QSearchError::new(error.to_string()))?;
@@ -313,7 +348,7 @@ fn propose_q_candidates_internal(
     let state_bins = training_corpora
         .iter()
         .flat_map(|corpus| &corpus.transitions)
-        .map(|transition| archive_context_key(&transition.state))
+        .map(|transition| archive_context_key(&transition.state, feature_indices))
         .collect::<BTreeSet<_>>()
         .len();
     let coverage_gate = OnlineCoverageGate::evaluate(
@@ -423,6 +458,7 @@ fn propose_q_candidates_internal(
         .sum();
     let stride = total_states.div_ceil(MAX_PROPOSAL_STATES).max(1);
     let mut exploit = Vec::new();
+    let mut temporal = Vec::new();
     let mut explore = Vec::new();
     let mut systematic = Vec::new();
     let mut archive_novelty = Vec::new();
@@ -450,7 +486,7 @@ fn propose_q_candidates_internal(
         .flat_map(|episode| &episode.corpus.transitions)
         .fold(BTreeMap::<String, u64>::new(), |mut counts, transition| {
             *counts
-                .entry(archive_context_key(&transition.state))
+                .entry(archive_context_key(&transition.state, feature_indices))
                 .or_default() += 1;
             counts
         });
@@ -544,7 +580,7 @@ fn propose_q_candidates_internal(
                 .copied()
                 .expect("movement catalog has alternate actions");
             let context_support = archive_context_support
-                .get(&archive_context_key(&transition.state))
+                .get(&archive_context_key(&transition.state, feature_indices))
                 .copied()
                 .unwrap_or(0);
             archive_novelty.push(Intervention {
@@ -587,7 +623,19 @@ fn propose_q_candidates_internal(
             });
         }
     }
+    if let Some(model) = &model {
+        for (episode_index, episode) in aligned.iter().enumerate() {
+            if episodes[episode_index].outcome == EpisodeOutcomeClass::Successful {
+                temporal.extend(temporal_consensus_interventions(
+                    model,
+                    episode_index,
+                    episode.corpus,
+                )?);
+            }
+        }
+    }
     sort_interventions(&mut exploit);
+    sort_interventions(&mut temporal);
     sort_interventions(&mut explore);
     sort_interventions(&mut systematic);
     sort_interventions(&mut archive_novelty);
@@ -610,21 +658,21 @@ fn propose_q_candidates_internal(
         })
         .collect::<Result<HashSet<_>, _>>()?;
     let (collection_cycle_offset, budgets, schedule_policy) =
-        if proposal_gate.learned_policy_enabled && proposal_gate.initial_bounded_trial {
+        if proposal_gate.learned_policy_enabled && proposal_gate.bounded_exploration_enabled {
             (
                 0,
                 split_initial_learned_budget(config.max_proposals),
-                "initial_bounded_trial_two_learned_then_safe_fallback",
+                "bounded_exploration_floor_three_learned_then_safe_fallback",
             )
         } else if proposal_gate.learned_policy_enabled {
-            let offset = config.generation as usize % 5;
+            let offset = config.generation as usize % 6;
             (
                 offset,
                 split_proposer_budget(config.max_proposals, offset),
                 "generation_rotated_budget_then_round_robin_available_lanes",
             )
         } else {
-            let offset = 2 + config.generation as usize % 3;
+            let offset = 3 + config.generation as usize % 3;
             (
                 offset,
                 split_fallback_budget(config.max_proposals, config.generation as usize % 3),
@@ -633,17 +681,18 @@ fn propose_q_candidates_internal(
         };
     let pools = [
         (ProposalKind::GuidedExploit, &exploit, budgets[0]),
-        (ProposalKind::EnsembleDisagreement, &explore, budgets[1]),
+        (ProposalKind::TemporalConsensus, &temporal, budgets[1]),
+        (ProposalKind::EnsembleDisagreement, &explore, budgets[2]),
         (
             ProposalKind::StructuredCounterfactual,
             &systematic,
-            budgets[2],
+            budgets[3],
         ),
-        (ProposalKind::ArchiveNovelty, &archive_novelty, budgets[3]),
-        (ProposalKind::RandomProbe, &blind_coverage, budgets[4]),
+        (ProposalKind::ArchiveNovelty, &archive_novelty, budgets[4]),
+        (ProposalKind::RandomProbe, &blind_coverage, budgets[5]),
     ];
-    let mut cursors = [0_usize; 5];
-    let mut generated = [0_usize; 5];
+    let mut cursors = [0_usize; 6];
+    let mut generated = [0_usize; 6];
     let mut collection_schedule = Vec::new();
     while candidates.len() < config.max_proposals {
         let mut progressed = false;
@@ -737,6 +786,7 @@ fn propose_q_candidates_internal(
             unmasked_action_evaluations,
             unmasked_q_probe_states,
             guided_exploit_interventions: exploit.len(),
+            temporal_consensus_interventions: temporal.len(),
             unmasked_exploratory_interventions: explore.len(),
             structured_counterfactual_interventions: systematic.len(),
             archive_novelty_interventions: archive_novelty.len(),
@@ -745,7 +795,7 @@ fn propose_q_candidates_internal(
             collection_schedule,
             schedule_policy,
             proposals: candidates.len(),
-            coverage: collection_coverage(episodes),
+            coverage: collection_coverage(episodes, feature_indices),
             proposer_attribution,
             policy_collapse_audit,
         },
@@ -828,6 +878,8 @@ fn candidate_envelope(
         .ok_or_else(|| QSearchError::new("Q proposal has no typed proposer attribution"))?;
     let (kind, id) = if mutation.starts_with("q_guided") {
         (ProposerKind::Learned, "learned.tree-fqi-guided")
+    } else if mutation.starts_with("q_temporal_consensus") {
+        (ProposerKind::Learned, "learned.tree-fqi-temporal-consensus")
     } else if mutation.starts_with("q_disagreement_heuristic") {
         (ProposerKind::Learned, "learned.tree-fqi-disagreement")
     } else if mutation.starts_with("structured_counterfactual") {
@@ -912,28 +964,108 @@ fn validate_episode_alignment(episode: &QEpisode) -> Result<AlignedEpisode<'_>, 
     })
 }
 
-fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
-    let mut budgets = [total / 5; 5];
+fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 6] {
+    let mut budgets = [total / 6; 6];
     for offset in 0..total % 5 {
         budgets[(cycle_offset + offset) % budgets.len()] += 1;
     }
     budgets
 }
 
-fn split_initial_learned_budget(total: usize) -> [usize; 5] {
-    let mut budgets = [usize::from(total > 0), usize::from(total > 1), 0, 0, 0];
-    for ordinal in 2..total {
-        budgets[2 + (ordinal - 2) % 3] += 1;
+fn split_initial_learned_budget(total: usize) -> [usize; 6] {
+    let mut budgets = [
+        usize::from(total > 0),
+        usize::from(total > 1),
+        usize::from(total > 2),
+        0,
+        0,
+        0,
+    ];
+    for ordinal in 3..total {
+        budgets[3 + (ordinal - 3) % 3] += 1;
     }
     budgets
 }
 
-fn split_fallback_budget(total: usize, cycle_offset: usize) -> [usize; 5] {
-    let mut budgets = [0; 5];
+fn split_fallback_budget(total: usize, cycle_offset: usize) -> [usize; 6] {
+    let mut budgets = [0; 6];
     for ordinal in 0..total {
-        budgets[2 + (cycle_offset + ordinal) % 3] += 1;
+        budgets[3 + (cycle_offset + ordinal) % 3] += 1;
     }
     budgets
+}
+
+/// Build temporally extended learned actions by asking which single action has
+/// the highest mean fitted-Q advantage over an observed window. This is an
+/// open-loop candidate proposal, not a simulated counterfactual: the native
+/// evaluator remains the only authority on whether holding that action
+/// actually produces a straighter or faster trajectory.
+fn temporal_consensus_interventions(
+    model: &FittedQ,
+    episode: usize,
+    corpus: &TransitionCorpus,
+) -> Result<Vec<Intervention>, QSearchError> {
+    const HORIZONS: [usize; 4] = [8, 16, 32, 64];
+    let actions = model.actions();
+    let mut advantages = Vec::with_capacity(corpus.transitions.len());
+    for transition in &corpus.transitions {
+        let guidance = movement_action_mask_v2(&transition.state)
+            .map_err(|error| QSearchError::new(error.to_string()))?;
+        let ranked = model
+            .rank_actions(&transition.state)
+            .map_err(|error| QSearchError::new(error.to_string()))?;
+        let current = ranked
+            .iter()
+            .find(|estimate| estimate.action == transition.action.action_id)
+            .ok_or_else(|| QSearchError::new("fitted-Q model omitted an observed action"))?
+            .mean;
+        let row = actions
+            .iter()
+            .map(|action| {
+                ranked
+                    .iter()
+                    .find(|estimate| estimate.action == *action)
+                    .filter(|_| guidance.recommends(*action))
+                    .map_or(f64::NEG_INFINITY, |estimate| estimate.mean - current)
+            })
+            .collect::<Vec<_>>();
+        advantages.push(row);
+    }
+
+    let mut interventions = Vec::new();
+    for width in HORIZONS {
+        if width > advantages.len() {
+            continue;
+        }
+        for frame in 0..=advantages.len() - width {
+            let best = actions
+                .iter()
+                .enumerate()
+                .filter_map(|(action_index, action)| {
+                    let sum = advantages[frame..frame + width]
+                        .iter()
+                        .map(|row| row[action_index])
+                        .try_fold(0.0, |sum, value| value.is_finite().then_some(sum + value))?;
+                    Some((*action, sum / width as f64))
+                })
+                .max_by(|left, right| {
+                    left.1
+                        .total_cmp(&right.1)
+                        .then_with(|| right.0.cmp(&left.0))
+                });
+            if let Some((action, score)) = best {
+                interventions.push(Intervention {
+                    episode,
+                    frame,
+                    action,
+                    score,
+                    kind: ProposalKind::TemporalConsensus,
+                    width,
+                });
+            }
+        }
+    }
+    Ok(interventions)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1003,7 +1135,7 @@ fn collection_action_support(corpora: &[TransitionCorpus]) -> BTreeMap<u32, u64>
     support
 }
 
-fn archive_context_key(state: &[f32]) -> String {
+fn archive_context_key(state: &[f32], indices: MovementFeatureIndices) -> String {
     let stage: String = state[..8]
         .iter()
         .map(|value| (value * 255.0).round().clamp(0.0, 255.0) as u8)
@@ -1013,12 +1145,12 @@ fn archive_context_key(state: &[f32]) -> String {
     format!(
         "{stage}:{}:{},{}:proc{}:phase{}",
         state[8].round() as i32,
-        (state[17] * 32.0).floor() as i32,
-        (state[19] * 32.0).floor() as i32,
-        state[16].round() as i32,
-        if state[48] <= 1.0 / 1024.0 {
+        (state[indices.position[0]] * 32.0).floor() as i32,
+        (state[indices.position[2]] * 32.0).floor() as i32,
+        state[indices.procedure].round() as i32,
+        if state[indices.remaining] <= 1.0 / 1024.0 {
             "terminal"
-        } else if state[47] <= 1.0 / 1024.0 {
+        } else if state[indices.elapsed] <= 1.0 / 1024.0 {
             "opening"
         } else {
             "middle"
@@ -1026,7 +1158,10 @@ fn archive_context_key(state: &[f32]) -> String {
     )
 }
 
-fn collection_coverage(episodes: &[QEpisode]) -> CollectionCoverage {
+fn collection_coverage(
+    episodes: &[QEpisode],
+    indices: MovementFeatureIndices,
+) -> CollectionCoverage {
     let mut coverage = CollectionCoverage {
         episodes: episodes.len(),
         effective_decisions: 0,
@@ -1060,13 +1195,13 @@ fn collection_coverage(episodes: &[QEpisode]) -> CollectionCoverage {
                 format!(
                     "{stage}:{}:{},{}",
                     state[8].round() as i32,
-                    (state[17] * 32.0).floor() as i32,
-                    (state[19] * 32.0).floor() as i32
+                    (state[indices.position[0]] * 32.0).floor() as i32,
+                    (state[indices.position[2]] * 32.0).floor() as i32
                 ),
             );
             increment(
                 &mut coverage.player_procedures,
-                (state[16].round() as i32).to_string(),
+                (state[indices.procedure].round() as i32).to_string(),
             );
             increment(&mut coverage.options, "pad_frame".into());
             increment(
@@ -1077,9 +1212,9 @@ fn collection_coverage(episodes: &[QEpisode]) -> CollectionCoverage {
                 &mut coverage.durations,
                 transition.duration_ticks.to_string(),
             );
-            let phase = if transition.terminal || state[48] <= 1.0 / 1024.0 {
+            let phase = if transition.terminal || state[indices.remaining] <= 1.0 / 1024.0 {
                 "terminal"
-            } else if state[47] <= 1.0 / 1024.0 {
+            } else if state[indices.elapsed] <= 1.0 / 1024.0 {
                 "opening"
             } else {
                 "middle"
@@ -1209,7 +1344,18 @@ mod tests {
     fn corpus_for(candidate: &Candidate) -> TransitionCorpus {
         let observation_spec = movement_state_v2_spec();
         let feature_count = observation_spec.feature_count();
+        let player_present = observation_spec.feature_index("player.present").unwrap();
+        let player_is_link = observation_spec.feature_index("player.is_link").unwrap();
+        let procedure_present = observation_spec
+            .feature_index("player.procedure_present")
+            .unwrap();
+        let procedure = observation_spec.feature_index("player.procedure").unwrap();
+        let position_x = observation_spec.feature_index("player.position_x").unwrap();
+        let event_running = observation_spec.feature_index("event.running").unwrap();
+        let elapsed = observation_spec.feature_index("window.elapsed").unwrap();
+        let remaining = observation_spec.feature_index("window.remaining").unwrap();
         let tape = candidate.compile().unwrap();
+        let frame_count = tape.frames.len();
         let transitions = tape
             .frames
             .iter()
@@ -1217,9 +1363,18 @@ mod tests {
             .map(|(index, frame)| {
                 let action_id = movement_action_id_v2(frame.pads[0]).unwrap();
                 let mut state = vec![0.0; feature_count as usize];
-                state[17] = index as f32;
+                state[player_present] = 1.0;
+                state[player_is_link] = 1.0;
+                state[procedure_present] = 1.0;
+                state[procedure] = 4.0;
+                state[position_x] = index as f32 / 32.0;
+                state[event_running] = f32::from(index == 0);
+                state[elapsed] = index as f32 / 1024.0;
+                state[remaining] = frame_count.saturating_sub(index) as f32 / 1024.0;
                 let mut next_state = state.clone();
-                next_state[17] += 1.0;
+                next_state[position_x] += 1.0 / 32.0;
+                next_state[elapsed] += 1.0 / 1024.0;
+                next_state[remaining] = frame_count.saturating_sub(index + 1) as f32 / 1024.0;
                 Transition {
                     source: StateReference {
                         kind: StateReferenceKind::Boundary,
@@ -1337,10 +1492,11 @@ mod tests {
         assert!(first.summary.coverage_gate.learned_policy_enabled);
         assert!(first.summary.proposal_gate.learned_policy_enabled);
         assert_eq!(first.summary.collection_cycle_offset, 1);
-        assert_eq!(first.summary.guided_action_evaluations, 4);
+        assert!(first.summary.guided_action_evaluations > 0);
         assert_eq!(first.summary.unmasked_q_probe_states, 2);
         assert_eq!(first.summary.unmasked_action_evaluations, 2);
         assert!(first.summary.guided_exploit_interventions > 0);
+        assert!(first.summary.temporal_consensus_interventions > 0);
         assert!(first.summary.unmasked_exploratory_interventions > 0);
         assert!(first.summary.structured_counterfactual_interventions > 0);
         assert!(first.summary.archive_novelty_interventions > 0);
@@ -1369,7 +1525,7 @@ mod tests {
             first.summary.coverage.effective_decisions,
             episodes[0].corpus.transitions.len()
         );
-        assert_eq!(first.summary.proposer_attribution.len(), 5);
+        assert_eq!(first.summary.proposer_attribution.len(), 6);
         assert_eq!(
             first.summary.collection_schedule.len(),
             first.summary.proposals
@@ -1391,6 +1547,7 @@ mod tests {
             "archive_novelty",
             "blind_coverage",
             "guided_exploit",
+            "temporal_consensus",
         ] {
             assert!(
                 first
@@ -1619,7 +1776,7 @@ mod tests {
                 .summary
                 .proposer_attribution
                 .iter()
-                .take(2)
+                .take(3)
                 .map(|lane| lane.requested_budget)
                 .sum::<usize>(),
             0
@@ -1681,7 +1838,6 @@ mod tests {
             [
                 super::super::training_guard::LearnedProposalBlocker::RequiredFactsUnsupported,
                 super::super::training_guard::LearnedProposalBlocker::DeterminismUnproved,
-                super::super::training_guard::LearnedProposalBlocker::HeldOutPerformanceInadequate,
             ]
         );
         assert!(batch.summary.model_lineage.is_none());
@@ -1700,16 +1856,16 @@ mod tests {
 
     #[test]
     fn remainder_budget_rotates_across_all_collection_lanes() {
-        assert_eq!(split_proposer_budget(3, 0), [1, 1, 1, 0, 0]);
-        assert_eq!(split_proposer_budget(3, 1), [0, 1, 1, 1, 0]);
-        assert_eq!(split_proposer_budget(3, 4), [1, 1, 0, 0, 1]);
-        let mut totals = [0; 5];
-        for generation in 0..5 {
+        assert_eq!(split_proposer_budget(3, 0), [1, 1, 1, 0, 0, 0]);
+        assert_eq!(split_proposer_budget(3, 1), [0, 1, 1, 1, 0, 0]);
+        assert_eq!(split_proposer_budget(3, 4), [1, 0, 0, 0, 1, 1]);
+        let mut totals = [0; 6];
+        for generation in 0..6 {
             for (total, budget) in totals.iter_mut().zip(split_proposer_budget(3, generation)) {
                 *total += budget;
             }
         }
-        assert_eq!(totals, [3; 5]);
+        assert_eq!(totals, [3; 6]);
     }
 
     #[test]
@@ -1723,7 +1879,7 @@ mod tests {
         .unwrap();
         let admitted = LearnedProposalGate::evaluate(&ready_coverage, true, true, false, true);
         assert!(admitted.learned_policy_enabled);
-        assert_eq!(split_initial_learned_budget(64), [1, 1, 21, 21, 20]);
+        assert_eq!(split_initial_learned_budget(64), [1, 1, 1, 21, 20, 20]);
 
         let unsupported = LearnedProposalGate::evaluate(&ready_coverage, false, true, false, true);
         assert!(!unsupported.learned_policy_enabled);

@@ -74,7 +74,9 @@ pub(super) fn learned_proposal_held_out_performance(
     learned_holdout_scores_adequate(leaderboard.iter().filter_map(|row| {
         let member = member_by_id.get(row.candidate_id.as_str())?;
         let learned = member.ancestry.mutation.as_deref().is_some_and(|mutation| {
-            mutation.starts_with("q_guided") || mutation.starts_with("q_disagreement_heuristic")
+            mutation.starts_with("q_guided")
+                || mutation.starts_with("q_temporal_consensus")
+                || mutation.starts_with("q_disagreement_heuristic")
         });
         Some((learned, row.score))
     }))

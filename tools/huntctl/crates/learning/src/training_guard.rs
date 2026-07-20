@@ -7,7 +7,7 @@ use std::fmt;
 
 pub const ONLINE_TRAINING_HEALTH_SCHEMA_V1: &str = "dusklight-online-training-health/v1";
 pub const ONLINE_COVERAGE_GATE_SCHEMA_V1: &str = "dusklight-online-coverage-gate/v1";
-pub const LEARNED_PROPOSAL_GATE_SCHEMA_V1: &str = "dusklight-learned-proposal-gate/v1";
+pub const LEARNED_PROPOSAL_GATE_SCHEMA_V2: &str = "dusklight-learned-proposal-gate/v2";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CoverageGuardConfig {
@@ -100,7 +100,6 @@ pub enum LearnedProposalBlocker {
     InsufficientActionSupport,
     InsufficientStateCoverage,
     DeterminismUnproved,
-    HeldOutPerformanceInadequate,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -112,6 +111,10 @@ pub struct LearnedProposalGate {
     pub determinism_proved: bool,
     pub held_out_performance_adequate: bool,
     pub initial_bounded_trial: bool,
+    /// A poor prior proposal batch reduces learned allocation to a bounded
+    /// exploration floor; it is not a safety reason to permanently disable
+    /// learning and trap the search in its current local optimum.
+    pub bounded_exploration_enabled: bool,
     pub learned_policy_enabled: bool,
     pub fallback_policy: Option<&'static str>,
     pub blockers: Vec<LearnedProposalBlocker>,
@@ -148,18 +151,17 @@ impl LearnedProposalGate {
         if !determinism_proved {
             blockers.push(LearnedProposalBlocker::DeterminismUnproved);
         }
-        if !held_out_performance_adequate && !initial_bounded_trial {
-            blockers.push(LearnedProposalBlocker::HeldOutPerformanceInadequate);
-        }
         let learned_policy_enabled = blockers.is_empty();
+        let bounded_exploration_enabled = learned_policy_enabled && !held_out_performance_adequate;
         Self {
-            schema: LEARNED_PROPOSAL_GATE_SCHEMA_V1,
+            schema: LEARNED_PROPOSAL_GATE_SCHEMA_V2,
             required_facts_supported,
             action_support_adequate,
             state_coverage_adequate,
             determinism_proved,
             held_out_performance_adequate,
             initial_bounded_trial,
+            bounded_exploration_enabled,
             learned_policy_enabled,
             fallback_policy: (!learned_policy_enabled).then_some("structured_archive_blind_only"),
             blockers,
@@ -423,7 +425,6 @@ mod tests {
                 LearnedProposalBlocker::InsufficientActionSupport,
                 LearnedProposalBlocker::InsufficientStateCoverage,
                 LearnedProposalBlocker::DeterminismUnproved,
-                LearnedProposalBlocker::HeldOutPerformanceInadequate,
             ]
         );
         assert_eq!(
@@ -442,10 +443,18 @@ mod tests {
         assert!(initial_trial.learned_policy_enabled);
         assert!(!initial_trial.held_out_performance_adequate);
         assert!(initial_trial.initial_bounded_trial);
+        assert!(initial_trial.bounded_exploration_enabled);
+
+        let recovery_floor =
+            LearnedProposalGate::evaluate(&ready_coverage, true, true, false, false);
+        assert!(recovery_floor.learned_policy_enabled);
+        assert!(recovery_floor.bounded_exploration_enabled);
+        assert!(recovery_floor.blockers.is_empty());
 
         let ready = LearnedProposalGate::evaluate(&ready_coverage, true, true, true, false);
         assert!(ready.learned_policy_enabled);
         assert!(ready.blockers.is_empty());
+        assert!(!ready.bounded_exploration_enabled);
         assert_eq!(ready.fallback_policy, None);
     }
 }
