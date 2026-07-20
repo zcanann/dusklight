@@ -10,13 +10,16 @@ Each attempt retains its exact request and result identities, terminal,
 objective boundary, realized-tape digest, gameplay-trace digest, objective
 evidence digest, tick counts, native-process time, end-to-end harness time, and
 the exact native lifecycle artifact. Current runs emit
-`dusklight-native-lifecycle-timing/v2`, which adds the authenticated post-run
-session-reuse audit; historical v1 timing remains valid. Native marks cover
+`dusklight-native-lifecycle-timing/v3`, which adds process CPU time to the v2
+authenticated post-run session-reuse audit; historical v1 and v2 timing remain
+valid. Native marks cover
 process entry, parsed configuration, Aurora initialization, engine readiness,
 stage readiness, first/last candidate ticks, proof flush, engine shutdown, and
 exit readiness. The summary divides the parent-observed process envelope into
 startup, stage loading, simulation, artifact flush, teardown, and unattributed
-process-envelope overhead.
+process-envelope overhead. V3 summaries also report process launches, declared
+prefix and candidate ticks, candidate-tick throughput, native CPU utilization,
+simulator idle time, and generated artifact files and bytes.
 
 The report also seals its host OS, architecture, hardware/CPU model, logical CPU
 count, memory, and recording time. It is comparable only when every attempt has
@@ -24,6 +27,27 @@ complete artifacts and identical semantic and artifact evidence. A difference
 writes the diagnostic report but returns a failing exit status.
 
 ## Run and validate
+
+For a checked route segment, `route-cold-process` derives the absolute tape,
+parent-prefix length, objective program, exact observation dependencies, and
+sealed request directly from the timeline. The timeline's sibling support
+directory supplies `benchmarks/process_boot.fixture.json` and
+`benchmarks/<goal>.observation.json`:
+
+```powershell
+tools\huntctl\target\debug\huntctl.exe benchmark route-cold-process `
+  --timeline "routes\Glitch Exhibition\intro.timeline" `
+  --segment to_ordon_spring_q125 `
+  --goal ordon_spring_load_committed `
+  --game "build\windows-clang-relwithdebinfo\dusklight.exe" `
+  --dvd "orig\GZ2E01\Legend of Zelda, The - Twilight Princess (USA).iso" `
+  --artifact-root "build/benchmarks/ordon-q125-cold-v3" `
+  --repetitions 5
+```
+
+The command refuses an existing artifact or generated-input root and defaults
+the report to `<artifact-root>/report.json`. Generated evidence stays ignored
+under `build/`.
 
 First produce a sealed request with the checked objective conformance command
 documented in [objective suites](objective-suites.md). Then choose a new ignored
@@ -101,3 +125,27 @@ It must introduce an explicit world teardown/reinitialize seam and prove an
 A/B/A request sequence against cold runs before claiming reset equivalence.
 Full-memory checkpoints, concurrent sessions, and general arbitrary-state
 restore remain out of scope until that narrower reset seam is deterministic.
+
+## Ordon route Windows baseline
+
+On 2026-07-19, two v3 cold runs materialized directly from the checked `intro`
+timeline both reached `ordon_spring_load_committed` at absolute tick 565. Both
+runs agreed on realized input
+`fad64d9c0610ef954a9f18c348d663dd249ae14d54a164471e766a2d38107f6f`,
+gameplay trace
+`95bc7caa5f5ba412415d4e8947ae5585cb54b370e315f1df64af22100d41c798`,
+objective evidence
+`427d5f7b732cc07a35685ec506c1e1ec948bd97558e0416be9eac65730a4d9a1`,
+and terminal fingerprint `5f0db2cd758da9d20bffd7c7def9af70`. The sealed
+report digest was
+`83a451ffd40b44197155a07e57a214c2760fa2548830935b0d9d1c848dd701d8`.
+
+The parent prefix consumed 440 ticks. The segment score is 125 ticks
+(`565 - 440`); the benchmark counts 126 sampled suffix ticks because it includes
+both the source-adjacent sample and the terminal sample. Across both launches it
+measured 252 candidate ticks in 3.778 seconds, or 66.708 candidate ticks/second.
+It launched two processes, spent 2.194 seconds outside candidate simulation,
+used 3.688 process CPU-seconds across engine threads (97.61% of elapsed time),
+and produced 34 files totaling 4,044,882 bytes. These numbers quantify why
+process reuse and prefix checkpoint
+restore are the next gate; they are not included in the route score.

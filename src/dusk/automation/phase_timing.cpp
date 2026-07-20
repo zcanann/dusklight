@@ -2,9 +2,14 @@
 
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <fstream>
 #include <optional>
 #include <system_error>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -19,6 +24,7 @@ constexpr std::size_t PhaseCount = static_cast<std::size_t>(Phase::Count);
 
 struct Recorder {
     Clock::time_point start{};
+    std::optional<std::uint64_t> cpuStartMicroseconds;
     std::array<std::optional<std::uint64_t>, PhaseCount> microseconds{};
     std::optional<std::string> sessionReuseBoundary;
     bool active = false;
@@ -34,6 +40,42 @@ std::uint64_t elapsed_microseconds() {
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         Clock::now() - recorder.start);
     return elapsed.count() < 0 ? 0 : static_cast<std::uint64_t>(elapsed.count());
+}
+
+std::optional<std::uint64_t> current_process_cpu_microseconds() {
+#ifdef _WIN32
+    FILETIME creationTime{};
+    FILETIME exitTime{};
+    FILETIME kernelTime{};
+    FILETIME userTime{};
+    if (!GetProcessTimes(
+            GetCurrentProcess(), &creationTime, &exitTime, &kernelTime, &userTime)) {
+        return std::nullopt;
+    }
+    ULARGE_INTEGER kernel{};
+    kernel.LowPart = kernelTime.dwLowDateTime;
+    kernel.HighPart = kernelTime.dwHighDateTime;
+    ULARGE_INTEGER user{};
+    user.LowPart = userTime.dwLowDateTime;
+    user.HighPart = userTime.dwHighDateTime;
+    return (kernel.QuadPart + user.QuadPart) / 10;
+#else
+    const auto current = std::clock();
+    if (current == static_cast<std::clock_t>(-1)) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint64_t>(
+        static_cast<long double>(current) * 1'000'000.0L /
+        static_cast<long double>(CLOCKS_PER_SEC));
+#endif
+}
+
+std::uint64_t process_cpu_microseconds() {
+    const auto current = current_process_cpu_microseconds();
+    if (!recorder.cpuStartMicroseconds || !current || *current < *recorder.cpuStartMicroseconds) {
+        return 0;
+    }
+    return *current - *recorder.cpuStartMicroseconds;
 }
 
 constexpr std::array<const char*, PhaseCount> PhaseNames{
@@ -54,6 +96,7 @@ constexpr std::array<const char*, PhaseCount> PhaseNames{
 void begin_native_lifecycle_timing() {
     recorder = {};
     recorder.start = Clock::now();
+    recorder.cpuStartMicroseconds = current_process_cpu_microseconds();
     recorder.active = true;
     recorder.microseconds[index(Phase::ProcessEntry)] = 0;
 }
@@ -108,8 +151,9 @@ bool write_native_lifecycle_timing(const std::filesystem::path& path, std::strin
     }
 
     nlohmann::ordered_json document{
-        {"schema", "dusklight-native-lifecycle-timing/v2"},
+        {"schema", "dusklight-native-lifecycle-timing/v3"},
         {"clock", "steady_clock"},
+        {"process_cpu_micros", process_cpu_microseconds()},
     };
     for (std::size_t phase = 0; phase < PhaseCount; ++phase) {
         document[PhaseNames[phase]] = *recorder.microseconds[phase];

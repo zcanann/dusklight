@@ -32,6 +32,7 @@ pub const RUN_REQUEST_SCHEMA_V2: &str = "dusklight-harness-run-request/v2";
 pub const RUN_RESULT_SCHEMA_V2: &str = "dusklight-harness-run-result/v2";
 pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V1: &str = "dusklight-native-lifecycle-timing/v1";
 pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V2: &str = "dusklight-native-lifecycle-timing/v2";
+pub const NATIVE_LIFECYCLE_TIMING_SCHEMA_V3: &str = "dusklight-native-lifecycle-timing/v3";
 const MAX_LOGICAL_TICKS: u64 = 10_000_000;
 const MAX_HOST_TIMEOUT_SECONDS: u32 = 86_400;
 const MAX_FACTS: usize = 128;
@@ -175,6 +176,8 @@ pub struct HarnessRunTiming {
 pub struct HarnessNativePhaseTiming {
     pub schema: String,
     pub clock: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_cpu_micros: Option<u64>,
     pub process_entry_micros: u64,
     pub cli_configured_micros: u64,
     pub aurora_initialized_micros: u64,
@@ -732,16 +735,23 @@ impl HarnessNativePhaseTiming {
     pub fn validate(&self, host_elapsed_millis: u64) -> Result<(), HarnessRunContractError> {
         if !matches!(
             self.schema.as_str(),
-            NATIVE_LIFECYCLE_TIMING_SCHEMA_V1 | NATIVE_LIFECYCLE_TIMING_SCHEMA_V2
+            NATIVE_LIFECYCLE_TIMING_SCHEMA_V1
+                | NATIVE_LIFECYCLE_TIMING_SCHEMA_V2
+                | NATIVE_LIFECYCLE_TIMING_SCHEMA_V3
         ) || self.clock != "steady_clock"
         {
             return Err(contract_error(
                 "unsupported native lifecycle timing identity",
             ));
         }
-        match (self.schema.as_str(), &self.session_reuse_audit) {
-            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V1, None) => {}
-            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V2, Some(audit)) => {
+        match (
+            self.schema.as_str(),
+            self.process_cpu_micros,
+            &self.session_reuse_audit,
+        ) {
+            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V1, None, None) => {}
+            (NATIVE_LIFECYCLE_TIMING_SCHEMA_V2, None, Some(audit))
+            | (NATIVE_LIFECYCLE_TIMING_SCHEMA_V3, Some(_), Some(audit)) => {
                 audit.validate().map_err(|error| {
                     contract_error(format!("invalid native session reuse audit: {error}"))
                 })?;
@@ -1478,6 +1488,7 @@ mod tests {
         HarnessNativePhaseTiming {
             schema: NATIVE_LIFECYCLE_TIMING_SCHEMA_V2.into(),
             clock: "steady_clock".into(),
+            process_cpu_micros: None,
             process_entry_micros: 0,
             cli_configured_micros: 1,
             aurora_initialized_micros: 2,
@@ -1505,6 +1516,17 @@ mod tests {
     #[test]
     fn native_phase_v2_authenticates_post_run_reuse_refusal() {
         native_phase_timing_v2().validate(1).unwrap();
+    }
+
+    #[test]
+    fn native_phase_v3_authenticates_process_cpu_time() {
+        let mut timing = native_phase_timing_v2();
+        timing.schema = NATIVE_LIFECYCLE_TIMING_SCHEMA_V3.into();
+        timing.process_cpu_micros = Some(12_345);
+        timing.validate(1).unwrap();
+
+        timing.process_cpu_micros = None;
+        assert!(timing.validate(1).is_err());
     }
 
     #[test]

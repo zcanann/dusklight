@@ -21,6 +21,7 @@ pub struct ColdProcessBenchmarkConfig<'a> {
     pub repository_root: &'a Path,
     pub artifact_destination_root: &'a str,
     pub repetitions: u32,
+    pub prefix_ticks: Option<u64>,
 }
 
 pub fn run_cold_process_benchmark(
@@ -82,6 +83,10 @@ pub fn run_cold_process_benchmark(
         let result = execute_request(&request, config.repository_root, attempt)
             .map_err(|error| benchmark_error(format!("attempt {attempt} failed: {error}")))?;
         let end_to_end_micros = started.elapsed().as_micros().max(1);
+        let (artifact_file_count, artifact_bytes) = measure_artifacts(
+            &config.repository_root.join(&request_relative),
+            &config.repository_root.join(&artifact_destination),
+        )?;
         attempts.push(attempt_record(
             attempt,
             &request_relative,
@@ -90,6 +95,9 @@ pub fn run_cold_process_benchmark(
             &request,
             &result,
             end_to_end_micros,
+            config.prefix_ticks,
+            artifact_file_count,
+            artifact_bytes,
         )?);
     }
 
@@ -121,6 +129,9 @@ fn attempt_record(
     request: &HarnessRunRequest,
     result: &HarnessRunResult,
     end_to_end_micros: u128,
+    prefix_ticks: Option<u64>,
+    artifact_file_count: u64,
+    artifact_bytes: u64,
 ) -> Result<ColdProcessBenchmarkAttempt, ColdProcessBenchmarkError> {
     let native_process_micros = u128::from(result.timing.host_elapsed_millis) * 1_000;
     let native_phases = result.timing.native_phases.clone().ok_or_else(|| {
@@ -128,6 +139,19 @@ fn attempt_record(
             "attempt {attempt} omitted authenticated native lifecycle timing"
         ))
     })?;
+    let candidate_ticks = prefix_ticks
+        .map(|ticks| {
+            result
+                .timing
+                .logical_ticks
+                .checked_sub(ticks)
+                .ok_or_else(|| {
+                    benchmark_error(format!(
+                        "attempt {attempt} ended before the declared {ticks}-tick prefix"
+                    ))
+                })
+        })
+        .transpose()?;
     Ok(ColdProcessBenchmarkAttempt {
         attempt,
         request: request_path.into(),
@@ -158,10 +182,75 @@ fn attempt_record(
         logical_ticks: result.timing.logical_ticks,
         consumed_input_ticks: result.timing.consumed_input_ticks,
         native_process_millis: result.timing.host_elapsed_millis,
+        native_process_cpu_micros: native_phases.process_cpu_micros,
+        artifact_file_count: Some(artifact_file_count),
+        artifact_bytes: Some(artifact_bytes),
+        prefix_ticks,
+        candidate_ticks,
         end_to_end_micros,
         harness_outside_process_micros: end_to_end_micros.saturating_sub(native_process_micros),
         native_phases,
     })
+}
+
+fn measure_artifacts(
+    request_path: &Path,
+    artifact_root: &Path,
+) -> Result<(u64, u64), ColdProcessBenchmarkError> {
+    let request_bytes = fs::metadata(request_path)
+        .map_err(|error| {
+            benchmark_error(format!(
+                "cannot measure request artifact {}: {error}",
+                request_path.display()
+            ))
+        })?
+        .len();
+    let (files, bytes) = measure_directory(artifact_root)?;
+    Ok((
+        files
+            .checked_add(1)
+            .ok_or_else(|| benchmark_error("artifact file count overflowed"))?,
+        bytes
+            .checked_add(request_bytes)
+            .ok_or_else(|| benchmark_error("artifact byte count overflowed"))?,
+    ))
+}
+
+fn measure_directory(path: &Path) -> Result<(u64, u64), ColdProcessBenchmarkError> {
+    let mut files = 0_u64;
+    let mut bytes = 0_u64;
+    for entry in fs::read_dir(path).map_err(|error| {
+        benchmark_error(format!(
+            "cannot enumerate benchmark artifacts {}: {error}",
+            path.display()
+        ))
+    })? {
+        let entry =
+            entry.map_err(|error| benchmark_error(format!("cannot read artifact: {error}")))?;
+        let metadata = entry.metadata().map_err(|error| {
+            benchmark_error(format!(
+                "cannot inspect artifact {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if metadata.is_dir() {
+            let measured = measure_directory(&entry.path())?;
+            files = files
+                .checked_add(measured.0)
+                .ok_or_else(|| benchmark_error("artifact file count overflowed"))?;
+            bytes = bytes
+                .checked_add(measured.1)
+                .ok_or_else(|| benchmark_error("artifact byte count overflowed"))?;
+        } else if metadata.is_file() {
+            files = files
+                .checked_add(1)
+                .ok_or_else(|| benchmark_error("artifact file count overflowed"))?;
+            bytes = bytes
+                .checked_add(metadata.len())
+                .ok_or_else(|| benchmark_error("artifact byte count overflowed"))?;
+        }
+    }
+    Ok((files, bytes))
 }
 
 fn capture_host() -> Result<ColdProcessBenchmarkHost, ColdProcessBenchmarkError> {

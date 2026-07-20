@@ -8,8 +8,9 @@ use dusklight_harness_contracts::run_contract::{
 
 fn native_phases() -> HarnessNativePhaseTiming {
     HarnessNativePhaseTiming {
-        schema: "dusklight-native-lifecycle-timing/v2".into(),
+        schema: "dusklight-native-lifecycle-timing/v3".into(),
         clock: "steady_clock".into(),
+        process_cpu_micros: Some(6_000),
         process_entry_micros: 0,
         cli_configured_micros: 500,
         aurora_initialized_micros: 1_000,
@@ -58,6 +59,11 @@ fn attempt(number: u32, trace: u8, duration: u128) -> ColdProcessBenchmarkAttemp
         logical_ticks: 5,
         consumed_input_ticks: 5,
         native_process_millis: 8,
+        native_process_cpu_micros: Some(6_000),
+        artifact_file_count: Some(10),
+        artifact_bytes: Some(1_000),
+        prefix_ticks: Some(2),
+        candidate_ticks: Some(3),
         end_to_end_micros: duration,
         harness_outside_process_micros: duration.saturating_sub(8_000),
         native_phases: native_phases(),
@@ -101,6 +107,21 @@ fn report_seals_exact_attempts_and_computes_throughput() {
     assert_eq!(report.summary.median_end_to_end_micros, 10_000);
     assert_eq!(report.summary.p95_end_to_end_micros, 20_000);
     assert_eq!(report.summary.candidates_per_second_millionths, 66_666_666);
+    assert_eq!(report.summary.process_launches, Some(2));
+    assert_eq!(report.summary.total_prefix_ticks, Some(4));
+    assert_eq!(report.summary.total_candidate_ticks, Some(6));
+    assert_eq!(
+        report.summary.candidate_ticks_per_second_millionths,
+        Some(200_000_000)
+    );
+    assert_eq!(report.summary.total_native_process_cpu_micros, Some(12_000));
+    assert_eq!(
+        report.summary.native_cpu_utilization_millionths,
+        Some(400_000)
+    );
+    assert_eq!(report.summary.total_artifact_file_count, Some(20));
+    assert_eq!(report.summary.total_artifact_bytes, Some(2_000));
+    assert_eq!(report.summary.simulator_idle_micros, Some(26_000));
     let decoded: ColdProcessBenchmarkReport =
         serde_json::from_slice(&report.to_pretty_json().unwrap()).unwrap();
     decoded.validate().unwrap();

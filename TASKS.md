@@ -25,10 +25,10 @@ the current benchmark demonstrates that it is necessary.
 
 ## 1. Freeze and measure the benchmark
 
-- [ ] Define the exact source boundary at first controllable Link input and the
+- [x] Define the exact source boundary at first controllable Link input and the
   exact terminal predicate for entering Ordon Springs.
-- [ ] Retain the current human tape as the named incumbent.
-- [ ] Add one repeatable benchmark command that reports useful candidate ticks
+- [x] Retain the current human tape as the named incumbent.
+- [x] Add one repeatable benchmark command that reports useful candidate ticks
   per second, prefix ticks, process launches, simulator idle time, CPU use, and
   bytes/files written.
 - [ ] Record the incumbent's position, speed, facing, camera, applied input,
@@ -36,6 +36,13 @@ the current benchmark demonstrates that it is necessary.
   tick.
 - [ ] Report elementary route defects numerically: excess distance, heading
   error, collision loss, corner duration, and roll timing.
+
+The frozen boundary is `tolink_link_control` at fingerprint
+`ac7c32788fc3b5c59046386d95b9b5b4`; the terminal authority is
+`ordon_spring_load_committed`. The retained human incumbent is
+`intro/segments/to_ordon_spring_human150.tape`. The checked route benchmark and
+its first measured Windows baseline are documented in
+`docs/glitch-hunting/throughput.md`.
 
 **Exit:** we can compare later changes against an unchanged route, objective,
 and workload rather than relying on visual impressions.

@@ -39,6 +39,16 @@ pub struct ColdProcessBenchmarkAttempt {
     pub logical_ticks: u64,
     pub consumed_input_ticks: u64,
     pub native_process_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_process_cpu_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_file_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_ticks: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_ticks: Option<u64>,
     pub end_to_end_micros: u128,
     pub harness_outside_process_micros: u128,
     pub native_phases: HarnessNativePhaseTiming,
@@ -61,6 +71,24 @@ pub struct ColdProcessBenchmarkSummary {
     pub total_native_lifecycle_micros: u64,
     pub native_phase_totals_micros: ColdProcessNativePhaseBreakdown,
     pub native_phase_shares_millionths: ColdProcessNativePhaseBreakdown,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_launches: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_prefix_ticks: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_candidate_ticks: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_ticks_per_second_millionths: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_native_process_cpu_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_cpu_utilization_millionths: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_artifact_file_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_artifact_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulator_idle_micros: Option<u128>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -123,6 +151,12 @@ impl ColdProcessBenchmarkReport {
                 || attempt.request_sha256 == Digest::ZERO
                 || attempt.result_sha256 == Digest::ZERO
                 || attempt.end_to_end_micros == 0
+                || attempt.artifact_file_count.is_some() != attempt.artifact_bytes.is_some()
+                || attempt.prefix_ticks.is_some() != attempt.candidate_ticks.is_some()
+                || attempt.prefix_ticks.is_some_and(|ticks| {
+                    ticks > attempt.logical_ticks
+                        || attempt.candidate_ticks != Some(attempt.logical_ticks - ticks)
+                })
             {
                 return Err(benchmark_error(
                     "cold-process benchmark attempt identity or timing is invalid",
@@ -251,6 +285,43 @@ pub(crate) fn summarize(
         .ok_or_else(|| benchmark_error("native lifecycle total overflowed"))?;
     let native_phase_shares_millionths =
         native_phase_totals_micros.shares(total_native_process_millis.saturating_mul(1_000))?;
+    let cpu_measured = attempts
+        .iter()
+        .all(|attempt| attempt.native_process_cpu_micros.is_some());
+    let artifacts_measured = attempts
+        .iter()
+        .all(|attempt| attempt.artifact_file_count.is_some());
+    let route_ticks = attempts
+        .iter()
+        .all(|attempt| attempt.prefix_ticks.is_some());
+    let process_launches = Some(
+        u64::try_from(attempts.len())
+            .map_err(|_| benchmark_error("process launch count does not fit u64"))?,
+    );
+    let total_native_process_cpu_micros = cpu_measured
+        .then(|| sum_optional_u64(attempts, |attempt| attempt.native_process_cpu_micros))
+        .transpose()?;
+    let total_artifact_file_count = artifacts_measured
+        .then(|| sum_optional_u64(attempts, |attempt| attempt.artifact_file_count))
+        .transpose()?;
+    let total_artifact_bytes = artifacts_measured
+        .then(|| sum_optional_u64(attempts, |attempt| attempt.artifact_bytes))
+        .transpose()?;
+    let total_prefix_ticks = route_ticks
+        .then(|| sum_optional_u64(attempts, |attempt| attempt.prefix_ticks))
+        .transpose()?;
+    let total_candidate_ticks = route_ticks
+        .then(|| sum_optional_u64(attempts, |attempt| attempt.candidate_ticks))
+        .transpose()?;
+    let candidate_ticks_per_second_millionths = total_candidate_ticks
+        .map(|ticks| per_second_millionths(ticks, total_end_to_end_micros))
+        .transpose()?;
+    let native_cpu_utilization_millionths = total_native_process_cpu_micros
+        .map(|cpu| fixed_share_millionths(u128::from(cpu), total_end_to_end_micros))
+        .transpose()?;
+    let simulator_idle_micros = Some(
+        total_end_to_end_micros.saturating_sub(u128::from(native_phase_totals_micros.simulation)),
+    );
     Ok(ColdProcessBenchmarkSummary {
         total_logical_ticks,
         total_consumed_input_ticks,
@@ -281,7 +352,42 @@ pub(crate) fn summarize(
         total_native_lifecycle_micros,
         native_phase_totals_micros,
         native_phase_shares_millionths,
+        process_launches,
+        total_prefix_ticks,
+        total_candidate_ticks,
+        candidate_ticks_per_second_millionths,
+        total_native_process_cpu_micros,
+        native_cpu_utilization_millionths,
+        total_artifact_file_count,
+        total_artifact_bytes,
+        simulator_idle_micros,
     })
+}
+
+fn sum_optional_u64(
+    attempts: &[ColdProcessBenchmarkAttempt],
+    value: impl Fn(&ColdProcessBenchmarkAttempt) -> Option<u64>,
+) -> Result<u64, ColdProcessBenchmarkError> {
+    attempts.iter().try_fold(0_u64, |total, attempt| {
+        total
+            .checked_add(value(attempt).ok_or_else(|| {
+                benchmark_error("benchmark measurement set is internally incomplete")
+            })?)
+            .ok_or_else(|| benchmark_error("benchmark measurement total overflowed"))
+    })
+}
+
+fn fixed_share_millionths(
+    numerator: u128,
+    denominator: u128,
+) -> Result<u64, ColdProcessBenchmarkError> {
+    u64::try_from(
+        numerator
+            .checked_mul(1_000_000)
+            .ok_or_else(|| benchmark_error("fixed-point share overflowed"))?
+            / denominator,
+    )
+    .map_err(|_| benchmark_error("fixed-point share exceeds report range"))
 }
 
 fn per_second_millionths(

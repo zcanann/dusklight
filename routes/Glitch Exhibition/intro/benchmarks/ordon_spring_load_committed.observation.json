@@ -1,0 +1,40 @@
+{
+  "schema": "dusklight-observation-spec/v1",
+  "id": "ordon-spring-route/v1",
+  "objective": {
+    "id": "ordon_spring_load_committed",
+    "source": {
+      "stage": "F_SP103",
+      "room": 1,
+      "layer": 3,
+      "point": 1
+    },
+    "target": {
+      "stage": "F_SP104",
+      "room": 1,
+      "layer": 0,
+      "point": 0
+    }
+  },
+  "phase": "post_simulation",
+  "channels": [
+    {
+      "channel": "stage",
+      "version": 1,
+      "stride": 32,
+      "status": "present"
+    }
+  ],
+  "features": [
+    {
+      "field_id": 1,
+      "name": "stage.room",
+      "value_type": "signed_integer",
+      "units": "identifier",
+      "coordinate_space": "none",
+      "transform": { "kind": "identity" },
+      "categorical": true,
+      "missingness": { "kind": "required" }
+    }
+  ]
+}
