@@ -25,7 +25,7 @@ const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 const MAX_STDERR_INSPECTION_BYTES: u64 = 1024 * 1024;
 const EMPTY_CARD_IDENTITY_DOMAIN: &[u8] = b"dusklight-stage-survey-empty-card/v1\0";
 const OBSERVATION_SCHEMA_DOMAIN: &[u8] =
-    b"dusklight-stage-survey-all-trace-plus-actor-catalog/v1\0";
+    b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v2\0";
 const SURVEY_SETTINGS_DOMAIN: &[u8] = b"dusklight-stage-survey-settings/v1\0";
 const SURVEY_CVARS: [&str; 4] = [
     "game.instantSaves=true",
@@ -162,6 +162,15 @@ struct ActorCatalogSummary {
     stage: String,
     room: i8,
     layer: i8,
+    observed_actor_count: u32,
+    retained_actor_count: u32,
+    truncated: bool,
+    learning_actor_population: LearningActorPopulationSummary,
+}
+
+#[derive(Debug, Deserialize)]
+struct LearningActorPopulationSummary {
+    source_schema: String,
     observed_actor_count: u32,
     retained_actor_count: u32,
     truncated: bool,
@@ -711,13 +720,20 @@ fn validate_successful_probe(
     let actor_catalog: ActorCatalogSummary =
         serde_json::from_slice(&actor_bytes).map_err(|_| "actor_catalog_decode_failed")?;
     let final_observation = decoded.records.last().ok_or("trace_empty")?;
-    if actor_catalog.schema != "dusklight.actor-catalog.v1"
+    if actor_catalog.schema != "dusklight.actor-catalog.v2"
         || actor_catalog.simulation_tick != final_observation.simulation_tick
         || actor_catalog.stage != final_observation.stage_name
         || actor_catalog.room != final_observation.room
         || actor_catalog.layer != final_observation.layer
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
+        || actor_catalog.learning_actor_population.source_schema
+            != "dusklight-learning-observation/v6"
+        || actor_catalog.learning_actor_population.truncated
+        || actor_catalog.learning_actor_population.observed_actor_count
+            != actor_catalog.learning_actor_population.retained_actor_count
+        || actor_catalog.learning_actor_population.retained_actor_count
+            != actor_catalog.retained_actor_count
     {
         return Err("actor_catalog_incomplete");
     }

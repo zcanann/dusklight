@@ -13,8 +13,10 @@ namespace dusk::automation {
 // eligible for selection under the same lowest-process-ID retention rule.
 inline constexpr std::size_t ActorCatalogMaximumEntries = kInputControllerMaximumActors;
 
-// Captures a bounded, read-only snapshot of the live actor list and writes it
-// as a versioned JSON artifact. No actor or process field is modified.
+// Captures both a bounded diagnostic actor catalog and the independent complete
+// actor vector supplied to native learning observations at the same boundary.
+// The duplicate read-only walks make selection/truncation drift auditable. No
+// actor or process field is modified.
 bool write_actor_catalog(
     const std::filesystem::path& path, std::uint64_t simulationTick, std::string& error);
 

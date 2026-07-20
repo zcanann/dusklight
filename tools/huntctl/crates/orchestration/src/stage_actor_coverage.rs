@@ -18,7 +18,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const STAGE_ACTOR_COVERAGE_SCHEMA_V1: &str = "dusklight-stage-actor-coverage/v1";
+pub const STAGE_ACTOR_COVERAGE_SCHEMA_V2: &str = "dusklight-stage-actor-coverage/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,6 +41,7 @@ pub struct StageActorCaseCoverage {
     pub actor_catalog_sha256: Digest,
     pub observed_actor_count: u32,
     pub retained_actor_count: u32,
+    pub learning_actor_count: u32,
     pub unique_profile_count: u32,
     pub enemy_actor_count: u32,
     pub profile_names: Vec<i16>,
@@ -98,16 +99,54 @@ struct ActorCatalogSnapshot {
     retained_actor_count: u32,
     truncated: bool,
     actors: Vec<ActorCatalogActor>,
+    learning_actor_population: LearningActorPopulation,
 }
 
 #[derive(Debug, Deserialize)]
 struct ActorCatalogActor {
     process_id: u32,
+    parent_process_id: u32,
+    parameters: u32,
+    status: u32,
     actor_name: i16,
     profile_name: i16,
     symbolic_name: String,
+    set_id: u16,
+    health: i16,
+    home_room: i8,
+    current_room: i8,
     group: u8,
+    argument: i8,
+    home_position: [f32; 3],
+    current_position: [f32; 3],
     is_enemy: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct LearningActorPopulation {
+    source_schema: String,
+    observed_actor_count: u32,
+    retained_actor_count: u32,
+    truncated: bool,
+    actors: Vec<LearningActor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LearningActor {
+    runtime_generation: u64,
+    parent_runtime_generation: u32,
+    parameters: u32,
+    status: u32,
+    actor_name: i16,
+    profile_name: i16,
+    set_id: u16,
+    health: i16,
+    home_room: i8,
+    current_room: i8,
+    group: u8,
+    argument: i8,
+    home_position: [f32; 3],
+    current_position: [f32; 3],
 }
 
 #[derive(Default)]
@@ -214,6 +253,9 @@ impl StageActorCoverageReport {
                     ),
                 },
             };
+            let learning_actor_count = snapshot
+                .as_ref()
+                .map_or(0, |snapshot| snapshot.learning_actor_population.retained_actor_count);
             let mut profile_names = BTreeSet::new();
             let mut enemy_actor_count = 0_u32;
             if let Some(snapshot) = &snapshot {
@@ -249,6 +291,7 @@ impl StageActorCoverageReport {
                 actor_catalog_sha256: expected_digest,
                 observed_actor_count: expected_observed,
                 retained_actor_count: expected_retained,
+                learning_actor_count,
                 unique_profile_count: profile_names.len() as u32,
                 enemy_actor_count,
                 profile_names: profile_names.into_iter().collect(),
@@ -287,7 +330,7 @@ impl StageActorCoverageReport {
             .filter(|case| case.status == StageActorEvidenceStatus::VerifiedCompleteSnapshot)
             .count() as u32;
         let mut report = Self {
-            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V1.into(),
+            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V2.into(),
             catalog_sha256,
             ledger_sha256,
             ready_case_count: cases.len() as u32,
@@ -304,7 +347,7 @@ impl StageActorCoverageReport {
     }
 
     pub fn validate(&self) -> Result<(), StageActorCoverageError> {
-        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V1
+        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V2
             || self.catalog_sha256 == Digest::ZERO
             || self.ledger_sha256 == Digest::ZERO
             || self.report_sha256 == Digest::ZERO
@@ -416,7 +459,13 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.process_id)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v1"
+    let learning = &snapshot.learning_actor_population;
+    let unique_learning_generations = learning
+        .actors
+        .iter()
+        .map(|actor| actor.runtime_generation)
+        .collect::<BTreeSet<_>>();
+    if snapshot.schema != "dusklight.actor-catalog.v2"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -430,7 +479,44 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
+    if learning.source_schema != "dusklight-learning-observation/v6"
+        || learning.truncated
+        || learning.observed_actor_count != learning.retained_actor_count
+        || learning.retained_actor_count != snapshot.retained_actor_count
+        || learning.actors.len() != learning.retained_actor_count as usize
+        || unique_learning_generations.len() != learning.actors.len()
+        || snapshot
+            .actors
+            .iter()
+            .zip(&learning.actors)
+            .any(|(catalog, learner)| !same_actor_at_boundary(catalog, learner))
+    {
+        return Err("learning_actor_population_invariant_mismatch".into());
+    }
     Ok(snapshot)
+}
+
+fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) -> bool {
+    u64::from(catalog.process_id) == learner.runtime_generation
+        && catalog.parent_process_id == learner.parent_runtime_generation
+        && catalog.parameters == learner.parameters
+        && catalog.status == learner.status
+        && catalog.actor_name == learner.actor_name
+        && catalog.profile_name == learner.profile_name
+        && catalog.set_id == learner.set_id
+        && catalog.health == learner.health
+        && catalog.home_room == learner.home_room
+        && catalog.current_room == learner.current_room
+        && catalog.group == learner.group
+        && catalog.argument == learner.argument
+        && same_float3(catalog.home_position, learner.home_position)
+        && same_float3(catalog.current_position, learner.current_position)
+}
+
+fn same_float3(left: [f32; 3], right: [f32; 3]) -> bool {
+    left.into_iter()
+        .zip(right)
+        .all(|(left, right)| left.to_bits() == right.to_bits())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -508,7 +594,9 @@ mod tests {
         std::env::temp_dir().join(format!("stage-actor-coverage-{nonce}"))
     }
 
-    fn fixture() -> (StageBootCatalog, StageSurveyLedger, PathBuf) {
+    fn fixture_with_learning_generation(
+        first_learning_generation: u64,
+    ) -> (StageBootCatalog, StageSurveyLedger, PathBuf) {
         let catalog = catalog();
         let mut ledger = StageSurveyLedger::new(
             &catalog,
@@ -529,7 +617,7 @@ mod tests {
         )
         .unwrap();
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v1",
+            "schema": "dusklight.actor-catalog.v2",
             "simulation_tick": 29,
             "stage": "F_SP103",
             "room": 0,
@@ -538,11 +626,40 @@ mod tests {
             "retained_actor_count": 2,
             "truncated": false,
             "actors": [
-                {"process_id": 4, "actor_name": 253, "profile_name": 253,
-                 "symbolic_name": "fpcNm_ALINK_e", "group": 1, "is_enemy": false},
-                {"process_id": 8, "actor_name": 291, "profile_name": 291,
-                 "symbolic_name": "fpcNm_NPC_e", "group": 2, "is_enemy": true}
-            ]
+                {"process_id": 4, "parent_process_id": 4294967295_u32,
+                 "parameters": 1, "status": 2, "actor_name": 253,
+                 "profile_name": 253, "symbolic_name": "fpcNm_ALINK_e",
+                 "set_id": 0, "health": 10, "home_room": 0, "current_room": 0,
+                 "group": 1, "argument": 0, "home_position": [1.0, 2.0, 3.0],
+                 "current_position": [4.0, 5.0, 6.0], "is_enemy": false},
+                {"process_id": 8, "parent_process_id": 4,
+                 "parameters": 3, "status": 4, "actor_name": 291,
+                 "profile_name": 291, "symbolic_name": "fpcNm_NPC_e",
+                 "set_id": 1, "health": 5, "home_room": 0, "current_room": 0,
+                 "group": 2, "argument": -1, "home_position": [7.0, 8.0, 9.0],
+                 "current_position": [10.0, 11.0, 12.0], "is_enemy": true}
+            ],
+            "learning_actor_population": {
+                "source_schema": "dusklight-learning-observation/v6",
+                "observed_actor_count": 2,
+                "retained_actor_count": 2,
+                "truncated": false,
+                "actors": [
+                    {"runtime_generation": first_learning_generation,
+                     "parent_runtime_generation": 4294967295_u32,
+                     "parameters": 1, "status": 2, "actor_name": 253,
+                     "profile_name": 253, "set_id": 0, "health": 10,
+                     "home_room": 0, "current_room": 0, "group": 1, "argument": 0,
+                     "home_position": [1.0, 2.0, 3.0],
+                     "current_position": [4.0, 5.0, 6.0]},
+                    {"runtime_generation": 8, "parent_runtime_generation": 4,
+                     "parameters": 3, "status": 4, "actor_name": 291,
+                     "profile_name": 291, "set_id": 1, "health": 5,
+                     "home_room": 0, "current_room": 0, "group": 2, "argument": -1,
+                     "home_position": [7.0, 8.0, 9.0],
+                     "current_position": [10.0, 11.0, 12.0]}
+                ]
+            }
         }))
         .unwrap();
         let actor_digest = Digest(Sha256::digest(&actor_bytes).into());
@@ -589,6 +706,10 @@ mod tests {
         (catalog, ledger, root)
     }
 
+    fn fixture() -> (StageBootCatalog, StageSurveyLedger, PathBuf) {
+        fixture_with_learning_generation(4)
+    }
+
     #[test]
     fn aggregates_verified_complete_actor_snapshots_by_stage_and_profile() {
         let (catalog, ledger, root) = fixture();
@@ -616,6 +737,23 @@ mod tests {
             StageActorEvidenceStatus::ArtifactMissing
         );
         assert!(report.profiles.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_complete_but_different_learning_actor_population() {
+        let (catalog, ledger, root) = fixture_with_learning_generation(5);
+        let report = StageActorCoverageReport::build(&catalog, &ledger, &root).unwrap();
+        assert_eq!(report.verified_case_count, 0);
+        assert_eq!(report.rejected_case_count, 1);
+        assert_eq!(
+            report.cases[0].status,
+            StageActorEvidenceStatus::ArtifactRejected
+        );
+        assert_eq!(
+            report.cases[0].diagnostic.as_deref(),
+            Some("learning_actor_population_invariant_mismatch")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

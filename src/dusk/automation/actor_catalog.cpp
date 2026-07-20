@@ -3,6 +3,8 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "dusk/automation/build_identity.hpp"
+#include "dusk/automation/game_state_observer.hpp"
+#include "dusk/automation/learning_episode.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
 
 #include "d/d_com_inf_game.h"
@@ -92,6 +94,63 @@ json position_json(const cXyz& position) {
     return json::array({position.x, position.y, position.z});
 }
 
+json position_json(const float x, const float y, const float z) {
+    return json::array({x, y, z});
+}
+
+json angle_json(const std::int16_t x, const std::int16_t y, const std::int16_t z) {
+    return json::array({x, y, z});
+}
+
+json learning_actor_json(const MilestoneObservation::Actor& actor) {
+    json attention = nullptr;
+    if (actor.attentionPresent) {
+        attention = {
+            {"flags", actor.attention.flags},
+            {"position", position_json(actor.attention.positionX,
+                             actor.attention.positionY, actor.attention.positionZ)},
+            {"distance_indices", actor.attention.distanceIndices},
+            {"auxiliary", actor.attention.auxiliary},
+        };
+    }
+    json eventParticipation = nullptr;
+    if (actor.eventParticipationPresent) {
+        eventParticipation = {
+            {"command", actor.eventParticipation.command},
+            {"condition", actor.eventParticipation.condition},
+            {"event_id", actor.eventParticipation.eventId},
+            {"map_tool_id", actor.eventParticipation.mapToolId},
+            {"index", actor.eventParticipation.index},
+        };
+    }
+    return {
+        {"runtime_generation", actor.runtimeGeneration},
+        {"parent_runtime_generation", actor.parentRuntimeGeneration},
+        {"actor_name", actor.actorName},
+        {"profile_name", actor.profileName},
+        {"group", actor.group},
+        {"set_id", actor.setId},
+        {"parameters", actor.parameters},
+        {"argument", actor.argument},
+        {"home_room", actor.homeRoom},
+        {"current_room", actor.currentRoom},
+        {"home_position", position_json(actor.homePositionX,
+                              actor.homePositionY, actor.homePositionZ)},
+        {"current_position", position_json(actor.positionX,
+                                 actor.positionY, actor.positionZ)},
+        {"velocity", position_json(actor.velocityX, actor.velocityY, actor.velocityZ)},
+        {"forward_speed", actor.forwardSpeed},
+        {"current_angle", angle_json(actor.currentAngleX,
+                              actor.currentAngleY, actor.currentAngleZ)},
+        {"shape_angle", angle_json(actor.shapeAngleX,
+                            actor.shapeAngleY, actor.shapeAngleZ)},
+        {"health", actor.health},
+        {"status", actor.status},
+        {"attention", std::move(attention)},
+        {"event_participation", std::move(eventParticipation)},
+    };
+}
+
 }  // namespace
 
 bool write_actor_catalog(
@@ -124,13 +183,24 @@ bool write_actor_catalog(
         });
     }
 
+    // Capture the independent, complete actor vector used by native learning
+    // episodes at this exact no-simulation boundary. Keeping both walks in one
+    // artifact lets the host prove that the learner did not silently inherit
+    // the controller's bounded selection rule. Both adapters are read-only.
+    MilestoneObservationStorage learningStorage;
+    const MilestoneObservation learningObservation =
+        capture_milestone_observation(learningStorage);
+    json learningActors = json::array();
+    for (const MilestoneObservation::Actor& actor : learningObservation.actors)
+        learningActors.push_back(learning_actor_json(actor));
+
     const auto& nameEntryObserver = name_entry_observer();
     const BuildIdentity build = current_build_identity(
         nameEntryObserver.cursorBreakoutShadowEnabled()
             ? "cursor_breakout_shadow"
             : "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v1"},
+        {"schema", "dusklight.actor-catalog.v2"},
         {"build",
             {
                 {"version", build.version},
@@ -159,6 +229,14 @@ bool write_actor_catalog(
         {"retained_actor_count", capture.count},
         {"truncated", capture.observed > capture.count},
         {"actors", std::move(actors)},
+        {"learning_actor_population",
+            {
+                {"source_schema", LearningObservationSchema},
+                {"observed_actor_count", learningObservation.actorObservedCount},
+                {"retained_actor_count", learningObservation.actors.size()},
+                {"truncated", learningObservation.actorsTruncated},
+                {"actors", std::move(learningActors)},
+            }},
     };
 
     std::error_code filesystemError;

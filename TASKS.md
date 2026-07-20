@@ -144,9 +144,16 @@ them is learner work.
     64-145 active actors per entry (`d23a7f78...1ffa`). This inventories the
     expected population; it does not pretend the bounded trace actor selection
     is a complete learner observation.
-  - [ ] Retain a complete native learning observation for the generic probe and
-    compare its actor generations against the authenticated actor snapshot for
-    every ready case.
+  - [x] Retain the exact complete actor vector supplied to native learning
+    observation v6 at the generic probe's terminal boundary and compare it
+    against an independent actor-catalog walk at that same tick. Actor-catalog
+    v2 records both read-only populations; the sealed coverage report rejects
+    missingness, truncation, duplicate generations, count drift, ordering
+    drift, or any shared identity/state-field mismatch. A fresh eight-client,
+    16-entry D_MN01 batch verified 64-145 learner actors per case, all 16 cases
+    and 58 profiles with zero rejections (`63b6143c...44440`). This proves the
+    capture path on the surveyed slice; the parent item remains open until all
+    successful catalog entries have equivalent evidence.
 - [ ] Audit universal actor information: stable runtime identity and spawn
   generation, authored placement identity, transform, velocity, scale,
   collision/body information, action/procedure and animation state,
