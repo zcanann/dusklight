@@ -51,7 +51,7 @@ pub struct DuplicateTrajectoryGroup {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeterminismConflictGroup {
-    pub source_and_consumed_pad_sha256: String,
+    pub execution_and_consumed_pad_sha256: String,
     pub copies: usize,
     pub distinct_payloads: usize,
     pub episode_ids: Vec<String>,
@@ -244,6 +244,34 @@ fn encode_pad(pad: NativeRawPad, output: &mut Vec<u8>) {
         u8::from(pad.connected),
         pad.error as u8,
     ]);
+}
+
+fn hash_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
+
+fn replay_key(shard: &NativeEpisodeShard, source_state: [u8; 16], trajectory: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.native-corpus-determinism-key/v1\0");
+    for value in [
+        shard.metadata.build_revision.as_bytes(),
+        shard.metadata.aurora_revision.as_bytes(),
+        shard.metadata.feature_digest.as_bytes(),
+        shard.metadata.fidelity_profile.as_bytes(),
+        shard
+            .metadata
+            .game_data_identity
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+        shard.metadata.checkpoint_identity.as_bytes(),
+    ] {
+        hash_field(&mut hasher, value);
+    }
+    hash_field(&mut hasher, &source_state);
+    hash_field(&mut hasher, trajectory);
+    format!("{:x}", hasher.finalize())
 }
 
 fn pad_key(pad: NativeRawPad) -> String {
@@ -491,10 +519,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             entry.0 += 1;
             entry.1 += u64::from(episode.success);
             entry.2 += u64::from(!episode.success);
-            let mut replay_hasher = Sha256::new();
-            replay_hasher.update(first.state_identity);
-            replay_hasher.update(&trajectory);
-            let replay_digest = format!("{:x}", replay_hasher.finalize());
+            let replay_digest = replay_key(shard, first.state_identity, &trajectory);
             let replay = replay_groups.entry(replay_digest).or_default();
             replay.payloads.insert(payload_digest);
             replay
@@ -535,7 +560,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         .into_iter()
         .filter_map(|(digest, group)| {
             (group.payloads.len() > 1).then_some(DeterminismConflictGroup {
-                source_and_consumed_pad_sha256: digest,
+                execution_and_consumed_pad_sha256: digest,
                 copies: group.episode_ids.len(),
                 distinct_payloads: group.payloads.len(),
                 episode_ids: group.episode_ids,
@@ -555,7 +580,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
     if !determinism_conflicts.is_empty() {
         warnings.push(
-            "determinism failure: identical initial state and consumed PAD produced different episode payloads"
+            "determinism failure: identical execution identity, initial state, and consumed PAD produced different episode payloads"
                 .into(),
         );
     }
@@ -692,5 +717,6 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("leakage ablations"))
         );
+        assert!(report.determinism_conflicts.is_empty());
     }
 }
