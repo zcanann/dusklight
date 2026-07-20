@@ -70,8 +70,8 @@ to DUSKTAPE, which remains replay authority:
       "ancestry": { "generation": 0 }
     }
 
-Zero degrees is forward and positive 90 degrees is right. A roll presses B on
-its declared frame, holds its analog direction during recovery, and may require
+Zero degrees is forward and positive 90 degrees is right. A roll presses the
+GameCube A action button on its declared frame, holds its analog direction during recovery, and may require
 an absolute modulo spacing phase. Missing timing fields preserve the legacy
 first-frame, unconstrained-phase behavior. Press supports typed A, B, and Start
 pulses for boot-menu optimization. `game_tactic` exposes bounded combat, item,
@@ -353,6 +353,15 @@ source proof, manifests, per-attempt evidence, and results. This proves a local
 single-coordinate minimum for the fixed ordered A/Start pulse sequence; it does
 not claim a global optimum across added/deleted pulses, reordered pulses, or
 coordinated moves that require a temporarily later goal tick.
+
+An interrupted golf can continue with the identical command plus `--resume`.
+The golfer proves the source again, then reuses only completed batches whose
+ordered candidate IDs, source tick and boundary, executable, DVD, harness
+request, arguments, repetition count, timeout, native results file, and
+content digests still match. A batch with evidence but no sealed cache is
+partial and is run again in a fresh evidence directory. Worker count is not
+part of the semantic identity, so concurrency can be reduced when resuming;
+all gameplay-affecting inputs fail closed on mismatch.
 
 Both boot proof tools accept `--run-request REQUEST.json --repository-root
 ROOT` in place of loose executable inputs when the request's exact goal is
@@ -735,10 +744,13 @@ candidate without the normal repeated native evaluation and proof gates.
 
 Fitted-Q proposals may receive half of the slots left after archive retention. They
 alternate between a state-guided mean-Q action change and a fully unmasked
-uncertainty-weighted action change. The learned lanes are local-improvement
-operators over successful parent tapes; failed and near-miss episodes still
-train the critic and remain proposal parents for the separately attributed
-structured, archive, and blind-coverage lanes. Each learned change replaces a
+uncertainty-weighted action change. The learned lanes operate over successful
+parents and failed parents that made authenticated progress beyond their source
+boundary. This `authenticated-progress-repair/v2` rule lets Q directly repair a
+fast approach/load-zone near miss, while excluding crashes, desyncs, timeouts,
+unsupported runs, truncations, and failed tapes with no new satisfied predicate.
+Eligibility is derived from the authenticated progress-fraction feature rather
+than coordinates or an outcome label invented by the learner. Each learned change replaces a
 one-, two-, or four-frame window with an exact canonical controller sample,
 compiles back to an ordinary candidate, and goes through the same cold-process
 milestone evaluator as every other route. Unsupported schemas, misaligned tape/action
@@ -789,8 +801,8 @@ from outranking a longer successful route without rewriting collected evidence.
 The step and terminal schemas and values are part of both model lineage and
 proposer configuration identity.
 
-Each generation writes `q-proposals.json` v11 with its training size, complete
-readiness and coverage gates, step/terminal-reward and successful-parent policies,
+Each generation writes `q-proposals.json` v12 with its training size, complete
+readiness and coverage gates, step/terminal-reward and progress-parent policies,
 guidance schema, masked-state count, guided and
 unmasked action evaluation counts, unmasked probe-state count, intervention
 counts, exact collection schedule, and proposal count (or an explicit

@@ -38,7 +38,7 @@ const UNMASKED_Q_PROBE_INTERVAL: usize = 4;
 const Q_TERMINAL_REWARD_SCHEMA_V1: &str = "dusklight-route-q-terminal-reward/v1";
 const Q_GOAL_TERMINAL_ADJUSTMENT: f32 = 512.0;
 const Q_FAILURE_TERMINAL_ADJUSTMENT: f32 = -512.0;
-const LEARNED_PARENT_POLICY_V1: &str = "successful-local-improvement/v1";
+const LEARNED_PARENT_POLICY_V2: &str = "authenticated-progress-repair/v2";
 const INITIAL_TRIAL_BUDGET_POLICY_V2: &str = "two-learned-then-safe-fallback/v2";
 
 #[derive(Clone, Debug)]
@@ -214,6 +214,7 @@ struct Intervention {
 struct MovementFeatureIndices {
     position: [usize; 3],
     procedure: usize,
+    progress_fraction: usize,
     elapsed: usize,
     remaining: usize,
 }
@@ -234,6 +235,7 @@ impl MovementFeatureIndices {
                 index("player.position_z")?,
             ],
             procedure: index("player.procedure")?,
+            progress_fraction: index("objective.progress_fraction")?,
             elapsed: index("window.elapsed")?,
             remaining: index("window.remaining")?,
         })
@@ -477,12 +479,16 @@ fn propose_q_candidates_internal(
     let learned_parent_episodes = aligned
         .iter()
         .enumerate()
-        .filter(|(index, _)| episodes[*index].outcome == EpisodeOutcomeClass::Successful)
+        .filter(|(index, episode)| {
+            learned_parent_eligible(episodes[*index].outcome, episode.corpus, feature_indices)
+        })
         .count();
     let learned_parent_states = aligned
         .iter()
         .enumerate()
-        .filter(|(index, _)| episodes[*index].outcome == EpisodeOutcomeClass::Successful)
+        .filter(|(index, episode)| {
+            learned_parent_eligible(episodes[*index].outcome, episode.corpus, feature_indices)
+        })
         .map(|(_, episode)| episode.corpus.transitions.len())
         .sum();
     let archive_context_support = aligned
@@ -511,7 +517,11 @@ fn propose_q_candidates_internal(
                 (0..MOVEMENT_ACTION_COUNT_V2).any(|action| !guidance.recommends(action)),
             );
             if let Some(model) = &model
-                && episodes[episode_index].outcome == EpisodeOutcomeClass::Successful
+                && learned_parent_eligible(
+                    episodes[episode_index].outcome,
+                    episode.corpus,
+                    feature_indices,
+                )
             {
                 let current = model
                     .estimate(&transition.state, transition.action.action_id)
@@ -629,7 +639,11 @@ fn propose_q_candidates_internal(
     }
     if let Some(model) = &model {
         for (episode_index, episode) in aligned.iter().enumerate() {
-            if episodes[episode_index].outcome == EpisodeOutcomeClass::Successful {
+            if learned_parent_eligible(
+                episodes[episode_index].outcome,
+                episode.corpus,
+                feature_indices,
+            ) {
                 temporal.extend(temporal_consensus_interventions(
                     model,
                     episode_index,
@@ -768,7 +782,7 @@ fn propose_q_candidates_internal(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QProposalBatch {
         summary: QProposalSummary {
-            schema: "dusklight-q-proposals/v11",
+            schema: "dusklight-q-proposals/v12",
             dataset_generation_sha256: lineage.map(|(dataset, _)| dataset.generation_sha256),
             model_lineage,
             training_transitions: transitions.len(),
@@ -781,7 +795,7 @@ fn propose_q_candidates_internal(
             terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
             goal_terminal_adjustment: Q_GOAL_TERMINAL_ADJUSTMENT,
             failure_terminal_adjustment: Q_FAILURE_TERMINAL_ADJUSTMENT,
-            learned_parent_policy: LEARNED_PARENT_POLICY_V1,
+            learned_parent_policy: LEARNED_PARENT_POLICY_V2,
             initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V2,
             learned_parent_episodes,
             learned_parent_states,
@@ -835,17 +849,39 @@ fn route_q_training_transition(
     }
 }
 
+fn learned_parent_eligible(
+    outcome: EpisodeOutcomeClass,
+    corpus: &TransitionCorpus,
+    indices: MovementFeatureIndices,
+) -> bool {
+    if outcome == EpisodeOutcomeClass::Successful {
+        return true;
+    }
+    if outcome != EpisodeOutcomeClass::Failed {
+        return false;
+    }
+    let Some(first) = corpus.transitions.first() else {
+        return false;
+    };
+    let initial = first.state[indices.progress_fraction];
+    initial.is_finite()
+        && corpus.transitions.iter().any(|transition| {
+            let progress = transition.next_state[indices.progress_fraction];
+            progress.is_finite() && progress > initial + f32::EPSILON
+        })
+}
+
 fn proposal_configuration_sha256(
     config: &QProposalConfig,
     lineage: Option<(&OnlineDatasetGeneration, Option<&OnlineModelLineage>)>,
 ) -> Result<Digest, QSearchError> {
     let identity = ProposalConfigurationIdentity {
-        schema: "dusklight-q-proposals/v11",
+        schema: "dusklight-q-proposals/v12",
         step_reward_schema: MOVEMENT_REWARD_SCHEMA_V2,
         terminal_reward_schema: Q_TERMINAL_REWARD_SCHEMA_V1,
         goal_terminal_adjustment_bits: Q_GOAL_TERMINAL_ADJUSTMENT.to_bits(),
         failure_terminal_adjustment_bits: Q_FAILURE_TERMINAL_ADJUSTMENT.to_bits(),
-        learned_parent_policy: LEARNED_PARENT_POLICY_V1,
+        learned_parent_policy: LEARNED_PARENT_POLICY_V2,
         initial_trial_budget_policy: INITIAL_TRIAL_BUDGET_POLICY_V2,
         action_guidance_schema: ACTION_GUIDANCE_SCHEMA_V2,
         generation: config.generation,
@@ -1358,6 +1394,12 @@ mod tests {
         let procedure = observation_spec.feature_index("player.procedure").unwrap();
         let position_x = observation_spec.feature_index("player.position_x").unwrap();
         let event_running = observation_spec.feature_index("event.running").unwrap();
+        let progress_configured = observation_spec
+            .feature_index("objective.progress_configured")
+            .unwrap();
+        let progress_fraction = observation_spec
+            .feature_index("objective.progress_fraction")
+            .unwrap();
         let elapsed = observation_spec.feature_index("window.elapsed").unwrap();
         let remaining = observation_spec.feature_index("window.remaining").unwrap();
         let tape = candidate.compile().unwrap();
@@ -1375,6 +1417,8 @@ mod tests {
                 state[procedure] = 4.0;
                 state[position_x] = index as f32 / 32.0;
                 state[event_running] = f32::from(index == 0);
+                state[progress_configured] = 1.0;
+                state[progress_fraction] = 1.0 / 3.0;
                 state[elapsed] = index as f32 / 1024.0;
                 state[remaining] = frame_count.saturating_sub(index) as f32 / 1024.0;
                 let mut next_state = state.clone();
@@ -1478,7 +1522,7 @@ mod tests {
             health.disposition,
             super::super::training_guard::TrainingHealthDisposition::Healthy
         );
-        assert_eq!(first.summary.schema, "dusklight-q-proposals/v11");
+        assert_eq!(first.summary.schema, "dusklight-q-proposals/v12");
         assert_eq!(first.summary.step_reward_schema, MOVEMENT_REWARD_SCHEMA_V2);
         assert_eq!(
             first.summary.terminal_reward_schema,
@@ -1486,7 +1530,7 @@ mod tests {
         );
         assert_eq!(
             first.summary.learned_parent_policy,
-            LEARNED_PARENT_POLICY_V1
+            LEARNED_PARENT_POLICY_V2
         );
         assert_eq!(
             first.summary.initial_trial_budget_policy,
@@ -1620,6 +1664,76 @@ mod tests {
         let interior = route_q_training_transition(&missed, false);
         assert!(!interior.terminal);
         assert_eq!(interior.reward, -1.0);
+    }
+
+    #[test]
+    fn authenticated_progress_failure_is_a_learned_repair_parent() {
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        let tape = InputTape {
+            frames: (0..8)
+                .map(|index| InputFrame {
+                    owned_ports: 1,
+                    pads: [
+                        canonical_movement_pad_v2(if index % 2 == 0 { 0 } else { 18 }).unwrap(),
+                        disconnected,
+                        disconnected,
+                        disconnected,
+                    ],
+                    ..InputFrame::default()
+                })
+                .collect(),
+            ..InputTape::default()
+        };
+        let candidate =
+            Candidate::from_absolute_tape(SegmentProfile::Fsp103ToFsp104, &tape).unwrap();
+        let mut corpus = corpus_for(&candidate);
+        let progress = movement_state_v2_spec()
+            .feature_index("objective.progress_fraction")
+            .unwrap();
+        for (index, transition) in corpus.transitions.iter_mut().enumerate() {
+            if index >= 3 {
+                transition.state[progress] = 2.0 / 3.0;
+            }
+            if index >= 2 {
+                transition.next_state[progress] = 2.0 / 3.0;
+            }
+        }
+        corpus.transitions.last_mut().unwrap().terminal = false;
+        corpus.validate().unwrap();
+        let batch = propose_q_candidates(
+            std::slice::from_ref(&corpus),
+            &[QEpisode {
+                candidate: candidate.clone(),
+                corpus: corpus.clone(),
+                outcome: EpisodeOutcomeClass::Failed,
+                objective: objective(),
+            }],
+            QProposalConfig {
+                generation: 1,
+                max_proposals: 4,
+                iterations: 4,
+                trees_per_action: 3,
+                seed: 77,
+                readiness: admitted_readiness(),
+            },
+        )
+        .unwrap();
+        assert_eq!(batch.summary.learned_parent_episodes, 1);
+        assert_eq!(batch.summary.learned_parent_states, 8);
+        assert!(batch.summary.guided_exploit_interventions > 0);
+        assert!(batch.summary.temporal_consensus_interventions > 0);
+        assert!(batch.candidates.iter().any(|proposal| {
+            proposal.ancestry.parent_id.as_deref() == Some(candidate.id().unwrap().as_str())
+                && proposal
+                    .ancestry
+                    .mutation
+                    .as_deref()
+                    .is_some_and(|mutation| mutation.starts_with("q_"))
+        }));
     }
 
     #[test]
