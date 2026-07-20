@@ -230,6 +230,19 @@ struct ObservationFixture {
         observation.playerResources.collectItemBits[0] = 0x03;
         observation.playerResources.collectedCrystalBits = 0x02;
         observation.playerResources.collectedMirrorBits = 0x01;
+        observation.playerRelationshipsPresent = true;
+        observation.playerRelationships.targetedActor = {
+            .present = true,
+            .runtimeGeneration = 7,
+            .actorName = 0x123,
+            .setId = 4,
+            .homeRoom = 0,
+            .currentRoom = 0,
+            .homePositionPresent = true,
+            .homePositionX = 10.0F,
+            .homePositionY = 2.0F,
+            .homePositionZ = -10.0F,
+        };
         observation.actors = actors;
         observation.actorObservedCount = 1;
         observation.dynamicColliders = dynamicColliders;
@@ -561,6 +574,20 @@ void test_player_resources_presence_matches_player_presence() {
     REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
 }
 
+void test_player_relationships_join_complete_actor_population() {
+    ObservationFixture fixture;
+    fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("relationship is inconsistent with actor set") != std::string::npos);
+}
+
 void test_mechanics_boundary_and_surface_identity_fail_closed() {
     ObservationFixture fixture;
     std::vector<std::uint8_t> bytes;
@@ -611,6 +638,7 @@ int main(const int argc, char** argv) {
     test_duplicate_actor_identity_fails_closed();
     test_temporary_event_register_bank_is_required();
     test_player_resources_presence_matches_player_presence();
+    test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";
     return 0;

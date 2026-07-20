@@ -508,6 +508,26 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         observation.playerResourcesPresent = true;
     }
 
+    if (link != nullptr) {
+        auto& relationships = observation.playerRelationships;
+        const fpc_ProcID itemId = link->getItemID();
+        relationships.targetedActor = actorIdentity(link->mTargetedActor);
+        relationships.rideActor = actorIdentity(link->mRideAcKeep.getActorConst());
+        relationships.heldItemActor = actorIdentity(
+            itemId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(itemId));
+        relationships.grabbedActor = grabbedActor;
+        relationships.thrownBoomerangActor =
+            actorIdentity(link->mThrowBoomerangAcKeep.getActorConst());
+        relationships.copyRodActor = actorIdentity(link->mCopyRodAcKeep.getActorConst());
+        relationships.hookshotRoofWaitActor =
+            actorIdentity(link->mCargoCarryAcKeep.getActorConst());
+        relationships.chainGrabActor = actorIdentity(link->field_0x2844.getActorConst());
+        relationships.attentionHintActor = actorIdentity(dComIfGp_att_getZHint());
+        relationships.attentionCatchActor = actorIdentity(dComIfGp_att_getCatghTarget());
+        relationships.attentionLookActor = actorIdentity(dComIfGp_att_getLookTarget());
+        observation.playerRelationshipsPresent = true;
+    }
+
     fopAcIt_Executor(capture_milestone_actor, &storage);
     std::sort(
         storage.actors.begin(), storage.actors.end(), [](const auto& left, const auto& right) {

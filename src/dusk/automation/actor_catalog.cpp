@@ -295,6 +295,44 @@ json learning_player_resources_json(const MilestoneObservation::PlayerResources&
     };
 }
 
+json learning_actor_identity_json(const MilestoneObservation::ActorIdentity& identity) {
+    if (!identity.present)
+        return nullptr;
+    return {
+        {"runtime_generation", identity.runtimeGeneration},
+        {"actor_name", identity.actorName},
+        {"set_id", identity.setId},
+        {"home_room", identity.homeRoom},
+        {"current_room", identity.currentRoom},
+        {"home_position", identity.homePositionPresent ?
+                              position_json(identity.homePositionX, identity.homePositionY,
+                                  identity.homePositionZ) :
+                              json(nullptr)},
+    };
+}
+
+json learning_player_relationships_json(
+    const MilestoneObservation::PlayerRelationships& relationships) {
+    return {
+        {"targeted_actor", learning_actor_identity_json(relationships.targetedActor)},
+        {"ride_actor", learning_actor_identity_json(relationships.rideActor)},
+        {"held_item_actor", learning_actor_identity_json(relationships.heldItemActor)},
+        {"grabbed_actor", learning_actor_identity_json(relationships.grabbedActor)},
+        {"thrown_boomerang_actor",
+            learning_actor_identity_json(relationships.thrownBoomerangActor)},
+        {"copy_rod_actor", learning_actor_identity_json(relationships.copyRodActor)},
+        {"hookshot_roof_wait_actor",
+            learning_actor_identity_json(relationships.hookshotRoofWaitActor)},
+        {"chain_grab_actor", learning_actor_identity_json(relationships.chainGrabActor)},
+        {"attention_hint_actor",
+            learning_actor_identity_json(relationships.attentionHintActor)},
+        {"attention_catch_actor",
+            learning_actor_identity_json(relationships.attentionCatchActor)},
+        {"attention_look_actor",
+            learning_actor_identity_json(relationships.attentionLookActor)},
+    };
+}
+
 }  // namespace
 
 bool write_actor_catalog(
@@ -366,7 +404,7 @@ bool write_actor_catalog(
         nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
                                                           "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v5"},
+        {"schema", "dusklight.actor-catalog.v6"},
         {"build",
             {
                 {"version", build.version},
@@ -417,6 +455,15 @@ bool write_actor_catalog(
                 {"present", learningObservation.playerResourcesPresent},
                 {"value", learningObservation.playerResourcesPresent ?
                               learning_player_resources_json(learningObservation.playerResources) :
+                              json(nullptr)},
+            }},
+        {"learning_player_relationships",
+            {
+                {"source_schema", LearningObservationSchema},
+                {"present", learningObservation.playerRelationshipsPresent},
+                {"value", learningObservation.playerRelationshipsPresent ?
+                              learning_player_relationships_json(
+                                  learningObservation.playerRelationships) :
                               json(nullptr)},
             }},
     };

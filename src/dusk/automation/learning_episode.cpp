@@ -386,6 +386,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         observation.actorsTruncated || observation.dynamicCollidersTruncated ||
         (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) ||
         observation.playerResourcesPresent != observation.playerPresent ||
+        observation.playerRelationshipsPresent != observation.playerIsLink ||
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
@@ -403,6 +404,30 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     {
         error = "learning observation actor set is not strictly ordered";
         return false;
+    }
+    const auto& relationships = observation.playerRelationships;
+    const std::array<const MilestoneObservation::ActorIdentity*, 11> relationshipActors{
+        &relationships.targetedActor,
+        &relationships.rideActor,
+        &relationships.heldItemActor,
+        &relationships.grabbedActor,
+        &relationships.thrownBoomerangActor,
+        &relationships.copyRodActor,
+        &relationships.hookshotRoofWaitActor,
+        &relationships.chainGrabActor,
+        &relationships.attentionHintActor,
+        &relationships.attentionCatchActor,
+        &relationships.attentionLookActor,
+    };
+    for (const MilestoneObservation::ActorIdentity* identity : relationshipActors) {
+        const bool joined = !identity->present || std::ranges::binary_search(observation.actors,
+            identity->runtimeGeneration, {}, &MilestoneObservation::Actor::runtimeGeneration);
+        if (identity->present != identity->homePositionPresent ||
+            (!observation.playerRelationshipsPresent && identity->present) || !joined)
+        {
+            error = "learning observation player relationship is inconsistent with actor set";
+            return false;
+        }
     }
     for (std::size_t index = 0; index < observation.dynamicColliders.size(); ++index) {
         if (observation.dynamicColliders[index].registrationIndex != index) {
@@ -734,6 +759,35 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     output.insert(output.end(), resources.collectItemBits.begin(), resources.collectItemBits.end());
     append_integer(output, resources.collectedCrystalBits);
     append_integer(output, resources.collectedMirrorBits);
+
+    const MilestoneObservation::PlayerRelationships emptyRelationships{};
+    const auto& retainedRelationships = observation.playerRelationshipsPresent
+                                            ? observation.playerRelationships
+                                            : emptyRelationships;
+    const std::uint8_t relationshipStatus = observation.playerRelationshipsPresent ? 1 :
+                                            observation.playerPresent               ? 3 :
+                                                                                      2;
+    append_integer(output, relationshipStatus);
+    append_integer(output, static_cast<std::uint8_t>(relationshipActors.size()));
+    append_integer<std::uint16_t>(output, 0);
+    for (const MilestoneObservation::ActorIdentity* identity :
+        std::array<const MilestoneObservation::ActorIdentity*, 11>{
+            &retainedRelationships.targetedActor,
+            &retainedRelationships.rideActor,
+            &retainedRelationships.heldItemActor,
+            &retainedRelationships.grabbedActor,
+            &retainedRelationships.thrownBoomerangActor,
+            &retainedRelationships.copyRodActor,
+            &retainedRelationships.hookshotRoofWaitActor,
+            &retainedRelationships.chainGrabActor,
+            &retainedRelationships.attentionHintActor,
+            &retainedRelationships.attentionCatchActor,
+            &retainedRelationships.attentionLookActor,
+        })
+    {
+        if (!append_actor_identity(output, *identity, error))
+            return false;
+    }
     return true;
 }
 

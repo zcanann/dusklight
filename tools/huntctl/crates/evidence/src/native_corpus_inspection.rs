@@ -13,7 +13,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V3: &str = "dusklight-native-corpus-inspection/v3";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V4: &str = "dusklight-native-corpus-inspection/v4";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -98,6 +98,7 @@ pub struct NativeCorpusInspection {
     pub dynamic_collider_set_sizes: SetSizeSummary,
     pub unique_actor_types: usize,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
+    pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
     pub flag_mask_coverage: BTreeMap<String, FlagMaskCoverage>,
     pub constant_pre_input_channels: BTreeMap<String, String>,
@@ -398,6 +399,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut observation_schemas = BTreeMap::new();
     let mut action_schemas = BTreeMap::new();
     let mut channel_coverage = BTreeMap::<String, ChannelCoverage>::new();
+    let mut player_relationship_role_presence = BTreeMap::<String, u64>::new();
     let mut missing_mask_counts = BTreeMap::<String, u64>::new();
     let mut flag_masks = BTreeMap::<String, FlagAccumulator>::new();
     let mut constant_values = BTreeMap::<String, BTreeSet<String>>::new();
@@ -536,6 +538,10 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ("scene_exit", observation.scene_exit_status),
                         ("dynamic_colliders", observation.dynamic_colliders_status),
                         ("player_resources", observation.player_resources_status),
+                        (
+                            "player_relationships",
+                            observation.player_relationships_status,
+                        ),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -546,6 +552,34 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                     surface_sizes.push(surface_count);
                     dynamic_collider_sizes.push(observation.dynamic_colliders.len());
                     let resources = observation.player_resources.as_ref();
+                    if let Some(relationships) = observation.player_relationships.as_ref() {
+                        for (role, identity) in [
+                            ("targeted_actor", &relationships.targeted_actor),
+                            ("ride_actor", &relationships.ride_actor),
+                            ("held_item_actor", &relationships.held_item_actor),
+                            ("grabbed_actor", &relationships.grabbed_actor),
+                            (
+                                "thrown_boomerang_actor",
+                                &relationships.thrown_boomerang_actor,
+                            ),
+                            ("copy_rod_actor", &relationships.copy_rod_actor),
+                            (
+                                "hookshot_roof_wait_actor",
+                                &relationships.hookshot_roof_wait_actor,
+                            ),
+                            ("chain_grab_actor", &relationships.chain_grab_actor),
+                            ("attention_hint_actor", &relationships.attention_hint_actor),
+                            (
+                                "attention_catch_actor",
+                                &relationships.attention_catch_actor,
+                            ),
+                            ("attention_look_actor", &relationships.attention_look_actor),
+                        ] {
+                            *player_relationship_role_presence
+                                .entry(role.into())
+                                .or_default() += u64::from(identity.is_some());
+                        }
+                    }
                     for (name, values) in [
                         ("event_flags", observation.event_flags.as_deref()),
                         ("temporary_flags", observation.temporary_flags.as_deref()),
@@ -662,7 +696,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V3.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V4.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -687,6 +721,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         dynamic_collider_set_sizes: dynamic_collider_sizes.finish(),
         unique_actor_types: actor_types.len(),
         channel_coverage,
+        player_relationship_role_presence,
         missing_mask_counts,
         flag_mask_coverage: flag_masks
             .into_iter()
@@ -807,7 +842,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V3);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V4);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -815,12 +850,34 @@ mod tests {
         assert_eq!(report.missing_mask_counts["acquired_item_bits"], 0);
         assert_eq!(report.missing_mask_counts["collect_item_bits"], 0);
         assert_eq!(
-            report.flag_mask_coverage["acquired_item_bits"].widths.minimum,
+            report.flag_mask_coverage["acquired_item_bits"]
+                .widths
+                .minimum,
             32
         );
         assert_eq!(
-            report.flag_mask_coverage["collect_item_bits"].widths.minimum,
+            report.flag_mask_coverage["collect_item_bits"]
+                .widths
+                .minimum,
             8
         );
+    }
+
+    #[test]
+    fn audits_v10_player_relationship_role_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V4);
+        assert_eq!(
+            report.channel_coverage["player_relationships"].present,
+            report.observation_count
+        );
+        assert_eq!(
+            report.player_relationship_role_presence["targeted_actor"],
+            report.observation_count
+        );
+        assert_eq!(report.player_relationship_role_presence["ride_actor"], 0);
     }
 }

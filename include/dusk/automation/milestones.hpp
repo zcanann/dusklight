@@ -162,6 +162,25 @@ struct MilestoneObservation {
     PlayerResources playerResources;
     bool playerResourcesPresent = false;
 
+    // Pointer-free semantic relationships rooted at Link. Native pointers are
+    // resolved immediately to the same stable actor identity used by the
+    // complete learner actor population and never cross this boundary.
+    struct PlayerRelationships {
+        ActorIdentity targetedActor;
+        ActorIdentity rideActor;
+        ActorIdentity heldItemActor;
+        ActorIdentity grabbedActor;
+        ActorIdentity thrownBoomerangActor;
+        ActorIdentity copyRodActor;
+        ActorIdentity hookshotRoofWaitActor;
+        ActorIdentity chainGrabActor;
+        ActorIdentity attentionHintActor;
+        ActorIdentity attentionCatchActor;
+        ActorIdentity attentionLookActor;
+    };
+    PlayerRelationships playerRelationships;
+    bool playerRelationshipsPresent = false;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

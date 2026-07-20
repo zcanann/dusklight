@@ -6,6 +6,7 @@
 
 use crate::artifact::Digest;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -29,6 +30,7 @@ const OBSERVATION_VERSION_V6: u16 = 6;
 const OBSERVATION_VERSION_V7: u16 = 7;
 const OBSERVATION_VERSION_V8: u16 = 8;
 const OBSERVATION_VERSION_V9: u16 = 9;
+const OBSERVATION_VERSION_V10: u16 = 10;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -45,6 +47,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V7: &str = "dusklight-learning-observation/v7";
 pub const LEARNING_OBSERVATION_SCHEMA_V8: &str = "dusklight-learning-observation/v8";
 pub const LEARNING_OBSERVATION_SCHEMA_V9: &str = "dusklight-learning-observation/v9";
+pub const LEARNING_OBSERVATION_SCHEMA_V10: &str = "dusklight-learning-observation/v10";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -396,6 +399,21 @@ pub struct NativePlayerResourcesObservation {
     pub collected_mirror_bits: u8,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativePlayerRelationshipsObservation {
+    pub targeted_actor: Option<NativeActorIdentity>,
+    pub ride_actor: Option<NativeActorIdentity>,
+    pub held_item_actor: Option<NativeActorIdentity>,
+    pub grabbed_actor: Option<NativeActorIdentity>,
+    pub thrown_boomerang_actor: Option<NativeActorIdentity>,
+    pub copy_rod_actor: Option<NativeActorIdentity>,
+    pub hookshot_roof_wait_actor: Option<NativeActorIdentity>,
+    pub chain_grab_actor: Option<NativeActorIdentity>,
+    pub attention_hint_actor: Option<NativeActorIdentity>,
+    pub attention_catch_actor: Option<NativeActorIdentity>,
+    pub attention_look_actor: Option<NativeActorIdentity>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGoalObservation {
     pub configured: bool,
@@ -555,6 +573,8 @@ pub struct NativeLearningObservation {
     pub dynamic_colliders: Vec<NativeDynamicColliderObservation>,
     pub player_resources_status: NativeChannelStatus,
     pub player_resources: Option<NativePlayerResourcesObservation>,
+    pub player_relationships_status: NativeChannelStatus,
+    pub player_relationships: Option<NativePlayerRelationshipsObservation>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     /// Exact 256-byte dSv_info_c::mTmp.mEvent register bank (v5+).
@@ -623,6 +643,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V7
                 | OBSERVATION_VERSION_V8
                 | OBSERVATION_VERSION_V9
+                | OBSERVATION_VERSION_V10
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -746,6 +767,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V7 => LEARNING_OBSERVATION_SCHEMA_V7,
         OBSERVATION_VERSION_V8 => LEARNING_OBSERVATION_SCHEMA_V8,
         OBSERVATION_VERSION_V9 => LEARNING_OBSERVATION_SCHEMA_V9,
+        OBSERVATION_VERSION_V10 => LEARNING_OBSERVATION_SCHEMA_V10,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1090,11 +1112,23 @@ fn decode_player_resources(
         dungeon_compass: dungeon_items & (1 << 1) != 0,
         dungeon_boss_key: dungeon_items & (1 << 2) != 0,
         dungeon_warp: dungeon_items & (1 << 3) != 0,
-        inventory: reader.bytes(24)?.try_into().expect("exact inventory length"),
-        selected_items: reader.bytes(4)?.try_into().expect("exact selected-item length"),
-        mixed_items: reader.bytes(4)?.try_into().expect("exact mixed-item length"),
+        inventory: reader
+            .bytes(24)?
+            .try_into()
+            .expect("exact inventory length"),
+        selected_items: reader
+            .bytes(4)?
+            .try_into()
+            .expect("exact selected-item length"),
+        mixed_items: reader
+            .bytes(4)?
+            .try_into()
+            .expect("exact mixed-item length"),
         equipment: reader.bytes(6)?.try_into().expect("exact equipment length"),
-        bomb_counts: reader.bytes(3)?.try_into().expect("exact bomb-count length"),
+        bomb_counts: reader
+            .bytes(3)?
+            .try_into()
+            .expect("exact bomb-count length"),
         bomb_capacities: reader
             .bytes(3)?
             .try_into()
@@ -1122,6 +1156,96 @@ fn decode_player_resources(
         ));
     }
     Ok((status, resources))
+}
+
+fn relationship_identity(
+    identity: NativeActorIdentity,
+) -> Result<Option<NativeActorIdentity>, NativeEpisodeShardError> {
+    if identity.present {
+        return Ok(Some(identity));
+    }
+    if identity.runtime_generation != u32::MAX
+        || identity.actor_name != -1
+        || identity.set_id != u16::MAX
+        || identity.home_room != -1
+        || identity.current_room != -1
+        || identity.home_position.is_some()
+    {
+        return Err(NativeEpisodeShardError::new(
+            "absent player relationship has a noncanonical actor identity",
+        ));
+    }
+    Ok(None)
+}
+
+fn decode_player_relationships(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, NativePlayerRelationshipsObservation), NativeEpisodeShardError> {
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 11 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "invalid player-relationship role count or reserved bytes",
+        ));
+    }
+    let relationships = NativePlayerRelationshipsObservation {
+        targeted_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        ride_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        held_item_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        grabbed_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        thrown_boomerang_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        copy_rod_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        hookshot_roof_wait_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        chain_grab_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        attention_hint_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        attention_catch_actor: relationship_identity(decode_actor_identity(reader)?)?,
+        attention_look_actor: relationship_identity(decode_actor_identity(reader)?)?,
+    };
+    if status != NativeChannelStatus::Present
+        && player_relationship_identities(&relationships).any(Option::is_some)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "player-relationship payload is present for an unavailable channel",
+        ));
+    }
+    Ok((status, relationships))
+}
+
+fn player_relationship_identities(
+    relationships: &NativePlayerRelationshipsObservation,
+) -> impl Iterator<Item = &Option<NativeActorIdentity>> {
+    [
+        &relationships.targeted_actor,
+        &relationships.ride_actor,
+        &relationships.held_item_actor,
+        &relationships.grabbed_actor,
+        &relationships.thrown_boomerang_actor,
+        &relationships.copy_rod_actor,
+        &relationships.hookshot_roof_wait_actor,
+        &relationships.chain_grab_actor,
+        &relationships.attention_hint_actor,
+        &relationships.attention_catch_actor,
+        &relationships.attention_look_actor,
+    ]
+    .into_iter()
+}
+
+fn validate_player_relationship_joins(
+    relationships: &NativePlayerRelationshipsObservation,
+    actors: &[NativeActorObservation],
+) -> Result<(), NativeEpisodeShardError> {
+    let actor_generations = actors
+        .iter()
+        .map(|actor| actor.runtime_generation)
+        .collect::<BTreeSet<_>>();
+    if player_relationship_identities(relationships)
+        .flatten()
+        .any(|identity| !actor_generations.contains(&u64::from(identity.runtime_generation)))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "player relationship does not join the complete actor population",
+        ));
+    }
+    Ok(())
 }
 
 fn decode_camera(
@@ -1895,7 +2019,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V6
         | OBSERVATION_VERSION_V7
         | OBSERVATION_VERSION_V8
-        | OBSERVATION_VERSION_V9 => {
+        | OBSERVATION_VERSION_V9
+        | OBSERVATION_VERSION_V10 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2318,7 +2443,35 @@ fn decode_observation(
                     "player-resources presence disagrees with player presence",
                 ));
             }
-            (status, (status == NativeChannelStatus::Present).then_some(resources))
+            (
+                status,
+                (status == NativeChannelStatus::Present).then_some(resources),
+            )
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
+    let (player_relationships_status, player_relationships) =
+        if observation_version >= OBSERVATION_VERSION_V10 {
+            let (status, relationships) = decode_player_relationships(reader)?;
+            let player_present = flags & 1 != 0;
+            let player_is_link = flags & (1 << 1) != 0;
+            let expected_status = if player_is_link {
+                NativeChannelStatus::Present
+            } else if player_present {
+                NativeChannelStatus::Unavailable
+            } else {
+                NativeChannelStatus::Absent
+            };
+            if status != expected_status {
+                return Err(NativeEpisodeShardError::new(
+                    "player-relationship status disagrees with player type",
+                ));
+            }
+            validate_player_relationship_joins(&relationships, &actors)?;
+            (
+                status,
+                (status == NativeChannelStatus::Present).then_some(relationships),
+            )
         } else {
             (NativeChannelStatus::NotSampled, None)
         };
@@ -2392,6 +2545,8 @@ fn decode_observation(
         dynamic_colliders,
         player_resources_status,
         player_resources,
+        player_relationships_status,
+        player_relationships,
         event_flags,
         temporary_flags,
         temporary_event_bytes,
@@ -2619,6 +2774,10 @@ mod tests {
 
     fn golden_v9() -> &'static [u8] {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps")
+    }
+
+    fn golden_v10() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps")
     }
 
     #[test]
@@ -3077,6 +3236,59 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v10_pointer_free_player_relationships() {
+        let shard = NativeEpisodeShard::decode(golden_v10()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V10
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            assert_eq!(
+                observation.player_relationships_status,
+                NativeChannelStatus::Present
+            );
+            let relationships = observation.player_relationships.as_ref().unwrap();
+            let target = relationships.targeted_actor.as_ref().unwrap();
+            assert_eq!(target.runtime_generation, 7);
+            assert_eq!(target.actor_name, 0x123);
+            assert_eq!(target.set_id, 4);
+            assert_eq!(target.home_position, Some([10.0, 2.0, -10.0]));
+            assert!(relationships.ride_actor.is_none());
+            assert!(relationships.held_item_actor.is_none());
+            assert!(relationships.attention_look_actor.is_none());
+            assert!(
+                observation
+                    .actors
+                    .iter()
+                    .any(|actor| actor.runtime_generation == u64::from(target.runtime_generation))
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_player_relationship_outside_complete_actor_population() {
+        let shard = NativeEpisodeShard::decode(golden_v10()).unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let mut relationships = observation.player_relationships.clone().unwrap();
+        relationships
+            .targeted_actor
+            .as_mut()
+            .unwrap()
+            .runtime_generation = 999;
+        assert!(
+            validate_player_relationship_joins(&relationships, &observation.actors)
+                .unwrap_err()
+                .to_string()
+                .contains("does not join the complete actor population")
+        );
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -3200,6 +3412,7 @@ mod tests {
                                 | LEARNING_OBSERVATION_SCHEMA_V7
                                 | LEARNING_OBSERVATION_SCHEMA_V8
                                 | LEARNING_OBSERVATION_SCHEMA_V9
+                                | LEARNING_OBSERVATION_SCHEMA_V10
                         ) || [&step.pre_input, &step.post_simulation].iter().all(
                             |observation| {
                                 observation
@@ -3236,6 +3449,7 @@ mod tests {
                 | LEARNING_OBSERVATION_SCHEMA_V7
                 | LEARNING_OBSERVATION_SCHEMA_V8
                 | LEARNING_OBSERVATION_SCHEMA_V9
+                | LEARNING_OBSERVATION_SCHEMA_V10
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode
