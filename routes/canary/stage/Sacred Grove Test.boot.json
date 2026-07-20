@@ -1,0 +1,11 @@
+{
+  "schema": "dusklight.route-workbench.boot-override.v1",
+  "enabled": true,
+  "boot": {
+    "kind": "stage",
+    "stage": "F_SP117",
+    "room": 1,
+    "point": 1,
+    "layer": -1
+  }
+}
