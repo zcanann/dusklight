@@ -312,20 +312,22 @@ changing their order:
 
 This is exhaustive coordinate descent, not evolution or random sampling. Each
 round tests every legal earlier absolute frame for every existing pulse,
-starting with the final pulse. A candidate is eligible only when all repeated
-runs agree exactly, it reaches the source proof's boundary fingerprint, and it
-does not regress the current goal tick. Selection minimizes goal tick first,
-then the sum and lexicographic vector of pulse timestamps. Consequently an
-earlier same-tick move is retained: it may open space for an earlier neighboring
-pulse and expose a faster pair on the next round. Golfing stops only when no
-single coordinate has an eligible earlier move, then runs a separate exact
-proof after truncating the winner to `goal tape_frame + 1`.
+starting with the final pulse. At each coordinate it tests both the authored
+button and its A/Start alternative. A candidate is eligible only when all
+repeated runs agree exactly, it reaches the source proof's boundary
+fingerprint, and it does not regress the current goal tick. Selection minimizes
+goal tick first, then the sum and lexicographic vector of pulse timestamps.
+Consequently an earlier same-tick move is retained: it may open space for an
+earlier neighboring pulse and expose a faster pair on the next round. Golfing
+stops only when no single coordinate/button choice has an eligible earlier
+move, then runs a separate exact proof after truncating the winner to
+`goal tape_frame + 1`.
 
 The output contains `golfed.candidate.json`, `golfed.tape`, `proof.json`, and
 `golf.summary.json`. Every tested round remains below `rounds/`, including the
 source proof, manifests, per-attempt evidence, and results. This proves a local
-single-coordinate minimum for the fixed ordered pulse sequence; it does not
-claim a global optimum across different buttons, added/deleted pulses, or
+single-coordinate minimum for the fixed ordered A/Start pulse sequence; it does
+not claim a global optimum across added/deleted pulses, reordered pulses, or
 coordinated moves that require a temporarily later goal tick.
 
 Both boot proof tools accept `--run-request REQUEST.json --repository-root
