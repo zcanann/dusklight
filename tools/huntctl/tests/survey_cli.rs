@@ -122,6 +122,23 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown survey candidate"));
 
+    let invalid_workers = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "run", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--game"])
+        .arg(&game_path)
+        .args(["--dvd"])
+        .arg(&dvd_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .args(["--workers", "0"])
+        .output()
+        .unwrap();
+    assert!(!invalid_workers.status.success());
+    assert!(String::from_utf8_lossy(&invalid_workers.stderr).contains("--workers"));
+
     let duplicate = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["survey", "init", "--catalog"])
         .arg(&catalog_path)

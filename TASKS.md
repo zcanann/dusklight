@@ -130,6 +130,9 @@ them is learner work.
   A live observer-enabled run classified `D_MN01/room/0/point/0/layer/-1` as
   ready after 30 post-readiness ticks, retained all 75 observed actors without
   truncation, and sealed the exact trace, actor snapshot and state sequence.
+  Bounded parallel execution persists each completion independently; an
+  eight-client smoke batch classified the first 16 entries as ready with
+  64-145 of 64-145 actors retained per entry and no truncation.
 - [ ] For every successful entry, prove that the learner observation contains
   the complete active actor population. Inventory all actor profiles and all
   generally available enemy metadata; enemies are sparse enough that this data

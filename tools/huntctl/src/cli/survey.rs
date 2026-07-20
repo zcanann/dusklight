@@ -7,10 +7,16 @@ use huntctl::stage_survey::{
     execute_stage_survey_attempt, stage_survey_identity,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
+
+const MAX_SURVEY_WORKERS: usize = 64;
 
 pub(crate) fn command_survey(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
@@ -80,8 +86,12 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         return Err("survey run accepts either --candidate or --limit, not both".into());
     }
     let limit = usize_option(args, "--limit", 1)?;
+    let workers = usize_option(args, "--workers", 1)?;
     if limit == 0 {
         return Err("survey run --limit must be greater than zero".into());
+    }
+    if workers == 0 || workers > MAX_SURVEY_WORKERS {
+        return Err(format!("survey run --workers must be in 1..={MAX_SURVEY_WORKERS}").into());
     }
     let game_args = repeated_option(args, "--game-arg");
     let catalog = load_catalog(&catalog_path)?;
@@ -121,26 +131,65 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         state_root,
         game_args,
     };
-    let mut completed = Vec::new();
-    for candidate in candidates {
-        let attempt_number = ledger
-            .cases
-            .iter()
-            .find(|case| case.candidate_id == candidate.id)
-            .map_or(1, |case| case.attempts.len() + 1);
-        let attempt_number = u8::try_from(attempt_number)?;
-        let attempt =
-            execute_stage_survey_attempt(&candidate, &ledger.policy, attempt_number, &execution)?;
-        ledger.record_attempt(&catalog, &candidate.id, attempt.clone())?;
-        write_ledger(&ledger_path, &ledger.canonical_bytes(&catalog)?)?;
-        completed.push(json!({
-            "candidate_id": candidate.id,
-            "attempt": attempt,
-            "classification": ledger.cases.iter()
+    let jobs = candidates
+        .into_iter()
+        .map(|candidate| {
+            let attempt_number = ledger
+                .cases
+                .iter()
                 .find(|case| case.candidate_id == candidate.id)
-                .and_then(|case| case.classification),
-        }));
-    }
+                .map_or(1, |case| case.attempts.len() + 1);
+            Ok((candidate, u8::try_from(attempt_number)?))
+        })
+        .collect::<Result<Vec<_>, std::num::TryFromIntError>>()?;
+    let next_job = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    let worker_count = workers.min(jobs.len().max(1));
+    let policy = ledger.policy.clone();
+    let mut completed = BTreeMap::new();
+    thread::scope(|scope| -> Result<(), Box<dyn Error>> {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let jobs = &jobs;
+            let execution = &execution;
+            let policy = &policy;
+            let next_job = &next_job;
+            scope.spawn(move || {
+                loop {
+                    let index = next_job.fetch_add(1, Ordering::Relaxed);
+                    let Some((candidate, attempt_number)) = jobs.get(index) else {
+                        break;
+                    };
+                    let result =
+                        execute_stage_survey_attempt(candidate, policy, *attempt_number, execution);
+                    if sender.send((index, candidate.clone(), result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(sender);
+        for _ in 0..jobs.len() {
+            let (index, candidate, result) = receiver.recv()?;
+            let attempt = result?;
+            ledger.record_attempt(&catalog, &candidate.id, attempt.clone())?;
+            // Persist after every completed process, not only after the batch,
+            // so interruption loses no classified entry.
+            write_ledger(&ledger_path, &ledger.canonical_bytes(&catalog)?)?;
+            completed.insert(
+                index,
+                json!({
+                    "candidate_id": candidate.id,
+                    "attempt": attempt,
+                    "classification": ledger.cases.iter()
+                        .find(|case| case.candidate_id == candidate.id)
+                        .and_then(|case| case.classification),
+                }),
+            );
+        }
+        Ok(())
+    })?;
+    let completed = completed.into_values().collect::<Vec<_>>();
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
