@@ -23,6 +23,7 @@ enum class StateCheckpointError {
     AddressOverflow,
     DuplicateName,
     OverlappingRegion,
+    InvalidIgnoredRange,
     MissingCallback,
     CaptureFailed,
     RestoreFailed,
@@ -49,6 +50,18 @@ struct StateCheckpointEntryDigest {
     std::string digest;
 };
 
+/**
+ * A byte range that is preserved by checkpoint capture/restore and raw
+ * integrity hashing, but canonicalized for gameplay-state comparisons.
+ *
+ * This is intentionally explicit. It is for proven host-ABI padding only,
+ * never for state that merely appears unimportant in one scenario.
+ */
+struct StateCheckpointIgnoredRange {
+    std::size_t offset = 0;
+    std::size_t size = 0;
+};
+
 using StateCheckpointCaptureCallback = bool (*)(void*, std::span<std::byte>);
 using StateCheckpointRestoreCallback = bool (*)(void*, std::span<const std::byte>);
 
@@ -63,7 +76,8 @@ using StateCheckpointRestoreCallback = bool (*)(void*, std::span<const std::byte
 class StateCheckpoint {
 public:
     StateCheckpointError addMemoryRegion(
-        std::string_view name, void* address, std::size_t size);
+        std::string_view name, void* address, std::size_t size,
+        std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges = {});
     StateCheckpointError addComponent(std::string_view name, std::size_t size, void* context,
         StateCheckpointCaptureCallback capture, StateCheckpointRestoreCallback restore);
 
@@ -80,6 +94,12 @@ public:
     /** Hashes the registered live state without copying direct memory regions. */
     [[nodiscard]] StateCheckpointError currentDigest(std::string& digest,
         std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;
+    /**
+     * Hashes live state while canonicalizing only explicitly registered
+     * host-ABI padding. Raw checkpoint integrity remains byte exact.
+     */
+    [[nodiscard]] StateCheckpointError currentSemanticDigest(std::string& digest,
+        std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;
     [[nodiscard]] std::size_t entryCount() const { return mEntries.size(); }
     [[nodiscard]] std::size_t byteCount() const;
 
@@ -92,12 +112,15 @@ private:
         void* context = nullptr;
         StateCheckpointCaptureCallback capture = nullptr;
         StateCheckpointRestoreCallback restore = nullptr;
+        std::vector<StateCheckpointIgnoredRange> semanticIgnoredRanges;
     };
 
     [[nodiscard]] StateCheckpointError validateNameAndSize(
         std::string_view name, std::size_t size) const;
     [[nodiscard]] StateCheckpointError restoreImpl(
         const StateCheckpointImage& image, bool validateDigest) const;
+    [[nodiscard]] StateCheckpointError currentDigestImpl(std::string& digest,
+        std::vector<StateCheckpointEntryDigest>* entryDigests, bool semantic) const;
 
     std::vector<Entry> mEntries;
 };

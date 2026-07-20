@@ -82,8 +82,10 @@ private:
         std::string& error);
     bool captureTickDigest(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
-        std::string& replayOutput,
+        std::string& replayOutput, std::string& hostStateOutput,
         std::vector<StateCheckpointEntryDigest>* entryDigests, std::string& error);
+    void recordImageDifferences(
+        const StateCheckpointImage& expected, const StateCheckpointImage& actual);
     void fail(std::string message);
 
     bool mEnabled = false;
@@ -103,18 +105,26 @@ private:
     MilestoneObservationStorage mObservationStorage;
     std::vector<std::string> mA1Digests;
     std::vector<std::string> mA1ReplayDigests;
+    std::vector<std::string> mA1HostStates;
     std::vector<std::vector<StateCheckpointEntryDigest>> mA1EntryDigests;
+    // Probe-only byte images of the small native data sections. Keeping these
+    // per tick lets a delayed restore divergence report an exact byte offset
+    // without retaining another ~295 MiB MEM1/ARAM image for every suffix tick.
+    std::vector<StateCheckpointImage> mA1NativeImages;
     bool mBDiffered = false;
     std::size_t mFirstBDifference = 0;
     std::size_t mFirstDivergence = 0;
     std::string mExpectedDivergence;
     std::string mActualDivergence;
+    std::string mExpectedHostState;
+    std::string mActualHostState;
     std::vector<std::string> mDivergentEntries;
     std::vector<ByteDifference> mByteDifferences;
     std::string mError;
     std::uint64_t mCaptureMicros = 0;
     std::vector<std::uint64_t> mRestoreMicros;
     bool mAudioCallbackQuiesced = false;
+    bool mRestoreIntegrityFailed = false;
 };
 
 CheckpointProbe& checkpoint_probe();

@@ -13,6 +13,7 @@
 #include "JSystem/JKernel/JKRHeap.h"
 #include "Z2AudioLib/Z2Audience.h"
 #include "Z2AudioLib/Z2SoundHandles.h"
+#include "d/d_meter_HIO.h"
 
 #include <cstring>
 #include <cstdio>
@@ -28,6 +29,50 @@ namespace {
 
 static_assert(std::is_trivially_copyable_v<JASGenericMemPoolState>);
 static_assert(std::is_trivially_copyable_v<JFWDisplayCheckpointState>);
+static_assert(std::is_trivially_copyable_v<JUTGamePadState>);
+
+std::vector<StateCheckpointIgnoredRange> native_semantic_padding(
+    const std::span<std::byte> region) {
+    std::vector<StateCheckpointIgnoredRange> result;
+    const auto regionBegin = reinterpret_cast<std::uintptr_t>(region.data());
+    const auto regionEnd = regionBegin + region.size();
+    const auto appendPadding = [&](const void* const afterField,
+                                   const void* const nextField) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(afterField);
+        const auto end = reinterpret_cast<std::uintptr_t>(nextField);
+        if (regionBegin <= begin && begin < end && end <= regionEnd) {
+            result.push_back({
+                .offset = static_cast<std::size_t>(begin - regionBegin),
+                .size = static_cast<std::size_t>(end - begin),
+            });
+        }
+    };
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.field_0x4) +
+            sizeof(g_drawHIO.field_0x4),
+        &g_drawHIO.mLifeTopPosX);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mButtonATextDebug) +
+            sizeof(g_drawHIO.mButtonATextDebug),
+        &g_drawHIO.mButtonBFontScale);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mMidnaIconFlashRate) +
+            sizeof(g_drawHIO.mMidnaIconFlashRate),
+        &g_drawHIO.field_0x3f0);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mScrollArrowDisplayAll) +
+            sizeof(g_drawHIO.mScrollArrowDisplayAll),
+        &g_drawHIO.mWiiLockArrowScaleX);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mWiiLockArrowDisplayAll) +
+            sizeof(g_drawHIO.mWiiLockArrowDisplayAll),
+        &g_drawHIO.mFloatingMessagePosX);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mItemScalePercent) +
+            sizeof(g_drawHIO.mItemScalePercent),
+        &g_drawHIO.mTouchAreaUnselectScale[0]);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.field_0x60a) +
+            sizeof(g_drawHIO.field_0x60a),
+        &g_drawHIO.mLanternIconMeterPosX);
+    appendPadding(reinterpret_cast<const std::byte*>(&g_drawHIO.mLanternIconMeterSize) +
+            sizeof(g_drawHIO.mLanternIconMeterSize),
+        &g_drawHIO.mCollectScreen);
+    return result;
+}
 
 template <typename T>
 bool capture_audio_pool(void*, const std::span<std::byte> output) {
@@ -186,7 +231,12 @@ bool capture_jut_gamepad(void*, const std::span<std::byte> output) {
     if (output.size() != sizeof(JUTGamePadState)) {
         return false;
     }
-    JUTGamePadState state{};
+    // Value initialization does not guarantee deterministic padding bytes.
+    // Canonicalize the complete trivially-copyable representation before
+    // assigning every logical field so checkpoint digests never learn stack
+    // residue as gameplay state.
+    JUTGamePadState state;
+    std::memset(&state, 0, sizeof(state));
     if (!capture_jut_gamepad_state(state)) {
         return false;
     }
@@ -226,7 +276,9 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
         char name[32]{};
         std::snprintf(name, sizeof(name), "native_game_state_%zu", index);
         const std::span<std::byte> region = nativeState.items[index];
-        error = checkpoint.addMemoryRegion(name, region.data(), region.size());
+        const std::vector<StateCheckpointIgnoredRange> ignored =
+            native_semantic_padding(region);
+        error = checkpoint.addMemoryRegion(name, region.data(), region.size(), ignored);
         if (error != StateCheckpointError::None) {
             return error;
         }

@@ -378,6 +378,15 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   candidate.
 - [ ] Support validated intermediate checkpoints along recorded trajectories so
   short-horizon experiments do not replay unrelated earlier decisions.
+  The same-process substrate now preserves raw checkpoint bytes separately from
+  semantic gameplay identity and permits only explicitly declared host-ABI
+  padding to be canonicalized. A frame-440 A/B/A probe matched a 100-tick
+  future across two validated and ten trusted restores; twelve independent
+  frame-500 probes matched 40-tick futures across 36 trusted restores. The
+  latter stress lane exposed intermittent `dMeter_drawHIO_c` padding changes;
+  PDB-resolved field boundaries now exclude exactly its eight top-level ABI
+  gaps without changing or weakening raw restore integrity. This proves the
+  restore primitive, not yet its integration into the persistent batch loop.
 - [ ] Profile checkpoint restore, simulation, observation capture, policy
   inference, corpus encoding, GPU work and CPU draw traversal independently.
 - [ ] Implement a true no-present render sink: no visible window, presentation,

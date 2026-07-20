@@ -97,7 +97,8 @@ StateCheckpointError StateCheckpoint::validateNameAndSize(
 }
 
 StateCheckpointError StateCheckpoint::addMemoryRegion(
-    const std::string_view name, void* const address, const std::size_t size) {
+    const std::string_view name, void* const address, const std::size_t size,
+    const std::span<const StateCheckpointIgnoredRange> semanticIgnoredRanges) {
     const StateCheckpointError common = validateNameAndSize(name, size);
     if (common != StateCheckpointError::None) {
         return common;
@@ -121,11 +122,24 @@ StateCheckpointError StateCheckpoint::addMemoryRegion(
         }
     }
     try {
+        std::vector<StateCheckpointIgnoredRange> ignored(
+            semanticIgnoredRanges.begin(), semanticIgnoredRanges.end());
+        std::ranges::sort(ignored, {}, &StateCheckpointIgnoredRange::offset);
+        std::size_t previousEnd = 0;
+        for (const StateCheckpointIgnoredRange range : ignored) {
+            if (range.size == 0 || range.offset > size || range.size > size - range.offset ||
+                range.offset < previousEnd)
+            {
+                return StateCheckpointError::InvalidIgnoredRange;
+            }
+            previousEnd = range.offset + range.size;
+        }
         mEntries.push_back(Entry{
             .name = std::string(name),
             .kind = StateCheckpointEntryKind::MemoryRegion,
             .address = static_cast<std::byte*>(address),
             .size = size,
+            .semanticIgnoredRanges = std::move(ignored),
         });
     } catch (const std::bad_alloc&) {
         return StateCheckpointError::AllocationFailed;
@@ -224,12 +238,24 @@ StateCheckpointError StateCheckpoint::restoreImpl(
 
 StateCheckpointError StateCheckpoint::currentDigest(std::string& digest,
     std::vector<StateCheckpointEntryDigest>* const entryDigests) const {
+    return currentDigestImpl(digest, entryDigests, false);
+}
+
+StateCheckpointError StateCheckpoint::currentSemanticDigest(std::string& digest,
+    std::vector<StateCheckpointEntryDigest>* const entryDigests) const {
+    return currentDigestImpl(digest, entryDigests, true);
+}
+
+StateCheckpointError StateCheckpoint::currentDigestImpl(std::string& digest,
+    std::vector<StateCheckpointEntryDigest>* const entryDigests, const bool semantic) const {
     XXH3_state_t* state = XXH3_createState();
     if (state == nullptr) {
         return StateCheckpointError::AllocationFailed;
     }
     XXH3_128bits_reset(state);
-    constexpr std::string_view Domain = "dusklight-state-checkpoint/v1";
+    constexpr std::string_view RawDomain = "dusklight-state-checkpoint/v1";
+    constexpr std::string_view SemanticDomain = "dusklight-state-checkpoint-semantic/v1";
+    const std::string_view Domain = semantic ? SemanticDomain : RawDomain;
     XXH3_128bits_update(state, Domain.data(), Domain.size());
     hash_u64(state, mEntries.size());
     std::vector<std::byte> componentBytes;
@@ -244,19 +270,34 @@ StateCheckpointError StateCheckpoint::currentDigest(std::string& digest,
             hash_u64(state, entry.name.size());
             XXH3_128bits_update(state, entry.name.data(), entry.name.size());
             hash_u64(state, entry.size);
+            if (semantic) {
+                hash_u64(state, entry.semanticIgnoredRanges.size());
+                for (const StateCheckpointIgnoredRange range : entry.semanticIgnoredRanges) {
+                    hash_u64(state, range.offset);
+                    hash_u64(state, range.size);
+                }
+            }
             const void* entryBytes = nullptr;
             if (entry.kind == StateCheckpointEntryKind::MemoryRegion) {
-                XXH3_128bits_update(state, entry.address, entry.size);
-                entryBytes = entry.address;
+                if (semantic && !entry.semanticIgnoredRanges.empty()) {
+                    componentBytes.resize(entry.size);
+                    std::memcpy(componentBytes.data(), entry.address, entry.size);
+                    for (const StateCheckpointIgnoredRange range : entry.semanticIgnoredRanges) {
+                        std::memset(componentBytes.data() + range.offset, 0, range.size);
+                    }
+                    entryBytes = componentBytes.data();
+                } else {
+                    entryBytes = entry.address;
+                }
             } else {
                 componentBytes.resize(entry.size);
                 if (!entry.capture(entry.context, componentBytes)) {
                     XXH3_freeState(state);
                     return StateCheckpointError::CaptureFailed;
                 }
-                XXH3_128bits_update(state, componentBytes.data(), componentBytes.size());
                 entryBytes = componentBytes.data();
             }
+            XXH3_128bits_update(state, entryBytes, entry.size);
             if (entryDigests != nullptr) {
                 capturedEntryDigests.push_back({
                     .name = entry.name,
@@ -302,6 +343,7 @@ const char* state_checkpoint_error_message(const StateCheckpointError error) {
     case StateCheckpointError::AddressOverflow: return "checkpoint memory region overflows the address space";
     case StateCheckpointError::DuplicateName: return "checkpoint entry name is duplicated";
     case StateCheckpointError::OverlappingRegion: return "checkpoint memory regions overlap";
+    case StateCheckpointError::InvalidIgnoredRange: return "checkpoint semantic ignored range is invalid";
     case StateCheckpointError::MissingCallback: return "checkpoint component callback is missing";
     case StateCheckpointError::CaptureFailed: return "checkpoint component capture failed";
     case StateCheckpointError::RestoreFailed: return "checkpoint component restore failed";

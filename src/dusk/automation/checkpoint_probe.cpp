@@ -1,9 +1,12 @@
 #include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/io_mode.hpp"
+#include "dusk/automation/native_state_region.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <string_view>
 #include <system_error>
@@ -65,6 +68,25 @@ std::string phase_name(const CheckpointProbe::Phase phase) {
     return "unknown";
 }
 
+StateCheckpointImage capture_native_diagnostic_image() {
+    StateCheckpointImage image;
+    const NativeGameStateRegions regions = native_game_state_regions();
+    image.entries.reserve(regions.count);
+    for (std::size_t index = 0; index < regions.count; ++index) {
+        char name[32]{};
+        std::snprintf(name, sizeof(name), "native_game_state_%zu", index);
+        const std::span<const std::byte> source = regions.items[index];
+        StateCheckpointImageEntry entry{
+            .name = name,
+            .kind = StateCheckpointEntryKind::MemoryRegion,
+            .bytes = std::vector<std::byte>(source.size()),
+        };
+        std::memcpy(entry.bytes.data(), source.data(), source.size());
+        image.entries.push_back(std::move(entry));
+    }
+    return image;
+}
+
 }  // namespace
 
 bool CheckpointProbe::configure(const std::size_t sourceFrame, const std::size_t suffixTicks,
@@ -84,7 +106,9 @@ bool CheckpointProbe::configure(const std::size_t sourceFrame, const std::size_t
     mResultPath = std::move(resultPath);
     mA1Digests.reserve(suffixTicks);
     mA1ReplayDigests.reserve(suffixTicks);
+    mA1HostStates.reserve(suffixTicks);
     mA1EntryDigests.reserve(suffixTicks);
+    mA1NativeImages.reserve(suffixTicks);
     mRestoreMicros.reserve(2 + repeatAttempts);
     return true;
 }
@@ -149,6 +173,15 @@ bool CheckpointProbe::restoreSource(std::uint64_t& simulationTick, std::uint64_t
         (mCheckpoint.currentDigest(restoredDigest) != StateCheckpointError::None ||
             restoredDigest != mImage.digest))
     {
+        mRestoreIntegrityFailed = true;
+        mExpectedDivergence = mImage.digest;
+        mActualDivergence = std::move(restoredDigest);
+        StateCheckpointImage actualImage;
+        if (mCheckpoint.capture(actualImage) == StateCheckpointError::None) {
+            recordImageDifferences(mImage, actualImage);
+        } else {
+            mDivergentEntries.push_back("checkpoint_diagnostic_capture");
+        }
         error = "restored checkpoint bytes do not match the captured image";
         return false;
     }
@@ -167,6 +200,94 @@ bool CheckpointProbe::restoreSource(std::uint64_t& simulationTick, std::uint64_t
     tapeFrameApplied = mSource.tapeFrameApplied;
     mEpisodeTick = 0;
     return true;
+}
+
+void CheckpointProbe::recordImageDifferences(
+    const StateCheckpointImage& expected, const StateCheckpointImage& actual) {
+    const auto recordEntry = [this](const std::string& name) {
+        if (std::find(mDivergentEntries.begin(), mDivergentEntries.end(), name) ==
+            mDivergentEntries.end())
+        {
+            mDivergentEntries.push_back(name);
+        }
+    };
+    if (actual.entries.size() != expected.entries.size()) {
+        recordEntry("checkpoint_manifest");
+        return;
+    }
+    constexpr std::size_t MaxDifferencesPerEntry = 8;
+    for (std::size_t entryIndex = 0; entryIndex < actual.entries.size(); ++entryIndex) {
+        const auto& expectedEntry = expected.entries[entryIndex];
+        const auto& actualEntry = actual.entries[entryIndex];
+        if (expectedEntry.name != actualEntry.name ||
+            expectedEntry.kind != actualEntry.kind ||
+            expectedEntry.bytes.size() != actualEntry.bytes.size())
+        {
+            recordEntry(expectedEntry.name);
+            continue;
+        }
+        if (expectedEntry.bytes == actualEntry.bytes) continue;
+        recordEntry(expectedEntry.name);
+        std::size_t entryDifferences = 0;
+        for (std::size_t offset = 0; offset < expectedEntry.bytes.size(); ++offset) {
+            if (expectedEntry.bytes[offset] == actualEntry.bytes[offset]) continue;
+            const std::size_t contextOffset = offset & ~std::size_t{7};
+            mByteDifferences.push_back({
+                .entry = expectedEntry.name,
+                .offset = offset,
+                .expected = std::to_integer<std::uint8_t>(expectedEntry.bytes[offset]),
+                .actual = std::to_integer<std::uint8_t>(actualEntry.bytes[offset]),
+                .contextOffset = contextOffset,
+                .expectedContext = hex_context(expectedEntry.bytes, contextOffset),
+                .actualContext = hex_context(actualEntry.bytes, contextOffset),
+            });
+            ByteDifference& difference = mByteDifferences.back();
+            if (expectedEntry.name == "mem1") {
+                auto* const address =
+                    static_cast<std::byte*>(AuroraGetMEM1StorageAddress()) + offset;
+                JKRHeap* const heap = JKRHeap::findFromRoot(address);
+                if (heap != nullptr) {
+                    difference.heapName = heap->getName();
+                    difference.heapOffset = static_cast<std::size_t>(
+                        address - static_cast<std::byte*>(heap->getStartAddr()));
+                    if (heap->getHeapType() == 'EXPH') {
+                        auto* const expHeap = static_cast<JKRExpHeap*>(heap);
+                        for (auto* block = expHeap->getUsedFirst(); block != nullptr;
+                             block = block->getNextBlock())
+                        {
+                            auto* const content = static_cast<std::byte*>(block->getContent());
+                            if (content <= address && address < content + block->getSize()) {
+                                difference.allocationOffset =
+                                    static_cast<std::size_t>(address - content);
+                                difference.allocationSize = block->getSize();
+                                break;
+                            }
+                        }
+                    }
+                }
+                const auto identifyObject = [&difference, address](
+                                                const char* const name,
+                                                const auto* const object) {
+                    if (object == nullptr) return;
+                    const auto* const begin = reinterpret_cast<const std::byte*>(object);
+                    const auto* const end = begin + sizeof(*object);
+                    if (begin <= address && address < end) {
+                        difference.objectName = name;
+                        difference.objectOffset = static_cast<std::size_t>(address - begin);
+                    }
+                };
+                identifyObject("JFWDisplay", JFWDisplay::getManager());
+                identifyObject("JUTXfb", JUTXfb::getManager());
+                identifyObject("JUTProcBar", JUTProcBar::getManager());
+                identifyObject("JUTDbPrint", JUTDbPrint::getManager());
+                identifyObject("JUTDirectPrint", JUTDirectPrint::getManager());
+                if (JFWDisplay::getManager() != nullptr) {
+                    identifyObject("JUTFader", JFWDisplay::getManager()->getFader());
+                }
+            }
+            if (++entryDifferences == MaxDifferencesPerEntry) break;
+        }
+    }
 }
 
 bool CheckpointProbe::preInput(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
@@ -227,10 +348,11 @@ void CheckpointProbe::overrideInputForAlternate() {
 bool CheckpointProbe::captureTickDigest(const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
     const bool tapeFrameApplied, std::string& output, std::string& replayOutput,
+    std::string& hostStateOutput,
     std::vector<StateCheckpointEntryDigest>* const entryDigests, std::string& error) {
     std::string machine;
     const StateCheckpointError checkpointError =
-        mCheckpoint.currentDigest(machine, entryDigests);
+        mCheckpoint.currentSemanticDigest(machine, entryDigests);
     if (checkpointError != StateCheckpointError::None) {
         error = state_checkpoint_error_message(checkpointError);
         return false;
@@ -269,7 +391,7 @@ bool CheckpointProbe::captureTickDigest(const std::uint64_t simulationTick,
 #endif
         });
     }
-    const std::string host = nlohmann::json{
+    hostStateOutput = nlohmann::json{
         {"machine", machine},
         {"simulation_tick", simulationTick},
         {"tape_frame", tapeFrame},
@@ -289,7 +411,7 @@ bool CheckpointProbe::captureTickDigest(const std::uint64_t simulationTick,
         {"replay", replayOutput},
         {"milestones", serialize_milestone_result(milestone_tracker())},
     }.dump();
-    output = hex_digest(host);
+    output = hex_digest(hostStateOutput);
     return true;
 }
 
@@ -299,18 +421,19 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
     if (!mEnabled || mPhase == Phase::WaitingForSource || mCompleted || mFailed) return false;
     std::string digest;
     std::string replayDigest;
+    std::string hostState;
     std::vector<StateCheckpointEntryDigest> entryDigests;
-    std::vector<StateCheckpointEntryDigest>* const entryOutput =
-        mPhase == Phase::A1 ? &entryDigests : nullptr;
     if (!captureTickDigest(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied,
-            digest, replayDigest, entryOutput, error)) {
+            digest, replayDigest, hostState, &entryDigests, error)) {
         fail(error);
         return true;
     }
     if (mPhase == Phase::A1) {
         mA1Digests.push_back(digest);
         mA1ReplayDigests.push_back(replayDigest);
+        mA1HostStates.push_back(std::move(hostState));
         mA1EntryDigests.push_back(std::move(entryDigests));
+        mA1NativeImages.push_back(capture_native_diagnostic_image());
         if (mEpisodeTick == 0) {
             const StateCheckpointError captureError = mCheckpoint.capture(mA1FirstTickImage);
             if (captureError != StateCheckpointError::None) {
@@ -329,14 +452,8 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
         mFirstDivergence = mEpisodeTick;
         mExpectedDivergence = mA1Digests[mEpisodeTick];
         mActualDivergence = digest;
-        std::string diagnosticDigest;
-        const StateCheckpointError diagnosticError =
-            mCheckpoint.currentDigest(diagnosticDigest, &entryDigests);
-        if (diagnosticError != StateCheckpointError::None) {
-            error = state_checkpoint_error_message(diagnosticError);
-            fail(error);
-            return true;
-        }
+        mExpectedHostState = mA1HostStates[mEpisodeTick];
+        mActualHostState = std::move(hostState);
         const auto& expectedEntries = mA1EntryDigests[mEpisodeTick];
         if (entryDigests.size() == expectedEntries.size()) {
             for (std::size_t index = 0; index < entryDigests.size(); ++index) {
@@ -351,87 +468,12 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
         }
         if (mEpisodeTick == 0) {
             StateCheckpointImage actualImage;
-            if (mCheckpoint.capture(actualImage) == StateCheckpointError::None &&
-                actualImage.entries.size() == mA1FirstTickImage.entries.size())
-            {
-                constexpr std::size_t MaxDifferencesPerEntry = 8;
-                for (std::size_t entryIndex = 0;
-                     entryIndex < actualImage.entries.size(); ++entryIndex)
-                {
-                    const auto& expectedEntry = mA1FirstTickImage.entries[entryIndex];
-                    const auto& actualEntry = actualImage.entries[entryIndex];
-                    if (std::find(mDivergentEntries.begin(), mDivergentEntries.end(),
-                            expectedEntry.name) == mDivergentEntries.end())
-                    {
-                        continue;
-                    }
-                    if (expectedEntry.name != actualEntry.name ||
-                        expectedEntry.bytes.size() != actualEntry.bytes.size())
-                    {
-                        continue;
-                    }
-                    std::size_t entryDifferences = 0;
-                    for (std::size_t offset = 0; offset < expectedEntry.bytes.size(); ++offset) {
-                        if (expectedEntry.bytes[offset] == actualEntry.bytes[offset]) continue;
-                        const std::size_t contextOffset = offset & ~std::size_t{7};
-                        mByteDifferences.push_back({
-                            .entry = expectedEntry.name,
-                            .offset = offset,
-                            .expected = std::to_integer<std::uint8_t>(expectedEntry.bytes[offset]),
-                            .actual = std::to_integer<std::uint8_t>(actualEntry.bytes[offset]),
-                            .contextOffset = contextOffset,
-                            .expectedContext = hex_context(expectedEntry.bytes, contextOffset),
-                            .actualContext = hex_context(actualEntry.bytes, contextOffset),
-                        });
-                        ByteDifference& difference = mByteDifferences.back();
-                        if (expectedEntry.name == "mem1") {
-                            auto* const address = static_cast<std::byte*>(
-                                AuroraGetMEM1StorageAddress()) + offset;
-                            JKRHeap* const heap = JKRHeap::findFromRoot(address);
-                            if (heap != nullptr) {
-                                difference.heapName = heap->getName();
-                                difference.heapOffset = static_cast<std::size_t>(
-                                    address - static_cast<std::byte*>(heap->getStartAddr()));
-                                if (heap->getHeapType() == 'EXPH') {
-                                    auto* const expHeap = static_cast<JKRExpHeap*>(heap);
-                                    for (auto* block = expHeap->getUsedFirst(); block != nullptr;
-                                         block = block->getNextBlock())
-                                    {
-                                        auto* const content = static_cast<std::byte*>(block->getContent());
-                                        if (content <= address && address < content + block->getSize()) {
-                                            difference.allocationOffset =
-                                                static_cast<std::size_t>(address - content);
-                                            difference.allocationSize = block->getSize();
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            const auto identifyObject = [&difference, address](
-                                                            const char* const name,
-                                                            const auto* const object) {
-                                if (object == nullptr) return;
-                                const auto* const begin = reinterpret_cast<const std::byte*>(object);
-                                const auto* const end = begin + sizeof(*object);
-                                if (begin <= address && address < end) {
-                                    difference.objectName = name;
-                                    difference.objectOffset =
-                                        static_cast<std::size_t>(address - begin);
-                                }
-                            };
-                            identifyObject("JFWDisplay", JFWDisplay::getManager());
-                            identifyObject("JUTXfb", JUTXfb::getManager());
-                            identifyObject("JUTProcBar", JUTProcBar::getManager());
-                            identifyObject("JUTDbPrint", JUTDbPrint::getManager());
-                            identifyObject("JUTDirectPrint", JUTDirectPrint::getManager());
-                            if (JFWDisplay::getManager() != nullptr) {
-                                identifyObject("JUTFader", JFWDisplay::getManager()->getFader());
-                            }
-                        }
-                        if (++entryDifferences == MaxDifferencesPerEntry) break;
-                    }
-                }
+            if (mCheckpoint.capture(actualImage) == StateCheckpointError::None) {
+                recordImageDifferences(mA1FirstTickImage, actualImage);
             }
+        } else if (mEpisodeTick < mA1NativeImages.size()) {
+            recordImageDifferences(
+                mA1NativeImages[mEpisodeTick], capture_native_diagnostic_image());
         }
         error = mPhase == Phase::RepeatA
                     ? "repeated A attempt diverged from fresh-prefix A"
@@ -520,6 +562,7 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"capture_micros", mCaptureMicros},
         {"restore_micros", mRestoreMicros},
         {"audio_callback_quiesced", mAudioCallbackQuiesced},
+        {"restore_integrity_failed", mRestoreIntegrityFailed},
         {"a_sequence_digest", hex_digest(sequence)},
         {"replay_fingerprint_schema", "dusklight-milestone-observation/v1"},
         {"a_replay_sequence_digest", hex_digest(replaySequence)},
@@ -531,7 +574,11 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"expected_digest", mExpectedDivergence.empty() ? nlohmann::json(nullptr)
                                                           : nlohmann::json(mExpectedDivergence)},
         {"actual_digest", mActualDivergence.empty() ? nlohmann::json(nullptr)
-                                                      : nlohmann::json(mActualDivergence)},
+                                                       : nlohmann::json(mActualDivergence)},
+        {"expected_host_state", mExpectedHostState.empty() ? nlohmann::json(nullptr)
+                                                               : nlohmann::json(mExpectedHostState)},
+        {"actual_host_state", mActualHostState.empty() ? nlohmann::json(nullptr)
+                                                           : nlohmann::json(mActualHostState)},
         {"divergent_entries", mDivergentEntries},
         {"first_byte_differences", std::move(byteDifferences)},
         {"error", mError.empty() ? nlohmann::json(nullptr) : nlohmann::json(mError)},

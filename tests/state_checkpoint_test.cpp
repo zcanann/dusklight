@@ -125,12 +125,65 @@ void test_component_fail_closed() {
     REQUIRE(other.restore(image) == StateCheckpointError::ManifestMismatch);
 }
 
+void test_semantic_padding_is_explicit_and_raw_integrity_stays_exact() {
+    std::array<std::byte, 16> memory{};
+    memory[3] = std::byte{0x11};
+    memory[5] = std::byte{0x22};
+    const std::array ignored{
+        StateCheckpointIgnoredRange{.offset = 4, .size = 3},
+    };
+    StateCheckpoint checkpoint;
+    REQUIRE(checkpoint.addMemoryRegion("memory", memory.data(), memory.size(), ignored) ==
+            StateCheckpointError::None);
+
+    StateCheckpointImage image;
+    REQUIRE(checkpoint.capture(image) == StateCheckpointError::None);
+    std::string rawBefore;
+    std::string semanticBefore;
+    REQUIRE(checkpoint.currentDigest(rawBefore) == StateCheckpointError::None);
+    REQUIRE(checkpoint.currentSemanticDigest(semanticBefore) == StateCheckpointError::None);
+    REQUIRE(rawBefore == image.digest);
+    REQUIRE(rawBefore != semanticBefore);
+
+    memory[5] = std::byte{0x99};
+    std::string rawAfterPadding;
+    std::string semanticAfterPadding;
+    REQUIRE(checkpoint.currentDigest(rawAfterPadding) == StateCheckpointError::None);
+    REQUIRE(checkpoint.currentSemanticDigest(semanticAfterPadding) ==
+            StateCheckpointError::None);
+    REQUIRE(rawAfterPadding != rawBefore);
+    REQUIRE(semanticAfterPadding == semanticBefore);
+
+    memory[3] = std::byte{0x44};
+    std::string semanticAfterState;
+    REQUIRE(checkpoint.currentSemanticDigest(semanticAfterState) ==
+            StateCheckpointError::None);
+    REQUIRE(semanticAfterState != semanticBefore);
+    REQUIRE(checkpoint.restore(image) == StateCheckpointError::None);
+    REQUIRE(memory[3] == std::byte{0x11});
+    REQUIRE(memory[5] == std::byte{0x22});
+
+    StateCheckpoint invalid;
+    const std::array zeroRange{
+        StateCheckpointIgnoredRange{.offset = 2, .size = 0},
+    };
+    REQUIRE(invalid.addMemoryRegion("zero", memory.data(), memory.size(), zeroRange) ==
+            StateCheckpointError::InvalidIgnoredRange);
+    const std::array overlapping{
+        StateCheckpointIgnoredRange{.offset = 2, .size = 4},
+        StateCheckpointIgnoredRange{.offset = 5, .size = 2},
+    };
+    REQUIRE(invalid.addMemoryRegion("overlap", memory.data(), memory.size(), overlapping) ==
+            StateCheckpointError::InvalidIgnoredRange);
+}
+
 }  // namespace
 
 int main() {
     test_round_trip_and_integrity();
     test_registration_rejections();
     test_component_fail_closed();
+    test_semantic_padding_is_explicit_and_raw_integrity_stays_exact();
     std::cout << "state checkpoint tests passed\n";
     return 0;
 }
