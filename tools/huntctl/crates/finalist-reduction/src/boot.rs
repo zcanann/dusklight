@@ -237,6 +237,8 @@ pub fn minimize_boot(config: &BootMinimizeConfig) -> Result<BootMinimizeSummary,
 /// when its earlier timestamp can expose a coordinated improvement on a later
 /// pass.
 const BOOT_GOLF_EVALUATION_BATCH_SIZE: usize = 32;
+const BUTTON_A: u16 = 0x0100;
+const BUTTON_START: u16 = 0x1000;
 
 pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateError> {
     if config.candidate.segment != SegmentProfile::BootToFsp103 {
@@ -317,12 +319,26 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
                     .ok_or_else(|| EvaluateError::InvalidResult("pulse frame overflowed".into()))?
             };
             for timestamp in (earliest..timestamps[pulse_index]).rev() {
+                let old_index = usize::try_from(timestamps[pulse_index]).map_err(|_| {
+                    EvaluateError::InvalidResult("pulse timestamp is too large".into())
+                })?;
+                let authored_buttons = current.tape.frames[old_index].pads[0].buttons;
                 candidates.push(candidate_with_shifted_pulse(
                     &current,
                     pulse_index,
                     timestamp,
+                    authored_buttons,
                     round,
                 )?);
+                if let Some(alternate_buttons) = alternate_menu_buttons(authored_buttons) {
+                    candidates.push(candidate_with_shifted_pulse(
+                        &current,
+                        pulse_index,
+                        timestamp,
+                        alternate_buttons,
+                        round,
+                    )?);
+                }
             }
         }
         if candidates.is_empty() {
@@ -500,6 +516,7 @@ fn candidate_with_shifted_pulse(
     parent: &ProvenBootCandidate,
     pulse_index: usize,
     new_timestamp: u64,
+    new_buttons: u16,
     generation: u32,
 ) -> Result<Candidate, EvaluateError> {
     let timestamps = pulse_timestamps(&parent.tape)?;
@@ -519,16 +536,22 @@ fn candidate_with_shifted_pulse(
         ));
     }
     let mut tape = parent.tape.clone();
-    let pad = tape.frames[old_index].pads[0];
+    let mut pad = tape.frames[old_index].pads[0];
+    let old_buttons = pad.buttons;
+    pad.buttons = new_buttons;
     tape.frames[old_index].pads[0] = RawPadState::default();
     tape.frames[new_index].pads[0] = pad;
     let mut candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape)?;
     candidate.ancestry = Ancestry {
         generation,
         parent_id: Some(parent.candidate.id()?),
-        mutation: Some(format!(
-            "move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
-        )),
+        mutation: Some(if old_buttons == new_buttons {
+            format!("move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}")
+        } else {
+            format!(
+                "move and swap pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}"
+            )
+        }),
         intervention: Some(InterventionRange {
             start_frame: old_timestamp.min(new_timestamp),
             end_frame_exclusive: old_timestamp.max(new_timestamp) + 1,
@@ -536,6 +559,14 @@ fn candidate_with_shifted_pulse(
         }),
     };
     Ok(candidate)
+}
+
+fn alternate_menu_buttons(buttons: u16) -> Option<u16> {
+    match buttons {
+        BUTTON_A => Some(BUTTON_START),
+        BUTTON_START => Some(BUTTON_A),
+        _ => None,
+    }
 }
 
 fn pulse_frame_count(tape: &InputTape) -> usize {
@@ -723,5 +754,34 @@ mod tests {
         assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
+    }
+
+    #[test]
+    fn shifted_boot_pulse_can_swap_between_a_and_start() {
+        let mut tape = InputTape {
+            frames: vec![Default::default(); 5],
+            ..InputTape::default()
+        };
+        tape.frames[3].pads[0].buttons = BUTTON_START;
+        let candidate = Candidate::from_absolute_tape(SegmentProfile::BootToFsp103, &tape).unwrap();
+        let parent = ProvenBootCandidate {
+            candidate,
+            tape,
+            sim_tick: 4,
+            tape_frame: 4,
+            boundary_fingerprint: BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v1".into(),
+                digest: "a".repeat(32),
+            },
+        };
+
+        let swapped = candidate_with_shifted_pulse(&parent, 0, 1, BUTTON_A, 1)
+            .unwrap()
+            .compile()
+            .unwrap();
+        assert_eq!(swapped.frames[1].pads[0].buttons, BUTTON_A);
+        assert_eq!(swapped.frames[3].pads[0].buttons, 0);
     }
 }
