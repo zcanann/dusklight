@@ -221,7 +221,8 @@ The lower-level form accepts those artifacts directly:
 `golf-inputs` edits only pure, zero-stick A/Start pulse frames in the candidate
 suffix. Each round tries removing one pulse, then moving a surviving pulse to
 an earlier free frame without changing pulse order, testing both its authored
-button and the A/Start alternative. Proposals are deterministic and bounded by
+button and the A/Start alternative. It also tests the alternate button at the
+unchanged timestamp. Proposals are deterministic and bounded by
 `--candidate-budget`; there is no random seed or model. Every
 candidate replays the immutable prefix from a clean process and must reach the
 selected goal predicate with identical evidence in every repetition.
@@ -312,8 +313,9 @@ changing their order:
 
 This is exhaustive coordinate descent, not evolution or random sampling. Each
 round tests every legal earlier absolute frame for every existing pulse,
-starting with the final pulse. At each coordinate it tests both the authored
-button and its A/Start alternative. A candidate is eligible only when all
+starting with the final pulse. At each earlier coordinate it tests both the
+authored button and its A/Start alternative, and it tests the alternate at the
+current coordinate. A candidate is eligible only when all
 repeated runs agree exactly, it reaches the source proof's boundary
 fingerprint, and it does not regress the current goal tick. Selection minimizes
 goal tick first, then the sum and lexicographic vector of pulse timestamps.

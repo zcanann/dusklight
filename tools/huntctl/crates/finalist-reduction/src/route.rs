@@ -1020,6 +1020,29 @@ fn input_golf_proposals(
         )?;
     }
 
+    // The alternate button can be meaningful even when the authored timestamp
+    // is already the earliest legal coordinate.
+    for (pulse_index, timestamp) in timestamps.iter().copied().enumerate() {
+        if proposals.len() == budget {
+            return Ok(proposals);
+        }
+        let mut tape = parent.tape.clone();
+        let Some(alternate) = alternate_menu_pulse(tape.frames[timestamp as usize].pads[0]) else {
+            continue;
+        };
+        tape.frames[timestamp as usize].pads[0] = alternate;
+        push_input_golf_candidate(
+            parent,
+            tape,
+            generation,
+            format!("swap menu pulse {pulse_index} at frame {timestamp}"),
+            timestamp,
+            timestamp + 1,
+            &mut ids,
+            &mut proposals,
+        )?;
+    }
+
     // Search every earlier free coordinate with both the authored button and
     // its A/Start alternative. Last-to-first makes late menu gates available
     // early in a bounded run; descending destinations test the smallest
@@ -1540,8 +1563,8 @@ mod tests {
             },
         };
 
-        let proposals = input_golf_proposals(&proven, 1, 4).unwrap();
-        assert_eq!(proposals.len(), 4);
+        let proposals = input_golf_proposals(&proven, 1, 6).unwrap();
+        assert_eq!(proposals.len(), 6);
         assert_eq!(
             menu_pulse_timestamps(&proposals[0].compile().unwrap()).unwrap(),
             vec![7]
@@ -1552,13 +1575,21 @@ mod tests {
         );
         assert_eq!(
             menu_pulse_timestamps(&proposals[2].compile().unwrap()).unwrap(),
-            vec![3, 6]
+            vec![3, 7]
         );
         assert_eq!(
-            proposals[2].compile().unwrap().frames[9].pads[0].buttons,
+            proposals[2].compile().unwrap().frames[3].pads[0].buttons,
+            BUTTON_START
+        );
+        assert_eq!(
+            proposals[3].compile().unwrap().frames[7].pads[0].buttons,
+            BUTTON_A
+        );
+        assert_eq!(
+            proposals[4].compile().unwrap().frames[9].pads[0].buttons,
             0x0200
         );
-        let swapped = proposals[3].compile().unwrap();
+        let swapped = proposals[5].compile().unwrap();
         assert_eq!(menu_pulse_timestamps(&swapped).unwrap(), vec![3, 6]);
         assert_eq!(swapped.frames[6].pads[0].buttons, BUTTON_A);
         assert_eq!(swapped.frames[9].pads[0].buttons, 0x0200);

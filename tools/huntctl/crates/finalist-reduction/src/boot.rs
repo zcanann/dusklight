@@ -318,11 +318,19 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
                     .checked_add(1)
                     .ok_or_else(|| EvaluateError::InvalidResult("pulse frame overflowed".into()))?
             };
+            let old_index = usize::try_from(timestamps[pulse_index])
+                .map_err(|_| EvaluateError::InvalidResult("pulse timestamp is too large".into()))?;
+            let authored_buttons = current.tape.frames[old_index].pads[0].buttons;
+            if let Some(alternate_buttons) = alternate_menu_buttons(authored_buttons) {
+                candidates.push(candidate_with_shifted_pulse(
+                    &current,
+                    pulse_index,
+                    timestamps[pulse_index],
+                    alternate_buttons,
+                    round,
+                )?);
+            }
             for timestamp in (earliest..timestamps[pulse_index]).rev() {
-                let old_index = usize::try_from(timestamps[pulse_index]).map_err(|_| {
-                    EvaluateError::InvalidResult("pulse timestamp is too large".into())
-                })?;
-                let authored_buttons = current.tape.frames[old_index].pads[0].buttons;
                 candidates.push(candidate_with_shifted_pulse(
                     &current,
                     pulse_index,
@@ -527,8 +535,10 @@ fn candidate_with_shifted_pulse(
         .map_err(|_| EvaluateError::InvalidResult("new pulse timestamp is too large".into()))?;
     let old_index = usize::try_from(old_timestamp)
         .map_err(|_| EvaluateError::InvalidResult("old pulse timestamp is too large".into()))?;
-    if new_timestamp >= old_timestamp
-        || parent.tape.frames[new_index].pads[0].buttons != 0
+    let old_buttons = parent.tape.frames[old_index].pads[0].buttons;
+    if new_timestamp > old_timestamp
+        || (new_timestamp == old_timestamp && new_buttons == old_buttons)
+        || (new_timestamp != old_timestamp && parent.tape.frames[new_index].pads[0].buttons != 0)
         || (pulse_index > 0 && new_timestamp <= timestamps[pulse_index - 1])
     {
         return Err(EvaluateError::InvalidResult(
@@ -537,7 +547,6 @@ fn candidate_with_shifted_pulse(
     }
     let mut tape = parent.tape.clone();
     let mut pad = tape.frames[old_index].pads[0];
-    let old_buttons = pad.buttons;
     pad.buttons = new_buttons;
     tape.frames[old_index].pads[0] = RawPadState::default();
     tape.frames[new_index].pads[0] = pad;
@@ -545,7 +554,9 @@ fn candidate_with_shifted_pulse(
     candidate.ancestry = Ancestry {
         generation,
         parent_id: Some(parent.candidate.id()?),
-        mutation: Some(if old_buttons == new_buttons {
+        mutation: Some(if old_timestamp == new_timestamp {
+            format!("swap pulse {pulse_index} at frame {old_timestamp}")
+        } else if old_buttons == new_buttons {
             format!("move pulse {pulse_index} from frame {old_timestamp} to {new_timestamp}")
         } else {
             format!(
@@ -787,5 +798,11 @@ mod tests {
             .unwrap();
         assert_eq!(swapped.frames[1].pads[0].buttons, BUTTON_A);
         assert_eq!(swapped.frames[3].pads[0].buttons, 0);
+
+        let in_place = candidate_with_shifted_pulse(&parent, 0, 3, BUTTON_A, 1)
+            .unwrap()
+            .compile()
+            .unwrap();
+        assert_eq!(in_place.frames[3].pads[0].buttons, BUTTON_A);
     }
 }
