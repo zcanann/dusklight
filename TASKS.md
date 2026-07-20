@@ -447,6 +447,16 @@ PAD and gameplay sequence as ordinary playback.
   Models may request or ablate channel families without recollecting episodes.
 - [ ] Represent actors, contacts and nearby geometry as masked sets or graphs,
   not fixed actor slots whose iteration order becomes accidental meaning.
+  - [x] Derive a sealed dynamic-collision graph from the complete native-v8
+    collider population without recollecting gameplay. Collision view v1 keeps
+    not-sampled, unavailable, absent and present distinct; joins collider
+    owners and attack/target/correction hit partners to actor generations; and
+    retains unresolved runtime identities instead of silently dropping edges.
+    Shape geometry is available in absolute, Link-relative and owner-relative
+    coordinates with exact status masks. V8 and legacy-v7 fixtures cover
+    complete-set joins and explicit historical absence; malformed edges,
+    status/mask disagreement, non-finite geometry and canonical tampering fail
+    closed. A trainable graph encoder and held-out comparison remain open.
 - [ ] Preserve the complete dynamic actor set until an object-centric encoder
   has seen it. Learn attention/gating over typed channel families and explicit
   validity masks; do not permanently discard distant or apparently irrelevant
@@ -503,6 +513,16 @@ and geometry set sizes without schema changes.
 
 ## 4. Build the first genuine learning loop
 
+- [ ] Treat optimization and discovery as distinct evaluation regimes over one
+  learner, not as different route-specific algorithms:
+  - demonstration-seeded runs may use successful episodes to initialize replay,
+    state coverage and reverse curricula, but may not use incumbent-relative
+    coordinates, progress rewards or a mandatory trajectory corridor;
+  - goal-only runs receive the source state, semantic terminal predicate and
+    generic observations/actions, with no successful action sequence;
+  - transfer runs hold out maps, checkpoints and mechanics combinations so a
+    learner must reuse control/contact knowledge instead of starting a fresh
+    route model or memorizing one stage.
 - [ ] Maintain a replay corpus containing demonstrations, successful and failed
   policy rollouts, randomized coverage and alternate terminal states. Preserve
   checkpoint, episode, branch and policy-generation lineage.
@@ -527,8 +547,18 @@ and geometry set sizes without schema changes.
   viable action basin, then move validated checkpoints backward. A state is
   useful when an actual continuation reaches the predicate, not when it falls
   inside a hand-authored floating-point waypoint epsilon.
+- [ ] Build reset distributions from states the learner actually reached,
+  clustered by semantic/relational state rather than frame number or distance
+  along a tape. Expand the curriculum frontier only when held-out rollouts can
+  reconnect a newly explored state to a terminal success or another validated
+  competence basin.
 - [ ] Add hindsight goals so failures teach achieved transitions and local
   dynamics even when they miss the main predicate.
+- [ ] Learn reusable goal-conditioned skills/options from experience: discover
+  coherent action phases, parameterize them by relational targets and state,
+  learn initiation/termination conditions, and always retain the exact raw-PAD
+  realization. Options may be proposed by the learner or mined from recurring
+  behavior; they must not embed route coordinates or documented glitch steps.
 - [ ] Use a hybrid proposal policy: learned value/reachability ranks
   checkpoint-backed short-horizon exploration, while continuous trajectory
   optimization handles analog parameters and discrete search handles button
@@ -590,11 +620,21 @@ Only after gates 1-5 work end to end:
 - [ ] Add a quality-diversity archive over generic relational state: spatial
   region, contact/surface relationships, action phase, velocity, actor/item
   relationships, event/inventory changes and novel displacement.
+- [ ] Preserve precision basins rather than only terminal winners: archive
+  states by fine relational offsets, velocity/contact phase, simultaneous
+  interaction opportunities and critic/model uncertainty. Adapt resolution
+  around empirically sensitive dimensions instead of globally hand-selecting
+  a floating-point tolerance.
 - [ ] Add intrinsic exploration signals based on new state/contact/event
   combinations and learned-dynamics disagreement. They prioritize experiments
   but never prove a glitch.
 - [ ] Mine recurring successful action sequences as candidate reusable options
   while retaining raw-PAD refinement.
+- [ ] Test compositional discovery: combine independently learned setup,
+  locomotion, interaction and frame-synchronization options, then let
+  short-horizon continuous/discrete refinement search their boundaries. The
+  benchmark must include a success whose setup requires multiple simultaneous
+  relational conditions so raw local mutation is an inadequate baseline.
 - [ ] Require an input-only deterministic proof for every claimed outcome.
 
 **Gate 6:** the system can retain and revisit rare physically interesting
