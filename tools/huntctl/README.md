@@ -215,6 +215,22 @@ explicitly when needed:
 --gameplay-trace-channels core,stage,player-motion,player-action,rng,camera,goal-progress,selected-actors
 ```
 
+For a cold proof that native learning capture does not change controller input
+or gameplay, record `all` trace channels once during ordinary playback and once
+during a single tape-passthrough suffix batch, then bind both traces to the
+batch's episode shard:
+
+```text
+huntctl trace observation-parity off.trace on.trace \
+  --learning-shard on-result.json.episodes.dseps \
+  --output observation-parity.json
+```
+
+The command requires complete, unretained v5 traces; compares the exact
+pre-clamp `PADRead` sequence and every retained gameplay-state channel; checks
+that the v4 shard's chosen and consumed PAD agree with the traced suffix; seals
+the report; and exits nonzero on the first divergence.
+
 `selected-actors` keeps at most 16 non-player actors and reports the full
 observed count plus truncation. `huntctl trace inspect build/run.trace` exposes
 both new typed channels.

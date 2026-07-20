@@ -5,7 +5,6 @@
 
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
-#include "JSystem/JUtility/JUTGamePad.h"
 #include "d/actor/d_a_alink.h"
 #include "d/actor/d_a_scene_exit.h"
 #include "d/actor/d_a_scene_exit2.h"
@@ -28,6 +27,9 @@
 namespace dusk::automation {
 
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
+
+static std::array<RawPadState, kInputPortCount> sLastConsumedPads{};
+static bool sLastConsumedPadsValid = false;
 
 struct GameplayTraceCollisionReadAdapter {
     static u32 flags(const dBgS_Acch& value) { return value.m_flags; }
@@ -350,6 +352,16 @@ int capture_selected_actor(void* candidate, void* context) {
 
 #endif
 
+void record_gameplay_trace_consumed_pads(
+    const std::span<const PADStatus, kInputPortCount> statuses) {
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    std::ranges::transform(statuses, sLastConsumedPads.begin(), raw_pad_state_from_pad_status);
+    sLastConsumedPadsValid = true;
+#else
+    (void)statuses;
+#endif
+}
+
 bool gameplay_trace_observer_enabled() {
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     return true;
@@ -482,13 +494,16 @@ bool capture_gameplay_trace_sample(const GameplayTraceCaptureContext& context,
     }
 
     if (wants(Channel::AppliedPads)) {
-        sample.appliedPadsStatus = Status::Present;
-        sample.appliedPads.ownedPorts = context.ownedPorts;
-        for (std::size_t port = 0; port < kInputPortCount; ++port) {
-            auto& pad = sample.appliedPads.pads[port];
-            pad = raw_pad_state_from_pad_status(JUTGamePad::mPadStatus[port]);
-            if (has_flag(pad.flags, RawPadFlags::Connected)) {
-                sample.appliedPads.validPorts |= static_cast<std::uint8_t>(1u << port);
+        sample.appliedPadsStatus =
+            sLastConsumedPadsValid ? Status::Present : Status::Unavailable;
+        if (sLastConsumedPadsValid) {
+            sample.appliedPads.ownedPorts = context.ownedPorts;
+            for (std::size_t port = 0; port < kInputPortCount; ++port) {
+                auto& pad = sample.appliedPads.pads[port];
+                pad = sLastConsumedPads[port];
+                if (has_flag(pad.flags, RawPadFlags::Connected)) {
+                    sample.appliedPads.validPorts |= static_cast<std::uint8_t>(1u << port);
+                }
             }
         }
     }

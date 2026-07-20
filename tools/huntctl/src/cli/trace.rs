@@ -71,6 +71,34 @@ pub(crate) fn command_trace(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&comparison)?);
             Ok(())
         }
+        Some("observation-parity") if args.len() == 5 || args.len() == 7 => {
+            let shard_path = option(&args[3..], "--learning-shard")
+                .ok_or("observation parity requires --learning-shard EPISODES.dseps")?;
+            let output_path = option(&args[3..], "--output");
+            if args.len() == 7 && output_path.is_none() {
+                return usage_error();
+            }
+            let off_bytes = fs::read(&args[1])?;
+            let on_bytes = fs::read(&args[2])?;
+            let shard_bytes = fs::read(shard_path)?;
+            let report = huntctl::observation_parity::ObservationParityReport::build(
+                &huntctl::trace::decode(&off_bytes)?,
+                &off_bytes,
+                &huntctl::trace::decode(&on_bytes)?,
+                &on_bytes,
+                &huntctl::native_episode_shard::NativeEpisodeShard::decode(&shard_bytes)?,
+            )?;
+            let encoded = serde_json::to_vec_pretty(&report)?;
+            if let Some(path) = output_path {
+                fs::write(path, &encoded)?;
+            } else {
+                println!("{}", String::from_utf8(encoded)?);
+            }
+            if !report.verified {
+                return Err("cold observation-on/off parity proof diverged".into());
+            }
+            Ok(())
+        }
         Some("route-diagnostics") if args.len() >= 6 => {
             let source_boundary_frame = option(&args[2..], "--source-boundary-frame")
                 .ok_or("route diagnostics require --source-boundary-frame N")?

@@ -123,8 +123,20 @@ the same goal without demonstration-relative features.
 - [x] Add corpus inspection for missing channels, masks, NaNs, constants,
   discontinuities, set sizes, action coverage, outcome balance, duplicate
   trajectories, and possible identity leakage.
-- [ ] Prove observation on/off parity and raw-PAD/state-hash equivalence with
-  cold playback.
+- [x] Prove observation on/off parity and raw-PAD/state-hash equivalence with
+  cold playback. `huntctl trace observation-parity` now binds a complete
+  all-channel ordinary trace, a trace from the real one-candidate native v4
+  learning batch, and that batch's authenticated episode shard into one sealed,
+  fail-closed report. Gameplay trace retains the exact `PADRead` result before
+  JUT's non-idempotent clamp, and suffix batches may emit this read-only witness;
+  the terminal batch tick is retained exactly once. Two fresh process/card/cache
+  roots replayed the same 565-frame tape with capture off and on. Their complete
+  v5 traces were byte-identical (`075bef84...de16`), all 565 exact multi-port
+  raw-PAD samples matched (`b41fadc5...8d26`), all 565 gameplay-state projections
+  matched (`1cc15f95...11d9`), and the 125 episode PAD samples matched the trace
+  suffix (`1bf49d0b...24c5`). The sealed report is
+  `d437cce3...9b685`; any disagreement is emitted as a named first divergence
+  and fails the command.
 
 **Gate 1:** one native Ordon batch produces complete replayable trajectories
 for every success and failure, can be ingested directly by the learner, has no

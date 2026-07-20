@@ -4,6 +4,9 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
+
+#include <dolphin/pad.h>
 
 namespace dusk::automation {
 
@@ -48,6 +51,9 @@ struct GameplayPlayerFormObservation {
 };
 
 bool gameplay_trace_observer_enabled();
+/** Retains the exact PADRead result before JUTGamePad applies its non-idempotent clamp. */
+void record_gameplay_trace_consumed_pads(
+    std::span<const PADStatus, kInputPortCount> statuses);
 GameplayCollisionCorrectionObservation capture_gameplay_collision_correction();
 GameplayCollisionPlanesObservation capture_gameplay_collision_planes();
 GameplayPlayerFormObservation capture_gameplay_player_form();

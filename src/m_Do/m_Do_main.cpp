@@ -1706,6 +1706,12 @@ static bool finish_suffix_batch_tick() {
     if (!batch.enabled()) return false;
     std::string error;
     if (!batch.postSimulation(automationSimulationTick, automationTapeFrame, error)) return false;
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // The ordinary post-simulation path records this tick after batch handling. A completed
+    // batch exits before reaching that path, so retain its terminal witness here exactly once.
+    // Batch finalization is read-only with respect to gameplay and controller state.
+    record_gameplay_trace_tick();
+#endif
     if (batch.failed()) {
         suffixBatchFailed = true;
         DuskLog.error("Suffix batch failed: {}", error);
@@ -3291,8 +3297,7 @@ int game_main(int argc, char* argv[]) {
             hasInputController || hasInputTapeFastForward || hasRecordInputTape ||
             hasRealizedInputTape || exitAfterInputTape || automationLogicalTickBudget != 0 ||
             frameCaptureEnabled || playbackThumbnailCaptureEnabled || hasAutomationOracle ||
-            hasNameEntryTrace || parsed_arg_options.count("gameplay-trace") != 0 ||
-            parsed_arg_options.count("actor-catalog") != 0 ||
+            hasNameEntryTrace || parsed_arg_options.count("actor-catalog") != 0 ||
             parsed_arg_options.count("milestones") != 0 ||
             parsed_arg_options.count("automation-phase-timing") != 0 ||
             parsed_arg_options.count("stage") != 0 ||
@@ -3302,7 +3307,7 @@ int game_main(int argc, char* argv[]) {
                 dusk::automation::TapeBootKind::Process)
         {
             fprintf(stderr,
-                    "Suffix Batch Error: batch execution requires a headless absolute default boot tape with release-at-end and no competing automation artifact mode\n");
+                    "Suffix Batch Error: batch execution requires a headless absolute default boot tape with release-at-end and no competing stateful automation mode; read-only gameplay tracing is allowed\n");
             return 1;
         }
         const std::string batchArgument =

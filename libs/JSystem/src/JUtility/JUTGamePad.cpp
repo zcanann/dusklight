@@ -3,6 +3,7 @@
 #include "JSystem/JUtility/JUTGamePad.h"
 #if TARGET_PC
 #include <aurora/aurora.h>
+#include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/suffix_batch_runner.hpp"
 #endif
@@ -95,6 +96,7 @@ u32 JUTGamePad::sRumbleSupported;
 u32 JUTGamePad::read() {
     sRumbleSupported = PADRead(mPadStatus);
 #if TARGET_PC
+    dusk::automation::record_gameplay_trace_consumed_pads(mPadStatus);
     dusk::automation::suffix_batch_runner().recordConsumedPads(mPadStatus);
     // Read-only cold branch when no recording is armed. Capture after host
     // mapping and before the game's non-idempotent clamp so replay clamps the

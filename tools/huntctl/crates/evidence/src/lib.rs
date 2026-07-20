@@ -14,6 +14,7 @@ pub mod episode;
 pub mod episode_store;
 pub mod native_corpus_inspection;
 pub mod native_episode_shard;
+pub mod observation_parity;
 pub mod semantic_state_hash;
 pub mod trace_diff;
 pub mod transition_corpus;

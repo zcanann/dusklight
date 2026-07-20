@@ -147,7 +147,9 @@ fn usage_error<T>() -> Result<T, Box<dyn Error>> {
 }
 
 fn print_usage() {
-    eprintln!("Trace typed facts:\n  huntctl trace facts INPUT.trace [--boundary-index N]\n");
+    eprintln!(
+        "Trace typed facts and parity:\n  huntctl trace facts INPUT.trace [--boundary-index N]\n  huntctl trace observation-parity OFF.trace ON.trace --learning-shard EPISODES.dseps [--output REPORT.json]\n"
+    );
     eprintln!("Engine sessions:\n  huntctl session audit --worker PATH [--worker-arg ARG]...\n");
     eprintln!(
         "Objective campaigns:\n  huntctl conformance --suite SUITE.json --executable DUSKLIGHT --game-data GAME.iso --output build/DIR [--repository-root DIR] [--fidelity headless|unpaced-headful|realtime-headful]\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --dry-run [--repository-root DIR] [--proposer scripted|random|structured|learned]...\n  huntctl campaign --suite SUITE.json --case ID --output build/DIR --run-request REQUEST.json --definition TOURNAMENT.json [--repository-root DIR] [--workers N]\n"
