@@ -138,8 +138,8 @@ The resulting matrix must answer two separate questions:
 2. Could Dusklight prove the outcome without patching gameplay or relying only
    on a screenshot?
 
-An `unknown` answer is valid research output. Pretending that a coarse actor
-record is sufficient is not.
+An `unknown` answer is valid research output (unless Skybook itself is
+under-specified). Pretending that a coarse actor record is sufficient is not.
 
 **Gate 0B:** each major Skybook mechanism has at least one source-backed
 control/proof analysis and one relevant runtime inspection where a scene is
@@ -152,8 +152,8 @@ has silently become a promise to reproduce it.
   1. Ordon Link-control to `ordon_spring_load_committed`, testing route learning;
   2. a movement goal on a held-out map, testing transfer rather than memorized
      coordinates;
-  3. one Skybook-supported, narrow collision/actor/timing setup, testing precise
-     precondition acquisition and synchronized execution.
+  3. the Telma/Louise text-displacement setup, testing precise actor/trigger/
+     dialogue synchronization and persistent event state.
 - [ ] For each benchmark, define the initial-state identity, terminal predicate,
   allowed observation families, action surface, simulated-tick budget, training
   budget, and cold-playback promotion gate before training begins.
@@ -333,21 +333,58 @@ responsible for finding useful actions.
 efficiency advantage, or the failure produces a specific representation gap
 supported by traces and ablation.
 
-### 5.3 Thin Skybook-supported setup
+### 5.3 Telma/Louise text displacement
 
-- [ ] Select the representative only after the controllability audit. Prefer a
-  case requiring a narrow combination of relative position/angle/velocity,
-  action phase, and actor or pickup timing.
-- [ ] Define separate semantic predicates for reaching the precondition region,
-  executing the synchronization, and obtaining the actual outcome. These aid
-  diagnosis and curriculum; only the real outcome authorizes promotion.
-- [ ] Learn locally from validated checkpoints, expand the successful basin,
-  move the curriculum backward, and finally produce an input-only tape from its
-  declared boot origin.
+Use Skybook's `telma-dialog-skip-grants-text-displacement` as the first thin,
+actor-dependent setup. The learner must make Louise's meow cutscene interrupt
+Telma's dialogue by interacting with Louise while Link enters Telma's dialogue
+trigger. The interrupted dialogue leaves shared text-progression state behind;
+subsequent interactions with Telma advance the displaced dialogue one box at a
+time.
 
-**Gate 5C:** the framework finds and cold-replays the selected outcome without
-gameplay writes, hard-coded outcome injection, or a human specifying the exact
-successful frame sequence.
+- [ ] Author a declared stage-boot fixture inside Telma's Bar with the normal
+  post-twilight progression flags required for both Telma and Louise to be
+  present in their intended states. Record the exact stage, room, layer, spawn,
+  form, inventory, and flag identity. Boot overrides establish tick-zero state;
+  no intervention may write gameplay state after playback begins.
+- [ ] Confirm through the stage audit that Telma, Louise, Telma's dialogue
+  trigger, and any actor or event controller responsible for the meow cutscene
+  are captured with stable identities and useful transforms/state. If the
+  trigger is not an ordinary actor, expose its realized volume and enabled/event
+  state through the read-only observer boundary.
+- [ ] Identify the symbolic owners and meanings of the shared text-progression
+  bits documented by Skybook around GameCube addresses `80406F98`, `80406F99`,
+  and `80406F9D`. Expose the relevant fixed bits as a versioned, read-only event/
+  dialogue observation. Keep the addresses as source evidence, not as portable
+  native pointer identities.
+- [ ] Capture the normal control cases: Telma dialogue alone, Louise interaction
+  alone, entering the trigger without the required overlap, and ordinary
+  dialogue completion/cleanup. These establish which progression bits and event
+  ownership transitions are specific to the glitch.
+- [ ] Define diagnostic predicates for:
+  1. the authored fixture being ready with both actors and the trigger present;
+  2. Louise interaction and Telma trigger entry overlapping in the required
+     action/event window;
+  3. the meow cutscene taking event ownership before Telma's dialogue cleanup;
+  4. the displaced text-progression bit pattern persisting after that cutscene;
+     and
+  5. a later Telma interaction advancing exactly one of the dialogue boxes that
+     normally would have progressed during the interrupted sequence.
+- [ ] Make the persistent text-displacement state plus the one-box Telma
+  consequence the terminal semantic proof. Spatial overlap or an interrupted
+  event alone is diagnostic progress and cannot authorize promotion.
+- [ ] Learn locally from validated checkpoints near the interaction, expand the
+  successful timing/position basin, move the curriculum backward, and finally
+  produce an input-only tape from the declared Telma's Bar fixture.
+- [ ] Do not provide the learner with the successful input frame or a scripted
+  `talk now` condition. It may observe actor, trigger, action, event, dialogue,
+  and text-bit state and choose from the normal PAD/tactic action surface.
+
+**Gate 5C:** the framework repeatedly acquires text displacement and proves the
+one-box-at-a-time Telma behavior from the declared post-twilight boot fixture,
+then cold-replays the exact raw tape with identical event and text-bit evidence.
+No gameplay writes, hard-coded outcome injection, or human-specified successful
+frame sequence may participate after tick zero.
 
 ## 6. Only then open unknown-glitch discovery
 
