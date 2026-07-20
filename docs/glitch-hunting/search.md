@@ -40,6 +40,15 @@ insufficient corpus coverage, or unproved determinism still disable learned
 proposals. This distinction prevents one weak batch from trapping the search
 at the incumbent while preserving the framework's evidence gates.
 
+When fewer than half of the 68 canonical movement actions have native support,
+collection—not unsupported Q extrapolation—receives the majority of the Q
+proposal budget. Structured and archive headings use 4-, 8-, and 16-frame
+windows; blind coverage uses bounded windows up to 16 frames. Every learned
+lane retains a floor, and normal learned-majority allocation resumes once the
+action catalog has enough replayed support. This lets straight headings and
+new roll/button combinations enter the dataset as meaningful movements rather
+than isolated one-frame noise.
+
 C++ is the scoring authority: it reports the first simulation tick and complete
 boundary fingerprint for each memory-backed milestone. Rust owns candidates,
 compact tape compilation, native process scheduling, evidence, ranking, and
