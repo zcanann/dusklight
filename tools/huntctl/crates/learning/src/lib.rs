@@ -16,6 +16,7 @@ pub mod action_guidance;
 pub mod actor_set_representation;
 pub mod batch;
 pub mod calibration;
+pub mod compiled_goal_graph;
 pub mod dataset;
 pub mod double_q;
 pub mod dyna_mixture;

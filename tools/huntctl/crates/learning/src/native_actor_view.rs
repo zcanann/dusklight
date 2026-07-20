@@ -5,10 +5,12 @@
 //! derives coordinate frames offline. It performs no live-game queries.
 
 use crate::artifact::Digest;
+use crate::compiled_goal_graph::{CompiledGoalGraph, GoalSpatialAnchor};
 use dusklight_evidence::native_episode_shard::{
     NativeActorObservation, NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation,
     NativeObservationPhase,
 };
+use dusklight_objectives::milestone_dsl::{CompiledMilestones, decode};
 use dusklight_world::actor_profile_catalog::ActorProfileCatalog;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -17,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V2: &str = "dusklight-native-actor-view/v2";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V3: &str = "dusklight-native-actor-view/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +65,9 @@ pub struct NativeActorRelation {
     pub parent_relative_velocity: Option<[f32; 3]>,
     pub attention: Option<NativeActorAttentionRelation>,
     pub event_participation: Option<NativeActorEventParticipation>,
+    /// One entry per semantic goal-graph spatial anchor, preserving explicit
+    /// unresolved values.
+    pub goal_relative_positions: Vec<Option<[f32; 3]>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -86,6 +91,29 @@ pub struct NativeActorEventParticipation {
     pub index: u8,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeGoalAnchorStatus {
+    Static,
+    ResolvedActor,
+    StageMismatch,
+    ActorAbsent,
+    ActorAmbiguous,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGoalAnchorObservation {
+    /// Exact predicate node in `NativeEpisodeActorView::goal_graph`.
+    pub node_index: u16,
+    /// Zero is `when`; subsequent values are ordered `then` steps.
+    pub sequence_step: u16,
+    pub status: NativeGoalAnchorStatus,
+    pub absolute_position: Option<[f32; 3]>,
+    pub link_relative_position: Option<[f32; 3]>,
+    pub actor_runtime_generation: Option<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeActorViewObservation {
@@ -100,6 +128,7 @@ pub struct NativeActorViewObservation {
     pub player_position: [f32; 3],
     pub player_yaw: i16,
     pub camera_frame_present: bool,
+    pub goal_anchors: Vec<NativeGoalAnchorObservation>,
     pub actors: Vec<NativeActorRelation>,
 }
 
@@ -111,6 +140,7 @@ pub struct NativeEpisodeActorView {
     pub observation_schema: String,
     pub actor_profile_catalog_identity: String,
     pub actor_profile_catalog_sha256: Digest,
+    pub goal_graph: Option<CompiledGoalGraph>,
     pub observations: Vec<NativeActorViewObservation>,
     pub view_sha256: Digest,
 }
@@ -119,6 +149,52 @@ impl NativeEpisodeActorView {
     pub fn build(
         shard: &NativeEpisodeShard,
         catalog: &ActorProfileCatalog,
+    ) -> Result<Self, NativeActorViewError> {
+        Self::build_internal(shard, catalog, None)
+    }
+
+    pub fn build_for_goal(
+        shard: &NativeEpisodeShard,
+        catalog: &ActorProfileCatalog,
+        milestone_program: &[u8],
+        definition_name: &str,
+    ) -> Result<Self, NativeActorViewError> {
+        let decoded = decode(milestone_program)
+            .map_err(|error| NativeActorViewError::new(error.to_string()))?;
+        let definition_index = decoded
+            .definitions
+            .iter()
+            .position(|definition| definition.name == definition_name)
+            .ok_or_else(|| {
+                NativeActorViewError::new(format!(
+                    "compiled milestone definition {definition_name} does not exist"
+                ))
+            })?;
+        if shard.metadata.objective != definition_name {
+            return Err(NativeActorViewError::new(format!(
+                "native shard objective {} does not match selected definition {definition_name}",
+                shard.metadata.objective
+            )));
+        }
+        let program_sha256 = Digest(decoded.program_sha256);
+        let definition_sha256 = Digest(decoded.definitions[definition_index].sha256);
+        shard
+            .verify_authored_objective(&program_sha256.to_string(), &definition_sha256.to_string())
+            .map_err(|error| NativeActorViewError::new(error.to_string()))?;
+        let compiled = CompiledMilestones {
+            bytes: milestone_program.to_vec(),
+            program_sha256: decoded.program_sha256,
+            definitions: decoded.definitions,
+        };
+        let goal_graph = CompiledGoalGraph::from_compiled(&compiled, definition_index)
+            .map_err(|error| NativeActorViewError::new(error.to_string()))?;
+        Self::build_internal(shard, catalog, Some(goal_graph))
+    }
+
+    fn build_internal(
+        shard: &NativeEpisodeShard,
+        catalog: &ActorProfileCatalog,
+        goal_graph: Option<CompiledGoalGraph>,
     ) -> Result<Self, NativeActorViewError> {
         catalog
             .validate()
@@ -159,23 +235,26 @@ impl NativeEpisodeActorView {
                     step_index,
                     &step.pre_input,
                     &profile_slots,
+                    goal_graph.as_ref(),
                 )?);
                 observations.push(materialize_observation(
                     &episode.id,
                     step_index,
                     &step.post_simulation,
                     &profile_slots,
+                    goal_graph.as_ref(),
                 )?);
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V2.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V3.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
             actor_profile_catalog_sha256: catalog
                 .digest()
                 .map_err(|error| NativeActorViewError::new(error.to_string()))?,
+            goal_graph,
             observations,
             view_sha256: Digest::ZERO,
         };
@@ -202,7 +281,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V2
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V3
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -214,8 +293,17 @@ impl NativeEpisodeActorView {
                 "native actor view envelope or seal is invalid",
             ));
         }
+        if let Some(graph) = &self.goal_graph {
+            graph
+                .validate()
+                .map_err(|error| NativeActorViewError::new(error.to_string()))?;
+        }
+        let goal_anchors = self
+            .goal_graph
+            .as_ref()
+            .map_or_else(Vec::new, CompiledGoalGraph::spatial_anchors);
         for observation in &self.observations {
-            validate_observation(observation)?;
+            validate_observation(observation, &goal_anchors)?;
         }
         Ok(())
     }
@@ -226,7 +314,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v2\0");
+        hasher.update(b"dusklight.native-actor-view/v3\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -238,6 +326,7 @@ fn materialize_observation(
     step_index: u32,
     observation: &NativeLearningObservation,
     profile_slots: &BTreeMap<i16, Vec<u32>>,
+    goal_graph: Option<&CompiledGoalGraph>,
 ) -> Result<NativeActorViewObservation, NativeActorViewError> {
     let phase = match observation.phase {
         NativeObservationPhase::PreInput => ActorViewObservationPhase::PreInput,
@@ -256,6 +345,13 @@ fn materialize_observation(
         .iter()
         .map(|actor| (actor.runtime_generation, actor))
         .collect::<BTreeMap<_, _>>();
+    let goal_anchors = goal_graph
+        .map(|graph| materialize_goal_anchors(&graph.spatial_anchors(), observation))
+        .unwrap_or_default();
+    let goal_positions = goal_anchors
+        .iter()
+        .map(|anchor| anchor.absolute_position)
+        .collect::<Vec<_>>();
     let mut actors = Vec::with_capacity(observation.actors.len());
     for actor in &observation.actors {
         let slots = profile_slots.get(&actor.profile_name).ok_or_else(|| {
@@ -270,6 +366,7 @@ fn materialize_observation(
             observation,
             camera_frame,
             &actors_by_generation,
+            &goal_positions,
         ));
     }
     Ok(NativeActorViewObservation {
@@ -284,8 +381,95 @@ fn materialize_observation(
         player_position: observation.player_position,
         player_yaw: observation.player_shape_angle[1],
         camera_frame_present: camera_frame.is_some(),
+        goal_anchors,
         actors,
     })
+}
+
+fn materialize_goal_anchors(
+    anchors: &[GoalSpatialAnchor],
+    observation: &NativeLearningObservation,
+) -> Vec<NativeGoalAnchorObservation> {
+    anchors
+        .iter()
+        .map(|anchor| {
+            let (node_index, sequence_step) = goal_anchor_identity(anchor);
+            let (status, absolute_position, actor_runtime_generation) = match anchor {
+                GoalSpatialAnchor::PlayerAabb {
+                    minimum, maximum, ..
+                } => (
+                    NativeGoalAnchorStatus::Static,
+                    Some([
+                        (minimum[0] + maximum[0]) * 0.5,
+                        (minimum[1] + maximum[1]) * 0.5,
+                        (minimum[2] + maximum[2]) * 0.5,
+                    ]),
+                    None,
+                ),
+                GoalSpatialAnchor::PlayerPlane { point, .. } => {
+                    (NativeGoalAnchorStatus::Static, Some(*point), None)
+                }
+                GoalSpatialAnchor::PlacedActor { selector, .. }
+                    if selector.stage != observation.stage =>
+                {
+                    (NativeGoalAnchorStatus::StageMismatch, None, None)
+                }
+                GoalSpatialAnchor::PlacedActor { selector, .. } => {
+                    let mut matches = observation.actors.iter().filter(|actor| {
+                        actor.home_room == selector.home_room
+                            && actor.set_id == selector.set_id
+                            && actor.actor_name == selector.actor_name
+                    });
+                    match (matches.next(), matches.next()) {
+                        (None, _) => (NativeGoalAnchorStatus::ActorAbsent, None, None),
+                        (Some(actor), None) => (
+                            NativeGoalAnchorStatus::ResolvedActor,
+                            Some(actor.position),
+                            Some(actor.runtime_generation),
+                        ),
+                        (Some(_), Some(_)) => (NativeGoalAnchorStatus::ActorAmbiguous, None, None),
+                    }
+                }
+            };
+            let link_relative_position = absolute_position.and_then(|position| {
+                observation.player_present.then(|| {
+                    relative_yaw(
+                        position,
+                        observation.player_position,
+                        observation.player_shape_angle[1],
+                    )
+                })
+            });
+            NativeGoalAnchorObservation {
+                node_index,
+                sequence_step,
+                status,
+                absolute_position,
+                link_relative_position,
+                actor_runtime_generation,
+            }
+        })
+        .collect()
+}
+
+fn goal_anchor_identity(anchor: &GoalSpatialAnchor) -> (u16, u16) {
+    match anchor {
+        GoalSpatialAnchor::PlacedActor {
+            node_index,
+            sequence_step,
+            ..
+        }
+        | GoalSpatialAnchor::PlayerAabb {
+            node_index,
+            sequence_step,
+            ..
+        }
+        | GoalSpatialAnchor::PlayerPlane {
+            node_index,
+            sequence_step,
+            ..
+        } => (*node_index, *sequence_step),
+    }
 }
 
 fn materialize_actor(
@@ -294,6 +478,7 @@ fn materialize_actor(
     observation: &NativeLearningObservation,
     camera_frame: Option<CameraFrame>,
     actors_by_generation: &BTreeMap<u64, &NativeActorObservation>,
+    goal_positions: &[Option<[f32; 3]>],
 ) -> NativeActorRelation {
     let link_relative_position = observation.player_present.then(|| {
         relative_yaw(
@@ -381,6 +566,10 @@ fn materialize_actor(
                 index: event.index,
             }
         }),
+        goal_relative_positions: goal_positions
+            .iter()
+            .map(|position| position.map(|position| subtract(actor.position, position)))
+            .collect(),
     }
 }
 
@@ -424,6 +613,7 @@ impl CameraFrame {
 
 fn validate_observation(
     observation: &NativeActorViewObservation,
+    expected_goal_anchors: &[GoalSpatialAnchor],
 ) -> Result<(), NativeActorViewError> {
     if observation.episode_id.is_empty()
         || observation.stage.is_empty()
@@ -436,10 +626,41 @@ fn validate_observation(
             .actors
             .windows(2)
             .any(|pair| pair[0].runtime_generation >= pair[1].runtime_generation)
+        || observation.goal_anchors.len() != expected_goal_anchors.len()
     {
         return Err(NativeActorViewError::new(
             "native actor observation envelope is invalid",
         ));
+    }
+    for (anchor, expected) in observation.goal_anchors.iter().zip(expected_goal_anchors) {
+        let payload_consistent = match anchor.status {
+            NativeGoalAnchorStatus::Static => {
+                anchor.absolute_position.is_some() && anchor.actor_runtime_generation.is_none()
+            }
+            NativeGoalAnchorStatus::ResolvedActor => {
+                anchor.absolute_position.is_some() && anchor.actor_runtime_generation.is_some()
+            }
+            NativeGoalAnchorStatus::StageMismatch
+            | NativeGoalAnchorStatus::ActorAbsent
+            | NativeGoalAnchorStatus::ActorAmbiguous => {
+                anchor.absolute_position.is_none() && anchor.actor_runtime_generation.is_none()
+            }
+        };
+        if (anchor.node_index, anchor.sequence_step) != goal_anchor_identity(expected)
+            || !payload_consistent
+            || (anchor.absolute_position.is_some() && observation.player_present)
+                != anchor.link_relative_position.is_some()
+            || anchor
+                .absolute_position
+                .iter()
+                .flatten()
+                .chain(anchor.link_relative_position.iter().flatten())
+                .any(|value| !value.is_finite())
+        {
+            return Err(NativeActorViewError::new(
+                "goal anchor observation is invalid",
+            ));
+        }
     }
     for actor in &observation.actors {
         let option_consistent = observation.player_present
@@ -491,6 +712,7 @@ fn validate_observation(
                     .iter()
                     .flat_map(|attention| attention.camera_relative_position.iter().flatten()),
             )
+            .chain(actor.goal_relative_positions.iter().flatten().flatten())
             .all(|value| value.is_finite());
         let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
             attention.flags != 0
@@ -498,6 +720,7 @@ fn validate_observation(
                 && observation.camera_frame_present == attention.camera_relative_position.is_some()
         });
         if actor.profile_slots.is_empty()
+            || actor.goal_relative_positions.len() != expected_goal_anchors.len()
             || actor
                 .profile_slots
                 .windows(2)
@@ -604,6 +827,8 @@ impl Error for NativeActorViewError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_evidence::native_episode_shard::authored_milestone_objective_identity;
+    use dusklight_objectives::milestone_dsl::compile_source;
     use dusklight_world::actor_profile_catalog::{ACTOR_PROFILE_CATALOG_SCHEMA, ActorProfileEntry};
 
     fn catalog_for(shard: &NativeEpisodeShard) -> ActorProfileCatalog {
@@ -664,6 +889,8 @@ mod tests {
         let view = NativeEpisodeActorView::build(&shard, &catalog).unwrap();
         assert_eq!(view.observations.len(), 2);
         for observation in &view.observations {
+            assert!(view.goal_graph.is_none());
+            assert!(observation.goal_anchors.is_empty());
             assert_eq!(
                 observation.actors.len(),
                 shard.episodes[0].steps[0].pre_input.actors.len()
@@ -674,6 +901,7 @@ mod tests {
                 actor.link_relative_position.is_some()
                     && actor.camera_relative_position.is_some()
                     && !actor.profile_slots.is_empty()
+                    && actor.goal_relative_positions.is_empty()
             }));
             let attention = observation.actors[0].attention.as_ref().unwrap();
             assert_eq!(attention.flags, 0x20000002);
@@ -693,6 +921,140 @@ mod tests {
             NativeEpisodeActorView::decode_canonical(&bytes).unwrap(),
             view
         );
+    }
+
+    #[test]
+    fn binds_exact_compiled_goal_and_derives_only_real_spatial_anchors() {
+        const SOURCE: &str = r#"milestones 1.8
+milestone spatial_goal {
+  phase post_sim
+  when player.in_aabb(10.0, 0.0, -10.0, 14.0, 6.0, -6.0) &&
+       actor.placed.exists("F_SP103", 0, 4, 291) &&
+       player.plane_signed_distance(1.0, 2.0, 3.0, 1.0, 0.0, 0.0) >= 0.0
+}
+"#;
+        let compiled = compile_source(SOURCE).unwrap();
+        let definition = &compiled.definitions[0];
+        let mut shard = shard();
+        shard.metadata.objective = definition.name.clone();
+        shard.metadata.objective_identity = authored_milestone_objective_identity(
+            &Digest(compiled.program_sha256).to_string(),
+            &Digest(definition.sha256).to_string(),
+        )
+        .unwrap();
+        for observation in shard.episodes.iter_mut().flat_map(|episode| {
+            episode
+                .steps
+                .iter_mut()
+                .flat_map(|step| [&mut step.pre_input, &mut step.post_simulation])
+        }) {
+            for actor in observation.actors.iter_mut().skip(1) {
+                actor.set_id = 5;
+            }
+        }
+        let catalog = catalog_for(&shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build_for_goal(
+            &shard,
+            &catalog,
+            &compiled.bytes,
+            "spatial_goal",
+        )
+        .unwrap();
+        let graph = view.goal_graph.as_ref().unwrap();
+        assert_eq!(graph.program_sha256, Digest(compiled.program_sha256));
+        assert_eq!(graph.definition_sha256, Digest(definition.sha256));
+        assert_eq!(graph.spatial_anchors().len(), 3);
+        for observation in &view.observations {
+            assert_eq!(observation.goal_anchors.len(), 3);
+            assert_eq!(observation.goal_anchors[0].node_index, 0);
+            assert_eq!(observation.goal_anchors[0].sequence_step, 0);
+            assert_eq!(
+                observation.goal_anchors[0].status,
+                NativeGoalAnchorStatus::Static
+            );
+            assert_eq!(
+                observation.goal_anchors[0].absolute_position,
+                Some([12.0, 3.0, -8.0])
+            );
+            assert_eq!(
+                observation.goal_anchors[1].status,
+                NativeGoalAnchorStatus::ResolvedActor
+            );
+            assert_eq!(
+                observation.goal_anchors[1].actor_runtime_generation,
+                Some(1)
+            );
+            assert_eq!(
+                observation.actors[0].goal_relative_positions,
+                [
+                    Some([0.5, 0.0, 0.0]),
+                    Some([0.0, 0.0, 0.0]),
+                    Some([11.5, 1.0, -11.0])
+                ]
+            );
+        }
+
+        let mut wrong_identity = shard.clone();
+        wrong_identity.metadata.objective_identity = "00000000000000000000000000000000".into();
+        assert!(
+            NativeEpisodeActorView::build_for_goal(
+                &wrong_identity,
+                &catalog,
+                &compiled.bytes,
+                "spatial_goal"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn goal_actor_resolution_preserves_ambiguous_and_stage_missingness() {
+        const SOURCE: &str = r#"milestones 1.8
+milestone actor_goal {
+  phase post_sim
+  when actor.placed.exists("F_SP103", 0, 4, 291)
+}
+"#;
+        let compiled = compile_source(SOURCE).unwrap();
+        let definition = &compiled.definitions[0];
+        let mut shard = shard();
+        shard.metadata.objective = definition.name.clone();
+        shard.metadata.objective_identity = authored_milestone_objective_identity(
+            &Digest(compiled.program_sha256).to_string(),
+            &Digest(definition.sha256).to_string(),
+        )
+        .unwrap();
+        let catalog = catalog_for(&shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+
+        let ambiguous =
+            NativeEpisodeActorView::build_for_goal(&shard, &catalog, &compiled.bytes, "actor_goal")
+                .unwrap();
+        assert!(ambiguous.observations.iter().all(|observation| {
+            observation.goal_anchors[0].status == NativeGoalAnchorStatus::ActorAmbiguous
+                && observation.goal_anchors[0].absolute_position.is_none()
+                && observation
+                    .actors
+                    .iter()
+                    .all(|actor| actor.goal_relative_positions == [None])
+        }));
+
+        for observation in shard.episodes.iter_mut().flat_map(|episode| {
+            episode
+                .steps
+                .iter_mut()
+                .flat_map(|step| [&mut step.pre_input, &mut step.post_simulation])
+        }) {
+            observation.stage = "F_SP104".into();
+        }
+        let wrong_stage =
+            NativeEpisodeActorView::build_for_goal(&shard, &catalog, &compiled.bytes, "actor_goal")
+                .unwrap();
+        assert!(wrong_stage.observations.iter().all(|observation| {
+            observation.goal_anchors[0].status == NativeGoalAnchorStatus::StageMismatch
+                && observation.goal_anchors[0].absolute_position.is_none()
+        }));
     }
 
     #[test]

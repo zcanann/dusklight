@@ -671,7 +671,22 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             let shard = NativeEpisodeShard::read(&input)?;
             let catalog = ActorProfileCatalog::read_canonical(&catalog_path)?;
-            let view = NativeEpisodeActorView::build(&shard, &catalog)?;
+            let milestones = option(learn_args, "--milestones");
+            let milestone_goal = option(learn_args, "--milestone-goal");
+            let view = match (milestones, milestone_goal) {
+                (None, None) => NativeEpisodeActorView::build(&shard, &catalog)?,
+                (Some(program), Some(goal)) => NativeEpisodeActorView::build_for_goal(
+                    &shard,
+                    &catalog,
+                    &fs::read(program)?,
+                    &goal,
+                )?,
+                _ => {
+                    return Err(
+                        "learn actor-view requires both --milestones and --milestone-goal".into(),
+                    );
+                }
+            };
             let bytes = view.canonical_bytes()?;
             if let Some(parent) = output
                 .parent()
@@ -706,6 +721,12 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "parent_relations": view.observations.iter()
                         .flat_map(|observation| &observation.actors)
                         .filter(|actor| actor.parent_relative_position.is_some()).count(),
+                    "goal": view.goal_graph.as_ref().map(|graph| &graph.definition_name),
+                    "goal_anchors": view.goal_graph.as_ref()
+                        .map_or(0, |graph| graph.spatial_anchors().len()),
+                    "resolved_goal_anchor_observations": view.observations.iter()
+                        .flat_map(|observation| &observation.goal_anchors)
+                        .filter(|anchor| anchor.absolute_position.is_some()).count(),
                 }))?
             );
             Ok(())

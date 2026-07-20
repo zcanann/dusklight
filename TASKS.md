@@ -223,9 +223,25 @@ human-authored successful setup.
       noncanonical masks/payloads, and the sealed actor view derives Link- and
       camera-relative attention positions offline. The v6 cross-language
       fixture covers both present and absent components;
-    - [ ] derive spatial relations to typed anchors in the selected compiled
+    - [x] Retain the selected compiled goal as an authenticated semantic graph,
+      including every Boolean edge, ordered sequence root, typed field/query,
+      actor selector, comparison, literal and spatial primitive. The graph
+      reconstructs and recompiles to the exact definition digest, rejects
+      cycles/shared/unreachable nodes, and exposes typed spatial anchors. The
+      older 65-float hash/statistics vector is not considered a semantic goal
+      representation. The live Ordon view embeds all five exact transition
+      atoms and four Boolean nodes in graph `e68befb3...12cae`;
+    - [ ] feed the semantic goal graph to model encoders instead of treating
+      digest bytes and predicate counts as learnable goal meaning;
+    - [x] derive spatial relations to typed anchors in the selected compiled
       goal when the goal actually exposes one, retaining explicit absence for
-      nonspatial or ambiguous goals;
+      nonspatial or ambiguous goals. Actor view v3 binds the exact graph,
+      resolves static AABB/plane and portable placed-actor anchors per
+      observation, emits explicit stage-mismatch/absent/ambiguous states, and
+      derives Link- and actor-relative positions. The exact nonspatial Ordon
+      goal correctly produced zero fabricated anchors across all 512
+      observations in sealed view `890a7787...bd471` / blob
+      `1f17770d...3c36a`;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
 - [x] Store immutable map geometry, placements, and type metadata once per
