@@ -137,7 +137,7 @@ the same goal without demonstration-relative features.
     typed actor components without changing the canonical raw actor set;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
-- [ ] Store immutable map geometry, placements, and type metadata once per
+- [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
   - [x] World inventories and their BVH spatial indexes are distinct
@@ -156,8 +156,21 @@ the same goal without demonstration-relative features.
     A live 125-step Ordon shard produced 250 fully covered pre/post observations
     and 8,000 bounded probes in view `8e46dfc0...c3c7013`, bound to native shard
     `a849e3b9...1b014` and F_SP103 inventory `370675af...01e7f`.
-  - [ ] Bind the actor type/profile catalog and complete required static-world
+  - [x] Bind the actor type/profile catalog and complete required static-world
     set directly to episode/shard identity, including multi-stage trajectories.
+    Native shard v2 separates the authenticated game-data SHA-256, immutable
+    card fixture, pointer-free actor profile-table identity, and canonical
+    multi-stage world-context SHA-256. `world context` sorts and seals every
+    required inventory and derived spatial index against the exact disc bytes.
+    A live mixed-outcome Ordon shard bound F_SP103 and F_SP104 context
+    `194cbb4b...e3b71`, ISO `490ef919...3c814`, card fixture
+    `4a704aa8...341996`, and profile catalog `d1920358...831e4`; Rust accepted
+    all 256 transitions in shard `18fcf868...7063d`. Geometry view v2 joined all
+    512 observations in view `22fcaad0...35a5c` and rejected the same shard
+    when F_SP104 was omitted. The native executable also exported all 792
+    pointer-free profile slots (759 actors) as a canonical 197,018-byte catalog;
+    the independent Rust decoder recomputed the same semantic identity and
+    installed content blob `56bf2ec6...23edf`.
 - [x] Remove arbitrary learner-facing actor truncation. Learning-observation v4
   requires the complete process actor set and rejects inconsistent counts,
   truncation markers, or a non-complete selection rule. The separate controller
@@ -165,9 +178,15 @@ the same goal without demonstration-relative features.
 - [x] Enforce decision-phase correctness: model input may contain only state
   realized before its chosen action. Add explicit tests against one-frame and
   terminal-label leakage.
-- [ ] Buffer episodes in memory and write compact content-addressed binary
+- [x] Buffer episodes in memory and write compact content-addressed binary
   shards, not one file per attempt or tick. Bind every shard to build, game
   data, checkpoint, observation schema, action schema, objective and fidelity.
+  Each candidate is buffered as one canonical episode, independently zstd
+  compressed and checksummed inside one shard; the Rust boundary authenticates
+  the complete shard by SHA-256. Shard v2 additionally fails closed unless game
+  data, memory-card fixture, actor-profile catalog and world context are distinct
+  declared identities. The live two-candidate shard compressed 3,531,036 bytes
+  to 51,761 bytes without creating per-tick or per-attempt files.
 - [x] Bind every process-boot dependency, including the isolated memory card,
   save data and relevant configuration, into the boot/checkpoint identity.
   Materializing the same declared fixture in a fresh automation root must

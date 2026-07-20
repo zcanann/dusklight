@@ -228,7 +228,7 @@ huntctl trace observation-parity off.trace on.trace \
 
 The command requires complete, unretained v5 traces; compares the exact
 pre-clamp `PADRead` sequence and every retained gameplay-state channel; checks
-that the v4 shard's chosen and consumed PAD agree with the traced suffix; seals
+that the v5 shard's chosen and consumed PAD agree with the traced suffix; seals
 the report; and exits nonzero on the first divergence.
 
 `selected-actors` keeps at most 16 non-player actors and reports the full
@@ -272,6 +272,42 @@ huntctl world query point --inventory build/world/F_SP103.inventory.json \
   --room 1 --point 0,0,0 --max-distance 512 --limit 32
 ```
 
+Seal the exact set of stages a trajectory is allowed to reference, together
+with the authenticated disc bytes. Repeated `--inventory` arguments support
+multi-stage trajectories and are sorted canonically rather than inheriting CLI
+order:
+
+```console
+huntctl world context \
+  --game-data-sha256 490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814 \
+  --inventory build/world/F_SP103.inventory.json \
+  --inventory build/world/F_SP104.inventory.json \
+  --output build/world/ordon-context.json \
+  --artifact-store build/world/content
+```
+
+Native suffix collection requires the resulting digest through
+`--automation-world-context-sha256`, plus the independently authenticated disc
+digest through `--automation-game-data-sha256`. Episode-shard v2 keeps those
+separate from the memory-card fixture and from the executable's immutable actor
+profile-table identity; none may masquerade as another dependency.
+
+Export the executable's complete pointer-free process/actor profile table once,
+then independently validate and content-address it through `huntctl`:
+
+```console
+dusklight --actor-profile-catalog build/world/actor-profiles.json [normal automation arguments]
+huntctl world profile-catalog --input build/world/actor-profiles.json \
+  --artifact-store build/world/content
+```
+
+The catalog contains stable scalar profile metadata only; method pointers and
+other address-space-dependent values are excluded. Native shard v2 records its
+semantic XXH3 identity, while the content store records the exact canonical
+JSON by SHA-256. A live US executable exported 792 slots (759 actors) as
+197,018 bytes: semantic identity `d1920358...831e4`, content
+`56bf2ec6...23edf`.
+
 Artifact decoding rejects noncanonical JSON, unknown fields, inconsistent raw
 collision codes, reordered or mismatched room/prism identities, invalid
 geometry, and load-trigger joins that do not reproduce from the authored KCL
@@ -288,9 +324,11 @@ huntctl learn geometry-view --input attempts.episodes.dseps \
   --maximum-distance 512 --surface-limit 32
 ```
 
-The sealed view binds the source shard, inventory, and spatial-index digests and
-retains bounded nearest-surface probes for every pre-input and post-simulation
-observation. Missing players and unavailable room geometry are explicit masks.
+The sealed v2 view binds the source shard, world-context, inventory, and
+spatial-index digests and retains bounded nearest-surface probes for every
+pre-input and post-simulation observation. For a v2 shard, omitting or replacing
+even one stage inventory fails before any probe is derived. Missing players and
+unavailable room geometry are explicit masks.
 The model representation rotates closest-point offsets, surface normals, and
 actor headings into Link-relative coordinates; changing those semantics bumped
 the fixed representation contract to v2.

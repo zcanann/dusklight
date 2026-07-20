@@ -112,7 +112,9 @@ fn execute_native_request(
     command
         .current_dir(&repository_root)
         .arg("--dvd")
-        .arg(game_data);
+        .arg(game_data)
+        .arg("--automation-game-data-sha256")
+        .arg(request.game_data.sha256.to_string());
     match &prepared_input {
         PreparedNativeInput::Tape { .. } => {
             command

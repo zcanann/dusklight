@@ -5,6 +5,8 @@
 
 pub use dusklight_automation_contracts::artifact;
 
+pub mod actor_profile_catalog;
+pub mod world_context;
 pub mod world_geometry;
 pub mod world_inventory;
 pub mod world_spatial;

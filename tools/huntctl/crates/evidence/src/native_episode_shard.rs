@@ -14,7 +14,8 @@ use std::path::Path;
 const MAGIC: &[u8; 8] = b"DUSKEPS\0";
 const EPISODE_MAGIC: &[u8; 4] = b"EPIS";
 const PAYLOAD_MAGIC: &[u8; 8] = b"DUSKEP\0\0";
-const VERSION: u16 = 1;
+const VERSION_V1: u16 = 1;
+const VERSION: u16 = 2;
 const HEADER_SIZE: usize = 128;
 const BLOCK_HEADER_SIZE: usize = 64;
 const PAYLOAD_HEADER_SIZE: usize = 24;
@@ -31,6 +32,7 @@ const MAX_ACTORS: usize = u16::MAX as usize;
 const MAX_EXPANDED_BYTES: usize = 16 * 1024 * 1024 * 1024;
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
+pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const LEARNING_OBSERVATION_SCHEMA_V2: &str = "dusklight-learning-observation/v2";
 pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation/v3";
 pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
@@ -50,7 +52,10 @@ pub struct NativeEpisodeShardMetadata {
     pub aurora_revision: String,
     pub feature_digest: String,
     pub fidelity_profile: String,
-    pub game_data_identity: Option<String>,
+    pub game_data_sha256: Option<Digest>,
+    pub card_fixture_identity: Option<String>,
+    pub actor_profile_catalog_identity: Option<String>,
+    pub world_context_sha256: Option<Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -430,7 +435,10 @@ impl NativeEpisodeShard {
         }
         let mut header = Reader::new(bytes);
         header.bytes(8)?;
-        if header.u16()? != VERSION || usize::from(header.u16()?) != HEADER_SIZE {
+        let shard_version = header.u16()?;
+        if !matches!(shard_version, VERSION_V1 | VERSION)
+            || usize::from(header.u16()?) != HEADER_SIZE
+        {
             return Err(NativeEpisodeShardError::new(
                 "unsupported native episode shard version",
             ));
@@ -483,8 +491,11 @@ impl NativeEpisodeShard {
                 "noncanonical native episode shard layout",
             ));
         }
-        let metadata =
-            decode_metadata(&bytes[metadata_offset..payload_offset], observation_version)?;
+        let metadata = decode_metadata(
+            &bytes[metadata_offset..payload_offset],
+            shard_version,
+            observation_version,
+        )?;
         let mut payload = Reader::new(&bytes[payload_offset..]);
         let mut episodes = Vec::with_capacity(episode_count);
         let mut uncompressed_total = 0_u64;
@@ -526,16 +537,22 @@ impl NativeEpisodeShard {
 
 fn decode_metadata(
     bytes: &[u8],
+    shard_version: u16,
     observation_version: u16,
 ) -> Result<NativeEpisodeShardMetadata, NativeEpisodeShardError> {
     let mut reader = Reader::new(bytes);
-    if reader.u16()? != 12 {
+    let expected_field_count = match shard_version {
+        VERSION_V1 => 12,
+        VERSION => 15,
+        _ => unreachable!("shard version was validated by the header decoder"),
+    };
+    if usize::from(reader.u16()?) != expected_field_count {
         return Err(NativeEpisodeShardError::new(
             "unsupported shard metadata field count",
         ));
     }
-    let mut fields = Vec::with_capacity(12);
-    for _ in 0..12 {
+    let mut fields = Vec::with_capacity(expected_field_count);
+    for _ in 0..expected_field_count {
         fields.push(reader.string16()?);
     }
     let expected_observation_schema = match observation_version {
@@ -549,8 +566,13 @@ fn decode_metadata(
             ));
         }
     };
+    let expected_shard_schema = if shard_version == VERSION_V1 {
+        NATIVE_EPISODE_SHARD_SCHEMA_V1
+    } else {
+        NATIVE_EPISODE_SHARD_SCHEMA_V2
+    };
     if !reader.done()
-        || fields[0] != NATIVE_EPISODE_SHARD_SCHEMA_V1
+        || fields[0] != expected_shard_schema
         || fields[1] != expected_observation_schema
         || fields[2] != RAW_PAD_ACTION_SCHEMA_V2
         || fields[3].len() != 32
@@ -565,20 +587,60 @@ fn decode_metadata(
             "invalid shard identity metadata",
         ));
     }
+    let game_data_sha256 = if shard_version == VERSION {
+        Some(parse_canonical_digest(&fields[11], "game-data SHA-256")?)
+    } else {
+        None
+    };
+    let card_fixture_index = if shard_version == VERSION_V1 { 11 } else { 12 };
+    let card_fixture_identity =
+        (!fields[card_fixture_index].is_empty()).then(|| fields[card_fixture_index].clone());
+    if shard_version == VERSION
+        && (!fields[card_fixture_index].starts_with("card-fixture:")
+            || !fields[13].starts_with("actor-profile-catalog:"))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "invalid static dependency identity metadata",
+        ));
+    }
+    let actor_profile_catalog_identity = (shard_version == VERSION).then(|| fields[13].clone());
+    let world_context_sha256 = if shard_version == VERSION {
+        Some(parse_canonical_digest(
+            &fields[14],
+            "world-context SHA-256",
+        )?)
+    } else {
+        None
+    };
     Ok(NativeEpisodeShardMetadata {
-        shard_schema: fields.remove(0),
-        observation_schema: fields.remove(0),
-        action_schema: fields.remove(0),
-        source_boundary_fingerprint: fields.remove(0),
-        checkpoint_identity: fields.remove(0),
-        objective: fields.remove(0),
-        objective_identity: fields.remove(0),
-        build_revision: fields.remove(0),
-        aurora_revision: fields.remove(0),
-        feature_digest: fields.remove(0),
-        fidelity_profile: fields.remove(0),
-        game_data_identity: (!fields[0].is_empty()).then(|| fields.remove(0)),
+        shard_schema: fields[0].clone(),
+        observation_schema: fields[1].clone(),
+        action_schema: fields[2].clone(),
+        source_boundary_fingerprint: fields[3].clone(),
+        checkpoint_identity: fields[4].clone(),
+        objective: fields[5].clone(),
+        objective_identity: fields[6].clone(),
+        build_revision: fields[7].clone(),
+        aurora_revision: fields[8].clone(),
+        feature_digest: fields[9].clone(),
+        fidelity_profile: fields[10].clone(),
+        game_data_sha256,
+        card_fixture_identity,
+        actor_profile_catalog_identity,
+        world_context_sha256,
     })
+}
+
+fn parse_canonical_digest(value: &str, label: &str) -> Result<Digest, NativeEpisodeShardError> {
+    let digest: Digest = value
+        .parse()
+        .map_err(|_| NativeEpisodeShardError::new(format!("invalid {label} in shard metadata")))?;
+    if digest == Digest::ZERO || digest.to_string() != value {
+        return Err(NativeEpisodeShardError::new(format!(
+            "noncanonical {label} in shard metadata"
+        )));
+    }
+    Ok(digest)
 }
 
 fn decode_episode(
@@ -2138,6 +2200,20 @@ mod tests {
             shard.metadata.observation_schema,
             LEARNING_OBSERVATION_SCHEMA_V5
         );
+        assert_eq!(shard.metadata.shard_schema, NATIVE_EPISODE_SHARD_SCHEMA_V2);
+        assert_eq!(shard.metadata.game_data_sha256, Some(Digest([0x11; 32])));
+        assert_eq!(
+            shard.metadata.card_fixture_identity.as_deref(),
+            Some("card-fixture:xxh3-128:22222222222222222222222222222222")
+        );
+        assert_eq!(
+            shard.metadata.actor_profile_catalog_identity.as_deref(),
+            Some("actor-profile-catalog:xxh3-128:33333333333333333333333333333333")
+        );
+        assert_eq!(
+            shard.metadata.world_context_sha256,
+            Some(Digest([0x44; 32]))
+        );
         for observation in shard.episodes.iter().flat_map(|episode| {
             episode
                 .steps
@@ -2253,11 +2329,16 @@ mod tests {
         };
         let shard = NativeEpisodeShard::read(path).expect("decode live native episode shard");
         assert!(!shard.episodes.is_empty());
-        if let Some(expected) = std::env::var_os("DUSK_EXPECTED_GAME_DATA_IDENTITY") {
+        if let Some(expected) = std::env::var_os("DUSK_EXPECTED_GAME_DATA_SHA256") {
+            let expected: Digest = expected
+                .to_str()
+                .expect("expected game-data SHA-256 is UTF-8")
+                .parse()
+                .expect("expected game-data SHA-256 is canonical");
             assert_eq!(
-                shard.metadata.game_data_identity.as_deref(),
-                expected.to_str(),
-                "live shard did not bind the declared game-data fixture identity"
+                shard.metadata.game_data_sha256,
+                Some(expected),
+                "live shard did not bind the authenticated game-data bytes"
             );
         }
         assert!(shard.episodes.iter().all(|episode| {

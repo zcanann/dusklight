@@ -261,8 +261,26 @@ fn replay_key(shard: &NativeEpisodeShard, source_state: [u8; 16], trajectory: &[
         shard.metadata.fidelity_profile.as_bytes(),
         shard
             .metadata
-            .game_data_identity
+            .game_data_sha256
+            .map(|digest| digest.to_string())
+            .unwrap_or_default()
+            .as_bytes(),
+        shard
+            .metadata
+            .card_fixture_identity
             .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+        shard
+            .metadata
+            .actor_profile_catalog_identity
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+        shard
+            .metadata
+            .world_context_sha256
+            .map(|digest| digest.to_string())
             .unwrap_or_default()
             .as_bytes(),
         shard.metadata.checkpoint_identity.as_bytes(),
@@ -427,11 +445,35 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                 ),
                 ("build_revision", shard.metadata.build_revision.clone()),
                 (
-                    "game_data_identity",
+                    "game_data_sha256",
                     shard
                         .metadata
-                        .game_data_identity
+                        .game_data_sha256
+                        .map(|digest| digest.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "card_fixture_identity",
+                    shard
+                        .metadata
+                        .card_fixture_identity
                         .clone()
+                        .unwrap_or_default(),
+                ),
+                (
+                    "actor_profile_catalog_identity",
+                    shard
+                        .metadata
+                        .actor_profile_catalog_identity
+                        .clone()
+                        .unwrap_or_default(),
+                ),
+                (
+                    "world_context_sha256",
+                    shard
+                        .metadata
+                        .world_context_sha256
+                        .map(|digest| digest.to_string())
                         .unwrap_or_default(),
                 ),
                 ("source_frame", shard.source_frame.to_string()),

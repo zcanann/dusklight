@@ -302,8 +302,18 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .auroraRevision = "cafebabe",
         .featureDigest = "dddddddddddddddddddddddddddddddd",
         .fidelityProfile = "native-read-only-checkpoint-batch",
+        .gameDataSha256 = "1111111111111111111111111111111111111111111111111111111111111111",
+        .cardFixtureIdentity = "card-fixture:xxh3-128:22222222222222222222222222222222",
+        .actorProfileCatalogIdentity =
+            "actor-profile-catalog:xxh3-128:33333333333333333333333333333333",
+        .worldContextSha256 =
+            "4444444444444444444444444444444444444444444444444444444444444444",
     };
     LearningEpisodeShardWriter writer;
+    LearningEpisodeShardMetadata invalidMetadata = metadata;
+    invalidMetadata.gameDataSha256.clear();
+    REQUIRE(!writer.begin(path, invalidMetadata, error));
+    REQUIRE(error.find("metadata is incomplete") != std::string::npos);
     REQUIRE(writer.begin(path, metadata, error));
     REQUIRE(!writer.append(
         {.id = "invalid-success", .success = true, .ticksExecuted = 1, .remainingTicks = 0},
@@ -324,6 +334,8 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     const std::vector<std::uint8_t> shard = read_file(path);
     REQUIRE(shard.size() > 128);
     REQUIRE(std::string(shard.begin(), shard.begin() + 7) == "DUSKEPS");
+    REQUIRE(read_little<std::uint16_t>(shard, 8) == LearningEpisodeShardVersion);
+    REQUIRE(read_little<std::uint16_t>(shard, 128) == 15);
     REQUIRE(read_little<std::uint32_t>(shard, 12) == 1);
     REQUIRE(read_little<std::uint32_t>(shard, 16) == 2);
     const std::size_t payloadOffset = read_little<std::uint64_t>(shard, 56);

@@ -18,9 +18,9 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const COMPILED_OBJECTIVE_VECTOR_SCHEMA_V1: &str = "dusklight-compiled-objective-vector/v1";
-pub const COMPILED_OBJECTIVE_VECTOR_WIDTH: usize = 64;
-pub const GOAL_CONDITIONED_INPUT_SCHEMA_V1: &str = "dusklight-goal-conditioned-input/v1";
+pub const COMPILED_OBJECTIVE_VECTOR_SCHEMA_V2: &str = "dusklight-compiled-objective-vector/v2";
+pub const COMPILED_OBJECTIVE_VECTOR_WIDTH: usize = 65;
+pub const GOAL_CONDITIONED_INPUT_SCHEMA_V2: &str = "dusklight-goal-conditioned-input/v2";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +58,7 @@ impl CompiledObjectiveVector {
             .ok_or(GoalConditioningError::UnknownDefinition(definition_index))?;
         let values = encode_definition(identity.sha256, definition);
         let vector = Self {
-            schema: COMPILED_OBJECTIVE_VECTOR_SCHEMA_V1.into(),
+            schema: COMPILED_OBJECTIVE_VECTOR_SCHEMA_V2.into(),
             program_sha256: Digest(decoded.program_sha256),
             definition_sha256: Digest(identity.sha256),
             definition_name: identity.name.clone(),
@@ -75,7 +75,7 @@ impl CompiledObjectiveVector {
     }
 
     pub fn validate(&self) -> Result<(), GoalConditioningError> {
-        if self.schema != COMPILED_OBJECTIVE_VECTOR_SCHEMA_V1
+        if self.schema != COMPILED_OBJECTIVE_VECTOR_SCHEMA_V2
             || self.program_sha256 == Digest::ZERO
             || self.definition_sha256 == Digest::ZERO
             || self.definition_name.is_empty()
@@ -97,7 +97,7 @@ impl CompiledObjectiveVector {
 
 fn vector_digest(program: Digest, definition: Digest, name: &str, values: &[f32]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight.compiled-objective-vector.identity/v1\0");
+    hasher.update(b"dusklight.compiled-objective-vector.identity/v2\0");
     hasher.update(program.0);
     hasher.update(definition.0);
     hasher.update((name.len() as u64).to_le_bytes());
@@ -134,7 +134,7 @@ impl GoalConditionedInputEncoder {
             .schema_sha256()
             .map_err(GoalConditioningError::from)?;
         Ok(Self {
-            schema: GOAL_CONDITIONED_INPUT_SCHEMA_V1,
+            schema: GOAL_CONDITIONED_INPUT_SCHEMA_V2,
             state_schema_sha256,
             state_width,
             action_factor_schema_sha256,
@@ -240,7 +240,7 @@ fn encode_definition(identity: [u8; 32], definition: &MilestoneDefinition) -> Ve
 #[derive(Default)]
 struct ObjectiveStatistics {
     expressions: [u16; 5],
-    queries: [u16; 4],
+    queries: [u16; 5],
     comparisons: [u16; 8],
     values: [u16; 8],
 }
@@ -289,6 +289,7 @@ const fn query_index(fact: &QueryFact) -> usize {
         QueryFact::Flag { .. } => 1,
         QueryFact::PlayerInAabb { .. } => 2,
         QueryFact::PlayerPlaneSignedDistance { .. } => 3,
+        QueryFact::TemporaryEventByte { .. } => 4,
     }
 }
 

@@ -23,6 +23,12 @@ constexpr std::size_t EpisodePayloadHeaderSize = 24;
 constexpr std::uint32_t ShardComplete = 1u << 0;
 constexpr std::uint16_t EpisodeSuccess = 1u << 0;
 
+bool is_lower_hex(const std::string_view value, const std::size_t size) {
+    return value.size() == size && std::ranges::all_of(value, [](const char byte) {
+        return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
+    });
+}
+
 template <typename T>
 void append_integer(std::vector<std::uint8_t>& output, const T value) {
     using U = std::make_unsigned_t<T>;
@@ -620,6 +626,10 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
         metadata.checkpointIdentity.size() != 32 || metadata.objective.empty() ||
         metadata.objectiveIdentity.size() != 32 || metadata.buildRevision.empty() ||
         metadata.featureDigest.empty() || metadata.fidelityProfile.empty() ||
+        !is_lower_hex(metadata.gameDataSha256, 64) ||
+        !metadata.cardFixtureIdentity.starts_with("card-fixture:") ||
+        !metadata.actorProfileCatalogIdentity.starts_with("actor-profile-catalog:") ||
+        !is_lower_hex(metadata.worldContextSha256, 64) ||
         metadata.maximumTicks == 0 || metadata.maximumTicks > LearningEpisodeMaximumTicks)
     {
         error = "learning episode shard metadata is incomplete";
@@ -645,7 +655,7 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
     }
 
     std::vector<std::uint8_t> encodedMetadata;
-    const std::array<std::string_view, 12> fields{
+    const std::array<std::string_view, 15> fields{
         LearningEpisodeShardSchema,
         LearningObservationSchema,
         LearningActionSchema,
@@ -657,7 +667,10 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
         metadata.auroraRevision,
         metadata.featureDigest,
         metadata.fidelityProfile,
-        metadata.gameDataIdentity,
+        metadata.gameDataSha256,
+        metadata.cardFixtureIdentity,
+        metadata.actorProfileCatalogIdentity,
+        metadata.worldContextSha256,
     };
     append_integer(encodedMetadata, static_cast<std::uint16_t>(fields.size()));
     for (const auto field : fields) {

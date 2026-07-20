@@ -1,7 +1,10 @@
 //! Static world inventory, geometry inspection, and spatial-query adapters.
 
-use crate::{flag, option, required_path, usage_error, usize_option};
+use crate::{flag, option, repeated_option, required_path, usage_error, usize_option};
+use huntctl::Digest;
+use huntctl::actor_profile_catalog::ActorProfileCatalog;
 use huntctl::content_store::{ContentKind, ContentStore};
+use huntctl::world_context::WorldContext;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
 use huntctl::world_inventory::WorldInventory;
 use huntctl::world_spatial::{
@@ -51,6 +54,76 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "exits": inventory.exits.len(),
                     "collisions": inventory.collisions.len(),
                     "load_triggers": inventory.load_triggers.len(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("context") => {
+            let output = required_path(&args[1..], "--output")?;
+            let game_data_sha256: Digest = option(&args[1..], "--game-data-sha256")
+                .ok_or("missing required --game-data-sha256 SHA256")?
+                .parse()?;
+            let inventory_paths = repeated_option(&args[1..], "--inventory");
+            if inventory_paths.is_empty() {
+                return Err("world context requires at least one --inventory FILE".into());
+            }
+            let inventories = inventory_paths
+                .iter()
+                .map(|path| WorldInventory::read_canonical(Path::new(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let context = WorldContext::build(game_data_sha256, &inventories)?;
+            let bytes = context.canonical_bytes()?;
+            let digest = context.digest()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::WorldContext)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": context.schema,
+                    "game_data_sha256": context.game_data_sha256,
+                    "stages": context.stages,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "sha256": digest,
+                    "bytes": bytes.len(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("profile-catalog") => {
+            let input = required_path(&args[1..], "--input")?;
+            let bytes = fs::read(&input)?;
+            let catalog = ActorProfileCatalog::decode_canonical(&bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| input.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::ActorProfileCatalog)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": catalog.schema,
+                    "identity": catalog.identity,
+                    "sha256": catalog.digest()?,
+                    "profiles": catalog.profiles.len(),
+                    "present_profiles": catalog.profiles.iter()
+                        .filter(|profile| profile.present).count(),
+                    "actor_profiles": catalog.profiles.iter()
+                        .filter(|profile| profile.is_actor == Some(true)).count(),
+                    "input": input,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
                 }))?
             );
             Ok(())

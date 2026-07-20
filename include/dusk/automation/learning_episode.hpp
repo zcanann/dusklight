@@ -16,13 +16,13 @@
 
 namespace dusk::automation {
 
-inline constexpr std::uint16_t LearningEpisodeShardVersion = 1;
+inline constexpr std::uint16_t LearningEpisodeShardVersion = 2;
 inline constexpr std::uint16_t LearningObservationVersion = 5;
 inline constexpr std::uint16_t LearningActionVersion = 2;
 inline constexpr std::uint32_t LearningEpisodeMaximumTicks = 4096;
 inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v5";
 inline constexpr std::string_view LearningActionSchema = "dusklight-raw-pad-action/v2";
-inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v1";
+inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v2";
 
 enum class LearningObservationPhase : std::uint8_t {
     PreInput = 1,
@@ -107,9 +107,14 @@ struct LearningEpisodeShardMetadata {
     std::string auroraRevision;
     std::string featureDigest;
     std::string fidelityProfile;
-    // Supplied by the launching harness when known. Empty is explicit unknown,
-    // never a claim that two game images are compatible.
-    std::string gameDataIdentity;
+    // Authenticated by the launching harness; never inferred from a filename.
+    std::string gameDataSha256;
+    // Independent from game data: process-boot durable state is its own input.
+    std::string cardFixtureIdentity;
+    // Stable scalar contents of the executable's immutable profile table.
+    std::string actorProfileCatalogIdentity;
+    // Canonical multi-stage WorldContext artifact selected for this shard.
+    std::string worldContextSha256;
 };
 
 struct LearningEpisodeDescriptor {

@@ -1,11 +1,13 @@
 #include "dusk/automation/suffix_batch_runner.hpp"
 
 #include "dusk/automation/build_identity.hpp"
+#include "dusk/automation/actor_profile_catalog.hpp"
 #include "dusk/automation/card_fixture.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
 #include "dusk/audio/DuskAudioSystem.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <system_error>
@@ -26,6 +28,12 @@ constexpr std::uint64_t LearningTraceChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::SceneExit) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
+
+bool is_lower_hex(const std::string_view value, const std::size_t width) {
+    return value.size() == width && std::ranges::all_of(value, [](const char byte) {
+        return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
+    });
+}
 
 std::string xxh3_128_hex(const std::string_view value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
@@ -91,9 +99,10 @@ bool write_atomic(const std::filesystem::path& path, const std::string_view byte
 
 bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
-    std::string& error) {
+    std::string gameDataSha256, std::string worldContextSha256, std::string& error) {
     if (mEnabled || definition.candidates.empty() || definition.maximumTicks == 0 ||
-        resultPath.empty())
+        resultPath.empty() || !is_lower_hex(gameDataSha256, 64) ||
+        !is_lower_hex(worldContextSha256, 64))
     {
         error = "suffix batch runner configuration is empty or already installed";
         return false;
@@ -102,6 +111,8 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     mDefinition = std::move(definition);
     mResultPath = std::move(resultPath);
     mWinnerTapePath = std::move(winnerTapePath);
+    mGameDataSha256 = std::move(gameDataSha256);
+    mWorldContextSha256 = std::move(worldContextSha256);
     mEpisodeShardPath = mResultPath;
     mEpisodeShardPath += ".episodes.dseps";
     mConsumedPads.reserve(mDefinition.maximumTicks);
@@ -190,7 +201,10 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         .auroraRevision = std::string(build.auroraRevision),
         .featureDigest = std::string(build.featureDigest),
         .fidelityProfile = std::string(build.fidelityProfile),
-        .gameDataIdentity = std::string(active_automation_card_fixture_identity()),
+        .gameDataSha256 = mGameDataSha256,
+        .cardFixtureIdentity = std::string(active_automation_card_fixture_identity()),
+        .actorProfileCatalogIdentity = std::string(actor_profile_catalog_identity()),
+        .worldContextSha256 = mWorldContextSha256,
     };
     if (!mEpisodeShard.begin(mEpisodeShardPath, metadata, error))
         return false;

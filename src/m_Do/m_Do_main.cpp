@@ -64,6 +64,7 @@
 #include "dusk/runtime/lifecycle.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
+#include "dusk/automation/actor_profile_catalog.hpp"
 #include "dusk/automation/card_fixture.hpp"
 #include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/game_state_observer.hpp"
@@ -2100,6 +2101,8 @@ int game_main(int argc, char* argv[]) {
             ("suffix-batch", "Run one bounded in-process suffix candidate batch from JSON", cxxopts::value<std::string>())
             ("suffix-batch-result", "Write the aggregate suffix batch result", cxxopts::value<std::string>())
             ("suffix-batch-winner-tape", "Export the fastest successful consumed suffix as DUSKTAPE", cxxopts::value<std::string>())
+            ("automation-game-data-sha256", "Authenticated SHA-256 of the explicit --dvd bytes", cxxopts::value<std::string>())
+            ("automation-world-context-sha256", "SHA-256 of the canonical multi-stage world-context artifact", cxxopts::value<std::string>())
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-thumbnail-png", "Capture the retained terminal frame when a human input recording closes cleanly", cxxopts::value<std::string>())
@@ -2110,6 +2113,7 @@ int game_main(int argc, char* argv[]) {
             ("record-input-start-milestone", "Milestone ID required at the exact recording handoff frame", cxxopts::value<std::string>())
             ("record-input-start-fingerprint", "Expected lowercase XXH3-128 boundary fingerprint at recording handoff", cxxopts::value<std::string>())
             ("actor-catalog", "Write a read-only JSON snapshot of live actors on automation exit", cxxopts::value<std::string>())
+            ("actor-profile-catalog", "Write the canonical pointer-free process/actor profile table", cxxopts::value<std::string>())
             ("frame-capture-png", "Capture the resolved final input-tape frame to a PNG, hidden on a real renderer", cxxopts::value<std::string>())
             ("input-tape-thumbnail-png", "Best-effort capture of the terminal input-tape frame before live controller handoff", cxxopts::value<std::string>())
             ("frame-capture-width", "Frame-capture output width (default 320)", cxxopts::value<std::uint32_t>()->default_value("320"))
@@ -2608,6 +2612,24 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         actorCatalogPath = std::filesystem::u8path(outputPath);
+    }
+    if (parsed_arg_options.count("actor-profile-catalog") != 0) {
+        const std::string outputPath =
+            parsed_arg_options["actor-profile-catalog"].as<std::string>();
+        const std::filesystem::path path = std::filesystem::u8path(outputPath);
+        std::error_code filesystemError;
+        if (outputPath.empty() || std::filesystem::exists(path, filesystemError) ||
+            filesystemError)
+        {
+            fprintf(stderr,
+                    "Actor Profile Catalog Error: output path is empty, unavailable, or already exists\n");
+            return 1;
+        }
+        std::string catalogError;
+        if (!dusk::automation::write_actor_profile_catalog(path, catalogError)) {
+            fprintf(stderr, "Actor Profile Catalog Error: %s\n", catalogError.c_str());
+            return 1;
+        }
     }
 
     if (parsed_arg_options.count("gameplay-trace")) {
@@ -3204,6 +3226,10 @@ int game_main(int argc, char* argv[]) {
     const bool hasSuffixBatchResult = parsed_arg_options.count("suffix-batch-result") != 0;
     const bool hasSuffixBatchWinner =
         parsed_arg_options.count("suffix-batch-winner-tape") != 0;
+    const bool hasAutomationGameDataSha256 =
+        parsed_arg_options.count("automation-game-data-sha256") != 0;
+    const bool hasAutomationWorldContextSha256 =
+        parsed_arg_options.count("automation-world-context-sha256") != 0;
     if (checkpointProbeOptionCount != 0 &&
         (hasSuffixBatch || hasSuffixBatchResult || hasSuffixBatchWinner))
     {
@@ -3292,7 +3318,17 @@ int game_main(int argc, char* argv[]) {
                 "Suffix Batch Error: --suffix-batch and --suffix-batch-result are required together; winner export is optional\n");
         return 1;
     }
+    if (hasAutomationWorldContextSha256 && !hasSuffixBatch) {
+        fprintf(stderr,
+                "Automation Identity Error: --automation-world-context-sha256 requires --suffix-batch\n");
+        return 1;
+    }
     if (hasSuffixBatch) {
+        if (!hasAutomationGameDataSha256 || !hasAutomationWorldContextSha256) {
+            fprintf(stderr,
+                    "Suffix Batch Error: authenticated game-data and world-context SHA-256 identities are required\n");
+            return 1;
+        }
         if (!headlessMainLoop || !hasInputTape || inputTapeHasConditions || stageBootPending ||
             hasInputController || hasInputTapeFastForward || hasRecordInputTape ||
             hasRealizedInputTape || exitAfterInputTape || automationLogicalTickBudget != 0 ||
@@ -3316,6 +3352,10 @@ int game_main(int argc, char* argv[]) {
             parsed_arg_options["suffix-batch-result"].as<std::string>();
         const std::string winnerArgument = hasSuffixBatchWinner
             ? parsed_arg_options["suffix-batch-winner-tape"].as<std::string>() : "";
+        const std::string gameDataSha256 =
+            parsed_arg_options["automation-game-data-sha256"].as<std::string>();
+        const std::string worldContextSha256 =
+            parsed_arg_options["automation-world-context-sha256"].as<std::string>();
         if (batchArgument.empty() || resultArgument.empty() ||
             (hasSuffixBatchWinner && winnerArgument.empty()))
         {
@@ -3369,7 +3409,8 @@ int game_main(int argc, char* argv[]) {
             return 1;
         }
         if (!dusk::automation::suffix_batch_runner().configure(
-                std::move(definition), resultPath, winnerPath, batchError))
+                std::move(definition), resultPath, winnerPath, gameDataSha256,
+                worldContextSha256, batchError))
         {
             fprintf(stderr, "Suffix Batch Error: %s\n", batchError.c_str());
             return 1;

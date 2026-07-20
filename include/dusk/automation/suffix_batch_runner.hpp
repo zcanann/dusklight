@@ -22,7 +22,8 @@ namespace dusk::automation {
 class SuffixBatchRunner {
 public:
     bool configure(SuffixBatchDefinition definition, std::filesystem::path resultPath,
-        std::filesystem::path winnerTapePath, std::string& error);
+        std::filesystem::path winnerTapePath, std::string gameDataSha256,
+        std::string worldContextSha256, std::string& error);
 
     /** Stable boundary immediately before InputTapePlayer::tick(). */
     bool preInput(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
@@ -112,6 +113,8 @@ private:
     std::filesystem::path mResultPath;
     std::filesystem::path mWinnerTapePath;
     std::filesystem::path mEpisodeShardPath;
+    std::string mGameDataSha256;
+    std::string mWorldContextSha256;
     StateCheckpoint mCheckpoint;
     StateCheckpointImage mImage;
     HostSnapshot mSource;

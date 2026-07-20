@@ -520,6 +520,7 @@ if (MSVC)
 endif ()
 target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
 target_sources(dusklight PRIVATE
+    src/dusk/automation/actor_profile_catalog.cpp
     src/dusk/automation/learning_episode.cpp
     src/dusk/automation/suffix_batch.cpp
     src/dusk/automation/suffix_batch_runner.cpp

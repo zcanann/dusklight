@@ -11,6 +11,7 @@ use crate::world_spatial::{WorldPointQueryRequest, WorldSpatialIndex, WorldSurfa
 use dusklight_evidence::native_episode_shard::{
     NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
 };
+use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::Vec3;
 use dusklight_world::world_inventory::WorldInventory;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V1: &str = "dusklight-native-geometry-view/v1";
+pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V2: &str = "dusklight-native-geometry-view/v2";
 pub const MAX_GEOMETRY_QUERY_DISTANCE: f32 = 65_536.0;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -99,6 +100,7 @@ pub struct NativeEpisodeGeometryView {
     pub schema: String,
     pub native_shard_sha256: Digest,
     pub observation_schema: String,
+    pub world_context_sha256: Option<Digest>,
     pub configuration: NativeGeometryViewConfiguration,
     pub worlds: Vec<GeometryWorldReference>,
     pub observations: Vec<NativeGeometryObservation>,
@@ -136,6 +138,30 @@ impl NativeEpisodeGeometryView {
                 .validate()
                 .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
         }
+        let world_context_sha256 = match (
+            shard.metadata.game_data_sha256,
+            shard.metadata.world_context_sha256,
+        ) {
+            (Some(game_data_sha256), Some(expected)) => {
+                let context = WorldContext::build(game_data_sha256, inventories)
+                    .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
+                let actual = context
+                    .digest()
+                    .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
+                if actual != expected {
+                    return Err(NativeGeometryViewError::new(
+                        "native shard world-context identity does not match supplied inventories",
+                    ));
+                }
+                Some(actual)
+            }
+            (None, None) => None,
+            _ => {
+                return Err(NativeGeometryViewError::new(
+                    "native shard has an incomplete world-context identity",
+                ));
+            }
+        };
         let indexes = ordered
             .iter()
             .map(|inventory| {
@@ -183,9 +209,10 @@ impl NativeEpisodeGeometryView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V1.into(),
+            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V2.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
+            world_context_sha256,
             configuration,
             worlds,
             observations,
@@ -218,9 +245,10 @@ impl NativeEpisodeGeometryView {
 
     pub fn validate(&self) -> Result<(), NativeGeometryViewError> {
         self.configuration.validate()?;
-        if self.schema != NATIVE_GEOMETRY_VIEW_SCHEMA_V1
+        if self.schema != NATIVE_GEOMETRY_VIEW_SCHEMA_V2
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
+            || self.world_context_sha256 == Some(Digest::ZERO)
             || self.worlds.is_empty()
             || self.observations.is_empty()
             || self.view_sha256 != self.compute_identity()?
@@ -298,7 +326,7 @@ impl NativeEpisodeGeometryView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-geometry-view/v1\0");
+        hasher.update(b"dusklight.native-geometry-view/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
