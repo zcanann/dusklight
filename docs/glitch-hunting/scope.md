@@ -1,54 +1,31 @@
 # Project scope and objective selection
 
-Dusklight's near-term success criterion is a trustworthy automation harness for
-controlling agents, expressing semantic objectives, querying game state,
-collecting learning evidence, and narrowing proposals into cold-replayable
-winners. The harness should first prove itself on cheap ordinary gameplay—not
-on an ambitious catalog of known glitches.
+Dusklight's near-term success criterion is narrower than the eventual glitch-
+hunting vision: improve the existing Link-control-to-Ordon-Springs tape faster
+than a human can improve it frame by frame, then cold-replay the result exactly.
 
 ## Core scope
 
-- Establish process and stage boot through a declared scenario fixture.
-- Give scripted, random, structured, and learned agents one bounded execution
-  contract.
-- Expose typed, read-only facts required by a checked-in objective.
-- Evaluate a semantic objective independently of learner reward or score.
-- Retain the exact realized input tape, episode evidence, and complete identity.
-- Compare proposal sources fairly, minimize finalists, and require independent
-  cold replay before promotion.
-
-The first conformance objectives should be intentionally mundane and easy to
-inspect:
-
-1. boot into a map and establish the declared ready state;
-2. walk into a bounded target region;
-3. approach and talk to one exact placed NPC; and
-4. approach and pick up one exact carryable object.
-
-Each objective needs a negative control. These cases exercise boot, input,
-queries, actor identity, interaction state, predicates, traces, episode storage,
-search/learning integration, replay, and diagnosis without making glitch setup
-complexity part of the infrastructure test.
+- Reuse a live game process and an exact Link-control checkpoint for cheap
+  suffix experiments.
+- Run observation and policy decisions at the native pre-input tick boundary.
+- Expose only the read-only movement and spatial facts required by this route.
+- Compare raw mutation, structured tactics, continuous search, and learned
+  proposals under the same useful-simulation budget.
+- Retain the realized input tape and require independent cold replay before
+  promotion.
 
 ## Objective-driven expansion
 
-An authored objective is the gate for new harness work. Add only the observation
-families, actions, controller features, and operational tooling needed to run
-and diagnose that objective. Missing capability should produce an explicit
-unsupported result, not a guessed value or a speculative whole-game subsystem.
-
-Glitches remain useful later because they stress unusual state and timing, but
-they are not inherently better harness tests than ordinary interactions. The
-revision-pinned Skybook manifest remains inert reference material until a human
-chooses a page after the basic objective suite is reliable.
+The Ordon benchmark is the gate for new harness work. Add an observation,
+action, algorithm, or operational tool only when a measured limitation of that
+benchmark requires it. Existing experimental scaffolding does not create an
+obligation to expand it.
 
 ## Active roadmap
 
-`TASKS.md` is the sole roadmap. Its current completion gate is deliberately
-narrow: persistent native episodes, one exact Link-control checkpoint, generic
-tactics, causal learning, and a cold-proven machine improvement over the human
-Ordon route. Larger glitch, UI, multiclient, distributed, and general savestate
-programs are not active work merely because experimental scaffolding exists.
+`TASKS.md` is the sole roadmap. Its completion gate is a cold-proven, multi-tick
+machine improvement over the retained human Ordon tape.
 
 Do not add arbitrary game-state writes to ordinary agent runs. Do not let a
 learner, novelty score, route topology, checkpoint, intervention, or visual
