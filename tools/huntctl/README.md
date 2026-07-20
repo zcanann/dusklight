@@ -250,6 +250,34 @@ continuation for audit, composes it after the exact seed, and writes a standalon
 tape carrying the seed's stage/save origin. Existing output files and stale
 continuations are refused rather than overwritten.
 
+## Static world artifacts
+
+Build immutable geometry, placement, exit, and trigger metadata once from the
+original stage resources:
+
+```console
+huntctl world inventory --stage-dir orig/GZ2E01/files/res/Stage/F_SP103 \
+  --stage F_SP103 --output build/world/F_SP103.inventory.json \
+  --artifact-store build/world/content
+```
+
+The output is canonical JSON and is also installed by SHA-256 in the content
+store. Later indexing and spatial queries consume that exact validated artifact
+without reopening or reparsing the extracted stage files:
+
+```console
+huntctl world spatial-index --inventory build/world/F_SP103.inventory.json \
+  --output build/world/F_SP103.spatial.json
+huntctl world query point --inventory build/world/F_SP103.inventory.json \
+  --room 1 --point 0,0,0 --max-distance 512 --limit 32
+```
+
+Artifact decoding rejects noncanonical JSON, unknown fields, inconsistent raw
+collision codes, reordered or mismatched room/prism identities, invalid
+geometry, and load-trigger joins that do not reproduce from the authored KCL
+and SCLS records. This keeps static world context out of per-tick episodes while
+allowing learner views to be regenerated from a stable inventory digest.
+
 ## Content-addressed corpus
 
 Initialize and populate an append-only local corpus with:

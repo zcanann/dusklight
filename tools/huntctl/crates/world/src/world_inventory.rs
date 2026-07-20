@@ -5,10 +5,12 @@
 //! identity.
 
 use crate::artifact::Digest;
-use crate::world_geometry::{KclInventoryPrism, KclPlc, RarcArchive, Vec3, WorldGeometryError};
-use serde::Serialize;
+use crate::world_geometry::{
+    KclInventoryPrism, KclPlc, KclReconstruction, RarcArchive, Vec3, WorldGeometryError,
+};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -70,21 +72,21 @@ impl From<serde_json::Error> for WorldInventoryError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Stage,
     Room,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceScope {
     pub kind: SourceKind,
     pub room: Option<i8>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldSource {
     pub scope: SourceScope,
@@ -98,7 +100,7 @@ pub struct WorldSource {
     pub addressable_prisms: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageChunkSummary {
     pub source_sha256: Digest,
@@ -109,7 +111,7 @@ pub struct StageChunkSummary {
     pub recognized_record_size: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementKind {
     Actor,
@@ -118,7 +120,7 @@ pub enum PlacementKind {
     PlayerSpawn,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlacementRecord {
     pub stable_id: String,
@@ -137,7 +139,7 @@ pub struct PlacementRecord {
     pub raw_hex: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageExitRecord {
     pub stable_id: String,
@@ -159,14 +161,14 @@ pub struct StageExitRecord {
     pub raw_hex: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionInventoryRecord {
     pub room: i8,
     pub prism: KclInventoryPrism,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionLoadTrigger {
     pub stable_id: String,
@@ -181,7 +183,7 @@ pub struct CollisionLoadTrigger {
     pub inferred_semantics: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldInventory {
     pub schema: String,
@@ -281,7 +283,7 @@ impl WorldInventory {
         }
 
         let load_triggers = join_load_triggers(&collisions, &exits);
-        Ok(Self {
+        let inventory = Self {
             schema: WORLD_INVENTORY_SCHEMA.into(),
             stage: stage.into(),
             sources,
@@ -291,7 +293,195 @@ impl WorldInventory {
             exits,
             collisions,
             load_triggers,
-        })
+        };
+        inventory.validate()?;
+        Ok(inventory)
+    }
+
+    /// Decodes only the canonical byte representation emitted by
+    /// [`WorldInventory::canonical_bytes`]. Callers may therefore bind these
+    /// bytes directly to their content digest without accepting an alternate
+    /// JSON spelling of the same semantic inventory.
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, WorldInventoryError> {
+        let inventory: Self = serde_json::from_slice(bytes)?;
+        inventory.validate()?;
+        if serde_json::to_vec(&inventory)? != bytes {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory bytes are not canonical".into(),
+            ));
+        }
+        Ok(inventory)
+    }
+
+    pub fn read_canonical(path: &Path) -> Result<Self, WorldInventoryError> {
+        Self::decode_canonical(&fs::read(path)?)
+    }
+
+    pub fn validate(&self) -> Result<(), WorldInventoryError> {
+        if self.schema != WORLD_INVENTORY_SCHEMA {
+            return Err(WorldInventoryError::Invalid(format!(
+                "unsupported world inventory schema {:?}",
+                self.schema
+            )));
+        }
+        validate_stage_name(&self.stage)?;
+        if self.sources.is_empty()
+            || self.sources[0].scope
+                != (SourceScope {
+                    kind: SourceKind::Stage,
+                    room: None,
+                })
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory must begin with exactly one stage source".into(),
+            ));
+        }
+
+        let mut source_by_data = BTreeMap::new();
+        let mut room_sources = BTreeMap::new();
+        let mut previous_room = None;
+        for (index, source) in self.sources.iter().enumerate() {
+            let scope_is_valid = match source.scope {
+                SourceScope {
+                    kind: SourceKind::Stage,
+                    room: None,
+                } => index == 0,
+                SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(room),
+                } => {
+                    let ordered = previous_room.is_none_or(|previous| previous < room);
+                    previous_room = Some(room);
+                    ordered && room_sources.insert(room, source).is_none()
+                }
+                _ => false,
+            };
+            let collision_fields = (
+                source.kcl_path.as_ref(),
+                source.kcl_sha256,
+                source.plc_path.as_ref(),
+                source.plc_sha256,
+            );
+            let collision_fields_are_valid = match source.scope.kind {
+                SourceKind::Stage => {
+                    collision_fields == (None, None, None, None) && source.addressable_prisms == 0
+                }
+                SourceKind::Room => {
+                    matches!(collision_fields, (Some(kcl), Some(_), Some(plc), Some(_))
+                        if !kcl.is_empty() && !plc.is_empty())
+                        && source.addressable_prisms > 0
+                }
+            };
+            if !scope_is_valid
+                || source.archive_sha256 == Digest::ZERO
+                || source.stage_data_sha256 == Digest::ZERO
+                || source.stage_data_path.is_empty()
+                || !collision_fields_are_valid
+                || source_by_data
+                    .insert(source.stage_data_sha256, source.scope)
+                    .is_some()
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory contains an invalid or duplicate source".into(),
+                ));
+            }
+        }
+
+        for chunk in &self.chunks {
+            if source_by_data.get(&chunk.source_sha256) != Some(&chunk.scope)
+                || chunk.tag.len() != 4
+                || chunk.record_count > MAX_STAGE_RECORDS
+                || chunk.recognized_record_size == Some(0)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory contains an invalid stage chunk".into(),
+                ));
+            }
+        }
+        for placement in self.placements.iter().chain(&self.player_spawns) {
+            let expected_hex_bytes = match placement.kind {
+                PlacementKind::ScaledActor => SCALED_PLACEMENT_SIZE,
+                _ => PLACEMENT_SIZE,
+            };
+            if source_by_data.get(&placement.source_sha256) != Some(&placement.scope)
+                || placement.stable_id.is_empty()
+                || placement.chunk_tag.len() != 4
+                || placement.name.is_empty()
+                || !finite_vec3(placement.position)
+                || !canonical_hex(&placement.raw_hex, expected_hex_bytes)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory contains an invalid placement".into(),
+                ));
+            }
+        }
+        if self
+            .player_spawns
+            .iter()
+            .any(|placement| placement.kind != PlacementKind::PlayerSpawn)
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory player-spawn set contains a non-spawn placement".into(),
+            ));
+        }
+        for exit in &self.exits {
+            if source_by_data.get(&exit.source_sha256) != Some(&exit.scope)
+                || exit.stable_id.is_empty()
+                || exit.chunk_tag != "SCLS"
+                || validate_stage_name(&exit.destination_stage).is_err()
+                || !canonical_hex(&exit.raw_hex, SCLS_SIZE)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory contains an invalid stage exit".into(),
+                ));
+            }
+        }
+
+        let mut collision_counts = BTreeMap::<i8, usize>::new();
+        let mut expected_prism = BTreeMap::<i8, u16>::new();
+        for collision in &self.collisions {
+            let Some(source) = room_sources.get(&collision.room) else {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory collision references an absent room source".into(),
+                ));
+            };
+            let prism = &collision.prism.authored;
+            let next = expected_prism.entry(collision.room).or_insert(1);
+            let expected_stable_id = format!(
+                "kcl-sha256:{}/plc-sha256:{}/prism/{}",
+                source.kcl_sha256.expect("validated room KCL digest"),
+                source.plc_sha256.expect("validated room PLC digest"),
+                prism.prism_index
+            );
+            if prism.prism_index != *next
+                || prism.stable_id != expected_stable_id
+                || !prism.height.is_finite()
+                || prism.height < 0.0
+                || prism.code != crate::world_geometry::CollisionCode::decode(prism.code.raw)
+                || !valid_reconstruction(&collision.prism.reconstruction)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory contains an invalid or unordered collision prism".into(),
+                ));
+            }
+            *next = next.checked_add(1).ok_or_else(|| {
+                WorldInventoryError::Invalid("world inventory prism index overflowed".into())
+            })?;
+            *collision_counts.entry(collision.room).or_default() += 1;
+        }
+        if room_sources.iter().any(|(room, source)| {
+            collision_counts.get(room).copied().unwrap_or_default() != source.addressable_prisms
+        }) {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory collision counts disagree with their room sources".into(),
+            ));
+        }
+        if self.load_triggers != join_load_triggers(&self.collisions, &self.exits) {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory load-trigger join is not canonical".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, WorldInventoryError> {
@@ -679,6 +869,36 @@ fn validate_stage_name(stage: &str) -> Result<(), WorldInventoryError> {
     Ok(())
 }
 
+fn finite_vec3(value: Vec3) -> bool {
+    value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+}
+
+fn canonical_hex(value: &str, byte_count: usize) -> bool {
+    value.len() == byte_count.saturating_mul(2)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_reconstruction(reconstruction: &KclReconstruction) -> bool {
+    match reconstruction {
+        KclReconstruction::Reconstructed { plane, triangle } => {
+            finite_vec3(plane.anchor)
+                && finite_vec3(plane.normal)
+                && plane.d.is_finite()
+                && plane.normal.x.mul_add(
+                    plane.normal.x,
+                    plane
+                        .normal
+                        .y
+                        .mul_add(plane.normal.y, plane.normal.z * plane.normal.z),
+                ) > 0.0
+                && triangle.iter().copied().all(finite_vec3)
+        }
+        KclReconstruction::Degenerate { reason } => !reason.is_empty(),
+    }
+}
+
 fn source_record_id(prefix: &str, digest: Digest, tag: &str, index: usize) -> String {
     format!("{prefix}-sha256:{digest}/chunk/{tag}/record/{index}")
 }
@@ -794,7 +1014,78 @@ fn read_f32(bytes: &[u8], offset: usize, context: &str) -> Result<f32, WorldInve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world_geometry::KclReconstruction;
+    use crate::world_geometry::{CollisionCode, KclAuthoredPrism, KclSourceIndices};
+
+    fn canonical_inventory() -> WorldInventory {
+        let stage_archive = sha256(b"stage-archive");
+        let stage_data = sha256(b"stage-data");
+        let room_archive = sha256(b"room-archive");
+        let room_data = sha256(b"room-data");
+        let kcl = sha256(b"room-kcl");
+        let plc = sha256(b"room-plc");
+        let code = CollisionCode::decode([0x3f, 0, 0, 0, 0]);
+        WorldInventory {
+            schema: WORLD_INVENTORY_SCHEMA.into(),
+            stage: "F_TEST".into(),
+            sources: vec![
+                WorldSource {
+                    scope: SourceScope {
+                        kind: SourceKind::Stage,
+                        room: None,
+                    },
+                    archive_sha256: stage_archive,
+                    stage_data_path: "stage.dzs".into(),
+                    stage_data_sha256: stage_data,
+                    kcl_path: None,
+                    kcl_sha256: None,
+                    plc_path: None,
+                    plc_sha256: None,
+                    addressable_prisms: 0,
+                },
+                WorldSource {
+                    scope: SourceScope {
+                        kind: SourceKind::Room,
+                        room: Some(0),
+                    },
+                    archive_sha256: room_archive,
+                    stage_data_path: "room.dzr".into(),
+                    stage_data_sha256: room_data,
+                    kcl_path: Some("room.kcl".into()),
+                    kcl_sha256: Some(kcl),
+                    plc_path: Some("room.plc".into()),
+                    plc_sha256: Some(plc),
+                    addressable_prisms: 1,
+                },
+            ],
+            chunks: Vec::new(),
+            placements: Vec::new(),
+            player_spawns: Vec::new(),
+            exits: Vec::new(),
+            collisions: vec![CollisionInventoryRecord {
+                room: 0,
+                prism: KclInventoryPrism {
+                    authored: KclAuthoredPrism {
+                        stable_id: format!("kcl-sha256:{kcl}/plc-sha256:{plc}/prism/1"),
+                        prism_index: 1,
+                        height: 0.0,
+                        source_indices: KclSourceIndices {
+                            position: 0,
+                            face_normal: 0,
+                            edge_normal_1: 0,
+                            edge_normal_2: 0,
+                            edge_normal_3: 0,
+                        },
+                        attribute: 0,
+                        code,
+                    },
+                    reconstruction: KclReconstruction::Degenerate {
+                        reason: "fixture".into(),
+                    },
+                },
+            }],
+            load_triggers: Vec::new(),
+        }
+    }
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
@@ -925,6 +1216,26 @@ mod tests {
             .stable_id
             .clone();
         assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn canonical_inventory_round_trips_and_rejects_alternate_or_tampered_bytes() {
+        let inventory = canonical_inventory();
+        inventory.validate().unwrap();
+        let bytes = inventory.canonical_bytes().unwrap();
+        assert_eq!(WorldInventory::decode_canonical(&bytes).unwrap(), inventory);
+
+        let pretty = serde_json::to_vec_pretty(&inventory).unwrap();
+        assert!(WorldInventory::decode_canonical(&pretty).is_err());
+
+        let mut tampered = inventory.clone();
+        tampered.collisions[0].prism.authored.code.exit_id = 0;
+        let tampered_bytes = serde_json::to_vec(&tampered).unwrap();
+        assert!(WorldInventory::decode_canonical(&tampered_bytes).is_err());
+
+        let mut reordered = inventory;
+        reordered.sources.swap(0, 1);
+        assert!(reordered.validate().is_err());
     }
 
     #[test]

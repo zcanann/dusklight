@@ -56,10 +56,8 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         Some("spatial-index") => {
-            let stage_dir = required_path(&args[1..], "--stage-dir")?;
-            let stage = option(&args[1..], "--stage").ok_or("missing required --stage ID")?;
             let output = required_path(&args[1..], "--output")?;
-            let inventory = WorldInventory::build(&stage_dir, &stage)?;
+            let inventory = load_world_inventory(&args[1..])?;
             let index = WorldSpatialIndex::build(&inventory)?;
             let bytes = index.artifact().canonical_bytes()?;
             if let Some(parent) = output
@@ -73,7 +71,7 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
             let content_blob = ContentStore::initialize(&artifact_store)?
-                .put_bytes(&bytes, ContentKind::WorldInventory)?;
+                .put_bytes(&bytes, ContentKind::WorldSpatialIndex)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -160,8 +158,6 @@ fn command_world_query(args: &[String]) -> Result<(), Box<dyn Error>> {
         .map(String::as_str)
         .ok_or("world query requires point, aabb, or ray as its operation")?;
     let query_args = &args[1..];
-    let stage_dir = required_path(query_args, "--stage-dir")?;
-    let stage = option(query_args, "--stage").ok_or("missing required --stage ID")?;
     let room: i8 = option(query_args, "--room")
         .ok_or("missing required --room N (coordinates are room-scoped)")?
         .parse()?;
@@ -178,7 +174,7 @@ fn command_world_query(args: &[String]) -> Result<(), Box<dyn Error>> {
             .map(|value| value.parse())
             .transpose()?,
     };
-    let inventory = WorldInventory::build(&stage_dir, &stage)?;
+    let inventory = load_world_inventory(query_args)?;
     let index = WorldSpatialIndex::build(&inventory)?;
     match operation {
         "point" => {
@@ -243,6 +239,20 @@ fn command_world_query(args: &[String]) -> Result<(), Box<dyn Error>> {
         _ => return Err("world query operation must be point, aabb, or ray".into()),
     }
     Ok(())
+}
+
+fn load_world_inventory(args: &[String]) -> Result<WorldInventory, Box<dyn Error>> {
+    let inventory = option(args, "--inventory").map(PathBuf::from);
+    let stage_dir = option(args, "--stage-dir").map(PathBuf::from);
+    let stage = option(args, "--stage");
+    match (inventory, stage_dir, stage) {
+        (Some(path), None, None) => Ok(WorldInventory::read_canonical(&path)?),
+        (None, Some(stage_dir), Some(stage)) => Ok(WorldInventory::build(&stage_dir, &stage)?),
+        _ => Err(
+            "world operation requires either --inventory INVENTORY.json or both --stage-dir STAGE_DIR --stage STAGE_ID"
+                .into(),
+        ),
+    }
 }
 
 fn parse_world_point(value: &str) -> Result<Vec3, Box<dyn Error>> {

@@ -5,7 +5,7 @@
 //! source buffers.
 
 use crate::artifact::Digest;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -39,7 +39,7 @@ impl fmt::Display for WorldGeometryError {
 
 impl Error for WorldGeometryError {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Vec3 {
     pub x: f32,
@@ -73,7 +73,7 @@ impl Vec3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PointTriangleQuery {
     pub point: Vec3,
@@ -82,7 +82,7 @@ pub struct PointTriangleQuery {
     pub distance: f64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KclSourceIndices {
     pub position: u16,
@@ -92,7 +92,7 @@ pub struct KclSourceIndices {
     pub edge_normal_3: u16,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionCode {
     pub raw: [u32; 5],
@@ -114,7 +114,7 @@ pub struct CollisionCode {
 }
 
 impl CollisionCode {
-    fn decode(raw: [u32; 5]) -> Self {
+    pub(crate) fn decode(raw: [u32; 5]) -> Self {
         Self {
             raw,
             exit_id: (raw[0] & 0x3f) as u8,
@@ -136,7 +136,7 @@ impl CollisionCode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionPlane {
     pub anchor: Vec3,
@@ -144,7 +144,7 @@ pub struct CollisionPlane {
     pub d: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KclPrismInspection {
     pub stable_id: String,
@@ -159,7 +159,7 @@ pub struct KclPrismInspection {
 
 /// Authored fields that remain meaningful even when a retail prism cannot be
 /// reconstructed into a finite triangle.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KclAuthoredPrism {
     pub stable_id: String,
@@ -170,7 +170,7 @@ pub struct KclAuthoredPrism {
     pub code: CollisionCode,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum KclReconstruction {
     Reconstructed {
@@ -182,7 +182,7 @@ pub enum KclReconstruction {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KclInventoryPrism {
     pub authored: KclAuthoredPrism,

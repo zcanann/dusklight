@@ -111,6 +111,20 @@ the same goal without demonstration-relative features.
 - [ ] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
+  - [x] World inventories and their BVH spatial indexes are distinct
+    content-addressed artifacts. Canonical inventory bytes can now be decoded
+    and validated without reopening the extracted stage resources; alternate
+    JSON spellings, inconsistent raw collision codes, invalid source/prism
+    ordering, nonfinite geometry, and non-reproducible KCL/SCLS trigger joins
+    fail closed. `world spatial-index` and every point/AABB/ray query accept the
+    validated inventory artifact directly. A live F_SP103 rebuild retained
+    10,794 prisms and 40 load triggers in inventory
+    `370675af...01e7f`; its independently stored spatial index is
+    `2ad975ee...e73834`, and an artifact-only room-1 query reproduced prism
+    2187 as the nearest surface.
+  - [ ] Bind the appropriate static-world artifact set and actor type/profile
+    catalog to each episode/shard identity, then derive per-state local geometry
+    and placement views by reference rather than embedding the map per tick.
 - [x] Remove arbitrary learner-facing actor truncation. Learning-observation v4
   requires the complete process actor set and rejects inconsistent counts,
   truncation markers, or a non-complete selection rule. The separate controller
