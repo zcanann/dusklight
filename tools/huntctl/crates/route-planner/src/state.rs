@@ -481,10 +481,14 @@ fn validate_location(location: &SceneLocation) -> Result<(), PlannerContractErro
 }
 
 fn validate_player(player: &PlayerState) -> Result<(), PlannerContractError> {
-    if !player.position.iter().all(|value| value.is_finite()) {
+    if !player
+        .position
+        .iter()
+        .all(|value| value.is_finite() && value.to_bits() != (-0.0_f32).to_bits())
+    {
         return Err(PlannerContractError::new(
             "player.position",
-            "must contain finite coordinates",
+            "must contain finite canonical coordinates",
         ));
     }
     validate_label("player.action", &player.action)?;

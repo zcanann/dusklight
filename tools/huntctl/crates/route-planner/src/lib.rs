@@ -11,6 +11,7 @@ pub mod fact_pack;
 pub mod identity;
 pub mod logic;
 pub mod refinement;
+pub mod snapshot;
 pub mod state;
 pub mod transition;
 
