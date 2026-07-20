@@ -235,6 +235,12 @@ human-authored successful setup.
 - [x] Capture failures and successes through the same episode contract. A
   failed attempt must no longer collapse to one terminal X/Z observation.
 - [ ] Define a canonical, versioned observation envelope containing:
+  Capture every cheap, typed, read-only channel that can be made semantically
+  stable, with explicit validity and provenance. Do not feed the canonical
+  envelope to a learner as one flat vector: derive selectable set/graph views,
+  masks and temporal features from the retained evidence, and compare those
+  representations without recollecting rollouts. Raw process memory, pointers,
+  padding and host-only implementation state are not observation features.
   - [x] Link motion, facing, action/animation phase, timers, form and relevant
     status;
   - [x] recent controls and camera state;
@@ -261,6 +267,10 @@ human-authored successful setup.
   - [ ] expose available typed actor components and goal-relative actor
     features without adding gameplay writes or making optional components look
     universally present;
+    - [x] Actor base-state component v1 carries the universal observation-v7
+      fields through native shards into actor view v4 with explicit absence for
+      v2-v6 shards. It remains a structured component rather than being
+      unconditionally concatenated into every model input;
     - [x] Learning observation v6 copies active actor attention and
       event-participation scalars through the single gated read-only adapter.
       Pointer fields never cross the boundary; constructor-default/inactive
@@ -424,6 +434,17 @@ PAD and gameplay sequence as ordinary playback.
   Models may request or ablate channel families without recollecting episodes.
 - [ ] Represent actors, contacts and nearby geometry as masked sets or graphs,
   not fixed actor slots whose iteration order becomes accidental meaning.
+- [ ] Preserve the complete dynamic actor set until an object-centric encoder
+  has seen it. Learn attention/gating over typed channel families and explicit
+  validity masks; do not permanently discard distant or apparently irrelevant
+  actors with a hand-authored nearest-K rule. Any bounded inference view must
+  expose its overflow and win an equal-budget held-out comparison against the
+  complete-set representation.
+- [ ] Keep immutable world geometry out of the per-tick flat vector. Supply
+  bounded spatial queries, connectivity and semantic surface/trigger tokens by
+  reference to the authenticated world artifact, with a graph path for models
+  that need context around a bend. Retain the source query and coverage proof
+  so a larger view can be derived without rerunning gameplay.
 - [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
   goal-relative features. Generic physics relationships are observations, not
   route rewards.
@@ -452,6 +473,17 @@ and geometry set sizes without schema changes.
 - [ ] Maintain a replay corpus containing demonstrations, successful and failed
   policy rollouts, randomized coverage and alternate terminal states. Preserve
   checkpoint, episode, branch and policy-generation lineage.
+- [ ] Pretrain and continually refresh the shared state encoder from every
+  phase-correct transition, not only successful episodes. Compare bounded
+  auxiliary objectives such as next-state/delta prediction, inverse action,
+  contact/surface transition, actor lifecycle, action phase, event/loading and
+  short-horizon reachability. These objectives teach representation; they must
+  not replace the real predicate and tick cost as outcome authority.
+- [ ] Measure learned feature selection rather than assuming that more inputs
+  helped: report attention/gating stability, held-out prediction by channel,
+  rare-event recall and controlled channel-family ablations. Reject a broad
+  encoder that loses to the smaller view under equal data and simulator budget,
+  while preserving the canonical raw evidence for a different encoder.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
