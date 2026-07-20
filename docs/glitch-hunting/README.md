@@ -90,8 +90,8 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 - [Skybook benchmark import](skybook.md) documents the revision-pinned,
   content-addressed requirements manifest and its read-only import boundary.
 - [Project scope and objective selection](scope.md) defines the cheap objective
-  conformance suite, objective-driven expansion rule, deferred work, and current
-  won't-do boundaries.
+  conformance suite, objective-driven expansion rule, active Ordon target, and
+  current won't-do boundaries.
 - [Objective conformance suites](objective-suites.md) defines the
   content-addressed case contract and strict artifact validator for ordinary
   stage-ready, movement, interaction, and object-manipulation tests.
