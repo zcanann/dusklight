@@ -174,6 +174,7 @@ pub struct BootGolfConfig {
     pub game_args_prefix: Vec<String>,
     pub workers: usize,
     pub repetitions: u32,
+    pub resume: bool,
     pub timeout: Duration,
     pub harness: Option<HarnessEvaluateConfig>,
 }

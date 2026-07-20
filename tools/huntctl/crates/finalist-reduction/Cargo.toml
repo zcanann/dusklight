@@ -12,3 +12,4 @@ dusklight-evaluation = { path = "../evaluation" }
 dusklight-search = { path = "../search" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"

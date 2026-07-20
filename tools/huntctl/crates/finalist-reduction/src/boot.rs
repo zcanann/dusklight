@@ -1,6 +1,51 @@
 //! Boot-specific minimization and timing golf over proved native candidates.
 
 use super::*;
+use sha2::{Digest as _, Sha256};
+use std::io::Read;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BootGolfRunIdentity {
+    schema: String,
+    strategy: String,
+    source_candidate_id: String,
+    source_goal_sim_tick: u64,
+    source_goal_tape_frame: u64,
+    source_boundary_fingerprint: BoundaryFingerprint,
+    game_sha256: ArtifactDigest,
+    dvd_sha256: ArtifactDigest,
+    working_directory: PathBuf,
+    game_args_prefix: Vec<String>,
+    repetitions: u32,
+    timeout_millis: u64,
+    harness_request_sha256: Option<ArtifactDigest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BootGolfCachedProof {
+    candidate_id: String,
+    sim_tick: u64,
+    tape_frame: u64,
+    boundary_fingerprint: BoundaryFingerprint,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BootGolfBatchCache {
+    schema: String,
+    content_sha256: ArtifactDigest,
+    run: BootGolfRunIdentity,
+    round: u32,
+    batch_index: usize,
+    candidate_ids: Vec<String>,
+    proven: Vec<BootGolfCachedProof>,
+    evaluation: PathBuf,
+    evaluation_sha256: ArtifactDigest,
+    results: PathBuf,
+    results_sha256: ArtifactDigest,
+}
 
 #[derive(Clone)]
 pub(super) struct ProvenBootCandidate {
@@ -248,16 +293,19 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     }
     config.candidate.validate()?;
     validate_boot_harness(config.harness.as_ref())?;
+    let output_nonempty = directory_is_nonempty(&config.output_root)?;
     if !config.game.is_file()
         || !config.dvd.is_file()
         || !config.working_directory.is_dir()
         || config.workers == 0
         || config.repetitions < 2
         || config.timeout.is_zero()
-        || directory_is_nonempty(&config.output_root)?
+        || (!config.resume && output_nonempty)
+        || (config.resume && !output_nonempty)
+        || (config.resume && config.output_root.join("golf.summary.json").exists())
     {
         return Err(EvaluateError::InvalidConfig(
-            "game, DVD, working directory, at least two repetitions, positive execution limits, and a new/empty output root are required"
+            "boot timing golf requires valid execution inputs and either a new output root or --resume with an incomplete matching output root"
                 .into(),
         ));
     }
@@ -280,10 +328,13 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     let initial = evaluate_boot_batch(
         &evaluation,
         vec![config.candidate.clone()],
-        &config
-            .output_root
-            .join("rounds")
-            .join(format!("{round:04}")),
+        &fresh_boot_evidence_root(
+            &config
+                .output_root
+                .join("rounds")
+                .join(format!("{round:04}")),
+            config.resume,
+        )?,
         round,
     )?
     .into_iter()
@@ -295,6 +346,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     })?;
     let source_goal_sim_tick = initial.sim_tick;
     let source_fingerprint = initial.boundary_fingerprint.clone();
+    let run_identity = boot_golf_run_identity(config, &source_id, &initial)?;
     let source_pulse_timestamps = pulse_timestamps(&initial.tape)?;
     if source_pulse_timestamps.is_empty() {
         return Err(EvaluateError::InvalidConfig(
@@ -364,15 +416,13 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
             .chunks(BOOT_GOLF_EVALUATION_BATCH_SIZE)
             .enumerate()
         {
-            let proven = evaluate_boot_batch(
+            let proven = evaluate_or_load_boot_golf_batch(
                 &evaluation,
+                &run_identity,
                 batch.to_vec(),
-                &config
-                    .output_root
-                    .join("rounds")
-                    .join(format!("{round:04}"))
-                    .join(format!("batch-{batch_index:04}")),
                 round,
+                batch_index,
+                config.resume,
             )?;
             for candidate in proven.into_iter().filter(|candidate| {
                 candidate.boundary_fingerprint == source_fingerprint
@@ -424,7 +474,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
             parent_end_frame_exclusive: current.tape.frames.len() as u64,
         }),
     };
-    let proof_root = config.output_root.join("proof");
+    let proof_root = fresh_boot_evidence_root(&config.output_root.join("proof"), config.resume)?;
     let (mut proof_candidates, proof_report) =
         evaluate_boot_batch_with_report(&evaluation, vec![trimmed], &proof_root, round)?;
     evaluated_candidates = evaluated_candidates
@@ -465,6 +515,288 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
     };
     write_json(&config.output_root.join("golf.summary.json"), &summary)?;
     Ok(summary)
+}
+
+fn boot_golf_run_identity(
+    config: &BootGolfConfig,
+    source_candidate_id: &str,
+    source: &ProvenBootCandidate,
+) -> Result<BootGolfRunIdentity, EvaluateError> {
+    let timeout_millis = u64::try_from(config.timeout.as_millis()).map_err(|_| {
+        EvaluateError::InvalidConfig("boot golf timeout does not fit in u64 milliseconds".into())
+    })?;
+    Ok(BootGolfRunIdentity {
+        schema: "dusklight-boot-timing-golf-run/v1".into(),
+        strategy: "a-start-coordinate-descent/v2".into(),
+        source_candidate_id: source_candidate_id.into(),
+        source_goal_sim_tick: source.sim_tick,
+        source_goal_tape_frame: source.tape_frame,
+        source_boundary_fingerprint: source.boundary_fingerprint.clone(),
+        game_sha256: sha256_file(&config.game)?,
+        dvd_sha256: sha256_file(&config.dvd)?,
+        working_directory: fs::canonicalize(&config.working_directory)?,
+        game_args_prefix: config.game_args_prefix.clone(),
+        repetitions: config.repetitions,
+        timeout_millis,
+        harness_request_sha256: config
+            .harness
+            .as_ref()
+            .map(|harness| harness.request_template.content_sha256),
+    })
+}
+
+fn sha256_file(path: &Path) -> Result<ArtifactDigest, EvaluateError> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(ArtifactDigest(hasher.finalize().into()))
+}
+
+fn boot_golf_batch_cache_digest(
+    cache: &BootGolfBatchCache,
+) -> Result<ArtifactDigest, EvaluateError> {
+    let mut unsigned = cache.clone();
+    unsigned.content_sha256 = ArtifactDigest::ZERO;
+    Ok(ArtifactDigest(
+        Sha256::digest(serde_json::to_vec(&unsigned)?).into(),
+    ))
+}
+
+fn validate_boot_golf_batch_cache(
+    cache: &BootGolfBatchCache,
+    run: &BootGolfRunIdentity,
+    output_root: &Path,
+    round: u32,
+    batch_index: usize,
+    candidate_ids: &[String],
+) -> Result<(), EvaluateError> {
+    let candidate_set = candidate_ids.iter().collect::<BTreeSet<_>>();
+    let proven_ids = cache
+        .proven
+        .iter()
+        .map(|proof| &proof.candidate_id)
+        .collect::<BTreeSet<_>>();
+    let relative_path_is_safe = |path: &Path| {
+        !path.as_os_str().is_empty()
+            && path.components().all(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+    };
+    let evaluation_match = relative_path_is_safe(&cache.evaluation)
+        && output_root.join(&cache.evaluation).is_file()
+        && sha256_file(&output_root.join(&cache.evaluation))? == cache.evaluation_sha256;
+    let results_match = relative_path_is_safe(&cache.results)
+        && cache.results.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+        && output_root.join(&cache.results).is_file()
+        && sha256_file(&output_root.join(&cache.results))? == cache.results_sha256;
+    if cache.schema != "dusklight-boot-timing-golf-batch/v1"
+        || cache.content_sha256 == ArtifactDigest::ZERO
+        || cache.content_sha256 != boot_golf_batch_cache_digest(cache)?
+        || &cache.run != run
+        || cache.round != round
+        || cache.batch_index != batch_index
+        || cache.candidate_ids != candidate_ids
+        || candidate_set.len() != candidate_ids.len()
+        || proven_ids.len() != cache.proven.len()
+        || !proven_ids.is_subset(&candidate_set)
+        || !evaluation_match
+        || !results_match
+    {
+        return Err(EvaluateError::InvalidResult(format!(
+            "boot golf batch {round:04}/{batch_index:04} is stale, inconsistent, or tampered"
+        )));
+    }
+    Ok(())
+}
+
+fn boot_golf_batch_cache_path(output_root: &Path, round: u32, batch_index: usize) -> PathBuf {
+    output_root
+        .join("rounds")
+        .join(format!("{round:04}"))
+        .join(format!("batch-{batch_index:04}.cache.json"))
+}
+
+fn write_boot_golf_batch_cache(
+    path: &Path,
+    mut cache: BootGolfBatchCache,
+) -> Result<(), EvaluateError> {
+    cache.content_sha256 = boot_golf_batch_cache_digest(&cache)?;
+    let bytes = serde_json::to_vec_pretty(&cache)?;
+    if path.exists() {
+        if fs::read(path)? != bytes {
+            return Err(EvaluateError::InvalidResult(format!(
+                "boot golf batch cache destination changed: {}",
+                path.display()
+            )));
+        }
+        return Ok(());
+    }
+    let parent = path.parent().ok_or_else(|| {
+        EvaluateError::InvalidConfig("boot golf batch cache has no parent directory".into())
+    })?;
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| EvaluateError::InvalidConfig("invalid batch cache file name".into()))?;
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    fs::write(&temporary, bytes)?;
+    fs::rename(&temporary, path)?;
+    Ok(())
+}
+
+fn fresh_boot_evidence_root(base: &Path, resume: bool) -> Result<PathBuf, EvaluateError> {
+    if !base.exists() {
+        return Ok(base.to_path_buf());
+    }
+    if !resume {
+        return Err(EvaluateError::InvalidConfig(format!(
+            "boot golf evidence root already exists: {}",
+            base.display()
+        )));
+    }
+    for attempt in 1..=u16::MAX {
+        let candidate = base.with_file_name(format!(
+            "{}-resume-{attempt:04}",
+            base.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("evidence")
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(EvaluateError::InvalidResult(
+        "too many resumed boot golf evidence roots".into(),
+    ))
+}
+
+fn evaluate_or_load_boot_golf_batch(
+    config: &BootMinimizeConfig,
+    run: &BootGolfRunIdentity,
+    candidates: Vec<Candidate>,
+    round: u32,
+    batch_index: usize,
+    resume: bool,
+) -> Result<Vec<ProvenBootCandidate>, EvaluateError> {
+    let candidate_ids = candidates
+        .iter()
+        .map(Candidate::id)
+        .collect::<Result<Vec<_>, _>>()?;
+    let cache_path = boot_golf_batch_cache_path(&config.output_root, round, batch_index);
+    if resume && cache_path.is_file() {
+        let cache: BootGolfBatchCache = serde_json::from_slice(&fs::read(&cache_path)?)?;
+        validate_boot_golf_batch_cache(
+            &cache,
+            run,
+            &config.output_root,
+            round,
+            batch_index,
+            &candidate_ids,
+        )?;
+        return cache
+            .proven
+            .into_iter()
+            .map(|proof| {
+                let candidate = candidates
+                    .iter()
+                    .find(|candidate| candidate.id().is_ok_and(|id| id == proof.candidate_id))
+                    .cloned()
+                    .ok_or_else(|| {
+                        EvaluateError::InvalidResult(format!(
+                            "cached proof references absent candidate {}",
+                            proof.candidate_id
+                        ))
+                    })?;
+                Ok(ProvenBootCandidate {
+                    tape: candidate.compile()?,
+                    candidate,
+                    sim_tick: proof.sim_tick,
+                    tape_frame: proof.tape_frame,
+                    boundary_fingerprint: proof.boundary_fingerprint,
+                })
+            })
+            .collect();
+    }
+
+    let base = config
+        .output_root
+        .join("rounds")
+        .join(format!("{round:04}"))
+        .join(format!("batch-{batch_index:04}"));
+    let evidence_root = fresh_boot_evidence_root(&base, resume)?;
+    let (proven, report) =
+        evaluate_boot_batch_with_report(config, candidates, &evidence_root, round)?;
+    if report.completed_attempts != report.planned_attempts || report.infrastructure_faults != 0 {
+        return Err(EvaluateError::InvalidResult(format!(
+            "boot golf batch {round:04}/{batch_index:04} did not seal every planned attempt"
+        )));
+    }
+    let results = report
+        .results
+        .strip_prefix(&config.output_root)
+        .map_err(|_| {
+            EvaluateError::InvalidResult(format!(
+                "boot golf results escaped output root: {}",
+                report.results.display()
+            ))
+        })?;
+    let results = results.to_path_buf();
+    let results_sha256 = sha256_file(&report.results)?;
+    let evaluation_path = evidence_root.join("evidence/evaluation.json");
+    let evaluation = evaluation_path
+        .strip_prefix(&config.output_root)
+        .map_err(|_| {
+            EvaluateError::InvalidResult(format!(
+                "boot golf evaluation escaped output root: {}",
+                evaluation_path.display()
+            ))
+        })?
+        .to_path_buf();
+    let evaluation_sha256 = sha256_file(&evaluation_path)?;
+    let cached_proofs = proven
+        .iter()
+        .map(|candidate| {
+            Ok(BootGolfCachedProof {
+                candidate_id: candidate.candidate.id()?,
+                sim_tick: candidate.sim_tick,
+                tape_frame: candidate.tape_frame,
+                boundary_fingerprint: candidate.boundary_fingerprint.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, EvaluateError>>()?;
+    write_boot_golf_batch_cache(
+        &cache_path,
+        BootGolfBatchCache {
+            schema: "dusklight-boot-timing-golf-batch/v1".into(),
+            content_sha256: ArtifactDigest::ZERO,
+            run: run.clone(),
+            round,
+            batch_index,
+            candidate_ids,
+            proven: cached_proofs,
+            evaluation,
+            evaluation_sha256,
+            results,
+            results_sha256,
+        },
+    )?;
+    Ok(proven)
 }
 
 fn validate_boot_harness(harness: Option<&HarnessEvaluateConfig>) -> Result<(), EvaluateError> {
@@ -736,6 +1068,7 @@ fn evaluate_boot_batch_with_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn proven(sim_tick: u64, tape_frame: u64, digest: &str) -> ProvenBootCandidate {
         let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
@@ -751,6 +1084,40 @@ mod tests {
                 digest: digest.into(),
             },
         }
+    }
+
+    fn test_run_identity() -> BootGolfRunIdentity {
+        BootGolfRunIdentity {
+            schema: "dusklight-boot-timing-golf-run/v1".into(),
+            strategy: "a-start-coordinate-descent/v2".into(),
+            source_candidate_id: "source".into(),
+            source_goal_sim_tick: 439,
+            source_goal_tape_frame: 439,
+            source_boundary_fingerprint: BoundaryFingerprint {
+                schema: "dusklight.milestone-boundary/v1".into(),
+                algorithm: "xxh3-128".into(),
+                canonical_encoding: "little-endian-fixed-v1".into(),
+                digest: "a".repeat(32),
+            },
+            game_sha256: ArtifactDigest([1; 32]),
+            dvd_sha256: ArtifactDigest([2; 32]),
+            working_directory: PathBuf::from("C:/repo"),
+            game_args_prefix: vec!["--automation-headless".into()],
+            repetitions: 2,
+            timeout_millis: 120_000,
+            harness_request_sha256: Some(ArtifactDigest([3; 32])),
+        }
+    }
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "dusklight-finalist-reduction-{label}-{}-{nonce}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -804,5 +1171,167 @@ mod tests {
             .compile()
             .unwrap();
         assert_eq!(in_place.frames[3].pads[0].buttons, BUTTON_A);
+    }
+
+    #[test]
+    fn batch_cache_is_bound_to_run_candidates_and_native_results() {
+        let root = unique_test_root("batch-cache");
+        fs::create_dir_all(root.join("native")).unwrap();
+        fs::write(root.join("native/results.json"), b"sealed native results").unwrap();
+        fs::write(root.join("native/evaluation.json"), b"sealed evaluation").unwrap();
+        let run = test_run_identity();
+        let candidate_ids = vec!["candidate-a".into(), "candidate-b".into()];
+        let mut cache = BootGolfBatchCache {
+            schema: "dusklight-boot-timing-golf-batch/v1".into(),
+            content_sha256: ArtifactDigest::ZERO,
+            run: run.clone(),
+            round: 1,
+            batch_index: 2,
+            candidate_ids: candidate_ids.clone(),
+            proven: vec![BootGolfCachedProof {
+                candidate_id: "candidate-b".into(),
+                sim_tick: 439,
+                tape_frame: 439,
+                boundary_fingerprint: run.source_boundary_fingerprint.clone(),
+            }],
+            evaluation: PathBuf::from("native/evaluation.json"),
+            evaluation_sha256: sha256_file(&root.join("native/evaluation.json")).unwrap(),
+            results: PathBuf::from("native/results.json"),
+            results_sha256: sha256_file(&root.join("native/results.json")).unwrap(),
+        };
+        cache.content_sha256 = boot_golf_batch_cache_digest(&cache).unwrap();
+        validate_boot_golf_batch_cache(&cache, &run, &root, 1, 2, &candidate_ids).unwrap();
+
+        let mut changed_run = run.clone();
+        changed_run.source_goal_sim_tick += 1;
+        assert!(
+            validate_boot_golf_batch_cache(&cache, &changed_run, &root, 1, 2, &candidate_ids)
+                .is_err()
+        );
+        let mut changed_candidates = candidate_ids.clone();
+        changed_candidates.reverse();
+        assert!(
+            validate_boot_golf_batch_cache(&cache, &run, &root, 1, 2, &changed_candidates).is_err()
+        );
+
+        fs::write(root.join("native/results.json"), b"changed").unwrap();
+        assert!(validate_boot_golf_batch_cache(&cache, &run, &root, 1, 2, &candidate_ids).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_cache_rejects_foreign_duplicate_and_tampered_proofs() {
+        let root = unique_test_root("batch-cache-tamper");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("results.json"), b"sealed").unwrap();
+        fs::write(root.join("evaluation.json"), b"sealed evaluation").unwrap();
+        let run = test_run_identity();
+        let candidate_ids = vec!["candidate-a".into()];
+        let proof = BootGolfCachedProof {
+            candidate_id: "candidate-a".into(),
+            sim_tick: 439,
+            tape_frame: 439,
+            boundary_fingerprint: run.source_boundary_fingerprint.clone(),
+        };
+        let mut cache = BootGolfBatchCache {
+            schema: "dusklight-boot-timing-golf-batch/v1".into(),
+            content_sha256: ArtifactDigest::ZERO,
+            run: run.clone(),
+            round: 1,
+            batch_index: 0,
+            candidate_ids: candidate_ids.clone(),
+            proven: vec![proof.clone(), proof],
+            evaluation: PathBuf::from("evaluation.json"),
+            evaluation_sha256: sha256_file(&root.join("evaluation.json")).unwrap(),
+            results: PathBuf::from("results.json"),
+            results_sha256: sha256_file(&root.join("results.json")).unwrap(),
+        };
+        cache.content_sha256 = boot_golf_batch_cache_digest(&cache).unwrap();
+        assert!(validate_boot_golf_batch_cache(&cache, &run, &root, 1, 0, &candidate_ids).is_err());
+
+        cache.proven = vec![BootGolfCachedProof {
+            candidate_id: "foreign".into(),
+            sim_tick: 439,
+            tape_frame: 439,
+            boundary_fingerprint: run.source_boundary_fingerprint.clone(),
+        }];
+        cache.content_sha256 = boot_golf_batch_cache_digest(&cache).unwrap();
+        assert!(validate_boot_golf_batch_cache(&cache, &run, &root, 1, 0, &candidate_ids).is_err());
+
+        cache.proven.clear();
+        cache.content_sha256 = boot_golf_batch_cache_digest(&cache).unwrap();
+        cache.round = 2;
+        assert!(validate_boot_golf_batch_cache(&cache, &run, &root, 1, 0, &candidate_ids).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn partial_evidence_gets_a_fresh_resume_root() {
+        let root = unique_test_root("partial-evidence");
+        let base = root.join("rounds/0001/batch-0000");
+        fs::create_dir_all(&base).unwrap();
+        assert!(fresh_boot_evidence_root(&base, false).is_err());
+        assert_eq!(
+            fresh_boot_evidence_root(&base, true).unwrap(),
+            root.join("rounds/0001/batch-0000-resume-0001")
+        );
+        fs::create_dir_all(root.join("rounds/0001/batch-0000-resume-0001")).unwrap();
+        assert_eq!(
+            fresh_boot_evidence_root(&base, true).unwrap(),
+            root.join("rounds/0001/batch-0000-resume-0002")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sealed_batch_cache_skips_native_evaluation() {
+        let root = unique_test_root("cached-evaluation");
+        fs::create_dir_all(root.join("sealed/evidence")).unwrap();
+        fs::write(root.join("sealed/evidence/evaluation.json"), b"evaluation").unwrap();
+        fs::write(root.join("sealed/results.json"), b"results").unwrap();
+        let candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
+        let candidate_id = candidate.id().unwrap();
+        let run = test_run_identity();
+        let cache_path = boot_golf_batch_cache_path(&root, 1, 0);
+        write_boot_golf_batch_cache(
+            &cache_path,
+            BootGolfBatchCache {
+                schema: "dusklight-boot-timing-golf-batch/v1".into(),
+                content_sha256: ArtifactDigest::ZERO,
+                run: run.clone(),
+                round: 1,
+                batch_index: 0,
+                candidate_ids: vec![candidate_id.clone()],
+                proven: vec![BootGolfCachedProof {
+                    candidate_id,
+                    sim_tick: 439,
+                    tape_frame: 439,
+                    boundary_fingerprint: run.source_boundary_fingerprint.clone(),
+                }],
+                evaluation: PathBuf::from("sealed/evidence/evaluation.json"),
+                evaluation_sha256: sha256_file(&root.join("sealed/evidence/evaluation.json"))
+                    .unwrap(),
+                results: PathBuf::from("sealed/results.json"),
+                results_sha256: sha256_file(&root.join("sealed/results.json")).unwrap(),
+            },
+        )
+        .unwrap();
+        let config = BootMinimizeConfig {
+            candidate: candidate.clone(),
+            game: root.join("intentionally-absent-game.exe"),
+            dvd: root.join("intentionally-absent.iso"),
+            output_root: root.clone(),
+            working_directory: root.clone(),
+            game_args_prefix: Vec::new(),
+            workers: 1,
+            repetitions: 2,
+            timeout: Duration::from_secs(1),
+            harness: None,
+        };
+        let loaded =
+            evaluate_or_load_boot_golf_batch(&config, &run, vec![candidate], 1, 0, true).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].sim_tick, 439);
+        fs::remove_dir_all(root).unwrap();
     }
 }

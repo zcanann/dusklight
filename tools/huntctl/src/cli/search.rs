@@ -971,6 +971,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 game_args_prefix: execution.game_args_prefix,
                 workers: usize_option(search_args, "--workers", 4)?,
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
+                resume: flag(search_args, "--resume"),
                 timeout: execution.timeout,
                 harness: execution.harness,
             })?;
