@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-skybook-pilot/v1",
-  "content_sha256": "29e5d6573060f418fb274919a51c85013a00a443565606c3c464ba20a3d05ae7",
+  "content_sha256": "4276a41fb5d49e4ef0317c1f0f63ba685d297a4fc508c170e90e87f7e52d6119",
   "source_manifest_content_sha256": "bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6",
   "source_repository_url": "https://github.com/qwertyquerty/skybook",
   "source_git_revision": "e9104852ff6b87862b67100f58aaa729096b42dc",
@@ -88,7 +88,7 @@
     {
       "role": "native_automation_integration",
       "path": "src/m_Do/m_Do_main.cpp",
-      "sha256": "a4e6166ac87462586994b40dbbb9d0802d56ec891fbc862e97dd46193f35e7ea"
+      "sha256": "79ea6d96a8d4314c9ce3eeb776e9d0b1fc625b399306765176a9e52616b84247"
     },
     {
       "role": "original_layout_shadow_implementation",
