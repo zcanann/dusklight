@@ -460,8 +460,19 @@ PAD and gameplay sequence as ordinary playback.
     failure has been proven; evidence qualification remains separate from
     construction and promotion. A 257-actor regression proves complete-set and
     permutation-invariant encoding beyond controller capacity, while schema
-    mismatch and non-finite aggregation fail closed. Native typed projection
-    and equal-budget learned comparisons remain open.
+    mismatch and non-finite aggregation fail closed. Equal-budget learned
+    comparisons remain open.
+  - [x] Derive a sealed, declarative native actor-feature view without
+    recollecting gameplay. Feature view v1 keeps categorical integers exact,
+    continuous and binary channels separately masked, runtime/parent identity
+    as structural provenance rather than learnable ordinal values, and every
+    actor in each observation. Its selectable families cover identity,
+    absolute motion, universal lifecycle/physics, Link/camera/parent relations,
+    attention, event participation and goal-relative positions. V7 and legacy
+    V6 cross-language fixtures prove exact base-state values versus explicit
+    absence, distinct schemas for channel ablations, canonical round trips and
+    tamper rejection. A trainable set/graph encoder and held-out comparison are
+    still required before completing the parent item.
 - [ ] Keep immutable world geometry out of the per-tick flat vector. Supply
   bounded spatial queries, connectivity and semantic surface/trigger tokens by
   reference to the authenticated world artifact, with a graph path for models
