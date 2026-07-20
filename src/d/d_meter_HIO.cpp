@@ -13,6 +13,7 @@
 #include <cstring>
 
 dMeter_menuHIO_c::dMeter_menuHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mGameover = 70;
 }
 
@@ -23,6 +24,7 @@ void dMeter_menuHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawCollectHIO_c::dMeter_drawCollectHIO_c() {
+    std::memset(field_0x04, 0, sizeof(field_0x04));
     mUnselectItemScale = 1.0f;
     mSelectItemScale = 1.5f;
     mUnselectSaveOptionScale = 1.0f;
@@ -132,6 +134,7 @@ void dMeter_drawCollectHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawOptionHIO_c::dMeter_drawOptionHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mBarScale[0] = 1.02f;
     mBarScale[1] = 0.98f;
     mArrowSize = 0.3f;
@@ -144,7 +147,7 @@ dMeter_drawOptionHIO_c::dMeter_drawOptionHIO_c() {
     mWindowPosY = 0.0f;
     mWindowScale = 1.0f;
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
         mOptionTypeBGPosX[i] = 0.0f;
         mOptionTypeBGPosY[i] = 0.0f;
     }
@@ -212,6 +215,8 @@ void dMeter_drawOptionHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawLetterHIO_c::dMeter_drawLetterHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
+    std::memset(field_0x3a, 0, sizeof(field_0x3a));
     for (int i = 0; i < 2; i++) {
         mOpenFrame[i] = 10;
         mCloseFrame[i] = 10;
@@ -315,6 +320,9 @@ void dMeter_drawLetterHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawFishingHIO_c::dMeter_drawFishingHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
+    std::memset(field_0x22c, 0, sizeof(field_0x22c));
+    std::memset(field_0x246, 0, sizeof(field_0x246));
     static f32 const fipaScale[6] = {0.98f, 1.0f, 1.0f, 1.0f, 0.95f, 1.1f};
 #if PLATFORM_GCN
     static f32 const fipaPosX[6] = {1.3f, 6.6f, 0.0f, 3.96f, 4.0f, 27.5f};
@@ -485,6 +493,7 @@ void dMeter_drawFishingHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawInsectHIO_c::dMeter_drawInsectHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mOpenFrame = 10;
     mCloseFrame = 10;
 
@@ -542,6 +551,7 @@ void dMeter_drawInsectHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawCalibrationHIO_c::dMeter_drawCalibrationHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mOpenFrames = 10;
     mCloseFrames = 10;
     mDebug = false;
@@ -564,6 +574,7 @@ void dMeter_drawCalibrationHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawSkillHIO_c::dMeter_drawSkillHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     for (int i = 0; i < 2; i++) {
         mOpenFrame[i] = 10;
         mCloseFrame[i] = 10;
@@ -662,6 +673,7 @@ void dMeter_drawSkillHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawEmpButtonHIO_c::dMeter_drawEmpButtonHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mPikariScale = 2.5f;
 
     mPikariFrontInner.r = 255;
@@ -1153,6 +1165,7 @@ void dMeter_drawEmpButtonHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawMiniGameHIO_c::dMeter_drawMiniGameHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     field_0x8[0] = 1.0f;
     field_0x14[0] = 0.0f;
     field_0x20[0] = 0.0f;
@@ -1475,6 +1488,7 @@ void dMeter_drawMiniGameHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawLightDropHIO_c::dMeter_drawLightDropHIO_c() {
+    std::memset(field_0x4, 0, sizeof(field_0x4));
     mVesselScale = 0.76f;
     mVesselPosX = -18.0f;
     mVesselPosY = 11.0f;
@@ -1642,6 +1656,7 @@ void dMeter_drawLightDropHIO_c::genMessage(JORMContext* mctx) {
 #endif
 
 dMeter_drawHIO_c::dMeter_drawHIO_c() {
+    field_0x4 = 0;
     #if DEBUG
     field_0x8_debug = 0;
     #endif
