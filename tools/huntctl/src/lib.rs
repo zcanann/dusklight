@@ -31,7 +31,7 @@ pub use dusklight_search::{
 };
 pub use dusklight_semantic_novelty as semantic_novelty;
 pub use dusklight_throughput_benchmark as throughput_benchmark;
-pub use dusklight_trace::{trace, trace_typed_facts};
+pub use dusklight_trace::{route_diagnostics, trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{world_geometry, world_inventory, world_spatial};
 

@@ -149,3 +149,32 @@ used 3.688 process CPU-seconds across engine threads (97.61% of elapsed time),
 and produced 34 files totaling 4,044,882 bytes. These numbers quantify why
 process reuse and prefix checkpoint
 restore are the next gate; they are not included in the route score.
+
+## Route diagnostics
+
+Every harness execution requests all gameplay-trace channels. The Ordon
+baseline contains applied pads, Link motion, camera, player action/animation,
+background collision, and goal progress on all 566 records. A concise report
+for the candidate suffix is generated without rerunning the game:
+
+```powershell
+tools\huntctl\target\debug\huntctl.exe trace route-diagnostics `
+  "build\benchmarks\ordon-q125-cold-v3\attempt-001\gameplay.trace" `
+  --source-boundary-frame 439 `
+  --terminal-frame 565
+```
+
+The analyzer requires a complete trace and all diagnostic channels. It reports
+horizontal path and direct distances; their excess and ratio; facing-to-motion
+angular error; collision displacement loss and correction; configurable
+per-tick yaw-change episodes; and front-roll cycles reconstructed from the
+procedure plus primary-animation resets. These are diagnostics, not alternate
+success or scoring authorities.
+
+For the current 125-score winner it measured 3,641.556 horizontal path units versus
+3,062.366 direct units (579.189 excess, 84.10% direct/path efficiency), 0.649°
+mean facing-to-motion error, four collision-correction frames with 6.370 units
+of horizontal loss, and a longest seven-tick turn episode at the default
+512-s16 threshold. Roll starts occurred at frames 440, 460, 480, 500, 520, 540,
+and 560: exact 20-tick spacing with each A edge applied on the reconstructed
+roll-start frame.

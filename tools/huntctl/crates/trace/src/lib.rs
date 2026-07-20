@@ -4,5 +4,6 @@
 // internal paths without granting trace a dependency on the root CLI crate.
 pub use dusklight_automation_contracts::{scenario_fixture, tape};
 
+pub mod route_diagnostics;
 pub mod trace;
 pub mod trace_typed_facts;

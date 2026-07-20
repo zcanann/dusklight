@@ -31,10 +31,10 @@ the current benchmark demonstrates that it is necessary.
 - [x] Add one repeatable benchmark command that reports useful candidate ticks
   per second, prefix ticks, process launches, simulator idle time, CPU use, and
   bytes/files written.
-- [ ] Record the incumbent's position, speed, facing, camera, applied input,
+- [x] Record the incumbent's position, speed, facing, camera, applied input,
   collision correction, action state, roll state, and predicate progress each
   tick.
-- [ ] Report elementary route defects numerically: excess distance, heading
+- [x] Report elementary route defects numerically: excess distance, heading
   error, collision loss, corner duration, and roll timing.
 
 The frozen boundary is `tolink_link_control` at fingerprint
@@ -42,7 +42,9 @@ The frozen boundary is `tolink_link_control` at fingerprint
 `ordon_spring_load_committed`. The retained human incumbent is
 `intro/segments/to_ordon_spring_human150.tape`. The checked route benchmark and
 its first measured Windows baseline are documented in
-`docs/glitch-hunting/throughput.md`.
+`docs/glitch-hunting/throughput.md`. Its authenticated trace contains all
+required channels on every tick; `huntctl trace route-diagnostics` rejects
+incomplete traces and produces the numeric route report.
 
 **Exit:** we can compare later changes against an unchanged route, objective,
 and workload rather than relying on visual impressions.

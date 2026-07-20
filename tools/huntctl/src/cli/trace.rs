@@ -71,6 +71,34 @@ pub(crate) fn command_trace(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&comparison)?);
             Ok(())
         }
+        Some("route-diagnostics") if args.len() >= 6 => {
+            let source_boundary_frame = option(&args[2..], "--source-boundary-frame")
+                .ok_or("route diagnostics require --source-boundary-frame N")?
+                .parse::<u64>()?;
+            let terminal_frame = option(&args[2..], "--terminal-frame")
+                .ok_or("route diagnostics require --terminal-frame N")?
+                .parse::<u64>()?;
+            let corner_yaw_threshold_s16 = option(&args[2..], "--corner-yaw-threshold-s16")
+                .map(|value| value.parse::<u16>())
+                .transpose()?
+                .unwrap_or(512);
+            let trace = huntctl::trace::decode(&fs::read(&args[1])?)?;
+            let report = huntctl::route_diagnostics::analyze_route(
+                &trace,
+                &huntctl::route_diagnostics::RouteDiagnosticsConfig {
+                    source_boundary_frame,
+                    terminal_frame,
+                    corner_yaw_threshold_s16,
+                },
+            )?;
+            let output = serde_json::to_vec_pretty(&report)?;
+            if let Some(path) = option(&args[2..], "--output") {
+                fs::write(path, output)?;
+            } else {
+                println!("{}", String::from_utf8(output)?);
+            }
+            Ok(())
+        }
         Some("timeline") if args.len() == 2 => {
             let decoded = huntctl::trace::decode(&fs::read(&args[1])?)?;
             let mut prior: Option<&huntctl::trace::TraceRecord> = None;
