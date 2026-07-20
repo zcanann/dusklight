@@ -381,9 +381,13 @@ The repository already contains useful foundations:
 - Existing proof/search infrastructure.
 - Save, stage, event, actor, and title-flow source needed to ground mechanics.
 
-These should be reused, but none is presently the complete symbolic causal graph.
-Concrete route timelines remain authored route books; extracted data and rules
-become the knowledge base; nested workbench graphs become plan-region UI.
+Reuse these at the level appropriate to each asset. Concrete route timelines
+remain authored route books; extracted data and rules become the knowledge base.
+The existing Route Workbench supplies a strong visual and interaction precedent
+for nested plan regions, but its timeline tree, playback authority, and graph
+schema are not the planner's causal model. Share a generic primitive only when it
+has a clean domain-independent boundary; do not make code reuse a prerequisite
+for a consistent look and feel.
 
 ### 4.2 Source-grounded save/runtime findings
 
@@ -1171,6 +1175,35 @@ silent fact after export or sharing.
 
 ### 5.18 UX surfaces
 
+#### Relationship to the TAS Route Workbench
+
+The planner should feel like a sibling of the existing huntctl Route Workbench:
+
+- The same general dark graph-canvas vocabulary, compact node cards, curved
+  edges, selection treatment, details pane, and restrained status colors.
+- Pan, zoom, fit, breadcrumbs, double-click-to-enter a subgraph, and
+  multi-selection/grouping interactions where they retain the same meaning.
+- Stable machine IDs beneath editable human labels.
+- A projected browser graph backed by authoritative Git-owned/runtime schemas,
+  rather than browser state becoming the source of truth.
+- Revision-checked edits, explicit previews for consequential mutations, and
+  recoverable local drafts where appropriate.
+
+This is visual/product continuity, not a requirement to extend the current
+`WorkbenchGraph` or timeline schema. The TAS workbench projects a mostly
+parent-linked concrete playback history. The planner projects a potentially
+cyclic AND/OR causal graph with alternative producers, requirements,
+obstructions, hypothetical edges, and multiple continuation-distinct states.
+Forcing either domain into the other's schema would erase important semantics.
+
+Give the planner its own versioned schemas and Rust domain crate/server surface.
+Rust owns fact-pack resolution, validation, semantic state transitions, solving,
+proof construction, graph projection, and authoritative edits. The browser layer
+owns rendering and direct manipulation, sending typed commands rather than
+reimplementing reachability or state propagation. CSS tokens, layout ideas, and
+truly generic graph-camera or selection utilities may be extracted later if that
+reduces drift without coupling the models.
+
 #### Route canvas
 
 - Pan/zoom graph with collapsible plan regions.
@@ -1178,6 +1211,8 @@ silent fact after export or sharing.
   edges.
 - Alternative-producer branches and selected proof.
 - Route costs and version badges.
+- Familiar Route Workbench navigation, while making AND requirements, OR
+  alternatives, obstruction edges, and proof status visually unambiguous.
 
 #### State inspector
 
@@ -1449,7 +1484,20 @@ Deliverable: every route and failure is inspectable rather than magical.
 
 ### Phase 9 — Workbench UX and authoring
 
-- [ ] Adapt nested workbench subgraphs into plan regions.
+- [ ] Define an independent versioned planner graph-projection schema and Rust
+      crate/server API; do not overload timeline `WorkbenchGraph` or playback
+      segment semantics.
+- [ ] Match the Route Workbench's visual grammar and navigation conventions with
+      a side-by-side design inventory of reusable colors, spacing, node anatomy,
+      camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.
+- [ ] Implement nested proof/plan regions with familiar subgraph navigation while
+      preserving planner-specific AND/OR, cycles, and continuation-distinct
+      frontier states.
+- [ ] Keep fact resolution, validation, solver/proof work, graph projection, and
+      authoritative mutations in Rust; keep the browser a typed rendering and
+      command surface.
+- [ ] Share or extract UI/infrastructure code only after a domain-independent seam
+      is demonstrated; visual consistency does not depend on shared graph models.
 - [ ] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
 - [ ] Add inventory/flag/component state inspector with before/after diff.
 - [ ] Add raw flag catalogue search and friendly aliases.
@@ -1461,7 +1509,9 @@ Deliverable: every route and failure is inspectable rather than magical.
       fallback.
 - [ ] Keep route annotation separate from mechanics refinement.
 
-Deliverable: one UI suitable for both simple routes and deep research.
+Deliverable: a planner-specific UI suitable for both simple routes and deep
+research, recognizably related to the TAS Route Workbench without inheriting its
+timeline assumptions.
 
 ### Phase 10 — Evidence and proof integration
 
@@ -1720,6 +1770,8 @@ facts.
 | PAL language split | French-only message-flow behavior does not leak into English or proven-portable queries. |
 | Derived-pack replay | Exact queries reproduce without `orig/` once the matching generated pack exists. |
 | Cross-context semantic binding | Friendly facts compare across contexts while retaining exact raw bindings and provenance. |
+| Planner/workbench schema boundary | Cycles, AND requirements, and hypothetical edges survive projection without masquerading as TAS timeline segments. |
+| Thin browser contract | Invalid authoring commands are rejected by Rust validation and browser-local state cannot alter solver truth. |
 
 Also require:
 
@@ -1811,6 +1863,9 @@ The first serious release is complete when:
   content/language contexts, path constraints, costs, and honest unknowns.
 - The UI scales from a collapsed milestone route to raw flags, component history,
   and full proof graphs.
+- The visual editor is recognizably a sibling of the TAS Route Workbench, while
+  its independent Rust schemas and graph projection preserve planner-specific
+  causal semantics.
 - Fishing Rod, BiT/file 0, EMS/obstructions, local-bank rebind, Fanadi locking, and
   Faron-twilight return research all pass their vertical-slice fixtures.
 - Lanayru spirit appearance, interaction, and Vessel grant are modeled as
