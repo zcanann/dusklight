@@ -73,6 +73,18 @@ the same goal without demonstration-relative features.
   structured mechanics and flag channels present, no truncation or determinism
   conflict, and the expected warning that its two retained candidates are both
   failures.
+- A single native Ordon suffix batch from the authenticated frame-440 source
+  now retains a known 127-tick load-zone success and a 128-tick neutral-input
+  failure through the same episode contract. `huntctl learn inspect-native`
+  accepted all 256 transitions and 512 observations with complete 47-48 actor
+  sets, two RNG streams, six collision surfaces, exact chosen/consumed PAD
+  agreement, both terminal observations, no non-finite values, discontinuity,
+  truncation, duplicate trajectory, determinism conflict, or warning. The
+  authenticated shard is `d44d8eed...2fa2f`; its success and failure state
+  sequences are `95fe103f...ba74` and `8cd6bba5...047e`. The promoted full
+  process-boot tape then reached `exit-f-sp103-to-f-sp104` at frame 567 in two
+  fresh cold replays without a controller, model, or checkpoint, producing the
+  identical v6 boundary fingerprint `545c3127...ca155`.
 
 ## 1. Turn every attempt into learning experience
 
