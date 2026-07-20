@@ -58,9 +58,10 @@ The goal `own Fishing Rod` can be satisfied by at least these plan shapes:
   receive the rod.
 - Mix compatible steps from those routes, such as chicken bypass followed by the
   ordinary hawk step.
-- On supported HD rulesets, obtain a rod in another runtime/file context and use
-  Auru duplication to transfer the relevant item result to a file that cannot
-  reach the ordinary Ordon rod quest.
+- Use the session-level recent-presentation item mechanism plus Auru's broken
+  grant path to obtain a rod prepared on another file. The causal machinery is
+  present in the SD code; the currently known way to activate the broken path
+  depends on HD's longer targeting range.
 
 The collapsed result is simply `obtain Fishing Rod`. Expanding it reveals the
 selected proof and its alternatives. The rod is not marked as “lost” by Back in
@@ -171,6 +172,52 @@ A user can enable, disable, add, or propose:
 The base data remains intact. Results identify which overlay assumptions they
 depend on and distinguish an evidenced bypass from simply deleting an obstacle.
 
+### 2.9 Auru recent-item grant: shared mechanism, build-specific reachability
+
+The planner models the event controller's most recently queued presentation-item
+ID as session/process state independent of the active save file. Obtaining or
+showing an applicable item writes that store; changing files preserves it under
+the observed lifetime; Auru's broken grant path reads it through the generic
+get-item machinery and applies the selected item's ordinary grant semantics.
+
+The broken grant is surfaced as a candidate on SD even though no known SD route
+can activate it. Its spatial activation obligation is approximately:
+
+```text
+find a reachable player pose that is
+  inside Auru's talk/target volume
+  outside the normal cutscene-trigger volume
+  while player input and the required dialogue state are available
+```
+
+HD's longer targeting range is a known resolver. SD begins as obstructed when the
+non-overlap/reachability claim is evidenced, or `feasibility_unknown` while the
+trigger and interaction geometry remain unaudited. A proposed SD clip, actor
+displacement, trigger unload, or interaction-range change can discharge the same
+obligation without redefining the item mechanism.
+
+### 2.10 Text Displacement and Goron Mines
+
+Text Displacement is represented as concrete temporary message-progress bits,
+message-flow control state, cleanup behavior, and interruption edges—not a
+`text_displacement = true` technique flag.
+
+The Goron Mines entrance story must compose causally:
+
+1. One of several dialogue/interruption routes produces the required temporary
+   bit pattern.
+2. Gor Coron's flow reads that pattern and follows a displaced branch.
+3. That branch writes the actual event/switch state used by the entrance actors.
+4. Invisible-wall, elevator, and NPC actor state update or reconstruct according
+   to their own rules.
+5. Any remaining live NPC/collision obstruction must still be resolved, perhaps
+   by movement or a room reload.
+6. Only then does the encoded Goron Mines transition become executable.
+
+The solver can work backward from the consumer's raw bit predicate to every known
+producer, including Coro, Auru, Yeta, Ooccoo, and hypothetical interruption
+routes, while preserving their distinct spatial and timing requirements.
+
 ---
 
 ## 3. Core semantic laws
@@ -187,9 +234,10 @@ BackInTime loses FishingRodOpportunity
 
 Encode only causal changes. If Back in Time changes origin, active runtime file,
 scene, form, inventory, or flags, ordinary access to the rod quest disappears
-because the solver can no longer reach its producers. If Auru duplication is
-available on an HD ruleset, the rod becomes reachable again through a different
-producer without editing the Back in Time definition.
+because the solver can no longer reach its producers. If Auru's recent-item grant
+becomes feasible through the known HD setup or a hypothetical SD resolver, the
+rod becomes reachable again through a different producer without editing the
+Back in Time definition.
 
 ### 3.2 Tricks are transitions, not flags
 
@@ -242,8 +290,10 @@ visible and queryable.
 ### 3.9 Exact builds are the primitive
 
 Rules target concrete platform/region/revision builds. Friendly groups such as
-`GCN`, `Wii`, or `HD` expand to exact builds. Version-specific behavior such as
-Auru duplication must never leak into unsupported builds.
+`GCN`, `Wii`, or `HD` expand to exact builds. Shared Auru item-state mechanics may
+apply broadly while the long-range activation setup remains HD-specific; version
+scope belongs on each fact, obstruction, and resolver rather than only on the
+friendly trick name.
 
 ### 3.10 Collapse preserves proofs; it does not merge states
 
@@ -266,6 +316,21 @@ interaction side, key or item checks, switches, cutscene state, collision access
 and transition-trigger execution. The solver may traverse it only after every
 known hard guard and physical obligation is satisfied; unaudited obligations make
 the candidate unknown rather than implicitly usable.
+
+### 3.13 Obstructions apply to state-producing actions
+
+An obstruction may guard talking to an actor, avoiding a trigger, advancing one
+message node, interrupting cleanup, performing a one-frame input, or reloading an
+actor—not only walking through a final map transition. A route cannot manufacture
+the required state merely because a downstream rule exists.
+
+### 3.14 Temporal control flow is state
+
+Message node, cutscene phase, pending cleanup, accepted input window, and player
+control are modeled at the granularity needed by a technique. Normal flow and an
+interrupted flow are alternative ordered transitions with different resulting
+stores. A verified microtrace may summarize frame-level behavior, but it must
+declare its exact pre-state, timing obligation, preserved state, and post-state.
 
 ---
 
@@ -308,6 +373,19 @@ The current code shows:
 - Fanadi code sets and later clears the same `NO_TELOP` bit.
 - Game start/savewarp consumes `PlayerReturnPlace` to choose the return stage,
   room, and point.
+- `dEvt_control_c::mGtItm` stores the most recently queued presentation/get-item
+  ID. Present-demo and chest-demo creation overwrite it; ordinary event completion
+  and removal clear `mPreItemNo` but do not clear `mGtItm`.
+- Link's get-item initialization consumes `mGtItm` when the demo parameter uses
+  the generic `0x100` item selector. This is the shared causal core of Auru
+  duplication even though this codebase does not contain an executable TPHD
+  build.
+- Message-flow event `010` writes parameterized temporary flags and event `011`
+  clears them. Event cleanup clears the shared message-progress subset on only
+  particular completion paths, while NPC actors may also clear individual bits.
+- Auru's actor separates proximity behavior, a pending presentation actor ID,
+  normal memo creation, and generic `DEFAULT_GETITEM` execution. These are
+  distinct state sites and ordered actions.
 
 Primary source anchors:
 
@@ -318,6 +396,13 @@ Primary source anchors:
 - `src/d/actor/d_a_npc_shaman.cpp`: Fanadi's `NO_TELOP` set/clear behavior.
 - `include/d/d_save_temp_bit_labels.inc`: `NO_TELOP = 0x1301`.
 - `src/d/d_s_play.cpp` and `src/d/d_menu_save.cpp`: title/file/save lifecycle.
+- `include/d/d_event.h`, `src/d/d_event.cpp`, and
+  `src/f_op/f_op_actor_mng.cpp`: `mGtItm`, its writers, event cleanup, and session
+  lifetime.
+- `src/d/actor/d_a_alink_demo.inc`: generic get-item consumption of `mGtItm`.
+- `src/d/d_msg_flow.cpp`: message nodes that write and clear temporary flags.
+- `src/d/actor/d_a_npc_rafrel.cpp`: Auru proximity, talk, message-flow, pending
+  presentation actor, and get-item handoff.
 
 This evidence establishes the generic storage and write-gate mechanics. The exact
 player-facing exploit sequence, duration, version support, and Ooccoo setup still
@@ -337,7 +422,17 @@ Before claiming completeness, inventory:
 - Normal stage load/commit order and failure/void/reload paths.
 - BiT/BiTE preservation and clearing behavior per build.
 - Known wrong-flags respawns beyond BiTE.
-- Auru duplication's exact component transfer semantics in HD.
+- Exact Auru broken-flow branch, `mGtItm` initialization/lifetime per executable
+  build, normal memo overwrite point, and the HD versus SD interaction/trigger
+  geometry. Treat imported HD documentation as external mechanics evidence, not
+  as an executable HD build supplied by this repository.
+- Message-flow asset format, node graph, branch predicates, temporary-bit
+  writes/clears, terminal cleanup, and actor-specific flow selection.
+- Known dialogue interruption windows, input/control constraints, and which
+  cleanup operations each interruption avoids.
+- Goron Mines entrance actor placements, invisible-wall/elevator/NPC control
+  state, and the exact raw text-bit predicates and downstream writes used by Gor
+  Coron's displaced branch.
 - Twilight-dependent transition suppression and form/mount restrictions.
 - Actor reconstruction rules: which behavior comes from placement parameters,
   persisted switches/items, live actor fields, or room/scene lifecycle.
@@ -431,6 +526,9 @@ Candidate component kinds include:
 - Dungeon state.
 - Zone and room switches.
 - Temporary/event-runtime flags.
+- Session event-control state such as the most recent presentation item.
+- Current message-flow node, branch state, pending cleanup, and dialogue/cutscene
+  phase where route-relevant.
 - Player return place and restart place.
 - Scene, room, layer, spawn, form, and mount.
 - Pending respawn, transition, cutscene, or actor state.
@@ -510,6 +608,9 @@ All ordinary and glitched transitions use a small operation vocabulary:
 - `project(source_runtime_file, destination_runtime_file, component_set)`
 - `consume(pending_operation)`
 - `set_gate(gate)` / `clear_gate(gate)`
+- `advance(flow, node)` / `branch(flow, edge)`
+- `schedule(cleanup)` / `cancel_or_avoid(cleanup)`
+- `interrupt(action, temporal_window)`
 
 A transition declares its behavior per component. Unmentioned behavior is not
 implicitly preserved: it is inherited from a named boundary policy or marked
@@ -525,7 +626,8 @@ Example boundary policies:
 - Load physical slot.
 - Save slotless runtime file to a physical slot.
 - BiTE wrong-respawn transfer.
-- HD Auru duplication.
+- File load that preserves session event-control state.
+- Interrupted dialogue/cutscene microtransition.
 
 This operation language is also the safe boundary for theorycrafting. Users may
 propose typed transfers without being given an unconstrained “write arbitrary
@@ -655,6 +757,8 @@ Candidate producers include:
 - Form/mount changes.
 - Save/load/title operations.
 - Technique-defined wrong warps or component transfers.
+- Interaction, message-node, interruption, cleanup, and actor-reload actions that
+  produce state required by later transitions.
 
 SCLS data is evidence that a destination is encoded, not proof that Link can
 activate it from a given approach.
@@ -707,6 +811,55 @@ Key count, pickup persistence, door-unlocked state, live door state, and encoded
 destination remain separate. Door actor families may implement them differently,
 so extraction should preserve actor-specific unknowns rather than inventing one
 universal unlock effect.
+
+#### 5.10.2 Interaction and trigger geometry
+
+Represent an interaction obligation as a conjunction over world and player state:
+
+```text
+InteractionObligation
+  actor instance and interaction mode
+  accepted player pose/volume/facing
+  excluded trigger or collision volumes
+  player-control and form predicate
+  current actor/cutscene/message phase
+  temporal window where applicable
+  exact build/layer
+```
+
+The authoring system may initially encode a qualitative relation such as “no
+known reachable point lies inside talk range while outside this trigger.” Later
+geometry extraction can replace or strengthen it with exact shapes and radii.
+Changing target radius, moving either participant, unloading the trigger, or
+reaching an unexpected pose are scoped resolvers, not edits to the downstream
+dialogue rule.
+
+#### 5.10.3 Message-flow and interruption graph
+
+Compile relevant message/cutscene data into microtransitions:
+
+```text
+MessageFlowInstance
+  actor and flow identity
+  current node / cut
+  branch inputs and choices
+  temporary-bit reads and writes
+  persistent effects
+  pending item/event handoffs
+  scheduled cleanup
+  player-control/input state
+```
+
+Each node advance declares its reads and writes. Normal termination executes its
+cleanup policy. An interruption edge exits between named operations and preserves
+only what that path actually leaves behind. Frame-exact tricks can be represented
+as witnessed microtraces with a temporal obligation instead of forcing every
+planner query to simulate every frame.
+
+Text Displacement is then the family of states and routes in which shared
+message-progress bits survive and are consumed by another flow. Friendly labels
+may summarize a useful bit pattern, but raw flags and their producer/consumer
+proofs remain authoritative.
 
 ### 5.11 Obstructions and feasibility obligations
 
@@ -778,8 +931,12 @@ Examples:
 - Epona OOB discharges named geometry obligations and requires a non-twilight
   mounted setup.
 - A rupee clip discharges a particular wall obligation, not “all walls.”
-- Auru duplication projects a recently obtained item result across the contexts
-  supported by its HD behavior.
+- Auru's broken grant reads session-level recent-item state. HD's targeting range
+  resolves its known spatial setup; the same causal transition remains visible but
+  obstructed or unknown on SD until another resolver is supplied.
+- A sidehop/backflip dialogue interruption discharges a named one-frame temporal
+  obligation and preserves the exact message bits/trigger state observed by its
+  microtrace.
 
 ### 5.13 Goals and path constraints
 
@@ -848,7 +1005,8 @@ Derived lockouts should be presented as cuts in the graph:
 Fishing Rod unreachable under this model
   ordinary quest producer: Ordon quest state unreachable
   chicken/cradle producer: required Ordon approach unreachable
-  HD Auru producer: disabled because build is GCN
+  Auru recent-item producer: causal grant exists, but no enabled GCN setup
+  resolves talk-without-trigger and interruption obligations
 ```
 
 That is more useful than `fishing_rod_opportunity = false`.
@@ -859,6 +1017,8 @@ A route book is a curated preference over the causal graph, not a second mechani
 database. Ship or support books such as:
 
 - Normal completion.
+- Glitchless story reference routes.
+- Versioned glitchless 100% reference routes.
 - Standard Any% variants.
 - Back in Time research.
 - HD cross-file/item-transfer routes.
@@ -869,7 +1029,8 @@ Plan regions are nested, single-entry/single-exit proof regions when possible:
 ```text
 Obtain Fishing Rod
   selected proof: chicken bypass + hawk + ordinary Uli reward
-  alternatives: ordinary cradle quest, glitched cradle carry, HD Auru transfer
+  alternatives: ordinary cradle quest, glitched cradle carry, Auru recent-item
+  grant through a build-feasible or hypothetical activation route
 ```
 
 The view offers:
@@ -931,6 +1092,8 @@ At every selected node show:
 - Scene/room/layer/spawn/form/mount.
 - Runtime-file identity/backing and physical slots.
 - Pending operations.
+- Session recent-item value, message-flow node/cut, pending cleanup, player-control
+  state, and temporal-window obligations when relevant.
 - Return/restart values, last writers, and active gates.
 - Bound dungeon key count/items, key provenance, and consumed/unlocked door state.
 - Static placement versus persisted control versus live actor-instance state.
@@ -973,6 +1136,8 @@ practical:
 - Backing-store layouts and ordinary reads/writes.
 - Actor parameters and recognizable hard guards such as key, boss-key, item,
   switch, event, form, or twilight checks.
+- Message-flow nodes, branch parameters, temporary-bit operations, item handoffs,
+  and normal cleanup where their data formats are understood.
 - Pickup effects, key counts, and persistent unlock writes where code/data makes
   them decidable.
 - Ordinary actor reconstruction and transition activation mechanisms.
@@ -981,6 +1146,9 @@ practical:
 Human refinements supply knowledge that extraction cannot prove reliably:
 
 - Geometric reachability and approach-specific blockers.
+- Interaction-volume versus trigger-volume feasibility where exact shapes or
+  reachable poses cannot be proven automatically.
+- Frame/timing windows and verified interruption microtraces.
 - Actor unloads, clips, alternate loading-zone activation, and other techniques.
 - Timing, reliability, difficulty, and practical route cost.
 - Poorly understood flags, actor parameters, and lifecycle behavior.
@@ -1002,13 +1170,18 @@ evidenced overlays over the generated base rather than silent edits to it.
 - [ ] Catalogue all save/runtime components and reset boundaries.
 - [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
 - [ ] Audit SCLS and actor-driven transition consumers.
+- [ ] Audit message-flow assets, generic node handlers, shared temporary progress
+      bits, normal/abnormal cleanup, and item/event handoffs.
+- [ ] Audit interaction/attention volumes, forced cutscene triggers, player-control
+      gates, and temporal windows for representative NPC setups.
 - [ ] Audit keyed door/gate actor families, their key/boss-key guards, consumption,
       persistent unlock writes, and alternate activation paths.
 - [ ] Inventory static placement, persistent control, and transient instance state
       for representative actor families.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
 - [ ] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
-      and Ordon/twilight route evidence without prematurely encoding conclusions.
+      Text Displacement, and Ordon/twilight route evidence without prematurely
+      encoding conclusions.
 - [ ] Establish a glossary: build, runtime file, backing, slot, component, payload,
       binding, fact, technique, obstruction, obligation, refinement, route book,
       proof.
@@ -1029,6 +1202,9 @@ Deliverable: an evidence index and a list of explicit unknowns.
       hard guards, physical obligations, effects, and explicit unknown fields.
 - [ ] Define static world-object, persisted control, and live actor-instance
       representations plus reconstruction rules.
+- [ ] Define message-flow instance, node/branch, scheduled cleanup, player-control,
+      temporal-window, and witnessed-microtrace representations.
+- [ ] Define interaction obligations over required/excluded volumes and poses.
 - [ ] Define goals, path constraints, costs, and evidence status.
 - [ ] Define refinement pack manifests, conflicts, and deterministic precedence.
 - [ ] Add strict schema validation and stable IDs.
@@ -1043,6 +1219,8 @@ Deliverable: one validated runtime representation independent of authoring forma
 - [ ] Snapshot typed components plus unknown/raw regions where possible.
 - [ ] Record binding changes and component provenance.
 - [ ] Record return/restart values, gates, and relevant actor writes.
+- [ ] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
+      pending cleanup, item partner, event name, and player-control transitions.
 - [ ] Produce semantic and raw diffs across room load, stage load, save, load,
       void, title, BiT, and BiTE boundaries.
 - [ ] Make unsupported/unobserved fields explicit rather than defaulting false.
@@ -1056,6 +1234,8 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Implement normal bank commit/load and binding changes.
 - [ ] Derive bound small-key counts and dungeon items from per-stage memory.
 - [ ] Import hard door/actor guards and their state operations where decidable.
+- [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
+      predicates, normal cleanup, and item/event handoffs where decidable.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle.
 - [ ] Implement save/load/title/runtime-file operations.
@@ -1074,7 +1254,8 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
 - [ ] Prevent accidental preservation of unspecified components.
 - [ ] Support mixed provenance after cross-file operations.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
-- [ ] Encode HD Auru duplication's actual transferable result and constraints.
+- [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
+      from build-specific activation feasibility and external HD evidence.
 - [ ] Add a hypothetical local-bank rebind refinement for testing.
 - [ ] Add diagnostics for aliases that change under a binding.
 
@@ -1084,6 +1265,10 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 
 - [ ] Derive approach geometry from collision and spawn data where possible.
 - [ ] Define obligations for reaching/activating each candidate transition.
+- [ ] Define obligations for state-producing interactions and interruptions, not
+      only final map transitions.
+- [ ] Support required talk/attention volumes, excluded cutscene-trigger volumes,
+      facing/control predicates, and temporal windows.
 - [ ] Import authored obstructions without mutating build facts.
 - [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
 - [ ] Classify candidates as feasible, obstructed, or unknown.
@@ -1096,6 +1281,8 @@ verified route.
 
 - [ ] Build validated authoring for techniques and obstruction resolvers.
 - [ ] Encode exact setup, component operations, discharged obligations, and cost.
+- [ ] Allow a technique to supply a witnessed microtrace with exact pre/post state
+      and timing rather than a global named Boolean.
 - [ ] Add built-in packs for ordinary movement and selected sequence breaks.
 - [ ] Add route-local and ephemeral what-if overlays.
 - [ ] Distinguish bypass, avoid, supersede, and assume-absent operations.
@@ -1113,6 +1300,8 @@ Deliverable: researchers can extend the model without editing core code.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [ ] Return reachable, unreachable-under-model, or unknown.
 - [ ] Report minimal missing obligations/assumptions where practical.
+- [ ] Add bounded suspicious-state queries and retain complete proof objects for
+      model-bug versus research-lead triage.
 
 Deliverable: a headless query API and deterministic fixture suite.
 
@@ -1148,6 +1337,8 @@ Deliverable: one UI suitable for both simple routes and deep research.
 - [ ] Promote witnessed edges without erasing lower-confidence alternatives.
 - [ ] Attach source, extraction, trace, video, or community citations.
 - [ ] Add tools to identify facts used by many routes but supported weakly.
+- [ ] Report which facts and obligations are exercised by glitchless story, 100%,
+      Any%, and hypothetical route suites.
 - [ ] Report extraction coverage separately for topology, hard guards, backing
       stores, actor lifecycle, and physical feasibility.
 
@@ -1160,7 +1351,8 @@ Deliverable: route confidence is mechanically explainable.
 - [ ] Model ordinary vine/hawk/cradle/Uli producers.
 - [ ] Model chicken vine bypass, OOB, cradle carry state, reload, and Uli reward.
 - [ ] Permit compatible mixing where real predicates allow it.
-- [ ] Model HD Auru duplication as an alternate producer.
+- [ ] Model Auru's session-level recent-item grant as an alternate producer, with
+      HD activation evidence and a separately obstructed/hypothetical SD setup.
 - [ ] Prove GCN BiT does not author a rod loss; it merely lacks reachable producers.
 - [ ] Collapse all methods into `obtain Fishing Rod` with residual-state safety.
 
@@ -1242,6 +1434,88 @@ Deliverable: route confidence is mechanically explainable.
 - [ ] Verify an OOB route that avoids the door does not falsely mark the door
       unlocked or consume a key.
 
+#### 11I. Auru recent-item grant
+
+- [ ] Model `mGtItm` as a session/process storage site separate from save-file
+      inventory and `mPreItemNo`.
+- [ ] Enumerate presentation/chest/show-item writers and prove which boundaries
+      preserve or reset the value.
+- [ ] Model file A writing an item ID, file load preserving session state, and file
+      B consuming it through generic get-item semantics.
+- [ ] Decompose Auru's normal memo path, pending item actor, `DEFAULT_GETITEM`
+      handoff, and broken path that avoids the memo overwrite.
+- [ ] Author the talk-volume/outside-trigger/player-control obligation.
+- [ ] Mark the known HD targeting resolver as external build evidence; keep the SD
+      candidate surfaced as obstructed or unknown rather than absent.
+- [ ] Add a hypothetical SD geometry/interaction resolver and verify arbitrary
+      recent-item producers become usable without editing Auru's grant rule.
+- [ ] Model the optional memo-preservation sidehop/backflip interruption as a
+      separate frame-exact microtransition.
+
+#### 11J. Text Displacement to Goron Mines
+
+- [ ] Extract raw shared message-progress bits and their generic flow-node writers,
+      readers, and cleanup paths.
+- [ ] Model at least Coro, Auru, Yeta, and Ooccoo producer routes as distinct
+      interruption/advancement proofs where evidence exists.
+- [ ] Identify Gor Coron's exact displaced-branch predicate and downstream
+      persistent event/switch writes.
+- [ ] Model invisible wall, elevator authorization, live NPC blockers, and room
+      reload reconstruction independently.
+- [ ] Start with the Goron Mines encoded transition visible but non-executable;
+      discharge each authorization and physical obligation causally.
+- [ ] Verify the solver can work backward from the entrance to all enabled
+      producers of the required text-bit pattern.
+- [ ] Verify removing one producer or adding a hypothetical new interrupt changes
+      reachability without changing the Goron consumer or entrance rules.
+
+#### 11K. Glitchless story route
+
+- [ ] Author one reasonable glitchless route from a fresh file through final-boss
+      completion using ordinary movement, quests, dungeon progression, and combat.
+- [ ] Require every room transition, NPC interaction, cutscene, item acquisition,
+      key expenditure, boss-key door, and dungeon exit to replay through the same
+      causal model used by theorycraft routes.
+- [ ] Model Forest Temple monkey rescues individually, including the current
+      rescued/following set and every gate or traversal consequence that consumes
+      it; expose `rescue required monkeys` only as a collapsible subgraph.
+- [ ] For each dungeon, account for the selected small-key pickups and every
+      consumed key rather than jumping directly between milestone rooms.
+- [ ] Compare every propagated snapshot against expected inventory, flags, key
+      count, room/layer, and relevant actor state.
+- [ ] Treat any apparently skippable mandatory step as a missing guard/obstruction
+      until proven to be a real alternate route.
+
+#### 11L. Glitchless 100% route
+
+- [ ] Define an explicit versioned 100% completion contract rather than assuming a
+      universal category definition.
+- [ ] Author a reasonable completion order while allowing the solver to expose
+      equivalent reorderings.
+- [ ] Include all category-required collectibles, upgrades, quests, dungeon items,
+      small keys, locked doors, optional rooms, and persistent completion flags.
+- [ ] Use aggregate goals only as derived views over individually witnessed
+      acquisitions and consumptions.
+- [ ] Verify no collectible is double-counted, no consumed key survives, no opened
+      door relocks incorrectly, and no one-time reward can be collected twice.
+- [ ] Use the route as a coverage report for unaudited writers, guards, actors,
+      message flows, and transitions.
+
+#### 11M. Any% graph and suspicious-state audit
+
+- [ ] Author a versioned standard Any% route book only after the glitchless route
+      can replay coherently.
+- [ ] Represent alternate known sequence breaks as graph branches sharing the same
+      underlying facts, obstructions, and technique transitions.
+- [ ] Compare solver-selected plans with known category routes and explain every
+      divergence in cost, enabled technique, or missing knowledge.
+- [ ] Run bounded queries for milestones, items, maps, layers, and flag combinations
+      that should appear implausibly early or mutually inconsistent.
+- [ ] Classify each suspicious result as a genuine route, hypothetical dependency,
+      incomplete feasibility evidence, extraction error, or authoring/model bug.
+- [ ] Preserve promising unexplained results as reproducible research cases rather
+      than automatically suppressing them.
+
 ---
 
 ## 7. Regression and acceptance matrix
@@ -1256,7 +1530,7 @@ expected classification, and key proof facts.
 | File-0 save | State projects only to slot 1–3 and applies save policy. |
 | Unescaped file 0 | Lack of slot backing is not equated with dead; hypothetical continuation remains representable. |
 | GCN rod after BiT | All enabled rod producers fail causally; no authored loss marker exists. |
-| HD rod after BiT | Auru producer can restore reachability only on supported builds. |
+| Rod via Auru recent-item state | Shared grant semantics exist independently of whether the active build has a feasible Auru setup. |
 | Rod route collapse | Alternative proofs collapse only when residual differences are safe. |
 | EMS upper bound | Logical authorization appears before geometry is supplied. |
 | EMS obstruction | Physical blocker removes route only from feasible projection. |
@@ -1274,6 +1548,19 @@ expected classification, and key proof facts.
 | Key consumption/unlock | Count, persisted unlock, and live actor state update independently. |
 | Key-store rebind hypothesis | Target door derives access from transferred backing state and reports the overlay. |
 | Door-avoidance OOB | Alternate route neither consumes a key nor mutates the door's persisted state. |
+| Auru session state | Item prepared on file A remains available to the modeled Auru consumer on file B. |
+| Auru normal path | Memo creation overwrites recent-item state and grants the memo normally. |
+| Auru HD activation | External HD targeting evidence resolves talk-inside/outside-trigger geometry. |
+| Auru SD base | Candidate is surfaced as obstructed or unknown, never silently absent or reachable. |
+| Auru SD hypothetical | Adding only a spatial resolver exposes all compatible recent-item producers. |
+| Dialogue interrupt | Microtrace preserves declared message/trigger state and executes no skipped cleanup. |
+| Text-bit producer search | Goron consumer traces backward to every enabled Coro/Auru/Yeta/Ooccoo producer. |
+| Goron entrance residuals | Unlock state does not silently remove still-live NPC/collision blockers. |
+| Glitchless story replay | Every step reaches its next state with balanced keys and required quest/dungeon facts. |
+| Forest Temple monkeys | Each rescue is causal; the collapsed group preserves count/set and downstream effects. |
+| Glitchless 100% replay | Every requirement is individually produced once and the final contract is derived. |
+| Any% comparison | Solver divergence from a reference route has an explicit cost, rule, or knowledge explanation. |
+| Suspicious early state | Implausible reachability produces a reproducible proof and triage classification. |
 | Overlay isolation | Disabling an overlay restores identical base results. |
 | Unknown geometry | Query returns unknown, not impossible or reachable. |
 | Exact build scope | Unsupported techniques never appear through group leakage. |
@@ -1306,8 +1593,15 @@ These should remain explicit unknowns until evidence closes them:
   build support.
 - All return-place writers encountered on paths to Fanadi.
 - Whether actor unload/order can extend or alter the write gate.
-- Exact Auru duplication payload, source/destination restrictions, and reset
-  behavior.
+- Exact Auru broken-flow path, source/destination restrictions, `mGtItm` reset
+  behavior, and build-specific interaction geometry despite the shared mechanism
+  visible in SD source.
+- Exact mappings from message-flow assets to the shared temporary progress bits,
+  and every abnormal exit that preserves or clears them.
+- Exact one-frame interruption windows and player-control/input behavior across
+  GCN, Wii, and externally documented HD routes.
+- Exact Gor Coron displaced predicate, entrance event/switch effects, live NPC
+  residual state, and reload requirements.
 - Which Faron-twilight target maps have encoded but physically inaccessible
   incoming transitions.
 - How much geometry feasibility can be derived automatically versus authored.
@@ -1339,6 +1633,12 @@ The first serious release is complete when:
   obligations are satisfied; dungeon keys derive from their bound backing store.
 - Static placements, persisted actor-control state, and transient actor instances
   are modeled separately across load/unload boundaries.
+- Session recent-item state, message-flow nodes, shared text-progress bits,
+  scheduled cleanup, and frame-exact interruption edges are independently modeled.
+- Auru's causal grant mechanism is separated from HD/SD spatial feasibility, and
+  hypothetical SD resolvers compose without changing the grant rule.
+- Goron Mines Text Displacement derives from raw bit producers and the actual NPC
+  flow consumer before resolving the remaining world obstructions.
 - Users can author versioned refinement packs and ephemeral what-if scenarios
   without mutating base data.
 - The solver supports alternative producers, ordered setups, exact builds,
@@ -1349,5 +1649,11 @@ The first serious release is complete when:
   Faron-twilight return research all pass their vertical-slice fixtures.
 - Lanayru spirit appearance, interaction, and Vessel grant are modeled as
   separately testable transitions with raw and friendly requirements.
+- A complete glitchless story route and versioned glitchless 100% contract replay
+  coherently through the fact system, including Forest Temple monkeys and balanced
+  dungeon-key/door state.
+- A standard Any% graph composes known sequence breaks without duplicating
+  mechanics, and suspiciously early states produce auditable proofs for bug versus
+  discovery triage.
 - Every displayed route can explain why it works, every rejected route can explain
   what blocks it, and every hypothetical route names its assumptions.
