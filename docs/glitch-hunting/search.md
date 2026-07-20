@@ -359,6 +359,8 @@ current coordinate. A candidate is eligible only when all
 repeated runs agree exactly, it reaches the source proof's boundary
 fingerprint, and it does not regress the current goal tick. Selection minimizes
 goal tick first, then the sum and lexicographic vector of pulse timestamps.
+Candidate IDs break ties only between equally good proposals; an ID is never
+treated as progress over the incumbent.
 Consequently an earlier same-tick move is retained: it may open space for an
 earlier neighboring pulse and expose a faster pair on the next round. Golfing
 stops only when no single coordinate/button choice has an eligible earlier

@@ -427,7 +427,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
             for candidate in proven.into_iter().filter(|candidate| {
                 candidate.boundary_fingerprint == source_fingerprint
                     && candidate.sim_tick <= current.sim_tick
-                    && boot_golf_cmp(candidate, &current).is_lt()
+                    && boot_golf_quality_cmp(candidate, &current).is_lt()
             }) {
                 if best
                     .as_ref()
@@ -527,7 +527,7 @@ fn boot_golf_run_identity(
     })?;
     Ok(BootGolfRunIdentity {
         schema: "dusklight-boot-timing-golf-run/v1".into(),
-        strategy: "a-start-coordinate-descent/v2".into(),
+        strategy: "a-start-coordinate-descent/v3".into(),
         source_candidate_id: source_candidate_id.into(),
         source_goal_sim_tick: source.sim_tick,
         source_goal_tape_frame: source.tape_frame,
@@ -548,7 +548,7 @@ fn boot_golf_run_identity(
 fn sha256_file(path: &Path) -> Result<ArtifactDigest, EvaluateError> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {
@@ -596,12 +596,6 @@ fn validate_boot_golf_batch_cache(
         && output_root.join(&cache.evaluation).is_file()
         && sha256_file(&output_root.join(&cache.evaluation))? == cache.evaluation_sha256;
     let results_match = relative_path_is_safe(&cache.results)
-        && cache.results.components().all(|component| {
-            matches!(
-                component,
-                std::path::Component::Normal(_) | std::path::Component::CurDir
-            )
-        })
         && output_root.join(&cache.results).is_file()
         && sha256_file(&output_root.join(&cache.results))? == cache.results_sha256;
     if cache.schema != "dusklight-boot-timing-golf-batch/v1"
@@ -747,20 +741,21 @@ fn evaluate_or_load_boot_golf_batch(
             "boot golf batch {round:04}/{batch_index:04} did not seal every planned attempt"
         )));
     }
-    let results = report
-        .results
-        .strip_prefix(&config.output_root)
+    let canonical_output_root = fs::canonicalize(&config.output_root)?;
+    let canonical_results = fs::canonicalize(&report.results)?;
+    let results = canonical_results
+        .strip_prefix(&canonical_output_root)
         .map_err(|_| {
             EvaluateError::InvalidResult(format!(
                 "boot golf results escaped output root: {}",
-                report.results.display()
+                canonical_results.display()
             ))
         })?;
     let results = results.to_path_buf();
     let results_sha256 = sha256_file(&report.results)?;
-    let evaluation_path = evidence_root.join("evidence/evaluation.json");
+    let evaluation_path = fs::canonicalize(evidence_root.join("evidence/evaluation.json"))?;
     let evaluation = evaluation_path
-        .strip_prefix(&config.output_root)
+        .strip_prefix(&canonical_output_root)
         .map_err(|_| {
             EvaluateError::InvalidResult(format!(
                 "boot golf evaluation escaped output root: {}",
@@ -834,6 +829,18 @@ fn pulse_timestamp_sum(tape: &InputTape) -> Result<u64, EvaluateError> {
 }
 
 fn boot_golf_cmp(left: &ProvenBootCandidate, right: &ProvenBootCandidate) -> std::cmp::Ordering {
+    boot_golf_quality_cmp(left, right).then_with(|| {
+        left.candidate
+            .id()
+            .unwrap()
+            .cmp(&right.candidate.id().unwrap())
+    })
+}
+
+fn boot_golf_quality_cmp(
+    left: &ProvenBootCandidate,
+    right: &ProvenBootCandidate,
+) -> std::cmp::Ordering {
     let left_timestamps = pulse_timestamps(&left.tape).expect("validated candidate timestamps");
     let right_timestamps = pulse_timestamps(&right.tape).expect("validated candidate timestamps");
     left.sim_tick
@@ -844,12 +851,6 @@ fn boot_golf_cmp(left: &ProvenBootCandidate, right: &ProvenBootCandidate) -> std
                 .cmp(&pulse_timestamp_sum(&right.tape).expect("validated candidate timestamp sum"))
         })
         .then(left_timestamps.cmp(&right_timestamps))
-        .then_with(|| {
-            left.candidate
-                .id()
-                .unwrap()
-                .cmp(&right.candidate.id().unwrap())
-        })
 }
 
 fn candidate_with_shifted_pulse(
@@ -1089,7 +1090,7 @@ mod tests {
     fn test_run_identity() -> BootGolfRunIdentity {
         BootGolfRunIdentity {
             schema: "dusklight-boot-timing-golf-run/v1".into(),
-            strategy: "a-start-coordinate-descent/v2".into(),
+            strategy: "a-start-coordinate-descent/v3".into(),
             source_candidate_id: "source".into(),
             source_goal_sim_tick: 439,
             source_goal_tape_frame: 439,
@@ -1132,6 +1133,40 @@ mod tests {
         assert!(!target.accepts(&proven(440, 439, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 440, &"a".repeat(32))));
         assert!(!target.accepts(&proven(439, 439, &"b".repeat(32))));
+    }
+
+    #[test]
+    fn candidate_hash_is_only_a_tie_breaker_not_progress() {
+        let with_button = |button| {
+            let mut candidate = Candidate::baseline(SegmentProfile::BootToFsp103);
+            candidate.actions = vec![
+                MacroAction::Neutral { frames: 3 },
+                MacroAction::Press {
+                    buttons: vec![button],
+                    hold_frames: 1,
+                    neutral_frames: 1,
+                },
+            ];
+            ProvenBootCandidate {
+                tape: candidate.compile().unwrap(),
+                candidate,
+                sim_tick: 439,
+                tape_frame: 439,
+                boundary_fingerprint: BoundaryFingerprint {
+                    schema: "dusklight.milestone-boundary/v1".into(),
+                    algorithm: "xxh3-128".into(),
+                    canonical_encoding: "little-endian-fixed-v1".into(),
+                    digest: "a".repeat(32),
+                },
+            }
+        };
+        let left = with_button(dusklight_search::search::ControllerButton::A);
+        let right = with_button(dusklight_search::search::ControllerButton::Start);
+        assert_ne!(left.candidate.id().unwrap(), right.candidate.id().unwrap());
+        assert_eq!(
+            boot_golf_quality_cmp(&left, &right),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
