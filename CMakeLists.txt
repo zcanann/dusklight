@@ -574,6 +574,14 @@ target_include_directories(dusk_state_checkpoint_test PRIVATE
 target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
 set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_suffix_batch_test EXCLUDE_FROM_ALL
+    tests/suffix_batch_test.cpp
+    src/dusk/automation/suffix_batch.cpp
+)
+target_include_directories(dusk_suffix_batch_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(dusk_suffix_batch_test PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(dusk_suffix_batch_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_native_state_region_test EXCLUDE_FROM_ALL
     tests/native_state_region_test.cpp
     tests/native_state_fixture.cpp
