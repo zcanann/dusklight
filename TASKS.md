@@ -358,13 +358,20 @@ lane; discovery, not parity with the 125-tick demonstration, is the gate.
 
 ### 5C. Thin Skybook-supported setup
 
+- This is a learner-discovery benchmark, not a route-replication exercise. The
+  checked-in artifact supplies only the deterministic starting distribution,
+  read-only observations, control outcomes, and semantic terminal criterion.
+  It must not supply a successful trajectory, interaction frame, waypoint,
+  privileged distance reward, or hand-authored controller that encodes the
+  setup.
 - [x] Boot directly into Telma's Bar with declared post-twilight game flags
   that place both Telma and Louise in the bar. Record the complete boot
   identity so the fixture is reproducible and all gameplay after tick zero
   remains input-only.
-- [ ] Acquire text displacement by talking to Louise while entering Telma's
-  dialogue trigger, causing Louise's meow cutscene to interrupt Telma's
-  dialogue.
+- [ ] Have the learner acquire text displacement by talking to Louise while
+  entering Telma's dialogue trigger, causing Louise's meow cutscene to
+  interrupt Telma's dialogue. Exploration policy, reusable tactics, and the
+  learned corpus—not a demonstrated route—must produce the overlap.
 - [ ] Observe the fixed shared text-progression bits needed to distinguish the
   displaced state from an ordinary interrupted event. These are read-only
   learner observations and semantic proof, never gameplay writes.
