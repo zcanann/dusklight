@@ -88,6 +88,15 @@ the same goal without demonstration-relative features.
   case and zero coverage rejections (`aa36f22e...ff7c281`); all roles were
   correctly empty in that idle slice, so generic action probes are still
   required to measure role variation.
+- Native actor-view v5 now preserves those roles as typed edges to the complete
+  actor set, and actor-feature view v2 exposes an independently selectable
+  player-relationship family as per-actor role flags. Present-but-empty is
+  distinct from absent, unavailable and not-sampled; legacy shards therefore
+  remain masked instead of fabricating negative examples. The v10 fixture
+  proves the target edge joins runtime generation 7, legacy v6/v7 fixtures
+  prove historical missingness, and canonical validation rejects detached or
+  multiply-selected roles. This is general learner input, not an authored
+  interaction sequence, benchmark tactic or shaped reward.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
@@ -197,6 +206,12 @@ them is learner work.
     the roles, and a neutral 16-entry D_MN01 batch verified component presence
     and actor invariants in all 16/16 cases (`aa36f22e...ff7c281`). The parent
     remains open for non-player ownership/attachment and typed actor state.
+  - [x] Carry those relationships through the offline learner boundary instead
+    of dropping them after collection. Actor-view v5 stores canonical typed
+    edges into the complete actor set; actor-feature view v2 turns each named
+    role into a selectable, explicitly masked per-actor flag. V10, legacy and
+    tamper tests prove exact joins, historical missingness and fail-closed
+    model materialization without adding any route- or glitch-specific logic.
 - [ ] Audit environment information: static and moving collision, nearby
   terrain triangles, contact normals and correction, materials, ceilings,
   floors, walls, triggers, exits, switches, event state and inactive authored
