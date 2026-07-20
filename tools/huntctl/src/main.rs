@@ -16,11 +16,35 @@ use std::time::Duration;
 mod cli;
 
 fn main() {
+    suppress_windows_error_dialogs();
     if let Err(error) = run() {
         eprintln!("huntctl: {error}");
         std::process::exit(2);
     }
 }
+
+#[cfg(windows)]
+fn suppress_windows_error_dialogs() {
+    // Hunt workers are unattended and fan out native child processes. Preserve
+    // their nonzero exit status and WER evidence, but never let a crashed child
+    // block the farm on an interactive Windows error dialog. The process error
+    // mode is inherited by children unless a launcher explicitly resets it.
+    const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+    const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetErrorMode(mode: u32) -> u32;
+    }
+
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    }
+}
+
+#[cfg(not(windows))]
+fn suppress_windows_error_dialogs() {}
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
