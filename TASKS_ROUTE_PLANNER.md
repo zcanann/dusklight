@@ -1344,16 +1344,16 @@ Deliverable: an evidence index and a list of explicit unknowns.
       selectors, groups, and proven-equivalence sets.
 - [x] Define deterministic fact-pack manifests with input, executable, resource,
       extractor, schema, coverage, and output digests.
-- [ ] Define execution environment, runtime-file identity, backing attachment,
+- [x] Define execution environment, runtime-file identity, backing attachment,
       and serialization policy independently.
-- [ ] Define typed components, bindings, lifetimes, and serialization owners.
+- [x] Define typed components, bindings, lifetimes, and serialization owners.
 - [ ] Define raw/friendly fact catalogue and derived-rule IR.
 - [ ] Define component operation and boundary-policy IR.
 - [ ] Define transition, writer, gate, reader, technique, obstruction, and resolver
       schemas.
 - [ ] Require every candidate transition to carry an activation contract with
       hard guards, physical obligations, effects, and explicit unknown fields.
-- [ ] Define static world-object, persisted control, and live actor-instance
+- [x] Define static world-object, persisted control, and live actor-instance
       representations plus reconstruction rules.
 - [ ] Define message-flow instance, node/branch, scheduled cleanup, player-control,
       temporal-window, and witnessed-microtrace representations.
