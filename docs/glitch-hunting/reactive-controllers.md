@@ -236,6 +236,51 @@ before promoting a result. Gameplay traces mark controller-driven frames
 separately from tape-driven frames, so offline tooling cannot accidentally
 treat a reactive run as an absolute tape.
 
+### Trace-derived and compact waypoint policies
+
+`derive-waypoint-policy` turns a successful player-motion trace into a bounded
+reactive controller. It samples future world positions at an explicit interval
+and lookahead, then layers either a periodic roll schedule or an explicit list
+of roll ticks. The latter is the optimization surface: each rising edge can be
+moved independently instead of forcing the whole route to share one cadence.
+
+```text
+huntctl controller derive-waypoint-policy success.trace route.dctl \
+  --source-frame 440 --duration 160 --interval 10 --waypoint-phase 0 \
+  --lookahead 15 --roll-frames 0,20,40,60,80,100,120,140 \
+  --roll-hold 1 --magnitude 127 --terminal-extension 0
+```
+
+For a route already reduced to a few meaningful turns, `waypoint-policy`
+builds the same ordinary `DUSKCTRL` artifact without retaining every sampled
+trace point. Each `START:X:Y:Z` entry owns movement until the next start tick.
+This compact representation is suitable for finite-sample continuous search
+over switch ticks and waypoint coordinates.
+
+```text
+huntctl controller waypoint-policy route.dctl --duration 160 \
+  --waypoints "0:-360:800:-2260;40:-1130:800:-2600;70:-1460:800:-2900;90:-1740:800:-4250" \
+  --roll-frames 0,20,40,60,80,100,120,140 --roll-hold 1 --magnitude 127 \
+  --button-layers "12:1:0x0200,32:1:0x0040"
+```
+
+`--button-layers` adds bounded button masks over the generated movement and
+roll layers. This makes one-frame B (`0x0200`) or L (`0x0040`) experiments a
+declared policy input rather than an ad hoc tape rewrite.
+
+Neither command promotes a controller as proof. After a controller run,
+`search candidate-from-tape` can import a selected realized suffix into the
+ordinary learned-search candidate format. `--normalize-port-one` explicitly
+discards secondary-port ownership/connectivity emitted by the runtime while
+preserving the consumed port-zero PAD stream; it is never implicit. The
+resulting candidate still has to pass repeated clean-boot milestone proof.
+
+```text
+huntctl search candidate-from-tape --input realized.tape \
+  --output seed.candidate.json --segment fsp103_to_fsp104 \
+  --start 440 --frames 128 --normalize-port-one
+```
+
 ## Live continuation recording
 
 Headful playback can record the human continuation after an exact automation

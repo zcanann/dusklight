@@ -89,6 +89,63 @@ fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("candidate-from-tape") => {
+            if args.len() < 2 {
+                return usage_error();
+            }
+            let search_args = &args[1..];
+            let input = required_path(search_args, "--input")?;
+            let output = required_path(search_args, "--output")?;
+            let segment = option(search_args, "--segment")
+                .ok_or("missing required --segment PROFILE")?
+                .parse::<SegmentProfile>()?;
+            let start = usize_option(search_args, "--start", 0)?;
+            let decoded = InputTape::decode(&fs::read(&input)?)?;
+            let available = decoded
+                .tape
+                .frames
+                .len()
+                .checked_sub(start)
+                .ok_or("candidate tape start exceeds input length")?;
+            let frames = usize_option(search_args, "--frames", available)?;
+            let end = start
+                .checked_add(frames)
+                .ok_or("candidate tape range overflows")?;
+            if frames == 0 || end > decoded.tape.frames.len() {
+                return Err("candidate tape range must be nonempty and inside the input".into());
+            }
+            let mut tape = InputTape {
+                frames: decoded.tape.frames[start..end].to_vec(),
+                ..decoded.tape
+            };
+            if flag(search_args, "--normalize-port-one") {
+                let disconnected = huntctl::tape::RawPadState {
+                    connected: false,
+                    error: -1,
+                    ..huntctl::tape::RawPadState::default()
+                };
+                for frame in &mut tape.frames {
+                    frame.owned_ports = 0x01;
+                    frame.pads[1..].fill(disconnected);
+                }
+            }
+            let candidate = Candidate::from_absolute_tape(segment, &tape)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, serde_json::to_vec_pretty(&candidate)?)?;
+            println!(
+                "wrote {} frames as {} actions to {} (port-one-normalized: {})",
+                candidate.frame_count(),
+                candidate.actions.len(),
+                output.display(),
+                flag(search_args, "--normalize-port-one")
+            );
+            Ok(())
+        }
         Some("evaluate") => {
             let search_args = &args[1..];
             let population = required_path(search_args, "--population")?;
