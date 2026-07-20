@@ -387,6 +387,65 @@ void testBoundaryFingerprintIsStableAndSensitiveToExplicitState() {
             result["boot"]["fixture"]);
 }
 
+void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
+    using namespace dusk::automation;
+    std::array<MilestoneObservation::Actor, 2> actors{{
+        {.runtimeGeneration = 9, .actorName = 3, .positionX = 10.0F, .health = 4},
+        {.runtimeGeneration = 2, .actorName = 7, .positionZ = -5.0F, .status = 8},
+    }};
+    std::array<std::uint8_t, 3> eventFlags{0, 1, 0};
+    std::array<std::uint8_t, 2> temporaryFlags{1, 0};
+    std::array<std::uint8_t, 1> dungeonFlags{1};
+    std::array<std::uint8_t, 2> switchFlags{0, 1};
+    MilestoneObservation observation = f_sp103();
+    observation.playerModeFlags = 0x1234;
+    observation.talkPartner = {
+        .present = true,
+        .runtimeGeneration = 5,
+        .actorName = 11,
+        .homePositionPresent = true,
+        .homePositionX = 20.0F,
+    };
+    observation.playerGroundContact = true;
+    observation.playerGroundHeightPresent = true;
+    observation.playerGroundHeight = 800.0F;
+    observation.actors = actors;
+    observation.eventFlags = eventFlags;
+    observation.temporaryFlags = temporaryFlags;
+    observation.dungeonFlags = dungeonFlags;
+    observation.switchFlags = switchFlags;
+    observation.switchFlagRoom = 1;
+    observation.flagsPresent = true;
+    const TapeBoot boot;
+    const std::string digest = compute_milestone_observation_fingerprint(observation, boot);
+    REQUIRE(digest.size() == 32);
+    REQUIRE(compute_milestone_observation_fingerprint(observation, boot) == digest);
+
+    std::array<MilestoneObservation::Actor, 2> reversedActors{actors[1], actors[0]};
+    MilestoneObservation changed = observation;
+    changed.actors = reversedActors;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) == digest);
+    changed = observation;
+    changed.playerPositionX += 1.0F;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changed = observation;
+    changed.playerModeFlags++;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changed = observation;
+    changed.playerGroundContact = false;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    actors[0].positionX += 1.0F;
+    changed = observation;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    actors[0].positionX -= 1.0F;
+    eventFlags[0] = 1;
+    REQUIRE(compute_milestone_observation_fingerprint(observation, boot) != digest);
+    eventFlags[0] = 0;
+    TapeBoot changedBoot = boot;
+    changedBoot.point = 1;
+    REQUIRE(compute_milestone_observation_fingerprint(observation, changedBoot) != digest);
+}
+
 void testCheckedStageSmokeFingerprintV4() {
     using namespace dusk::automation;
     MilestoneEvidence evidence{
@@ -984,6 +1043,7 @@ int main() {
     testExitRequiresCommittedExactDestination();
     testTrackerCapturesOnlyTheFirstHitAndSerializesEvidence();
     testBoundaryFingerprintIsStableAndSensitiveToExplicitState();
+    testObservationFingerprintIsPortableCompleteAndOrderIndependent();
     testCheckedStageSmokeFingerprintV4();
     testGoalMustBeRequested();
     testAuthoredBootStableAndExactFirstHit();

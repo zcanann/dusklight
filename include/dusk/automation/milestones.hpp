@@ -16,6 +16,7 @@ namespace dusk::automation {
 
 inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
 inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 5;
+inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 1;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -279,6 +280,15 @@ std::string_view milestone_name(MilestoneId id);
  * key, not a claim that every future-relevant game byte is covered.
  */
 std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evidence);
+
+/**
+ * Computes a process-independent fingerprint of every copied gameplay field in an observation,
+ * plus the tape boot identity. Unlike a checkpoint digest, this deliberately excludes host
+ * addresses and allocator bytes so equivalent cold launches can be compared. It is an observable
+ * replay-equivalence key, not a substitute for same-process full-state checkpoint verification.
+ */
+std::string compute_milestone_observation_fingerprint(
+    const MilestoneObservation& observation, const TapeBoot& boot);
 
 /** Parse a comma-separated list of stable milestone IDs. */
 bool parse_milestone_list(

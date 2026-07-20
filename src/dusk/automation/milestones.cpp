@@ -639,6 +639,82 @@ std::string compute_milestone_boundary_fingerprint(const MilestoneEvidence& evid
     return output;
 }
 
+std::string compute_milestone_observation_fingerprint(
+    const MilestoneObservation& observation, const TapeBoot& boot) {
+    const std::string boundary =
+        compute_milestone_boundary_fingerprint(capture_evidence(observation, boot));
+    if (boundary.empty()) return {};
+
+    std::vector<std::uint8_t> canonical;
+    canonical.reserve(2048);
+    append_integer(canonical, MilestoneObservationFingerprintVersion);
+    canonical.insert(canonical.end(), boundary.begin(), boundary.end());
+    append_integer(canonical, observation.playerModeFlags);
+    append_integer(canonical, observation.playerDamageWaitTimer);
+    append_integer(canonical, observation.playerIceDamageWaitTimer);
+    append_integer(canonical, observation.playerSwordChangeWaitTimer);
+    append_integer(canonical, observation.playerDoStatus);
+
+    const auto appendActorIdentity = [&canonical](const MilestoneObservation::ActorIdentity& actor) {
+        append_integer<std::uint8_t>(canonical, actor.present ? 1 : 0);
+        append_integer(canonical, actor.runtimeGeneration);
+        append_integer(canonical, actor.actorName);
+        append_integer(canonical, actor.setId);
+        append_integer(canonical, actor.homeRoom);
+        append_integer(canonical, actor.currentRoom);
+        append_integer<std::uint8_t>(canonical, actor.homePositionPresent ? 1 : 0);
+        append_float(canonical, actor.homePositionX);
+        append_float(canonical, actor.homePositionY);
+        append_float(canonical, actor.homePositionZ);
+    };
+    appendActorIdentity(observation.talkPartner);
+    appendActorIdentity(observation.grabbedActor);
+    append_integer<std::uint8_t>(canonical, observation.playerGroundContact ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerWallContact ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerRoofContact ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerWaterContact ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerWaterIn ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerGroundHeightPresent ? 1 : 0);
+    append_integer<std::uint8_t>(canonical, observation.playerRoofHeightPresent ? 1 : 0);
+    append_float(canonical, observation.playerGroundHeight);
+    append_float(canonical, observation.playerRoofHeight);
+
+    std::vector<MilestoneObservation::Actor> actors(
+        observation.actors.begin(), observation.actors.end());
+    std::ranges::sort(actors, [](const auto& left, const auto& right) {
+        return std::tie(left.runtimeGeneration, left.actorName, left.setId, left.homeRoom,
+                   left.currentRoom) <
+               std::tie(right.runtimeGeneration, right.actorName, right.setId, right.homeRoom,
+                   right.currentRoom);
+    });
+    append_integer<std::uint64_t>(canonical, actors.size());
+    for (const MilestoneObservation::Actor& actor : actors) {
+        append_integer(canonical, actor.runtimeGeneration);
+        append_integer(canonical, actor.actorName);
+        append_integer(canonical, actor.setId);
+        append_integer(canonical, actor.homeRoom);
+        append_integer(canonical, actor.currentRoom);
+        append_float(canonical, actor.positionX);
+        append_float(canonical, actor.positionY);
+        append_float(canonical, actor.positionZ);
+        append_integer(canonical, actor.health);
+        append_integer(canonical, actor.status);
+    }
+    append_integer<std::uint8_t>(canonical, observation.actorsTruncated ? 1 : 0);
+
+    const auto appendBytes = [&canonical](const std::span<const std::uint8_t> bytes) {
+        append_integer<std::uint64_t>(canonical, bytes.size());
+        canonical.insert(canonical.end(), bytes.begin(), bytes.end());
+    };
+    appendBytes(observation.eventFlags);
+    appendBytes(observation.temporaryFlags);
+    appendBytes(observation.dungeonFlags);
+    appendBytes(observation.switchFlags);
+    append_integer(canonical, observation.switchFlagRoom);
+    append_integer<std::uint8_t>(canonical, observation.flagsPresent ? 1 : 0);
+    return xxh3_128_hex(canonical);
+}
+
 bool parse_milestone_list(
     const std::string_view text, std::vector<MilestoneId>& output, std::string& error) {
     output.clear();

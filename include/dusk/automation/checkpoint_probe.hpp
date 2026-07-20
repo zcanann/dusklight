@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "dusk/automation/game_state_observer.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/state_checkpoint.hpp"
@@ -81,6 +82,7 @@ private:
         std::string& error);
     bool captureTickDigest(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
+        std::string& replayOutput,
         std::vector<StateCheckpointEntryDigest>* entryDigests, std::string& error);
     void fail(std::string message);
 
@@ -98,7 +100,9 @@ private:
     StateCheckpointImage mImage;
     StateCheckpointImage mA1FirstTickImage;
     HostSnapshot mSource;
+    MilestoneObservationStorage mObservationStorage;
     std::vector<std::string> mA1Digests;
+    std::vector<std::string> mA1ReplayDigests;
     std::vector<std::vector<StateCheckpointEntryDigest>> mA1EntryDigests;
     bool mBDiffered = false;
     std::size_t mFirstBDifference = 0;
