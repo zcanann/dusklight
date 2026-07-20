@@ -606,6 +606,34 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             actor.eventParticipationPresent ? participation.mapToolId : std::uint8_t{0});
         append_integer(output,
             actor.eventParticipationPresent ? participation.index : std::uint8_t{0});
+
+        std::uint8_t backingMask = 0;
+        backingMask |= actor.heapPresent ? 1u << 0 : 0;
+        backingMask |= actor.modelPresent ? 1u << 1 : 0;
+        backingMask |= actor.jointCollisionPresent ? 1u << 2 : 0;
+        append_integer(output, backingMask);
+        append_integer<std::uint8_t>(output, 0);
+        append_integer(output, actor.actorType);
+        append_integer(output, actor.processSubtype);
+        append_integer(output, actor.condition);
+        append_integer(output, actor.pauseFlag);
+        append_integer(output, actor.processInitState);
+        append_integer(output, actor.processCreatePhase);
+        append_integer(output, actor.cullType);
+        append_integer(output, actor.demoActorId);
+        append_integer(output, actor.carryType);
+        append_integer(output, actor.oldRoom);
+        append_integer<std::uint8_t>(output, 0);
+        for (const float value : {actor.oldPositionX, actor.oldPositionY, actor.oldPositionZ,
+                 actor.scaleX, actor.scaleY, actor.scaleZ, actor.gravity, actor.maxFallSpeed,
+                 actor.eyePositionX, actor.eyePositionY, actor.eyePositionZ})
+        {
+            if (!append_float(output, value, error))
+                return false;
+        }
+        for (const std::int16_t value : {actor.homeAngleX, actor.homeAngleY, actor.homeAngleZ,
+                 actor.oldAngleX, actor.oldAngleY, actor.oldAngleZ})
+            append_integer(output, value);
     }
 
     if (observation.flagsPresent) {

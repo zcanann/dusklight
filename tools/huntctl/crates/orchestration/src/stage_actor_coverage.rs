@@ -18,7 +18,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const STAGE_ACTOR_COVERAGE_SCHEMA_V2: &str = "dusklight-stage-actor-coverage/v2";
+pub const STAGE_ACTOR_COVERAGE_SCHEMA_V3: &str = "dusklight-stage-actor-coverage/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,19 +106,39 @@ struct ActorCatalogSnapshot {
 struct ActorCatalogActor {
     process_id: u32,
     parent_process_id: u32,
+    actor_type: i32,
+    process_subtype: i32,
     parameters: u32,
     status: u32,
+    condition: u32,
     actor_name: i16,
     profile_name: i16,
     symbolic_name: String,
     set_id: u16,
     health: i16,
     home_room: i8,
+    old_room: i8,
     current_room: i8,
     group: u8,
     argument: i8,
+    pause_flag: u8,
+    process_init_state: i8,
+    process_create_phase: u8,
+    cull_type: u8,
+    demo_actor_id: u8,
+    carry_type: u8,
+    heap_present: bool,
+    model_present: bool,
+    joint_collision_present: bool,
     home_position: [f32; 3],
+    old_position: [f32; 3],
     current_position: [f32; 3],
+    scale: [f32; 3],
+    gravity: f32,
+    max_fall_speed: f32,
+    eye_position: [f32; 3],
+    home_angle: [i16; 3],
+    old_angle: [i16; 3],
     is_enemy: bool,
 }
 
@@ -135,18 +155,38 @@ struct LearningActorPopulation {
 struct LearningActor {
     runtime_generation: u64,
     parent_runtime_generation: u32,
+    actor_type: i32,
+    process_subtype: i32,
     parameters: u32,
     status: u32,
+    condition: u32,
     actor_name: i16,
     profile_name: i16,
     set_id: u16,
     health: i16,
     home_room: i8,
+    old_room: i8,
     current_room: i8,
     group: u8,
     argument: i8,
+    pause_flag: u8,
+    process_init_state: i8,
+    process_create_phase: u8,
+    cull_type: u8,
+    demo_actor_id: u8,
+    carry_type: u8,
+    heap_present: bool,
+    model_present: bool,
+    joint_collision_present: bool,
     home_position: [f32; 3],
+    old_position: [f32; 3],
     current_position: [f32; 3],
+    scale: [f32; 3],
+    gravity: f32,
+    max_fall_speed: f32,
+    eye_position: [f32; 3],
+    home_angle: [i16; 3],
+    old_angle: [i16; 3],
 }
 
 #[derive(Default)]
@@ -253,9 +293,9 @@ impl StageActorCoverageReport {
                     ),
                 },
             };
-            let learning_actor_count = snapshot
-                .as_ref()
-                .map_or(0, |snapshot| snapshot.learning_actor_population.retained_actor_count);
+            let learning_actor_count = snapshot.as_ref().map_or(0, |snapshot| {
+                snapshot.learning_actor_population.retained_actor_count
+            });
             let mut profile_names = BTreeSet::new();
             let mut enemy_actor_count = 0_u32;
             if let Some(snapshot) = &snapshot {
@@ -330,7 +370,7 @@ impl StageActorCoverageReport {
             .filter(|case| case.status == StageActorEvidenceStatus::VerifiedCompleteSnapshot)
             .count() as u32;
         let mut report = Self {
-            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V2.into(),
+            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V3.into(),
             catalog_sha256,
             ledger_sha256,
             ready_case_count: cases.len() as u32,
@@ -347,7 +387,7 @@ impl StageActorCoverageReport {
     }
 
     pub fn validate(&self) -> Result<(), StageActorCoverageError> {
-        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V2
+        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V3
             || self.catalog_sha256 == Digest::ZERO
             || self.ledger_sha256 == Digest::ZERO
             || self.report_sha256 == Digest::ZERO
@@ -465,7 +505,7 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.runtime_generation)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v2"
+    if snapshot.schema != "dusklight.actor-catalog.v3"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -479,7 +519,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != "dusklight-learning-observation/v6"
+    if learning.source_schema != "dusklight-learning-observation/v7"
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -499,24 +539,48 @@ fn validate_snapshot(
 fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) -> bool {
     u64::from(catalog.process_id) == learner.runtime_generation
         && catalog.parent_process_id == learner.parent_runtime_generation
+        && catalog.actor_type == learner.actor_type
+        && catalog.process_subtype == learner.process_subtype
         && catalog.parameters == learner.parameters
         && catalog.status == learner.status
+        && catalog.condition == learner.condition
         && catalog.actor_name == learner.actor_name
         && catalog.profile_name == learner.profile_name
         && catalog.set_id == learner.set_id
         && catalog.health == learner.health
         && catalog.home_room == learner.home_room
+        && catalog.old_room == learner.old_room
         && catalog.current_room == learner.current_room
         && catalog.group == learner.group
         && catalog.argument == learner.argument
+        && catalog.pause_flag == learner.pause_flag
+        && catalog.process_init_state == learner.process_init_state
+        && catalog.process_create_phase == learner.process_create_phase
+        && catalog.cull_type == learner.cull_type
+        && catalog.demo_actor_id == learner.demo_actor_id
+        && catalog.carry_type == learner.carry_type
+        && catalog.heap_present == learner.heap_present
+        && catalog.model_present == learner.model_present
+        && catalog.joint_collision_present == learner.joint_collision_present
         && same_float3(catalog.home_position, learner.home_position)
+        && same_float3(catalog.old_position, learner.old_position)
         && same_float3(catalog.current_position, learner.current_position)
+        && same_float3(catalog.scale, learner.scale)
+        && same_float(catalog.gravity, learner.gravity)
+        && same_float(catalog.max_fall_speed, learner.max_fall_speed)
+        && same_float3(catalog.eye_position, learner.eye_position)
+        && catalog.home_angle == learner.home_angle
+        && catalog.old_angle == learner.old_angle
 }
 
 fn same_float3(left: [f32; 3], right: [f32; 3]) -> bool {
     left.into_iter()
         .zip(right)
         .all(|(left, right)| left.to_bits() == right.to_bits())
+}
+
+fn same_float(left: f32, right: f32) -> bool {
+    left.to_bits() == right.to_bits()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -548,7 +612,10 @@ mod tests {
         STAGE_BOOT_CATALOG_SCHEMA, StageBootCandidate, StageCatalogStatus, StageInventoryStatus,
     };
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMPORARY_ROOT: AtomicU64 = AtomicU64::new(0);
 
     fn digest(byte: u8) -> Digest {
         Digest([byte; 32])
@@ -591,7 +658,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("stage-actor-coverage-{nonce}"))
+        let sequence = NEXT_TEMPORARY_ROOT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "stage-actor-coverage-{}-{nonce}-{sequence}",
+            std::process::id()
+        ))
     }
 
     fn fixture_with_learning_generation(
@@ -616,49 +687,69 @@ mod tests {
             },
         )
         .unwrap();
+        let catalog_actors = vec![
+            json!({"process_id": 4, "parent_process_id": 4294967295_u32,
+                "actor_type": 1, "process_subtype": 2, "parameters": 1, "status": 2,
+                "condition": 3, "actor_name": 253, "profile_name": 253,
+                "symbolic_name": "fpcNm_ALINK_e", "set_id": 0, "health": 10,
+                "home_room": 0, "old_room": 0, "current_room": 0, "group": 1,
+                "argument": 0, "pause_flag": 0, "process_init_state": 1,
+                "process_create_phase": 2, "cull_type": 3, "demo_actor_id": 4,
+                "carry_type": 5, "heap_present": true, "model_present": true,
+                "joint_collision_present": false, "home_position": [1.0, 2.0, 3.0],
+                "old_position": [3.0, 4.0, 5.0], "current_position": [4.0, 5.0, 6.0],
+                "scale": [1.0, 1.0, 1.0], "gravity": -1.0, "max_fall_speed": -20.0,
+                "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
+                "old_angle": [4, 5, 6], "is_enemy": false}),
+            json!({"process_id": 8, "parent_process_id": 4, "actor_type": 6,
+                "process_subtype": 7, "parameters": 3, "status": 4, "condition": 5,
+                "actor_name": 291, "profile_name": 291, "symbolic_name": "fpcNm_NPC_e",
+                "set_id": 1, "health": 5, "home_room": 0, "old_room": 0,
+                "current_room": 0, "group": 2, "argument": -1, "pause_flag": 1,
+                "process_init_state": 2, "process_create_phase": 3, "cull_type": 4,
+                "demo_actor_id": 5, "carry_type": 6, "heap_present": false,
+                "model_present": true, "joint_collision_present": true,
+                "home_position": [7.0, 8.0, 9.0], "old_position": [9.0, 10.0, 11.0],
+                "current_position": [10.0, 11.0, 12.0], "scale": [2.0, 2.0, 2.0],
+                "gravity": -2.0, "max_fall_speed": -30.0,
+                "eye_position": [10.0, 13.0, 12.0], "home_angle": [7, 8, 9],
+                "old_angle": [10, 11, 12], "is_enemy": true}),
+        ];
+        let learning_actors = vec![
+            json!({"runtime_generation": first_learning_generation,
+                "parent_runtime_generation": 4294967295_u32, "actor_type": 1,
+                "process_subtype": 2, "parameters": 1, "status": 2, "condition": 3,
+                "actor_name": 253, "profile_name": 253, "set_id": 0, "health": 10,
+                "home_room": 0, "old_room": 0, "current_room": 0, "group": 1,
+                "argument": 0, "pause_flag": 0, "process_init_state": 1,
+                "process_create_phase": 2, "cull_type": 3, "demo_actor_id": 4,
+                "carry_type": 5, "heap_present": true, "model_present": true,
+                "joint_collision_present": false, "home_position": [1.0, 2.0, 3.0],
+                "old_position": [3.0, 4.0, 5.0], "current_position": [4.0, 5.0, 6.0],
+                "scale": [1.0, 1.0, 1.0], "gravity": -1.0, "max_fall_speed": -20.0,
+                "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
+                "old_angle": [4, 5, 6]}),
+            json!({"runtime_generation": 8, "parent_runtime_generation": 4,
+                "actor_type": 6, "process_subtype": 7, "parameters": 3, "status": 4,
+                "condition": 5, "actor_name": 291, "profile_name": 291, "set_id": 1,
+                "health": 5, "home_room": 0, "old_room": 0, "current_room": 0,
+                "group": 2, "argument": -1, "pause_flag": 1, "process_init_state": 2,
+                "process_create_phase": 3, "cull_type": 4, "demo_actor_id": 5,
+                "carry_type": 6, "heap_present": false, "model_present": true,
+                "joint_collision_present": true, "home_position": [7.0, 8.0, 9.0],
+                "old_position": [9.0, 10.0, 11.0], "current_position": [10.0, 11.0, 12.0],
+                "scale": [2.0, 2.0, 2.0], "gravity": -2.0, "max_fall_speed": -30.0,
+                "eye_position": [10.0, 13.0, 12.0], "home_angle": [7, 8, 9],
+                "old_angle": [10, 11, 12]}),
+        ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v2",
-            "simulation_tick": 29,
-            "stage": "F_SP103",
-            "room": 0,
-            "layer": 0,
-            "observed_actor_count": 2,
-            "retained_actor_count": 2,
-            "truncated": false,
-            "actors": [
-                {"process_id": 4, "parent_process_id": 4294967295_u32,
-                 "parameters": 1, "status": 2, "actor_name": 253,
-                 "profile_name": 253, "symbolic_name": "fpcNm_ALINK_e",
-                 "set_id": 0, "health": 10, "home_room": 0, "current_room": 0,
-                 "group": 1, "argument": 0, "home_position": [1.0, 2.0, 3.0],
-                 "current_position": [4.0, 5.0, 6.0], "is_enemy": false},
-                {"process_id": 8, "parent_process_id": 4,
-                 "parameters": 3, "status": 4, "actor_name": 291,
-                 "profile_name": 291, "symbolic_name": "fpcNm_NPC_e",
-                 "set_id": 1, "health": 5, "home_room": 0, "current_room": 0,
-                 "group": 2, "argument": -1, "home_position": [7.0, 8.0, 9.0],
-                 "current_position": [10.0, 11.0, 12.0], "is_enemy": true}
-            ],
+            "schema": "dusklight.actor-catalog.v3", "simulation_tick": 29,
+            "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
+            "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": "dusklight-learning-observation/v6",
-                "observed_actor_count": 2,
-                "retained_actor_count": 2,
-                "truncated": false,
-                "actors": [
-                    {"runtime_generation": first_learning_generation,
-                     "parent_runtime_generation": 4294967295_u32,
-                     "parameters": 1, "status": 2, "actor_name": 253,
-                     "profile_name": 253, "set_id": 0, "health": 10,
-                     "home_room": 0, "current_room": 0, "group": 1, "argument": 0,
-                     "home_position": [1.0, 2.0, 3.0],
-                     "current_position": [4.0, 5.0, 6.0]},
-                    {"runtime_generation": 8, "parent_runtime_generation": 4,
-                     "parameters": 3, "status": 4, "actor_name": 291,
-                     "profile_name": 291, "set_id": 1, "health": 5,
-                     "home_room": 0, "current_room": 0, "group": 2, "argument": -1,
-                     "home_position": [7.0, 8.0, 9.0],
-                     "current_position": [10.0, 11.0, 12.0]}
-                ]
+                "source_schema": "dusklight-learning-observation/v7",
+                "observed_actor_count": 2, "retained_actor_count": 2,
+                "truncated": false, "actors": learning_actors
             }
         }))
         .unwrap();

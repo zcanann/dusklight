@@ -1,5 +1,7 @@
 //! Executable-facing composition of objective campaigns.
 
+#![recursion_limit = "256"]
+
 mod anchored_search;
 pub mod harness;
 pub mod stage_actor_coverage;

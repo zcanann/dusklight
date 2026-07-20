@@ -145,13 +145,13 @@ them is learner work.
     expected population; it does not pretend the bounded trace actor selection
     is a complete learner observation.
   - [x] Retain the exact complete actor vector supplied to native learning
-    observation v6 at the generic probe's terminal boundary and compare it
+    observation v7 at the generic probe's terminal boundary and compare it
     against an independent actor-catalog walk at that same tick. Actor-catalog
-    v2 records both read-only populations; the sealed coverage report rejects
+    v3 records both read-only populations; the sealed coverage report rejects
     missingness, truncation, duplicate generations, count drift, ordering
     drift, or any shared identity/state-field mismatch. A fresh eight-client,
     16-entry D_MN01 batch verified 64-145 learner actors per case, all 16 cases
-    and 58 profiles with zero rejections (`63b6143c...44440`). This proves the
+    and 58 profiles with zero rejections (`95b05ccb...4ee6`). This proves the
     capture path on the surveyed slice; the parent item remains open until all
     successful catalog entries have equivalent evidence.
 - [ ] Audit universal actor information: stable runtime identity and spawn
@@ -159,6 +159,17 @@ them is learner work.
   collision/body information, action/procedure and animation state,
   health/status, room/layer, target, ownership, parent/child relationships and
   lifecycle events.
+  - [x] Carry universal base-process and base-actor state through the same
+    complete read-only population: process/actor type, condition and lifecycle
+    phase, room history, pause/cull/demo/carry state, heap/model/joint-collision
+    presence, old/current/home/eye transforms, scale, gravity and fall speed.
+    Learning observation v7 is decoded into actor view v4 with explicit
+    `None` for pre-v7 recordings rather than fabricated zeroes. Actor-catalog
+    v3 independently captures and bit-compares the same fields. A fresh
+    eight-client D_MN01 survey verified all 1,432 actors across 16/16 entries,
+    58 profiles and 64-145 actors per entry with zero rejected cases in sealed
+    report `95b05ccb...4ee6`. Procedure, animation and concrete collision-body
+    state still require typed extensions, so the parent audit remains open.
 - [ ] Audit environment information: static and moving collision, nearby
   terrain triangles, contact normals and correction, materials, ceilings,
   floors, walls, triggers, exits, switches, event state and inactive authored

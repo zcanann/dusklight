@@ -19,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V3: &str = "dusklight-native-actor-view/v3";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V4: &str = "dusklight-native-actor-view/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +44,7 @@ pub struct NativeActorRelation {
     pub health: i16,
     pub parameters: u32,
     pub status: u32,
+    pub base_state: Option<NativeActorBaseState>,
     pub absolute_position: [f32; 3],
     pub absolute_home_position: [f32; 3],
     pub absolute_velocity: [f32; 3],
@@ -68,6 +69,31 @@ pub struct NativeActorRelation {
     /// One entry per semantic goal-graph spatial anchor, preserving explicit
     /// unresolved values.
     pub goal_relative_positions: Vec<Option<[f32; 3]>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorBaseState {
+    pub actor_type: i32,
+    pub process_subtype: i32,
+    pub condition: u32,
+    pub old_room: i8,
+    pub pause_flag: u8,
+    pub process_init_state: i8,
+    pub process_create_phase: u8,
+    pub cull_type: u8,
+    pub demo_actor_id: u8,
+    pub carry_type: u8,
+    pub heap_present: bool,
+    pub model_present: bool,
+    pub joint_collision_present: bool,
+    pub absolute_old_position: [f32; 3],
+    pub scale: [f32; 3],
+    pub gravity: f32,
+    pub max_fall_speed: f32,
+    pub absolute_eye_position: [f32; 3],
+    pub home_angle: [i16; 3],
+    pub old_angle: [i16; 3],
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -247,7 +273,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V3.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V4.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -281,7 +307,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V3
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V4
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -314,7 +340,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v3\0");
+        hasher.update(b"dusklight.native-actor-view/v4\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -519,6 +545,28 @@ fn materialize_actor(
         health: actor.health,
         parameters: actor.parameters,
         status: actor.status,
+        base_state: actor.base_state_available.then(|| NativeActorBaseState {
+            actor_type: actor.actor_type,
+            process_subtype: actor.process_subtype,
+            condition: actor.condition,
+            old_room: actor.old_room,
+            pause_flag: actor.pause_flag,
+            process_init_state: actor.process_init_state,
+            process_create_phase: actor.process_create_phase,
+            cull_type: actor.cull_type,
+            demo_actor_id: actor.demo_actor_id,
+            carry_type: actor.carry_type,
+            heap_present: actor.heap_present,
+            model_present: actor.model_present,
+            joint_collision_present: actor.joint_collision_present,
+            absolute_old_position: actor.old_position,
+            scale: actor.scale,
+            gravity: actor.gravity,
+            max_fall_speed: actor.max_fall_speed,
+            absolute_eye_position: actor.eye_position,
+            home_angle: actor.home_angle,
+            old_angle: actor.old_angle,
+        }),
         absolute_position: actor.position,
         absolute_home_position: actor.home_position,
         absolute_velocity: actor.velocity,
@@ -714,6 +762,16 @@ fn validate_observation(
             )
             .chain(actor.goal_relative_positions.iter().flatten().flatten())
             .all(|value| value.is_finite());
+        let base_state_finite = actor.base_state.as_ref().is_none_or(|base_state| {
+            base_state
+                .absolute_old_position
+                .iter()
+                .chain(&base_state.scale)
+                .chain(std::iter::once(&base_state.gravity))
+                .chain(std::iter::once(&base_state.max_fall_speed))
+                .chain(&base_state.absolute_eye_position)
+                .all(|value| value.is_finite())
+        });
         let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
             attention.flags != 0
                 && observation.player_present == attention.link_relative_position.is_some()
@@ -727,6 +785,7 @@ fn validate_observation(
                 .any(|pair| pair[0] >= pair[1])
             || !option_consistent
             || !attention_consistent
+            || !base_state_finite
             || !finite
         {
             return Err(NativeActorViewError::new(
@@ -881,6 +940,16 @@ mod tests {
         shard
     }
 
+    fn shard_v7() -> NativeEpisodeShard {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v7.dseps"
+        ))
+        .unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard
+    }
+
     #[test]
     fn builds_complete_absolute_link_camera_and_parent_relations() {
         let mut shard = shard();
@@ -902,6 +971,7 @@ mod tests {
                     && actor.camera_relative_position.is_some()
                     && !actor.profile_slots.is_empty()
                     && actor.goal_relative_positions.is_empty()
+                    && actor.base_state.is_none()
             }));
             let attention = observation.actors[0].attention.as_ref().unwrap();
             assert_eq!(attention.flags, 0x20000002);
@@ -921,6 +991,51 @@ mod tests {
             NativeEpisodeActorView::decode_canonical(&bytes).unwrap(),
             view
         );
+    }
+
+    #[test]
+    fn exposes_v7_universal_base_state_without_fabricating_legacy_values() {
+        let mut v7_shard = shard_v7();
+        let catalog = catalog_for(&v7_shard);
+        v7_shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&v7_shard, &catalog).unwrap();
+        for observation in &view.observations {
+            let state = observation.actors[0]
+                .base_state
+                .as_ref()
+                .expect("v7 actor base state");
+            assert_eq!(state.actor_type, 5);
+            assert_eq!(state.process_subtype, 6);
+            assert_eq!(state.condition, 0x12);
+            assert_eq!(state.old_room, 1);
+            assert_eq!(state.pause_flag, 4);
+            assert_eq!(state.process_init_state, -2);
+            assert_eq!(state.process_create_phase, 7);
+            assert_eq!(state.cull_type, 8);
+            assert_eq!(state.demo_actor_id, 9);
+            assert_eq!(state.carry_type, 10);
+            assert!(state.heap_present);
+            assert!(state.model_present);
+            assert!(state.joint_collision_present);
+            assert_eq!(state.absolute_old_position, [12.0, 2.5, -8.5]);
+            assert_eq!(state.scale, [1.0, 2.0, 3.0]);
+            assert_eq!(state.gravity, -3.0);
+            assert_eq!(state.max_fall_speed, -20.0);
+            assert_eq!(state.absolute_eye_position, [12.5, 7.0, -8.0]);
+            assert_eq!(state.home_angle, [11, 12, 13]);
+            assert_eq!(state.old_angle, [14, 15, 16]);
+        }
+
+        let mut legacy = shard();
+        let legacy_catalog = catalog_for(&legacy);
+        legacy.metadata.actor_profile_catalog_identity = Some(legacy_catalog.identity.clone());
+        let legacy_view = NativeEpisodeActorView::build(&legacy, &legacy_catalog).unwrap();
+        assert!(legacy_view.observations.iter().all(|observation| {
+            observation
+                .actors
+                .iter()
+                .all(|actor| actor.base_state.is_none())
+        }));
     }
 
     #[test]

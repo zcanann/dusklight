@@ -30,17 +30,37 @@ struct ActorCatalogEntry {
     std::uint32_t parentProcessId = 0;
     std::uint32_t parameters = 0;
     std::uint32_t status = 0;
+    std::uint32_t condition = 0;
+    std::int32_t actorType = 0;
+    std::int32_t processSubtype = 0;
     std::int16_t actorName = 0;
     std::int16_t profileName = 0;
     std::uint16_t setId = 0xffff;
     std::int16_t health = 0;
     std::int8_t homeRoom = -1;
+    std::int8_t oldRoom = -1;
     std::int8_t currentRoom = -1;
     std::uint8_t group = 0;
     std::int8_t argument = 0;
+    std::uint8_t pauseFlag = 0;
+    std::int8_t processInitState = 0;
+    std::uint8_t processCreatePhase = 0;
+    std::uint8_t cullType = 0;
+    std::uint8_t demoActorId = 0;
+    std::uint8_t carryType = 0;
+    bool heapPresent = false;
+    bool modelPresent = false;
+    bool jointCollisionPresent = false;
     std::array<char, 32> symbolicName{};
     cXyz homePosition{};
+    cXyz oldPosition{};
     cXyz currentPosition{};
+    cXyz scale{};
+    cXyz eyePosition{};
+    csXyz homeAngle{};
+    csXyz oldAngle{};
+    float gravity = 0.0F;
+    float maxFallSpeed = 0.0F;
 };
 
 struct ActorCatalogCapture {
@@ -59,16 +79,36 @@ int capture_actor(void* candidate, void* context) {
         .parentProcessId = static_cast<std::uint32_t>(actor->parentActorID),
         .parameters = fopAcM_GetParam(actor),
         .status = actor->actor_status,
+        .condition = actor->actor_condition,
+        .actorType = actor->actor_type,
+        .processSubtype = actor->subtype,
         .actorName = fopAcM_GetName(actor),
         .profileName = fopAcM_GetProfName(actor),
         .setId = actor->setID,
         .health = actor->health,
         .homeRoom = actor->home.roomNo,
+        .oldRoom = actor->old.roomNo,
         .currentRoom = actor->current.roomNo,
         .group = actor->group,
         .argument = actor->argument,
+        .pauseFlag = actor->pause_flag,
+        .processInitState = actor->state.init_state,
+        .processCreatePhase = actor->state.create_phase,
+        .cullType = actor->cullType,
+        .demoActorId = actor->demoActorID,
+        .carryType = actor->carryType,
+        .heapPresent = actor->heap != nullptr,
+        .modelPresent = actor->model != nullptr,
+        .jointCollisionPresent = actor->jntCol != nullptr,
         .homePosition = actor->home.pos,
+        .oldPosition = actor->old.pos,
         .currentPosition = actor->current.pos,
+        .scale = actor->scale,
+        .eyePosition = actor->eyePos,
+        .homeAngle = actor->home.angle,
+        .oldAngle = actor->old.angle,
+        .gravity = actor->gravity,
+        .maxFallSpeed = actor->maxFallSpeed,
     };
     const char* symbolicName = fopAcM_getProcNameString(actor);
     if (symbolicName != nullptr) {
@@ -125,21 +165,43 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
     }
     return {
         {"runtime_generation", actor.runtimeGeneration},
+        {"actor_type", actor.actorType},
+        {"process_subtype", actor.processSubtype},
         {"parent_runtime_generation", actor.parentRuntimeGeneration},
         {"actor_name", actor.actorName},
         {"profile_name", actor.profileName},
         {"group", actor.group},
         {"set_id", actor.setId},
         {"parameters", actor.parameters},
+        {"condition", actor.condition},
         {"argument", actor.argument},
         {"home_room", actor.homeRoom},
+        {"old_room", actor.oldRoom},
         {"current_room", actor.currentRoom},
+        {"pause_flag", actor.pauseFlag},
+        {"process_init_state", actor.processInitState},
+        {"process_create_phase", actor.processCreatePhase},
+        {"cull_type", actor.cullType},
+        {"demo_actor_id", actor.demoActorId},
+        {"carry_type", actor.carryType},
+        {"heap_present", actor.heapPresent},
+        {"model_present", actor.modelPresent},
+        {"joint_collision_present", actor.jointCollisionPresent},
         {"home_position", position_json(actor.homePositionX,
                               actor.homePositionY, actor.homePositionZ)},
+        {"old_position", position_json(actor.oldPositionX,
+                             actor.oldPositionY, actor.oldPositionZ)},
         {"current_position", position_json(actor.positionX,
                                  actor.positionY, actor.positionZ)},
         {"velocity", position_json(actor.velocityX, actor.velocityY, actor.velocityZ)},
         {"forward_speed", actor.forwardSpeed},
+        {"scale", position_json(actor.scaleX, actor.scaleY, actor.scaleZ)},
+        {"gravity", actor.gravity},
+        {"max_fall_speed", actor.maxFallSpeed},
+        {"eye_position", position_json(actor.eyePositionX,
+                             actor.eyePositionY, actor.eyePositionZ)},
+        {"home_angle", angle_json(actor.homeAngleX, actor.homeAngleY, actor.homeAngleZ)},
+        {"old_angle", angle_json(actor.oldAngleX, actor.oldAngleY, actor.oldAngleZ)},
         {"current_angle", angle_json(actor.currentAngleX,
                               actor.currentAngleY, actor.currentAngleZ)},
         {"shape_angle", angle_json(actor.shapeAngleX,
@@ -166,6 +228,8 @@ bool write_actor_catalog(
         actors.push_back({
             {"process_id", actor.processId},
             {"parent_process_id", actor.parentProcessId},
+            {"actor_type", actor.actorType},
+            {"process_subtype", actor.processSubtype},
             {"actor_name", actor.actorName},
             {"profile_name", actor.profileName},
             {"symbolic_name", actor.symbolicName.data()},
@@ -175,11 +239,29 @@ bool write_actor_catalog(
             {"parameters", actor.parameters},
             {"argument", actor.argument},
             {"home_room", actor.homeRoom},
+            {"old_room", actor.oldRoom},
             {"current_room", actor.currentRoom},
+            {"pause_flag", actor.pauseFlag},
+            {"process_init_state", actor.processInitState},
+            {"process_create_phase", actor.processCreatePhase},
+            {"cull_type", actor.cullType},
+            {"demo_actor_id", actor.demoActorId},
+            {"carry_type", actor.carryType},
+            {"heap_present", actor.heapPresent},
+            {"model_present", actor.modelPresent},
+            {"joint_collision_present", actor.jointCollisionPresent},
             {"home_position", position_json(actor.homePosition)},
+            {"old_position", position_json(actor.oldPosition)},
             {"current_position", position_json(actor.currentPosition)},
+            {"scale", position_json(actor.scale)},
+            {"gravity", actor.gravity},
+            {"max_fall_speed", actor.maxFallSpeed},
+            {"eye_position", position_json(actor.eyePosition)},
+            {"home_angle", angle_json(actor.homeAngle.x, actor.homeAngle.y, actor.homeAngle.z)},
+            {"old_angle", angle_json(actor.oldAngle.x, actor.oldAngle.y, actor.oldAngle.z)},
             {"health", actor.health},
             {"status", actor.status},
+            {"condition", actor.condition},
         });
     }
 
@@ -200,7 +282,7 @@ bool write_actor_catalog(
             ? "cursor_breakout_shadow"
             : "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v2"},
+        {"schema", "dusklight.actor-catalog.v3"},
         {"build",
             {
                 {"version", build.version},

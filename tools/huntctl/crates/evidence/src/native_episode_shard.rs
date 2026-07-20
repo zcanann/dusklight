@@ -26,6 +26,7 @@ const OBSERVATION_VERSION_V3: u16 = 3;
 const OBSERVATION_VERSION_V4: u16 = 4;
 const OBSERVATION_VERSION_V5: u16 = 5;
 const OBSERVATION_VERSION_V6: u16 = 6;
+const OBSERVATION_VERSION_V7: u16 = 7;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -39,6 +40,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
 pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation/v5";
 pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation/v6";
+pub const LEARNING_OBSERVATION_SCHEMA_V7: &str = "dusklight-learning-observation/v7";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -253,21 +255,42 @@ pub struct NativeActorIdentity {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeActorObservation {
     pub runtime_generation: u64,
+    pub base_state_available: bool,
+    pub actor_type: i32,
+    pub process_subtype: i32,
     pub parent_runtime_generation: u32,
     pub parameters: u32,
     pub status: u32,
+    pub condition: u32,
     pub actor_name: i16,
     pub profile_name: i16,
     pub set_id: u16,
     pub home_room: i8,
+    pub old_room: i8,
     pub current_room: i8,
     pub group: u8,
     pub argument: i8,
+    pub pause_flag: u8,
+    pub process_init_state: i8,
+    pub process_create_phase: u8,
+    pub cull_type: u8,
+    pub demo_actor_id: u8,
+    pub carry_type: u8,
+    pub heap_present: bool,
+    pub model_present: bool,
+    pub joint_collision_present: bool,
     pub health: i16,
     pub position: [f32; 3],
     pub home_position: [f32; 3],
+    pub old_position: [f32; 3],
     pub velocity: [f32; 3],
     pub forward_speed: f32,
+    pub scale: [f32; 3],
+    pub gravity: f32,
+    pub max_fall_speed: f32,
+    pub eye_position: [f32; 3],
+    pub home_angle: [i16; 3],
+    pub old_angle: [i16; 3],
     pub current_angle: [i16; 3],
     pub shape_angle: [i16; 3],
     pub attention: Option<NativeActorAttentionComponent>,
@@ -511,6 +534,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V4
                 | OBSERVATION_VERSION_V5
                 | OBSERVATION_VERSION_V6
+                | OBSERVATION_VERSION_V7
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -631,6 +655,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V4 => LEARNING_OBSERVATION_SCHEMA_V4,
         OBSERVATION_VERSION_V5 => LEARNING_OBSERVATION_SCHEMA_V5,
         OBSERVATION_VERSION_V6 => LEARNING_OBSERVATION_SCHEMA_V6,
+        OBSERVATION_VERSION_V7 => LEARNING_OBSERVATION_SCHEMA_V7,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1689,7 +1714,8 @@ fn decode_observation(
         OBSERVATION_VERSION_V3
         | OBSERVATION_VERSION_V4
         | OBSERVATION_VERSION_V5
-        | OBSERVATION_VERSION_V6 => {
+        | OBSERVATION_VERSION_V6
+        | OBSERVATION_VERSION_V7 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -1799,21 +1825,42 @@ fn decode_observation(
     for _ in 0..actor_count {
         let mut actor = NativeActorObservation {
             runtime_generation: reader.u64()?,
+            base_state_available: false,
+            actor_type: 0,
+            process_subtype: 0,
             parent_runtime_generation: reader.u32()?,
             parameters: reader.u32()?,
             status: reader.u32()?,
+            condition: 0,
             actor_name: reader.i16()?,
             profile_name: reader.i16()?,
             set_id: reader.u16()?,
             home_room: reader.i8()?,
+            old_room: -1,
             current_room: reader.i8()?,
             group: reader.u8()?,
             argument: reader.i8()?,
+            pause_flag: 0,
+            process_init_state: 0,
+            process_create_phase: 0,
+            cull_type: 0,
+            demo_actor_id: 0,
+            carry_type: 0,
+            heap_present: false,
+            model_present: false,
+            joint_collision_present: false,
             health: reader.i16()?,
             position: reader.f32x3()?,
             home_position: reader.f32x3()?,
+            old_position: [0.0; 3],
             velocity: reader.f32x3()?,
             forward_speed: reader.f32()?,
+            scale: [0.0; 3],
+            gravity: 0.0,
+            max_fall_speed: 0.0,
+            eye_position: [0.0; 3],
+            home_angle: [0; 3],
+            old_angle: [0; 3],
             current_angle: reader.i16x3()?,
             shape_angle: reader.i16x3()?,
             attention: None,
@@ -1892,6 +1939,40 @@ fn decode_observation(
                     "absent actor event component has a payload",
                 ));
             }
+        }
+        if observation_version >= OBSERVATION_VERSION_V7 {
+            let backing_mask = reader.u8()?;
+            if backing_mask & !0x7 != 0 || reader.u8()? != 0 {
+                return Err(NativeEpisodeShardError::new(
+                    "invalid actor base-state header",
+                ));
+            }
+            actor.base_state_available = true;
+            actor.actor_type = reader.i32()?;
+            actor.process_subtype = reader.i32()?;
+            actor.condition = reader.u32()?;
+            actor.pause_flag = reader.u8()?;
+            actor.process_init_state = reader.i8()?;
+            actor.process_create_phase = reader.u8()?;
+            actor.cull_type = reader.u8()?;
+            actor.demo_actor_id = reader.u8()?;
+            actor.carry_type = reader.u8()?;
+            actor.old_room = reader.i8()?;
+            if reader.u8()? != 0 {
+                return Err(NativeEpisodeShardError::new(
+                    "nonzero actor base-state reserved byte",
+                ));
+            }
+            actor.heap_present = backing_mask & 1 != 0;
+            actor.model_present = backing_mask & 2 != 0;
+            actor.joint_collision_present = backing_mask & 4 != 0;
+            actor.old_position = reader.f32x3()?;
+            actor.scale = reader.f32x3()?;
+            actor.gravity = reader.f32()?;
+            actor.max_fall_speed = reader.f32()?;
+            actor.eye_position = reader.f32x3()?;
+            actor.home_angle = reader.i16x3()?;
+            actor.old_angle = reader.i16x3()?;
         }
         actors.push(actor);
     }
@@ -2195,6 +2276,10 @@ mod tests {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v6.dseps")
     }
 
+    fn golden_v7() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v7.dseps")
+    }
+
     #[test]
     fn authored_objective_identity_binds_program_and_definition() {
         assert_eq!(
@@ -2241,6 +2326,10 @@ mod tests {
 
     fn mutate_first_v4_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
         mutate_first_episode_in(golden_v4(), mutator)
+    }
+
+    fn mutate_first_v7_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        mutate_first_episode_in(golden_v7(), mutator)
     }
 
     fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
@@ -2456,6 +2545,7 @@ mod tests {
                 .flat_map(|step| [&step.pre_input, &step.post_simulation])
         }) {
             let actor = &observation.actors[0];
+            assert!(!actor.base_state_available);
             let attention = actor.attention.as_ref().unwrap();
             assert_eq!(attention.flags, 0x20000002);
             assert_eq!(attention.position, [11.0, 4.0, -7.0]);
@@ -2471,6 +2561,62 @@ mod tests {
             assert!(absent.attention.is_none());
             assert!(absent.event_participation.is_none());
         }
+    }
+
+    #[test]
+    fn decodes_v7_complete_actor_base_state() {
+        let shard = NativeEpisodeShard::decode(golden_v7()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V7
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            let actor = &observation.actors[0];
+            assert!(actor.base_state_available);
+            assert_eq!(actor.actor_type, 5);
+            assert_eq!(actor.process_subtype, 6);
+            assert_eq!(actor.condition, 0x12);
+            assert_eq!(actor.pause_flag, 4);
+            assert_eq!(actor.process_init_state, -2);
+            assert_eq!(actor.process_create_phase, 7);
+            assert_eq!(actor.cull_type, 8);
+            assert_eq!(actor.demo_actor_id, 9);
+            assert_eq!(actor.carry_type, 10);
+            assert_eq!(actor.old_room, 1);
+            assert!(actor.heap_present);
+            assert!(actor.model_present);
+            assert!(actor.joint_collision_present);
+            assert_eq!(actor.old_position, [12.0, 2.5, -8.5]);
+            assert_eq!(actor.scale, [1.0, 2.0, 3.0]);
+            assert_eq!(actor.gravity, -3.0);
+            assert_eq!(actor.max_fall_speed, -20.0);
+            assert_eq!(actor.eye_position, [12.5, 7.0, -8.0]);
+            assert_eq!(actor.home_angle, [11, 12, 13]);
+            assert_eq!(actor.old_angle, [14, 15, 16]);
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_v7_actor_base_state_header() {
+        let shard = mutate_first_v7_episode(|expanded| {
+            let header = [7, 0, 5, 0, 0, 0, 6, 0, 0, 0, 0x12, 0, 0, 0];
+            let offset = expanded
+                .windows(header.len())
+                .position(|candidate| candidate == header)
+                .expect("v7 actor base-state header");
+            expanded[offset + 1] = 1;
+        });
+        assert!(
+            NativeEpisodeShard::decode(&shard)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid actor base-state header")
+        );
     }
 
     #[test]
@@ -2592,7 +2738,9 @@ mod tests {
                     step.chosen_pad == step.consumed_pad
                         && (!matches!(
                             shard.metadata.observation_schema.as_str(),
-                            LEARNING_OBSERVATION_SCHEMA_V5 | LEARNING_OBSERVATION_SCHEMA_V6
+                            LEARNING_OBSERVATION_SCHEMA_V5
+                                | LEARNING_OBSERVATION_SCHEMA_V6
+                                | LEARNING_OBSERVATION_SCHEMA_V7
                         ) || [&step.pre_input, &step.post_simulation].iter().all(
                             |observation| {
                                 observation
@@ -2626,6 +2774,7 @@ mod tests {
                 | LEARNING_OBSERVATION_SCHEMA_V4
                 | LEARNING_OBSERVATION_SCHEMA_V5
                 | LEARNING_OBSERVATION_SCHEMA_V6
+                | LEARNING_OBSERVATION_SCHEMA_V7
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode
