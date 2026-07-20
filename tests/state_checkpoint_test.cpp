@@ -1,15 +1,25 @@
 #include "dusk/automation/state_checkpoint.hpp"
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
 using namespace dusk::automation;
 
 namespace {
+
+void require(const bool condition, const char* expression, const int line) {
+    if (!condition) {
+        std::cerr << "state_checkpoint_test.cpp:" << line
+                  << ": check failed: " << expression << '\n';
+        std::abort();
+    }
+}
+
+#define REQUIRE(expression) require((expression), #expression, __LINE__)
 
 struct Component {
     std::uint32_t value = 0;
@@ -41,65 +51,72 @@ void test_round_trip_and_integrity() {
     Component component{.value = 0x12345678};
 
     StateCheckpoint checkpoint;
-    assert(checkpoint.addMemoryRegion("memory", memory.data(), memory.size()) ==
+    REQUIRE(checkpoint.addMemoryRegion("memory", memory.data(), memory.size()) ==
            StateCheckpointError::None);
-    assert(checkpoint.addComponent("component", sizeof(component.value), &component,
+    REQUIRE(checkpoint.addComponent("component", sizeof(component.value), &component,
                capture_component, restore_component) == StateCheckpointError::None);
-    assert(checkpoint.entryCount() == 2);
-    assert(checkpoint.byteCount() == memory.size() + sizeof(component.value));
+    REQUIRE(checkpoint.entryCount() == 2);
+    REQUIRE(checkpoint.byteCount() == memory.size() + sizeof(component.value));
 
     StateCheckpointImage image;
-    assert(checkpoint.capture(image) == StateCheckpointError::None);
-    assert(!image.digest.empty());
+    REQUIRE(checkpoint.capture(image) == StateCheckpointError::None);
+    REQUIRE(!image.digest.empty());
+    std::string liveDigest;
+    std::vector<StateCheckpointEntryDigest> entryDigests;
+    REQUIRE(checkpoint.currentDigest(liveDigest, &entryDigests) == StateCheckpointError::None);
+    REQUIRE(liveDigest == image.digest);
+    REQUIRE(entryDigests.size() == 2);
+    REQUIRE(entryDigests[0].name == "memory");
+    REQUIRE(!entryDigests[0].digest.empty());
 
     memory.fill(std::byte{0xff});
     component.value = 9;
-    assert(checkpoint.restore(image) == StateCheckpointError::None);
-    assert(memory[3] == std::byte{0x7a});
-    assert(memory[4] == std::byte{0});
-    assert(component.value == 0x12345678);
+    REQUIRE(checkpoint.restore(image) == StateCheckpointError::None);
+    REQUIRE(memory[3] == std::byte{0x7a});
+    REQUIRE(memory[4] == std::byte{0});
+    REQUIRE(component.value == 0x12345678);
 
     image.entries[0].bytes[0] = std::byte{1};
-    assert(checkpoint.restore(image) == StateCheckpointError::DigestMismatch);
+    REQUIRE(checkpoint.restore(image) == StateCheckpointError::DigestMismatch);
 }
 
 void test_registration_rejections() {
     std::array<std::byte, 16> memory{};
     Component component{};
     StateCheckpoint checkpoint;
-    assert(checkpoint.addMemoryRegion("", memory.data(), memory.size()) ==
+    REQUIRE(checkpoint.addMemoryRegion("", memory.data(), memory.size()) ==
            StateCheckpointError::InvalidName);
-    assert(checkpoint.addMemoryRegion("zero", memory.data(), 0) ==
+    REQUIRE(checkpoint.addMemoryRegion("zero", memory.data(), 0) ==
            StateCheckpointError::EmptyState);
-    assert(checkpoint.addMemoryRegion("null", nullptr, 1) ==
+    REQUIRE(checkpoint.addMemoryRegion("null", nullptr, 1) ==
            StateCheckpointError::NullAddress);
-    assert(checkpoint.addMemoryRegion("a", memory.data(), 8) == StateCheckpointError::None);
-    assert(checkpoint.addMemoryRegion("b", memory.data() + 7, 4) ==
+    REQUIRE(checkpoint.addMemoryRegion("a", memory.data(), 8) == StateCheckpointError::None);
+    REQUIRE(checkpoint.addMemoryRegion("b", memory.data() + 7, 4) ==
            StateCheckpointError::OverlappingRegion);
-    assert(checkpoint.addComponent("a", sizeof(component.value), &component, capture_component,
+    REQUIRE(checkpoint.addComponent("a", sizeof(component.value), &component, capture_component,
                restore_component) == StateCheckpointError::DuplicateName);
-    assert(checkpoint.addComponent("component", sizeof(component.value), &component, nullptr,
+    REQUIRE(checkpoint.addComponent("component", sizeof(component.value), &component, nullptr,
                restore_component) == StateCheckpointError::MissingCallback);
 }
 
 void test_component_fail_closed() {
     Component component{.value = 42, .rejectCapture = true};
     StateCheckpoint checkpoint;
-    assert(checkpoint.addComponent("component", sizeof(component.value), &component,
+    REQUIRE(checkpoint.addComponent("component", sizeof(component.value), &component,
                capture_component, restore_component) == StateCheckpointError::None);
     StateCheckpointImage image;
-    assert(checkpoint.capture(image) == StateCheckpointError::CaptureFailed);
+    REQUIRE(checkpoint.capture(image) == StateCheckpointError::CaptureFailed);
 
     component.rejectCapture = false;
-    assert(checkpoint.capture(image) == StateCheckpointError::None);
+    REQUIRE(checkpoint.capture(image) == StateCheckpointError::None);
     component.rejectRestore = true;
-    assert(checkpoint.restore(image) == StateCheckpointError::RestoreFailed);
+    REQUIRE(checkpoint.restore(image) == StateCheckpointError::RestoreFailed);
 
     StateCheckpoint other;
     std::array<std::byte, 4> bytes{};
-    assert(other.addMemoryRegion("other", bytes.data(), bytes.size()) ==
+    REQUIRE(other.addMemoryRegion("other", bytes.data(), bytes.size()) ==
            StateCheckpointError::None);
-    assert(other.restore(image) == StateCheckpointError::ManifestMismatch);
+    REQUIRE(other.restore(image) == StateCheckpointError::ManifestMismatch);
 }
 
 }  // namespace

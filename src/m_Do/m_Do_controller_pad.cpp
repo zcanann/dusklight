@@ -13,6 +13,7 @@
 #include "tracy/Tracy.hpp"
 
 #if TARGET_PC
+#include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/menu_pointer.h"
 #include "dusk/ui/touch_controls.hpp"
@@ -70,6 +71,7 @@ void mDoCPd_c::read() {
     const bool tapeWasPlaying = inputTapePlayer.isPlaying();
     inputTapePlayer.tick();
     mDoAutomationInputTick(tapeWasPlaying);
+    dusk::automation::checkpoint_probe().overrideInputForAlternate();
 #endif
     JUTGamePad::read();
     if (!mDoRst::isReset() && mDoRst::is3ButtonReset()) {

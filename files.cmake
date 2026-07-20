@@ -1427,12 +1427,17 @@ set(DUSK_FILES
         src/dusk/runtime/lifecycle.cpp
         include/dusk/automation/build_identity.hpp
         src/dusk/automation/build_identity.cpp
+        src/dusk/automation/checkpoint_probe.cpp
         include/dusk/automation/actor_catalog.hpp
         src/dusk/automation/actor_catalog.cpp
         include/dusk/automation/engine_session.hpp
         src/dusk/automation/engine_session.cpp
         src/dusk/automation/emulated_machine_checkpoint.cpp
+        include/dusk/automation/jut_gamepad_state.hpp
+        src/dusk/automation/jut_gamepad_state.cpp
+        src/dusk/automation/native_state_region.cpp
         src/dusk/automation/state_checkpoint.cpp
+        include/dusk/automation/vi_state.hpp
         include/dusk/automation/input_tape.hpp
         src/dusk/automation/input_pad.cpp
         src/dusk/automation/input_tape.cpp

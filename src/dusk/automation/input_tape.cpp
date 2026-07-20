@@ -528,6 +528,45 @@ void InputTapePlayer::handoffToLiveInput() {
     mReleasePending = false;
 }
 
+InputTapePlayerState InputTapePlayer::captureState() const {
+    return {
+        .nextFrame = mNextFrame,
+        .ownedPorts = mOwnedPorts,
+        .endBehavior = mEndBehavior,
+        .playing = mPlaying,
+        .releasePending = mReleasePending,
+        .conditionWaitTicks = mConditionWaitTicks,
+        .conditionPulseNeutral = mConditionPulseNeutral,
+        .playbackError = mPlaybackError,
+        .failedFrame = mFailedFrame,
+        .failedCondition = mFailedCondition,
+    };
+}
+
+bool InputTapePlayer::restoreState(const InputTapePlayerState& state) {
+    if (state.nextFrame > mTape.frames.size() ||
+        state.ownedPorts > kAllPortsMask ||
+        static_cast<unsigned>(state.endBehavior) > static_cast<unsigned>(TapeEndBehavior::Loop) ||
+        static_cast<unsigned>(state.playbackError) >
+            static_cast<unsigned>(InputTapePlaybackError::ConditionTimedOut) ||
+        !valid_frame_condition(state.failedCondition) ||
+        (state.playing && state.nextFrame >= mTape.frames.size()) ||
+        (state.failedFrame > mTape.frames.size())) {
+        return false;
+    }
+    mNextFrame = state.nextFrame;
+    mOwnedPorts = state.ownedPorts;
+    mEndBehavior = state.endBehavior;
+    mPlaying = state.playing;
+    mReleasePending = state.releasePending;
+    mConditionWaitTicks = state.conditionWaitTicks;
+    mConditionPulseNeutral = state.conditionPulseNeutral;
+    mPlaybackError = state.playbackError;
+    mFailedFrame = state.failedFrame;
+    mFailedCondition = state.failedCondition;
+    return true;
+}
+
 void InputTapePlayer::tick() {
     if (mReleasePending) {
         releaseOwnedPorts();

@@ -307,6 +307,44 @@ configure_version_header()
 
 include(files.cmake)
 
+# Compile original game translation units through generated build-tree wrappers.
+# Each wrapper consumes the normal target PCH first, then opens the dedicated
+# native-state section before including the untouched source file.
+set(DUSK_CHECKPOINT_EXCLUDED_SOURCES
+    src/m_Do/m_Do_main.cpp
+    src/m_Do/m_Do_audio.cpp
+    src/m_Do/m_Do_graphic.cpp
+    src/m_Do/m_Do_machine.cpp
+    src/m_Do/m_Do_dvd_thread.cpp
+    src/m_Do/m_Do_DVDError.cpp
+    src/m_Do/m_Do_MemCard.cpp
+    src/m_Do/m_Do_MemCardRWmng.cpp
+    src/m_Do/m_Do_hostIO.cpp
+    src/CaptureScreen.cpp
+)
+
+function(dusk_wrap_checkpoint_state_sources output_variable)
+    set(wrapped_sources)
+    foreach(source IN LISTS ARGN)
+        if(source IN_LIST DUSK_CHECKPOINT_EXCLUDED_SOURCES OR
+           NOT source MATCHES "\\.(cc|cpp|cxx)$")
+            list(APPEND wrapped_sources "${source}")
+            continue()
+        endif()
+        string(MD5 source_id "${source}")
+        get_filename_component(source_stem "${source}" NAME_WE)
+        set(wrapper "${CMAKE_BINARY_DIR}/checkpoint_wrappers/${source_stem}-${source_id}.cpp")
+        file(GENERATE OUTPUT "${wrapper}" CONTENT
+            "#include \"dusk/automation/native_state_section_begin.h\"\n#include \"${CMAKE_SOURCE_DIR}/${source}\"\n")
+        list(APPEND wrapped_sources "${wrapper}")
+    endforeach()
+    set(${output_variable} "${wrapped_sources}" PARENT_SCOPE)
+endfunction()
+
+dusk_wrap_checkpoint_state_sources(DOLZEL_FILES ${DOLZEL_FILES})
+dusk_wrap_checkpoint_state_sources(REL_FILES ${REL_FILES})
+dusk_wrap_checkpoint_state_sources(SSYSTEM_FILES ${SSYSTEM_FILES})
+
 # TODO: version handling for res includes
 
 set(DUSK_BUNDLE_NAME Dusklight)
@@ -461,6 +499,17 @@ if(ANDROID)
 else ()
     add_executable(dusklight ${DUSK_FILES})
 endif ()
+
+# clang-cl emits function-local statics in associative COMDAT fragments whose
+# inferred PE characteristics can otherwise split the checkpoint sections into
+# read-only and writable outputs. Original game statics are mutable; force the
+# final named sections to retain data-segment write access.
+if (MSVC)
+    target_link_options(dusklight PRIVATE
+        "/SECTION:.dskdat,RW"
+        "/SECTION:.dskbss,RW"
+    )
+endif ()
 target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
 if (ENABLE_ASAN)
     target_sources(dusklight PRIVATE src/dusk/asan_options.c)
@@ -516,6 +565,23 @@ target_include_directories(dusk_state_checkpoint_test PRIVATE
 )
 target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
 set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
+
+add_executable(dusk_native_state_region_test EXCLUDE_FROM_ALL
+    tests/native_state_region_test.cpp
+    tests/native_state_fixture.cpp
+    src/dusk/automation/native_state_region.cpp
+    src/dusk/automation/state_checkpoint.cpp
+)
+target_include_directories(dusk_native_state_region_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(dusk_native_state_region_test PRIVATE xxHash::xxhash)
+if (MSVC)
+    set_source_files_properties(tests/native_state_fixture.cpp PROPERTIES
+        COMPILE_OPTIONS "/FI${CMAKE_SOURCE_DIR}/include/dusk/automation/native_state_section_begin.h")
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(tests/native_state_fixture.cpp PROPERTIES
+        COMPILE_OPTIONS "-include;${CMAKE_SOURCE_DIR}/include/dusk/automation/native_state_section_begin.h")
+endif ()
+set_target_properties(dusk_native_state_region_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_automation_input_policy_test EXCLUDE_FROM_ALL
     tests/automation_input_policy_test.cpp

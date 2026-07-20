@@ -1077,6 +1077,37 @@ void testScenarioFixtureCanonicalRoundTripAndCorruption() {
     REQUIRE(encode_scenario_fixture(fixture, second) == ScenarioFixtureError::DuplicateKey);
 }
 
+void testPlayerStateRestoresExactPlaybackCursor() {
+    using namespace dusk::automation;
+
+    resetPadSpies();
+    InputTape tape;
+    tape.frames.resize(3);
+    tape.frames[0].ownedPorts = 1;
+    tape.frames[0].pads[0].buttons = PAD_BUTTON_A;
+    tape.frames[1].ownedPorts = 1;
+    tape.frames[1].pads[0].stickX = 45;
+    tape.frames[2].ownedPorts = 1;
+
+    InputTapePlayer player;
+    player.install(std::move(tape));
+    REQUIRE(player.start(TapeEndBehavior::Hold));
+    player.tick();
+    const InputTapePlayerState source = player.captureState();
+    REQUIRE(source.nextFrame == 1);
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 2);
+    REQUIRE(player.restoreState(source));
+    REQUIRE(player.captureState() == source);
+    player.tick();
+    REQUIRE(player.nextFrameIndex() == 2);
+    REQUIRE(gStatuses[0].stickX == 45);
+
+    InputTapePlayerState invalid = source;
+    invalid.nextFrame = 99;
+    REQUIRE(!player.restoreState(invalid));
+}
+
 } // namespace
 
 extern "C" void PADSetAutomationStatus(const u32 port, const PADStatus* status) {
@@ -1148,6 +1179,7 @@ int main() {
     testRecorderArmsUntilExactHandoff();
     testRecordedRawInputReplaysThroughExactlyOneClamp();
     testRecorderOutputDependsOnPadTicksNotHostPacing();
+    testPlayerStateRestoresExactPlaybackCursor();
     testScenarioFixtureCanonicalRoundTripAndCorruption();
     std::cout << "input tape tests passed\n";
     return 0;

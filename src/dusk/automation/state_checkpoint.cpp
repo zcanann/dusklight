@@ -51,6 +51,34 @@ std::string checkpoint_digest(const StateCheckpointImage& image) {
     return result;
 }
 
+std::string finish_digest(XXH3_state_t* state) {
+    const XXH128_hash_t hash = XXH3_128bits_digest(state);
+    XXH128_canonical_t canonical{};
+    XXH128_canonicalFromHash(&canonical, hash);
+    constexpr char Hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(sizeof(canonical.digest) * 2);
+    for (const unsigned char byte : canonical.digest) {
+        result.push_back(Hex[byte >> 4]);
+        result.push_back(Hex[byte & 0xf]);
+    }
+    return result;
+}
+
+std::string bytes_digest(const void* const bytes, const std::size_t size) {
+    const XXH128_hash_t hash = XXH3_128bits(bytes, size);
+    XXH128_canonical_t canonical{};
+    XXH128_canonicalFromHash(&canonical, hash);
+    constexpr char Hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(sizeof(canonical.digest) * 2);
+    for (const unsigned char byte : canonical.digest) {
+        result.push_back(Hex[byte >> 4]);
+        result.push_back(Hex[byte & 0xf]);
+    }
+    return result;
+}
+
 }  // namespace
 
 StateCheckpointError StateCheckpoint::validateNameAndSize(
@@ -183,6 +211,66 @@ StateCheckpointError StateCheckpoint::restore(const StateCheckpointImage& image)
         }
     }
     return StateCheckpointError::None;
+}
+
+StateCheckpointError StateCheckpoint::currentDigest(std::string& digest,
+    std::vector<StateCheckpointEntryDigest>* const entryDigests) const {
+    XXH3_state_t* state = XXH3_createState();
+    if (state == nullptr) {
+        return StateCheckpointError::AllocationFailed;
+    }
+    XXH3_128bits_reset(state);
+    constexpr std::string_view Domain = "dusklight-state-checkpoint/v1";
+    XXH3_128bits_update(state, Domain.data(), Domain.size());
+    hash_u64(state, mEntries.size());
+    std::vector<std::byte> componentBytes;
+    try {
+        std::vector<StateCheckpointEntryDigest> capturedEntryDigests;
+        if (entryDigests != nullptr) {
+            capturedEntryDigests.reserve(mEntries.size());
+        }
+        for (const Entry& entry : mEntries) {
+            const std::uint8_t kind = static_cast<std::uint8_t>(entry.kind);
+            XXH3_128bits_update(state, &kind, sizeof(kind));
+            hash_u64(state, entry.name.size());
+            XXH3_128bits_update(state, entry.name.data(), entry.name.size());
+            hash_u64(state, entry.size);
+            const void* entryBytes = nullptr;
+            if (entry.kind == StateCheckpointEntryKind::MemoryRegion) {
+                XXH3_128bits_update(state, entry.address, entry.size);
+                entryBytes = entry.address;
+            } else {
+                componentBytes.resize(entry.size);
+                if (!entry.capture(entry.context, componentBytes)) {
+                    XXH3_freeState(state);
+                    return StateCheckpointError::CaptureFailed;
+                }
+                XXH3_128bits_update(state, componentBytes.data(), componentBytes.size());
+                entryBytes = componentBytes.data();
+            }
+            if (entryDigests != nullptr) {
+                capturedEntryDigests.push_back({
+                    .name = entry.name,
+                    .kind = entry.kind,
+                    .size = entry.size,
+                    .digest = bytes_digest(entryBytes, entry.size),
+                });
+            }
+        }
+        std::string finished = finish_digest(state);
+        XXH3_freeState(state);
+        state = nullptr;
+        digest = std::move(finished);
+        if (entryDigests != nullptr) {
+            *entryDigests = std::move(capturedEntryDigests);
+        }
+    } catch (const std::bad_alloc&) {
+        if (state != nullptr) {
+            XXH3_freeState(state);
+        }
+        return StateCheckpointError::AllocationFailed;
+    }
+    return digest.empty() ? StateCheckpointError::AllocationFailed : StateCheckpointError::None;
 }
 
 std::size_t StateCheckpoint::byteCount() const {

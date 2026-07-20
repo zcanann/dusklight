@@ -12,6 +12,7 @@
 #include <memory>
 #include <dusk/logging.h>
 #include <dusk/main.h>
+#include "dusk/automation/vi_state.hpp"
 
 #include "tracy/Tracy.hpp"
 
@@ -376,6 +377,27 @@ VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback cb) {
 }
 
 }  // extern "C"
+
+namespace dusk::automation {
+
+bool capture_vi_state(VIState& state) {
+    state.retraceCount = sRetraceCount;
+    state.preRetraceCallback = sVIPreRetraceCallback;
+    state.postRetraceCallback = sVIPostRetraceCallback;
+    return true;
+}
+
+bool restore_vi_state(const VIState& state) {
+    if (sVIPreRetraceCallback != state.preRetraceCallback ||
+        sVIPostRetraceCallback != state.postRetraceCallback)
+    {
+        return false;
+    }
+    sRetraceCount = state.retraceCount;
+    return true;
+}
+
+}  // namespace dusk::automation
 
 #pragma mark Z2Audio
 class Z2AudioCS {

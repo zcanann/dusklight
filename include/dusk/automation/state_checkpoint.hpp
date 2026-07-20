@@ -42,6 +42,13 @@ struct StateCheckpointImage {
     std::string digest;
 };
 
+struct StateCheckpointEntryDigest {
+    std::string name;
+    StateCheckpointEntryKind kind = StateCheckpointEntryKind::MemoryRegion;
+    std::size_t size = 0;
+    std::string digest;
+};
+
 using StateCheckpointCaptureCallback = bool (*)(void*, std::span<std::byte>);
 using StateCheckpointRestoreCallback = bool (*)(void*, std::span<const std::byte>);
 
@@ -62,6 +69,9 @@ public:
 
     [[nodiscard]] StateCheckpointError capture(StateCheckpointImage& image) const;
     [[nodiscard]] StateCheckpointError restore(const StateCheckpointImage& image) const;
+    /** Hashes the registered live state without copying direct memory regions. */
+    [[nodiscard]] StateCheckpointError currentDigest(std::string& digest,
+        std::vector<StateCheckpointEntryDigest>* entryDigests = nullptr) const;
     [[nodiscard]] std::size_t entryCount() const { return mEntries.size(); }
     [[nodiscard]] std::size_t byteCount() const;
 

@@ -64,6 +64,7 @@
 #include "dusk/runtime/lifecycle.hpp"
 #include "dusk/app_info.hpp"
 #include "dusk/automation/actor_catalog.hpp"
+#include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/game_state_observer.hpp"
 #include "dusk/automation/gameplay_trace.hpp"
 #include "dusk/automation/gameplay_trace_observer.hpp"
@@ -249,6 +250,7 @@ static bool finalize_input_tape_fast_forward_reveal();
 static bool verify_recording_start_boundary();
 static void complete_recording_handoff_countdown();
 static bool finish_simulation_tick();
+static bool finish_checkpoint_probe_tick();
 static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
 static bool record_milestone_pre_input_boundary();
@@ -269,6 +271,7 @@ static void write_milestone_result_on_exit();
 static void write_realized_input_tape_on_exit();
 static void write_recorded_input_tape_on_exit(bool processFailedBeforeRecording);
 static void write_actor_catalog_on_exit();
+static void write_checkpoint_probe_result_on_exit();
 static void release_active_controller_on_exit();
 static bool auxiliary_live_input_enabled();
 
@@ -449,6 +452,9 @@ void main01(void) {
                     if (!finish_simulation_tick()) {
                         break;
                     }
+                    if (finish_checkpoint_probe_tick()) {
+                        break;
+                    }
                     if (finish_automation_oracle_tick()) {
                         break;
                     }
@@ -488,7 +494,7 @@ void main01(void) {
 
                 mDoAud_Execute();
                 if (finish_simulation_tick()) {
-                    if (!finish_automation_oracle_tick()) {
+                    if (!finish_checkpoint_probe_tick() && !finish_automation_oracle_tick()) {
                         finish_input_tape_tick();
                     }
                 }
@@ -545,6 +551,7 @@ void main01(void) {
     write_milestone_result_on_exit();
     write_realized_input_tape_on_exit();
     write_actor_catalog_on_exit();
+    write_checkpoint_probe_result_on_exit();
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::ProofArtifactsWritten);
 }
@@ -687,6 +694,8 @@ static dusk::automation::InputControllerProgram inputControllerProgram;
 static bool automationInputHandedOff;
 static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
+static bool checkpointProbeFailed;
+static bool checkpointProbeWriteFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
@@ -1123,6 +1132,15 @@ static bool prepare_automation_pre_input_boundary() {
                      readinessTicks, stageBootDescriptor.stage, stageBootDescriptor.room,
                      stageBootDescriptor.point, stageBootDescriptor.layer,
                      stageBootDescriptor.saveSlot);
+    }
+    std::string checkpointProbeError;
+    if (!dusk::automation::checkpoint_probe().preInput(
+            automationSimulationTick, automationTapeFrame, automationPreparedInputFrame,
+            inputTapeFrameApplied, checkpointProbeError))
+    {
+        checkpointProbeFailed = true;
+        DuskLog.error("Checkpoint probe failed at pre-input boundary: {}", checkpointProbeError);
+        return true;
     }
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::StageReady);
@@ -1643,6 +1661,39 @@ static bool finish_simulation_tick() {
     return false;
 }
 
+static bool finish_checkpoint_probe_tick() {
+    auto& probe = dusk::automation::checkpoint_probe();
+    if (!probe.enabled()) {
+        return false;
+    }
+    std::string error;
+    if (!probe.postSimulation(automationSimulationTick, automationTapeFrame,
+            automationPreparedInputFrame, inputTapeFrameApplied, error))
+    {
+        return false;
+    }
+    if (probe.failed()) {
+        checkpointProbeFailed = true;
+        DuskLog.error("Checkpoint A/B/A proof failed: {}", error);
+    } else {
+        DuskLog.info("Checkpoint A/B/A proof completed");
+    }
+    dusk::IsRunning = false;
+    return true;
+}
+
+static void write_checkpoint_probe_result_on_exit() {
+    const auto& probe = dusk::automation::checkpoint_probe();
+    if (!probe.enabled()) {
+        return;
+    }
+    std::string error;
+    if (!probe.writeResult(error)) {
+        checkpointProbeWriteFailed = true;
+        DuskLog.error("Failed to write checkpoint probe result: {}", error);
+    }
+}
+
 static void write_name_entry_trace_on_exit() {
     if (nameEntryTracePath.empty()) {
         return;
@@ -1992,6 +2043,9 @@ int game_main(int argc, char* argv[]) {
             ("input-controller", "Run a DUSKCTRL reactive controller, optionally after --input-tape", cxxopts::value<std::string>())
             ("exit-after-controller", "Exit after the final reactive controller frame executes", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-tick-budget", "Stop after this many completed logical simulation ticks", cxxopts::value<std::uint64_t>())
+            ("checkpoint-probe-source-frame", "Absolute tape frame captured as the source of an in-process A/B/A restore proof", cxxopts::value<std::size_t>())
+            ("checkpoint-probe-suffix-ticks", "Number of suffix ticks in each A/B/A checkpoint proof episode", cxxopts::value<std::size_t>())
+            ("checkpoint-probe-result", "Write the versioned checkpoint A/B/A proof result", cxxopts::value<std::string>())
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-thumbnail-png", "Capture the retained terminal frame when a human input recording closes cleanly", cxxopts::value<std::string>())
@@ -3010,6 +3064,76 @@ int game_main(int argc, char* argv[]) {
         }
     }
 
+    const unsigned checkpointProbeOptionCount =
+        static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-source-frame") != 0) +
+        static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-suffix-ticks") != 0) +
+        static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-result") != 0);
+    if (checkpointProbeOptionCount != 0 && checkpointProbeOptionCount != 3) {
+        fprintf(stderr,
+                "Checkpoint Probe Error: source frame, suffix ticks, and result path must be supplied together\n");
+        return 1;
+    }
+    if (checkpointProbeOptionCount == 3) {
+        const std::size_t sourceFrame =
+            parsed_arg_options["checkpoint-probe-source-frame"].as<std::size_t>();
+        const std::size_t suffixTicks =
+            parsed_arg_options["checkpoint-probe-suffix-ticks"].as<std::size_t>();
+        const std::string resultArgument =
+            parsed_arg_options["checkpoint-probe-result"].as<std::string>();
+        if (!headlessMainLoop || !hasInputTape || inputTapeHasConditions || stageBootPending ||
+            hasInputController || hasInputTapeFastForward || hasRecordInputTape ||
+            hasRealizedInputTape || exitAfterInputTape || automationLogicalTickBudget != 0 ||
+            frameCaptureEnabled || playbackThumbnailCaptureEnabled || hasAutomationOracle ||
+            hasNameEntryTrace || parsed_arg_options.count("gameplay-trace") != 0 ||
+            parsed_arg_options.count("actor-catalog") != 0 ||
+            parsed_arg_options.count("milestones") != 0 ||
+            parsed_arg_options.count("milestone-program") != 0 ||
+            parsed_arg_options.count("milestone-goal") != 0 ||
+            parsed_arg_options.count("milestone-result") != 0 ||
+            parsed_arg_options.count("automation-phase-timing") != 0 ||
+            parsed_arg_options.count("stage") != 0 ||
+            parsed_arg_options["load-save"].as<std::uint8_t>() != 0 ||
+            inputTapeEndBehavior != dusk::automation::TapeEndBehavior::Release ||
+            dusk::automation::input_tape_player().tape().boot.kind !=
+                dusk::automation::TapeBootKind::Process)
+        {
+            fprintf(stderr,
+                    "Checkpoint Probe Error: the proof requires a headless absolute default boot tape with release-at-end and no controller, fast-forward, recording, capture, oracle, trace, catalog, milestones, stage override, timing artifact, tick budget, or exit-after-tape mode\n");
+            return 1;
+        }
+        if (suffixTicks == 0 || sourceFrame > inputTapeFrameCount ||
+            suffixTicks > inputTapeFrameCount - sourceFrame)
+        {
+            fprintf(stderr,
+                    "Checkpoint Probe Error: source %zu plus suffix %zu exceeds the %zu-frame tape\n",
+                    sourceFrame, suffixTicks, inputTapeFrameCount);
+            return 1;
+        }
+        if (resultArgument.empty()) {
+            fprintf(stderr, "Checkpoint Probe Error: result path cannot be empty\n");
+            return 1;
+        }
+        const std::filesystem::path resultPath = std::filesystem::u8path(resultArgument);
+        std::error_code resultPathError;
+        if (std::filesystem::exists(resultPath, resultPathError)) {
+            fprintf(stderr, "Checkpoint Probe Error: result already exists: '%s'\n",
+                    resultArgument.c_str());
+            return 1;
+        }
+        if (resultPathError) {
+            fprintf(stderr, "Checkpoint Probe Error: cannot inspect result path: %s\n",
+                    resultPathError.message().c_str());
+            return 1;
+        }
+        std::string configureError;
+        if (!dusk::automation::checkpoint_probe().configure(
+                sourceFrame, suffixTicks, resultPath, configureError))
+        {
+            fprintf(stderr, "Checkpoint Probe Error: %s\n", configureError.c_str());
+            return 1;
+        }
+    }
+
     if (hasInputController) {
         inputControllerPath = parsed_arg_options["input-controller"].as<std::string>();
         if (inputControllerPath.empty()) {
@@ -3665,14 +3789,19 @@ int game_main(int argc, char* argv[]) {
             dusk::automation::EyeShredderOracleStatus::Passed;
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
-        milestoneTracker.goalConfigured() && !milestoneTracker.goalReached();
+        milestoneTracker.goalConfigured() && !milestoneTracker.goalReached() &&
+        !dusk::automation::checkpoint_probe().enabled();
+    const auto& checkpointProbe = dusk::automation::checkpoint_probe();
+    const bool checkpointProbeIncomplete =
+        checkpointProbe.enabled() && !checkpointProbe.completed() && !checkpointProbe.failed();
     const bool processInfrastructureFailed =
         nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
         realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
         milestoneResultWriteFailed ||
         eyeShredderOracleResultWriteFailed || eyeShredderOracleFailed ||
         deterministicTimeAdvanceFailed || inputTapePlaybackFailed || frameCaptureFailed ||
-        frameCaptureEnabled;
+        frameCaptureEnabled || checkpointProbeFailed || checkpointProbeWriteFailed ||
+        checkpointProbeIncomplete;
     const bool processFailedBeforeRecording =
         processInfrastructureFailed || milestoneGoalFailed;
 

@@ -172,6 +172,21 @@ enum class InputTapePlaybackError {
 
 const char* input_tape_playback_error_message(InputTapePlaybackError error);
 
+struct InputTapePlayerState {
+    std::size_t nextFrame = 0;
+    std::uint8_t ownedPorts = 0;
+    TapeEndBehavior endBehavior = TapeEndBehavior::Release;
+    bool playing = false;
+    bool releasePending = false;
+    std::uint16_t conditionWaitTicks = 0;
+    bool conditionPulseNeutral = false;
+    InputTapePlaybackError playbackError = InputTapePlaybackError::None;
+    std::size_t failedFrame = 0;
+    InputFrameCondition failedCondition = InputFrameCondition::None;
+
+    bool operator==(const InputTapePlayerState&) const = default;
+};
+
 /**
  * Game-thread tape player. Loading may allocate; tick() never does.
  */
@@ -198,6 +213,8 @@ public:
     std::size_t frameCount() const { return mTape.frames.size(); }
     std::uint8_t ownedPorts() const { return mOwnedPorts; }
     const InputTape& tape() const { return mTape; }
+    [[nodiscard]] InputTapePlayerState captureState() const;
+    [[nodiscard]] bool restoreState(const InputTapePlayerState& state);
 
 private:
     void apply(const InputFrame& frame);
