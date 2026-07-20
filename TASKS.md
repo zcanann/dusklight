@@ -1,411 +1,246 @@
-# Learning framework execution plan
+# Active task: build a learning system, then prove it on Ordon
 
-The objective is a deterministic, native-speed learning system that can discover
-and optimize controller-input solutions which are meaningfully better than a
-human editing a tape frame by frame.
+The immediate objective is not another procedural route search:
 
-This is an ordered execution plan, not a wishlist. The Ordon Springs 125-tick
-route remains the first integration benchmark, but it does not define the
-architecture. Skybook is a requirements corpus used to test whether the
-framework exposes enough of the game to control difficult glitches; it is not a
-checklist we promise to reproduce blindly.
+> Build an integrated learning loop that retains complete experience, learns
+> which state and actions predict future success, and uses that knowledge to
+> discover and optimize input sequences. Prove it first on the Link-control to
+> Ordon Springs segment.
 
-## Non-negotiable invariants
+The 125-tick tape is a demonstration and baseline, not the route definition.
+The framework must support both learning from that demonstration and attempting
+the same goal without demonstration-relative features.
 
-- Identical input and identical initial state must produce identical per-tick
-  gameplay state. Any disagreement is a framework bug to investigate, never a
-  reason to search for a more timing-tolerant tape.
-- Normal observation is read-only. Fork-owned observers may copy already
-  realized game state behind `DUSK_ENABLE_AUTOMATION_OBSERVERS`; they may not
-  change gameplay logic, object layout, initialization, control flow, caches,
-  RNG, collision state, or outcomes.
-- A learned controller may inspect state while searching, but every promoted
-  result is the exact raw PAD sequence it consumed and must pass repeated,
-  input-only cold playback.
-- Simulation time is fixed logical ticks. Rendering, shader compilation, host
-  I/O, process startup, and checkpoint restore time never enter a route score.
-- Per-tick capture, policy execution, and input application stay native. Rust
-  may schedule batches, manage corpora, train models, and promote artifacts; it
-  is not a per-frame dependency.
-- Checkpoints accelerate experiments but never establish correctness. They must
-  reproduce the same future state sequence as their cold-boot prefix.
-- Comprehensive capture and learner input are separate contracts. Preserve a
-  rich canonical record, then derive versioned learner views from it so a newly
-  useful feature does not require repeating every old experiment.
-- Route-specific geometry, waypoint rewards, and incumbent-relative mutations
-  are allowed only as declared baselines. They are not evidence that a learner
-  discovered a solution.
-- Methods are compared under equal simulated-tick budgets. Promotion is based
-  on terminal predicates, deterministic replay, and held-out behavior rather
-  than training loss or algorithm names.
+## Invariants
 
-## 0. Research the control surface before designing the learner
+- Identical initial state and consumed PAD must produce identical per-tick
+  gameplay state. Any disagreement is a framework bug.
+- Normal automation observes state and supplies controller input; it does not
+  patch gameplay state. Checkpoints are an acceleration mechanism only.
+- Every promoted result is the exact realized PAD sequence and must replay from
+  an ordinary cold boot without a policy, checkpoint, or gameplay write.
+- Terminal predicates and simulated ticks are authoritative. Auxiliary rewards,
+  learned values, novelty, and demonstrations may guide exploration but cannot
+  declare success.
+- Capture broadly, but present state to learners through versioned structured
+  views. Do not flatten native memory, pointers, renderer state, or future
+  information into model input.
+- Per-tick observation, policy inference, and PAD application remain native.
+  Training and batch orchestration may run outside the frame loop.
+- Compare methods under the same simulated-tick budget and initial-state
+  distribution. Training loss and algorithm names are not results.
 
-This phase is deliberately first. We do not know enough yet about which state
-is universally available, which state varies by stage, or which missing facts
-make representative glitches unlearnable.
+## Existing evidence
 
-### 0.1 Inventory and boot the complete stage universe
+- The first-Link-control checkpoint has passed repeated restore and cold-prefix
+  equivalence tests.
+- Native suffix execution evaluated 18,867 candidates and 2,358,375 ticks
+  without beating the 125-tick incumbent.
+- Those attempts retained terminal endpoints for failures and were generated
+  by route-specific mutation families. They are evidence against that search
+  method, not a learning corpus.
+- The older Q path retained some trajectories, but its inspected campaign used
+  only 3,489 transitions from 12 episodes, sparse terminal-only progress, and a
+  coarse action catalog. It is a baseline, not a completed learner.
 
-- [ ] Build an authoritative inventory from game data of every declared stage,
-  room, layer, and spawn-point combination. Do not probe guessed numeric ranges
-  and mistake crashes for a catalog.
-- [ ] Record the fixture requirements that affect a valid boot: form, entrance,
-  inventory, event/save flags, time, mounted state, and any stage-specific
-  dependencies discovered during enumeration.
-- [ ] Boot every catalogued spawn through the native harness. For each origin,
-  retain readiness, crash/timeout, initial fingerprint, and a bounded neutral
-  trace followed by a small standardized input probe.
-- [ ] Repeat every boot sufficiently to detect nondeterminism. Compare observer
-  on/off and headful/render-sink execution; quarantine the first divergent tick
-  and component.
-- [ ] Produce a compact review queue. Inspect at least one headful run for every
-  distinct stage/room/layer scene configuration, plus every spawn whose actors,
-  collision, triggers, readiness, or outcome differ from its siblings.
-- [ ] Replace the current one-entry stage-smoke fixture with a generated,
-  versioned coverage catalog and a human-readable coverage report. The report
-  must distinguish valid, conditionally valid, invalid-by-game-data, crashing,
-  timed-out, and not-yet-understood origins.
+## 1. Turn every attempt into learning experience
 
-For every boot, audit these families rather than merely proving that Link
-appeared:
+- [ ] Extend the native checkpoint batch loop to retain, for every candidate
+  tick: pre-action observation, chosen action and exact consumed PAD,
+  post-action observation, predicate/event changes, terminal status, remaining
+  tick budget, and deterministic state identity.
+- [ ] Capture failures and successes through the same episode contract. A
+  failed attempt must no longer collapse to one terminal X/Z observation.
+- [ ] Define a canonical, versioned observation envelope containing:
+  - Link motion, facing, action/animation phase, timers, form and relevant
+    status;
+  - recent controls and camera state;
+  - contact manifolds, collision correction, surface identity and normals;
+  - generic local clearance/geometry queries in Link-relative coordinates;
+  - active gameplay actors as a deterministically ordered variable-length set
+    with stable semantic identity, relative transform, velocity, type and
+    available typed components;
+  - triggers, exits, loading/event state, goal state, clocks and RNG identity.
+- [ ] Store immutable map geometry, placements, and type metadata once per
+  world identity. Per-tick episodes reference static data and retain dynamic
+  state rather than copying the entire map.
+- [ ] Remove arbitrary learner-facing actor truncation. If capture is bounded
+  for measured performance reasons, record the selection rule and omitted
+  count so the sample cannot masquerade as complete.
+- [ ] Enforce decision-phase correctness: model input may contain only state
+  realized before its chosen action. Add explicit tests against one-frame and
+  terminal-label leakage.
+- [ ] Buffer episodes in memory and write compact content-addressed binary
+  shards, not one file per attempt or tick. Bind every shard to build, game
+  data, checkpoint, observation schema, action schema, objective and fidelity.
+- [ ] Add corpus inspection for missing channels, masks, NaNs, constants,
+  discontinuities, set sizes, action coverage, outcome balance, duplicate
+  trajectories, and possible identity leakage.
+- [ ] Prove observation on/off parity and raw-PAD/state-hash equivalence with
+  cold playback.
 
-- Link, mount, camera, controller history, action/procedure/animation, timers,
-  velocity, form, and inventory-relevant state;
-- every active gameplay actor, including enemies, NPCs, pickups, projectiles,
-  movable objects, doors, switches, and actor-backed tags/triggers;
-- actor identity, type/profile, set and room identity, parameters, parent/owner,
-  transform, velocity, health, status, action/animation, collision volume,
-  contacts, targeting, timers, and other deterministic fields justified by the
-  observer audit;
-- static collision and placement data, plus dynamic contact manifolds, surface
-  identity/normals, clearance, scene exits, event regions, and non-actor
-  triggers;
-- event/cutscene state, flags, RNG state/counters, loading and transition state,
-  UI ownership, and resource/heap facts that may affect gameplay;
-- explicit absence, staleness, invalidity, and truncation for every channel.
+**Gate 1:** one native Ordon batch produces complete replayable trajectories
+for every success and failure, can be ingested directly by the learner, has no
+silent truncation or future leakage, and preserves deterministic cold playback.
 
-The actor trace currently retains at most 16 non-player actors. That is useful
-diagnostic scaffolding, not acceptable learner coverage. The research capture
-must retain every active gameplay actor without arbitrary selection. Static
-actor/type/placement metadata should be stored once; dynamic records should be
-variable-length, deterministically ordered sets keyed by stable portable
-identity. Native pointers must never become identities or learned features.
+## 2. Make experience collection fast enough to learn
 
-**Gate 0A:** every game-data-declared spawn has a classified boot result and
-repeat evidence; every distinct scene configuration has been reviewed; no
-successful run silently truncates an audited observation family.
+- [ ] Keep the game process, disc resources, and source checkpoint alive across
+  many batches. Training must not relaunch or replay the boot prefix per
+  candidate.
+- [ ] Support validated intermediate checkpoints along recorded trajectories so
+  short-horizon experiments do not replay unrelated earlier decisions.
+- [ ] Profile checkpoint restore, simulation, observation capture, policy
+  inference, corpus encoding, GPU work and CPU draw traversal independently.
+- [ ] Implement a true no-present render sink: no visible window, presentation,
+  shader compilation, or GPU submission during farming while retaining any
+  CPU-side work still required for equivalent gameplay.
+- [ ] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
+  identical future gameplay across representative movement, actor, event and
+  loading states. A mismatch blocks the optimization.
+- [ ] Run fixed logical ticks uncapped; never alter the simulated framerate to
+  increase throughput.
+- [ ] Scale persistent workers only after measuring the single-worker loop.
+  Choose process count with checkpoint memory bandwidth and crash isolation in
+  mind rather than an arbitrary client limit.
+- [ ] Publish useful transitions/second, episode throughput, restore cost,
+  observation cost, inference cost, corpus bytes/transition and CPU/GPU share.
 
-### 0.2 Audit Skybook for controllability, not replication
+**Gate 2:** the trajectory-producing learner loop is materially faster than
+cold prefix replay, and every approved fast mode produces the same realized
+PAD and gameplay sequence as ordinary playback.
 
-The checked corpus currently contains 483 pages, including 452 categorized as
-glitches. Its dominant tags already span movement, collision, cutscenes, warp,
-memory behavior, storage, combat, actor corruption, crashes, RNG, and many
-map-specific mechanisms. A route optimizer designed only around Link position
-cannot credibly address that surface.
+## 3. Give learners general state and precise control
 
-- [ ] Create a structured, revision-bound requirements inventory for every
-  Skybook page. This is triage, not an implementation commitment.
-- [ ] For each page, record the documented initial conditions, controller
-  actions, timing precision, relevant actors and geometry, hidden state, RNG or
-  platform dependencies, expected outcome, likely checkpoint boundary, and a
-  semantic proof candidate.
-- [ ] Classify every required fact as `captured`, `derivable`, `missing`,
-  `unsafe-to-query`, or `unknown`. Classify every required action as raw-PAD
-  expressible, expressible by an existing native tactic, missing a useful
-  tactic, or dependent on an intervention that cannot prove a real glitch.
-- [ ] Group pages by causal mechanism rather than by map or title. At minimum,
-  cover movement/camera, static collision, actor displacement and combat,
-  pickup/item synchronization, mounted movement, trigger/event/cutscene state,
-  storage/flags/inventory, loading/warp/save state, RNG, resource/actor-slot
-  pressure, memory corruption, crash, and renderer-visible consequences.
-- [ ] Deep-read representative pages from every mechanism family, including
-  several narrow, frame- and float-sensitive setups. Trace their required facts
-  into actual game types and existing observer fields. Do not infer coverage
-  merely because a generic `position` or `status` field exists.
-- [ ] For each representative, boot its relevant scene when known and capture a
-  short native trace. Confirm whether the referenced actors, surfaces, triggers,
-  action phases, timers, and outcome evidence are actually present and stable.
-- [ ] Record gaps as generic capabilities where possible. For example, prefer
-  `contact manifold plus action phase` over a feature named for one Ordon wall.
-  Preserve genuinely type-specific state as a versioned actor component rather
-  than forcing unrelated maps into a fake universal scalar layout.
+- [ ] Derive declarative learner views from the canonical episode envelope.
+  Models may request or ablate channel families without recollecting episodes.
+- [ ] Represent actors, contacts and nearby geometry as masked sets or graphs,
+  not fixed actor slots whose iteration order becomes accidental meaning.
+- [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
+  goal-relative features. Generic physics relationships are observations, not
+  route rewards.
+- [ ] Always retain exact raw PAD as the ground-truth action.
+- [ ] Replace the 16-heading/full-magnitude learned catalog with a factorized
+  hybrid action surface covering stick direction and magnitude, sub-stick,
+  button edges/holds and duration at frame-precise resolution.
+- [ ] Let a policy invoke bounded stateful tactics through the same native
+  episode boundary. Tactics may query read-only world state, but their exact
+  consumed PAD and every intermediate transition must be recorded.
+- [ ] Begin with generic options already justified by control needs: maintain a
+  relative heading/offset, seek a coordinate or portable actor identity,
+  compose a short curve, control camera while moving, and synchronize a button
+  edge with an observed action phase. Do not encode Ordon coordinates or the
+  incumbent's corner frames.
+- [ ] Support short observation history or recurrent state for action phases
+  and hidden timers that a single frame cannot make Markov.
 
-The resulting matrix must answer two separate questions:
+**Gate 3:** the same model-facing contracts execute raw input, precise
+continuous adjustments and stateful tactics; every execution exports an
+identical standalone tape, and the observation encoder handles different actor
+and geometry set sizes without schema changes.
 
-1. Could a state-aware policy control the documented setup with the facts and
-   actions currently available?
-2. Could Dusklight prove the outcome without patching gameplay or relying only
-   on a screenshot?
+## 4. Build the first genuine learning loop
 
-An `unknown` answer is valid research output (unless Skybook itself is
-under-specified). Pretending that a coarse actor record is sufficient is not.
+- [ ] Maintain a replay corpus containing demonstrations, successful and failed
+  policy rollouts, randomized coverage and alternate terminal states. Preserve
+  checkpoint, episode, branch and policy-generation lineage.
+- [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
+  `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
+  edge or distance along the incumbent as the learned objective.
+- [ ] Propagate the real terminal outcome backward through complete
+  trajectories. Use n-step returns, replay, target isolation and uncertainty
+  appropriate to the chosen Q/value method.
+- [ ] Use reverse curriculum from actual successful states: learn the final
+  viable action basin, then move validated checkpoints backward. A state is
+  useful when an actual continuation reaches the predicate, not when it falls
+  inside a hand-authored floating-point waypoint epsilon.
+- [ ] Add hindsight goals so failures teach achieved transitions and local
+  dynamics even when they miss the main predicate.
+- [ ] Use a hybrid proposal policy: learned value/reachability ranks
+  checkpoint-backed short-horizon exploration, while continuous trajectory
+  optimization handles analog parameters and discrete search handles button
+  edges. Simulation remains the outcome authority.
+- [ ] Compare at least:
+  - the existing endpoint/local mutation baseline;
+  - a small fitted or Double-Q learner using the new corpus;
+  - a learner/search combination capable of the hybrid continuous action
+    surface.
+- [ ] Add held-out checkpoint evaluation and negative controls: shuffled
+  outcomes, action-only input, removed collision/geometry, removed actors and
+  removed history. Reject models that memorize frame, RNG, checkpoint or tape
+  identity instead of predicting held-out outcomes.
+- [ ] Track terminal success, time-to-go error, calibration, critic disagreement,
+  effective state/action coverage and success by checkpoint. Do not promote on
+  training loss.
 
-**Gate 0B:** each major Skybook mechanism has at least one source-backed
-control/proof analysis and one relevant runtime inspection where a scene is
-known. Every observed gap is tied to a concrete example, and no unselected page
-has silently become a promise to reproduce it.
+**Gate 4:** under equal simulated-tick budgets, learned state-conditioned
+proposals produce more held-out successes or faster valid routes than the
+procedural mutation baseline, and the advantage disappears under appropriate
+negative controls rather than surviving through leakage.
 
-### 0.3 Freeze the first evidence-driven benchmark ladder
+## 5. Prove optimization and discovery separately on Ordon
 
-- [ ] Select a small ladder only after gates 0A and 0B:
-  1. Ordon Link-control to `ordon_spring_load_committed`, testing route learning;
-  2. a movement goal on a held-out map, testing transfer rather than memorized
-     coordinates;
-  3. the Telma/Louise text-displacement setup, testing precise actor/trigger/
-     dialogue synchronization and persistent event state.
-- [ ] For each benchmark, define the initial-state identity, terminal predicate,
-  allowed observation families, action surface, simulated-tick budget, training
-  budget, and cold-playback promotion gate before training begins.
-- [ ] Retain hand-authored tapes, hard-coded tactics, random search, and the old
-  Ordon endpoint search as explicit equal-budget baselines.
+### 5A. Demonstration-seeded optimization
 
-**Gate 0C:** the ladder covers route optimization, cross-map transfer, and a
-thin success manifold without requiring the whole future framework at once.
+- [ ] Ingest the 125-tick tape as one successful demonstration, not as a reward
+  function or mandatory corridor.
+- [ ] Train from the first-Link-control source with terminal success and tick
+  cost as authority. Permit the policy to leave the demonstrated trajectory.
+- [ ] Use the learned critic/curriculum to find and exhaust at least one valid
+  sub-125 route.
+- [ ] Export and cold-replay the winner five times with identical per-tick
+  state, first-hit tick, terminal predicate and terminal fingerprint.
 
-## 1. Build a lossless native transition corpus
+**Gate 5A:** deterministically beat 125 ticks, and equal-budget ablation shows
+that learned state/action relationships—not a new Ordon-specific mutation
+family—produced the improvement.
 
-- [ ] Replace endpoint-only suffix results with a native per-decision record:
-  pre-action observation, exact chosen action/PAD, post-action observation,
-  events, terminal status, predicate progress, and state-sequence identity.
-- [ ] Define a versioned canonical observation envelope with variable-length
-  typed sets for actors, contacts, triggers, exits, and events. Missing fields
-  require explicit masks; arbitrary fixed actor slots are forbidden.
-- [ ] Store static stage geometry, placements, and immutable type metadata once
-  by game-data identity. Per-tick records reference those objects and contain
-  only dynamic state.
-- [ ] Capture all active gameplay actors by default. If a measured throughput
-  optimization later filters a learner view, the canonical episode must still
-  disclose what was omitted and permit rebuilding a different view.
-- [ ] Add deterministic history for facts that are not Markov in a single
-  sample: recent PAD, contacts, action transitions, camera motion, spawn/despawn
-  events, and predicate changes.
-- [ ] Write compact, content-addressed episode shards from in-memory batches.
-  Bind build, game data, scenario/checkpoint, observation schema, action schema,
-  objective, seed, and fidelity. Do not write a file per attempt or per tick.
-- [ ] Feed successful demonstrations, ordinary failures, near successes,
-  randomized exploration, and learner rollouts into the same corpus contract.
-  Preserve episode and branch boundaries.
-- [ ] Add corpus inspection that reports feature availability, actor/set size
-  distributions, truncation, constants, NaNs, leakage, action coverage, success
-  balance, and state/next-state discontinuities.
-- [ ] Run observation-off/on A/B/A parity for every newly admitted field. Any
-  observer-induced divergence blocks that field and its dependent models.
+### 5B. Goal-only discovery
 
-**Gate 1:** an in-process Ordon batch yields a replayable trajectory for every
-attempt rather than one terminal X/Z point; the same contract records audited
-actors on multiple structurally different maps with no silent truncation; raw
-PAD and state hashes agree with equivalent cold playback.
+- [ ] Start from the same checkpoint and terminal predicate without supplying
+  the demonstration tape, incumbent-relative mutations, path coordinates or
+  route-progress features.
+- [ ] Allow generic world observations, raw actions, tactics, intrinsic
+  exploration and the shared mechanics corpus.
+- [ ] Preserve diverse behavior rather than only the state with smallest
+  Euclidean or exit-plane distance.
+- [ ] Produce a successful route and cold-replay its realized tape.
 
-## 2. Make local experience cheap without changing simulation
+**Gate 5B:** the system discovers a deterministic route to Ordon Springs from
+the goal and world state alone. Its speed may initially trail the optimized
+lane; discovery, not parity with the 125-tick demonstration, is the gate.
 
-- [ ] Keep native workers persistent across batches. Process launch, boot, and
-  prefix replay must not occur per candidate.
-- [ ] Support validated checkpoints at the source of a segment and at useful
-  intermediate curriculum boundaries. Restore must include every state
-  component required to reproduce the next validation window exactly.
-- [ ] Profile capture, restore, simulation, observation, inference, and artifact
-  encoding separately before optimizing any one of them.
-- [ ] Implement and measure a no-present render sink first. Remove draw traversal
-  only if observer-off/on and headful/renderless state sequences prove that the
-  skipped work has no gameplay consequence on the audited stage suite.
-- [ ] Keep crash-prone experiments in disposable worker processes while still
-  batching many safe attempts per process. A crash must lose at most the active
-  uncommitted batch and must retain its input/model/checkpoint identity.
-- [ ] Choose worker count, CPU affinity, batch size, observation density, and
-  checkpoint tier from measured candidate-ticks per second and deterministic
-  restore cost, not an arbitrary client limit.
+## 6. Prepare for narrow-basin glitch discovery
 
-**Gate 2:** the same raw tapes produce identical gameplay sequences in the
-approved execution modes, and local checkpointed training gains enough measured
-throughput to justify its complexity over cold prefix replay.
+Only after gates 1-5 work end to end:
 
-## 3. Expose a learnable, cross-map state and action language
+- [ ] Add a quality-diversity archive over generic relational state: spatial
+  region, contact/surface relationships, action phase, velocity, actor/item
+  relationships, event/inventory changes and novel displacement.
+- [ ] Add intrinsic exploration signals based on new state/contact/event
+  combinations and learned-dynamics disagreement. They prioritize experiments
+  but never prove a glitch.
+- [ ] Mine recurring successful action sequences as candidate reusable options
+  while retaining raw-PAD refinement.
+- [ ] Select one bounded, explicitly requested thin-success-manifold benchmark
+  to test precise continuous setup plus synchronized actions. Choose it from
+  observed framework gaps at that time; do not pre-commit to the Skybook
+  catalog or a particular glitch here.
+- [ ] Require an input-only deterministic proof for every claimed outcome.
 
-### Observation representation
+**Gate 6:** the system can retain and revisit rare physically interesting
+states, compose precise setup and action timing, and prove one selected
+narrow-basin outcome without a human supplying its successful frame sequence.
 
-- [ ] Keep a stable outer schema: player, recent control, camera, contacts,
-  actors, triggers/exits, local geometry, global stage context, and goal.
-  Contents may vary by map without changing the envelope.
-- [ ] Encode actors, contacts, and nearby geometry as permutation-invariant sets
-  or graphs. Include type and component masks so enemies, pots, NPCs, pickups,
-  and stage mechanisms can expose different typed state safely.
-- [ ] Separate a shared Link/camera/collision encoder from map geometry context,
-  goal encoding, and small map- or mechanism-specific adapters. A new map may
-  add an optional typed component; it may not redefine every existing feature.
-- [ ] Preserve absolute world context while also deriving Link-, camera-,
-  surface-, and target-relative features. This allows transfer of concepts such
-  as clearance, approach angle, wall contact, and actor interception without
-  prescribing a route.
-- [ ] Permit privileged read-only state during training and critic evaluation
-  when the audit justifies it. Record that dependency explicitly; the promoted
-  tape remains raw input-only.
-- [ ] Make observation views declarative and ablatable. Train/evaluate with
-  channel families removed to prove which information contributes signal.
+## Explicitly not current work
 
-### Action representation
-
-- [ ] Always retain exact raw PAD as the ground truth action.
-- [ ] Provide a factorized native action surface for analog stick direction and
-  magnitude, camera/sub-stick, button edges, holds, and durations. Do not force
-  fine movement into a handful of full-magnitude compass headings.
-- [ ] Expose bounded stateful tactics only where the research audit demonstrates
-  recurring value: seek an actor or coordinate, maintain relative offset,
-  follow/compose a curve, control camera while preserving movement, time rolls,
-  and synchronize an action edge with an observed phase.
-- [ ] Treat tactics as temporally extended policy options whose exact consumed
-  PAD is recorded. They may improve exploration and credit assignment, but a
-  learner must remain able to choose or refine raw per-tick input.
-- [ ] Resolve targets through portable actor/placement/type identities and
-  explicit selection rules, never pointers or accidental iteration order.
-
-**Gate 3:** one model-facing schema batches variable actor and geometry sets
-from multiple maps; actions cover both coarse traversal and frame-precise analog
-adjustments; every policy execution materializes an identical standalone tape.
-
-## 4. Establish that learning, rather than mutation volume, drives progress
-
-- [ ] Define a goal-conditioned interface approximating value and policy from
-  `state + goal + remaining tick budget`, not a separate hard-coded network
-  input for every route.
-- [ ] Use terminal success and tick cost as the authoritative task reward. Add
-  hindsight goals, reverse curriculum, reachability estimates, or representation
-  objectives to make sparse success learnable; do not encode the incumbent's
-  waypoints as the answer.
-- [ ] Bootstrap from human demonstrations when useful, but keep a source-only
-  lane with no demonstration-relative distance, mutation position, or corridor
-  features. A demonstration is one successful episode, not the reward function.
-- [ ] Start local curricula near real success states, learn the viable basin of
-  precise actions and preconditions, then move checkpoints backward. Preserve
-  alternate successful states instead of assuming the fastest local state has
-  the best continuation or RNG.
-- [ ] Maintain replay mixtures across successes, hard failures, diverse states,
-  maps, goals, and policy generations. Use priority and uncertainty without
-  allowing a tiny set of terminal transitions to dominate value scale.
-- [ ] Compare suitable learners under the same corpus and simulation budget.
-  At minimum include a non-learning action-search baseline, the existing fitted
-  or Double-Q path, and a method capable of the audited hybrid/continuous action
-  space. Select algorithms from held-out terminal performance and sample
-  efficiency, not from the label `DQN` or `DDQN`.
-- [ ] Add negative controls: shuffled outcomes, removed geometry/actor channels,
-  action-only prediction, and held-out checkpoints. A claimed signal that
-  survives shuffled labels or fails held-out states is not useful learning.
-- [ ] Track calibrated success probability, time-to-go error, critic ensemble
-  disagreement, state/action coverage, and terminal success by checkpoint and
-  map. Training loss alone is never a campaign result.
-
-**Gate 4:** under equal simulated-tick budgets, the learner repeatedly produces
-more held-out terminal successes or faster valid routes than random/local tape
-mutation and the current procedural proposal families. Results must survive a
-fresh process and exact cold replay.
-
-## 5. Prove the architecture on the benchmark ladder
-
-### 5.1 Ordon Springs
-
-- [ ] Re-run the 125-tick segment with the new trajectory corpus. Do not use the
-  hard-coded Ordon exit edge, incumbent-relative waypoint rewards, or fixed
-  mutation windows as learner input.
-- [ ] Verify that contacts, wall-relative geometry, camera, action/roll phase,
-  and the full relevant actor set are available before deciding what the model
-  should ignore.
-- [ ] Train from the same source checkpoint with a declared demonstration lane
-  and a demonstration-free lane. Report sample budget and learning curves for
-  both.
-- [ ] Export every improvement as raw PAD, repair downstream segments only when
-  requested, and cold-prove any promoted tape repeatedly.
-
-**Gate 5A:** deterministically beat 125 ticks, and ablation/equal-budget evidence
-shows that state-conditioned learning—not an Ordon-specific proposal family—was
-responsible for finding useful actions.
-
-### 5.2 Held-out map transfer
-
-- [ ] Hold one audited movement scene out of shared representation/dynamics
-  training.
-- [ ] Compare adaptation from the shared model against training the same model
-  from scratch under an equal local sample budget.
-- [ ] Record which generic channels transfer and which optional map components
-  are newly required. Evolve the versioned schema rather than forking an
-  unrelated format.
-
-**Gate 5B:** the shared model reaches the held-out goal with a measured sample
-efficiency advantage, or the failure produces a specific representation gap
-supported by traces and ablation.
-
-### 5.3 Telma/Louise text displacement
-
-Use Skybook's `telma-dialog-skip-grants-text-displacement` as the first thin,
-actor-dependent setup. The learner must make Louise's meow cutscene interrupt
-Telma's dialogue by interacting with Louise while Link enters Telma's dialogue
-trigger. The interrupted dialogue leaves shared text-progression state behind;
-subsequent interactions with Telma advance the displaced dialogue one box at a
-time.
-
-- [ ] Author a declared stage-boot fixture inside Telma's Bar with the normal
-  post-twilight progression flags required for both Telma and Louise to be
-  present in their intended states. Record the exact stage, room, layer, spawn,
-  form, inventory, and flag identity. Boot overrides establish tick-zero state;
-  no intervention may write gameplay state after playback begins.
-- [ ] Confirm through the stage audit that Telma, Louise, Telma's dialogue
-  trigger, and any actor or event controller responsible for the meow cutscene
-  are captured with stable identities and useful transforms/state. If the
-  trigger is not an ordinary actor, expose its realized volume and enabled/event
-  state through the read-only observer boundary.
-- [ ] Identify the symbolic owners and meanings of the shared text-progression
-  bits documented by Skybook around GameCube addresses `80406F98`, `80406F99`,
-  and `80406F9D`. Expose the relevant fixed bits as a versioned, read-only event/
-  dialogue observation. Keep the addresses as source evidence, not as portable
-  native pointer identities.
-- [ ] Capture the normal control cases: Telma dialogue alone, Louise interaction
-  alone, entering the trigger without the required overlap, and ordinary
-  dialogue completion/cleanup. These establish which progression bits and event
-  ownership transitions are specific to the glitch.
-- [ ] Define diagnostic predicates for:
-  1. the authored fixture being ready with both actors and the trigger present;
-  2. Louise interaction and Telma trigger entry overlapping in the required
-     action/event window;
-  3. the meow cutscene taking event ownership before Telma's dialogue cleanup;
-  4. the displaced text-progression bit pattern persisting after that cutscene;
-     and
-  5. a later Telma interaction advancing exactly one of the dialogue boxes that
-     normally would have progressed during the interrupted sequence.
-- [ ] Make the persistent text-displacement state plus the one-box Telma
-  consequence the terminal semantic proof. Spatial overlap or an interrupted
-  event alone is diagnostic progress and cannot authorize promotion.
-- [ ] Learn locally from validated checkpoints near the interaction, expand the
-  successful timing/position basin, move the curriculum backward, and finally
-  produce an input-only tape from the declared Telma's Bar fixture.
-- [ ] Do not provide the learner with the successful input frame or a scripted
-  `talk now` condition. It may observe actor, trigger, action, event, dialogue,
-  and text-bit state and choose from the normal PAD/tactic action surface.
-
-**Gate 5C:** the framework repeatedly acquires text displacement and proves the
-one-box-at-a-time Telma behavior from the declared post-twilight boot fixture,
-then cold-replays the exact raw tape with identical event and text-bit evidence.
-No gameplay writes, hard-coded outcome injection, or human-specified successful
-frame sequence may participate after tick zero.
-
-## 6. Only then open unknown-glitch discovery
-
-Do not build a general novelty workbench before gates 0 through 5 establish that
-the framework can observe, control, learn, and prove known bounded outcomes.
-Afterward, use the same corpus and native loop to add generic invariant and
-novelty objectives such as unexpected collision crossing, discontinuous motion,
-impossible actor overlap, action-state anomalies, event/flag inconsistency,
-resource exhaustion, or learned-dynamics disagreement. Keep novelty archives
-separate from semantic proof, and require deterministic input-only replay before
-calling any candidate a game glitch.
-
-## Existing evidence to retain as baselines
-
-- Trusted checkpoint restore and cold-prefix equivalence have already been
-  demonstrated for the current Ordon source state.
-- Native suffix batches have evaluated 18,867 candidates and 2,358,375 suffix
-  ticks without beating the 125-tick incumbent.
-- Those batches mostly retained terminal endpoints and used route-specific
-  mutation/ranking families. They establish that the current search is
-  insufficient; they are not a serious learning corpus.
-- The current `movement-state/v2` and selected-actor channels are useful seeds,
-  but their fixed scalar layout, coarse action catalog, and 16-actor trace cap
-  do not satisfy this plan's research or corpus gates.
+- Enumerating every stage, room, layer or spawn before the learning loop works.
+- Triaging or reproducing the entire Skybook catalog.
+- Preselecting a distant glitch benchmark before Ordon exposes the next real
+  limitation.
+- A general visualization workbench.
+- Route-specific waypoint rewards or hard-coded wall-follow instructions
+  presented as learning.
+- Dumping raw process memory or duplicating the entire static map every tick.
+- Scaling workers or model size to compensate for missing trajectories,
+  identical failure rewards, coarse actions or leakage.
