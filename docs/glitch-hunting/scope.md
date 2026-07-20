@@ -42,21 +42,14 @@ they are not inherently better harness tests than ordinary interactions. The
 revision-pinned Skybook manifest remains inert reference material until a human
 chooses a page after the basic objective suite is reliable.
 
-## Deferred scope
+## Active roadmap
 
-`TASKS_DEFERRED.md` holds non-active research and scale work: whole-corpus
-glitch reproduction, exhaustive query catalogs, whole-game determinism audits,
-portable checkpoints, advanced neural/model-based learning, autonomous novelty,
-causal interventions, a full graphical workbench, and distributed execution.
+`TASKS.md` is the sole roadmap. Its current completion gate is deliberately
+narrow: persistent native episodes, one exact Link-control checkpoint, generic
+tactics, causal learning, and a cold-proven machine improvement over the human
+Ordon route. Larger glitch, UI, multiclient, distributed, and general savestate
+programs are not active work merely because experimental scaffolding exists.
 
-Moving an item back requires evidence from a checked-in objective or a measured
-bottleneck, plus a reduced testable slice. Existing experimental implementation
-does not by itself make further expansion an active obligation.
-
-## Current won't-do boundaries
-
-Do not build distributed workers, deterministic multi-client networking, NUMA
-schedulers, OS process snapshots/forkservers, or per-page requirements for the
-Skybook corpus. Do not add arbitrary game-state writes to ordinary agent runs.
-Do not let a learner, novelty score, route topology, or visual impression bypass
-semantic objective evidence and cold replay.
+Do not add arbitrary game-state writes to ordinary agent runs. Do not let a
+learner, novelty score, route topology, checkpoint, intervention, or visual
+impression bypass semantic objective evidence and cold absolute-tape replay.

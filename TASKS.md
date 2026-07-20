@@ -1,602 +1,331 @@
-# Core automation harness backlog
-
-This is the active queue for one useful harness loop:
-
-1. boot directly into a small test scenario;
-2. query only the state needed by its objective;
-3. let scripted, random, search, or learned agents choose inputs;
-4. record comparable objective and episode evidence;
-5. narrow proposals to a winner; and
-6. prove that winner by cold-replaying its realized tape.
-
-Talking to one NPC or picking up one rock is as valuable here as reproducing a
-glitch. The current milestone is infrastructure confidence, not exhaustive
-game coverage or autonomous glitch discovery. Difficult, speculative, and
-whole-game work lives in [`TASKS_DEFERRED.md`](TASKS_DEFERRED.md).
-
-## Queue rules
-
-- `[x]` means the stated boundary exists and has direct test evidence.
-- Add a fact, action, or observer only when a checked-in objective needs it.
-- Missing state stays explicitly missing; it must never become false or
-  success by accident.
-- An agent, learner, or search algorithm proposes. Only semantic objective
-  proof and an independently replayable absolute tape can win.
-- Every comparison binds the exact scenario, build, objective, observation,
-  action, settings, seed, and proposer identities needed to reproduce it.
-- Ordinary harness runs are read-only with respect to gameplay state.
-- Put status and design notes under `docs/glitch-hunting/`; keep this file as
-  the short active queue.
-
-## 1. Cheap end-to-end objectives
-
-- [x] Define a versioned suite case that binds boot, scenario, objective,
-  required facts, seed input, budget, and expected terminal class.
-- [x] Check in a stage-ready case that boots directly into a map and proves
-  player/location readiness without controller input.
-- [x] Check in a reach-point case that moves Link into a bounded region and
-  proves stable arrival.
-- [x] Check in a talk-to-NPC case with an exact placed-NPC selector and proof
-  of the expected dialogue or event edge.
-- [x] Check in a pick-up-object case with an exact placed-object selector and
-  proof that Link carries or owns that object.
-- [x] Add a cheap negative control beside each positive case so nearby
-  position, wrong target, or missed interaction cannot satisfy the objective.
-- [x] Run the four cases twice through one public macOS command and retain one
-  machine-readable conformance report.
-
-**Done when:** these small cases exercise boot, control, query, objective, and
-evidence collection without a debug write, manual mid-run action, or visual
-judgment.
-
-## 2. One execution and episode boundary
-
-- [x] Preserve exact four-port controller state in canonical `DUSKTAPE`, with
-  exclusive ownership and realized-tape output.
-- [x] Support process boot and explicit stage/room/point/layer boot, including
-  an optional named save/loadout fixture and a readiness gate.
-- [x] Compile bounded static and reactive controllers while retaining an
-  ordinary absolute tape as replay authority.
-- [x] Define one authenticated run request and one typed run result covering
-  the executable, game data, scenario, objective, observations, actions, seed,
-  budgets, fidelity, evidence, and terminal reason.
-- [x] Route tape playback, reactive control, the active population search, and
-  learned proposals through that same request/result executor.
-- [x] Give a controller one versioned pre-input observation and require one
-  bounded action response without game-state mutation authority.
-- [x] Enforce the logical-tick budget independently of host timeout and retain
-  a precise terminal reason plus authenticated partial artifacts on failure.
-- [x] Define one immutable episode artifact aligning pre-input state, consumed
-  action, post-simulation state, objective/reward evidence, terminal reason,
-  realized tape, and lineage.
-
-**Done when:** random, scripted, search, and learned agents can attempt the same
-objective contract and produce directly comparable episode results.
-
-## 3. Minimum objective and state-query surface
-
-- [x] Compile deterministic objective predicates with Boolean composition,
-  comparisons, ranges, regions, stability, sequences, exact actor selectors,
-  flags, events, and named projections.
-- [x] Evaluate facts at one immutable post-simulation boundary and retain
-  first-hit evidence plus objective progress.
-- [x] Keep objective truth separate from reward shaping and proposer scores.
-- [x] Require declared observation families and return unsupported when their
-  evidence is unavailable or incomplete.
-- [x] Expose stable reached, exhausted, impossible, unsupported, timeout,
-  crash, hang, target-lost, and nondeterministic terminal classes.
-- [x] Inspect objective source, compiled identity, required facts, progress,
-  first hit, and missing evidence from the CLI.
-- [x] Define one versioned typed-fact response shared by live control, traces,
-  objective evaluation, and offline inspection, including explicit missingness
-  and source phase.
-- [x] Finish only the player, interaction, dialogue/event, carry/ownership,
-  exact placed-actor, and local spatial facts required by the four cases.
-- [x] Prove native and offline evaluation agree for every fact and objective
-  used by those cases.
-
-**Done when:** the four objectives see the same bounded facts online and
-offline, can explain missing evidence, and cannot confuse the wrong actor with
-the authored target.
-
-## 4. Small learning and proposal loop
-
-- [x] Provide deterministic nearest-neighbor, tabular, and tree-FQI baselines
-  over immutable transition batches.
-- [x] Provide structured candidate mutation and bounded search strategies with
-  pre-evaluation deduplication and per-proposer budget accounting.
-- [x] Define one candidate envelope for scripted, random, structured-search,
-  and learned proposals with exact parent, objective, action schema, seed, and
-  proposer identity.
-- [x] Freeze one dataset generation, train one simple baseline, and emit only
-  bounded candidate proposals; the learner cannot launch runs or claim proof.
-- [x] Collect successes, ordinary failures, and near misses for one cheap
-  objective, keeping evaluation episodes out of training until evaluation
-  closes.
-- [x] Compare the baseline against scripted/random/structured proposals under
-  the same native objective and simulator budget.
-- [x] Demonstrate on fixed seeds that the learned proposer improves native
-  proposal ordering over the best non-learned lane.
-- [x] Stop or fall back to structured proposals when required facts, action
-  support, determinism, or basic held-out performance are inadequate.
-
-**Done when:** one simple learner reproducibly improves proposal ordering for
-one cheap objective without receiving a separate execution or proof path.
-
-## 5. Narrow proposals into proved winners
-
-- [x] Rank candidates lexicographically by objective feasibility, progress,
-  first-hit tick, tape length/input complexity, and measured risk; unknown risk
-  must remain unknown.
-- [x] Preserve materially different successful boundary states long enough to
-  avoid narrowing onto a locally cheap but unusable result.
-- [x] Minimize a finalist only while preserving objective evidence, boot,
-  fidelity, and terminal boundary class.
-- [x] Cold-replay the realized tape at least twice with no controller or model
-  in the loop before calling it a winner.
-- [x] Keep contradictory replays and quarantine that candidate/build/scenario
-  combination instead of averaging the contradiction away.
-- [x] Emit a compact report comparing budget, objective hits, useful boundary
-  states, replay verdict, and best proved tape per proposer.
-
-**Done when:** the reported winner is a minimized, repeated, replayable tape,
-not a learner score, controller claim, or lucky filename.
-
-## 6. Minimal operator and reproducibility path
-
-- [x] Define operation-specific compatibility and provide `huntctl identity
-  compare` with precise incompatibility output.
-- [x] Reject incompatible inputs automatically at the active run, episode,
-  comparison, and replay boundaries.
-- [x] Add one top-level command that resolves a suite case, runs selected
-  proposers, ranks results, cold-replays finalists, and writes the report.
-- [x] Support a dry run showing resolved paths, identities, required facts,
-  capabilities, budgets, and output locations.
-- [x] Keep generated evidence under an ignored build root and print the first
-  unsupported or mismatched fact with its artifact path.
-- [x] Document the shortest macOS loop: inspect case, run, inspect evidence,
-  replay finalist, and explicitly keep or discard it.
-
-**Done when:** a developer can run and diagnose the cheap-objective loop from a
-clean macOS checkout without hand-assembling algorithm-specific commands.
-
-## Immediate implementation order
-
-1. [x] Finish the talk-to-NPC and pick-up-object facts and fixtures.
-2. [x] Route search and learned candidates through the authenticated executor.
-3. [x] Seal the shared episode artifact and pre-input observation/action turn.
-4. [x] Run scripted, random, structured, and one simple learned proposer on one
-   cheap objective under the same budget.
-5. [x] Rank, minimize, and cold-replay the finalists.
-6. [x] Publish one conformance/tournament report and use its measured friction
-   to decide what, if anything, returns from `TASKS_DEFERRED.md`.
-
-## 7. Exact anchored-route finalist minimization
-
-- [x] Add `huntctl search minimize-route` for a proved anchored suffix. Reduce
-  actions and durations only through the authenticated clean-boot evaluator,
-  preserving the exact objective identity, source boundary, goal tick, and
-  terminal boundary fingerprint across repeated processes.
-- [x] Minimize the learned Ordon Spring finalist and retain a machine-readable
-  source proof, reduction history, final proof, and compact realized tape.
-
-**Done when:** route and glitch finalists can be reduced without launching a
-general search or silently changing the successful terminal state.
-
-## 8. Compiler-enforced finalist-reduction ownership
-
-- [x] Move boot and anchored-route minimization policy out of
-  `dusklight-evaluation` and into `dusklight-orchestration`; the reducer may
-  depend on authenticated evaluation, but evaluation must not depend back on
-  reducer policy.
-- [x] Preserve the public CLI surface through compatibility re-exports, ratchet
-  the closed crate inventories, and pass the full workspace test suite.
-
-**Done when:** adding another finalist reducer cannot grow the evaluator crate
-or acquire a second native proof path by mere module placement.
-
-## 9. Compiler-enforced bounded-search ownership
-
-- [x] Move ordinary, beam, continuous, and Bayesian native search drivers from
-  `dusklight-evaluation` into `dusklight-orchestration`; search policy may call
-  evaluation, but evaluation must not own optimizer loops.
-- [x] Move pure parent/child tape intervention discovery into
-  `dusklight-search`, preserve the CLI facade, ratchet closed inventories, and
-  pass the full workspace suite.
-
-**Done when:** adding another bounded optimizer cannot grow the evaluator crate
-or hide portable candidate logic inside native-execution policy.
-
-## 10. Compiler-enforced tournament ownership
-
-- [x] Move proposer tournament selection, budget accounting, and comparison
-  orchestration out of `dusklight-evaluation`; retain learned-proposal fact and
-  holdout admission as explicit evaluator policy.
-- [x] Preserve equal-budget and campaign CLI behavior, ratchet the closed crate
-  inventories, and pass the full workspace suite.
-
-**Done when:** tournament policy depends one-way on authenticated evaluation,
-while evaluator admission remains independent of tournament coordination.
-
-## 11. Recoverable exact route minimization
-
-- [x] Checkpoint `minimize-route` after every completed reduction round and add
-  `--resume` for an interrupted output root. Re-authenticate the objective and
-  reprove both the source and retained candidate before spending new proposals.
-- [x] Refuse stale or tampered checkpoints, never overwrite partial evidence,
-  preserve the original candidate budget and exact terminal contract, and test
-  the resume state machine.
-
-**Done when:** interrupting a long route reduction no longer discards completed
-proposal work or weakens its clean-process proof requirements.
-
-## 12. Compiler-enforced policy contract ownership
-
-- [x] Move finalist-reduction config and result contracts from
-  `dusklight-evaluation` beside their reducers in `dusklight-orchestration`.
-- [x] Move specialized bounded-search and proposer-tournament config and result contracts
-  beside their orchestration policy, preserving the public CLI facade.
-- [x] Ratchet the closed crate inventories and pass the full workspace suite.
-
-**Done when:** adding a reducer, optimizer, or tournament policy cannot grow the
-authenticated evaluator crate merely to define that policy's command surface.
-
-## 13. Compiler-enforced anchored-generation ownership
-
-- [x] Move the anchored generation, archive, learning-admission, evolution, and
-  champion-promotion loop from `dusklight-evaluation` to
-  `dusklight-orchestration` with its config and result contracts.
-- [x] Expose only prepared evaluation, evidence-derived novelty/context, fact
-  support, holdout admission, and authenticated suffix realization APIs.
-- [x] Add direct one-way domain dependencies, ratchet inventories and line
-  budgets, preserve the CLI facade, and pass the full workspace suite.
-
-**Done when:** `dusklight-evaluation` can authenticate and interpret a prepared
-population but cannot own a multi-generation search or learning loop.
-
-## 14. Deterministic native worker assignment
-
-- [x] Assign each planned trial to a stable worker lane independent of thread
-  wakeup and completion order for ordinary and anchored evaluation.
-- [x] Preserve parallel execution and fail-fast cancellation, prove exact lane
-  coverage without duplicates, and pass the full workspace suite.
-
-**Done when:** a healthy evaluation with the same population, repetition count,
-and worker count cannot change evidence worker identities due to host timing.
-
-## 15. Authenticated native worker schedule
-
-- [x] Write a deterministic prelaunch worker schedule for ordinary and anchored
-  evaluation, and link it from the evaluation report.
-- [x] Validate completed trial identities and worker claims against that
-  schedule before aggregation, with unit, CLI, and full workspace coverage.
-
-**Done when:** native attempt evidence cannot silently disagree with its
-predeclared worker lane or introduce an unplanned or duplicate trial identity.
-
-## 16. Compiler-enforced evaluation-plan ownership
-
-- [x] Move deterministic trial scheduling, lane iteration, schedule hashing,
-  and completed-claim validation into a dependency-minimal crate.
-- [x] Make native evaluation consume the exact declared schedule when launching
-  lanes, ratchet the evaluator line budget, and pass the full workspace suite.
-
-**Done when:** evaluator execution can consume a portable prelaunch plan but
-cannot redefine worker assignment or validation policy in its coordination file.
-
-## 17. Authenticated specialized bounded search
-
-- [x] Carry one authenticated run-request template through every beam,
-  CEM/CMA-ES, and Bayesian native evaluation batch.
-- [x] Expose the same sole-authority CLI contract as ordinary search, reject
-  mixed legacy/run-request inputs, and retain authenticated attempt evidence.
-
-**Done when:** these bounded optimizers cannot drop an explicitly supplied core
-harness authority between proposal generation and native ranking.
-
-## 18. Authenticated boot finalist reduction
-
-- [x] Carry an exact gameplay-ready run-request template through every boot
-  minimization and timing-golf reduction batch and final proof.
-- [x] Expose the shared sole-authority CLI contract, retain authenticated proof
-  attempts, and reject mixed legacy/run-request inputs.
-
-**Done when:** boot finalist tools cannot silently return to the legacy native
-path after accepting a core-harness authority.
-
-## 19. Authenticated anchored-route minimization
-
-- [x] Require an optional run-request template to bind the exact anchored goal
-  and milestone program, then retain it through every reduction and proof.
-- [x] Bind that authority into resumable checkpoints, preserve legacy v1 resume
-  only for legacy execution, and reject mixed or changed authority.
-
-**Done when:** exact anchored finalist reduction and resume cannot drop or swap
-an explicitly supplied core-harness authority.
-
-## 20. Authenticated anchored proposer tournaments
-
-- [x] Allow an anchored tournament to retain a sole run-request authority
-  through its shared evaluation and cold-replay evidence.
-- [x] Validate the request's exact milestone program and goal separately from
-  the derived anchored-objective identity carried by proposal envelopes.
-
-**Done when:** a fair anchored tournament can use the core harness without
-conflating or weakening either authenticated identity.
-
-## 21. Exact authority for anchored route search
-
-- [x] Require `run-route --run-request` to bind the timeline-selected goal,
-  compiled milestone program, and movement action schema exactly.
-- [x] Share that validation across route search, reduction, and tournaments so
-  anchored identity rules cannot drift between orchestration entry points.
-
-**Done when:** accepting a sealed request cannot make an anchored route command
-execute a different objective than the one it reports and ranks.
-
-## 22. Dedicated finalist-reduction crate
-
-- [x] Extract boot and anchored-route finalist reduction from the broad
-  orchestration crate into a dedicated dependency-bounded crate.
-- [x] Keep shared anchored request validation below orchestration, preserve the
-  public API, and ratchet the new crate's exact source inventory and line caps.
-
-**Done when:** finalist reduction cannot regain unrelated campaign, novelty, or
-learning dependencies without an explicit architecture-policy change.
-
-## 23. Dedicated bounded-search crate
-
-- [x] Extract ordinary, beam, continuous, and Bayesian native search drivers
-  from broad orchestration into a dedicated dependency-bounded crate.
-- [x] Preserve anchored-search composition and the public CLI facade while
-  ratcheting the new crate's exact inventory and dependency allowlist.
-
-**Done when:** bounded optimizer loops cannot acquire campaign, novelty,
-finalist-reduction, route, or workbench ownership by sibling-module imports.
-
-## 24. Dedicated proposer-tournament crate
-
-- [x] Extract equal-budget proposer selection, accounting, replay comparison,
-  and finalist publication from broad orchestration into a dedicated crate.
-- [x] Preserve campaign composition and the public CLI facade while ratcheting
-  the new crate's exact inventory and dependency allowlist.
-
-**Done when:** tournament policy cannot absorb campaign, objective-suite,
-novelty, route, workbench, or CLI ownership through flat sibling imports.
-
-## 25. Shared immutable episode store
-
-- [x] Add one evidence-owned episode bundle index keyed by authenticated
-  episode identity. Verify the manifest against its transition corpus and
-  content-address the tape, trace, corpus, transition evidence, and manifest
-  before publishing an immutable entry.
-- [x] Let native population evaluation target an explicit shared episode-store
-  root, retain per-run evidence paths for diagnosis, and prove two independent
-  evaluation roots deduplicate the same bundle without accepting tampering.
-- [x] Document the operator path, ratchet crate boundaries, and pass the full
-  workspace suite.
-
-**Done when:** independent search runs can share authenticated learning
-episodes without copying mutable per-run paths or trusting a filename digest.
-
-## 26. Verified episode retention and recoverable GC
-
-- [x] Inventory and verify every immutable episode entry and referenced blob,
-  rejecting malformed paths, identity drift, missing content, and corruption.
-- [x] Retain episodes by authenticated episode ID and preview unretained entries
-  plus unreachable blobs before moving them to an explicit recoverable trash
-  root; refuse an empty retention set or a trash path inside the live store.
-- [x] Expose the lifecycle through the CLI, document it, and pass the full
-  workspace and architecture suites.
-
-**Done when:** a shared episode store can be checked and compacted without
-manual digest scraping, permanent deletion, or path-based trust.
-
-## 27. Canonical active-state hash series
-
-- [x] Derive one sealed semantic hash at every retained trace boundary from the
-  validated typed-fact response, binding its exact field profile, phase,
-  simulation tick, tape frame, boot origin, and source trace.
-- [x] Compare two compatible series by boundary and report the first differing
-  or missing boundary plus both hashes; reject profile, boot, tick-rate, seal,
-  ordering, or source tampering before comparison.
-- [x] Expose generation and comparison through `huntctl trace`, document the
-  supported facts and whole-game non-claim, and pass the full suites.
-
-**Done when:** parity and reset experiments get a cheap deterministic
-divergence alarm over the active query aperture and can escalate to trace diff
-at an exact boundary.
-
-## 28. Domain-owned trace CLI adapter
-
-- [x] Move trace inspection, typed facts, semantic hashes, timelines, and
-  comparison commands out of the root binary into the dedicated CLI domain.
-- [x] Lower the root-binary line ratchet and pass the trace integration plus
-  architecture suites without changing the public command surface.
-
-**Done when:** adding trace tooling cannot silently regrow the root Rust binary
-as a flat implementation module.
-
-## 29. Domain-owned corpus CLI adapter
-
-- [x] Move tape-corpus operations plus content/episode-store lifecycle commands
-  out of the root binary into one corpus CLI domain.
-- [x] Ratchet the reduced root binary and pass corpus lifecycle, lint, and
-  architecture gates without changing the public command surface.
-
-**Done when:** corpus and immutable-store lifecycle growth cannot silently
-accumulate in the root Rust binary.
-
-## 30. Domain-owned world CLI adapter
-
-- [x] Move world inventory, spatial indexing/query, and KCL/PLC inspection out
-  of the root binary beside the existing world domain crate.
-- [x] Ratchet the reduced root binary and pass real-fixture spatial, lint, and
-  architecture gates without changing the public command surface.
-
-**Done when:** static-world tooling can grow without turning the root binary
-back into a cross-domain implementation file.
-
-## 31. Domain-owned timeline CLI adapter
-
-- [x] Move timeline inspection/rebasing, route-store lifecycle, thumbnail
-  pruning, and workbench launch out of the root binary.
-- [x] Ratchet the reduced root binary and pass timeline/store, lint, and
-  architecture gates without changing the public command surface.
-
-**Done when:** route and workbench command growth is owned beside those domains
-instead of accumulating in the root Rust binary.
-
-## 32. Domain-owned objective and control CLI adapters
-
-- [x] Move fixture, observation, milestone, controller, and semantic/comparison
-  oracle commands into explicit CLI domains.
-- [x] Ratchet the reduced root binary and pass each public adapter integration,
-  lint, and architecture gate without changing command behavior.
-
-**Done when:** objective/control surface growth no longer accumulates as mixed
-implementation code in the root Rust binary.
-
-## 33. Domain-owned benchmark and identity CLI adapters
-
-- [x] Move revision-pinned benchmark metadata and artifact-compatibility
-  commands out of the root binary into explicit CLI domains.
-- [x] Ratchet the reduced root binary and pass benchmark/identity integration,
-  lint, and architecture gates without changing command behavior.
-
-**Done when:** offline benchmark and compatibility tooling no longer depends on
-mixed root-module implementation ownership.
-
-## 34. Domain-owned harness and campaign CLI adapter
-
-- [x] Move authenticated suite/request/result lifecycle, execution, inspection,
-  and objective campaign dispatch out of the root binary.
-- [x] Ratchet the reduced root binary and pass harness/campaign integration,
-  lint, and architecture gates without weakening fail-closed behavior.
-
-**Done when:** the core authenticated execution path has explicit CLI ownership
-and the root binary cannot absorb harness policy implementation.
-
-## 35. Domain-owned worker-control CLI adapter
-
-- [x] Move worker hello/ping, deterministic pool health, and unavailable
-  engine-session capability reporting out of the root binary.
-- [x] Ratchet the reduced root binary and pass worker/pool integration, lint,
-  and architecture gates without changing protocol behavior.
-
-**Done when:** persistent-control bootstrap has explicit CLI ownership and
-`main.rs` contains no production command implementation.
-
-## 36. No ambient production wildcard dependencies
-
-- [x] Replace root-wide CLI imports and cross-crate evaluation wildcards with
-  explicit helper/type imports at each owning module.
-- [x] Reject future `crate::*` CLI imports and external-crate wildcards in the
-  architecture policy; pass full workspace, lint, and boundary gates.
-
-**Done when:** moving or deleting an unrelated root/evaluation import cannot
-silently change which names another production domain receives.
-
-## 37. Authenticated cold-process throughput baseline
-
-- [x] Benchmark repeated isolated executions of one sealed run request and
-  retain each exact request/result identity, terminal, tick count, native
-  process time, and end-to-end harness time in one machine-readable report.
-- [x] Reject incomparable attempts, expose logical-tick and candidate
-  throughput from the CLI, document the macOS operator path, and measure one
-  checked-in cheap objective before designing persistent reset/session work.
-
-**Done when:** a future persistent worker or reset optimization can be compared
-against a reproducible process-per-run baseline without weakening run proof.
-
-## 38. Compiler-enforced objective-language internals
-
-- [x] Split the objective language's flat production module into closed
-  syntax/validation, formatting, canonical compilation, binary-codec, and
-  recorded-trace evaluation owners without changing its public API or wire
-  identities.
-- [x] Freeze the objective crate's exact source inventory, impose tighter
-  per-module line budgets, and pass its focused tests plus every workspace
-  architecture, format, lint, and test gate.
-
-**Done when:** objective-language changes have an obvious internal owner and
-cannot recreate a multi-thousand-line dumping ground without an explicit
-architecture-policy change.
-
-## 39. Compiler-enforced controller-contract internals
-
-- [x] Split the portable controller contract's flat production module into
-  closed schema, validation, text-parser, and wire-codec owners without
-  changing its public API or canonical bytes.
-- [x] Freeze the contracts crate's exact source inventory, impose tight budgets
-  on the controller owners, and pass focused round trips plus every workspace
-  architecture, format, lint, and test gate.
-
-**Done when:** controller syntax, semantic validation, and binary compatibility
-cannot grow as one flat cross-domain implementation without an explicit
-architecture-policy change.
-
-## 40. Compiler-enforced gameplay-trace internals
-
-- [x] Split the gameplay-trace flat decoder into closed schema, legacy/header,
-  columnar-channel, summary, and bounded-wire owners without changing the
-  public API or accepted trace bytes.
-- [x] Freeze the trace crate's exact source inventory, impose tight budgets on
-  each trace owner, and pass focused decoder corruption tests plus every
-  workspace architecture, format, lint, and test gate.
-
-**Done when:** trace schema evolution, channel decoding, and reporting have
-distinct physical owners and cannot collapse back into a single decoder file
-without an explicit architecture-policy change.
-
-## 41. Authenticated native lifecycle phase timing
-
-- [x] Emit one monotonic native timing artifact for authenticated automation
-  runs covering CLI/configuration, host initialization, engine readiness,
-  stage readiness, first/last simulation ticks, proof-artifact flush, engine
-  shutdown, and exit readiness.
-- [x] Validate and bind the exact timing artifact into the run result, aggregate
-  phase durations and shares in the cold-process benchmark, and reject missing,
-  nonmonotonic, or incomparable phase evidence.
-- [x] Measure the checked-in stage-ready request on macOS, document where its
-  native time is spent, and use that evidence to scope the first genuine
-  persistent-session/reset implementation.
-
-**Done when:** process startup, stage loading, simulation, artifact writing,
-and teardown costs are separately reproducible under the same authenticated
-request used by the cold-process baseline.
-
-## 42. Narrow persistent stage-boot session
-
-- [x] Separate process-lifetime shutdown from one authenticated game-run
-  lifecycle, retain Aurora/DVD hosting through the exact post-run admission
-  boundary, and refuse a second run without adding another request/result path.
-- [x] Define one explicit world teardown/reinitialize boundary for the checked
-  stage-boot case; audit managers, heaps, globals, threads, loaders, RNG, audio,
-  input, observers, and automation artifacts, refusing another run whenever
-  reset safety is not established.
-- [x] Execute the second admission attempt in the first native process, bind
-  its `post_authenticated_run` refusal and blocker inventory into ordinary run
-  evidence, and preserve cold conformance without claiming A/B/A throughput or
-  checkpoint support when request B cannot be admitted.
-
-**Done when:** the checked stage-ready request can run repeatedly in one native
-process with cold-equivalent authenticated evidence and a measured improvement,
-or the implementation rejects reuse at a precisely documented unsafe boundary.
-
-## 43. Bind the first selected Skybook glitch pilot
-
-- [ ] Bind the imported `file-name-cursor-breakout` page revision and content
-  identity to the existing Eye Shredder boot tape, observer, semantic oracle,
-  original-layout shadow model, and renderer diagnostic without importing a
-  broader glitch backlog.
-- [ ] Define the exact native-port claim, required setup, fidelity limitations,
-  positive evidence, and negative control using the ordinary authenticated
-  request/result path.
-- [ ] Re-run the bounded pilot, retain repeatable tape/trace/oracle identities,
-  and document which original-console rendering consequence remains modeled
-  rather than reproduced.
-
-**Done when:** one human-selected Skybook glitch has a pinned source identity,
-bounded requirements, ordinary authenticated evidence, and no claim beyond the
-behavior the native harness can actually prove.
+# Route-learning framework roadmap
+
+This is the sole active task list. It contains only the work required to make
+Dusklight optimize a deterministic movement segment better than a skilled human
+editing inputs frame-by-frame. Completed capability inventory belongs in
+`docs/glitch-hunting/status.md`.
+
+The immediate proving ground is the authenticated Link-control-to-Ordon-Springs
+segment. The current 128-tick route is visibly weak: its steering is noisy, its
+line is not consistently straight, and its roll schedule has not been causally
+optimized. The framework is not successful until it improves that route for
+the right reasons and cold-replays the result exactly.
+
+The last farm demonstrated why algorithm tuning alone is insufficient. It
+launched 1,152 complete game processes, replayed the 440-tick boot prefix for
+every 128-tick suffix, took roughly 45 minutes, and wrote 21,063 files totaling
+4.44 GiB without finding a faster route. Its fitted-Q model learned from
+completed open-loop tapes and proposed more open-loop frame overwrites. It
+could not restore one state and compare alternative actions from that state.
+
+## Completion gate
+
+The roadmap is complete only when one checked campaign:
+
+- boots each native worker and reaches Link control once;
+- restores that exact state between candidate suffixes without relaunching or
+  replaying the prefix;
+- runs the per-tick observation, policy, input, and scoring loop in Dusklight;
+- supplies generic movement, camera, curve, button, and roll tactics without
+  embedding the Ordon route;
+- learns from causal counterfactuals produced from identical restored states;
+- keeps workers evaluating while training and proposal generation continue;
+- substantially beats the best retained human/TAS Ordon tape under an equal
+  start predicate and terminal predicate;
+- realizes the winner as an ordinary absolute tape; and
+- cold-replays the complete boot-to-terminal chain five times with identical
+  per-tick state hashes and terminal evidence.
+
+“Substantially” is not satisfied by input simplification or an equal-time tape.
+The winner must save multiple simulation ticks and leave no obvious untested
+earlier roll, straighter heading, shorter corner, or removable input window in
+the locally exhaustive counterfactual audit.
+
+## Invariants
+
+- Replay divergence is a framework bug. Never compensate by searching for a
+  more forgiving tape or averaging contradictory runs.
+- Logical simulation ticks are the only time score. Process launch, rendering,
+  shader compilation, audio, filesystem I/O, and host scheduling do not count.
+- Normal automation observes gameplay read-only and controls only virtual PAD
+  input. Checkpoint restoration is a compile-gated harness operation, not a
+  gameplay mechanic or proof path.
+- Absolute tapes remain replay authority. Checkpoints, controllers, models,
+  rewards, and search scores may propose but cannot prove a result.
+- One worker process owns one game address space. A crash or suspected memory
+  corruption retires that worker; it may not restore itself and continue
+  producing trusted samples.
+- Every checkpoint, model, episode, and tape binds the executable, game data,
+  scenario, objective, state/action schema, settings, prefix, RNG, and ancestry.
+- Missing state is explicitly unavailable, never silently false or zero.
+- A protocol stub, refusal report, capability flag, design document, or test of
+  an unimplemented path does not complete a task.
+
+## 1. Measure the real baseline
+
+- [ ] Check in one command that reruns the current 128-tick Ordon campaign
+  workload and reports process launches, prefix ticks, candidate suffix ticks,
+  candidate-ticks/second, CPU utilization, learner time, simulator idle time,
+  artifact time, file count, and bytes written.
+- [ ] Record the current human/TAS incumbent's per-tick position, velocity,
+  facing, procedure, camera, collision correction, applied input, button edges,
+  roll state, and objective progress.
+- [ ] Derive route diagnostics: distance traveled, displacement toward the load
+  zone, path curvature, heading error, collision loss, corner duration, speed
+  profile, roll initiation/recovery, roll spacing, and terminal overshoot.
+- [ ] Separate process startup, engine setup, prefix replay, checkpoint/restore,
+  useful suffix simulation, inference, training, serialization, and disk I/O in
+  every later comparison.
+
+**Done when:** every architectural change can be compared against an unchanged,
+reproducible workload and the route's visible deficiencies are numeric rather
+than subjective.
+
+## 2. Persistent native episode execution
+
+- [ ] Replace the health-only worker with a native engine session supporting
+  `load`, `run_to_boundary`, `checkpoint`, `upload_program`, `upload_model`,
+  `run_batch`, `cancel`, `health`, and `shutdown`.
+- [ ] Keep the process, disc image, Aurora, immutable resources, shader cache,
+  and process-lifetime services alive across candidate batches.
+- [ ] Make Dusklight advance one logical tick or one bounded episode without
+  returning through game/process teardown.
+- [ ] Reset automation-owned predicates, controllers, tapes, observations,
+  clocks, counters, recorders, result buffers, and error state between episodes.
+- [ ] Upload immutable tape, controller, and model blobs once and address them
+  by content identity in later batch requests.
+- [ ] Return compact episode results in memory. Do not create routine per-run
+  stdout, stderr, JSON, database, memory-card, configuration, or trace files.
+- [ ] Retain the existing cold process executor independently for conformance
+  and promotion.
+- [ ] Add heartbeat, timeout, cancellation, crash classification, and automatic
+  clean worker replacement.
+
+**Done when:** one worker completes 1,000 short episodes in one process with
+bounded memory growth and agrees with the cold executor on the conformance set.
+
+## 3. Exact Link-control checkpoint
+
+- [ ] Capture the first checkpoint only at the authenticated pre-input
+  `link_control` boundary used by the Ordon segment.
+- [ ] Require a quiescent boundary: no unsafe stage load, DVD/ARAM transfer,
+  audio callback, movie task, render submission, or host job may be in flight.
+- [ ] Capture and restore MEM1, ARAM, heap metadata, game RNG, logical clocks,
+  PAD state, and automation state required to resume at the exact next input.
+- [ ] Inventory future-affecting mutable globals and host allocations outside
+  MEM1/ARAM. Register or isolate them explicitly; the current typed-fact hash is
+  not sufficient evidence of complete state.
+- [ ] Bind checkpoint identity to executable, game data, full prefix tape,
+  source predicate and fingerprint, tick boundary, memory-layout version,
+  settings, and a manifest of captured state.
+- [ ] Refuse capture or restore when quiescence or state coverage cannot be
+  established. The first checkpoint is same-process and build-bound; portable
+  arbitrary savestates are not required here.
+- [ ] Prove A/B/A restoration: run suffix A, restore and run B, restore and run
+  A again, then require A1 and A2 to match at every per-tick state hash.
+- [ ] Compare restored runs with fresh-process full-prefix runs over movement,
+  rolls, collision, RNG, events, and the Ordon stage transition.
+- [ ] Run randomized deterministic sentinel episodes throughout a farm and
+  retire the worker on the first mismatch, retaining the first divergent tick.
+- [ ] Measure full-copy restoration first; add dirty-page restoration only if
+  measurement shows it is needed after parity is proven.
+
+**Done when:** 1,000 randomized A/B/A cycles and the cold comparison set have
+zero divergence, and the 440-tick prefix executes once per worker rather than
+once per candidate.
+
+## 4. Native policy and tactic runtime
+
+The toolbox supplies generic controllable operations. It must not contain the
+answer to the benchmark. Learning chooses their parameters, timing,
+composition, initiation, and termination.
+
+- [ ] Execute the stateful policy loop at Dusklight's pre-input boundary with
+  no per-tick Rust IPC, filesystem access, or gameplay write.
+- [ ] Support bounded state, conditions, option initiation/termination,
+  timeouts, and deterministic composition of main stick, camera stick,
+  triggers, and buttons.
+- [ ] Always emit the exact realized four-port tape for independent playback.
+- [ ] Preserve exact raw GameCube pad states, button edges/holds/releases,
+  analog values, neutral, duration, and ownership as the lowest-level actions.
+- [ ] Add a generic pulse operator with searchable start, period, phase, hold,
+  count, and stop condition. It may drive A, L, or any button combination while
+  other controller layers continue.
+- [ ] Add generic world-, player-, and camera-relative heading control.
+- [ ] Add seek-to-coordinate/offset/opening and maintain-distance controllers
+  with configurable gain, magnitude, stop, and overshoot behavior.
+- [ ] Add camera-to-heading control that can compensate the main stick to
+  preserve a requested world trajectory while the camera turns.
+- [ ] Add line, piecewise, Bézier, Catmull-Rom, and waypoint paths with
+  searchable control points, duration, sampling phase, and feedback strength.
+- [ ] Add a parameterized roll option with a single A edge, chosen heading,
+  initiation state, recovery behavior, and termination. Do not model a roll as
+  holding A across an arbitrary frame window.
+- [ ] Keep raw-pad actions available beside every semantic tactic so an
+  incorrect abstraction cannot hide a useful input.
+- [ ] Run frozen deterministic model inference inside the worker, switching
+  model versions only at declared episode boundaries.
+
+**Done when:** a worker can run raw, scripted, and learned policies through the
+same tick loop, and no checked tactic contains an Ordon-specific coordinate,
+heading, corner tick, or roll spacing.
+
+## 5. State and spatial facts required for movement learning
+
+- [ ] Define one versioned movement state containing Link position, velocity,
+  acceleration, speed, facing, procedure/subprocedure, action/animation phase,
+  prior input, camera pose, collision correction, event state, transition
+  state, relevant timers, and complete RNG identity.
+- [ ] Expose action eligibility and timing facts: ticks since relevant button
+  edges, roll initiation, recovery, contact, targeting, and option termination.
+- [ ] Express target direction in world, player, camera, and velocity frames so
+  the learner need not infer coordinate transforms from sparse outcomes.
+- [ ] Expose the authored load-zone/opening geometry and read-only local queries
+  needed to reach it: raycast, sweep, clearance, nearest surface, signed
+  distance, predicted contact, and collision-aware distance.
+- [ ] Build immutable map geometry indices once and reuse them. Do not place
+  every polygon, tree, rock, or actor into every observation vector.
+- [ ] Retain feature missingness, units, coordinate frame, normalization,
+  query cost, and phase in the state schema identity.
+- [ ] Detect observation aliasing by finding identical states with different
+  checkpoint-backed action outcomes. Add the missing fact or bounded policy
+  memory rather than asking the critic to average hidden state.
+
+**Done when:** counterfactual outcomes are predictable from the declared state
+or produce a concrete retained state-aliasing report; framework nondeterminism
+is never treated as learnable noise.
+
+## 6. Causal transitions and useful rewards
+
+- [ ] Restore one checkpointed state and try alternative raw inputs, tactic
+  types, headings, curve parameters, durations, roll ticks, and terminations.
+- [ ] Retain checkpoint and sibling-group identity so training can use exact
+  paired comparisons instead of correlations between unrelated tapes.
+- [ ] Keep the semantic terminal predicate and first-hit tick authoritative.
+  Training reward is separate and fully decomposed in episode evidence.
+- [ ] Use a base `-1` tick cost plus auditable potential-based shaping from
+  collision-aware progress to the goal. Do not reward visual straightness
+  directly; shorter collision-valid motion should create the signal.
+- [ ] Report progress, collision loss, option cost, and terminal adjustment
+  independently so reward mistakes and hacking are visible.
+- [ ] Treat restored RNG as state. Identical checkpoint/action divergence is a
+  reset failure, not variance for Q-learning to smooth away.
+- [ ] Split training and evaluation by checkpoint/state region rather than
+  allowing adjacent frames or sibling actions to leak across both sets.
+
+**Done when:** on held-out restored states, learned value ordering identifies
+the better straight-line, corner, and roll-timing alternatives more often than
+random or frequency ordering, and native rollout confirms the comparison.
+
+## 7. Search and learning loop
+
+- [ ] Replace generation-wide evaluate/refit pauses with persistent workers
+  that continuously request episodes while proposal generation and training
+  proceed asynchronously.
+- [ ] Maintain an online replay buffer with immutable model generations,
+  bounded worker-policy staleness, checkpoint identity, and causal sibling
+  groups.
+- [ ] Establish equal-useful-candidate-tick baselines for human tape mutation,
+  structured tactic search, continuous optimization, and learned proposals.
+- [ ] Add Double-Q with target networks, prioritized replay, n-step returns,
+  ensemble uncertainty, and distributional values as individually measured
+  components. Do not add an RL acronym without an Ordon ablation.
+- [ ] Represent decisions as tactic type plus duration and parameters rather
+  than only 16 quantized raw headings crossed with button holds.
+- [ ] Run CEM/CMA-ES or Bayesian optimization over continuous headings, curve
+  points, gains, corner timing, and roll schedules.
+- [ ] Add short checkpoint-backed beam lookahead so useful action sequences can
+  be evaluated without requiring one mutation to repair the entire later tape.
+- [ ] Preserve materially different successful boundary states and RNG
+  lineages instead of retaining only the current fastest result.
+- [ ] Detect unsupported-action extrapolation, critic disagreement, policy
+  collapse, OOD states, reward hacking, and held-out regression before granting
+  a learned proposer more simulator budget.
+- [ ] Profile and remove repeated full-model refits, corpus redecoding,
+  quadratic proposal ranking, and other periods where all simulators sit idle.
+- [ ] Choose worker count and affinity from measured useful throughput on the
+  host; do not encode 16 as a framework limit.
+
+**Done when:** workers spend at least 85% of scheduled lane time in useful
+simulation or native inference, and a learned lane beats its non-learned
+equal-budget baselines on held-out Ordon states.
+
+## 8. Artifact, failure, and promotion path
+
+- [ ] Use a bounded binary batch protocol or shared-memory rings for hot data.
+  Upload programs/models once and return observations by rollout, never by tick.
+- [ ] Keep discovery results compact: score, terminal, checkpoint/model/action
+  identities, minimal trajectory, and failure classification.
+- [ ] Materialize full traces, databases, screenshots, logs, and repeated proof
+  only for determinism sentinels, anomalies, finalists, or explicit inspection.
+- [ ] Content-address optional large artifacts and enforce per-campaign file and
+  byte budgets.
+- [ ] Immediately retire a worker after access violation, sanitizer/guard hit,
+  allocator corruption, checkpoint mismatch, protocol corruption, or suspected
+  memory overwrite. Preserve only evidence written before the last trusted
+  boundary.
+- [ ] Re-run suspicious or crashing inputs in a clean disposable process; one
+  worker failure must not stop the scheduler or other lanes.
+- [ ] Compile every finalist's realized actions into an ordinary absolute tape,
+  then minimize only through exact native comparisons.
+- [ ] Cold-run the complete prefix and suffix five times with no checkpoint,
+  model, or reactive controller in the loop. Require identical state hashes,
+  predicate evidence, first-hit tick, and terminal fingerprint.
+
+**Done when:** the campaign's routine output is small, failures remain isolated,
+and a promoted result is independently reproducible from process boot.
+
+## 9. Ordon machine-versus-human proof
+
+- [ ] Freeze the exact source and terminal predicates, fingerprints, score
+  semantics, and allowed generic toolbox for the benchmark.
+- [ ] Retain the 128-tick route and the best deliberate human/TAS revision as
+  named baselines.
+- [ ] Assert mechanically that campaign configuration and tactic definitions do
+  not contain route-specific coordinates, headings, corner ticks, or roll
+  spacing copied from either baseline.
+- [ ] Run equal-budget ablations for raw mutation, structured tactics,
+  continuous parameter search, learned value guidance, progress shaping, and
+  checkpoint lookahead.
+- [ ] For each improvement, retain its path, speed, heading, collision, camera,
+  action, and roll timeline so the source of the frame win is explainable.
+- [ ] Exhaustively test locally earlier roll/button edges, neighboring heading
+  parameters, shorter tactic durations, and removable input windows around the
+  final route.
+- [ ] Require a multi-tick improvement rather than promoting an equal-time
+  lower-complexity tape as success.
+- [ ] Cold-prove the final full-chain tape five times and publish simulator
+  budget, wall time, useful throughput, restore cost, ablations, route
+  diagnostics, and exact proof identities.
+
+**Done when:** the framework substantially beats the best retained human/TAS
+Ordon route, explains the improvement, survives the local counterfactual audit,
+and passes five identical cold full-chain proofs.
+
+## Explicitly outside this roadmap
+
+Do not start these merely because related scaffolding already exists:
+
+- blind or withheld replication of the Skybook corpus;
+- a farm visualization dashboard or multi-worker graphical compositor;
+- deterministic multiplayer/network simulation;
+- distributed or remote workers;
+- general portable or arbitrary-tick savestates;
+- exhaustive whole-game actor, polygon, renderer, audio, or memory queries;
+- a general autonomous novelty/glitch-discovery campaign;
+- every published RL algorithm, world model, graph encoder, or accelerator;
+- cluster storage, dashboards, quotas, and broad artifact migration.
+
+Reconsider one only after the Ordon completion gate exposes a concrete need.
+
+## Immediate order
+
+1. [ ] Baseline the current Ordon farm and route numerically.
+2. [ ] Implement persistent native episode batches.
+3. [ ] Implement and A/B/A-prove the exact Link-control checkpoint.
+4. [ ] Run suffix batches without process, prefix, or routine-file tax.
+5. [ ] Implement the native stateful tactic runtime.
+6. [ ] Produce causal counterfactual transitions and progress rewards.
+7. [ ] Run asynchronous structured, continuous, and learned competitors.
+8. [ ] Substantially beat the human/TAS route.
+9. [ ] Cold-prove and promote the winning absolute tape.

@@ -57,10 +57,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
 
 ## Documents
 
-- [Core harness backlog](../../TASKS.md) is the active dependency-ordered queue
-  for agent control, objectives, state queries, learning evidence, winner
-  narrowing, and cheap gameplay conformance cases. [Deferred work](../../TASKS_DEFERRED.md)
-  retains ambitious glitch, research, UI, checkpoint, and scale directions.
+- [Route-learning roadmap](../../TASKS.md) is the sole dependency-ordered queue
+  for persistent episode execution, the Link-control checkpoint, native
+  tactics, causal learning, Ordon optimization, and cold proof.
 - [Fork-only observer boundary](observer-boundary.md) defines the explicit
   compile gate, current field-access manifest, and forbidden native query
   behavior.
