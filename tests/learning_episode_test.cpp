@@ -79,6 +79,23 @@ struct ObservationFixture {
             .forwardSpeed = 0.25F,
             .currentAngleY = 100,
             .shapeAngleY = 90,
+            .attentionPresent = true,
+            .attention = {
+                .flags = 0x20000002,
+                .positionX = 11.0F,
+                .positionY = 4.0F,
+                .positionZ = -7.0F,
+                .distanceIndices = {1, 2, 3, 4, 5, 6, 7, 8, 9},
+                .auxiliary = -4,
+            },
+            .eventParticipationPresent = true,
+            .eventParticipation = {
+                .command = 1,
+                .condition = 3,
+                .eventId = 27,
+                .mapToolId = 8,
+                .index = 2,
+            },
         };
         eventFlags[3] = 1;
         temporaryEventBytes[0] = 0x06;
@@ -220,6 +237,8 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         fixture.actors[0]);
     for (std::size_t index = 0; index < completeActors.size(); ++index)
         completeActors[index].runtimeGeneration = index + 1;
+    completeActors.back().attentionPresent = false;
+    completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
     fixture.observation.actorObservedCount =
         static_cast<std::uint32_t>(completeActors.size());

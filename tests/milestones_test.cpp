@@ -426,6 +426,7 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     }};
     std::array<std::uint8_t, 3> eventFlags{0, 1, 0};
     std::array<std::uint8_t, 2> temporaryFlags{1, 0};
+    std::array<std::uint8_t, 2> temporaryEventBytes{0x06, 0xa5};
     std::array<std::uint8_t, 1> dungeonFlags{1};
     std::array<std::uint8_t, 2> switchFlags{0, 1};
     MilestoneObservation observation = f_sp103();
@@ -444,6 +445,7 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     observation.actorObservedCount = 2;
     observation.eventFlags = eventFlags;
     observation.temporaryFlags = temporaryFlags;
+    observation.temporaryEventBytes = temporaryEventBytes;
     observation.dungeonFlags = dungeonFlags;
     observation.switchFlags = switchFlags;
     observation.switchFlagRoom = 1;
@@ -475,6 +477,17 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     changedActorMetadata[0].parameters = 0x12345678;
     changed.actors = changedActorMetadata;
     REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changedActorMetadata = actors;
+    changedActorMetadata[0].attentionPresent = true;
+    changedActorMetadata[0].attention.flags = 2;
+    changedActorMetadata[0].attention.positionX = 8.0F;
+    changed.actors = changedActorMetadata;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
+    changedActorMetadata = actors;
+    changedActorMetadata[0].eventParticipationPresent = true;
+    changedActorMetadata[0].eventParticipation.command = 1;
+    changed.actors = changedActorMetadata;
+    REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
     actors[0].positionX += 1.0F;
     changed = observation;
     REQUIRE(compute_milestone_observation_fingerprint(changed, boot) != digest);
@@ -482,6 +495,9 @@ void testObservationFingerprintIsPortableCompleteAndOrderIndependent() {
     eventFlags[0] = 1;
     REQUIRE(compute_milestone_observation_fingerprint(observation, boot) != digest);
     eventFlags[0] = 0;
+    temporaryEventBytes[1] ^= 1;
+    REQUIRE(compute_milestone_observation_fingerprint(observation, boot) != digest);
+    temporaryEventBytes[1] ^= 1;
     TapeBoot changedBoot = boot;
     changedBoot.point = 1;
     REQUIRE(compute_milestone_observation_fingerprint(observation, changedBoot) != digest);

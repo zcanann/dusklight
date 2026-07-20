@@ -734,6 +734,25 @@ std::string compute_milestone_observation_fingerprint(
         append_integer(canonical, actor.shapeAngleX);
         append_integer(canonical, actor.shapeAngleY);
         append_integer(canonical, actor.shapeAngleZ);
+        append_integer<std::uint8_t>(canonical, actor.attentionPresent ? 1 : 0);
+        if (actor.attentionPresent) {
+            append_integer(canonical, actor.attention.flags);
+            append_float(canonical, actor.attention.positionX);
+            append_float(canonical, actor.attention.positionY);
+            append_float(canonical, actor.attention.positionZ);
+            canonical.insert(canonical.end(), actor.attention.distanceIndices.begin(),
+                actor.attention.distanceIndices.end());
+            append_integer(canonical, actor.attention.auxiliary);
+        }
+        append_integer<std::uint8_t>(
+            canonical, actor.eventParticipationPresent ? 1 : 0);
+        if (actor.eventParticipationPresent) {
+            append_integer(canonical, actor.eventParticipation.command);
+            append_integer(canonical, actor.eventParticipation.condition);
+            append_integer(canonical, actor.eventParticipation.eventId);
+            append_integer(canonical, actor.eventParticipation.mapToolId);
+            append_integer(canonical, actor.eventParticipation.index);
+        }
     }
     append_integer(canonical, observation.actorObservedCount);
     append_integer<std::uint8_t>(canonical, observation.actorsTruncated ? 1 : 0);
@@ -744,6 +763,7 @@ std::string compute_milestone_observation_fingerprint(
     };
     appendBytes(observation.eventFlags);
     appendBytes(observation.temporaryFlags);
+    appendBytes(observation.temporaryEventBytes);
     appendBytes(observation.dungeonFlags);
     appendBytes(observation.switchFlags);
     append_integer(canonical, observation.switchFlagRoom);

@@ -25,6 +25,7 @@ const OBSERVATION_VERSION_V2: u16 = 2;
 const OBSERVATION_VERSION_V3: u16 = 3;
 const OBSERVATION_VERSION_V4: u16 = 4;
 const OBSERVATION_VERSION_V5: u16 = 5;
+const OBSERVATION_VERSION_V6: u16 = 6;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -37,6 +38,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V2: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation/v3";
 pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
 pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation/v5";
+pub const LEARNING_OBSERVATION_SCHEMA_V6: &str = "dusklight-learning-observation/v6";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,6 +239,25 @@ pub struct NativeActorObservation {
     pub forward_speed: f32,
     pub current_angle: [i16; 3],
     pub shape_angle: [i16; 3],
+    pub attention: Option<NativeActorAttentionComponent>,
+    pub event_participation: Option<NativeActorEventParticipationComponent>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeActorAttentionComponent {
+    pub flags: u32,
+    pub position: [f32; 3],
+    pub distance_indices: [u8; 9],
+    pub auxiliary: i16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeActorEventParticipationComponent {
+    pub command: u16,
+    pub condition: u16,
+    pub event_id: i16,
+    pub map_tool_id: u8,
+    pub index: u8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -458,6 +479,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V3
                 | OBSERVATION_VERSION_V4
                 | OBSERVATION_VERSION_V5
+                | OBSERVATION_VERSION_V6
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -560,6 +582,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V3 => LEARNING_OBSERVATION_SCHEMA_V3,
         OBSERVATION_VERSION_V4 => LEARNING_OBSERVATION_SCHEMA_V4,
         OBSERVATION_VERSION_V5 => LEARNING_OBSERVATION_SCHEMA_V5,
+        OBSERVATION_VERSION_V6 => LEARNING_OBSERVATION_SCHEMA_V6,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1585,7 +1608,10 @@ fn decode_observation(
             false,
             false,
         ),
-        OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4 | OBSERVATION_VERSION_V5 => {
+        OBSERVATION_VERSION_V3
+        | OBSERVATION_VERSION_V4
+        | OBSERVATION_VERSION_V5
+        | OBSERVATION_VERSION_V6 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -1693,7 +1719,7 @@ fn decode_observation(
     }
     let mut actors = Vec::with_capacity(actor_count);
     for _ in 0..actor_count {
-        actors.push(NativeActorObservation {
+        let mut actor = NativeActorObservation {
             runtime_generation: reader.u64()?,
             parent_runtime_generation: reader.u32()?,
             parameters: reader.u32()?,
@@ -1712,7 +1738,84 @@ fn decode_observation(
             forward_speed: reader.f32()?,
             current_angle: reader.i16x3()?,
             shape_angle: reader.i16x3()?,
-        });
+            attention: None,
+            event_participation: None,
+        };
+        if observation_version >= OBSERVATION_VERSION_V6 {
+            let component_mask = reader.u16()?;
+            if component_mask & !0x3 != 0 || reader.u16()? != 0 {
+                return Err(NativeEpisodeShardError::new(
+                    "invalid actor component header",
+                ));
+            }
+            let attention_flags = reader.u32()?;
+            let attention_position = reader.f32x3()?;
+            let attention_distances: [u8; 9] = reader
+                .bytes(9)?
+                .try_into()
+                .expect("exact attention-distance length");
+            let attention_auxiliary = reader.i16()?;
+            if reader.u8()? != 0 {
+                return Err(NativeEpisodeShardError::new(
+                    "nonzero actor attention reserved byte",
+                ));
+            }
+            let event_command = reader.u16()?;
+            let event_condition = reader.u16()?;
+            let event_id = reader.i16()?;
+            let event_map_tool_id = reader.u8()?;
+            let event_index = reader.u8()?;
+            if component_mask & 1 != 0 {
+                if attention_flags == 0 {
+                    return Err(NativeEpisodeShardError::new(
+                        "present actor attention component has no flags",
+                    ));
+                }
+                actor.attention = Some(NativeActorAttentionComponent {
+                    flags: attention_flags,
+                    position: attention_position,
+                    distance_indices: attention_distances,
+                    auxiliary: attention_auxiliary,
+                });
+            } else if attention_flags != 0
+                || attention_position != [0.0; 3]
+                || attention_distances != [0; 9]
+                || attention_auxiliary != 0
+            {
+                return Err(NativeEpisodeShardError::new(
+                    "absent actor attention component has a payload",
+                ));
+            }
+            let event_is_nondefault = event_command != 0
+                || event_condition != 2
+                || event_id != -1
+                || event_map_tool_id != 0xff
+                || event_index != 0;
+            if component_mask & 2 != 0 {
+                if !event_is_nondefault {
+                    return Err(NativeEpisodeShardError::new(
+                        "present actor event component is constructor-default state",
+                    ));
+                }
+                actor.event_participation = Some(NativeActorEventParticipationComponent {
+                    command: event_command,
+                    condition: event_condition,
+                    event_id,
+                    map_tool_id: event_map_tool_id,
+                    index: event_index,
+                });
+            } else if event_command != 0
+                || event_condition != 0
+                || event_id != 0
+                || event_map_tool_id != 0
+                || event_index != 0
+            {
+                return Err(NativeEpisodeShardError::new(
+                    "absent actor event component has a payload",
+                ));
+            }
+        }
+        actors.push(actor);
     }
     if actors
         .windows(2)
@@ -2005,6 +2108,10 @@ mod tests {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v5.dseps")
     }
 
+    fn golden_v6() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v6.dseps")
+    }
+
     fn read_u16(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
     }
@@ -2229,6 +2336,37 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v6_optional_actor_components() {
+        let shard = NativeEpisodeShard::decode(golden_v6()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V6
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            let actor = &observation.actors[0];
+            let attention = actor.attention.as_ref().unwrap();
+            assert_eq!(attention.flags, 0x20000002);
+            assert_eq!(attention.position, [11.0, 4.0, -7.0]);
+            assert_eq!(attention.distance_indices, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+            assert_eq!(attention.auxiliary, -4);
+            let event = actor.event_participation.as_ref().unwrap();
+            assert_eq!(event.command, 1);
+            assert_eq!(event.condition, 3);
+            assert_eq!(event.event_id, 27);
+            assert_eq!(event.map_tool_id, 8);
+            assert_eq!(event.index, 2);
+            let absent = observation.actors.last().unwrap();
+            assert!(absent.attention.is_none());
+            assert!(absent.event_participation.is_none());
+        }
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -2345,15 +2483,17 @@ mod tests {
             episode.steps.len() == episode.ticks_executed as usize
                 && episode.steps.iter().all(|step| {
                     step.chosen_pad == step.consumed_pad
-                        && (shard.metadata.observation_schema != LEARNING_OBSERVATION_SCHEMA_V5
-                            || [&step.pre_input, &step.post_simulation]
-                                .iter()
-                                .all(|observation| {
-                                    observation
-                                        .temporary_event_bytes
-                                        .as_ref()
-                                        .is_some_and(|bytes| bytes.len() == 256)
-                                }))
+                        && (!matches!(
+                            shard.metadata.observation_schema.as_str(),
+                            LEARNING_OBSERVATION_SCHEMA_V5 | LEARNING_OBSERVATION_SCHEMA_V6
+                        ) || [&step.pre_input, &step.post_simulation].iter().all(
+                            |observation| {
+                                observation
+                                    .temporary_event_bytes
+                                    .as_ref()
+                                    .is_some_and(|bytes| bytes.len() == 256)
+                            },
+                        ))
                 })
         }));
         let source_identity = shard.episodes[0].steps[0].pre_input.state_identity;
@@ -2375,7 +2515,10 @@ mod tests {
         }));
         if matches!(
             shard.metadata.observation_schema.as_str(),
-            LEARNING_OBSERVATION_SCHEMA_V3 | LEARNING_OBSERVATION_SCHEMA_V4
+            LEARNING_OBSERVATION_SCHEMA_V3
+                | LEARNING_OBSERVATION_SCHEMA_V4
+                | LEARNING_OBSERVATION_SCHEMA_V5
+                | LEARNING_OBSERVATION_SCHEMA_V6
         ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode

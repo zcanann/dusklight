@@ -201,6 +201,16 @@ human-authored successful setup.
   - [ ] expose available typed actor components and goal-relative actor
     features without adding gameplay writes or making optional components look
     universally present;
+    - [x] Learning observation v6 copies active actor attention and
+      event-participation scalars through the single gated read-only adapter.
+      Pointer fields never cross the boundary; constructor-default/inactive
+      storage becomes an explicit absent component. Rust decodes v2-v6, rejects
+      noncanonical masks/payloads, and the sealed actor view derives Link- and
+      camera-relative attention positions offline. The v6 cross-language
+      fixture covers both present and absent components;
+    - [ ] derive spatial relations to typed anchors in the selected compiled
+      goal when the goal actually exposes one, retaining explicit absence for
+      nonspatial or ambiguous goals;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
 - [x] Store immutable map geometry, placements, and type metadata once per

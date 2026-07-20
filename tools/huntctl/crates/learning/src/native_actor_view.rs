@@ -17,7 +17,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V1: &str = "dusklight-native-actor-view/v1";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V2: &str = "dusklight-native-actor-view/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +61,29 @@ pub struct NativeActorRelation {
     pub shape_yaw_relative_to_camera: Option<[f32; 2]>,
     pub parent_relative_position: Option<[f32; 3]>,
     pub parent_relative_velocity: Option<[f32; 3]>,
+    pub attention: Option<NativeActorAttentionRelation>,
+    pub event_participation: Option<NativeActorEventParticipation>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorAttentionRelation {
+    pub flags: u32,
+    pub absolute_position: [f32; 3],
+    pub distance_indices: [u8; 9],
+    pub auxiliary: i16,
+    pub link_relative_position: Option<[f32; 3]>,
+    pub camera_relative_position: Option<[f32; 3]>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorEventParticipation {
+    pub command: u16,
+    pub condition: u16,
+    pub event_id: i16,
+    pub map_tool_id: u8,
+    pub index: u8,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -146,7 +169,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V1.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V2.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -179,7 +202,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V1
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V2
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -203,7 +226,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v1\0");
+        hasher.update(b"dusklight.native-actor-view/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -332,6 +355,32 @@ fn materialize_actor(
             .map(|frame| angle_pair(actor.shape_angle[1].wrapping_sub(frame.view_yaw))),
         parent_relative_position: parent.map(|parent| subtract(actor.position, parent.position)),
         parent_relative_velocity: parent.map(|parent| subtract(actor.velocity, parent.velocity)),
+        attention: actor
+            .attention
+            .as_ref()
+            .map(|attention| NativeActorAttentionRelation {
+                flags: attention.flags,
+                absolute_position: attention.position,
+                distance_indices: attention.distance_indices,
+                auxiliary: attention.auxiliary,
+                link_relative_position: observation.player_present.then(|| {
+                    relative_yaw(
+                        attention.position,
+                        observation.player_position,
+                        observation.player_shape_angle[1],
+                    )
+                }),
+                camera_relative_position: camera_frame.map(|frame| frame.point(attention.position)),
+            }),
+        event_participation: actor.event_participation.as_ref().map(|event| {
+            NativeActorEventParticipation {
+                command: event.command,
+                condition: event.condition,
+                event_id: event.event_id,
+                map_tool_id: event.map_tool_id,
+                index: event.index,
+            }
+        }),
     }
 }
 
@@ -424,13 +473,37 @@ fn validate_observation(
             .chain(actor.shape_yaw_relative_to_camera.iter().flatten())
             .chain(actor.parent_relative_position.iter().flatten())
             .chain(actor.parent_relative_velocity.iter().flatten())
+            .chain(
+                actor
+                    .attention
+                    .iter()
+                    .flat_map(|attention| attention.absolute_position.iter()),
+            )
+            .chain(
+                actor
+                    .attention
+                    .iter()
+                    .flat_map(|attention| attention.link_relative_position.iter().flatten()),
+            )
+            .chain(
+                actor
+                    .attention
+                    .iter()
+                    .flat_map(|attention| attention.camera_relative_position.iter().flatten()),
+            )
             .all(|value| value.is_finite());
+        let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
+            attention.flags != 0
+                && observation.player_present == attention.link_relative_position.is_some()
+                && observation.camera_frame_present == attention.camera_relative_position.is_some()
+        });
         if actor.profile_slots.is_empty()
             || actor
                 .profile_slots
                 .windows(2)
                 .any(|pair| pair[0] >= pair[1])
             || !option_consistent
+            || !attention_consistent
             || !finite
         {
             return Err(NativeActorViewError::new(
@@ -575,7 +648,7 @@ mod tests {
 
     fn shard() -> NativeEpisodeShard {
         let mut shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v5.dseps"
+            "../../../../../tests/fixtures/automation/native_episode_v6.dseps"
         ))
         .unwrap();
         shard.episodes.truncate(1);
@@ -602,6 +675,18 @@ mod tests {
                     && actor.camera_relative_position.is_some()
                     && !actor.profile_slots.is_empty()
             }));
+            let attention = observation.actors[0].attention.as_ref().unwrap();
+            assert_eq!(attention.flags, 0x20000002);
+            assert!(attention.link_relative_position.is_some());
+            assert!(attention.camera_relative_position.is_some());
+            assert_eq!(
+                observation.actors[0]
+                    .event_participation
+                    .as_ref()
+                    .unwrap()
+                    .event_id,
+                27
+            );
         }
         let bytes = view.canonical_bytes().unwrap();
         assert_eq!(

@@ -91,7 +91,14 @@ int capture_milestone_actor(void* candidate, void* context) {
         ++storage->actorObservedCount;
     const std::uint64_t runtimeGeneration =
         static_cast<std::uint32_t>(fopAcM_GetID(actor));
-    const MilestoneObservation::Actor snapshot{
+    static_assert(sizeof(actor->attention_info.distances) ==
+        MilestoneObservation::Actor::AttentionDistanceCount);
+    const bool attentionPresent = actor->attention_info.flags != 0;
+    const bool eventParticipationPresent =
+        actor->eventInfo.mCommand != dEvtCmd_NONE_e ||
+        actor->eventInfo.mCondition != dEvtCnd_CANDEMO_e || actor->eventInfo.mEventId != -1 ||
+        actor->eventInfo.mMapToolId != 0xff || actor->eventInfo.mIndex != 0;
+    MilestoneObservation::Actor snapshot{
         .runtimeGeneration = runtimeGeneration,
         .actorName = static_cast<std::int16_t>(fopAcM_GetName(actor)),
         .setId = actor->setID,
@@ -120,7 +127,25 @@ int capture_milestone_actor(void* candidate, void* context) {
         .shapeAngleX = actor->shape_angle.x,
         .shapeAngleY = actor->shape_angle.y,
         .shapeAngleZ = actor->shape_angle.z,
+        .attentionPresent = attentionPresent,
+        .eventParticipationPresent = eventParticipationPresent,
     };
+    if (attentionPresent) {
+        snapshot.attention.flags = actor->attention_info.flags;
+        snapshot.attention.positionX = actor->attention_info.position.x;
+        snapshot.attention.positionY = actor->attention_info.position.y;
+        snapshot.attention.positionZ = actor->attention_info.position.z;
+        std::copy(std::begin(actor->attention_info.distances),
+            std::end(actor->attention_info.distances), snapshot.attention.distanceIndices.begin());
+        snapshot.attention.auxiliary = actor->attention_info.field_0xa;
+    }
+    if (eventParticipationPresent) {
+        snapshot.eventParticipation.command = actor->eventInfo.mCommand;
+        snapshot.eventParticipation.condition = actor->eventInfo.mCondition;
+        snapshot.eventParticipation.eventId = actor->eventInfo.mEventId;
+        snapshot.eventParticipation.mapToolId = actor->eventInfo.mMapToolId;
+        snapshot.eventParticipation.index = actor->eventInfo.mIndex;
+    }
     storage->actors.push_back(snapshot);
     return 1;
 }

@@ -571,6 +571,41 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         append_integer(output, actor.shapeAngleX);
         append_integer(output, actor.shapeAngleY);
         append_integer(output, actor.shapeAngleZ);
+        std::uint16_t componentMask = 0;
+        componentMask |= actor.attentionPresent ? 1u << 0 : 0;
+        componentMask |= actor.eventParticipationPresent ? 1u << 1 : 0;
+        append_integer(output, componentMask);
+        append_integer<std::uint16_t>(output, 0);
+
+        const auto& attention = actor.attention;
+        append_integer(output, actor.attentionPresent ? attention.flags : 0u);
+        if (!append_float(
+                output, actor.attentionPresent ? attention.positionX : 0.0F, error) ||
+            !append_float(
+                output, actor.attentionPresent ? attention.positionY : 0.0F, error) ||
+            !append_float(
+                output, actor.attentionPresent ? attention.positionZ : 0.0F, error))
+            return false;
+        if (actor.attentionPresent) {
+            output.insert(output.end(), attention.distanceIndices.begin(),
+                attention.distanceIndices.end());
+        } else {
+            output.insert(output.end(), attention.distanceIndices.size(), std::uint8_t{0});
+        }
+        append_integer(output, actor.attentionPresent ? attention.auxiliary : std::int16_t{0});
+        append_integer<std::uint8_t>(output, 0);
+
+        const auto& participation = actor.eventParticipation;
+        append_integer(output,
+            actor.eventParticipationPresent ? participation.command : std::uint16_t{0});
+        append_integer(output,
+            actor.eventParticipationPresent ? participation.condition : std::uint16_t{0});
+        append_integer(output,
+            actor.eventParticipationPresent ? participation.eventId : std::int16_t{0});
+        append_integer(output,
+            actor.eventParticipationPresent ? participation.mapToolId : std::uint8_t{0});
+        append_integer(output,
+            actor.eventParticipationPresent ? participation.index : std::uint8_t{0});
     }
 
     if (observation.flagsPresent) {

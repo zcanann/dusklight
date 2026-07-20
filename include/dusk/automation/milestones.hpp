@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -16,7 +17,7 @@ namespace dusk::automation {
 
 inline constexpr std::uint32_t MilestoneResultSchemaVersion = 5;
 inline constexpr std::uint32_t MilestoneBoundaryFingerprintVersion = 6;
-inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 3;
+inline constexpr std::uint32_t MilestoneObservationFingerprintVersion = 4;
 inline constexpr std::uint64_t MilestoneNoTapeFrame = ~std::uint64_t{0};
 
 enum class MilestoneId : std::uint8_t {
@@ -114,6 +115,26 @@ struct MilestoneObservation {
     GameRngSnapshot rng;
 
     struct Actor {
+        // The port preserves the GameCube actor layout: nine attention lanes.
+        static constexpr std::size_t AttentionDistanceCount = 9;
+
+        struct AttentionComponent {
+            std::uint32_t flags = 0;
+            float positionX = 0.0f;
+            float positionY = 0.0f;
+            float positionZ = 0.0f;
+            std::array<std::uint8_t, AttentionDistanceCount> distanceIndices{};
+            std::int16_t auxiliary = 0;
+        };
+
+        struct EventParticipationComponent {
+            std::uint16_t command = 0;
+            std::uint16_t condition = 0;
+            std::int16_t eventId = -1;
+            std::uint8_t mapToolId = 0xff;
+            std::uint8_t index = 0;
+        };
+
         std::uint64_t runtimeGeneration = 0;
         std::int16_t actorName = -1;
         std::uint16_t setId = 0xffff;
@@ -142,6 +163,14 @@ struct MilestoneObservation {
         std::int16_t shapeAngleX = 0;
         std::int16_t shapeAngleY = 0;
         std::int16_t shapeAngleZ = 0;
+        // These are semantic optional components. The underlying legacy actor
+        // storage exists for every actor, but its payload is only retained when
+        // the corresponding gameplay facility is active. This prevents default
+        // constructor bytes from masquerading as universally meaningful state.
+        bool attentionPresent = false;
+        AttentionComponent attention;
+        bool eventParticipationPresent = false;
+        EventParticipationComponent eventParticipation;
     };
     std::span<const Actor> actors;
     // Total actor population visited by the observer. Current native learning
