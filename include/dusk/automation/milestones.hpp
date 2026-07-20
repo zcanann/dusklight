@@ -144,9 +144,9 @@ struct MilestoneObservation {
         std::int16_t shapeAngleZ = 0;
     };
     std::span<const Actor> actors;
-    // Total actor population visited by the observer before bounded retention.
-    // When this exceeds actors.size(), the retained set is the lowest runtime
-    // generations in stable order and actorsTruncated is true.
+    // Total actor population visited by the observer. Current native learning
+    // capture requires this to equal actors.size(); the truncation marker is
+    // retained only so older or explicitly bounded observations fail closed.
     std::uint32_t actorObservedCount = 0;
     bool actorsTruncated = false;
 

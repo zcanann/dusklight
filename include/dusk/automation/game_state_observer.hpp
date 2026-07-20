@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <vector>
 
 namespace dusk::automation {
 
@@ -24,10 +25,11 @@ inline constexpr std::size_t kMilestoneDungeonFlagCount = 64;
 inline constexpr std::size_t kMilestoneSwitchFlagCount = 240;
 
 struct MilestoneObservationStorage {
-    std::array<MilestoneObservation::Actor, kInputControllerMaximumActors> actors{};
-    std::size_t actorCount = 0;
+    // Learning observations retain the complete process actor population. The
+    // controller's bounded actor view is a separate, explicitly lossy hot-path
+    // contract and must never silently constrain the training corpus.
+    std::vector<MilestoneObservation::Actor> actors;
     std::uint32_t actorObservedCount = 0;
-    bool actorsTruncated = false;
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
     std::array<std::uint8_t, kMilestoneDungeonFlagCount> dungeonFlags{};

@@ -325,11 +325,6 @@ bool append_mechanics_channels(std::vector<std::uint8_t>& output, const Gameplay
     return true;
 }
 
-LearningActorSelectionRule actor_selection_rule(const MilestoneObservation& observation) {
-    return observation.actorsTruncated ? LearningActorSelectionRule::LowestRuntimeGeneration :
-                                         LearningActorSelectionRule::Complete;
-}
-
 bool append_string16(
     std::vector<std::uint8_t>& output, const std::string_view value, std::string& error) {
     if (value.size() > std::numeric_limits<std::uint16_t>::max()) {
@@ -378,17 +373,17 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     if ((context.phase != LearningObservationPhase::PreInput &&
             context.phase != LearningObservationPhase::PostSimulation) ||
         !validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid ||
-        !traceBoundaryIsValid || observation.actors.size() > kInputControllerMaximumActors ||
-        observation.actorObservedCount < observation.actors.size() ||
-        observation.actorsTruncated !=
-            (observation.actorObservedCount > observation.actors.size()) ||
+        !traceBoundaryIsValid ||
+        observation.actors.size() > std::numeric_limits<std::uint16_t>::max() ||
+        observation.actorObservedCount != observation.actors.size() ||
+        observation.actorsTruncated ||
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
                 observation.dungeonFlags.size() != kMilestoneDungeonFlagCount ||
                 observation.switchFlags.size() != kMilestoneSwitchFlagCount)))
     {
-        error = "learning observation has inconsistent bounded channels";
+        error = "learning observation has incomplete or inconsistent channels";
         return false;
     }
     if (std::ranges::adjacent_find(observation.actors,
@@ -411,7 +406,6 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     flags |= observation.nextStageEnabled ? 1u << 2 : 0;
     flags |= context.cameraPresent ? 1u << 3 : 0;
     flags |= context.collisionCorrectionPresent ? 1u << 4 : 0;
-    flags |= observation.actorsTruncated ? 1u << 5 : 0;
     flags |= observation.flagsPresent ? 1u << 6 : 0;
     flags |= context.goal.configured ? 1u << 7 : 0;
     flags |= context.goal.reached ? 1u << 8 : 0;
@@ -420,7 +414,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     flags |= observation.eventNameHashPresent ? 1u << 11 : 0;
 
     append_integer(output, static_cast<std::uint8_t>(context.phase));
-    append_integer(output, static_cast<std::uint8_t>(actor_selection_rule(observation)));
+    append_integer(output, static_cast<std::uint8_t>(LearningActorSelectionRule::Complete));
     append_integer(output, static_cast<std::uint8_t>(context.terminalReason));
     append_integer<std::uint8_t>(output, 0);
     append_integer(output, static_cast<std::uint16_t>(observation.actors.size()));

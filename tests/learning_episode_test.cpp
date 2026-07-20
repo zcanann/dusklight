@@ -211,6 +211,13 @@ struct ObservationFixture {
 void test_episode_and_shard_are_compact_and_self_delimiting(
     const std::optional<std::filesystem::path>& fixturePath) {
     ObservationFixture fixture;
+    std::vector<MilestoneObservation::Actor> completeActors(kInputControllerMaximumActors + 1,
+        fixture.actors[0]);
+    for (std::size_t index = 0; index < completeActors.size(); ++index)
+        completeActors[index].runtimeGeneration = index + 1;
+    fixture.observation.actors = completeActors;
+    fixture.observation.actorObservedCount =
+        static_cast<std::uint32_t>(completeActors.size());
     RawPadState pad;
     pad.buttons = 0x0100;
     pad.stickX = 100;
@@ -347,7 +354,28 @@ void test_inconsistent_actor_completeness_fails_closed() {
             .stateIdentity = "11111111111111111111111111111111",
         },
         error));
-    REQUIRE(error.find("bounded channels") != std::string::npos);
+    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+}
+
+void test_actor_population_is_not_limited_by_controller_capacity() {
+    ObservationFixture fixture;
+    std::vector<MilestoneObservation::Actor> actors(kInputControllerMaximumActors + 1,
+        fixture.actors[0]);
+    for (std::size_t index = 0; index < actors.size(); ++index)
+        actors[index].runtimeGeneration = index + 1;
+    fixture.observation.actors = actors;
+    fixture.observation.actorObservedCount = static_cast<std::uint32_t>(actors.size());
+
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(read_little<std::uint16_t>(bytes, 28) == actors.size());
+    REQUIRE(read_little<std::uint32_t>(bytes, 34) == actors.size());
 }
 
 void test_duplicate_actor_identity_fails_closed() {
@@ -385,7 +413,7 @@ void test_mechanics_boundary_and_surface_identity_fail_closed() {
             .playerForm = {.present = true},
         },
         error));
-    REQUIRE(error.find("bounded channels") != std::string::npos);
+    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
 
     fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
     fixture.gameplayTrace.playerCollisionSurfaces.surfaces[0].flags = 0;
@@ -412,6 +440,7 @@ int main(const int argc, char** argv) {
     test_episode_and_shard_are_compact_and_self_delimiting(
         argc == 2 ? std::optional(std::filesystem::path(argv[1])) : std::nullopt);
     test_inconsistent_actor_completeness_fails_closed();
+    test_actor_population_is_not_limited_by_controller_capacity();
     test_duplicate_actor_identity_fails_closed();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";

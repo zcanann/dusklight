@@ -58,6 +58,11 @@ the same goal without demonstration-relative features.
   episodes. Cross-language tests reject action-boundary shifts, terminal labels
   in pre-input observations, malformed actor completeness, corruption, and
   phase discontinuity before a shard can enter learner code.
+- Learning-observation v4 separates the complete learner actor population from
+  the bounded controller hot path. Its checked C++-writer/Rust-reader fixture
+  carries 257 actors, and both sides fail closed on incomplete actor metadata.
+  A live two-candidate, 250-tick F_SP103 checkpoint batch emitted v4 under the
+  immutable process-boot card fixture and passed the same Rust invariant checks.
 
 ## 1. Turn every attempt into learning experience
 
@@ -82,9 +87,10 @@ the same goal without demonstration-relative features.
 - [ ] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
-- [ ] Remove arbitrary learner-facing actor truncation. If capture is bounded
-  for measured performance reasons, record the selection rule and omitted
-  count so the sample cannot masquerade as complete.
+- [x] Remove arbitrary learner-facing actor truncation. Learning-observation v4
+  requires the complete process actor set and rejects inconsistent counts,
+  truncation markers, or a non-complete selection rule. The separate controller
+  tactic view remains explicitly bounded for its hot-path contract.
 - [x] Enforce decision-phase correctness: model input may contain only state
   realized before its chosen action. Add explicit tests against one-frame and
   terminal-label leakage.

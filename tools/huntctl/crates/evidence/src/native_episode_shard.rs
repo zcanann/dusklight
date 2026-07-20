@@ -22,15 +22,17 @@ const COMPLETE: u32 = 1;
 const SUCCESS: u16 = 1;
 const OBSERVATION_VERSION_V2: u16 = 2;
 const OBSERVATION_VERSION_V3: u16 = 3;
+const OBSERVATION_VERSION_V4: u16 = 4;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
-const MAX_ACTORS: usize = 256;
+const MAX_ACTORS: usize = u16::MAX as usize;
 const MAX_EXPANDED_BYTES: usize = 16 * 1024 * 1024 * 1024;
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
 pub const LEARNING_OBSERVATION_SCHEMA_V2: &str = "dusklight-learning-observation/v2";
 pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation/v3";
+pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -440,7 +442,7 @@ impl NativeEpisodeShard {
         let observation_version = header.u16()?;
         if !matches!(
             observation_version,
-            OBSERVATION_VERSION_V2 | OBSERVATION_VERSION_V3
+            OBSERVATION_VERSION_V2 | OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -532,6 +534,7 @@ fn decode_metadata(
     let expected_observation_schema = match observation_version {
         OBSERVATION_VERSION_V2 => LEARNING_OBSERVATION_SCHEMA_V2,
         OBSERVATION_VERSION_V3 => LEARNING_OBSERVATION_SCHEMA_V3,
+        OBSERVATION_VERSION_V4 => LEARNING_OBSERVATION_SCHEMA_V4,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1426,6 +1429,15 @@ fn decode_observation(
             "inconsistent observation header",
         ));
     }
+    if observation_version >= OBSERVATION_VERSION_V4
+        && (actor_selection != NativeActorSelectionRule::Complete
+            || flags & (1 << 5) != 0
+            || actor_observed_count != actor_count as u32)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "v4 observation does not contain the complete actor set",
+        ));
+    }
     let stage = reader.fixed_name()?;
     let room = reader.i8()?;
     let layer = reader.i8()?;
@@ -1503,7 +1515,7 @@ fn decode_observation(
             false,
             false,
         ),
-        OBSERVATION_VERSION_V3 => {
+        OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -1911,6 +1923,10 @@ mod tests {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v3.dseps")
     }
 
+    fn golden_v4() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v4.dseps")
+    }
+
     fn read_u16(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
     }
@@ -1929,6 +1945,10 @@ mod tests {
 
     fn mutate_first_v3_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
         mutate_first_episode_in(golden_v3(), mutator)
+    }
+
+    fn mutate_first_v4_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        mutate_first_episode_in(golden_v4(), mutator)
     }
 
     fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
@@ -2070,6 +2090,48 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v4_complete_actor_contract() {
+        let shard = NativeEpisodeShard::decode(golden_v4()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V4
+        );
+        assert_eq!(shard.episodes[0].steps[0].pre_input.actors.len(), 257);
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            assert_eq!(
+                observation.actor_selection,
+                NativeActorSelectionRule::Complete
+            );
+            assert!(!observation.actors_truncated);
+            assert_eq!(
+                observation.actor_observed_count as usize,
+                observation.actors.len()
+            );
+        }
+    }
+
+    #[test]
+    fn v4_rejects_an_explicitly_truncated_actor_subset() {
+        let shard = mutate_first_v4_episode(|expanded| {
+            let (pre_input, _) = first_step_offsets(expanded);
+            expanded[pre_input + 1] = 1;
+            expanded[pre_input + 6] |= 1 << 5;
+            expanded[pre_input + 10..pre_input + 14].copy_from_slice(&258_u32.to_le_bytes());
+        });
+        assert!(
+            NativeEpisodeShard::decode(&shard)
+                .unwrap_err()
+                .to_string()
+                .contains("does not contain the complete actor set")
+        );
+    }
+
+    #[test]
     fn rejects_terminal_label_leakage_into_pre_input() {
         let shard = mutate_first_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -2185,7 +2247,10 @@ mod tests {
                     }
             })
         }));
-        if shard.metadata.observation_schema == LEARNING_OBSERVATION_SCHEMA_V3 {
+        if matches!(
+            shard.metadata.observation_schema.as_str(),
+            LEARNING_OBSERVATION_SCHEMA_V3 | LEARNING_OBSERVATION_SCHEMA_V4
+        ) {
             let observations = shard.episodes.iter().flat_map(|episode| {
                 episode
                     .steps
