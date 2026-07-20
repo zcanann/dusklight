@@ -7,8 +7,8 @@
 use crate::artifact::Digest;
 use crate::compiled_goal_graph::{CompiledGoalGraph, GoalSpatialAnchor};
 use dusklight_evidence::native_episode_shard::{
-    NativeActorObservation, NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation,
-    NativeObservationPhase,
+    NativeActorIdentity, NativeActorObservation, NativeChannelStatus, NativeEpisodeShard,
+    NativeLearningObservation, NativeObservationPhase,
 };
 use dusklight_objectives::milestone_dsl::{CompiledMilestones, decode};
 use dusklight_world::actor_profile_catalog::ActorProfileCatalog;
@@ -19,13 +19,61 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V4: &str = "dusklight-native-actor-view/v4";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V5: &str = "dusklight-native-actor-view/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorViewObservationPhase {
     PreInput,
     PostSimulation,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorViewChannelStatus {
+    NotSampled,
+    Present,
+    Absent,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativePlayerRelationshipRole {
+    TargetedActor,
+    RideActor,
+    HeldItemActor,
+    GrabbedActor,
+    ThrownBoomerangActor,
+    CopyRodActor,
+    HookshotRoofWaitActor,
+    ChainGrabActor,
+    AttentionHintActor,
+    AttentionCatchActor,
+    AttentionLookActor,
+}
+
+impl NativePlayerRelationshipRole {
+    pub const ALL: [Self; 11] = [
+        Self::TargetedActor,
+        Self::RideActor,
+        Self::HeldItemActor,
+        Self::GrabbedActor,
+        Self::ThrownBoomerangActor,
+        Self::CopyRodActor,
+        Self::HookshotRoofWaitActor,
+        Self::ChainGrabActor,
+        Self::AttentionHintActor,
+        Self::AttentionCatchActor,
+        Self::AttentionLookActor,
+    ];
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePlayerRelationshipEdge {
+    pub role: NativePlayerRelationshipRole,
+    pub actor_runtime_generation: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -154,6 +202,8 @@ pub struct NativeActorViewObservation {
     pub player_position: [f32; 3],
     pub player_yaw: i16,
     pub camera_frame_present: bool,
+    pub player_relationships_status: ActorViewChannelStatus,
+    pub player_relationships: Vec<NativePlayerRelationshipEdge>,
     pub goal_anchors: Vec<NativeGoalAnchorObservation>,
     pub actors: Vec<NativeActorRelation>,
 }
@@ -273,7 +323,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V4.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V5.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -307,7 +357,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V4
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V5
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -340,7 +390,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v4\0");
+        hasher.update(b"dusklight.native-actor-view/v5\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -371,6 +421,7 @@ fn materialize_observation(
         .iter()
         .map(|actor| (actor.runtime_generation, actor))
         .collect::<BTreeMap<_, _>>();
+    let player_relationships = materialize_player_relationships(observation)?;
     let goal_anchors = goal_graph
         .map(|graph| materialize_goal_anchors(&graph.spatial_anchors(), observation))
         .unwrap_or_default();
@@ -407,9 +458,110 @@ fn materialize_observation(
         player_position: observation.player_position,
         player_yaw: observation.player_shape_angle[1],
         camera_frame_present: camera_frame.is_some(),
+        player_relationships_status: actor_view_channel_status(
+            observation.player_relationships_status,
+        ),
+        player_relationships,
         goal_anchors,
         actors,
     })
+}
+
+fn actor_view_channel_status(status: NativeChannelStatus) -> ActorViewChannelStatus {
+    match status {
+        NativeChannelStatus::NotSampled => ActorViewChannelStatus::NotSampled,
+        NativeChannelStatus::Present => ActorViewChannelStatus::Present,
+        NativeChannelStatus::Absent => ActorViewChannelStatus::Absent,
+        NativeChannelStatus::Unavailable => ActorViewChannelStatus::Unavailable,
+    }
+}
+
+fn materialize_player_relationships(
+    observation: &NativeLearningObservation,
+) -> Result<Vec<NativePlayerRelationshipEdge>, NativeActorViewError> {
+    let Some(relationships) = observation.player_relationships.as_ref() else {
+        if observation.player_relationships_status == NativeChannelStatus::Present {
+            return Err(NativeActorViewError::new(
+                "present player-relationship channel has no payload",
+            ));
+        }
+        return Ok(Vec::new());
+    };
+    if observation.player_relationships_status != NativeChannelStatus::Present {
+        return Err(NativeActorViewError::new(
+            "unavailable player-relationship channel has a payload",
+        ));
+    }
+    let mut edges = Vec::new();
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::TargetedActor,
+        &relationships.targeted_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::RideActor,
+        &relationships.ride_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::HeldItemActor,
+        &relationships.held_item_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::GrabbedActor,
+        &relationships.grabbed_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::ThrownBoomerangActor,
+        &relationships.thrown_boomerang_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::CopyRodActor,
+        &relationships.copy_rod_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::HookshotRoofWaitActor,
+        &relationships.hookshot_roof_wait_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::ChainGrabActor,
+        &relationships.chain_grab_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::AttentionHintActor,
+        &relationships.attention_hint_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::AttentionCatchActor,
+        &relationships.attention_catch_actor,
+    );
+    push_player_relationship(
+        &mut edges,
+        NativePlayerRelationshipRole::AttentionLookActor,
+        &relationships.attention_look_actor,
+    );
+    Ok(edges)
+}
+
+fn push_player_relationship(
+    edges: &mut Vec<NativePlayerRelationshipEdge>,
+    role: NativePlayerRelationshipRole,
+    identity: &Option<NativeActorIdentity>,
+) {
+    if let Some(identity) = identity {
+        edges.push(NativePlayerRelationshipEdge {
+            role,
+            actor_runtime_generation: u64::from(identity.runtime_generation),
+        });
+    }
 }
 
 fn materialize_goal_anchors(
@@ -678,6 +830,26 @@ fn validate_observation(
     {
         return Err(NativeActorViewError::new(
             "native actor observation envelope is invalid",
+        ));
+    }
+    let actor_generations = observation
+        .actors
+        .iter()
+        .map(|actor| actor.runtime_generation)
+        .collect::<std::collections::BTreeSet<_>>();
+    if (observation.player_relationships_status != ActorViewChannelStatus::Present
+        && !observation.player_relationships.is_empty())
+        || observation
+            .player_relationships
+            .windows(2)
+            .any(|pair| pair[0].role >= pair[1].role)
+        || observation.player_relationships.iter().any(|edge| {
+            edge.actor_runtime_generation == 0
+                || !actor_generations.contains(&edge.actor_runtime_generation)
+        })
+    {
+        return Err(NativeActorViewError::new(
+            "native player-relationship edges are invalid",
         ));
     }
     for (anchor, expected) in observation.goal_anchors.iter().zip(expected_goal_anchors) {
@@ -950,6 +1122,16 @@ mod tests {
         shard
     }
 
+    fn shard_v10() -> NativeEpisodeShard {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v10.dseps"
+        ))
+        .unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard
+    }
+
     #[test]
     fn builds_complete_absolute_link_camera_and_parent_relations() {
         let mut shard = shard();
@@ -1031,11 +1213,45 @@ mod tests {
         legacy.metadata.actor_profile_catalog_identity = Some(legacy_catalog.identity.clone());
         let legacy_view = NativeEpisodeActorView::build(&legacy, &legacy_catalog).unwrap();
         assert!(legacy_view.observations.iter().all(|observation| {
-            observation
-                .actors
-                .iter()
-                .all(|actor| actor.base_state.is_none())
+            observation.player_relationships_status == ActorViewChannelStatus::NotSampled
+                && observation.player_relationships.is_empty()
+                && observation
+                    .actors
+                    .iter()
+                    .all(|actor| actor.base_state.is_none())
         }));
+    }
+
+    #[test]
+    fn materializes_v10_player_relationships_as_typed_actor_edges() {
+        let mut shard = shard_v10();
+        let catalog = catalog_for(&shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&shard, &catalog).unwrap();
+        for observation in &view.observations {
+            assert_eq!(
+                observation.player_relationships_status,
+                ActorViewChannelStatus::Present
+            );
+            assert_eq!(
+                observation.player_relationships,
+                [NativePlayerRelationshipEdge {
+                    role: NativePlayerRelationshipRole::TargetedActor,
+                    actor_runtime_generation: 7,
+                }]
+            );
+            assert!(
+                observation
+                    .actors
+                    .iter()
+                    .any(|actor| actor.runtime_generation == 7)
+            );
+        }
+
+        let mut tampered = view.clone();
+        tampered.observations[0].player_relationships[0].actor_runtime_generation = 999;
+        tampered.view_sha256 = tampered.compute_identity().unwrap();
+        assert!(tampered.validate().is_err());
     }
 
     #[test]

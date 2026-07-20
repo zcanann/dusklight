@@ -7,7 +7,8 @@
 
 use crate::artifact::Digest;
 use crate::native_actor_view::{
-    ActorViewObservationPhase, NativeActorRelation, NativeEpisodeActorView,
+    ActorViewChannelStatus, ActorViewObservationPhase, NativeActorRelation, NativeEpisodeActorView,
+    NativePlayerRelationshipEdge, NativePlayerRelationshipRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -15,7 +16,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V1: &str = "dusklight-native-actor-feature-view/v1";
+pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2: &str = "dusklight-native-actor-feature-view/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,10 +31,11 @@ pub enum ActorFeatureFamily {
     Attention,
     EventParticipation,
     GoalRelative,
+    PlayerRelationships,
 }
 
 impl ActorFeatureFamily {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Identity,
         Self::AbsoluteMotion,
         Self::BaseLifecycle,
@@ -44,6 +46,7 @@ impl ActorFeatureFamily {
         Self::Attention,
         Self::EventParticipation,
         Self::GoalRelative,
+        Self::PlayerRelationships,
     ];
 }
 
@@ -124,6 +127,7 @@ pub struct NativeActorFeatureObservation {
     pub room: i8,
     pub player_present: bool,
     pub camera_frame_present: bool,
+    pub player_relationships_status: Option<ActorViewChannelStatus>,
     pub actors: Vec<NativeActorFeatureRow>,
 }
 
@@ -176,15 +180,25 @@ impl NativeActorFeatureView {
                 room: observation.room,
                 player_present: observation.player_present,
                 camera_frame_present: observation.camera_frame_present,
+                player_relationships_status: spec
+                    .contains(ActorFeatureFamily::PlayerRelationships)
+                    .then_some(observation.player_relationships_status),
                 actors: observation
                     .actors
                     .iter()
-                    .map(|actor| materialize_actor(actor, &spec))
+                    .map(|actor| {
+                        materialize_actor(
+                            actor,
+                            &spec,
+                            observation.player_relationships_status,
+                            &observation.player_relationships,
+                        )
+                    })
                     .collect(),
             })
             .collect();
         let mut view = Self {
-            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V1.into(),
+            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2.into(),
             source_actor_view_sha256: source.view_sha256,
             spec,
             columns,
@@ -217,7 +231,7 @@ impl NativeActorFeatureView {
     pub fn validate(&self) -> Result<(), NativeActorFeatureError> {
         self.spec.validate()?;
         let expected_columns = columns_for(&self.spec, self.columns.goal_anchor_count);
-        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V1
+        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2
             || self.source_actor_view_sha256 == Digest::ZERO
             || self.observations.is_empty()
             || self.columns != expected_columns
@@ -244,6 +258,7 @@ impl NativeActorFeatureView {
             for actor in &observation.actors {
                 validate_actor(actor, &self.columns)?;
             }
+            validate_player_relationship_features(observation, &self.spec, &self.columns)?;
         }
         Ok(())
     }
@@ -251,7 +266,7 @@ impl NativeActorFeatureView {
     fn compute_identity(&self) -> Result<Digest, NativeActorFeatureError> {
         let mut canonical = self.clone();
         canonical.view_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.native-actor-feature-view/v1\0", &canonical)
+        canonical_digest(b"dusklight.native-actor-feature-view/v2\0", &canonical)
     }
 }
 
@@ -355,6 +370,24 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
             ],
         );
     }
+    if spec.contains(ActorFeatureFamily::PlayerRelationships) {
+        extend_names(
+            &mut binary,
+            &[
+                "player_targeted_actor",
+                "player_ride_actor",
+                "player_held_item_actor",
+                "player_grabbed_actor",
+                "player_thrown_boomerang_actor",
+                "player_copy_rod_actor",
+                "player_hookshot_roof_wait_actor",
+                "player_chain_grab_actor",
+                "player_attention_hint_actor",
+                "player_attention_catch_actor",
+                "player_attention_look_actor",
+            ],
+        );
+    }
     ActorFeatureColumns {
         categorical,
         continuous,
@@ -370,6 +403,8 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
 fn materialize_actor(
     actor: &NativeActorRelation,
     spec: &ActorFeatureSpec,
+    player_relationships_status: ActorViewChannelStatus,
+    player_relationships: &[NativePlayerRelationshipEdge],
 ) -> NativeActorFeatureRow {
     let mut row = NativeActorFeatureRow {
         runtime_generation: actor.runtime_generation,
@@ -506,7 +541,57 @@ fn materialize_actor(
     if spec.contains(ActorFeatureFamily::GoalRelative) {
         row.goal_relative_positions = actor.goal_relative_positions.clone();
     }
+    if spec.contains(ActorFeatureFamily::PlayerRelationships) {
+        let present = player_relationships_status == ActorViewChannelStatus::Present;
+        for role in NativePlayerRelationshipRole::ALL {
+            let related = player_relationships.iter().any(|edge| {
+                edge.role == role && edge.actor_runtime_generation == actor.runtime_generation
+            });
+            push_binary(&mut row, related, present);
+        }
+    }
     row
+}
+
+fn validate_player_relationship_features(
+    observation: &NativeActorFeatureObservation,
+    spec: &ActorFeatureSpec,
+    columns: &ActorFeatureColumns,
+) -> Result<(), NativeActorFeatureError> {
+    let enabled = spec.contains(ActorFeatureFamily::PlayerRelationships);
+    if enabled != observation.player_relationships_status.is_some() {
+        return Err(NativeActorFeatureError::new(
+            "player-relationship feature status disagrees with its feature family",
+        ));
+    }
+    if !enabled {
+        return Ok(());
+    }
+    let first = columns
+        .binary
+        .iter()
+        .position(|name| name == "player_targeted_actor")
+        .ok_or_else(|| NativeActorFeatureError::new("player-relationship columns are absent"))?;
+    let expected_present =
+        observation.player_relationships_status == Some(ActorViewChannelStatus::Present);
+    for role_offset in 0..NativePlayerRelationshipRole::ALL.len() {
+        let column = first + role_offset;
+        let mut related_count = 0usize;
+        for actor in &observation.actors {
+            if actor.binary_present[column] != expected_present {
+                return Err(NativeActorFeatureError::new(
+                    "player-relationship feature mask disagrees with channel status",
+                ));
+            }
+            related_count += usize::from(actor.binary[column]);
+        }
+        if related_count > 1 {
+            return Err(NativeActorFeatureError::new(
+                "player-relationship role selects multiple actors",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_actor(
@@ -562,7 +647,7 @@ fn feature_schema_digest(
     columns: &ActorFeatureColumns,
 ) -> Result<Digest, NativeActorFeatureError> {
     canonical_digest(
-        b"dusklight.native-actor-feature-schema/v1\0",
+        b"dusklight.native-actor-feature-schema/v2\0",
         &(spec, columns),
     )
 }
@@ -623,6 +708,11 @@ fn extend_binary(row: &mut NativeActorFeatureRow, values: &[bool], present: bool
         .extend(values.iter().map(|value| present && *value));
     row.binary_present
         .extend(std::iter::repeat_n(present, values.len()));
+}
+
+fn push_binary(row: &mut NativeActorFeatureRow, value: bool, present: bool) {
+    row.binary.push(present && value);
+    row.binary_present.push(present);
 }
 
 fn extend_optional_vec3(row: &mut NativeActorFeatureRow, value: Option<[f32; 3]>) {
@@ -818,6 +908,61 @@ mod tests {
         assert!(!actor.continuous_present[gravity]);
         assert!(!actor.binary[heap]);
         assert!(!actor.binary_present[heap]);
+
+        assert_eq!(
+            view.observations[0].player_relationships_status,
+            Some(ActorViewChannelStatus::NotSampled)
+        );
+        let targeted = binary(&view, "player_targeted_actor");
+        assert!(
+            view.observations[0]
+                .actors
+                .iter()
+                .all(|actor| !actor.binary[targeted] && !actor.binary_present[targeted])
+        );
+    }
+
+    #[test]
+    fn v10_relationship_edges_become_masked_per_actor_role_features() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v10.dseps"
+        ));
+        let view = NativeActorFeatureView::build(&source, ActorFeatureSpec::all()).unwrap();
+        let observation = &view.observations[0];
+        assert_eq!(
+            observation.player_relationships_status,
+            Some(ActorViewChannelStatus::Present)
+        );
+        let targeted = binary(&view, "player_targeted_actor");
+        let ride = binary(&view, "player_ride_actor");
+        for actor in &observation.actors {
+            assert!(actor.binary_present[targeted]);
+            assert!(actor.binary_present[ride]);
+            assert_eq!(
+                actor.binary[targeted],
+                actor.runtime_generation == 7,
+                "target role must join the exact actor generation"
+            );
+            assert!(!actor.binary[ride]);
+        }
+
+        let without_relationships = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::Identity]).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            without_relationships.observations[0]
+                .player_relationships_status
+                .is_none()
+        );
+        assert!(
+            !without_relationships
+                .columns
+                .binary
+                .iter()
+                .any(|name| name.starts_with("player_"))
+        );
     }
 
     #[test]
