@@ -48,5 +48,6 @@ pub mod prioritized_replay;
 pub mod rainbow;
 pub mod reward_shaping;
 pub mod rl_readiness;
+pub mod semantic_goal_input;
 pub mod training_guard;
 pub mod transfer_learning;

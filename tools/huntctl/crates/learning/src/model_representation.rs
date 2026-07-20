@@ -1,9 +1,10 @@
 //! Fixed, masked model inputs for the first serious representation baseline.
 
 use super::dataset::NormalizationStatistics;
-use super::goal_conditioning::CompiledObjectiveVector;
 use crate::artifact::Digest;
+use crate::compiled_goal_graph::CompiledGoalGraph;
 use crate::observation_view::{MissingnessPolicy, ObservationSpec};
+use crate::semantic_goal_input::{SEMANTIC_GOAL_INPUT_SCHEMA_V1, SemanticGoalInput};
 use crate::trace::TraceSelectedActors;
 use crate::world_spatial::WorldPointQueryReport;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const FIXED_MODEL_REPRESENTATION_SCHEMA_V2: &str = "dusklight-fixed-model-representation/v2";
+pub const FIXED_MODEL_REPRESENTATION_SCHEMA_V3: &str = "dusklight-fixed-model-representation/v3";
 pub const DEFAULT_CATEGORICAL_EMBEDDING_WIDTH: usize = 4;
 pub const DEFAULT_ACTOR_SLOTS: usize = 4;
 pub const DEFAULT_GEOMETRY_SLOTS: usize = 4;
@@ -92,7 +93,7 @@ impl LocalGeometryProbe {
 #[derive(Clone, Copy)]
 pub struct RepresentationContext<'a> {
     pub state: &'a [f32],
-    pub objective: &'a CompiledObjectiveVector,
+    pub goal: &'a CompiledGoalGraph,
     pub player_position: [f32; 3],
     pub player_yaw: i16,
     pub player_session_process_id: Option<u32>,
@@ -103,12 +104,16 @@ pub struct RepresentationContext<'a> {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FixedModelInput {
     pub schema_sha256: Digest,
+    /// Dense state/set input. Goal structure is intentionally not flattened.
     pub values: Vec<f32>,
     pub missingness_mask: Vec<f32>,
+    pub goal: SemanticGoalInput,
 }
 
 impl FixedModelInput {
-    pub fn concatenated(&self) -> Vec<f32> {
+    /// Dense branch only. A caller must encode `goal` through a graph/set
+    /// branch; silently flattening it into this vector is intentionally absent.
+    pub fn dense_concatenated(&self) -> Vec<f32> {
         self.values
             .iter()
             .chain(&self.missingness_mask)
@@ -140,7 +145,6 @@ pub struct FixedModelRepresentationEncoder {
     base_features: Vec<BaseFeatureLayout>,
     categorical_embeddings: Vec<CategoricalEmbeddingTable>,
     categorical_embedding_width: usize,
-    objective_width: usize,
     actor_slots: usize,
     actor_slot_width: usize,
     geometry_slots: usize,
@@ -253,18 +257,16 @@ impl FixedModelRepresentationEncoder {
             })
             .sum::<usize>();
         let value_width = base_value_width
-            + super::goal_conditioning::COMPILED_OBJECTIVE_VECTOR_WIDTH
             + 3
             + DEFAULT_ACTOR_SLOTS * ACTOR_SLOT_WIDTH
             + 3
             + DEFAULT_GEOMETRY_SLOTS * GEOMETRY_SLOT_WIDTH;
         let mut encoder = Self {
-            schema: FIXED_MODEL_REPRESENTATION_SCHEMA_V2,
+            schema: FIXED_MODEL_REPRESENTATION_SCHEMA_V3,
             observation_schema_sha256,
             base_features,
             categorical_embeddings,
             categorical_embedding_width: DEFAULT_CATEGORICAL_EMBEDDING_WIDTH,
-            objective_width: super::goal_conditioning::COMPILED_OBJECTIVE_VECTOR_WIDTH,
             actor_slots: DEFAULT_ACTOR_SLOTS,
             actor_slot_width: ACTOR_SLOT_WIDTH,
             geometry_slots: DEFAULT_GEOMETRY_SLOTS,
@@ -293,9 +295,7 @@ impl FixedModelRepresentationEncoder {
         {
             return Err(ModelRepresentationError::NonFiniteInput);
         }
-        context
-            .objective
-            .validate()
+        let goal = SemanticGoalInput::from_graph(context.goal)
             .map_err(|error| ModelRepresentationError::InvalidObjective(error.to_string()))?;
         let tables = self
             .categorical_embeddings
@@ -321,12 +321,6 @@ impl FixedModelRepresentationEncoder {
                 append_masked(&mut values, &mut missingness_mask, &[normalized], present);
             }
         }
-        append_masked(
-            &mut values,
-            &mut missingness_mask,
-            &context.objective.values,
-            true,
-        );
         self.append_actor_slots(&mut values, &mut missingness_mask, &context)?;
         self.append_geometry_slots(&mut values, &mut missingness_mask, &context)?;
         if values.len() != self.value_width
@@ -339,6 +333,7 @@ impl FixedModelRepresentationEncoder {
             schema_sha256: self.representation_sha256,
             values,
             missingness_mask,
+            goal,
         })
     }
 
@@ -346,7 +341,7 @@ impl FixedModelRepresentationEncoder {
         self.value_width
     }
 
-    pub fn model_input_width(&self) -> usize {
+    pub fn dense_model_input_width(&self) -> usize {
         self.value_width * 2
     }
 
@@ -487,7 +482,7 @@ impl FixedModelRepresentationEncoder {
             &self.base_features,
             &self.categorical_embeddings,
             self.categorical_embedding_width,
-            self.objective_width,
+            SEMANTIC_GOAL_INPUT_SCHEMA_V1,
             self.actor_slots,
             self.actor_slot_width,
             self.geometry_slots,
@@ -496,7 +491,7 @@ impl FixedModelRepresentationEncoder {
         ))
         .map_err(|error| ModelRepresentationError::Serialization(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.fixed-model-representation/v2\0");
+        hasher.update(b"dusklight.fixed-model-representation/v3\0");
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
@@ -585,12 +580,12 @@ impl Error for ModelRepresentationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::goal_conditioning::CompiledObjectiveVector;
+    use crate::compiled_goal_graph::CompiledGoalGraph;
     use crate::milestone_dsl::compile_source;
     use crate::observation_view::movement_state_v2_spec;
     use crate::trace::TraceSelectedActor;
 
-    fn objective() -> CompiledObjectiveVector {
+    fn goal() -> CompiledGoalGraph {
         let compiled = compile_source(
             r#"milestones 1.0
 milestone target_room {
@@ -600,7 +595,7 @@ milestone target_room {
 "#,
         )
         .unwrap();
-        CompiledObjectiveVector::from_compiled(&compiled, 0).unwrap()
+        CompiledGoalGraph::from_compiled(&compiled, 0).unwrap()
     }
 
     fn actor(process: u32, name: i16, x: f32) -> TraceSelectedActor {
@@ -630,11 +625,7 @@ milestone target_room {
         }
     }
 
-    fn fixture() -> (
-        FixedModelRepresentationEncoder,
-        Vec<f32>,
-        CompiledObjectiveVector,
-    ) {
+    fn fixture() -> (FixedModelRepresentationEncoder, Vec<f32>, CompiledGoalGraph) {
         let spec = movement_state_v2_spec();
         let width = spec.features.len();
         let states = vec![vec![0.0; width], vec![0.0; width]];
@@ -649,20 +640,20 @@ milestone target_room {
         (
             FixedModelRepresentationEncoder::fit(&spec, &normalization, &states).unwrap(),
             states[0].clone(),
-            objective(),
+            goal(),
         )
     }
 
     #[test]
     fn fixed_input_has_parallel_missingness_and_goal_conditioning() {
-        let (encoder, mut state, objective) = fixture();
+        let (encoder, mut state, goal) = fixture();
         // player.procedure is masked by player.procedure_present (field 18).
         state[17] = 0.0;
         state[18] = 42.0;
         let input = encoder
             .encode(RepresentationContext {
                 state: &state,
-                objective: &objective,
+                goal: &goal,
                 player_position: [0.0; 3],
                 player_yaw: 0,
                 player_session_process_id: None,
@@ -672,7 +663,10 @@ milestone target_room {
             .unwrap();
         assert_eq!(input.values.len(), encoder.value_width());
         assert_eq!(input.missingness_mask.len(), encoder.value_width());
-        assert_eq!(input.concatenated().len(), encoder.model_input_width());
+        assert_eq!(
+            input.dense_concatenated().len(),
+            encoder.dense_model_input_width()
+        );
         assert_ne!(input.schema_sha256, Digest::ZERO);
 
         let procedure_offset = encoder
@@ -697,16 +691,13 @@ milestone target_room {
             &[0.0; DEFAULT_CATEGORICAL_EMBEDDING_WIDTH]
         );
 
-        let mut changed = objective.clone();
-        changed.values[40] += 0.25;
-        changed.vector_sha256 = {
-            // Invalid objective vectors fail closed rather than becoming detached labels.
-            Digest::ZERO
-        };
+        let mut changed = goal.clone();
+        // Detached/tampered semantic graphs fail closed.
+        changed.nodes[0].sequence_step = 1;
         assert!(
             encoder
                 .encode(RepresentationContext {
-                    objective: &changed,
+                    goal: &changed,
                     state: &state,
                     player_position: [0.0; 3],
                     player_yaw: 0,
@@ -739,7 +730,7 @@ milestone target_room {
 
     #[test]
     fn actor_and_geometry_slots_are_nearest_k_and_order_invariant() {
-        let (encoder, state, objective) = fixture();
+        let (encoder, state, goal) = fixture();
         let actors = TraceSelectedActors {
             observed_count: 3,
             truncated: false,
@@ -755,7 +746,7 @@ milestone target_room {
             encoder
                 .encode(RepresentationContext {
                     state: &state,
-                    objective: &objective,
+                    goal: &goal,
                     player_position: [0.0; 3],
                     player_yaw: 0,
                     player_session_process_id: Some(10),
@@ -779,7 +770,7 @@ milestone target_room {
                 }
             })
             .sum::<usize>();
-        let actor_start = base_width + encoder.objective_width + 3;
+        let actor_start = base_width + 3;
         assert!((first.values[actor_start + 9] - 8.0 / 8192.0).abs() < f32::EPSILON);
         let geometry_start = actor_start + encoder.actor_slots * encoder.actor_slot_width + 3;
         assert!((first.values[geometry_start + 5] - 9.0 / 8192.0).abs() < f32::EPSILON);
@@ -794,14 +785,14 @@ milestone target_room {
 
     #[test]
     fn geometry_position_and_normal_rotate_into_player_local_space() {
-        let (encoder, state, objective) = fixture();
+        let (encoder, state, goal) = fixture();
         let mut geometry = vec![probe("surface", 10.0)];
         geometry[0].normal = [1.0, 0.0, 0.0];
         let encode = |player_yaw| {
             encoder
                 .encode(RepresentationContext {
                     state: &state,
-                    objective: &objective,
+                    goal: &goal,
                     player_position: [0.0; 3],
                     player_yaw,
                     player_session_process_id: None,
@@ -823,11 +814,7 @@ milestone target_room {
                 }
             })
             .sum::<usize>();
-        let geometry_start = base_width
-            + encoder.objective_width
-            + 3
-            + encoder.actor_slots * encoder.actor_slot_width
-            + 3;
+        let geometry_start = base_width + 3 + encoder.actor_slots * encoder.actor_slot_width + 3;
         assert!((world_aligned.values[geometry_start + 5] - 10.0 / 8192.0).abs() < 1.0e-6);
         assert!((world_aligned.values[geometry_start + 10] - 1.0).abs() < 1.0e-6);
         assert!(quarter_turn.values[geometry_start + 5].abs() < 1.0e-6);
@@ -838,12 +825,12 @@ milestone target_room {
 
     #[test]
     fn complete_mesh_sized_geometry_input_fails_before_encoding() {
-        let (encoder, state, objective) = fixture();
+        let (encoder, state, goal) = fixture();
         let probes = vec![probe("surface", 1.0); MAX_LOCAL_GEOMETRY_PROBES + 1];
         assert_eq!(
             encoder.encode(RepresentationContext {
                 state: &state,
-                objective: &objective,
+                goal: &goal,
                 player_position: [0.0; 3],
                 player_yaw: 0,
                 player_session_process_id: None,

@@ -245,8 +245,14 @@ human-authored successful setup.
       older 65-float hash/statistics vector is not considered a semantic goal
       representation. The live Ordon view embeds all five exact transition
       atoms and four Boolean nodes in graph `e68befb3...12cae`;
-    - [ ] feed the semantic goal graph to model encoders instead of treating
-      digest bytes and predicate counts as learnable goal meaning;
+    - [x] Feed the semantic goal graph to model encoders instead of treating
+      digest bytes and predicate counts as learnable goal meaning. Goal input
+      v1 emits masked typed node/projection rows, explicit Boolean child edges
+      and ordered sequence roots; identity digests remain provenance only.
+      Goal-conditioned policy/value input v3 and fixed representation v3 carry
+      that variable-length structure directly. Renaming an otherwise identical
+      definition leaves its model features unchanged, while literal and
+      topology changes alter them and tampering fails closed;
     - [x] derive spatial relations to typed anchors in the selected compiled
       goal when the goal actually exposes one, retaining explicit absence for
       nonspatial or ambiguous goals. Actor view v3 binds the exact graph,

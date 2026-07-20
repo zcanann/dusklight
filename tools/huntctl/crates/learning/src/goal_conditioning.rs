@@ -1,16 +1,20 @@
-//! Fixed-width goal vectors derived from canonical compiled milestone programs.
+//! Goal-conditioned model inputs derived from canonical compiled milestones.
 //!
-//! A caller selects one compiled definition. The vector retains its exact
-//! digest and bounded semantic structure, so a value or policy model can share
-//! one input layout across objectives without accepting a free-form segment ID.
+//! `CompiledObjectiveVector` remains as a legacy evidence identity used by
+//! hindsight artifacts. Policies and critics use the structured semantic goal
+//! input below; digest bytes and predicate counts are not model features.
 
 use super::factorized_actions::{
     FactorizedActionEncoder, FactorizedActionError, FactorizedOptionAction,
 };
 use crate::artifact::Digest;
+use crate::compiled_goal_graph::CompiledGoalGraph;
 use crate::milestone_dsl::{
     Comparison, CompiledMilestones, EvaluationPhase, Expression, MAX_OPS, MAX_PROJECTIONS,
     MilestoneDefinition, QueryFact, Value, decode,
+};
+use crate::semantic_goal_input::{
+    SEMANTIC_GOAL_INPUT_SCHEMA_V1, SemanticGoalInput, SemanticGoalInputError,
 };
 use crate::transition_corpus::MAX_FEATURES;
 use serde::{Deserialize, Serialize};
@@ -20,7 +24,7 @@ use std::fmt;
 
 pub const COMPILED_OBJECTIVE_VECTOR_SCHEMA_V2: &str = "dusklight-compiled-objective-vector/v2";
 pub const COMPILED_OBJECTIVE_VECTOR_WIDTH: usize = 65;
-pub const GOAL_CONDITIONED_INPUT_SCHEMA_V2: &str = "dusklight-goal-conditioned-input/v2";
+pub const GOAL_CONDITIONED_INPUT_SCHEMA_V3: &str = "dusklight-goal-conditioned-input/v3";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -116,9 +120,22 @@ pub struct GoalConditionedInputEncoder {
     state_width: usize,
     action_factor_schema_sha256: Digest,
     action_encoder: FactorizedActionEncoder,
-    objective_width: usize,
+    goal_input_schema: &'static str,
     policy_layout: &'static str,
     value_layout: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct GoalConditionedPolicyInput {
+    pub state: Vec<f64>,
+    pub goal: SemanticGoalInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct GoalConditionedValueInput {
+    pub state: Vec<f64>,
+    pub goal: SemanticGoalInput,
+    pub action_factors: Vec<f64>,
 }
 
 impl GoalConditionedInputEncoder {
@@ -134,51 +151,52 @@ impl GoalConditionedInputEncoder {
             .schema_sha256()
             .map_err(GoalConditioningError::from)?;
         Ok(Self {
-            schema: GOAL_CONDITIONED_INPUT_SCHEMA_V2,
+            schema: GOAL_CONDITIONED_INPUT_SCHEMA_V3,
             state_schema_sha256,
             state_width,
             action_factor_schema_sha256,
             action_encoder,
-            objective_width: COMPILED_OBJECTIVE_VECTOR_WIDTH,
-            policy_layout: "state_then_compiled_objective",
-            value_layout: "state_then_compiled_objective_then_action_factors",
+            goal_input_schema: SEMANTIC_GOAL_INPUT_SCHEMA_V1,
+            policy_layout: "dense_state_plus_semantic_goal_graph",
+            value_layout: "dense_state_plus_semantic_goal_graph_plus_action_factors",
         })
     }
 
     pub fn policy_input(
         &self,
         state: &[f32],
-        objective: &CompiledObjectiveVector,
-    ) -> Result<Vec<f64>, GoalConditioningError> {
-        self.validate_state_and_objective(state, objective)?;
-        Ok(state
-            .iter()
-            .map(|value| f64::from(*value))
-            .chain(objective.values.iter().map(|value| f64::from(*value)))
-            .collect())
+        goal: &CompiledGoalGraph,
+    ) -> Result<GoalConditionedPolicyInput, GoalConditioningError> {
+        self.validate_state(state)?;
+        Ok(GoalConditionedPolicyInput {
+            state: state.iter().map(|value| f64::from(*value)).collect(),
+            goal: SemanticGoalInput::from_graph(goal)?,
+        })
     }
 
     pub fn value_input(
         &self,
         state: &[f32],
-        objective: &CompiledObjectiveVector,
+        goal: &CompiledGoalGraph,
         action: &FactorizedOptionAction,
-    ) -> Result<Vec<f64>, GoalConditioningError> {
-        let mut input = self.policy_input(state, objective)?;
-        input.extend(
-            self.action_encoder
+    ) -> Result<GoalConditionedValueInput, GoalConditioningError> {
+        let input = self.policy_input(state, goal)?;
+        Ok(GoalConditionedValueInput {
+            state: input.state,
+            goal: input.goal,
+            action_factors: self
+                .action_encoder
                 .encode(action)
                 .map_err(GoalConditioningError::from)?,
-        );
-        Ok(input)
+        })
     }
 
-    pub fn policy_width(&self) -> usize {
-        self.state_width + self.objective_width
+    pub fn state_width(&self) -> usize {
+        self.state_width
     }
 
-    pub fn value_width(&self) -> usize {
-        self.policy_width() + self.action_encoder.feature_width()
+    pub fn action_factor_width(&self) -> usize {
+        self.action_encoder.feature_width()
     }
 
     pub fn schema_sha256(&self) -> Result<Digest, GoalConditioningError> {
@@ -187,11 +205,7 @@ impl GoalConditionedInputEncoder {
         Ok(Digest(Sha256::digest(bytes).into()))
     }
 
-    fn validate_state_and_objective(
-        &self,
-        state: &[f32],
-        objective: &CompiledObjectiveVector,
-    ) -> Result<(), GoalConditioningError> {
+    fn validate_state(&self, state: &[f32]) -> Result<(), GoalConditioningError> {
         if state.len() != self.state_width {
             return Err(GoalConditioningError::FeatureWidth {
                 expected: self.state_width,
@@ -201,7 +215,6 @@ impl GoalConditionedInputEncoder {
         if state.iter().any(|value| !value.is_finite()) {
             return Err(GoalConditioningError::NonFiniteState);
         }
-        objective.validate()?;
         Ok(())
     }
 }
@@ -328,6 +341,7 @@ pub enum GoalConditioningError {
     FeatureWidth { expected: usize, actual: usize },
     NonFiniteState,
     ActionFactors(String),
+    SemanticGoal(String),
     Serialization(String),
 }
 
@@ -356,6 +370,9 @@ impl fmt::Display for GoalConditioningError {
                 formatter,
                 "goal-conditioned action factors are invalid: {message}"
             ),
+            Self::SemanticGoal(message) => {
+                write!(formatter, "semantic goal input is invalid: {message}")
+            }
             Self::Serialization(message) => write!(
                 formatter,
                 "goal-conditioned schema serialization failed: {message}"
@@ -369,6 +386,12 @@ impl Error for GoalConditioningError {}
 impl From<FactorizedActionError> for GoalConditioningError {
     fn from(error: FactorizedActionError) -> Self {
         Self::ActionFactors(error.to_string())
+    }
+}
+
+impl From<SemanticGoalInputError> for GoalConditioningError {
+    fn from(error: SemanticGoalInputError) -> Self {
+        Self::SemanticGoal(error.to_string())
     }
 }
 
@@ -430,8 +453,8 @@ milestone fast_player {
     #[test]
     fn one_layout_conditions_policy_and_value_inputs_on_compiled_goals() {
         let compiled = compile_source(SOURCE).unwrap();
-        let room = CompiledObjectiveVector::from_compiled(&compiled, 0).unwrap();
-        let speed = CompiledObjectiveVector::from_compiled(&compiled, 1).unwrap();
+        let room = CompiledGoalGraph::from_compiled(&compiled, 0).unwrap();
+        let speed = CompiledGoalGraph::from_compiled(&compiled, 1).unwrap();
         let neutral = FactorizedOptionAction::new(OptionType::Neutral, 1);
         let roll = FactorizedOptionAction::new(OptionType::Roll, 4);
         let action_encoder = FactorizedActionEncoder::fit([&neutral, &roll]).unwrap();
@@ -440,14 +463,22 @@ milestone fast_player {
         let state = [1.0, 2.0];
         let room_policy = encoder.policy_input(&state, &room).unwrap();
         let speed_policy = encoder.policy_input(&state, &speed).unwrap();
-        assert_eq!(room_policy.len(), encoder.policy_width());
+        assert_eq!(room_policy.state.len(), encoder.state_width());
         assert_ne!(room_policy, speed_policy);
-        assert_eq!(&room_policy[..2], &[1.0, 2.0]);
+        assert_eq!(&room_policy.state, &[1.0, 2.0]);
+        assert_ne!(
+            room_policy.goal.node_features,
+            speed_policy.goal.node_features
+        );
 
         let neutral_value = encoder.value_input(&state, &room, &neutral).unwrap();
         let roll_value = encoder.value_input(&state, &room, &roll).unwrap();
-        assert_eq!(neutral_value.len(), encoder.value_width());
-        assert_eq!(&neutral_value[..encoder.policy_width()], &room_policy);
+        assert_eq!(
+            neutral_value.action_factors.len(),
+            encoder.action_factor_width()
+        );
+        assert_eq!(neutral_value.state, room_policy.state);
+        assert_eq!(neutral_value.goal, room_policy.goal);
         assert_ne!(neutral_value, roll_value);
         assert_ne!(encoder.schema_sha256().unwrap(), Digest::ZERO);
     }
