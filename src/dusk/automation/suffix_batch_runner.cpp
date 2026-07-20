@@ -380,6 +380,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
         InputFrame frame;
         frame.ownedPorts = 1;
         frame.pads[0] = pad;
+        for (std::size_t port = 1; port < frame.pads.size(); ++port) {
+            frame.pads[port].flags = RawPadFlags::None;
+            frame.pads[port].error = PAD_ERR_NO_CONTROLLER;
+        }
         tape.frames.push_back(frame);
     }
     std::vector<std::uint8_t> bytes;
