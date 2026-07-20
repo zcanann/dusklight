@@ -27,8 +27,10 @@ The audit uses these controlled capability names:
 
 - **PAD**: ordinary digital and analog controller authority;
 - **player collision history**: the current solver mode and line/wall
-  configuration are captured; generic contact probes and a derived bounded
-  floor/wall/ceiling transition history remain missing;
+  configuration are captured. A live 30-tick neutral probe distinguishes the
+  early empty wall table from the initialized three-circle Link solver;
+  generic action/contact probes and a derived bounded floor/wall/ceiling
+  transition history remain missing;
 - **typed actor state**: actor-specific action, animation phase, timers and
   state-machine values, explicitly masked outside the matching actor type;
 - **relationships**: targeting, ownership, attachment, carried/held and

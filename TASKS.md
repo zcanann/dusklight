@@ -98,7 +98,12 @@ the same goal without demonstration-relative features.
   actor-catalog v7 with the component present in all cases and zero coverage
   rejections (`4e3c8311...207df1ee`). All 16 idle samples shared solver flags
   `0x00000008`, table size zero, water mode one and offsets 60/0/1000, so this
-  is capture-path evidence, not evidence of useful transition diversity.
+  is capture-path evidence, not evidence of useful transition diversity. A
+  separate 30-tick neutral probe on `D_MN01/room/0/point/0/layer/-1` verified
+  the lifecycle distinction: actor-catalog v7 retained an initialized
+  three-circle solver with 50-unit radii, distinct wall heights, realized
+  centers, line/cylinder geometry, water mode two and offsets 60/40/10000; its
+  sealed single-case report has zero rejections (`63b32d58...c004fe04`).
 - Native actor-view v5 now preserves those roles as typed edges to the complete
   actor set, and actor-feature view v2 exposes an independently selectable
   player-relationship family as per-actor role flags. Present-but-empty is
@@ -247,8 +252,11 @@ them is learner work.
     supplies the raw per-tick sequence from which history can be derived. A
     neutral 16-entry D_MN01 batch verified component presence and actor
     invariants in all 16/16 cases (`4e3c8311...207df1ee`). Generic movement and
-    contact probes plus a bounded-history learner view remain open, so the
-    parent environment audit is not complete.
+    contact probes plus a bounded-history learner view remain open. A 30-tick
+    neutral follow-up proved that the initially empty wall table becomes the
+    expected initialized three-circle solver (`63b32d58...c004fe04`), but it
+    still does not establish action/contact variation, so the parent
+    environment audit is not complete.
 - [ ] Audit player, camera, inventory, timers, RNG, loading and other global
   channels across maps and forms. Record explicit missingness and phase rather
   than treating zero as unavailable.
