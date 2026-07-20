@@ -10,7 +10,9 @@ pub use dusklight_automation_contracts::artifact;
 pub mod fact_pack;
 pub mod identity;
 pub mod logic;
+pub mod refinement;
 pub mod state;
+pub mod transition;
 
 use std::error::Error;
 use std::fmt;

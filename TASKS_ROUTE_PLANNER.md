@@ -1348,21 +1348,21 @@ Deliverable: an evidence index and a list of explicit unknowns.
       and serialization policy independently.
 - [x] Define typed components, bindings, lifetimes, and serialization owners.
 - [x] Define raw/friendly fact catalogue and derived-rule IR.
-- [ ] Define component operation and boundary-policy IR.
-- [ ] Define transition, writer, gate, reader, technique, obstruction, and resolver
+- [x] Define component operation and boundary-policy IR.
+- [x] Define transition, writer, gate, reader, technique, obstruction, and resolver
       schemas.
-- [ ] Require every candidate transition to carry an activation contract with
+- [x] Require every candidate transition to carry an activation contract with
       hard guards, physical obligations, effects, and explicit unknown fields.
 - [x] Define static world-object, persisted control, and live actor-instance
       representations plus reconstruction rules.
-- [ ] Define message-flow instance, node/branch, scheduled cleanup, player-control,
+- [x] Define message-flow instance, node/branch, scheduled cleanup, player-control,
       temporal-window, and witnessed-microtrace representations.
-- [ ] Define interaction obligations over required/excluded volumes and poses.
-- [ ] Define goals, path constraints, costs, and evidence status.
-- [ ] Define refinement pack manifests, conflicts, and deterministic precedence.
+- [x] Define interaction obligations over required/excluded volumes and poses.
+- [x] Define goals, path constraints, costs, and evidence status.
+- [x] Define refinement pack manifests, conflicts, and deterministic precedence.
 - [x] Prevent a raw binding or fact observed for one exact context from becoming
       universal without an explicit, evidenced equivalence declaration.
-- [ ] Add strict schema validation and stable IDs.
+- [x] Add strict schema validation and stable IDs.
 
 Deliverable: one validated runtime representation independent of authoring format.
 

@@ -509,14 +509,14 @@ fn validate_player_mount(mount: &PlayerMount) -> Result<(), PlannerContractError
     }
 }
 
-fn validate_component_kind(kind: &ComponentKind) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_component_kind(kind: &ComponentKind) -> Result<(), PlannerContractError> {
     match kind {
         ComponentKind::Custom { id } => validate_stable_id("component_kind.id", id),
         _ => Ok(()),
     }
 }
 
-fn validate_binding(binding: &ComponentBinding) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_binding(binding: &ComponentBinding) -> Result<(), PlannerContractError> {
     match binding {
         ComponentBinding::Stage { stage }
         | ComponentBinding::Room { stage, .. }
@@ -542,7 +542,9 @@ fn validate_binding(binding: &ComponentBinding) -> Result<(), PlannerContractErr
     }
 }
 
-fn validate_serialization_owner(owner: &SerializationOwner) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_serialization_owner(
+    owner: &SerializationOwner,
+) -> Result<(), PlannerContractError> {
     match owner {
         SerializationOwner::RuntimeFile { runtime_file_id } => {
             validate_stable_id("serialization_owner.runtime_file_id", runtime_file_id)
