@@ -380,6 +380,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         (observation.flagsPresent &&
             (observation.eventFlags.size() != kMilestoneEventFlagCount ||
                 observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
+                observation.temporaryEventBytes.size() != kMilestoneTemporaryEventByteCount ||
                 observation.dungeonFlags.size() != kMilestoneDungeonFlagCount ||
                 observation.switchFlags.size() != kMilestoneSwitchFlagCount)))
     {
@@ -570,6 +571,8 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         output.insert(output.end(), observation.eventFlags.begin(), observation.eventFlags.end());
         output.insert(
             output.end(), observation.temporaryFlags.begin(), observation.temporaryFlags.end());
+        output.insert(output.end(), observation.temporaryEventBytes.begin(),
+            observation.temporaryEventBytes.end());
         output.insert(
             output.end(), observation.dungeonFlags.begin(), observation.dungeonFlags.end());
         output.insert(output.end(), observation.switchFlags.begin(), observation.switchFlags.end());

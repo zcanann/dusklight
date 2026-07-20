@@ -317,6 +317,11 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         storage.temporaryFlags[index] = static_cast<std::uint8_t>(
             dComIfGs_isTmpBit(dSv_event_tmp_flag_c::tempBitLabels[index]) != 0);
     }
+    // Structured read-only copy of the console-backed temporary event bank.
+    // In the GCN layout this is dSv_info_c::mTmp at offset 0xDD8; preserving
+    // bytes avoids collapsing register-style labels (low mask 0xff) to bools.
+    std::copy(std::begin(g_dComIfG_gameInfo.info.mTmp.mEvent),
+        std::end(g_dComIfG_gameInfo.info.mTmp.mEvent), storage.temporaryEventBytes.begin());
     for (std::size_t index = 0; index < storage.dungeonFlags.size(); ++index) {
         storage.dungeonFlags[index] =
             static_cast<std::uint8_t>(dComIfGs_isSaveDunSwitch(index) != 0);
@@ -328,6 +333,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     }
     observation.eventFlags = storage.eventFlags;
     observation.temporaryFlags = storage.temporaryFlags;
+    observation.temporaryEventBytes = storage.temporaryEventBytes;
     observation.dungeonFlags = storage.dungeonFlags;
     observation.switchFlags = storage.switchFlags;
     observation.flagsPresent = true;

@@ -21,6 +21,7 @@ struct ControllerObservationStorage {
 
 inline constexpr std::size_t kMilestoneEventFlagCount = 822;
 inline constexpr std::size_t kMilestoneTemporaryFlagCount = 185;
+inline constexpr std::size_t kMilestoneTemporaryEventByteCount = 256;
 inline constexpr std::size_t kMilestoneDungeonFlagCount = 64;
 inline constexpr std::size_t kMilestoneSwitchFlagCount = 240;
 
@@ -32,6 +33,7 @@ struct MilestoneObservationStorage {
     std::uint32_t actorObservedCount = 0;
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
+    std::array<std::uint8_t, kMilestoneTemporaryEventByteCount> temporaryEventBytes{};
     std::array<std::uint8_t, kMilestoneDungeonFlagCount> dungeonFlags{};
     std::array<std::uint8_t, kMilestoneSwitchFlagCount> switchFlags{};
 };

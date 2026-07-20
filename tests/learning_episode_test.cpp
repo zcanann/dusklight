@@ -47,6 +47,7 @@ struct ObservationFixture {
     std::array<MilestoneObservation::Actor, 1> actors{};
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};
     std::array<std::uint8_t, kMilestoneTemporaryFlagCount> temporaryFlags{};
+    std::array<std::uint8_t, kMilestoneTemporaryEventByteCount> temporaryEventBytes{};
     std::array<std::uint8_t, kMilestoneDungeonFlagCount> dungeonFlags{};
     std::array<std::uint8_t, kMilestoneSwitchFlagCount> switchFlags{};
     MilestoneObservation observation;
@@ -80,6 +81,9 @@ struct ObservationFixture {
             .shapeAngleY = 90,
         };
         eventFlags[3] = 1;
+        temporaryEventBytes[0] = 0x06;
+        temporaryEventBytes[1] = 0xa5;
+        temporaryEventBytes[5] = 0xc0;
         switchFlags[8] = 1;
         observation.stageName = "F_SP103";
         observation.room = 0;
@@ -111,6 +115,7 @@ struct ObservationFixture {
         observation.flagsPresent = true;
         observation.eventFlags = eventFlags;
         observation.temporaryFlags = temporaryFlags;
+        observation.temporaryEventBytes = temporaryEventBytes;
         observation.dungeonFlags = dungeonFlags;
         observation.switchFlags = switchFlags;
         observation.switchFlagRoom = 0;
@@ -394,6 +399,20 @@ void test_duplicate_actor_identity_fails_closed() {
     REQUIRE(error.find("strictly ordered") != std::string::npos);
 }
 
+void test_temporary_event_register_bank_is_required() {
+    ObservationFixture fixture;
+    fixture.observation.temporaryEventBytes = {};
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+}
+
 void test_mechanics_boundary_and_surface_identity_fail_closed() {
     ObservationFixture fixture;
     std::vector<std::uint8_t> bytes;
@@ -442,6 +461,7 @@ int main(const int argc, char** argv) {
     test_inconsistent_actor_completeness_fails_closed();
     test_actor_population_is_not_limited_by_controller_capacity();
     test_duplicate_actor_identity_fails_closed();
+    test_temporary_event_register_bank_is_required();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     std::cout << "learning episode tests passed\n";
     return 0;

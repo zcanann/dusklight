@@ -155,6 +155,9 @@ struct MilestoneObservation {
     // off-room query evaluates as unavailable rather than reading live state.
     std::span<const std::uint8_t> eventFlags;
     std::span<const std::uint8_t> temporaryFlags;
+    // Exact dSv_info_c::mTmp.mEvent register bank. Unlike temporaryFlags,
+    // this preserves multi-bit temporary registers used by message/event flow.
+    std::span<const std::uint8_t> temporaryEventBytes;
     std::span<const std::uint8_t> dungeonFlags;
     std::span<const std::uint8_t> switchFlags;
     std::int8_t switchFlagRoom = -1;

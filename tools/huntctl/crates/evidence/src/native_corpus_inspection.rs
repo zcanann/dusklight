@@ -1,7 +1,7 @@
 //! Corpus-level diagnostics for decoded native learning episodes.
 //!
 //! The native shard decoder already fails closed on malformed boundaries,
-//! non-finite floats, action shifts, and incomplete v4 actor sets. This module
+//! non-finite floats, action shifts, and incomplete v4+ actor sets. This module
 //! summarizes the surviving corpus so missing/constant channels, poor action
 //! coverage, duplicates, and suspicious outcome partitions are visible before
 //! learner code is allowed to treat the data as useful.
@@ -497,6 +497,10 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                     for (name, values) in [
                         ("event_flags", observation.event_flags.as_deref()),
                         ("temporary_flags", observation.temporary_flags.as_deref()),
+                        (
+                            "temporary_event_bytes",
+                            observation.temporary_event_bytes.as_deref(),
+                        ),
                         ("dungeon_flags", observation.dungeon_flags.as_deref()),
                         ("switch_flags", observation.switch_flags.as_deref()),
                     ] {
@@ -718,5 +722,21 @@ mod tests {
                 .any(|warning| warning.contains("leakage ablations"))
         );
         assert!(report.determinism_conflicts.is_empty());
+    }
+
+    #[test]
+    fn audits_v5_temporary_event_register_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v5.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(report.missing_mask_counts["temporary_event_bytes"], 0);
+        let coverage = &report.flag_mask_coverage["temporary_event_bytes"];
+        assert_eq!(coverage.present, report.observation_count);
+        assert_eq!(coverage.widths.minimum, 256);
+        assert_eq!(coverage.widths.maximum, 256);
+        assert!(coverage.ever_set_indices.contains(&0));
+        assert!(coverage.ever_set_indices.contains(&1));
+        assert!(coverage.ever_set_indices.contains(&5));
     }
 }

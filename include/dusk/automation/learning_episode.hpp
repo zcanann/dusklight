@@ -17,10 +17,10 @@
 namespace dusk::automation {
 
 inline constexpr std::uint16_t LearningEpisodeShardVersion = 1;
-inline constexpr std::uint16_t LearningObservationVersion = 4;
+inline constexpr std::uint16_t LearningObservationVersion = 5;
 inline constexpr std::uint16_t LearningActionVersion = 2;
 inline constexpr std::uint32_t LearningEpisodeMaximumTicks = 4096;
-inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v4";
+inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v5";
 inline constexpr std::string_view LearningActionSchema = "dusklight-raw-pad-action/v2";
 inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v1";
 

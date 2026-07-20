@@ -23,6 +23,7 @@ const SUCCESS: u16 = 1;
 const OBSERVATION_VERSION_V2: u16 = 2;
 const OBSERVATION_VERSION_V3: u16 = 3;
 const OBSERVATION_VERSION_V4: u16 = 4;
+const OBSERVATION_VERSION_V5: u16 = 5;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -33,6 +34,7 @@ pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard
 pub const LEARNING_OBSERVATION_SCHEMA_V2: &str = "dusklight-learning-observation/v2";
 pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation/v3";
 pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
+pub const LEARNING_OBSERVATION_SCHEMA_V5: &str = "dusklight-learning-observation/v5";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -389,6 +391,8 @@ pub struct NativeLearningObservation {
     pub actors: Vec<NativeActorObservation>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
+    /// Exact 256-byte dSv_info_c::mTmp.mEvent register bank (v5+).
+    pub temporary_event_bytes: Option<Vec<u8>>,
     pub dungeon_flags: Option<Vec<u8>>,
     pub switch_flags: Option<Vec<u8>>,
     pub switch_flag_room: i8,
@@ -442,7 +446,10 @@ impl NativeEpisodeShard {
         let observation_version = header.u16()?;
         if !matches!(
             observation_version,
-            OBSERVATION_VERSION_V2 | OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4
+            OBSERVATION_VERSION_V2
+                | OBSERVATION_VERSION_V3
+                | OBSERVATION_VERSION_V4
+                | OBSERVATION_VERSION_V5
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -535,6 +542,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V2 => LEARNING_OBSERVATION_SCHEMA_V2,
         OBSERVATION_VERSION_V3 => LEARNING_OBSERVATION_SCHEMA_V3,
         OBSERVATION_VERSION_V4 => LEARNING_OBSERVATION_SCHEMA_V4,
+        OBSERVATION_VERSION_V5 => LEARNING_OBSERVATION_SCHEMA_V5,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1435,7 +1443,7 @@ fn decode_observation(
             || actor_observed_count != actor_count as u32)
     {
         return Err(NativeEpisodeShardError::new(
-            "v4 observation does not contain the complete actor set",
+            "v4+ observation does not contain the complete actor set",
         ));
     }
     let stage = reader.fixed_name()?;
@@ -1515,7 +1523,7 @@ fn decode_observation(
             false,
             false,
         ),
-        OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4 => {
+        OBSERVATION_VERSION_V3 | OBSERVATION_VERSION_V4 | OBSERVATION_VERSION_V5 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -1655,6 +1663,9 @@ fn decode_observation(
     let flags_present = flags & (1 << 6) != 0;
     let event_flags = flags_present.then(|| reader.vec(822)).transpose()?;
     let temporary_flags = flags_present.then(|| reader.vec(185)).transpose()?;
+    let temporary_event_bytes = (flags_present && observation_version >= OBSERVATION_VERSION_V5)
+        .then(|| reader.vec(256))
+        .transpose()?;
     let dungeon_flags = flags_present.then(|| reader.vec(64)).transpose()?;
     let switch_flags = flags_present.then(|| reader.vec(240)).transpose()?;
     let switch_flag_room = reader.i8()?;
@@ -1726,6 +1737,7 @@ fn decode_observation(
         actors,
         event_flags,
         temporary_flags,
+        temporary_event_bytes,
         dungeon_flags,
         switch_flags,
         switch_flag_room,
@@ -1927,6 +1939,10 @@ mod tests {
         include_bytes!("../../../../../tests/fixtures/automation/native_episode_v4.dseps")
     }
 
+    fn golden_v5() -> &'static [u8] {
+        include_bytes!("../../../../../tests/fixtures/automation/native_episode_v5.dseps")
+    }
+
     fn read_u16(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
     }
@@ -2116,6 +2132,27 @@ mod tests {
     }
 
     #[test]
+    fn decodes_v5_exact_temporary_event_register_bank() {
+        let shard = NativeEpisodeShard::decode(golden_v5()).unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V5
+        );
+        for observation in shard.episodes.iter().flat_map(|episode| {
+            episode
+                .steps
+                .iter()
+                .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        }) {
+            let bytes = observation.temporary_event_bytes.as_ref().unwrap();
+            assert_eq!(bytes.len(), 256);
+            assert_eq!(bytes[0], 0x06);
+            assert_eq!(bytes[1], 0xa5);
+            assert_eq!(bytes[5], 0xc0);
+        }
+    }
+
+    #[test]
     fn v4_rejects_an_explicitly_truncated_actor_subset() {
         let shard = mutate_first_v4_episode(|expanded| {
             let (pre_input, _) = first_step_offsets(expanded);
@@ -2225,10 +2262,18 @@ mod tests {
         }
         assert!(shard.episodes.iter().all(|episode| {
             episode.steps.len() == episode.ticks_executed as usize
-                && episode
-                    .steps
-                    .iter()
-                    .all(|step| step.chosen_pad == step.consumed_pad)
+                && episode.steps.iter().all(|step| {
+                    step.chosen_pad == step.consumed_pad
+                        && (shard.metadata.observation_schema != LEARNING_OBSERVATION_SCHEMA_V5
+                            || [&step.pre_input, &step.post_simulation]
+                                .iter()
+                                .all(|observation| {
+                                    observation
+                                        .temporary_event_bytes
+                                        .as_ref()
+                                        .is_some_and(|bytes| bytes.len() == 256)
+                                }))
+                })
         }));
         let source_identity = shard.episodes[0].steps[0].pre_input.state_identity;
         assert!(

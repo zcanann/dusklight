@@ -64,6 +64,16 @@ the same goal without demonstration-relative features.
   sides fail closed on incomplete actor metadata. A live two-candidate,
   250-tick F_SP103 checkpoint batch emitted v4 under the immutable process-boot
   card fixture and passed the same Rust invariant checks.
+- Learning-observation v5 adds the exact 256-byte
+  `dSv_info_c::mTmp.mEvent` register bank without modifying gameplay code.
+  This preserves the console-backed bytes documented at `0x80406F98`,
+  `0x80406F99`, and `0x80406F9D`; the older 185-entry temporary-flag view
+  collapses register-style `0xff` labels to booleans and cannot prove text
+  displacement by itself. A C++-writer/Rust-reader golden shard checks offsets
+  0, 1, and 5 byte-for-byte. A live mixed-outcome Ordon batch emitted v5 from
+  the same authenticated frame-440 boundary and the isolated Rust ingestion
+  boundary accepted every episode with all 256 register bytes present at every
+  pre-input and post-simulation observation.
 - `huntctl learn inspect-native` now audits authenticated native shards before
   learner ingestion: channel/mask presence and flag-bit variation, constant
   core channels, actor/RNG/collision-set sizes, exact PAD coverage, outcome
