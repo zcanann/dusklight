@@ -447,6 +447,7 @@ void main01(void) {
                         dusk::gyro::read(pacing.sim_pace);
                     }
                     fapGm_Execute();
+                    dusk::audio::AdvanceDeterministicAutomationTick();
                     mDoAud_Execute();
                     dusk::game_clock::commit_sim_tick();
                     if (!finish_simulation_tick()) {
@@ -492,6 +493,7 @@ void main01(void) {
                 // This calls mDoGph_Painter -> JFWDisplay -> GX Functions
                 fapGm_Execute();
 
+                dusk::audio::AdvanceDeterministicAutomationTick();
                 mDoAud_Execute();
                 if (finish_simulation_tick()) {
                     if (!finish_checkpoint_probe_tick() && !finish_automation_oracle_tick()) {

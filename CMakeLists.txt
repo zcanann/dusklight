@@ -312,7 +312,6 @@ include(files.cmake)
 # native-state section before including the untouched source file.
 set(DUSK_CHECKPOINT_EXCLUDED_SOURCES
     src/m_Do/m_Do_main.cpp
-    src/m_Do/m_Do_audio.cpp
     src/m_Do/m_Do_graphic.cpp
     src/m_Do/m_Do_machine.cpp
     src/m_Do/m_Do_dvd_thread.cpp
@@ -341,9 +340,18 @@ function(dusk_wrap_checkpoint_state_sources output_variable)
     set(${output_variable} "${wrapped_sources}" PARENT_SCOPE)
 endfunction()
 
+function(dusk_wrap_checkpoint_target_sources target)
+    get_target_property(target_sources ${target} SOURCES)
+    dusk_wrap_checkpoint_state_sources(wrapped_sources ${target_sources})
+    set_property(TARGET ${target} PROPERTY SOURCES ${wrapped_sources})
+endfunction()
+
 dusk_wrap_checkpoint_state_sources(DOLZEL_FILES ${DOLZEL_FILES})
+dusk_wrap_checkpoint_state_sources(Z2AUDIOLIB_FILES ${Z2AUDIOLIB_FILES})
 dusk_wrap_checkpoint_state_sources(REL_FILES ${REL_FILES})
 dusk_wrap_checkpoint_state_sources(SSYSTEM_FILES ${SSYSTEM_FILES})
+dusk_wrap_checkpoint_target_sources(JSystem_JAudio2)
+dusk_wrap_checkpoint_target_sources(JSystem_JUtility)
 
 # TODO: version handling for res includes
 

@@ -10,7 +10,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
-#elif defined(__clang__)
+#elif defined(__APPLE__)
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+#elif defined(__ELF__) && defined(__clang__)
 extern "C" {
 extern std::byte __start_dusk_game_data[];
 extern std::byte __stop_dusk_game_data[];
@@ -53,7 +56,21 @@ NativeGameStateRegions native_game_state_regions() {
             static_cast<std::size_t>(section->Misc.VirtualSize),
         };
     }
-#elif defined(__clang__)
+#elif defined(__APPLE__)
+    const auto appendSection = [&result](const char* const sectionName) {
+        unsigned long size = 0;
+        auto* const bytes = getsectiondata(&_mh_execute_header, "__DATA", sectionName, &size);
+        if (bytes == nullptr || size == 0 || result.count == result.items.size()) {
+            return false;
+        }
+        result.items[result.count++] = {
+            reinterpret_cast<std::byte*>(bytes), static_cast<std::size_t>(size)};
+        return true;
+    };
+    if (!appendSection("dusk_game_data") || !appendSection("dusk_game_bss")) {
+        return {};
+    }
+#elif defined(__ELF__) && defined(__clang__)
     result.items[result.count++] = {__start_dusk_game_data,
         static_cast<std::size_t>(__stop_dusk_game_data - __start_dusk_game_data)};
     result.items[result.count++] = {__start_dusk_game_bss,

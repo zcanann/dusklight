@@ -1,8 +1,11 @@
 #include "dusk/audio/DuskAudioSystem.h"
 
+#include "dusk/automation/io_mode.hpp"
+
 #include <SDL3/SDL_init.h>
 #include <array>
 #include <cassert>
+#include <cstdint>
 #include <span>
 
 #include "JSystem/JAudio2/JASAiCtrl.h"
@@ -16,6 +19,8 @@
 #include "JSystem/JAudio2/JASDriverIF.h"
 #include "tracy/Tracy.hpp"
 
+#include "dusk/automation/native_state_section_begin.h"
+
 using namespace dusk::audio;
 
 static OutputSubframe OutBuffer;
@@ -23,6 +28,7 @@ static std::array<f32, DSP_SUBFRAME_SIZE * OutputSubframe::NUM_CHANNELS> OutInte
 
 static SDL_AudioStream* PlaybackStream;
 static bool OutputMuted;
+static std::uint64_t DeterministicSampleCredit;
 
 /**
  * SDL audiostream callback to trigger rendering of new audio data.
@@ -38,12 +44,12 @@ static void SDLCALL GetNewAudio(
  * Note: "audio frames" are unrelated to video frames.
  * @return Amount of audio samples rendered.
  */
-static int RenderNewAudioFrame();
+static int RenderNewAudioFrame(bool submitToHost);
 
 /**
  * Render an audio subframe and output it to SDL3.
  */
-static void RenderAudioSubframe();
+static void RenderAudioSubframe(bool submitToHost);
 
 static void InitSDL3Output() {
     SDL_Init(SDL_INIT_AUDIO);
@@ -69,8 +75,9 @@ void dusk::audio::Initialize() {
     JASDSPChannel::initAll();
 
     JASPoolAllocObject_MultiThreaded<JASChannel>::newMemPool(0x48);
-
-    SDL_ResumeAudioStreamDevice(PlaybackStream);
+    if (!dusk::automation::synchronous_io_enabled() && PlaybackStream != nullptr) {
+        SDL_ResumeAudioStreamDevice(PlaybackStream);
+    }
 }
 
 void dusk::audio::SetMasterVolume(const f32 value) {
@@ -87,11 +94,43 @@ void dusk::audio::SetOutputMuted(const bool muted) {
 }
 
 void dusk::audio::SetPaused(const bool paused) {
+    if (PlaybackStream == nullptr) {
+        return;
+    }
     if (paused) {
         SDL_PauseAudioStreamDevice(PlaybackStream);
     } else {
         SDL_ResumeAudioStreamDevice(PlaybackStream);
     }
+}
+
+void dusk::audio::AdvanceDeterministicAutomationTick() {
+    if (!dusk::automation::synchronous_io_enabled() || PlaybackStream == nullptr) {
+        return;
+    }
+
+    const std::uint64_t audioFrameSamples =
+        static_cast<std::uint64_t>(JASDriver::getSubFrames()) * DSP_SUBFRAME_SIZE;
+    if (audioFrameSamples == 0) {
+        return;
+    }
+
+    // A simulation tick is exactly 1/30 second. Keep the remainder in integer
+    // sample-rate units so the render cadence is deterministic and drift-free.
+    DeterministicSampleCredit += SampleRate;
+    const std::uint64_t audioFrameCost = 30 * audioFrameSamples;
+    while (DeterministicSampleCredit >= audioFrameCost) {
+        RenderNewAudioFrame(false);
+        DeterministicSampleCredit -= audioFrameCost;
+    }
+}
+
+bool dusk::audio::QuiesceForStateCheckpoint() {
+    JASCriticalSection section;
+    if (PlaybackStream == nullptr || dusk::automation::synchronous_io_enabled()) {
+        return true;
+    }
+    return SDL_PauseAudioStreamDevice(PlaybackStream);
 }
 
 void dusk::audio::SetEnableReverb(const bool value) {
@@ -111,13 +150,13 @@ void SDLCALL GetNewAudio(
     int) {
     FrameMarkStart(FrameName);
     while (needed > 0) {
-        const int rendered = RenderNewAudioFrame();
+        const int rendered = RenderNewAudioFrame(true);
         needed -= rendered;
     }
     FrameMarkEnd(FrameName);
 }
 
-int RenderNewAudioFrame() {
+int RenderNewAudioFrame(const bool submitToHost) {
     ZoneScoped;
     JASCriticalSection section;
     const u32 countSubframes = JASDriver::getSubFrames();
@@ -125,7 +164,7 @@ int RenderNewAudioFrame() {
     JASAudioThread::setDSPSyncCount(countSubframes);
 
     for (u32 i = 0; i < countSubframes; i++) {
-        RenderAudioSubframe();
+        RenderAudioSubframe(submitToHost);
 
         JASAudioThread::snIntCount -= 1;
     }
@@ -144,7 +183,7 @@ static void InterleaveOutputData(const OutputSubframe& data, std::span<f32> targ
     }
 }
 
-void RenderAudioSubframe() {
+void RenderAudioSubframe(const bool submitToHost) {
     ZoneScoped;
     OutBuffer = {};
 
@@ -167,7 +206,10 @@ void RenderAudioSubframe() {
         }
     }
 
-    SDL_PutAudioStreamData(PlaybackStream, &OutInterleaveBuffer, sizeof(OutInterleaveBuffer));
+    if (submitToHost && PlaybackStream != nullptr) {
+        SDL_PutAudioStreamData(PlaybackStream, &OutInterleaveBuffer,
+            sizeof(OutInterleaveBuffer));
+    }
 }
 
 u32 dusk::audio::GetResetCount(int channelIdx) {

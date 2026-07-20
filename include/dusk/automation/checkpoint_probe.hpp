@@ -46,6 +46,21 @@ public:
     };
 
 private:
+    struct ByteDifference {
+        std::string entry;
+        std::size_t offset = 0;
+        std::uint8_t expected = 0;
+        std::uint8_t actual = 0;
+        std::size_t contextOffset = 0;
+        std::string expectedContext;
+        std::string actualContext;
+        std::string heapName;
+        std::size_t heapOffset = 0;
+        std::size_t allocationOffset = 0;
+        std::size_t allocationSize = 0;
+        std::string objectName;
+        std::size_t objectOffset = 0;
+    };
 
     struct HostSnapshot {
         InputTapePlayerState tapePlayer;
@@ -76,6 +91,7 @@ private:
     std::filesystem::path mResultPath;
     StateCheckpoint mCheckpoint;
     StateCheckpointImage mImage;
+    StateCheckpointImage mA1FirstTickImage;
     HostSnapshot mSource;
     std::vector<std::string> mA1Digests;
     std::vector<std::vector<StateCheckpointEntryDigest>> mA1EntryDigests;
@@ -85,9 +101,11 @@ private:
     std::string mExpectedDivergence;
     std::string mActualDivergence;
     std::vector<std::string> mDivergentEntries;
+    std::vector<ByteDifference> mByteDifferences;
     std::string mError;
     std::uint64_t mCaptureMicros = 0;
     std::vector<std::uint64_t> mRestoreMicros;
+    bool mAudioCallbackQuiesced = false;
 };
 
 CheckpointProbe& checkpoint_probe();

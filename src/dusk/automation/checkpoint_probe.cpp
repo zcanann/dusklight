@@ -1,6 +1,8 @@
 #include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/io_mode.hpp"
+#include "dusk/audio/DuskAudioSystem.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <string_view>
@@ -10,6 +12,12 @@
 #include <xxhash.h>
 
 #include <aurora/dvd.h>
+#include <dolphin/os.h>
+#include <JSystem/JFramework/JFWDisplay.h>
+#include <JSystem/JKernel/JKRExpHeap.h>
+#include <JSystem/JUtility/JUTDbPrint.h>
+#include <JSystem/JUtility/JUTDirectPrint.h>
+#include <JSystem/JUtility/JUTProcBar.h>
 
 namespace dusk::automation {
 namespace {
@@ -22,6 +30,19 @@ std::string hex_digest(const std::string_view value) {
     std::string output;
     output.reserve(sizeof(canonical.digest) * 2);
     for (const unsigned char byte : canonical.digest) {
+        output.push_back(Hex[byte >> 4]);
+        output.push_back(Hex[byte & 0xf]);
+    }
+    return output;
+}
+
+std::string hex_context(const std::vector<std::byte>& bytes, const std::size_t offset) {
+    constexpr char Hex[] = "0123456789abcdef";
+    const std::size_t end = std::min(bytes.size(), offset + 16);
+    std::string output;
+    output.reserve((end - offset) * 2);
+    for (std::size_t index = offset; index < end; ++index) {
+        const std::uint8_t byte = std::to_integer<std::uint8_t>(bytes[index]);
         output.push_back(Hex[byte >> 4]);
         output.push_back(Hex[byte & 0xf]);
     }
@@ -69,6 +90,11 @@ bool CheckpointProbe::captureSource(const std::uint64_t simulationTick,
     const bool tapeFrameApplied, std::string& error) {
     if (!synchronous_io_enabled() || !aurora_dvd_is_synchronous()) {
         error = "checkpoint capture requires synchronous simulation-thread I/O";
+        return false;
+    }
+    mAudioCallbackQuiesced = dusk::audio::QuiesceForStateCheckpoint();
+    if (!mAudioCallbackQuiesced) {
+        error = "could not quiesce host audio callback for checkpoint capture";
         return false;
     }
     StateCheckpointError checkpointError = register_emulated_machine_checkpoint(mCheckpoint);
@@ -257,6 +283,14 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
     if (mPhase == Phase::A1) {
         mA1Digests.push_back(digest);
         mA1EntryDigests.push_back(std::move(entryDigests));
+        if (mEpisodeTick == 0) {
+            const StateCheckpointError captureError = mCheckpoint.capture(mA1FirstTickImage);
+            if (captureError != StateCheckpointError::None) {
+                error = state_checkpoint_error_message(captureError);
+                fail(error);
+                return true;
+            }
+        }
     } else if (mPhase == Phase::B) {
         if (!mBDiffered && digest != mA1Digests[mEpisodeTick]) {
             mBDiffered = true;
@@ -277,6 +311,90 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
             }
         } else {
             mDivergentEntries.push_back("checkpoint_manifest");
+        }
+        if (mEpisodeTick == 0) {
+            StateCheckpointImage actualImage;
+            if (mCheckpoint.capture(actualImage) == StateCheckpointError::None &&
+                actualImage.entries.size() == mA1FirstTickImage.entries.size())
+            {
+                constexpr std::size_t MaxDifferencesPerEntry = 8;
+                for (std::size_t entryIndex = 0;
+                     entryIndex < actualImage.entries.size(); ++entryIndex)
+                {
+                    const auto& expectedEntry = mA1FirstTickImage.entries[entryIndex];
+                    const auto& actualEntry = actualImage.entries[entryIndex];
+                    if (std::find(mDivergentEntries.begin(), mDivergentEntries.end(),
+                            expectedEntry.name) == mDivergentEntries.end())
+                    {
+                        continue;
+                    }
+                    if (expectedEntry.name != actualEntry.name ||
+                        expectedEntry.bytes.size() != actualEntry.bytes.size())
+                    {
+                        continue;
+                    }
+                    std::size_t entryDifferences = 0;
+                    for (std::size_t offset = 0; offset < expectedEntry.bytes.size(); ++offset) {
+                        if (expectedEntry.bytes[offset] == actualEntry.bytes[offset]) continue;
+                        const std::size_t contextOffset = offset & ~std::size_t{7};
+                        mByteDifferences.push_back({
+                            .entry = expectedEntry.name,
+                            .offset = offset,
+                            .expected = std::to_integer<std::uint8_t>(expectedEntry.bytes[offset]),
+                            .actual = std::to_integer<std::uint8_t>(actualEntry.bytes[offset]),
+                            .contextOffset = contextOffset,
+                            .expectedContext = hex_context(expectedEntry.bytes, contextOffset),
+                            .actualContext = hex_context(actualEntry.bytes, contextOffset),
+                        });
+                        ByteDifference& difference = mByteDifferences.back();
+                        if (expectedEntry.name == "mem1") {
+                            auto* const address = static_cast<std::byte*>(
+                                AuroraGetMEM1StorageAddress()) + offset;
+                            JKRHeap* const heap = JKRHeap::findFromRoot(address);
+                            if (heap != nullptr) {
+                                difference.heapName = heap->getName();
+                                difference.heapOffset = static_cast<std::size_t>(
+                                    address - static_cast<std::byte*>(heap->getStartAddr()));
+                                if (heap->getHeapType() == 'EXPH') {
+                                    auto* const expHeap = static_cast<JKRExpHeap*>(heap);
+                                    for (auto* block = expHeap->getUsedFirst(); block != nullptr;
+                                         block = block->getNextBlock())
+                                    {
+                                        auto* const content = static_cast<std::byte*>(block->getContent());
+                                        if (content <= address && address < content + block->getSize()) {
+                                            difference.allocationOffset =
+                                                static_cast<std::size_t>(address - content);
+                                            difference.allocationSize = block->getSize();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            const auto identifyObject = [&difference, address](
+                                                            const char* const name,
+                                                            const auto* const object) {
+                                if (object == nullptr) return;
+                                const auto* const begin = reinterpret_cast<const std::byte*>(object);
+                                const auto* const end = begin + sizeof(*object);
+                                if (begin <= address && address < end) {
+                                    difference.objectName = name;
+                                    difference.objectOffset =
+                                        static_cast<std::size_t>(address - begin);
+                                }
+                            };
+                            identifyObject("JFWDisplay", JFWDisplay::getManager());
+                            identifyObject("JUTXfb", JUTXfb::getManager());
+                            identifyObject("JUTProcBar", JUTProcBar::getManager());
+                            identifyObject("JUTDbPrint", JUTDbPrint::getManager());
+                            identifyObject("JUTDirectPrint", JUTDirectPrint::getManager());
+                            if (JFWDisplay::getManager() != nullptr) {
+                                identifyObject("JUTFader", JFWDisplay::getManager()->getFader());
+                            }
+                        }
+                        if (++entryDifferences == MaxDifferencesPerEntry) break;
+                    }
+                }
+            }
         }
         error = "A2 diverged from A1 after checkpoint restore";
         fail(error);
@@ -312,6 +430,26 @@ bool CheckpointProbe::writeResult(std::string& error) const {
     if (!mEnabled) return true;
     std::string sequence;
     for (const std::string& digest : mA1Digests) sequence += digest;
+    nlohmann::json byteDifferences = nlohmann::json::array();
+    for (const ByteDifference& difference : mByteDifferences) {
+        byteDifferences.push_back({
+            {"entry", difference.entry},
+            {"offset", difference.offset},
+            {"expected", difference.expected},
+            {"actual", difference.actual},
+            {"context_offset", difference.contextOffset},
+            {"expected_context", difference.expectedContext},
+            {"actual_context", difference.actualContext},
+            {"heap_name", difference.heapName.empty() ? nlohmann::json(nullptr)
+                                                          : nlohmann::json(difference.heapName)},
+            {"heap_offset", difference.heapOffset},
+            {"allocation_offset", difference.allocationOffset},
+            {"allocation_size", difference.allocationSize},
+            {"object_name", difference.objectName.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(difference.objectName)},
+            {"object_offset", difference.objectOffset},
+        });
+    }
     nlohmann::json result{
         {"schema", "dusklight-checkpoint-probe/v1"},
         {"status", mCompleted ? "passed" : mFailed ? "failed" : "incomplete"},
@@ -322,6 +460,7 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"checkpoint_digest", mImage.digest},
         {"capture_micros", mCaptureMicros},
         {"restore_micros", mRestoreMicros},
+        {"audio_callback_quiesced", mAudioCallbackQuiesced},
         {"a_sequence_digest", hex_digest(sequence)},
         {"b_differed", mBDiffered},
         {"first_b_difference_tick", mBDiffered ? nlohmann::json(mFirstBDifference) : nullptr},
@@ -332,6 +471,7 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"actual_digest", mActualDivergence.empty() ? nlohmann::json(nullptr)
                                                       : nlohmann::json(mActualDivergence)},
         {"divergent_entries", mDivergentEntries},
+        {"first_byte_differences", std::move(byteDifferences)},
         {"error", mError.empty() ? nlohmann::json(nullptr) : nlohmann::json(mError)},
     };
     std::error_code filesystemError;

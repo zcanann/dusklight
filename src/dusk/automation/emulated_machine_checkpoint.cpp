@@ -3,15 +3,62 @@
 #include "dusk/automation/jut_gamepad_state.hpp"
 #include "dusk/automation/vi_state.hpp"
 
+#include "JSystem/JKernel/JKRHeap.h"
+
 #include <cstring>
 #include <cstdio>
 
 #include <dolphin/ar.h>
+#include <dolphin/gx/GXAurora.h>
 #include <dolphin/os.h>
 #include <dolphin/os/OSTime.h>
 
 namespace dusk::automation {
 namespace {
+
+struct JKRHeapSelectionState {
+    JKRHeap* currentHeap = nullptr;
+};
+
+bool capture_jkr_heap_selection(void*, const std::span<std::byte> output) {
+    if (output.size() != sizeof(JKRHeapSelectionState)) {
+        return false;
+    }
+    const JKRHeapSelectionState state{.currentHeap = JKRHeap::getCurrentHeap()};
+    std::memcpy(output.data(), &state, sizeof(state));
+    return true;
+}
+
+bool restore_jkr_heap_selection(void*, const std::span<const std::byte> input) {
+    if (input.size() != sizeof(JKRHeapSelectionState)) {
+        return false;
+    }
+    JKRHeapSelectionState state{};
+    std::memcpy(&state, input.data(), sizeof(state));
+    JKRHeap::setCurrentHeap(state.currentHeap);
+    return true;
+}
+
+bool capture_gx_identity(void*, const std::span<std::byte> output) {
+    if (output.size() != sizeof(AuroraGXObjectIdentityState)) {
+        return false;
+    }
+    AuroraGXObjectIdentityState state{};
+    if (!AuroraCaptureGXObjectIdentityState(&state)) {
+        return false;
+    }
+    std::memcpy(output.data(), &state, sizeof(state));
+    return true;
+}
+
+bool restore_gx_identity(void*, const std::span<const std::byte> input) {
+    if (input.size() != sizeof(AuroraGXObjectIdentityState)) {
+        return false;
+    }
+    AuroraGXObjectIdentityState state{};
+    std::memcpy(&state, input.data(), sizeof(state));
+    return AuroraRestoreGXObjectIdentityState(&state) != FALSE;
+}
 
 bool capture_clock(void*, const std::span<std::byte> output) {
     if (output.size() != sizeof(AuroraDeterministicTimeState)) {
@@ -137,6 +184,17 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
     }
     error = checkpoint.addComponent("emulated_vi", sizeof(VIState), nullptr,
         capture_vi, restore_vi);
+    if (error != StateCheckpointError::None) {
+        return error;
+    }
+    error = checkpoint.addComponent("gx_object_identity",
+        sizeof(AuroraGXObjectIdentityState), nullptr,
+        capture_gx_identity, restore_gx_identity);
+    if (error != StateCheckpointError::None) {
+        return error;
+    }
+    error = checkpoint.addComponent("jkr_current_heap", sizeof(JKRHeapSelectionState), nullptr,
+        capture_jkr_heap_selection, restore_jkr_heap_selection);
     if (error != StateCheckpointError::None) {
         return error;
     }

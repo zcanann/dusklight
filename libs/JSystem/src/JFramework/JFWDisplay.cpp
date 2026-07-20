@@ -561,6 +561,10 @@ void JFWDisplay::clearEfb(int param_0, int param_1, int param_2, int param_3, GX
 
 void JFWDisplay::calcCombinationRatio() {
     u32 vidInterval = JUTVideo::getVideoInterval();
+    if (vidInterval == 0) {
+        mCombinationRatio = 0.0f;
+        return;
+    }
     s32 unk30 = field_0x30 * 2;
 
     s32 i = vidInterval;

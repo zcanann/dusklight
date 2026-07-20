@@ -30,6 +30,12 @@ namespace dusk::audio {
 
     void SetPaused(bool paused);
 
+    /** Advance emulated audio from the fixed-step simulation thread. */
+    void AdvanceDeterministicAutomationTick();
+
+    /** Stop host callback activity before checkpoint bytes are copied. */
+    bool QuiesceForStateCheckpoint();
+
     u32 GetResetCount(int channelIdx);
 
     f32 VolumeFromU16(u16 value);

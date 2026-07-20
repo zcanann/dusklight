@@ -17,6 +17,8 @@
 #include "global.h"
 #include "tracy/Tracy.hpp"
 
+#include "dusk/automation/native_state_section_begin.h"
+
 using namespace dusk::audio;
 
 ChannelAuxData dusk::audio::ChannelAux[DSP_CHANNELS] = {};
