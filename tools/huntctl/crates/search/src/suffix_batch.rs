@@ -2,7 +2,7 @@
 
 use crate::search::{Candidate, MacroAction, SearchError, SegmentProfile};
 use crate::tape::{InputFrame, InputTape};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v1";
@@ -10,24 +10,34 @@ const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
 const BUTTON_A: u16 = 0x0100;
+const ORDON_EXIT_EDGE_X: f64 = -1708.04;
+const ORDON_EXIT_EDGE_Z: f64 = -4166.06;
+const ORDON_EXIT_EDGE_DZ_DX: f64 = 15.9506 / -198.4406;
+
+pub fn ordon_exit_edge_distance(x: f64, z: f64) -> f64 {
+    z - (ORDON_EXIT_EDGE_Z + ORDON_EXIT_EDGE_DZ_DX * (x - ORDON_EXIT_EDGE_X))
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SuffixProposalMethod {
     Deletion,
     ButtonEdge,
     Heading,
+    Corner,
+    CornerWide,
+    Timing,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct NativeSuffixBatch {
-    pub schema: &'static str,
+    pub schema: String,
     pub source_frame: usize,
     pub maximum_ticks: usize,
     pub verify_state_hashes: bool,
     pub candidates: Vec<NativeSuffixCandidate>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NativeSuffixCandidate {
     pub id: String,
     pub actions: Vec<MacroAction>,
@@ -59,7 +69,7 @@ pub fn propose_suffix_batch(
     }
 
     let mut output = NativeSuffixBatch {
-        schema: NATIVE_SUFFIX_BATCH_SCHEMA,
+        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame,
         maximum_ticks,
         verify_state_hashes: false,
@@ -150,11 +160,18 @@ pub fn propose_suffix_batch(
         SuffixProposalMethod::Heading => {
             let base = source.frames[..maximum_ticks].to_vec();
             // A coprime walk spreads an equal proposal budget across the route
-            // instead of spending it all on the first corner.
-            for ordinal in 0..maximum_ticks {
-                let start = ordinal.wrapping_mul(37) % maximum_ticks;
-                for window in [1_usize, 2, 4, 8] {
-                    for degrees in [-6.0_f64, -3.0, 3.0, 6.0] {
+            // instead of spending it all on the first corner. Start at the
+            // terminal input because late steering is the least disruptive
+            // way to turn a one-tick miss into a crossing.
+            'variants: for (window, degrees) in [
+                (1_usize, [-6.0_f64, 6.0_f64]),
+                (2, [-6.0, 6.0]),
+                (4, [-3.0, 3.0]),
+                (8, [-3.0, 3.0]),
+            ] {
+                for ordinal in 0..maximum_ticks {
+                    let start = maximum_ticks - 1 - ordinal.wrapping_mul(37) % maximum_ticks;
+                    for degrees in degrees {
                         let mut frames = base.clone();
                         rotate_heading(&mut frames, start, window, degrees);
                         push_candidate(
@@ -166,17 +183,298 @@ pub fn propose_suffix_batch(
                             candidate_budget,
                         )?;
                         if output.candidates.len() == candidate_budget {
-                            break;
+                            break 'variants;
                         }
                     }
-                    if output.candidates.len() == candidate_budget {
-                        break;
-                    }
-                }
-                if output.candidates.len() == candidate_budget {
-                    break;
                 }
             }
+        }
+        SuffixProposalMethod::Corner => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            // Incumbent diagnostics identify two costly turn episodes. Sweep
+            // small signed changes across their entry, apex, and exit ticks.
+            let anchors = [36_usize, 38, 40, 66, 70, 72, 74, 76, 78, 80, 82];
+            'variants: for (window, degrees) in [
+                (1_usize, -3.0_f64),
+                (1, 3.0),
+                (2, -3.0),
+                (2, 3.0),
+                (3, -2.0),
+                (3, 2.0),
+                (4, -2.0),
+                (4, 2.0),
+                (6, -1.0),
+                (6, 1.0),
+                (8, -1.0),
+                (8, 1.0),
+            ] {
+                for start in anchors {
+                    if start >= maximum_ticks {
+                        continue;
+                    }
+                    let mut frames = base.clone();
+                    rotate_heading(&mut frames, start, window, degrees);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("corner-{start}-w{window}-{degrees:+.0}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::CornerWide => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            // Narrow corner edits did not improve the terminal miss enough to
+            // recover a tick. Sweep larger rotations over the same measured
+            // turn episodes without perturbing unrelated straight-line input.
+            let anchors = [32_usize, 36, 40, 64, 68, 72, 76, 80];
+            'variants: for (window, degrees) in [
+                (3_usize, -12.0_f64),
+                (3, 12.0),
+                (4, -12.0),
+                (4, 12.0),
+                (6, -9.0),
+                (6, 9.0),
+                (8, -9.0),
+                (8, 9.0),
+                (12, -6.0),
+                (12, 6.0),
+                (16, -6.0),
+                (16, 6.0),
+                (20, -4.0),
+                (20, 4.0),
+            ] {
+                for start in anchors {
+                    if start >= maximum_ticks {
+                        continue;
+                    }
+                    let mut frames = base.clone();
+                    rotate_heading(&mut frames, start, window, degrees);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("corner-wide-{start}-w{window}-{degrees:+.0}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
+        SuffixProposalMethod::Timing => {
+            let base = source.frames[..maximum_ticks].to_vec();
+            let starts = (28_usize..=45).chain(60..=90).collect::<Vec<_>>();
+            'variants: for (window, delta) in [
+                (1_usize, -1_isize),
+                (1, 1),
+                (2, -1),
+                (2, 1),
+                (4, -2),
+                (4, 2),
+                (6, -3),
+                (6, 3),
+            ] {
+                for &start in &starts {
+                    if start >= maximum_ticks {
+                        continue;
+                    }
+                    let mut frames = base.clone();
+                    shift_heading_timing(&mut frames, &base, start, window, delta);
+                    push_candidate(
+                        &mut output,
+                        &mut seen,
+                        seed,
+                        frames,
+                        format!("timing-{start}-w{window}-{delta:+}"),
+                        candidate_budget,
+                    )?;
+                    if output.candidates.len() == candidate_budget {
+                        break 'variants;
+                    }
+                }
+            }
+        }
+    }
+    if output.candidates.is_empty() {
+        return Err(SearchError::PopulationStalled);
+    }
+    Ok(output)
+}
+
+/// Combines complementary disjoint mutations from an evaluated batch. The
+/// endpoint model ranks proposals only; native terminal success remains the
+/// authority.
+pub fn propose_ranked_suffix_refinement(
+    seed: &Candidate,
+    parent: &NativeSuffixBatch,
+    terminal_observations: &[(String, f64, f64)],
+    candidate_budget: usize,
+) -> Result<NativeSuffixBatch, SearchError> {
+    if parent.schema != NATIVE_SUFFIX_BATCH_SCHEMA
+        || candidate_budget == 0
+        || candidate_budget > MAXIMUM_CANDIDATES
+        || candidate_budget.saturating_mul(parent.maximum_ticks) > MAXIMUM_EXPANDED_TICKS
+    {
+        return Err(SearchError::InvalidPopulation);
+    }
+    let source = seed.compile()?;
+    if source.frames.len() < parent.maximum_ticks {
+        return Err(SearchError::NonCanonicalTape(
+            "ranked refinement seed is shorter than its parent batch".into(),
+        ));
+    }
+    let base = source.frames[..parent.maximum_ticks].to_vec();
+    let by_id = parent
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.id.as_str(), candidate))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    // Exact repeated endpoints reveal mutations that had no gameplay effect,
+    // giving a robust baseline without a separate native run.
+    let mut endpoint_counts = std::collections::BTreeMap::new();
+    for (_, x, z) in terminal_observations {
+        *endpoint_counts
+            .entry((x.to_bits(), z.to_bits()))
+            .or_insert(0_usize) += 1;
+    }
+    let ((baseline_x_bits, baseline_z_bits), _) = endpoint_counts
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
+        .ok_or(SearchError::InvalidResult)?;
+    let baseline_x = f64::from_bits(baseline_x_bits);
+    let baseline_z = f64::from_bits(baseline_z_bits);
+
+    // The promoted world inventory reconstructs the near edge of the F_SP104
+    // exit triangle from (-1708.04, -4166.06) to (-1906.4806, -4150.1094).
+    // Rank by signed XZ distance to that edge, while success remains native.
+    let mut ranked = terminal_observations.to_vec();
+    ranked.sort_by(|left, right| {
+        ordon_exit_edge_distance(left.1, left.2)
+            .total_cmp(&ordon_exit_edge_distance(right.1, right.2))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    // Sixteen variables keep exhaustive subset ranking bounded at 65,535.
+    let selected_ids = ranked
+        .into_iter()
+        .take(16)
+        .map(|sample| sample.0)
+        .collect::<Vec<_>>();
+
+    let mut mutations = Vec::new();
+    for id in selected_ids {
+        let candidate = by_id.get(id.as_str()).ok_or(SearchError::InvalidResult)?;
+        let (_, terminal_x, terminal_z) = terminal_observations
+            .iter()
+            .find(|sample| sample.0 == id)
+            .ok_or(SearchError::InvalidResult)?;
+        let tape = Candidate {
+            schema: crate::search::CANDIDATE_SCHEMA.into(),
+            segment: seed.segment,
+            boot: seed.boot.clone(),
+            actions: candidate.actions.clone(),
+            ancestry: crate::search::Ancestry::default(),
+        }
+        .compile()?;
+        if tape.frames.len() != base.len() {
+            return Err(SearchError::InvalidResult);
+        }
+        let changes = base
+            .iter()
+            .zip(&tape.frames)
+            .enumerate()
+            .filter_map(|(index, (original, mutated))| {
+                (original != mutated).then_some((index, mutated.clone()))
+            })
+            .collect::<Vec<_>>();
+        if !changes.is_empty() {
+            mutations.push((
+                id,
+                changes,
+                terminal_x - baseline_x,
+                terminal_z - baseline_z,
+            ));
+        }
+    }
+    if mutations.len() < 2 {
+        return Err(SearchError::PopulationStalled);
+    }
+
+    let mut output = NativeSuffixBatch {
+        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame: parent.source_frame,
+        maximum_ticks: parent.maximum_ticks,
+        verify_state_hashes: false,
+        candidates: Vec::with_capacity(candidate_budget),
+    };
+    let mut seen = HashSet::new();
+    let mut ranked_subsets = Vec::new();
+    for mask in 1_u64..(1_u64 << mutations.len()) {
+        if mask.count_ones() < 2 {
+            continue;
+        }
+        let mut predicted_x = baseline_x;
+        let mut predicted_z = baseline_z;
+        for (index, mutation) in mutations.iter().enumerate() {
+            if mask & (1_u64 << index) != 0 {
+                predicted_x += mutation.2;
+                predicted_z += mutation.3;
+            }
+        }
+        let lane_penalty = if !(-1906.4806..=-1708.04).contains(&predicted_x) {
+            10_000.0
+        } else {
+            0.0
+        };
+        let score = ordon_exit_edge_distance(predicted_x, predicted_z) + lane_penalty;
+        ranked_subsets.push((score, mask));
+    }
+    ranked_subsets.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    for (_, mask) in ranked_subsets {
+        let mut frames = base.clone();
+        let mut touched = HashSet::new();
+        let mut compatible = true;
+        for (mutation_index, mutation) in mutations.iter().enumerate() {
+            if mask & (1_u64 << mutation_index) == 0 {
+                continue;
+            }
+            for (frame_index, frame) in &mutation.1 {
+                if !touched.insert(*frame_index) && frames[*frame_index] != *frame {
+                    compatible = false;
+                    break;
+                }
+                frames[*frame_index] = frame.clone();
+            }
+            if !compatible {
+                break;
+            }
+        }
+        if !compatible {
+            continue;
+        }
+        push_candidate(
+            &mut output,
+            &mut seen,
+            seed,
+            frames,
+            format!("ranked-{mask:x}"),
+            candidate_budget,
+        )?;
+        if output.candidates.len() == candidate_budget {
+            return Ok(output);
         }
     }
     if output.candidates.is_empty() {
@@ -265,6 +563,26 @@ fn rotate_heading(frames: &mut [InputFrame], start: usize, window: usize, degree
     }
 }
 
+fn shift_heading_timing(
+    frames: &mut [InputFrame],
+    source: &[InputFrame],
+    start: usize,
+    window: usize,
+    delta: isize,
+) {
+    let end = start.saturating_add(window).min(frames.len());
+    for (index, frame) in frames.iter_mut().enumerate().take(end).skip(start) {
+        let Some(source_index) = index.checked_add_signed(delta) else {
+            continue;
+        };
+        if source_index >= source.len() {
+            continue;
+        }
+        frame.pads[0].stick_x = source[source_index].pads[0].stick_x;
+        frame.pads[0].stick_y = source[source_index].pads[0].stick_y;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +634,34 @@ mod tests {
             propose_suffix_batch(&seed(), 440, 5, 8, SuffixProposalMethod::Heading).unwrap();
         assert_eq!(batch.candidates.len(), 8);
         assert!(batch.candidates.iter().all(|candidate| {
+            Candidate {
+                schema: CANDIDATE_SCHEMA.into(),
+                segment: SegmentProfile::Fsp103ToFsp104,
+                boot: TapeBoot::Process,
+                actions: candidate.actions.clone(),
+                ancestry: Ancestry::default(),
+            }
+            .compile()
+            .is_ok_and(|tape| tape.frames.len() == 5)
+        }));
+    }
+
+    #[test]
+    fn ranked_refinement_combines_distinct_high_progress_mutations() {
+        let parent =
+            propose_suffix_batch(&seed(), 440, 5, 8, SuffixProposalMethod::Heading).unwrap();
+        let scores = parent
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                let offset = index as f64;
+                (candidate.id.clone(), 10.0 - offset, 20.0 - offset)
+            })
+            .collect::<Vec<_>>();
+        let refined = propose_ranked_suffix_refinement(&seed(), &parent, &scores, 6).unwrap();
+        assert!(!refined.candidates.is_empty());
+        assert!(refined.candidates.iter().all(|candidate| {
             Candidate {
                 schema: CANDIDATE_SCHEMA.into(),
                 segment: SegmentProfile::Fsp103ToFsp104,

@@ -29,7 +29,10 @@ use huntctl::search_evaluator::{
     run_bayesian_search, run_beam_search, run_continuous_search, run_proposer_tournament,
     run_search,
 };
-use huntctl::suffix_batch::{SuffixProposalMethod, propose_suffix_batch};
+use huntctl::suffix_batch::{
+    NativeSuffixBatch, SuffixProposalMethod, ordon_exit_edge_distance,
+    propose_ranked_suffix_refinement, propose_suffix_batch,
+};
 use huntctl::tape::InputTape;
 use serde_json::{Value, json};
 use std::error::Error;
@@ -90,18 +93,152 @@ fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("suffix-promote-failure") => {
+            let search_args = &args[1..];
+            let candidate_path = required_path(search_args, "--candidate")?;
+            let batch_path = required_path(search_args, "--batch")?;
+            let results_path = required_path(search_args, "--results")?;
+            let output = required_path(search_args, "--output")?;
+            let seed: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
+            let batch: NativeSuffixBatch = serde_json::from_slice(&fs::read(batch_path)?)?;
+            let results: Value = serde_json::from_slice(&fs::read(results_path)?)?;
+            if results.get("status").and_then(Value::as_str) != Some("passed") {
+                return Err("failure promotion requires a passed native batch result".into());
+            }
+            let (winner_id, distance) = results
+                .get("candidates")
+                .and_then(Value::as_array)
+                .ok_or("native batch result has no candidates")?
+                .iter()
+                .filter(|result| result.get("success").and_then(Value::as_bool) == Some(false))
+                .filter_map(|result| {
+                    let id = result.get("id")?.as_str()?;
+                    let position = result
+                        .pointer("/terminal_observation/position")?
+                        .as_array()?;
+                    let x = position.first()?.as_f64()?;
+                    let z = position.get(2)?.as_f64()?;
+                    (x.is_finite() && z.is_finite()).then_some((id, ordon_exit_edge_distance(x, z)))
+                })
+                .min_by(|left, right| left.1.total_cmp(&right.1).then_with(|| left.0.cmp(right.0)))
+                .ok_or("native batch result has no finite failed terminal observations")?;
+            let selected = batch
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == winner_id)
+                .ok_or("best failed result is absent from its batch")?;
+            let promoted = Candidate {
+                schema: huntctl::search::CANDIDATE_SCHEMA.into(),
+                segment: seed.segment,
+                boot: seed.boot.clone(),
+                actions: selected.actions.clone(),
+                ancestry: huntctl::search::Ancestry {
+                    generation: seed.ancestry.generation.saturating_add(1),
+                    parent_id: Some(seed.id()?),
+                    mutation: Some(format!(
+                        "native failure promotion {winner_id}; exit-edge distance {distance:.6}"
+                    )),
+                    intervention: None,
+                },
+            };
+            promoted.validate()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&promoted)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!(
+                "promoted failed candidate {winner_id} at signed exit-edge distance {distance:.6} to {}",
+                output.display()
+            );
+            Ok(())
+        }
+        Some("suffix-refine") => {
+            let search_args = &args[1..];
+            let candidate_path = required_path(search_args, "--candidate")?;
+            let batch_path = required_path(search_args, "--batch")?;
+            let results_path = required_path(search_args, "--results")?;
+            let output = required_path(search_args, "--output")?;
+            let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
+            let batch: NativeSuffixBatch = serde_json::from_slice(&fs::read(batch_path)?)?;
+            let results: Value = serde_json::from_slice(&fs::read(results_path)?)?;
+            if results.get("status").and_then(Value::as_str) != Some("passed") {
+                return Err(
+                    "ranked suffix refinement requires a passed native batch result".into(),
+                );
+            }
+            let terminal_observations = results
+                .get("candidates")
+                .and_then(Value::as_array)
+                .ok_or("native batch result has no candidates")?
+                .iter()
+                .filter(|result| result.get("success").and_then(Value::as_bool) == Some(false))
+                .map(|result| {
+                    let id = result
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .ok_or("native batch candidate has no id")?;
+                    let position = result
+                        .pointer("/terminal_observation/position")
+                        .and_then(Value::as_array)
+                        .ok_or("native batch candidate has no terminal position")?;
+                    let x = position
+                        .first()
+                        .and_then(Value::as_f64)
+                        .ok_or("native batch candidate terminal x is absent or non-finite")?;
+                    let z = position
+                        .get(2)
+                        .and_then(Value::as_f64)
+                        .ok_or("native batch candidate terminal z is absent or non-finite")?;
+                    if !x.is_finite() || !z.is_finite() {
+                        return Err("native batch candidate terminal position is non-finite");
+                    }
+                    Ok((id.to_owned(), x, z))
+                })
+                .collect::<Result<Vec<_>, &str>>()?;
+            let refined = propose_ranked_suffix_refinement(
+                &candidate,
+                &batch,
+                &terminal_observations,
+                usize_option(search_args, "--candidate-budget", 107)?,
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&refined)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!(
+                "wrote {} progress-ranked suffix refinements to {}",
+                refined.candidates.len(),
+                output.display()
+            );
+            Ok(())
+        }
         Some("suffix-batch") => {
             let search_args = &args[1..];
             let candidate_path = required_path(search_args, "--candidate")?;
             let output = required_path(search_args, "--output")?;
             let candidate: Candidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
             let method = match option(search_args, "--method")
-                .ok_or("missing required --method deletion|button-edge|heading")?
+                .ok_or(
+                    "missing required --method deletion|button-edge|heading|corner|corner-wide|timing",
+                )?
                 .as_str()
             {
                 "deletion" => SuffixProposalMethod::Deletion,
                 "button-edge" => SuffixProposalMethod::ButtonEdge,
                 "heading" => SuffixProposalMethod::Heading,
+                "corner" => SuffixProposalMethod::Corner,
+                "corner-wide" => SuffixProposalMethod::CornerWide,
+                "timing" => SuffixProposalMethod::Timing,
                 value => return Err(format!("unknown suffix proposal method {value:?}").into()),
             };
             let batch = propose_suffix_batch(
