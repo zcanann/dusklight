@@ -49,8 +49,8 @@ its realized raw range.
 
 - camera-relative direction in integral degrees (`0` forward, `+90` right) and
   main-stick magnitude;
-- the exact zero-based option frame that presses B;
-- an exact count of direction-only recovery frames after the B frame;
+- the exact zero-based option frame that presses the GameCube A action button;
+- an exact count of direction-only recovery frames after the A frame;
 - an absolute spacing period and phase, requiring
   `absolute_button_tick % period_ticks == phase_tick`; and
 - a bounded ordered set of the same typed cancellation conditions used by the

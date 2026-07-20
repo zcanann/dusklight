@@ -346,7 +346,7 @@ roadmap documents describe the larger target.
   non-authoritative per-frame movement transitions from absolute tape/trace
   pairs with correct post-tick alignment. Each extraction also emits a
   digest-bound transition-evidence sidecar with exact phase and provenance.
-- Typed roll plans compile direction, an exact B frame, bounded recovery, and
+- Typed roll plans compile direction, an exact GameCube A frame, bounded recovery, and
   absolute modulo spacing phase into raw frames. Pre-input typed cancellation
   truncates the realized range exactly, and capture authenticates it through
   the common option-execution/tape contract. Search roll macros use this same

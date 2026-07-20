@@ -12,7 +12,7 @@ use std::fmt;
 
 pub const ROLL_OPTION_SCHEMA_V1: &str = "dusklight-roll-option/v1";
 pub const MAX_ROLL_TICKS: u32 = 10_000;
-const BUTTON_B: u16 = 0x0200;
+const BUTTON_A: u16 = 0x0100;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,9 +39,9 @@ pub struct RollOptionPlan {
     /// Camera-relative direction: zero is forward and +90 is right.
     pub direction_degrees: i16,
     pub magnitude: u8,
-    /// Zero-based option tick on which B is pressed.
+    /// Zero-based option tick on which the GameCube A action button is pressed.
     pub button_frame: u32,
-    /// Direction-only ticks emitted after the B frame.
+    /// Direction-only ticks emitted after the A frame.
     pub recovery_frames: u32,
     pub spacing: RollSpacing,
     pub cancellation_conditions: Vec<OptionCondition>,
@@ -216,7 +216,7 @@ impl RollOptionPlan {
         for tick in 0..realized_ticks {
             let mut pad = direction;
             if tick == self.button_frame {
-                pad.buttons = BUTTON_B;
+                pad.buttons = BUTTON_A;
             }
             frames.push(owned_frame(pad));
         }
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(realization.end_reason, OptionEndReason::Completed);
         assert_eq!(realization.frames[0].pads[0].stick_x, 100);
         assert_eq!(realization.frames[1].pads[0].buttons, 0);
-        assert_eq!(realization.frames[2].pads[0].buttons, BUTTON_B);
+        assert_eq!(realization.frames[2].pads[0].buttons, BUTTON_A);
         assert_eq!(realization.frames[5].pads[0].buttons, 0);
         assert!(matches!(
             plan.realize(4, None),

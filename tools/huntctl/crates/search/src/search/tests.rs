@@ -62,7 +62,7 @@ fn macro_ir_compiles_analog_roll_and_press() {
     assert_eq!(tape.frames[0].pads[0].stick_x, 127);
     assert_eq!(tape.frames[0].pads[0].stick_y, 0);
     assert_eq!(tape.frames[2].pads[0].buttons, 0);
-    assert_eq!(tape.frames[3].pads[0].buttons, BUTTON_B);
+    assert_eq!(tape.frames[3].pads[0].buttons, BUTTON_A);
     assert_eq!(tape.frames[3].pads[0].stick_y, 100);
     assert_eq!(tape.frames[6].pads[0].buttons, BUTTON_START);
     assert_eq!(tape.frames[7].pads[0].buttons, 0);
@@ -291,7 +291,9 @@ fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
         let child = mutate(&candidate, 1, &mut rng).unwrap();
         let mutation = child.ancestry.mutation.as_deref().unwrap();
         stick_mutations += usize::from(mutation.starts_with("pad_stick["));
-        button_mutations += usize::from(mutation.starts_with("pad_toggle_b["));
+        button_mutations += usize::from(
+            mutation.starts_with("pad_toggle_a[") || mutation.starts_with("pad_toggle_b["),
+        );
     }
     assert!(stick_mutations > 20);
     assert!(button_mutations > 20);

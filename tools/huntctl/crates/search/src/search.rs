@@ -111,8 +111,8 @@ impl ControllerButton {
 }
 
 /// Search-friendly controller macros. Angles use degrees: 0 is forward and
-/// +90 is right. A roll presses B on its first frame and holds its stick for
-/// the requested recovery frames.
+/// +90 is right. A roll presses the GameCube A action button on its declared
+/// frame and holds its stick for the requested recovery frames.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MacroAction {
@@ -1333,7 +1333,7 @@ fn mutate(
         .iter()
         .any(|action| matches!(action, MacroAction::PadRun { .. }));
     let mutation_kind = if imported {
-        [0, 4, 6, 7, 8][rng.usize(5)]
+        [0, 4, 6, 7, 8, 9, 10, 11, 12, 13][rng.usize(10)]
     } else if route {
         rng.usize(7)
     } else {
@@ -1508,7 +1508,7 @@ fn mutate(
             pad.stick_y = (i32::from(pad.stick_y) + delta_y).clamp(-127, 127) as i8;
             description = format!("pad_stick[{index}]({delta_x:+},{delta_y:+})");
         }
-        8 if imported => {
+        8 | 9 if imported => {
             let pads: Vec<_> = child
                 .actions
                 .iter()
@@ -1524,8 +1524,92 @@ fn mutate(
             let MacroAction::PadRun { pad, .. } = &mut child.actions[index] else {
                 unreachable!("pad-run index was selected above")
             };
-            pad.buttons ^= BUTTON_B;
-            description = format!("pad_toggle_b[{index}]");
+            let (button, name) = if mutation_kind == 8 {
+                (BUTTON_A, "a")
+            } else {
+                (BUTTON_B, "b")
+            };
+            pad.buttons ^= button;
+            description = format!("pad_toggle_{name}[{index}]");
+        }
+        10 if imported => {
+            let mut tape = parent_tape.clone();
+            let widths = [4_usize, 8, 16, 32, 64];
+            let width = widths[rng.usize(widths.len())].min(tape.frames.len());
+            let start = rng.usize(tape.frames.len() - width + 1);
+            let end = start + width;
+            let (sum_x, sum_y) =
+                tape.frames[start..end]
+                    .iter()
+                    .fold((0_i64, 0_i64), |(x, y), frame| {
+                        (
+                            x + i64::from(frame.pads[0].stick_x),
+                            y + i64::from(frame.pads[0].stick_y),
+                        )
+                    });
+            let length = ((sum_x * sum_x + sum_y * sum_y) as f64).sqrt();
+            let (stick_x, stick_y) = if length < f64::EPSILON {
+                (0, 0)
+            } else {
+                (
+                    (sum_x as f64 * 127.0 / length).round().clamp(-127.0, 127.0) as i8,
+                    (sum_y as f64 * 127.0 / length).round().clamp(-127.0, 127.0) as i8,
+                )
+            };
+            for frame in &mut tape.frames[start..end] {
+                frame.pads[0].stick_x = stick_x;
+                frame.pads[0].stick_y = stick_y;
+            }
+            child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+            description = format!("pad_smooth[{start}..{end}]=({stick_x:+},{stick_y:+})");
+        }
+        11 if imported => {
+            let mut tape = parent_tape.clone();
+            let period = 16 + rng.usize(9);
+            let phase = rng.usize(period);
+            let hold = 1 + rng.usize(4);
+            for (frame, input) in tape.frames.iter_mut().enumerate() {
+                input.pads[0].buttons &= !BUTTON_A;
+                if (frame + period - phase) % period < hold {
+                    input.pads[0].buttons |= BUTTON_A;
+                }
+            }
+            child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+            description =
+                format!("pad_roll_cadence[period={period},phase={phase},hold={hold}]");
+        }
+        12 if imported && parent_tape.frames.len() > 1 => {
+            let mut tape = parent_tape.clone();
+            let frame = rng.usize(tape.frames.len());
+            tape.frames.remove(frame);
+            child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+            description = format!("pad_delete_frame[{frame}]");
+        }
+        13 if imported => {
+            let mut tape = parent_tape.clone();
+            let rising_edges = (1..tape.frames.len())
+                .filter(|frame| {
+                    tape.frames[*frame].pads[0].buttons & BUTTON_A != 0
+                        && tape.frames[*frame - 1].pads[0].buttons & BUTTON_A == 0
+                })
+                .collect::<Vec<_>>();
+            if rising_edges.is_empty() {
+                return mutate(parent, generation, rng);
+            }
+            let source = rising_edges[rng.usize(rising_edges.len())];
+            let earlier = rng.usize(2) == 0;
+            let target = if earlier {
+                source.saturating_sub(1)
+            } else {
+                (source + 1).min(tape.frames.len() - 1)
+            };
+            if target == source {
+                return mutate(parent, generation, rng);
+            }
+            tape.frames[source].pads[0].buttons &= !BUTTON_A;
+            tape.frames[target].pads[0].buttons |= BUTTON_A;
+            child = Candidate::from_absolute_tape(parent.segment, &tape)?;
+            description = format!("pad_shift_a[{source}->{target}]");
         }
         _ => {
             let neutral: Vec<_> = child
