@@ -4,6 +4,7 @@
 #if TARGET_PC
 #include <aurora/aurora.h>
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/suffix_batch_runner.hpp"
 #endif
 #include <cmath>
 #include "os_report.h"
@@ -94,6 +95,7 @@ u32 JUTGamePad::sRumbleSupported;
 u32 JUTGamePad::read() {
     sRumbleSupported = PADRead(mPadStatus);
 #if TARGET_PC
+    dusk::automation::suffix_batch_runner().recordConsumedPads(mPadStatus);
     // Read-only cold branch when no recording is armed. Capture after host
     // mapping and before the game's non-idempotent clamp so replay clamps the
     // same canonical state exactly once.

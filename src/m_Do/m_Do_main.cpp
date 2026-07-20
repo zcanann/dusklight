@@ -73,6 +73,7 @@
 #include "dusk/automation/input_tape.hpp"
 #include "dusk/automation/io_mode.hpp"
 #include "dusk/automation/scenario_fixture_runtime.hpp"
+#include "dusk/automation/suffix_batch_runner.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/milestone_program.hpp"
 #include "dusk/automation/rng.hpp"
@@ -251,6 +252,7 @@ static bool verify_recording_start_boundary();
 static void complete_recording_handoff_countdown();
 static bool finish_simulation_tick();
 static bool finish_checkpoint_probe_tick();
+static bool finish_suffix_batch_tick();
 static void begin_automation_simulation_tick();
 static bool finish_automation_oracle_tick();
 static bool record_milestone_pre_input_boundary();
@@ -272,6 +274,7 @@ static void write_realized_input_tape_on_exit();
 static void write_recorded_input_tape_on_exit(bool processFailedBeforeRecording);
 static void write_actor_catalog_on_exit();
 static void write_checkpoint_probe_result_on_exit();
+static void write_suffix_batch_artifacts_on_exit();
 static void release_active_controller_on_exit();
 static bool auxiliary_live_input_enabled();
 
@@ -453,7 +456,7 @@ void main01(void) {
                     if (!finish_simulation_tick()) {
                         break;
                     }
-                    if (finish_checkpoint_probe_tick()) {
+                    if (finish_suffix_batch_tick() || finish_checkpoint_probe_tick()) {
                         break;
                     }
                     if (finish_automation_oracle_tick()) {
@@ -496,7 +499,8 @@ void main01(void) {
                 dusk::audio::AdvanceDeterministicAutomationTick();
                 mDoAud_Execute();
                 if (finish_simulation_tick()) {
-                    if (!finish_checkpoint_probe_tick() && !finish_automation_oracle_tick()) {
+                    if (!finish_suffix_batch_tick() && !finish_checkpoint_probe_tick() &&
+                        !finish_automation_oracle_tick()) {
                         finish_input_tape_tick();
                     }
                 }
@@ -554,6 +558,7 @@ void main01(void) {
     write_realized_input_tape_on_exit();
     write_actor_catalog_on_exit();
     write_checkpoint_probe_result_on_exit();
+    write_suffix_batch_artifacts_on_exit();
     dusk::automation::mark_native_lifecycle_phase(
         dusk::automation::NativeLifecyclePhase::ProofArtifactsWritten);
 }
@@ -698,6 +703,8 @@ static bool headlessMainLoop;
 static bool deterministicTimeAdvanceFailed;
 static bool checkpointProbeFailed;
 static bool checkpointProbeWriteFailed;
+static bool suffixBatchFailed;
+static bool suffixBatchWriteFailed;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
@@ -1142,6 +1149,15 @@ static bool prepare_automation_pre_input_boundary() {
     {
         checkpointProbeFailed = true;
         DuskLog.error("Checkpoint probe failed at pre-input boundary: {}", checkpointProbeError);
+        return true;
+    }
+    std::string suffixBatchError;
+    if (!dusk::automation::suffix_batch_runner().preInput(
+            automationSimulationTick, automationTapeFrame, automationPreparedInputFrame,
+            inputTapeFrameApplied, suffixBatchError))
+    {
+        suffixBatchFailed = true;
+        DuskLog.error("Suffix batch failed at pre-input boundary: {}", suffixBatchError);
         return true;
     }
     dusk::automation::mark_native_lifecycle_phase(
@@ -1684,6 +1700,21 @@ static bool finish_checkpoint_probe_tick() {
     return true;
 }
 
+static bool finish_suffix_batch_tick() {
+    auto& batch = dusk::automation::suffix_batch_runner();
+    if (!batch.enabled()) return false;
+    std::string error;
+    if (!batch.postSimulation(automationSimulationTick, automationTapeFrame, error)) return false;
+    if (batch.failed()) {
+        suffixBatchFailed = true;
+        DuskLog.error("Suffix batch failed: {}", error);
+    } else {
+        DuskLog.info("Suffix batch completed");
+    }
+    dusk::IsRunning = false;
+    return true;
+}
+
 static void write_checkpoint_probe_result_on_exit() {
     const auto& probe = dusk::automation::checkpoint_probe();
     if (!probe.enabled()) {
@@ -1693,6 +1724,16 @@ static void write_checkpoint_probe_result_on_exit() {
     if (!probe.writeResult(error)) {
         checkpointProbeWriteFailed = true;
         DuskLog.error("Failed to write checkpoint probe result: {}", error);
+    }
+}
+
+static void write_suffix_batch_artifacts_on_exit() {
+    const auto& batch = dusk::automation::suffix_batch_runner();
+    if (!batch.enabled()) return;
+    std::string error;
+    if (!batch.writeArtifacts(error)) {
+        suffixBatchWriteFailed = true;
+        DuskLog.error("Failed to write suffix batch artifacts: {}", error);
     }
 }
 
@@ -2049,6 +2090,9 @@ int game_main(int argc, char* argv[]) {
             ("checkpoint-probe-suffix-ticks", "Number of suffix ticks in each A/B/A checkpoint proof episode", cxxopts::value<std::size_t>())
             ("checkpoint-probe-repeat-attempts", "Restore and replay A's first suffix tick this many additional times in-process", cxxopts::value<std::size_t>())
             ("checkpoint-probe-result", "Write the versioned checkpoint A/B/A proof result", cxxopts::value<std::string>())
+            ("suffix-batch", "Run one bounded in-process suffix candidate batch from JSON", cxxopts::value<std::string>())
+            ("suffix-batch-result", "Write the aggregate suffix batch result", cxxopts::value<std::string>())
+            ("suffix-batch-winner-tape", "Export the fastest successful consumed suffix as DUSKTAPE", cxxopts::value<std::string>())
             ("realized-input-tape", "Write the tape prefix plus raw pre-clamp controller output as DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-tape", "Record live port-0 input after automation handoff as a continuation-only DUSKTAPE", cxxopts::value<std::string>())
             ("record-input-thumbnail-png", "Capture the retained terminal frame when a human input recording closes cleanly", cxxopts::value<std::string>())
@@ -3071,6 +3115,16 @@ int game_main(int argc, char* argv[]) {
         static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-source-frame") != 0) +
         static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-suffix-ticks") != 0) +
         static_cast<unsigned>(parsed_arg_options.count("checkpoint-probe-result") != 0);
+    const bool hasSuffixBatch = parsed_arg_options.count("suffix-batch") != 0;
+    const bool hasSuffixBatchResult = parsed_arg_options.count("suffix-batch-result") != 0;
+    const bool hasSuffixBatchWinner =
+        parsed_arg_options.count("suffix-batch-winner-tape") != 0;
+    if (checkpointProbeOptionCount != 0 &&
+        (hasSuffixBatch || hasSuffixBatchResult || hasSuffixBatchWinner))
+    {
+        fprintf(stderr, "Automation Error: checkpoint probe and suffix batch are exclusive\n");
+        return 1;
+    }
     if (checkpointProbeOptionCount != 0 && checkpointProbeOptionCount != 3) {
         fprintf(stderr,
                 "Checkpoint Probe Error: source frame, suffix ticks, and result path must be supplied together\n");
@@ -3144,6 +3198,96 @@ int game_main(int argc, char* argv[]) {
                 sourceFrame, suffixTicks, repeatAttempts, resultPath, configureError))
         {
             fprintf(stderr, "Checkpoint Probe Error: %s\n", configureError.c_str());
+            return 1;
+        }
+    }
+
+    if (hasSuffixBatch != hasSuffixBatchResult || (hasSuffixBatchWinner && !hasSuffixBatch)) {
+        fprintf(stderr,
+                "Suffix Batch Error: --suffix-batch and --suffix-batch-result are required together; winner export is optional\n");
+        return 1;
+    }
+    if (hasSuffixBatch) {
+        if (!headlessMainLoop || !hasInputTape || inputTapeHasConditions || stageBootPending ||
+            hasInputController || hasInputTapeFastForward || hasRecordInputTape ||
+            hasRealizedInputTape || exitAfterInputTape || automationLogicalTickBudget != 0 ||
+            frameCaptureEnabled || playbackThumbnailCaptureEnabled || hasAutomationOracle ||
+            hasNameEntryTrace || parsed_arg_options.count("gameplay-trace") != 0 ||
+            parsed_arg_options.count("actor-catalog") != 0 ||
+            parsed_arg_options.count("milestones") != 0 ||
+            parsed_arg_options.count("automation-phase-timing") != 0 ||
+            parsed_arg_options.count("stage") != 0 ||
+            parsed_arg_options["load-save"].as<std::uint8_t>() != 0 ||
+            inputTapeEndBehavior != dusk::automation::TapeEndBehavior::Release ||
+            dusk::automation::input_tape_player().tape().boot.kind !=
+                dusk::automation::TapeBootKind::Process)
+        {
+            fprintf(stderr,
+                    "Suffix Batch Error: batch execution requires a headless absolute default boot tape with release-at-end and no competing automation artifact mode\n");
+            return 1;
+        }
+        const std::string batchArgument =
+            parsed_arg_options["suffix-batch"].as<std::string>();
+        const std::string resultArgument =
+            parsed_arg_options["suffix-batch-result"].as<std::string>();
+        const std::string winnerArgument = hasSuffixBatchWinner
+            ? parsed_arg_options["suffix-batch-winner-tape"].as<std::string>() : "";
+        if (batchArgument.empty() || resultArgument.empty() ||
+            (hasSuffixBatchWinner && winnerArgument.empty()))
+        {
+            fprintf(stderr, "Suffix Batch Error: paths cannot be empty\n");
+            return 1;
+        }
+        const std::filesystem::path batchPath = std::filesystem::u8path(batchArgument);
+        std::error_code batchFileError;
+        const std::uintmax_t batchSize = std::filesystem::file_size(batchPath, batchFileError);
+        if (batchFileError || batchSize == 0 ||
+            batchSize > dusk::automation::SuffixBatchMaximumBytes)
+        {
+            fprintf(stderr, "Suffix Batch Error: input is missing, empty, or exceeds 64 MiB\n");
+            return 1;
+        }
+        std::string batchBytes(static_cast<std::size_t>(batchSize), '\0');
+        std::ifstream batchStream(batchPath, std::ios::binary);
+        if (!batchStream || !batchStream.read(batchBytes.data(),
+                static_cast<std::streamsize>(batchBytes.size())))
+        {
+            fprintf(stderr, "Suffix Batch Error: could not read '%s'\n", batchArgument.c_str());
+            return 1;
+        }
+        dusk::automation::SuffixBatchDefinition definition;
+        std::string batchError;
+        if (!dusk::automation::parse_suffix_batch(batchBytes, definition, batchError)) {
+            fprintf(stderr, "Suffix Batch Error: %s\n", batchError.c_str());
+            return 1;
+        }
+        if (definition.sourceFrame > inputTapeFrameCount ||
+            definition.maximumTicks > inputTapeFrameCount - definition.sourceFrame)
+        {
+            fprintf(stderr,
+                    "Suffix Batch Error: source %zu plus %zu ticks exceeds the %zu-frame tape\n",
+                    definition.sourceFrame, definition.maximumTicks, inputTapeFrameCount);
+            return 1;
+        }
+        const std::filesystem::path resultPath = std::filesystem::u8path(resultArgument);
+        const std::filesystem::path winnerPath = hasSuffixBatchWinner
+            ? std::filesystem::u8path(winnerArgument) : std::filesystem::path{};
+        std::error_code outputError;
+        if (std::filesystem::exists(resultPath, outputError) ||
+            (hasSuffixBatchWinner && std::filesystem::exists(winnerPath, outputError)))
+        {
+            fprintf(stderr, "Suffix Batch Error: output already exists\n");
+            return 1;
+        }
+        if (outputError) {
+            fprintf(stderr, "Suffix Batch Error: cannot inspect output: %s\n",
+                    outputError.message().c_str());
+            return 1;
+        }
+        if (!dusk::automation::suffix_batch_runner().configure(
+                std::move(definition), resultPath, winnerPath, batchError))
+        {
+            fprintf(stderr, "Suffix Batch Error: %s\n", batchError.c_str());
             return 1;
         }
     }
@@ -3804,10 +3948,14 @@ int game_main(int argc, char* argv[]) {
     const auto& milestoneTracker = dusk::automation::milestone_tracker();
     const bool milestoneGoalFailed =
         milestoneTracker.goalConfigured() && !milestoneTracker.goalReached() &&
-        !dusk::automation::checkpoint_probe().enabled();
+        !dusk::automation::checkpoint_probe().enabled() &&
+        !dusk::automation::suffix_batch_runner().enabled();
     const auto& checkpointProbe = dusk::automation::checkpoint_probe();
     const bool checkpointProbeIncomplete =
         checkpointProbe.enabled() && !checkpointProbe.completed() && !checkpointProbe.failed();
+    const auto& suffixBatch = dusk::automation::suffix_batch_runner();
+    const bool suffixBatchIncomplete =
+        suffixBatch.enabled() && !suffixBatch.completed() && !suffixBatch.failed();
     const bool processInfrastructureFailed =
         nameEntryTraceWriteFailed || gameplayTraceWriteFailed ||
         realizedInputTapeWriteFailed || actorCatalogWriteFailed ||
@@ -3815,7 +3963,8 @@ int game_main(int argc, char* argv[]) {
         eyeShredderOracleResultWriteFailed || eyeShredderOracleFailed ||
         deterministicTimeAdvanceFailed || inputTapePlaybackFailed || frameCaptureFailed ||
         frameCaptureEnabled || checkpointProbeFailed || checkpointProbeWriteFailed ||
-        checkpointProbeIncomplete;
+        checkpointProbeIncomplete || suffixBatchFailed || suffixBatchWriteFailed ||
+        suffixBatchIncomplete;
     const bool processFailedBeforeRecording =
         processInfrastructureFailed || milestoneGoalFailed;
 

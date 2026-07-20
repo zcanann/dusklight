@@ -15,6 +15,7 @@
 #if TARGET_PC
 #include "dusk/automation/checkpoint_probe.hpp"
 #include "dusk/automation/input_tape.hpp"
+#include "dusk/automation/suffix_batch_runner.hpp"
 #include "dusk/menu_pointer.h"
 #include "dusk/ui/touch_controls.hpp"
 #endif
@@ -72,6 +73,7 @@ void mDoCPd_c::read() {
     inputTapePlayer.tick();
     mDoAutomationInputTick(tapeWasPlaying);
     dusk::automation::checkpoint_probe().overrideInputForAlternate();
+    dusk::automation::suffix_batch_runner().applyCandidateInput();
 #endif
     JUTGamePad::read();
     if (!mDoRst::isReset() && mDoRst::is3ButtonReset()) {
