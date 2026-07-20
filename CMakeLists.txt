@@ -507,6 +507,16 @@ add_executable(dusk_game_clock_test EXCLUDE_FROM_ALL tests/game_clock_test.cpp)
 target_include_directories(dusk_game_clock_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(dusk_game_clock_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_state_checkpoint_test EXCLUDE_FROM_ALL
+    tests/state_checkpoint_test.cpp
+    src/dusk/automation/state_checkpoint.cpp
+)
+target_include_directories(dusk_state_checkpoint_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
+set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_automation_input_policy_test EXCLUDE_FROM_ALL
     tests/automation_input_policy_test.cpp
 )
