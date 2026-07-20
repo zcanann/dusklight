@@ -7,8 +7,10 @@ use std::error::Error;
 use std::fmt;
 
 pub const ACTOR_SET_READINESS_SCHEMA_V1: &str = "dusklight-actor-set-readiness/v1";
-pub const ACTOR_SET_ENCODING_SCHEMA_V1: &str = "dusklight-actor-set-encoding/v1";
-const MAX_ACTORS: usize = 256;
+pub const ACTOR_SET_ENCODING_SCHEMA_V2: &str = "dusklight-actor-set-encoding/v2";
+/// Matches the authenticated native episode format. This is a serialization
+/// limit, not a learner-side selection policy.
+pub const ACTOR_SET_MAXIMUM_ACTORS: usize = u16::MAX as usize;
 const MAX_ACTOR_WIDTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -141,19 +143,34 @@ impl ActorSetReadinessReport {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ActorSetEncoding {
     pub schema: &'static str,
-    pub readiness_sha256: Digest,
+    pub actor_feature_schema_sha256: Digest,
+    pub qualification: ActorSetEncoderQualification,
+    pub readiness_sha256: Option<Digest>,
     pub actor_source_available: bool,
-    pub actor_source_truncated: bool,
+    pub actor_source_complete: bool,
     pub actor_count: usize,
     pub deepsets: Vec<f32>,
     pub objective_attention: Vec<f32>,
     pub encoding_sha256: Digest,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorSetEncoderQualification {
+    /// Usable for training and controlled comparisons, but never promotion
+    /// authority by itself.
+    Exploratory,
+    /// Bound to evidence that the fixed-slot baseline failed on a sufficiently
+    /// large, content-disjoint overflow corpus.
+    FixedSlotFailureQualified,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ActorSetEncoder {
     schema: &'static str,
-    readiness_sha256: Digest,
+    actor_feature_schema_sha256: Digest,
+    qualification: ActorSetEncoderQualification,
+    readiness_sha256: Option<Digest>,
     actor_width: usize,
     deepsets_width: usize,
     attention_width: usize,
@@ -161,24 +178,62 @@ pub struct ActorSetEncoder {
 }
 
 impl ActorSetEncoder {
+    /// Construct a complete-set candidate without pretending that it has won a
+    /// promotion comparison. Building the representation must not depend on a
+    /// different representation failing first.
+    pub fn exploratory(
+        actor_feature_schema_sha256: Digest,
+        actor_width: usize,
+    ) -> Result<Self, ActorSetRepresentationError> {
+        Self::build(
+            actor_feature_schema_sha256,
+            actor_width,
+            ActorSetEncoderQualification::Exploratory,
+            None,
+        )
+    }
+
     pub fn from_readiness(
         readiness: &ActorSetReadinessReport,
+        actor_feature_schema_sha256: Digest,
         actor_width: usize,
     ) -> Result<Self, ActorSetRepresentationError> {
         if readiness.schema != ACTOR_SET_READINESS_SCHEMA_V1
             || readiness.readiness_sha256 != readiness.digest()?
             || !readiness.set_encoders_enabled
             || readiness.disposition != ActorSetReadinessDisposition::ReadyForSetEncoderComparison
-            || actor_width == 0
-            || actor_width > MAX_ACTOR_WIDTH
         {
             return Err(ActorSetRepresentationError::new(
                 "actor-set encoder is not readiness-qualified",
             ));
         }
+        Self::build(
+            actor_feature_schema_sha256,
+            actor_width,
+            ActorSetEncoderQualification::FixedSlotFailureQualified,
+            Some(readiness.readiness_sha256),
+        )
+    }
+
+    fn build(
+        actor_feature_schema_sha256: Digest,
+        actor_width: usize,
+        qualification: ActorSetEncoderQualification,
+        readiness_sha256: Option<Digest>,
+    ) -> Result<Self, ActorSetRepresentationError> {
+        if actor_feature_schema_sha256 == Digest::ZERO
+            || actor_width == 0
+            || actor_width > MAX_ACTOR_WIDTH
+        {
+            return Err(ActorSetRepresentationError::new(
+                "actor-set width is invalid",
+            ));
+        }
         let mut encoder = Self {
-            schema: ACTOR_SET_ENCODING_SCHEMA_V1,
-            readiness_sha256: readiness.readiness_sha256,
+            schema: ACTOR_SET_ENCODING_SCHEMA_V2,
+            actor_feature_schema_sha256,
+            qualification,
+            readiness_sha256,
             actor_width,
             // count/presence plus sum, mean, minimum, and maximum.
             deepsets_width: 2 + actor_width * 4,
@@ -187,9 +242,11 @@ impl ActorSetEncoder {
             encoder_sha256: Digest::ZERO,
         };
         encoder.encoder_sha256 = canonical_digest(
-            b"dusklight.actor-set-encoder/v1\0",
+            b"dusklight.actor-set-encoder/v2\0",
             &(
                 encoder.schema,
+                encoder.actor_feature_schema_sha256,
+                encoder.qualification,
                 encoder.readiness_sha256,
                 encoder.actor_width,
                 encoder.deepsets_width,
@@ -201,18 +258,21 @@ impl ActorSetEncoder {
 
     pub fn encode(
         &self,
+        actor_feature_schema_sha256: Digest,
         actors: &[Vec<f32>],
         objective_query: &[f32],
         actor_source_available: bool,
         actor_source_truncated: bool,
     ) -> Result<ActorSetEncoding, ActorSetRepresentationError> {
-        if actors.len() > MAX_ACTORS
+        if actor_feature_schema_sha256 != self.actor_feature_schema_sha256
+            || actors.len() > ACTOR_SET_MAXIMUM_ACTORS
             || objective_query.len() != self.actor_width
             || objective_query.iter().any(|value| !value.is_finite())
             || actors.iter().any(|actor| {
                 actor.len() != self.actor_width || actor.iter().any(|value| !value.is_finite())
             })
-            || (!actor_source_available && (!actors.is_empty() || actor_source_truncated))
+            || actor_source_truncated
+            || (!actor_source_available && !actors.is_empty())
         {
             return Err(ActorSetRepresentationError::new(
                 "actor-set input is invalid",
@@ -224,24 +284,37 @@ impl ActorSetEncoder {
             attention_features(&ordered_actors, objective_query, self.actor_width);
         debug_assert_eq!(deepsets.len(), self.deepsets_width);
         debug_assert_eq!(objective_attention.len(), self.attention_width);
+        if deepsets
+            .iter()
+            .chain(&objective_attention)
+            .any(|value| !value.is_finite())
+        {
+            return Err(ActorSetRepresentationError::new(
+                "actor-set encoding is nonfinite",
+            ));
+        }
         let mut encoding = ActorSetEncoding {
-            schema: ACTOR_SET_ENCODING_SCHEMA_V1,
+            schema: ACTOR_SET_ENCODING_SCHEMA_V2,
+            actor_feature_schema_sha256: self.actor_feature_schema_sha256,
+            qualification: self.qualification,
             readiness_sha256: self.readiness_sha256,
             actor_source_available,
-            actor_source_truncated,
+            actor_source_complete: actor_source_available,
             actor_count: actors.len(),
             deepsets,
             objective_attention,
             encoding_sha256: Digest::ZERO,
         };
         encoding.encoding_sha256 = canonical_digest(
-            b"dusklight.actor-set-encoding/v1\0",
+            b"dusklight.actor-set-encoding/v2\0",
             &(
                 encoding.schema,
                 self.encoder_sha256,
+                encoding.actor_feature_schema_sha256,
+                encoding.qualification,
                 encoding.readiness_sha256,
                 encoding.actor_source_available,
-                encoding.actor_source_truncated,
+                encoding.actor_source_complete,
                 encoding.actor_count,
                 &encoding.deepsets,
                 &encoding.objective_attention,
@@ -266,7 +339,7 @@ fn canonical_actor_order(actors: &[Vec<f32>]) -> Vec<&[f32]> {
 fn deepsets_features(actors: &[&[f32]], width: usize) -> Vec<f32> {
     let mut output = vec![
         f32::from(!actors.is_empty()),
-        actors.len() as f32 / MAX_ACTORS as f32,
+        actors.len() as f32 / ACTOR_SET_MAXIMUM_ACTORS as f32,
     ];
     if actors.is_empty() {
         output.resize(2 + width * 4, 0.0);
@@ -296,7 +369,7 @@ fn deepsets_features(actors: &[&[f32]], width: usize) -> Vec<f32> {
 fn attention_features(actors: &[&[f32]], query: &[f32], width: usize) -> Vec<f32> {
     let mut output = vec![
         f32::from(!actors.is_empty()),
-        actors.len() as f32 / MAX_ACTORS as f32,
+        actors.len() as f32 / ACTOR_SET_MAXIMUM_ACTORS as f32,
     ];
     if actors.is_empty() {
         output.resize(3 + width, 0.0);
@@ -414,7 +487,7 @@ mod tests {
             small.disposition,
             ActorSetReadinessDisposition::InsufficientCorpus
         );
-        assert!(ActorSetEncoder::from_readiness(&small, 2).is_err());
+        assert!(ActorSetEncoder::from_readiness(&small, Digest([4; 32]), 2).is_err());
 
         let mut passing_fixed_slots = failure();
         passing_fixed_slots.held_out_mse = 0.01;
@@ -432,7 +505,7 @@ mod tests {
             retained.disposition,
             ActorSetReadinessDisposition::RetainFixedSlots
         );
-        assert!(ActorSetEncoder::from_readiness(&retained, 2).is_err());
+        assert!(ActorSetEncoder::from_readiness(&retained, Digest([4; 32]), 2).is_err());
     }
 
     #[test]
@@ -448,14 +521,88 @@ mod tests {
         )
         .unwrap();
         assert!(readiness.set_encoders_enabled);
-        let encoder = ActorSetEncoder::from_readiness(&readiness, 2).unwrap();
+        let encoder = ActorSetEncoder::from_readiness(&readiness, Digest([4; 32]), 2).unwrap();
         let actors = vec![vec![1.0, 0.0], vec![0.0, 2.0], vec![3.0, 1.0]];
         let reversed = actors.iter().cloned().rev().collect::<Vec<_>>();
-        let first = encoder.encode(&actors, &[1.0, 0.0], true, false).unwrap();
-        let second = encoder.encode(&reversed, &[1.0, 0.0], true, false).unwrap();
+        let first = encoder
+            .encode(Digest([4; 32]), &actors, &[1.0, 0.0], true, false)
+            .unwrap();
+        let second = encoder
+            .encode(Digest([4; 32]), &reversed, &[1.0, 0.0], true, false)
+            .unwrap();
         assert_eq!(first, second);
+        assert_eq!(
+            first.qualification,
+            ActorSetEncoderQualification::FixedSlotFailureQualified
+        );
+        assert_eq!(first.readiness_sha256, Some(readiness.readiness_sha256));
+        assert_eq!(first.actor_feature_schema_sha256, Digest([4; 32]));
+        assert!(first.actor_source_complete);
         assert_ne!(first.encoding_sha256, Digest::ZERO);
         assert_eq!(first.actor_count, 3);
         assert!(first.objective_attention[2] > 2.0);
+    }
+
+    #[test]
+    fn exploratory_encoder_consumes_complete_populations_above_controller_capacity() {
+        let encoder = ActorSetEncoder::exploratory(Digest([4; 32]), 3).unwrap();
+        // The bounded native tactic/controller view has 256 slots, while the
+        // canonical learning observation is explicitly allowed to exceed it.
+        let actors = (0..257)
+            .map(|index| vec![index as f32 / 257.0, (index % 7) as f32, 1.0])
+            .collect::<Vec<_>>();
+        let reversed = actors.iter().cloned().rev().collect::<Vec<_>>();
+        let first = encoder
+            .encode(Digest([4; 32]), &actors, &[0.25, 0.5, 1.0], true, false)
+            .unwrap();
+        let second = encoder
+            .encode(Digest([4; 32]), &reversed, &[0.25, 0.5, 1.0], true, false)
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.actor_count, 257);
+        assert!(first.actor_source_complete);
+        assert_eq!(
+            first.qualification,
+            ActorSetEncoderQualification::Exploratory
+        );
+        assert_eq!(first.readiness_sha256, None);
+    }
+
+    #[test]
+    fn complete_set_encoder_rejects_truncation_and_nonfinite_aggregation() {
+        let encoder = ActorSetEncoder::exploratory(Digest([4; 32]), 1).unwrap();
+        assert!(
+            encoder
+                .encode(Digest([4; 32]), &[vec![1.0]], &[1.0], true, true)
+                .is_err()
+        );
+        assert!(
+            encoder
+                .encode(
+                    Digest([4; 32]),
+                    &[vec![f32::MAX], vec![f32::MAX]],
+                    &[1.0],
+                    true,
+                    false,
+                )
+                .is_err()
+        );
+        assert!(
+            encoder
+                .encode(Digest([4; 32]), &[vec![1.0]], &[1.0], false, false)
+                .is_err()
+        );
+        assert!(
+            encoder
+                .encode(Digest([5; 32]), &[vec![1.0]], &[1.0], true, false)
+                .is_err()
+        );
+
+        let absent = encoder
+            .encode(Digest([4; 32]), &[], &[1.0], false, false)
+            .unwrap();
+        assert!(!absent.actor_source_available);
+        assert!(!absent.actor_source_complete);
+        assert_eq!(absent.actor_count, 0);
     }
 }

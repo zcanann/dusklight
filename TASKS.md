@@ -440,6 +440,15 @@ PAD and gameplay sequence as ordinary playback.
   actors with a hand-authored nearest-K rule. Any bounded inference view must
   expose its overflow and win an equal-budget held-out comparison against the
   complete-set representation.
+  - [x] Remove the bounded controller's 256-entry limit from the independent
+    learner set path. Actor-set encoding v2 accepts the authenticated native
+    wire limit, rejects any declared truncation, binds the exact actor-feature
+    schema, and permits explicitly exploratory encoders before a fixed-slot
+    failure has been proven; evidence qualification remains separate from
+    construction and promotion. A 257-actor regression proves complete-set and
+    permutation-invariant encoding beyond controller capacity, while schema
+    mismatch and non-finite aggregation fail closed. Native typed projection
+    and equal-budget learned comparisons remain open.
 - [ ] Keep immutable world geometry out of the per-tick flat vector. Supply
   bounded spatial queries, connectivity and semantic surface/trigger tokens by
   reference to the authenticated world artifact, with a graph path for models

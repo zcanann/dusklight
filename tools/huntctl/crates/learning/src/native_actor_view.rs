@@ -545,7 +545,7 @@ fn materialize_actor(
         health: actor.health,
         parameters: actor.parameters,
         status: actor.status,
-        base_state: actor.base_state_available.then(|| NativeActorBaseState {
+        base_state: actor.base_state_available.then_some(NativeActorBaseState {
             actor_type: actor.actor_type,
             process_subtype: actor.process_subtype,
             condition: actor.condition,
