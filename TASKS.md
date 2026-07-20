@@ -88,6 +88,17 @@ the same goal without demonstration-relative features.
   case and zero coverage rejections (`aa36f22e...ff7c281`); all roles were
   correctly empty in that idle slice, so generic action probes are still
   required to measure role variation.
+- Learning-observation v11 retains Link's already-realized background-collision
+  solver state without invoking collision code: named solver flags, cached line
+  endpoints, wall-cylinder geometry, ground/roof/water offsets, water mode and
+  all three wall-circle configurations. The only game-header change is a
+  const, automation-gated friend aperture; capture performs reads only. Native
+  and Rust reject unknown flags, noncanonical absence, nonfinite geometry and
+  player/type status disagreement. A neutral 16-entry D_MN01 survey emitted
+  actor-catalog v7 with the component present in all cases and zero coverage
+  rejections (`4e3c8311...207df1ee`). All 16 idle samples shared solver flags
+  `0x00000008`, table size zero, water mode one and offsets 60/0/1000, so this
+  is capture-path evidence, not evidence of useful transition diversity.
 - Native actor-view v5 now preserves those roles as typed edges to the complete
   actor set, and actor-feature view v2 exposes an independently selectable
   player-relationship family as per-actor role flags. Present-but-empty is
@@ -229,6 +240,15 @@ them is learner work.
     truncation, crash or rejected case; its actor-parity report is
     `061ed9a4...cb0a`. This exposes interaction geometry but supplies no
     interaction target, tactic, route or reward.
+  - [x] Retain the current Link background-collision solver configuration and
+    realized work geometry through a typed read-only component. Observation
+    v11 records the known mode/contact flags, cached line, wall cylinder,
+    offsets, water mode and all three wall circles; ordinary episode ordering
+    supplies the raw per-tick sequence from which history can be derived. A
+    neutral 16-entry D_MN01 batch verified component presence and actor
+    invariants in all 16/16 cases (`4e3c8311...207df1ee`). Generic movement and
+    contact probes plus a bounded-history learner view remain open, so the
+    parent environment audit is not complete.
 - [ ] Audit player, camera, inventory, timers, RNG, loading and other global
   channels across maps and forms. Record explicit missingness and phase rather
   than treating zero as unavailable.
@@ -330,6 +350,8 @@ human-authored successful setup.
   - [x] recent controls and camera state;
   - [x] realized background-collision contacts, surface/polygon identity,
     backing metadata and resolved planes/normals;
+  - [x] current background-collision solver modes and cached configuration,
+    including line, wall-cylinder, offsets, water mode and wall circles;
   - [x] generic local clearance/geometry queries in Link-relative coordinates.
     `learn geometry-view` now joins authenticated native pre/post observations
     to immutable stage inventories entirely offline, retaining bounded nearest

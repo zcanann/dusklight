@@ -19,14 +19,16 @@ The canonical observation evidence currently retains player motion/action,
 camera state, recent controls, player resources/inventory, realized collision
 contacts, static geometry, complete active actors, actor identity/kinematics,
 base actor state, attention/event participation, complete dynamic collision
-shapes, and eleven pointer-free Link-rooted actor relationships. These are
-evidence channels, not prescribed model inputs.
+shapes, eleven pointer-free Link-rooted actor relationships, and Link's cached
+background-collision solver modes and work geometry. These are evidence
+channels, not prescribed model inputs.
 
 The audit uses these controlled capability names:
 
 - **PAD**: ordinary digital and analog controller authority;
-- **player collision history**: solver mode, prior contact state, line checks
-  and floor/wall/ceiling transition history, beyond only the realized contact;
+- **player collision history**: the current solver mode and line/wall
+  configuration are captured; generic contact probes and a derived bounded
+  floor/wall/ceiling transition history remain missing;
 - **typed actor state**: actor-specific action, animation phase, timers and
   state-machine values, explicitly masked outside the matching actor type;
 - **relationships**: targeting, ownership, attachment, carried/held and
@@ -73,7 +75,8 @@ technique steps.
 The representative spread reduces to six observation families worth building,
 in this order of cross-case reuse:
 
-1. player collision solver mode and short transition history;
+1. broad player-collision transition coverage and a derived short-history
+   learner view over the now-captured solver state;
 2. pointer-free ownership and attachment relationships beyond the current
    Link-rooted target, ride, held/grabbed, retained-item and attention roles;
 3. typed item/projectile lifecycle, trajectory, collision and action state;
