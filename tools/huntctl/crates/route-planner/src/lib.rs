@@ -15,6 +15,7 @@ pub mod refinement;
 pub mod snapshot;
 pub mod state;
 pub mod transition;
+pub mod world_import;
 
 use std::error::Error;
 use std::fmt;

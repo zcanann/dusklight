@@ -8,6 +8,7 @@ description = "Version-scoped causal route planning contracts for Twilight Princ
 [dependencies]
 dusklight-automation-contracts = { path = "../contracts" }
 dusklight-evidence = { path = "../evidence" }
+dusklight-world = { path = "../world" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -68,6 +68,9 @@ pub enum StateOperation {
         selector: ComponentSelector,
         binding: ComponentBinding,
     },
+    SetLocation {
+        location: crate::state::SceneLocation,
+    },
     Project {
         source_runtime_file_id: String,
         destination_runtime_file_id: String,
@@ -434,6 +437,7 @@ impl StateOperation {
                 validate_component_selector(selector)?;
                 validate_binding(binding)
             }
+            Self::SetLocation { location } => location.validate(),
             Self::Project {
                 source_runtime_file_id,
                 destination_runtime_file_id,

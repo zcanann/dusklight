@@ -364,6 +364,12 @@ impl RuntimeFile {
     }
 }
 
+impl SceneLocation {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_location(self)
+    }
+}
+
 impl StateComponent {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         validate_stable_id("components.id", &self.id)?;
@@ -640,7 +646,9 @@ fn validate_state_fields(
     Ok(())
 }
 
-fn validate_static_object(object: &StaticWorldObject) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_static_object(
+    object: &StaticWorldObject,
+) -> Result<(), PlannerContractError> {
     validate_stable_id("static_world_objects.id", &object.id)?;
     validate_stable_id("static_world_objects.actor_type", &object.actor_type)?;
     require_digest(

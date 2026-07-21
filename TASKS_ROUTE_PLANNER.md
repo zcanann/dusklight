@@ -472,6 +472,18 @@ The current code shows:
   digest-linked chain. This makes room/stage/save/load/void/title/BiT/BiTE test
   captures comparable without inferring the boundary label from coincidental
   state changes; representative captures for each boundary remain outstanding.
+- Extracted world-facts schema v1 now compiles an exact content identity,
+  runtime configuration, authenticated `WorldContext`, and its complete set of
+  canonical world inventories into a content-addressed planner payload. The
+  `huntctl world planner-facts` command emits both that payload and a sealed
+  fact-pack manifest, and stores both as typed immutable artifacts.
+- The compiler imports recognized static placements and player spawns with raw
+  records and source bindings. Every SCLS destination remains an encoded-exit
+  fact. An SCLS record with no collision activation join does not become a
+  transition; each collision/SCLS join becomes a separate exact-context
+  upper-bound candidate with a typed scene-location effect, an unresolved
+  physical approach obligation, and an explicit unknown while the collision
+  activation semantics remain inferred.
 
 Primary source anchors:
 
@@ -1432,9 +1444,16 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Build the deterministic `orig/` extraction pipeline and cache/reuse its
       content-addressed derived fact packs without requiring original assets at
       planner runtime.
+  - [x] Compile canonical world inventories into a strict exact-context payload
+        and sealed manifest, and cache both in the immutable content store.
+  - [ ] Add full input discovery/version verification and one-command extraction
+        from a supplied `orig/` tree.
 - [ ] Auto-detect and verify supported inputs; reject label/digest disagreement
       and represent unknown inputs as unsupported rather than guessing.
-- [ ] Import maps, rooms, layers, spawns, SCLS, placements, and actor transitions.
+- [x] Import world-context stages, room/layer bindings, player spawns, static
+      placements, raw SCLS records, and collision/SCLS activation joins.
+- [ ] Import actor-driven transitions and any remaining map/room metadata not
+      represented by the current world inventories.
 - [ ] Model ordinary item/NPC/event producers.
 - [ ] Implement normal bank commit/load and binding changes.
 - [ ] Derive bound small-key counts and dungeon items from per-stage memory.

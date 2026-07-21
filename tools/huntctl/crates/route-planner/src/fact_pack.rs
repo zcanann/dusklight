@@ -21,6 +21,8 @@ pub enum SourceArtifactKind {
     SourceAudit,
     TraceEvidence,
     ExternalEvidence,
+    WorldContext,
+    WorldInventory,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

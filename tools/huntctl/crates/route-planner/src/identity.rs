@@ -253,6 +253,18 @@ impl RuntimeConfiguration {
         canonical_json(self)
     }
 
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let configuration: Self = serde_json::from_slice(bytes)?;
+        configuration.validate()?;
+        if configuration.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "runtime_configuration",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(configuration)
+    }
+
     pub fn digest(&self) -> Result<Digest, PlannerContractError> {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }

@@ -4,6 +4,12 @@ use crate::{flag, option, repeated_option, required_path, usage_error, usize_opt
 use huntctl::Digest;
 use huntctl::actor_profile_catalog::ActorProfileCatalog;
 use huntctl::content_store::{ContentKind, ContentStore};
+use huntctl::route_planner::fact_pack::{
+    CoverageDomain, CoverageStatus, ExtractorIdentity, FactPackCoverage, FactPackManifest,
+    FactPackSource, SourceArtifactKind,
+};
+use huntctl::route_planner::identity::{ContentIdentity, RuntimeConfiguration};
+use huntctl::route_planner::world_import::ExtractedWorldFacts;
 use huntctl::stage_boot_catalog::{StageBootCatalog, StageInventoryStatus};
 use huntctl::world_context::WorldContext;
 use huntctl::world_geometry::{KclPlc, Vec3, extract_rarc_resource, query_prism_point};
@@ -13,6 +19,7 @@ use huntctl::world_spatial::{
     WorldSurfaceFilter,
 };
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -141,6 +148,127 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "content_blob": content_blob,
                     "sha256": digest,
                     "bytes": bytes.len(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("planner-facts") => {
+            let content_path = required_path(&args[1..], "--content-identity")?;
+            let runtime_path = required_path(&args[1..], "--runtime-configuration")?;
+            let context_path = required_path(&args[1..], "--world-context")?;
+            let output = required_path(&args[1..], "--output")?;
+            let manifest_output = required_path(&args[1..], "--manifest")?;
+            let inventory_paths = repeated_option(&args[1..], "--inventory");
+            if inventory_paths.is_empty() {
+                return Err("world planner-facts requires at least one --inventory FILE".into());
+            }
+            let content = ContentIdentity::decode_canonical(&fs::read(&content_path)?)?;
+            let runtime = RuntimeConfiguration::decode_canonical(&fs::read(&runtime_path)?)?;
+            let context = WorldContext::decode_canonical(&fs::read(&context_path)?)?;
+            let inventories = inventory_paths
+                .iter()
+                .map(|path| WorldInventory::read_canonical(Path::new(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let facts = ExtractedWorldFacts::build(&content, &runtime, &context, &inventories)?;
+            let bytes = facts.canonical_bytes()?;
+            let mut sources = vec![FactPackSource {
+                kind: SourceArtifactKind::WorldContext,
+                id: "world-context".into(),
+                sha256: facts.world_context_sha256,
+            }];
+            sources.extend(facts.inventories.iter().map(|inventory| FactPackSource {
+                kind: SourceArtifactKind::WorldInventory,
+                id: format!("world-inventory/{}", inventory.stage.to_ascii_lowercase()),
+                sha256: inventory.inventory_sha256,
+            }));
+            let executable_sha256 =
+                Digest(Sha256::digest(fs::read(std::env::current_exe()?)?).into());
+            let manifest = FactPackManifest::build(
+                format!("{}.world", content.id),
+                content,
+                ExtractorIdentity {
+                    name: "huntctl-world-planner-facts".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    executable_sha256,
+                    schema_sha256: Digest(
+                        Sha256::digest(
+                            huntctl::route_planner::world_import::EXTRACTED_WORLD_FACTS_SCHEMA,
+                        )
+                        .into(),
+                    ),
+                },
+                sources,
+                vec![
+                    FactPackCoverage {
+                        domain: CoverageDomain::Topology,
+                        scope: "world".into(),
+                        status: CoverageStatus::Partial,
+                        detail: "SCLS records and collision/SCLS joins are imported; actor-driven transitions remain unaudited.".into(),
+                    },
+                    FactPackCoverage {
+                        domain: CoverageDomain::ActorPlacements,
+                        scope: "world".into(),
+                        status: CoverageStatus::Partial,
+                        detail: "Recognized DZS/DZR placement chunks are imported with raw records; actor reconstruction remains unaudited.".into(),
+                    },
+                    FactPackCoverage {
+                        domain: CoverageDomain::Collision,
+                        scope: "world".into(),
+                        status: CoverageStatus::Partial,
+                        detail: "Addressable room collision and exit-code joins are indexed; reachability is not inferred.".into(),
+                    },
+                    FactPackCoverage {
+                        domain: CoverageDomain::PhysicalFeasibility,
+                        scope: "world".into(),
+                        status: CoverageStatus::Unavailable,
+                        detail: "Every imported collision exit retains an unresolved physical approach obligation.".into(),
+                    },
+                ],
+                huntctl::route_planner::world_import::EXTRACTED_WORLD_FACTS_SCHEMA,
+                facts.digest()?,
+            )?;
+            let manifest_bytes = manifest.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            if let Some(parent) = manifest_output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            fs::write(&manifest_output, &manifest_bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::RoutePlannerFacts)?;
+            let manifest_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&manifest_bytes, ContentKind::RoutePlannerFactManifest)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": facts.schema,
+                    "exact_context": facts.exact_context,
+                    "world_context_sha256": facts.world_context_sha256,
+                    "output": output,
+                    "manifest": manifest_output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "manifest_blob": manifest_blob,
+                    "manifest_sha256": manifest.digest()?,
+                    "sha256": facts.digest()?,
+                    "bytes": bytes.len(),
+                    "stages": facts.inventories.len(),
+                    "static_world_objects": facts.static_world_objects.len(),
+                    "spawns": facts.spawns.len(),
+                    "encoded_exits": facts.encoded_exits.len(),
+                    "candidate_transitions": facts.mechanics.transitions.len(),
+                    "physical_obligations": facts.mechanics.obligations.len(),
                 }))?
             );
             Ok(())
