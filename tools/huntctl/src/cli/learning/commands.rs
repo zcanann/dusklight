@@ -831,6 +831,22 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
             Ok(())
         }
+        Some("inspect-auxiliary") => {
+            let input = required_path(&args[1..], "--input")?;
+            let dataset: NativeAuxiliaryDataset = serde_json::from_slice(&fs::read(input)?)?;
+            dataset.validate()?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V1,
+                    "dataset_sha256": dataset.dataset_sha256,
+                    "replay_corpus_sha256": dataset.replay_corpus_sha256,
+                    "report": dataset.report,
+                    "split_diagnostics": dataset.split_diagnostics()?,
+                }))?
+            );
+            Ok(())
+        }
         Some("collision-history") => {
             let learn_args = &args[1..];
             let input = required_path(learn_args, "--input")?;

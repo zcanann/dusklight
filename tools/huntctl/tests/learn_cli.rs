@@ -216,6 +216,27 @@ fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
         serde_json::from_slice(&fs::read(&dataset_path).unwrap()).unwrap();
     dataset.validate().unwrap();
     assert_eq!(dataset.replay_corpus_sha256, corpus.corpus_sha256);
+    let inspection = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "inspect-auxiliary", "--input"])
+        .arg(&dataset_path)
+        .output()
+        .unwrap();
+    assert!(
+        inspection.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspection.stderr)
+    );
+    let inspection: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+    assert_eq!(inspection["report"]["examples"], 2);
+    assert_eq!(
+        inspection["split_diagnostics"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|split| split["episodes"].as_u64().unwrap())
+            .sum::<u64>(),
+        2
+    );
 
     let direct_path = root.join("direct-replay.json");
     let direct_output = Command::new(env!("CARGO_BIN_EXE_huntctl"))

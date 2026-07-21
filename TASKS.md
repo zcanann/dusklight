@@ -992,7 +992,12 @@ and geometry set sizes without schema changes.
     targets without flattening the source actor/collider sets. Train,
     validation and test assignment is deterministic per complete episode, not
     per frame. Training the shared encoder and reporting held-out auxiliary
-    performance remain open before the parent item can close.
+    performance remain open before the parent item can close. `learn
+    inspect-auxiliary` reports per-split support before training: the first real
+    Ordon coverage dataset retains 185/42/30 contact changes and 98/21/15
+    procedure changes across train/validation/test, but zero terminal successes
+    in every split. It can teach common dynamics and rare-contact prediction;
+    it cannot train or evaluate goal reachability by itself.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

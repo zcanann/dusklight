@@ -29,7 +29,7 @@ pub enum AuxiliarySplit {
     Test,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuxiliarySplitConfig {
     pub training_basis_points: u16,
@@ -62,7 +62,7 @@ impl AuxiliarySplitConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuxiliaryPadTarget {
     pub buttons: u16,
@@ -260,6 +260,21 @@ pub struct NativeAuxiliaryDatasetReport {
     pub terminal_reachable_examples: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AuxiliarySplitDiagnostics {
+    pub examples: usize,
+    pub episodes: usize,
+    pub distinct_consumed_pad_states: usize,
+    pub player_motion_changes: usize,
+    pub contact_changes: usize,
+    pub procedure_changes: usize,
+    pub mode_flag_changes: usize,
+    pub event_or_loading_changes: usize,
+    pub actor_appearances: u64,
+    pub actor_disappearances: u64,
+    pub goal_reachable_examples: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeAuxiliaryDataset {
@@ -390,6 +405,97 @@ impl NativeAuxiliaryDataset {
         Ok(())
     }
 
+    pub fn split_diagnostics(
+        &self,
+    ) -> Result<BTreeMap<AuxiliarySplit, AuxiliarySplitDiagnostics>, NativeAuxiliaryDatasetError>
+    {
+        self.validate()?;
+        let mut output = BTreeMap::new();
+        for split in [
+            AuxiliarySplit::Training,
+            AuxiliarySplit::Validation,
+            AuxiliarySplit::Test,
+        ] {
+            let examples = self
+                .examples
+                .iter()
+                .filter(|example| example.split == split)
+                .collect::<Vec<_>>();
+            let actor_appearances = checked_lifecycle_count(&examples, true)?;
+            let actor_disappearances = checked_lifecycle_count(&examples, false)?;
+            output.insert(
+                split,
+                AuxiliarySplitDiagnostics {
+                    examples: examples.len(),
+                    episodes: examples
+                        .iter()
+                        .map(|example| example.episode_payload_xxh3_128.as_str())
+                        .collect::<BTreeSet<_>>()
+                        .len(),
+                    distinct_consumed_pad_states: examples
+                        .iter()
+                        .map(|example| example.targets.inverse_action)
+                        .collect::<BTreeSet<_>>()
+                        .len(),
+                    player_motion_changes: examples
+                        .iter()
+                        .filter(|example| {
+                            example
+                                .targets
+                                .player_dynamics
+                                .as_ref()
+                                .is_some_and(|target| {
+                                    target
+                                        .position_delta
+                                        .iter()
+                                        .chain(&target.velocity_delta)
+                                        .chain(std::iter::once(&target.forward_speed_delta))
+                                        .any(|value| *value != 0.0)
+                                })
+                        })
+                        .count(),
+                    contact_changes: examples
+                        .iter()
+                        .filter(|example| {
+                            example
+                                .targets
+                                .contacts
+                                .as_ref()
+                                .is_some_and(|target| target.activated != 0 || target.cleared != 0)
+                        })
+                        .count(),
+                    procedure_changes: examples
+                        .iter()
+                        .filter(|example| {
+                            example.targets.action_phase.as_ref().is_some_and(|target| {
+                                target.procedure_before != target.procedure_after
+                            })
+                        })
+                        .count(),
+                    mode_flag_changes: examples
+                        .iter()
+                        .filter(|example| {
+                            example.targets.action_phase.as_ref().is_some_and(|target| {
+                                target.mode_flags_activated != 0 || target.mode_flags_cleared != 0
+                            })
+                        })
+                        .count(),
+                    event_or_loading_changes: examples
+                        .iter()
+                        .filter(|example| event_or_loading_changed(&example.targets.event_loading))
+                        .count(),
+                    actor_appearances,
+                    actor_disappearances,
+                    goal_reachable_examples: examples
+                        .iter()
+                        .filter(|example| example.targets.reachability.ticks_to_terminal.is_some())
+                        .count(),
+                },
+            );
+        }
+        Ok(output)
+    }
+
     fn digest(&self) -> Result<Digest, NativeAuxiliaryDatasetError> {
         canonical_digest(
             b"dusklight.native-auxiliary-dataset/v1\0",
@@ -404,6 +510,41 @@ impl NativeAuxiliaryDataset {
             ),
         )
     }
+}
+
+fn checked_lifecycle_count(
+    examples: &[&NativeAuxiliaryExample],
+    appearances: bool,
+) -> Result<u64, NativeAuxiliaryDatasetError> {
+    examples.iter().try_fold(0_u64, |total, example| {
+        let count = if appearances {
+            example
+                .targets
+                .actor_lifecycle
+                .appeared_runtime_generations
+                .len()
+        } else {
+            example
+                .targets
+                .actor_lifecycle
+                .disappeared_runtime_generations
+                .len()
+        };
+        total
+            .checked_add(count as u64)
+            .ok_or_else(|| NativeAuxiliaryDatasetError::new("lifecycle count overflowed"))
+    })
+}
+
+fn event_or_loading_changed(target: &EventLoadingTarget) -> bool {
+    target.event_running_before != target.event_running_after
+        || target.event_id_before != target.event_id_after
+        || target.stage_before != target.stage_after
+        || target.room_before != target.room_after
+        || target.layer_before != target.layer_after
+        || target.point_before != target.point_after
+        || target.pending_stage_before != target.pending_stage_after
+        || target.goal_reached_after
 }
 
 fn targets(
@@ -760,6 +901,21 @@ mod tests {
                 .collect::<BTreeSet<_>>();
             assert_eq!(splits.len(), 1);
         }
+        let diagnostics = dataset.split_diagnostics().unwrap();
+        assert_eq!(
+            diagnostics
+                .values()
+                .map(|split| split.examples)
+                .sum::<usize>(),
+            dataset.examples.len()
+        );
+        assert_eq!(
+            diagnostics
+                .values()
+                .map(|split| split.episodes)
+                .sum::<usize>(),
+            shard.episodes.len()
+        );
         dataset.validate().unwrap();
     }
 
