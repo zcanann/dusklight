@@ -8,7 +8,8 @@ use huntctl::stage_observation_coverage::{
 };
 use huntctl::stage_survey::{
     STAGE_SURVEY_FIDELITY, StageSurveyExecutionConfig, StageSurveyLedger, StageSurveyPolicy,
-    StageSurveyProbeKind, execute_stage_survey_attempt, stage_survey_identity,
+    StageSurveyProbeKind, compact_stage_survey_artifacts, execute_stage_survey_attempt,
+    stage_survey_identity,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,8 +30,23 @@ pub(crate) fn command_survey(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("run") => command_run(&args[1..]),
         Some("actor-coverage") => command_actor_coverage(&args[1..]),
         Some("observation-coverage") => command_observation_coverage(&args[1..]),
-        _ => Err("survey commands: init, status, run, actor-coverage, observation-coverage".into()),
+        Some("compact-artifacts") => command_compact_artifacts(&args[1..]),
+        _ => Err(
+            "survey commands: init, status, run, actor-coverage, observation-coverage, compact-artifacts"
+                .into(),
+        ),
     }
+}
+
+fn command_compact_artifacts(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog_path = required_path(args, "--catalog")?;
+    let ledger_path = required_path(args, "--ledger")?;
+    let state_root = required_path(args, "--state-root")?;
+    let catalog = load_catalog(&catalog_path)?;
+    let ledger = load_ledger(&ledger_path, &catalog)?;
+    let summary = compact_stage_survey_artifacts(&catalog, &ledger, &state_root)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
 }
 
 fn command_observation_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {

@@ -8,6 +8,7 @@ use crate::stage_survey::{
     StageSurveyAttemptOutcome, StageSurveyClassification, StageSurveyLedger,
     stage_survey_case_storage_id,
 };
+use crate::stage_survey_artifact::{compressed_artifact_path, read_survey_artifact};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_world::stage_boot_catalog::StageBootCatalog;
 use serde::{Deserialize, Serialize};
@@ -757,15 +758,19 @@ fn locate_actor_artifact(
                 .is_some_and(|name| name.starts_with(&prefix))
         })
         .map(|path| path.join("actors.json"))
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || compressed_artifact_path(path).is_file())
         .collect::<Vec<_>>();
     candidates.sort();
+    let mut rejected = None;
     for path in candidates {
-        let bytes =
-            fs::read(&path).map_err(|error| StageActorCoverageError::new(error.to_string()))?;
-        if Digest(Sha256::digest(&bytes).into()) == expected_digest {
-            return Ok(Some(bytes));
+        match read_survey_artifact(&path, expected_digest) {
+            Ok(Some(bytes)) => return Ok(Some(bytes)),
+            Ok(None) => {}
+            Err(error) => rejected = Some(error.to_string()),
         }
+    }
+    if let Some(error) = rejected {
+        return Err(StageActorCoverageError::new(error));
     }
     Ok(None)
 }
@@ -912,6 +917,7 @@ mod tests {
         STAGE_SURVEY_FIDELITY, StageSurveyAttempt, StageSurveyIdentity, StageSurveyObservedOrigin,
         StageSurveyPolicy, StageSurveyProbeKind,
     };
+    use crate::stage_survey_artifact::compact_survey_artifact;
     use dusklight_world::stage_boot_catalog::{
         BootLayerSource, BootLayerSourceKind, BootPointSource, BootPointSourceKind,
         STAGE_BOOT_CATALOG_SCHEMA, StageBootCandidate, StageCatalogStatus, StageInventoryStatus,
@@ -1164,6 +1170,23 @@ mod tests {
         );
         assert_ne!(report.report_sha256, Digest::ZERO);
         assert!(report.canonical_bytes().unwrap().ends_with(b"\n"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compressed_actor_artifact_reproduces_the_same_coverage_report() {
+        let (catalog, ledger, root) = fixture();
+        let raw_report = StageActorCoverageReport::build(&catalog, &ledger, &root).unwrap();
+        let actor_path = root
+            .join("cases")
+            .join(stage_survey_case_storage_id(&catalog.candidates[0].id).to_string())
+            .join("attempt-001-run-00000")
+            .join("actors.json");
+        let expected_digest = ledger.cases[0].attempts[0].actor_catalog_sha256.unwrap();
+        assert!(compact_survey_artifact(&actor_path, expected_digest).unwrap());
+
+        let compressed_report = StageActorCoverageReport::build(&catalog, &ledger, &root).unwrap();
+        assert_eq!(compressed_report, raw_report);
         fs::remove_dir_all(root).unwrap();
     }
 

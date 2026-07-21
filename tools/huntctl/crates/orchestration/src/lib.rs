@@ -7,6 +7,7 @@ pub mod harness;
 pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;
+mod stage_survey_artifact;
 
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,
