@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 
-pub const CUTSCENE_PROGRAM_SCHEMA: &str = "dusklight.route-planner.cutscene-program/v4";
+pub const CUTSCENE_PROGRAM_SCHEMA: &str = "dusklight.route-planner.cutscene-program/v5";
 pub const COMPILED_CUTSCENE_PROGRAM_SCHEMA: &str =
-    "dusklight.route-planner.compiled-cutscene-program/v4";
+    "dusklight.route-planner.compiled-cutscene-program/v5";
 const MAX_CUTSCENE_PHASES: usize = 4096;
 const MAX_PHASE_BRANCHES: usize = 256;
 

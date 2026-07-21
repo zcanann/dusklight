@@ -690,6 +690,20 @@ impl PlannerExecutionState {
                 | StateOperation::ActivateStageBank { component_id, .. } => {
                     vec![component_id.clone()]
                 }
+                StateOperation::AdjustBoundRawUnsigned {
+                    component_kind,
+                    binding,
+                    ..
+                } => self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component.component_kind == *component_kind && component.binding == *binding
+                    })
+                    .map(|component| component.id.clone())
+                    .collect(),
                 StateOperation::ClearComponent { selector }
                 | StateOperation::Preserve { selector }
                 | StateOperation::Serialize { selector, .. }
@@ -973,6 +987,91 @@ impl PlannerExecutionState {
                     PlannerContractError::new("operation.adjust", "references an absent field")
                 })?;
                 adjust_value(value, *delta)?;
+                mark_transition(component, application_id);
+            }
+            StateOperation::AdjustBoundRawUnsigned {
+                component_kind,
+                binding,
+                byte_offset,
+                byte_width,
+                delta,
+            } => {
+                let matching_ids = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component.component_kind == *component_kind && component.binding == *binding
+                    })
+                    .map(|component| component.id.clone())
+                    .collect::<Vec<_>>();
+                let [component_id] = matching_ids.as_slice() else {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "requires exactly one component with the selected kind and binding",
+                    ));
+                };
+                let component = self.component_mut(component_id)?;
+                let ComponentPayload::Raw { bytes, known_mask } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "requires a raw destination component",
+                    ));
+                };
+                let offset = usize::try_from(*byte_offset).map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned.byte_offset",
+                        "does not fit this host",
+                    )
+                })?;
+                let width = usize::from(*byte_width);
+                let end = offset.checked_add(width).ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "range overflows",
+                    )
+                })?;
+                if end > bytes.len() || end > known_mask.len() {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "range exceeds the destination component",
+                    ));
+                }
+                if known_mask[offset..end].iter().any(|known| *known != 0xff) {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "requires every source bit to be known",
+                    ));
+                }
+                let mut current = 0_u64;
+                for index in 0..width {
+                    current |= u64::from(bytes[offset + index]) << (index * 8);
+                }
+                let adjusted = if *delta > 0 {
+                    current.checked_add(delta.unsigned_abs())
+                } else {
+                    current.checked_sub(delta.unsigned_abs())
+                }
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "would underflow or overflow",
+                    )
+                })?;
+                let maximum = if *byte_width == 8 {
+                    u64::MAX
+                } else {
+                    (1_u64 << (u32::from(*byte_width) * 8)) - 1
+                };
+                if adjusted > maximum {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned",
+                        "would exceed the selected byte width",
+                    ));
+                }
+                let encoded = adjusted.to_le_bytes();
+                bytes[offset..end].copy_from_slice(&encoded[..width]);
                 mark_transition(component, application_id);
             }
             StateOperation::ClearComponent { selector } => {
@@ -2094,6 +2193,7 @@ fn history_event_writes_field(
                 .is_ok(),
             StateOperation::WriteRaw { .. }
             | StateOperation::InvalidateRaw { .. }
+            | StateOperation::AdjustBoundRawUnsigned { .. }
             | StateOperation::Preserve { .. }
             | StateOperation::Serialize { .. }
             | StateOperation::SaveRuntimeToSlot { .. }
@@ -3282,6 +3382,158 @@ mod tests {
                 known_mask: vec![0x20]
             }
         );
+    }
+
+    #[test]
+    fn bound_raw_unsigned_adjusts_only_one_known_stage_bank_atomically() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let mut bytes = vec![0_u8; 0x20];
+        bytes[0x1c] = 2;
+        state.snapshot.environment.components.push(StateComponent {
+            id: "stage-memory.active".into(),
+            component_kind: ComponentKind::DungeonMemory,
+            payload: ComponentPayload::Raw {
+                bytes,
+                known_mask: vec![0xff; 0x20],
+            },
+            binding: ComponentBinding::Stage {
+                stage: "D_MN05".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: "D_MN05".into(),
+            },
+            provenance: provenance(),
+        });
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state.validate().unwrap();
+
+        let adjust = |delta| StateOperation::AdjustBoundRawUnsigned {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Stage {
+                stage: "D_MN05".into(),
+            },
+            byte_offset: 0x1c,
+            byte_width: 1,
+            delta,
+        };
+        state
+            .apply_operations("pickup.small-key", "snapshot.three-keys", &[adjust(1)])
+            .unwrap();
+        state
+            .apply_operations("door.consume-key", "snapshot.two-keys", &[adjust(-1)])
+            .unwrap();
+        let stage_memory = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage-memory.active")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &stage_memory.payload else {
+            unreachable!()
+        };
+        assert_eq!(bytes[0x1c], 2);
+        assert!(bytes[..0x1c].iter().all(|byte| *byte == 0));
+        assert!(bytes[0x1d..].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            state.execution_history.last().unwrap().event,
+            ExecutionHistoryKind::Operation {
+                operation: adjust(-1),
+                affected_component_ids: vec!["stage-memory.active".into()],
+            }
+        );
+
+        let before_failure = state.clone();
+        let error = state
+            .apply_operations(
+                "door.wrong-bank",
+                "snapshot.not-produced",
+                &[StateOperation::AdjustBoundRawUnsigned {
+                    component_kind: ComponentKind::DungeonMemory,
+                    binding: ComponentBinding::Stage {
+                        stage: "D_MN04".into(),
+                    },
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    delta: -1,
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(error.field(), "operation.adjust_bound_raw_unsigned");
+        assert_eq!(state, before_failure);
+
+        let before_underflow = state.clone();
+        assert!(
+            state
+                .apply_operations(
+                    "door.consume-too-many-keys",
+                    "snapshot.no-underflow",
+                    &[adjust(-3)],
+                )
+                .is_err()
+        );
+        assert_eq!(state, before_underflow);
+
+        let mut duplicate = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage-memory.active")
+            .unwrap()
+            .clone();
+        duplicate.id = "stage-memory.ambiguous".into();
+        state.snapshot.environment.components.push(duplicate);
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let before_ambiguity = state.clone();
+        assert!(
+            state
+                .apply_operations(
+                    "door.ambiguous-key-bank",
+                    "snapshot.no-ambiguous-write",
+                    &[adjust(-1)],
+                )
+                .is_err()
+        );
+        assert_eq!(state, before_ambiguity);
+        state
+            .snapshot
+            .environment
+            .components
+            .retain(|component| component.id != "stage-memory.ambiguous");
+
+        let stage_memory = state
+            .snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "stage-memory.active")
+            .unwrap();
+        let ComponentPayload::Raw { known_mask, .. } = &mut stage_memory.payload else {
+            unreachable!()
+        };
+        known_mask[0x1c] = 0;
+        let before_unknown = state.clone();
+        assert!(
+            state
+                .apply_operations(
+                    "door.unknown-key-count",
+                    "snapshot.not-produced-either",
+                    &[adjust(-1)],
+                )
+                .is_err()
+        );
+        assert_eq!(state, before_unknown);
     }
 
     #[test]

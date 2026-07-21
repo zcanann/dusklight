@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v11";
+pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v12";
 pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v2";
-pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v12";
+pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v13";
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]

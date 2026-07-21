@@ -138,3 +138,10 @@ overwrites that image without pretending file 0 became slot 0;
 records the prior runtime as ended, and leaves session-owned components outside
 the projection. `activate_stage_bank` performs the initial stage-bank restore,
 while `set_location` remains a separate effect.
+
+Raw stage-memory semantics can also be addressed by backing rather than by a
+transient component ID. `bound_raw_bits` reads numeric fields or item masks from
+one exact component kind/binding, and `adjust_bound_raw_unsigned` mutates a
+uniquely bound known count atomically. This is how small-key counts and dungeon
+items follow the active stage bank through ordinary loads or explicit rebinds;
+see `docs/route-planner/bound-stage-memory-semantics.md`.

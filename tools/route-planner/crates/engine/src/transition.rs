@@ -3,17 +3,17 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentSelector, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount,
-    RuntimeFile, RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent,
-    StateValue, validate_binding as validate_component_binding, validate_component_kind,
-    validate_serialization_owner,
+    ComponentBinding, ComponentKind, ComponentSelector, PhysicalSlotId, PlaneRelation, PlayerForm,
+    PlayerMount, RuntimeFile, RuntimeFileLifecycle, SemanticLifetime, SerializationOwner,
+    StateComponent, StateValue, validate_binding as validate_component_binding,
+    validate_component_kind, validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v12";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v13";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -54,6 +54,13 @@ pub enum StateOperation {
     },
     Adjust {
         target: ComponentFieldTarget,
+        delta: i64,
+    },
+    AdjustBoundRawUnsigned {
+        component_kind: ComponentKind,
+        binding: ComponentBinding,
+        byte_offset: u32,
+        byte_width: u8,
         delta: i64,
     },
     ClearComponent {
@@ -569,6 +576,35 @@ impl StateOperation {
                 if *delta == 0 {
                     return Err(PlannerContractError::new(
                         "operation.adjust.delta",
+                        "must be nonzero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::AdjustBoundRawUnsigned {
+                component_kind,
+                binding,
+                byte_width,
+                delta,
+                ..
+            } => {
+                validate_component_kind(component_kind)?;
+                validate_component_binding(binding)?;
+                if matches!(binding, ComponentBinding::Unbound) {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned.binding",
+                        "must identify an explicit backing-store binding",
+                    ));
+                }
+                if !(1..=8).contains(byte_width) {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned.byte_width",
+                        "must be between 1 and 8",
+                    ));
+                }
+                if *delta == 0 {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust_bound_raw_unsigned.delta",
                         "must be nonzero",
                     ));
                 }
@@ -1585,6 +1621,21 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.component_ids"
+        );
+    }
+
+    #[test]
+    fn bound_raw_adjustment_requires_an_explicit_binding() {
+        let operation = StateOperation::AdjustBoundRawUnsigned {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Unbound,
+            byte_offset: 0,
+            byte_width: 1,
+            delta: 1,
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.adjust_bound_raw_unsigned.binding"
         );
     }
 }

@@ -625,6 +625,20 @@ impl RelevanceBuilder {
                 });
                 self.dependencies.insert(StateDependency::LocationStage);
             }
+            StateOperation::AdjustBoundRawUnsigned {
+                component_kind,
+                binding,
+                byte_offset,
+                byte_width,
+                ..
+            } => {
+                self.dependencies.insert(StateDependency::BoundRawBits {
+                    component_kind: component_kind.clone(),
+                    binding: binding.clone(),
+                    byte_offset: *byte_offset,
+                    byte_width: u32::from(*byte_width),
+                });
+            }
             StateOperation::ActivateStageBank { component_id, .. } => {
                 self.dependencies.insert(StateDependency::Component {
                     component_id: component_id.clone(),
@@ -725,6 +739,18 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             byte_offset: *byte_offset,
             byte_width: mask.len() as u8,
             mask: u64::MAX,
+        }],
+        StateOperation::AdjustBoundRawUnsigned {
+            component_kind,
+            binding,
+            byte_offset,
+            byte_width,
+            ..
+        } => vec![StateDependency::BoundRawBits {
+            component_kind: component_kind.clone(),
+            binding: binding.clone(),
+            byte_offset: *byte_offset,
+            byte_width: u32::from(*byte_width),
         }],
         StateOperation::ClearComponent { selector } => {
             if let crate::state::ComponentSelector::Id { component_id } = selector {
