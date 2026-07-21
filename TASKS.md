@@ -1075,12 +1075,17 @@ and geometry set sizes without schema changes.
     Every row references the complete pre-input and post-simulation states,
     retains exact consumed PAD, and derives player-motion, contact, complete
     actor-lifecycle, action-phase, event/loading and 1/2/4/8-tick terminal
-    targets without flattening the source actor/collider sets. Train,
+    targets without flattening the source actor/collider sets. Dataset v2
+    explicitly masks motion/action targets when player or context identity
+    changes, masks Link-contact labels for non-Link players, and treats a
+    stage/room/layer boundary as loading evidence rather than false mass actor
+    lifecycle or zero-motion supervision. The multitask materializer carries
+    those masks into its target heads. Train,
     validation and test assignment is deterministic per complete episode, not
     per frame. Training the shared encoder and reporting held-out auxiliary
     performance remain open before the parent item can close. `learn
     inspect-auxiliary` reports per-split support before training: the first real
-    Ordon coverage dataset retains 185/42/30 contact changes and 98/21/15
+    prior v1 Ordon coverage dataset retains 185/42/30 contact changes and 98/21/15
     procedure changes across train/validation/test, but zero terminal successes
     in every split. It can teach common dynamics and rare-contact prediction;
     it cannot train or evaluate goal reachability by itself.
