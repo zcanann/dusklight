@@ -7,6 +7,7 @@
 //! browser code.
 
 pub mod artifact;
+pub mod authorization;
 pub mod binary_evidence;
 pub mod cutscene;
 pub mod cutscene_corruption;

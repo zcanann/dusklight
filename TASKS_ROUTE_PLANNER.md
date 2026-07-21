@@ -2077,12 +2077,23 @@ Deliverable: replayable state evidence that can validate transition rules.
     proof, while a missing or disallowed in-scope reader makes the transition
     feasibility unknown. Writer, gate, and reader evidence all contribute to the
     step's weakest-evidence result.
-- [ ] Generate the upper-bound authorization graph.
+- [x] Generate the upper-bound authorization graph.
   - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
         per-transition upper-bound assessment; unknown raw bits, absent values,
         unsupported equivalence scopes, and disallowed evidence remain unknown.
-  - [ ] Materialize and traverse the authorization graph from evaluated
+  - [x] Materialize and traverse the authorization graph from evaluated
         snapshots.
+    - Added the canonical `dusklight.route-planner.authorization-graph/v1`
+      artifact and `project-authorization-graph` command. The bounded
+      breadth-first traversal roots every transition, writer, and stateful
+      technique, binds exact state, snapshot, catalog, refinement-stack,
+      equivalence-set, evidence-policy, and search-bound identities, and leaves
+      any reached-but-unevaluated frontier explicit.
+    - Regression coverage proves `A -> B -> C` materialization, permits an
+      unresolved physical obligation only in upper-bound mode, keeps an
+      explicitly unknown activation requirement non-executable, reports the
+      unknown transition, validates bounded frontiers, and round-trips the
+      canonical graph through both the engine and file-bound CLI.
 - [ ] Keep extracted destinations non-executable until their activation contracts
       are discharged.
   - [x] Classify hard-guard failure, unresolved requirements, and outstanding

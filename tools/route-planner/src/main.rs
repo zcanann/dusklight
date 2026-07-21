@@ -16,7 +16,7 @@ use dusklight_route_planner::cutscene_runtime::{
     resolve_cutscene_package,
 };
 use dusklight_route_planner::demo_actor::extract_gz2e01_demo_actor_program;
-use dusklight_route_planner::evaluation::EvidencePolicy;
+use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::fact_pack::{
     CoverageDomain, CoverageStatus, ExtractorIdentity, FactPackCoverage, FactPackManifest,
@@ -52,6 +52,7 @@ use dusklight_route_planner::refinement::{
 use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::snapshot::StateSnapshot;
+use dusklight_route_planner::solver::{ForwardSolver, SolverOptions};
 use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::MechanicsCatalog;
@@ -118,6 +119,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("materialize-fact-pack") => materialize_fact_pack(&args[1..]),
         Some("diff-state") => diff_state_command(&args[1..]),
         Some("project-graph") => project_graph(&args[1..]),
+        Some("project-authorization-graph") => project_authorization_graph(&args[1..]),
         Some("project-feasibility-diff") => project_feasibility_diff(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
@@ -1513,6 +1515,85 @@ fn project_feasibility_diff(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn project_authorization_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let state_path = required_path(args, "--state")?;
+    let output = required_path(args, "--output")?;
+    let state =
+        PlannerExecutionStateDocument::decode_canonical(&fs::read(state_path)?)?.into_state()?;
+    let equivalence_sets = repeated_option(args, "--equivalence-set")
+        .into_iter()
+        .map(|path| -> Result<EquivalenceSet, Box<dyn Error>> {
+            Ok(EquivalenceSet::decode_canonical(&fs::read(path)?)?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let defaults = SolverOptions::default();
+    let options = SolverOptions {
+        max_depth: usize_option(args, "--max-depth", defaults.max_depth)?,
+        max_states: usize_option(args, "--max-states", defaults.max_states)?,
+        max_resolution_combinations: usize_option(
+            args,
+            "--max-resolution-combinations",
+            defaults.max_resolution_combinations,
+        )?,
+        feasibility_mode: FeasibilityMode::UpperBound,
+        evidence_policy: if flag(args, "--research") {
+            EvidencePolicy::RESEARCH
+        } else {
+            EvidencePolicy::ESTABLISHED_ONLY
+        },
+    };
+    let graph = match (
+        option(args, "--catalog"),
+        option(args, "--facts"),
+        option(args, "--mechanics"),
+    ) {
+        (Some(path), None, None) => {
+            let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
+            let graph = ForwardSolver::new(
+                &catalog.facts,
+                &catalog.mechanics,
+                &equivalence_sets,
+                options,
+            )?
+            .authorization_graph(state)?;
+            graph.with_refinement_stack_sha256(catalog.refinement_stack.digest()?)?
+        }
+        (None, Some(facts), Some(mechanics)) => {
+            let facts = FactCatalog::decode_canonical(&fs::read(facts)?)?;
+            let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?;
+            ForwardSolver::new(&facts, &mechanics, &equivalence_sets, options)?
+                .authorization_graph(state)?
+        }
+        _ => {
+            return Err(
+                "project-authorization-graph requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    let bytes = graph.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": graph.schema,
+            "output": output,
+            "sha256": graph.digest()?,
+            "bytes": bytes.len(),
+            "initial_state_sha256": graph.initial_state_sha256,
+            "nodes": graph.nodes.len(),
+            "evaluated_states": graph.evaluated_states,
+            "edges": graph.edges.len(),
+            "traversal_complete": graph.traversal_complete,
+            "unknown_transitions": graph.unknown_transition_ids.len(),
+            "unknown_writers": graph.unknown_writer_ids.len(),
+            "execution_errors": graph.execution_error_ids.len(),
+            "refinement_stack_sha256": graph.refinement_stack_sha256,
+        }))?
+    );
+    Ok(())
+}
+
 fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
     let facts_path = required_path(args, "--facts")?;
     let mechanics_path = required_path(args, "--mechanics")?;
@@ -1955,6 +2036,7 @@ fn print_usage() {
             "  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]",
             "  route-planner list-archive-resources --archive ARCHIVE.arc --output RESOURCES.json",
             "  route-planner materialize-fact-pack --cache CACHE --manifest-sha256 SHA256 --payload PAYLOAD.json --manifest MANIFEST.json",
+            "  route-planner project-authorization-graph --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output GRAPH.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--research]",
             "  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]",
             "  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json",
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
@@ -1966,4 +2048,134 @@ fn print_usage() {
         ]
         .join("\n")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dusklight_route_planner::authorization::AuthorizationGraph;
+    use dusklight_route_planner::identity::RUNTIME_CONFIGURATION_SCHEMA;
+    use dusklight_route_planner::logic::FACT_CATALOG_SCHEMA;
+    use dusklight_route_planner::snapshot::STATE_SNAPSHOT_SCHEMA;
+    use dusklight_route_planner::state::{
+        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment,
+        PlayerForm, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
+        SceneLocation,
+    };
+    use dusklight_route_planner::transition::MECHANICS_CATALOG_SCHEMA;
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn project_authorization_graph_command_writes_a_canonical_base_graph() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!(
+            "dusklight-authorization-cli-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let state_path = root.join("state.json");
+        let facts_path = root.join("facts.json");
+        let mechanics_path = root.join("mechanics.json");
+        let output_path = root.join("authorization.json");
+        let snapshot = StateSnapshot {
+            schema: STATE_SNAPSHOT_SCHEMA.into(),
+            id: "snapshot.cli-start".into(),
+            sequence: 0,
+            environment: ExecutionEnvironment {
+                schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+                runtime_configuration: RuntimeConfiguration {
+                    schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+                    content_sha256: Digest([1; 32]),
+                    language: "en".into(),
+                    settings: BTreeMap::new(),
+                },
+                active_runtime_file: RuntimeFile {
+                    id: "file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: Vec::new(),
+                    lifecycle: RuntimeFileLifecycle::Active,
+                },
+                inactive_runtime_files: Vec::new(),
+                physical_slots: Vec::new(),
+                physical_slot_observations: Vec::new(),
+                execution_context: ExecutionContext::World,
+                location: SceneLocation {
+                    stage: "STAGE_A".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+                player: PlayerState {
+                    form: PlayerForm::Human,
+                    mount: None,
+                    position: [0.0; 3],
+                    rotation: [0; 3],
+                    has_control: Some(true),
+                    action: "idle".into(),
+                },
+                components: Vec::new(),
+                static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
+                persisted_object_controls: Vec::new(),
+                live_world_objects: Vec::new(),
+            },
+            semantic_observations: Vec::new(),
+        };
+        let state = PlannerExecutionState::new(snapshot)
+            .unwrap()
+            .to_document()
+            .unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: Vec::new(),
+            obligations: Vec::new(),
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: Vec::new(),
+            resolvers: Vec::new(),
+            techniques: Vec::new(),
+            microtraces: Vec::new(),
+            goals: Vec::new(),
+        };
+        fs::write(&state_path, state.canonical_bytes().unwrap()).unwrap();
+        fs::write(&facts_path, facts.canonical_bytes().unwrap()).unwrap();
+        fs::write(&mechanics_path, mechanics.canonical_bytes().unwrap()).unwrap();
+
+        project_authorization_graph(&[
+            "--state".into(),
+            state_path.to_string_lossy().into_owned(),
+            "--facts".into(),
+            facts_path.to_string_lossy().into_owned(),
+            "--mechanics".into(),
+            mechanics_path.to_string_lossy().into_owned(),
+            "--output".into(),
+            output_path.to_string_lossy().into_owned(),
+            "--max-depth".into(),
+            "4".into(),
+            "--max-states".into(),
+            "8".into(),
+        ])
+        .unwrap();
+        let graph = AuthorizationGraph::decode_canonical(&fs::read(&output_path).unwrap()).unwrap();
+        assert!(graph.traversal_complete);
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.evaluated_states, 1);
+        assert!(graph.edges.is_empty());
+        assert_eq!(graph.refinement_stack_sha256, None);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns thirty-nine operations:
+The planner CLI currently owns forty operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -165,6 +165,15 @@ The planner CLI currently owns thirty-nine operations:
 - `project-graph` emits a planner-native causal graph with typed relations and
   collapsible predicate regions and optional route-book plan regions; it does
   not use TAS timeline graph schemas.
+- `project-authorization-graph` performs a bounded, breadth-first upper-bound
+  traversal from one exact execution state. It roots every transition, writer,
+  and stateful technique instead of applying goal-directed pruning, records
+  full/snapshot/search identities for each reached state, and emits only edges
+  actually authorized after reevaluating their source snapshot. Search bounds,
+  evidence policy, equivalence sets, unknown actions, execution failures, and
+  any reached-but-unevaluated frontier remain explicit. Upper-bound mode relaxes
+  physical obligations and obstructions only; unknown guards, readers,
+  requirements, and disallowed evidence do not become executable.
 - `project-feasibility-diff` evaluates each candidate at one exact executable
   state and emits only edges whose permissive upper-bound and modeled results
   differ, including obstruction, obligation, and microtrace proof details.

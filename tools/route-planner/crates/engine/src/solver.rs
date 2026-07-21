@@ -1,5 +1,6 @@
 //! Bounded forward state search with explicit feasibility choices and proofs.
 
+use crate::authorization::{AuthorizationGraph, AuthorizationRecorder};
 use crate::evaluation::{
     EvaluatedTruth, EvidencePolicy, FeasibilityMode, FeasibilityResolution, FeasibilitySelection,
     PredicateEvaluator, RuleClassification, TransitionAssessment, TransitionClassification,
@@ -12,7 +13,7 @@ use crate::relevance::BackwardRelevance;
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
@@ -366,7 +367,7 @@ pub enum SearchStatus {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchActionKind {
     Transition,
@@ -617,6 +618,89 @@ impl<'a> ForwardSolver<'a> {
         start: PlannerExecutionState,
         goal: &PredicateExpression,
     ) -> Result<SearchResult, PlannerContractError> {
+        self.solve_internal(start, goal, &[], None)
+    }
+
+    /// Enumerate the bounded, permissive authorization graph without a goal-
+    /// directed slice. Unknown guards, readers, requirements, and disallowed
+    /// evidence remain blocked; physical obligations and obstructions are the
+    /// only constraints relaxed by upper-bound evaluation.
+    pub fn authorization_graph(
+        &self,
+        start: PlannerExecutionState,
+    ) -> Result<AuthorizationGraph, PlannerContractError> {
+        if self.options.feasibility_mode != FeasibilityMode::UpperBound {
+            return Err(PlannerContractError::new(
+                "authorization_graph.feasibility_mode",
+                "requires upper-bound evaluation",
+            ));
+        }
+        if self.route_book.is_some() {
+            return Err(PlannerContractError::new(
+                "authorization_graph.route_book",
+                "cannot apply route-specific pruning or preferences",
+            ));
+        }
+        start.validate()?;
+        let initial_state_sha256 = start.semantic_digest()?;
+        let initial_execution_state_sha256 = start.digest()?;
+        let mut action_roots =
+            self.mechanics
+                .transitions
+                .iter()
+                .map(|transition| RouteActionRef::Transition {
+                    transition_id: transition.id.clone(),
+                })
+                .chain(
+                    self.mechanics
+                        .writers
+                        .iter()
+                        .map(|writer| RouteActionRef::Writer {
+                            writer_id: writer.id.clone(),
+                        }),
+                )
+                .chain(self.mechanics.techniques.iter().map(|technique| {
+                    RouteActionRef::Technique {
+                        technique_id: technique.id.clone(),
+                    }
+                }))
+                .collect::<Vec<_>>();
+        action_roots.sort();
+        action_roots.dedup();
+        let mut recorder = AuthorizationRecorder::default();
+        let search = self.solve_internal(
+            start,
+            &PredicateExpression::False,
+            &action_roots,
+            Some(&mut recorder),
+        )?;
+        let mut equivalence_set_sha256 = self
+            .equivalence_sets
+            .iter()
+            .map(EquivalenceSet::digest)
+            .collect::<Result<Vec<_>, _>>()?;
+        equivalence_set_sha256.sort();
+        equivalence_set_sha256.dedup();
+        AuthorizationGraph::finish(
+            recorder,
+            initial_state_sha256,
+            initial_execution_state_sha256,
+            self.facts,
+            self.mechanics,
+            equivalence_set_sha256,
+            self.options.evidence_policy,
+            self.options,
+            &search,
+        )
+    }
+
+    fn solve_internal(
+        &self,
+        start: PlannerExecutionState,
+        goal: &PredicateExpression,
+        additional_action_roots: &[RouteActionRef],
+        mut authorization: Option<&mut AuthorizationRecorder>,
+    ) -> Result<SearchResult, PlannerContractError> {
         start.validate()?;
         let start_evaluator = PredicateEvaluator::new(
             &start.snapshot,
@@ -642,6 +726,7 @@ impl<'a> ForwardSolver<'a> {
                 }
             }
         }
+        backward_action_roots.extend(additional_action_roots.iter().cloned());
         let backward_action_roots = backward_action_roots.into_iter().collect::<Vec<_>>();
         let backward_relevance = BackwardRelevance::analyze_with_roots(
             self.facts,
@@ -714,12 +799,22 @@ impl<'a> ForwardSolver<'a> {
                 route_condition_unknown: node.route_condition_unknown,
                 route_costs: node.route_costs.clone(),
             };
-            if !visited.insert(search_identity) {
+            if visited.contains(&search_identity) {
                 continue;
             }
-            if visited.len() > self.options.max_states {
+            if visited.len() == self.options.max_states {
                 hit_search_limit = true;
                 break;
+            }
+            visited.insert(search_identity);
+            if let Some(recorder) = authorization.as_deref_mut() {
+                recorder.observe_state(
+                    state_identity,
+                    node.state.digest()?,
+                    node.state.snapshot.digest()?,
+                    node.depth,
+                    true,
+                );
             }
 
             let evaluator = PredicateEvaluator::new(
@@ -902,6 +997,7 @@ impl<'a> ForwardSolver<'a> {
                     std::slice::from_ref(&boundary),
                     route_policy.as_ref(),
                     generated_id,
+                    authorization.as_deref_mut(),
                     SearchStep {
                         action_kind: SearchActionKind::Writer,
                         action_id: writer.id.clone(),
@@ -977,6 +1073,7 @@ impl<'a> ForwardSolver<'a> {
                     std::slice::from_ref(&boundary),
                     route_policy.as_ref(),
                     generated_id,
+                    authorization.as_deref_mut(),
                     SearchStep {
                         action_kind: SearchActionKind::Technique,
                         action_id: technique.id.clone(),
@@ -1367,6 +1464,7 @@ impl<'a> ForwardSolver<'a> {
                             &action_boundaries,
                             route_policy.as_ref(),
                             generated_id,
+                            authorization.as_deref_mut(),
                             SearchStep {
                                 action_kind: SearchActionKind::Transition,
                                 action_id: transition.id.clone(),
@@ -1459,6 +1557,7 @@ impl<'a> ForwardSolver<'a> {
         boundaries: &[AppliedActionBoundary],
         route_policy: Option<&RouteSearchPolicy>,
         insertion_order: u64,
+        authorization: Option<&mut AuthorizationRecorder>,
         mut step: SearchStep,
     ) -> Result<bool, PlannerContractError> {
         let result = next.semantic_digest()?;
@@ -1572,10 +1671,20 @@ impl<'a> ForwardSolver<'a> {
             route_condition_unknown,
             route_costs: route_costs.clone(),
         };
+        step.result_state_sha256 = result;
+        if let Some(recorder) = authorization {
+            recorder.observe_state(
+                result,
+                next.digest()?,
+                next.snapshot.digest()?,
+                node.depth + 1,
+                false,
+            );
+            recorder.record_edge(&step);
+        }
         if visited.contains(&search_identity) {
             return Ok(saw_unknown_condition);
         }
-        step.result_state_sha256 = result;
         let mut steps = node.steps.clone();
         steps.push(step);
         queue.push(QueueEntry {
@@ -2189,7 +2298,7 @@ mod tests {
         GateRule, Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail,
         ObligationKind, Obstruction, ObstructionResolver, ReaderRule, ResolutionKind, RouteCost,
         StateOperation, Technique, TemporalRequirement, TemporalWindow, TransitionKind,
-        WitnessedMicrotrace, WriterRule,
+        UnknownRequirement, WitnessedMicrotrace, WriterRule,
     };
     use std::collections::BTreeMap;
 
@@ -2482,6 +2591,125 @@ mod tests {
         assert!(result.backward_pruning_applied);
         assert!(result.backward_relevance.writer_ids.is_empty());
         assert!(result.execution_error_ids.is_empty());
+    }
+
+    #[test]
+    fn upper_bound_authorization_graph_materializes_and_traverses_evaluated_states() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![
+            transition(
+                &snapshot,
+                "transition.a-to-b",
+                "STAGE_A",
+                "STAGE_B",
+                vec!["obligation.unmodeled".into()],
+            ),
+            transition(
+                &snapshot,
+                "transition.b-to-c",
+                "STAGE_B",
+                "STAGE_C",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.c-to-d-unknown",
+                "STAGE_C",
+                "STAGE_D",
+                Vec::new(),
+            ),
+        ]);
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.unmodeled".into(),
+            label: "Unmodeled physical activation".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Unresolved {
+                research_question: "geometry has not been imported".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.transitions[2].activation.unknown_requirements = vec![UnknownRequirement {
+            id: "requirement.activation-physics".into(),
+            description: "activation physics are unknown".into(),
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let facts = facts();
+        let options = SolverOptions {
+            max_depth: 8,
+            max_states: 100,
+            max_resolution_combinations: 16,
+            feasibility_mode: FeasibilityMode::UpperBound,
+            evidence_policy: EvidencePolicy::ESTABLISHED_ONLY,
+        };
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], options).unwrap();
+        let graph = solver
+            .authorization_graph(PlannerExecutionState::new(snapshot.clone()).unwrap())
+            .unwrap();
+
+        assert!(graph.traversal_complete);
+        assert_eq!(graph.nodes.len(), 3);
+        assert_eq!(graph.evaluated_states, 3);
+        assert_eq!(graph.edges.len(), 2);
+        assert_eq!(
+            graph.unknown_transition_ids,
+            vec!["transition.c-to-d-unknown"]
+        );
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .map(|edge| edge.action_id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["transition.a-to-b", "transition.b-to-c"])
+        );
+        assert_eq!(graph.reachable_state_ids().len(), 3);
+        let bytes = graph.canonical_bytes().unwrap();
+        assert_eq!(
+            crate::authorization::AuthorizationGraph::decode_canonical(&bytes).unwrap(),
+            graph
+        );
+
+        let bounded = ForwardSolver::new(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions {
+                max_states: 2,
+                ..options
+            },
+        )
+        .unwrap()
+        .authorization_graph(PlannerExecutionState::new(snapshot).unwrap())
+        .unwrap();
+        assert!(!bounded.traversal_complete);
+        assert_eq!(bounded.evaluated_states, 2);
+        assert_eq!(bounded.nodes.len(), 3);
+        assert_eq!(
+            bounded.nodes.iter().filter(|node| !node.evaluated).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn authorization_graph_requires_explicit_upper_bound_mode() {
+        let snapshot = snapshot();
+        let mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            Vec::new(),
+        )]);
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        assert!(
+            solver
+                .authorization_graph(PlannerExecutionState::new(snapshot).unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("requires upper-bound evaluation")
+        );
     }
 
     #[test]

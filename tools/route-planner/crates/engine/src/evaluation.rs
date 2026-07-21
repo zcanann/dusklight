@@ -38,7 +38,8 @@ impl EvaluatedTruth {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvidencePolicy {
     pub allow_contested: bool,
     pub allow_hypothetical: bool,
