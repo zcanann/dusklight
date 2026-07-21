@@ -38,6 +38,7 @@ pub mod local_dynamics;
 pub mod low_data_baselines;
 pub mod model_ownership;
 pub mod model_representation;
+pub mod multitask_set_encoder;
 pub mod native_actor_features;
 pub mod native_actor_view;
 pub mod native_auxiliary_dataset;

@@ -1052,6 +1052,28 @@ event/loading changes, actor lifecycle events, and goal-reachable examples per
 split. Aggregate transition count is not accepted as evidence that a rare
 mechanic or terminal outcome has held-out coverage.
 
+Fit the first shared complete-actor-set auxiliary encoder with:
+
+```powershell
+huntctl learn pretrain-native-encoder --dataset auxiliary-dataset.json `
+  --input episodes.dseps --output native-encoder.json `
+  --artifact-store build/content
+```
+
+The command reads complete, non-truncated actor populations directly from each
+referenced pre-input state and releases the decoded native shard before model
+optimization. Exact categorical values remain non-ordinal, optional channels
+carry masks, runtime generations are structural ordering keys only, and the
+post-simulation observation never enters policy input. Train and validation
+select the model; the test split is evaluated only afterward.
+
+Every artifact also fits an equal-architecture, equal-step negative control
+whose target values are independently shuffled within each supported head.
+The shuffle preserves target support and marginal values while destroying the
+state/target relationship, receives a distinct target-bound dataset identity,
+and must lose the real model's held-out advantage. Neither auxiliary result is
+terminal-success authority or permission to promote a policy.
+
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
 
