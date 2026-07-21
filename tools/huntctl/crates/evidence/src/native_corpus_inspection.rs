@@ -7,13 +7,14 @@
 //! learner code is allowed to treat the data as useful.
 
 use crate::native_episode_shard::{
-    NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation, NativeRawPad,
+    NativeActorObservation, NativeChannelStatus, NativeEpisode, NativeEpisodeShard,
+    NativeLearningObservation, NativeRawPad,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V4: &str = "dusklight-native-corpus-inspection/v4";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V5: &str = "dusklight-native-corpus-inspection/v5";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -77,6 +78,50 @@ pub struct NativeIdentityInspection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActorTemporalProfileCoverage {
+    pub profile_name: i16,
+    pub actor_names: Vec<i16>,
+    pub stages: Vec<String>,
+    pub boundary_samples: u64,
+    pub episode_local_lifetimes: u64,
+    pub persistent_transition_pairs: u64,
+    pub in_context_appearances: u64,
+    pub in_context_disappearances: u64,
+    pub context_change_appearances: u64,
+    pub context_change_disappearances: u64,
+    pub changed_fields: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActorIdentityConflict {
+    pub profile_name_before: i16,
+    pub profile_name_after: i16,
+    pub actor_name_before: i16,
+    pub actor_name_after: i16,
+    pub occurrences: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActorTemporalCoverage {
+    /// One initial pre-input boundary plus every post-simulation boundary in
+    /// each episode. Shared post/pre boundaries are intentionally counted once.
+    pub boundary_count: u64,
+    pub compared_transition_count: u64,
+    pub actor_boundary_samples: u64,
+    pub episode_local_lifetimes: u64,
+    pub persistent_transition_pairs: u64,
+    pub in_context_appearances: u64,
+    pub in_context_disappearances: u64,
+    pub context_change_appearances: u64,
+    pub context_change_disappearances: u64,
+    /// A complete actor set must not omit a generation and later reintroduce
+    /// it within one episode. Any nonzero value is observer identity drift.
+    pub runtime_generation_reappearances: u64,
+    pub identity_conflicts: Vec<ActorIdentityConflict>,
+    pub profiles: Vec<ActorTemporalProfileCoverage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NativeCorpusInspection {
     pub schema: String,
     pub shard_count: usize,
@@ -97,6 +142,7 @@ pub struct NativeCorpusInspection {
     pub collision_surface_set_sizes: SetSizeSummary,
     pub dynamic_collider_set_sizes: SetSizeSummary,
     pub unique_actor_types: usize,
+    pub actor_temporal_coverage: ActorTemporalCoverage,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -206,6 +252,420 @@ impl SetAccumulator {
 #[derive(Default)]
 struct IdentityValues {
     values: BTreeMap<String, u8>,
+}
+
+#[derive(Default)]
+struct ActorTemporalProfileAccumulator {
+    actor_names: BTreeSet<i16>,
+    stages: BTreeSet<String>,
+    boundary_samples: u64,
+    episode_local_lifetimes: u64,
+    persistent_transition_pairs: u64,
+    in_context_appearances: u64,
+    in_context_disappearances: u64,
+    context_change_appearances: u64,
+    context_change_disappearances: u64,
+    changed_fields: BTreeMap<String, u64>,
+}
+
+#[derive(Default)]
+struct ActorTemporalAccumulator {
+    boundary_count: u64,
+    compared_transition_count: u64,
+    actor_boundary_samples: u64,
+    episode_local_lifetimes: u64,
+    persistent_transition_pairs: u64,
+    in_context_appearances: u64,
+    in_context_disappearances: u64,
+    context_change_appearances: u64,
+    context_change_disappearances: u64,
+    runtime_generation_reappearances: u64,
+    identity_conflicts: BTreeMap<(i16, i16, i16, i16), u64>,
+    profiles: BTreeMap<i16, ActorTemporalProfileAccumulator>,
+}
+
+impl ActorTemporalAccumulator {
+    fn finish(self) -> ActorTemporalCoverage {
+        ActorTemporalCoverage {
+            boundary_count: self.boundary_count,
+            compared_transition_count: self.compared_transition_count,
+            actor_boundary_samples: self.actor_boundary_samples,
+            episode_local_lifetimes: self.episode_local_lifetimes,
+            persistent_transition_pairs: self.persistent_transition_pairs,
+            in_context_appearances: self.in_context_appearances,
+            in_context_disappearances: self.in_context_disappearances,
+            context_change_appearances: self.context_change_appearances,
+            context_change_disappearances: self.context_change_disappearances,
+            runtime_generation_reappearances: self.runtime_generation_reappearances,
+            identity_conflicts: self
+                .identity_conflicts
+                .into_iter()
+                .map(
+                    |(
+                        (
+                            profile_name_before,
+                            profile_name_after,
+                            actor_name_before,
+                            actor_name_after,
+                        ),
+                        occurrences,
+                    )| ActorIdentityConflict {
+                        profile_name_before,
+                        profile_name_after,
+                        actor_name_before,
+                        actor_name_after,
+                        occurrences,
+                    },
+                )
+                .collect(),
+            profiles: self
+                .profiles
+                .into_iter()
+                .map(|(profile_name, profile)| ActorTemporalProfileCoverage {
+                    profile_name,
+                    actor_names: profile.actor_names.into_iter().collect(),
+                    stages: profile.stages.into_iter().collect(),
+                    boundary_samples: profile.boundary_samples,
+                    episode_local_lifetimes: profile.episode_local_lifetimes,
+                    persistent_transition_pairs: profile.persistent_transition_pairs,
+                    in_context_appearances: profile.in_context_appearances,
+                    in_context_disappearances: profile.in_context_disappearances,
+                    context_change_appearances: profile.context_change_appearances,
+                    context_change_disappearances: profile.context_change_disappearances,
+                    changed_fields: profile.changed_fields,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn record_changed_field(
+    profile: &mut ActorTemporalProfileAccumulator,
+    name: &'static str,
+    changed: bool,
+) {
+    if changed {
+        *profile.changed_fields.entry(name.into()).or_default() += 1;
+    }
+}
+
+fn float_changed(left: f32, right: f32) -> bool {
+    left.to_bits() != right.to_bits()
+}
+
+fn float_array_changed<const N: usize>(left: [f32; N], right: [f32; N]) -> bool {
+    left.iter()
+        .zip(right)
+        .any(|(left, right)| float_changed(*left, right))
+}
+
+fn record_persistent_actor_changes(
+    profile: &mut ActorTemporalProfileAccumulator,
+    before: &NativeActorObservation,
+    after: &NativeActorObservation,
+) {
+    record_changed_field(profile, "actor_name", before.actor_name != after.actor_name);
+    record_changed_field(
+        profile,
+        "profile_name",
+        before.profile_name != after.profile_name,
+    );
+    record_changed_field(profile, "set_id", before.set_id != after.set_id);
+    record_changed_field(profile, "home_room", before.home_room != after.home_room);
+    record_changed_field(
+        profile,
+        "current_room",
+        before.current_room != after.current_room,
+    );
+    record_changed_field(profile, "health", before.health != after.health);
+    record_changed_field(profile, "status", before.status != after.status);
+    record_changed_field(
+        profile,
+        "position",
+        float_array_changed(before.position, after.position),
+    );
+    record_changed_field(
+        profile,
+        "current_angle",
+        before.current_angle != after.current_angle,
+    );
+    record_changed_field(
+        profile,
+        "shape_angle",
+        before.shape_angle != after.shape_angle,
+    );
+    record_changed_field(
+        profile,
+        "base_state_available",
+        before.base_state_available != after.base_state_available,
+    );
+
+    if before.base_state_available && after.base_state_available {
+        record_changed_field(profile, "actor_type", before.actor_type != after.actor_type);
+        record_changed_field(
+            profile,
+            "process_subtype",
+            before.process_subtype != after.process_subtype,
+        );
+        record_changed_field(
+            profile,
+            "parent_runtime_generation",
+            before.parent_runtime_generation != after.parent_runtime_generation,
+        );
+        record_changed_field(profile, "parameters", before.parameters != after.parameters);
+        record_changed_field(profile, "condition", before.condition != after.condition);
+        record_changed_field(profile, "old_room", before.old_room != after.old_room);
+        record_changed_field(profile, "group", before.group != after.group);
+        record_changed_field(profile, "argument", before.argument != after.argument);
+        record_changed_field(profile, "pause_flag", before.pause_flag != after.pause_flag);
+        record_changed_field(
+            profile,
+            "process_init_state",
+            before.process_init_state != after.process_init_state,
+        );
+        record_changed_field(
+            profile,
+            "process_create_phase",
+            before.process_create_phase != after.process_create_phase,
+        );
+        record_changed_field(profile, "cull_type", before.cull_type != after.cull_type);
+        record_changed_field(
+            profile,
+            "demo_actor_id",
+            before.demo_actor_id != after.demo_actor_id,
+        );
+        record_changed_field(profile, "carry_type", before.carry_type != after.carry_type);
+        record_changed_field(
+            profile,
+            "heap_present",
+            before.heap_present != after.heap_present,
+        );
+        record_changed_field(
+            profile,
+            "model_present",
+            before.model_present != after.model_present,
+        );
+        record_changed_field(
+            profile,
+            "joint_collision_present",
+            before.joint_collision_present != after.joint_collision_present,
+        );
+        record_changed_field(
+            profile,
+            "home_position",
+            float_array_changed(before.home_position, after.home_position),
+        );
+        record_changed_field(
+            profile,
+            "old_position",
+            float_array_changed(before.old_position, after.old_position),
+        );
+        record_changed_field(
+            profile,
+            "velocity",
+            float_array_changed(before.velocity, after.velocity),
+        );
+        record_changed_field(
+            profile,
+            "forward_speed",
+            float_changed(before.forward_speed, after.forward_speed),
+        );
+        record_changed_field(
+            profile,
+            "scale",
+            float_array_changed(before.scale, after.scale),
+        );
+        record_changed_field(
+            profile,
+            "gravity",
+            float_changed(before.gravity, after.gravity),
+        );
+        record_changed_field(
+            profile,
+            "max_fall_speed",
+            float_changed(before.max_fall_speed, after.max_fall_speed),
+        );
+        record_changed_field(
+            profile,
+            "eye_position",
+            float_array_changed(before.eye_position, after.eye_position),
+        );
+        record_changed_field(profile, "home_angle", before.home_angle != after.home_angle);
+        record_changed_field(profile, "old_angle", before.old_angle != after.old_angle);
+    }
+
+    record_changed_field(
+        profile,
+        "attention.present",
+        before.attention.is_some() != after.attention.is_some(),
+    );
+    if let (Some(before), Some(after)) = (&before.attention, &after.attention) {
+        record_changed_field(profile, "attention.flags", before.flags != after.flags);
+        record_changed_field(
+            profile,
+            "attention.position",
+            float_array_changed(before.position, after.position),
+        );
+        record_changed_field(
+            profile,
+            "attention.distance_indices",
+            before.distance_indices != after.distance_indices,
+        );
+        record_changed_field(
+            profile,
+            "attention.auxiliary",
+            before.auxiliary != after.auxiliary,
+        );
+    }
+    record_changed_field(
+        profile,
+        "event_participation.present",
+        before.event_participation.is_some() != after.event_participation.is_some(),
+    );
+    if let (Some(before), Some(after)) = (&before.event_participation, &after.event_participation) {
+        record_changed_field(
+            profile,
+            "event_participation.command",
+            before.command != after.command,
+        );
+        record_changed_field(
+            profile,
+            "event_participation.condition",
+            before.condition != after.condition,
+        );
+        record_changed_field(
+            profile,
+            "event_participation.event_id",
+            before.event_id != after.event_id,
+        );
+        record_changed_field(
+            profile,
+            "event_participation.map_tool_id",
+            before.map_tool_id != after.map_tool_id,
+        );
+        record_changed_field(
+            profile,
+            "event_participation.index",
+            before.index != after.index,
+        );
+    }
+    record_changed_field(
+        profile,
+        "return_place_writer",
+        before.return_place_writer != after.return_place_writer,
+    );
+}
+
+fn record_actor_temporal_episode(
+    accumulator: &mut ActorTemporalAccumulator,
+    episode: &NativeEpisode,
+) {
+    let mut boundaries = Vec::with_capacity(episode.steps.len() + 1);
+    boundaries.push(&episode.steps[0].pre_input);
+    boundaries.extend(episode.steps.iter().map(|step| &step.post_simulation));
+    accumulator.boundary_count += boundaries.len() as u64;
+
+    let mut episode_lifetimes = BTreeSet::new();
+    let mut seen_generations = BTreeSet::new();
+    let mut previous_generations = BTreeSet::new();
+    for (boundary_index, observation) in boundaries.iter().enumerate() {
+        accumulator.actor_boundary_samples += observation.actors.len() as u64;
+        let current_generations = observation
+            .actors
+            .iter()
+            .map(|actor| actor.runtime_generation)
+            .collect::<BTreeSet<_>>();
+        if boundary_index != 0 {
+            accumulator.runtime_generation_reappearances += current_generations
+                .iter()
+                .filter(|generation| {
+                    !previous_generations.contains(*generation)
+                        && seen_generations.contains(*generation)
+                })
+                .count() as u64;
+        }
+        seen_generations.extend(current_generations.iter().copied());
+        previous_generations = current_generations;
+        for actor in &observation.actors {
+            episode_lifetimes.insert((actor.profile_name, actor.runtime_generation));
+            let profile = accumulator.profiles.entry(actor.profile_name).or_default();
+            profile.actor_names.insert(actor.actor_name);
+            profile.stages.insert(observation.stage.clone());
+            profile.boundary_samples += 1;
+        }
+    }
+    accumulator.episode_local_lifetimes += episode_lifetimes.len() as u64;
+    for (profile_name, _) in episode_lifetimes {
+        accumulator
+            .profiles
+            .entry(profile_name)
+            .or_default()
+            .episode_local_lifetimes += 1;
+    }
+
+    for pair in boundaries.windows(2) {
+        let before = pair[0];
+        let after = pair[1];
+        accumulator.compared_transition_count += 1;
+        let same_context =
+            before.stage == after.stage && before.room == after.room && before.layer == after.layer;
+        let before_by_id = before
+            .actors
+            .iter()
+            .map(|actor| (actor.runtime_generation, actor))
+            .collect::<BTreeMap<_, _>>();
+        let after_by_id = after
+            .actors
+            .iter()
+            .map(|actor| (actor.runtime_generation, actor))
+            .collect::<BTreeMap<_, _>>();
+
+        for (runtime_generation, actor) in &after_by_id {
+            if let Some(previous) = before_by_id.get(runtime_generation) {
+                accumulator.persistent_transition_pairs += 1;
+                let profile = accumulator
+                    .profiles
+                    .entry(previous.profile_name)
+                    .or_default();
+                profile.persistent_transition_pairs += 1;
+                record_persistent_actor_changes(profile, previous, actor);
+                if previous.profile_name != actor.profile_name
+                    || previous.actor_name != actor.actor_name
+                {
+                    *accumulator
+                        .identity_conflicts
+                        .entry((
+                            previous.profile_name,
+                            actor.profile_name,
+                            previous.actor_name,
+                            actor.actor_name,
+                        ))
+                        .or_default() += 1;
+                }
+            } else {
+                let profile = accumulator.profiles.entry(actor.profile_name).or_default();
+                if same_context {
+                    accumulator.in_context_appearances += 1;
+                    profile.in_context_appearances += 1;
+                } else {
+                    accumulator.context_change_appearances += 1;
+                    profile.context_change_appearances += 1;
+                }
+            }
+        }
+        for (runtime_generation, actor) in &before_by_id {
+            if !after_by_id.contains_key(runtime_generation) {
+                let profile = accumulator.profiles.entry(actor.profile_name).or_default();
+                if same_context {
+                    accumulator.in_context_disappearances += 1;
+                    profile.in_context_disappearances += 1;
+                } else {
+                    accumulator.context_change_disappearances += 1;
+                    profile.context_change_disappearances += 1;
+                }
+            }
+        }
+    }
 }
 
 impl IdentityValues {
@@ -415,6 +875,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut rng_sizes = SetAccumulator::default();
     let mut surface_sizes = SetAccumulator::default();
     let mut dynamic_collider_sizes = SetAccumulator::default();
+    let mut actor_temporal = ActorTemporalAccumulator::default();
     let mut identities = BTreeMap::<String, IdentityValues>::new();
     let mut episode_count = 0_u64;
     let mut success_count = 0_u64;
@@ -433,6 +894,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             .entry(shard.metadata.action_schema.clone())
             .or_default() += 1;
         for episode in &shard.episodes {
+            record_actor_temporal_episode(&mut actor_temporal, episode);
             episode_count += 1;
             success_count += u64::from(episode.success);
             failure_count += u64::from(!episode.success);
@@ -690,6 +1152,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         })
         .collect::<Vec<_>>();
 
+    let actor_temporal_coverage = actor_temporal.finish();
     let mut warnings = Vec::new();
     if shards.is_empty() {
         warnings.push("corpus contains no shards".into());
@@ -718,9 +1181,14 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     if observation_schemas.len() > 1 || action_schemas.len() > 1 {
         warnings.push("corpus mixes incompatible observation or action schemas".into());
     }
+    if actor_temporal_coverage.runtime_generation_reappearances != 0
+        || !actor_temporal_coverage.identity_conflicts.is_empty()
+    {
+        warnings.push("actor runtime-generation identity is inconsistent within an episode".into());
+    }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V4.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V5.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -744,6 +1212,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         collision_surface_set_sizes: surface_sizes.finish(),
         dynamic_collider_set_sizes: dynamic_collider_sizes.finish(),
         unique_actor_types: actor_types.len(),
+        actor_temporal_coverage,
         channel_coverage,
         player_relationship_role_presence,
         missing_mask_counts,
@@ -866,7 +1335,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V4);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V5);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -893,7 +1362,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V4);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V5);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -931,5 +1400,139 @@ mod tests {
                 .minimum,
             12
         );
+    }
+
+    #[test]
+    fn audits_actor_lifecycles_and_typed_changes_without_raw_values() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v14.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        let step = &mut shard.episodes[0].steps[0];
+        let persistent = step.pre_input.actors[0].clone();
+
+        let mut disappeared = persistent.clone();
+        disappeared.runtime_generation += 10_000;
+        step.pre_input.actors.push(disappeared);
+        step.pre_input
+            .actors
+            .sort_by_key(|actor| actor.runtime_generation);
+
+        let after_persistent = step
+            .post_simulation
+            .actors
+            .iter_mut()
+            .find(|actor| actor.runtime_generation == persistent.runtime_generation)
+            .unwrap();
+        after_persistent.position[0] += 1.0;
+        after_persistent.velocity[2] += 2.0;
+
+        let mut appeared = persistent.clone();
+        appeared.runtime_generation += 20_000;
+        appeared.profile_name += 1;
+        appeared.actor_name += 1;
+        step.post_simulation.actors.push(appeared.clone());
+        step.post_simulation
+            .actors
+            .sort_by_key(|actor| actor.runtime_generation);
+
+        let report = inspect_native_episode_corpus(&[shard]);
+        let temporal = &report.actor_temporal_coverage;
+        assert_eq!(temporal.boundary_count, 2);
+        assert_eq!(temporal.compared_transition_count, 1);
+        assert_eq!(temporal.in_context_appearances, 1);
+        assert_eq!(temporal.in_context_disappearances, 1);
+        assert_eq!(temporal.context_change_appearances, 0);
+        assert_eq!(temporal.context_change_disappearances, 0);
+        assert!(temporal.identity_conflicts.is_empty());
+
+        let persistent_profile = temporal
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_name == persistent.profile_name)
+            .unwrap();
+        assert_eq!(persistent_profile.changed_fields["position"], 1);
+        assert_eq!(persistent_profile.changed_fields["velocity"], 1);
+        assert_eq!(persistent_profile.in_context_disappearances, 1);
+        assert!(!persistent_profile.changed_fields.contains_key("health"));
+
+        let appeared_profile = temporal
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_name == appeared.profile_name)
+            .unwrap();
+        assert_eq!(appeared_profile.in_context_appearances, 1);
+        assert_eq!(appeared_profile.boundary_samples, 1);
+    }
+
+    #[test]
+    fn separates_context_teardown_from_in_context_actor_lifecycle() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v14.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        let step = &mut shard.episodes[0].steps[0];
+        let removed = step.pre_input.actors[0].runtime_generation;
+        step.post_simulation.room = step.pre_input.room.wrapping_add(1);
+        step.post_simulation
+            .actors
+            .retain(|actor| actor.runtime_generation != removed);
+        let mut appeared = step.pre_input.actors[0].clone();
+        appeared.runtime_generation += 30_000;
+        step.post_simulation.actors.push(appeared);
+        step.post_simulation
+            .actors
+            .sort_by_key(|actor| actor.runtime_generation);
+
+        let report = inspect_native_episode_corpus(&[shard]);
+        let temporal = report.actor_temporal_coverage;
+        assert_eq!(temporal.in_context_appearances, 0);
+        assert_eq!(temporal.in_context_disappearances, 0);
+        assert_eq!(temporal.context_change_appearances, 1);
+        assert_eq!(temporal.context_change_disappearances, 1);
+    }
+
+    #[test]
+    fn flags_a_runtime_generation_that_reappears_after_omission() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v14.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        let second_step = shard.episodes[0].steps[0].clone();
+        shard.episodes[0].steps.push(second_step);
+        let generation = shard.episodes[0].steps[0].pre_input.actors[0].runtime_generation;
+        let actor = shard.episodes[0].steps[0].pre_input.actors[0].clone();
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .actors
+            .retain(|candidate| candidate.runtime_generation != generation);
+        if !shard.episodes[0].steps[1]
+            .post_simulation
+            .actors
+            .iter()
+            .any(|candidate| candidate.runtime_generation == generation)
+        {
+            shard.episodes[0].steps[1]
+                .post_simulation
+                .actors
+                .push(actor);
+            shard.episodes[0].steps[1]
+                .post_simulation
+                .actors
+                .sort_by_key(|candidate| candidate.runtime_generation);
+        }
+
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report
+                .actor_temporal_coverage
+                .runtime_generation_reappearances,
+            1
+        );
+        assert!(report.warnings.iter().any(|warning| {
+            warning.contains("actor runtime-generation identity is inconsistent within an episode")
+        }));
     }
 }

@@ -245,6 +245,20 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     components with explicit absence and validation. Host addresses, member
     pointers, guessed offsets and opaque object bytes are forbidden as features.
     This architecture result does not claim those typed components are built.
+  - [x] Audit actor state temporally from the complete native episode set rather
+    than treating duplicated pre/post snapshots as independent samples. Native
+    corpus inspection v5 reconstructs each episode's unique boundary sequence,
+    joins persistent actors by runtime generation, counts episode-local
+    lifetimes and in-context appearances/disappearances separately from room or
+    stage teardown, and reports typed field-change counts per profile without
+    retaining raw values. Identity/profile changes on one runtime generation
+    are explicit conflicts. A live observation-v13 two-episode shard yielded
+    252 boundaries, 11,864 complete actor samples, 98 episode-local lifetimes,
+    11,766 persistent pairs, two appearances and four disappearances across 28
+    profiles with zero identity conflicts or generation reappearances; 12
+    profiles changed at least one typed field (`88c1c59f...ce343`). This is
+    observation evidence only and supplies no target actor, desired transition,
+    reward or preferred action.
   - [x] Capture Link-rooted relationships as named, optional, pointer-free actor
     identities: targeted, ride, held, grabbed, thrown-boomerang, copy-rod,
     hookshot-roof-wait, chain-grab, and attention hint/catch/look actors.
