@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twenty-one operations:
+The planner CLI currently owns twenty-three operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -32,6 +32,10 @@ The planner CLI currently owns twenty-one operations:
   raw/component deltas and recomputed friendly-fact deltas. Binding-only changes
   are identified separately from payload changes, so identical bytes receiving
   a new semantic interpretation remain visible.
+- `diff-orig` compares two canonical extracted bundles at both archive-byte and
+  decoded-record levels. Optional left/right locale selection pairs message
+  groups across language bundles; missing groups, zero-group locale coverage,
+  and ignored message archives remain explicit instead of implying equality.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
 - `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely
@@ -54,6 +58,9 @@ The planner CLI currently owns twenty-one operations:
   immutable manifest-digest store; identical installs are reused.
 - `materialize-fact-pack` retrieves and re-verifies that derived pack without
   needing the original game assets.
+- `list-archive-resources` emits sorted file basenames from a bounded Yaz0/RARC
+  archive so resource-discovery exceptions can be audited instead of guessed
+  from archive filenames.
 - `extract-message-flow` emits the BMG flow labels, nodes, branch-target table,
   correctly resolved query-handler numbers, raw 32-bit event parameters, and
   source-derived temporary-bit, persistent-event-bit, and switch accesses. Raw

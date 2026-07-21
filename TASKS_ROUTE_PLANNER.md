@@ -1694,6 +1694,9 @@ Deliverable: replayable state evidence that can validate transition rules.
       complete fingerprint, and emits a canonical decoded stage/message bundle
       plus sealed fact-pack manifest without host paths or original bytes. See
       `docs/route-planner/orig-discovery-and-extraction.md`.
+    - Message archives are classified from their RARC resources rather than
+      filename inference: group 0 is retained, GZ2E01's empty `bmgres99.arc` is
+      represented explicitly, and ambiguous/malformed candidates fail closed.
   - [x] Install and reload canonical payload/manifest pairs through an immutable
         manifest-digest cache; materialization re-verifies both artifacts and
         needs no `orig/` tree.
@@ -1743,6 +1746,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         evidence instead of authoring guessed suffix effects.
 - [ ] Produce semantic/raw build and language diffs, with explicit unknown or
       uncovered fields rather than assumed equivalence.
+  - [x] Compare canonical extracted stage/message records and ignored archive
+        candidates by raw and decoded digests; explicit locale pairing reports
+        per-side group counts and one-sided coverage. Broader decoded domains
+        and rule-level semantic equivalence remain open.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle.
 - [ ] Implement save/load/title/runtime-file operations.

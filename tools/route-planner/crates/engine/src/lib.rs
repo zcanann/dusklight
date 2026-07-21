@@ -17,6 +17,7 @@ pub mod identity;
 pub mod logic;
 pub mod native_observation;
 pub mod native_snapshot;
+pub mod orig_diff;
 pub mod orig_discovery;
 pub mod orig_extraction;
 pub mod refinement;

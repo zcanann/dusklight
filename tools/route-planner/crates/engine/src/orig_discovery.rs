@@ -8,18 +8,19 @@
 use crate::artifact::Digest;
 use crate::identity::{ContentFingerprint, ContentIdentity, GamePlatform, GameRegion};
 use crate::orig_extraction::{
-    ExtractedMessageFlow, ExtractedStageData, extract_unique_rarc_resource, parse_message_flow,
-    parse_stage_data,
+    ExtractedMessageFlow, ExtractedStageData, extract_unique_rarc_resource,
+    list_rarc_resource_names, parse_message_flow, parse_stage_data,
 };
 use crate::{PlannerContractError, canonical_json};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 
 pub const ORIG_INPUT_SCAN_SCHEMA: &str = "dusklight.route-planner.orig-input-scan/v1";
-pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracted-orig-bundle/v1";
+pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracted-orig-bundle/v2";
 pub const SUPPORTED_BUILD_REGISTRY_SCHEMA: &str =
     "dusklight.route-planner.supported-build-registry/v1";
 pub const ORIG_IDENTIFICATION_SCHEMA: &str = "dusklight.route-planner.orig-identification/v1";
@@ -69,6 +70,21 @@ pub struct ExtractedOrigMessageArchive {
     pub flow: ExtractedMessageFlow,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IgnoredOrigArchiveReason {
+    NoMessageFlowResource,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedOrigIgnoredArchive {
+    pub relative_path: String,
+    pub archive_sha256: Digest,
+    pub reason: IgnoredOrigArchiveReason,
+    pub resource_names: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractedOrigBundle {
@@ -77,6 +93,7 @@ pub struct ExtractedOrigBundle {
     pub input_scan: OrigInputScan,
     pub stages: Vec<ExtractedOrigStageArchive>,
     pub message_flows: Vec<ExtractedOrigMessageArchive>,
+    pub ignored_archives: Vec<ExtractedOrigIgnoredArchive>,
 }
 
 /// Exact identities the caller is prepared to support. Product IDs and friendly
@@ -212,6 +229,18 @@ impl ExtractedOrigBundle {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }
 
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let bundle: Self = serde_json::from_slice(bytes)?;
+        bundle.validate()?;
+        if bundle.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "orig.bundle",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(bundle)
+    }
+
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != EXTRACTED_ORIG_BUNDLE_SCHEMA {
             return Err(PlannerContractError::new(
@@ -230,14 +259,24 @@ impl ExtractedOrigBundle {
         }
         if !is_sorted_by(&self.stages, |record| record.relative_path.as_str())
             || !is_sorted_by(&self.message_flows, |record| record.relative_path.as_str())
+            || !is_sorted_by(&self.ignored_archives, |record| {
+                record.relative_path.as_str()
+            })
         {
             return Err(PlannerContractError::new(
                 "orig.bundle",
                 "decoded archives must be unique and sorted by relative path",
             ));
         }
+        let mut classified_paths = BTreeSet::new();
         for record in &self.stages {
             validate_relative_path(&record.relative_path)?;
+            if !classified_paths.insert(record.relative_path.as_str()) {
+                return Err(PlannerContractError::new(
+                    "orig.bundle",
+                    "classifies one archive more than once",
+                ));
+            }
             require_source_digest(
                 &self.input_scan.files,
                 &record.relative_path,
@@ -253,6 +292,12 @@ impl ExtractedOrigBundle {
         }
         for record in &self.message_flows {
             validate_relative_path(&record.relative_path)?;
+            if !classified_paths.insert(record.relative_path.as_str()) {
+                return Err(PlannerContractError::new(
+                    "orig.bundle",
+                    "classifies one archive more than once",
+                ));
+            }
             require_source_digest(
                 &self.input_scan.files,
                 &record.relative_path,
@@ -280,6 +325,38 @@ impl ExtractedOrigBundle {
                 "orig.bundle.message_flows.resource_sha256",
                 record.resource_sha256,
             )?;
+        }
+        for record in &self.ignored_archives {
+            validate_relative_path(&record.relative_path)?;
+            if !classified_paths.insert(record.relative_path.as_str()) {
+                return Err(PlannerContractError::new(
+                    "orig.bundle",
+                    "classifies one archive more than once",
+                ));
+            }
+            require_source_digest(
+                &self.input_scan.files,
+                &record.relative_path,
+                record.archive_sha256,
+            )?;
+            if !record
+                .resource_names
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+            {
+                return Err(PlannerContractError::new(
+                    "orig.bundle.ignored_archives.resource_names",
+                    "must be unique and sorted",
+                ));
+            }
+            for name in &record.resource_names {
+                if name.is_empty() || name.contains(['/', '\\', '\0']) {
+                    return Err(PlannerContractError::new(
+                        "orig.bundle.ignored_archives.resource_names",
+                        "must contain valid basenames",
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -428,6 +505,7 @@ pub fn extract_orig_bundle(
     content.verify_detected(&discovered.scan.fingerprint)?;
     let mut stages = Vec::new();
     let mut message_flows = Vec::new();
+    let mut ignored_archives = Vec::new();
     for relative_path in &discovered.scan.extractable_archive_paths {
         let path = discovered.game_root.join(relative_path);
         let metadata = fs::symlink_metadata(&path)
@@ -449,16 +527,36 @@ pub fn extract_orig_bundle(
                 resource_sha256: Digest(Sha256::digest(&resource).into()),
                 stage: parse_stage_data(&resource)?,
             });
-        } else if let Some((locale_bundle, message_group, resource_name)) =
-            message_resource_name(relative_path)
-        {
-            let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+        } else if let Some(locale_bundle) = message_archive_locale(relative_path) {
+            let resource_names = list_rarc_resource_names(&archive)?;
+            let flow_resources = resource_names
+                .iter()
+                .filter_map(|name| {
+                    message_group_from_resource_name(name).map(|group| (name, group))
+                })
+                .collect::<Vec<_>>();
+            let [(resource_name, message_group)] = flow_resources.as_slice() else {
+                if flow_resources.is_empty() {
+                    ignored_archives.push(ExtractedOrigIgnoredArchive {
+                        relative_path: relative_path.clone(),
+                        archive_sha256,
+                        reason: IgnoredOrigArchiveReason::NoMessageFlowResource,
+                        resource_names,
+                    });
+                    continue;
+                }
+                return Err(PlannerContractError::new(
+                    "orig.message_archive",
+                    format!("{relative_path} contains multiple numbered message-flow resources"),
+                ));
+            };
+            let resource = extract_unique_rarc_resource(&archive, resource_name.as_str())?;
             message_flows.push(ExtractedOrigMessageArchive {
                 relative_path: relative_path.clone(),
                 archive_sha256,
                 locale_bundle,
-                message_group,
-                resource_name,
+                message_group: *message_group,
+                resource_name: resource_name.to_string(),
                 resource_sha256: Digest(Sha256::digest(&resource).into()),
                 flow: parse_message_flow(&resource)?,
             });
@@ -470,6 +568,7 @@ pub fn extract_orig_bundle(
         input_scan: discovered.scan,
         stages,
         message_flows,
+        ignored_archives,
     };
     bundle.validate()?;
     Ok(bundle)
@@ -563,7 +662,7 @@ fn discover_orig_tree(
         .iter()
         .filter(|record| {
             stage_resource_name(&record.relative_path).is_some()
-                || message_resource_name(&record.relative_path).is_some()
+                || message_archive_locale(&record.relative_path).is_some()
         })
         .map(|record| record.relative_path.clone())
         .collect::<Vec<_>>();
@@ -771,7 +870,7 @@ fn stage_resource_name(relative_path: &str) -> Option<&'static str> {
     }
 }
 
-fn message_resource_name(relative_path: &str) -> Option<(String, u16, String)> {
+fn message_archive_locale(relative_path: &str) -> Option<String> {
     if !relative_path.starts_with("files/res/Msg") || !relative_path.ends_with(".arc") {
         return None;
     }
@@ -784,12 +883,19 @@ fn message_resource_name(relative_path: &str) -> Option<(String, u16, String)> {
     if components.next().is_some() {
         return None;
     }
-    let group = file_name
-        .strip_prefix("bmgres")?
-        .strip_suffix(".arc")?
-        .parse::<u16>()
-        .ok()?;
-    Some((locale.to_owned(), group, format!("zel_{group:02}.bmg")))
+    let group_hint = file_name.strip_prefix("bmgres")?.strip_suffix(".arc")?;
+    if !group_hint.is_empty() && group_hint.parse::<u16>().is_err() {
+        return None;
+    }
+    Some(locale.to_owned())
+}
+
+fn message_group_from_resource_name(resource_name: &str) -> Option<u16> {
+    resource_name
+        .strip_prefix("zel_")?
+        .strip_suffix(".bmg")?
+        .parse()
+        .ok()
 }
 
 fn sha256_file(path: &Path) -> Result<Digest, PlannerContractError> {
@@ -951,6 +1057,12 @@ mod tests {
         archive
     }
 
+    fn empty_rarc() -> Vec<u8> {
+        let mut archive = rarc("unused", &[]);
+        archive[0x28..0x2c].copy_from_slice(&0_u32.to_be_bytes());
+        archive
+    }
+
     fn minimal_bmg() -> Vec<u8> {
         let mut bmg = vec![0_u8; 0x40];
         bmg[0..8].copy_from_slice(b"MESGbmg1");
@@ -1109,15 +1221,31 @@ mod tests {
             &game.join("files/res/Msgus/bmgres3.arc"),
             &rarc("zel_03.bmg", &minimal_bmg()),
         );
+        write(
+            &game.join("files/res/Msgus/bmgres.arc"),
+            &rarc("zel_00.bmg", &minimal_bmg()),
+        );
+        write(&game.join("files/res/Msgus/bmgres99.arc"), &empty_rarc());
         let scan = scan_orig_tree(&game, Some("GZ2E01")).unwrap();
         let content = ContentIdentity::new("gcn-us-1.0", scan.fingerprint.clone()).unwrap();
         let bundle = extract_orig_bundle(&fixture.0, &content).unwrap();
         assert_eq!(bundle.stages.len(), 1);
         assert_eq!(bundle.stages[0].resource_name, "stage.dzs");
-        assert_eq!(bundle.message_flows.len(), 1);
+        assert_eq!(bundle.message_flows.len(), 2);
         assert_eq!(bundle.message_flows[0].locale_bundle, "us");
-        assert_eq!(bundle.message_flows[0].message_group, 3);
-        assert_eq!(bundle.message_flows[0].flow.node_count, 0);
+        assert_eq!(bundle.message_flows[0].message_group, 0);
+        assert_eq!(bundle.message_flows[1].message_group, 3);
+        assert_eq!(bundle.message_flows[1].flow.node_count, 0);
+        assert_eq!(bundle.ignored_archives.len(), 1);
+        assert_eq!(
+            bundle.ignored_archives[0].relative_path,
+            "files/res/Msgus/bmgres99.arc"
+        );
+        assert_eq!(
+            bundle.ignored_archives[0].reason,
+            IgnoredOrigArchiveReason::NoMessageFlowResource
+        );
+        assert!(bundle.ignored_archives[0].resource_names.is_empty());
         let canonical = bundle.canonical_bytes().unwrap();
         assert!(
             !String::from_utf8(canonical)

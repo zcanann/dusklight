@@ -101,8 +101,10 @@ The canonical bundle contains only:
 
 - the verified content identity;
 - normalized relative paths, sizes, and source digests;
-- decoded DZS/DZR chunk, placement, STAG, and SCLS records; and
-- decoded BMG flow graphs with temporary, persistent, and switch accesses.
+- decoded DZS/DZR chunk, placement, STAG, and SCLS records;
+- decoded BMG flow graphs with temporary, persistent, and switch accesses; and
+- explicit records for candidate archives containing no numbered message-flow
+  resource, including their sorted resource-name inventory.
 
 The bundle contains no original archive bytes and no absolute host paths. The
 separate fact-pack manifest seals the bundle digest, extractor executable and
@@ -111,11 +113,46 @@ feasibility remains unavailable rather than being inferred from an encoded
 destination.
 
 Stage discovery recognizes `files/res/Stage/**/STG_00.arc` as `stage.dzs` and
-room archives beginning with `R` as `room.dzr`. Message discovery recognizes
-`files/res/Msg*/bmgresN.arc` and extracts `zel_NN.bmg`, retaining the locale
-bundle and group number separately. Any recognized archive that fails bounded
-Yaz0/RARC/BMG/DZS decoding aborts the operation instead of producing a partial
-success that looks complete.
+room archives beginning with `R` as `room.dzr`. Message discovery treats
+`files/res/Msg*/bmgres*.arc` as candidates, enumerates the bounded RARC, and
+derives the group from the actual unique `zel_NN.bmg` resource rather than the
+archive filename. This imports group 0 from `bmgres.arc` and records GZ2E01's
+empty `bmgres99.arc` as intentionally ignored. Multiple numbered flow resources
+remain an explicit ambiguity error. Any selected archive or resource that fails
+bounded Yaz0/RARC/BMG/DZS decoding aborts the operation instead of producing a
+partial success that looks complete.
+
+`list-archive-resources` exposes that same deterministic basename inventory for
+auditing filename/resource discrepancies without extracting original bytes.
+
+## Build and language comparison
+
+Compare all decoded records in two canonical bundles:
+
+```text
+route-planner diff-orig \
+  --left extracted-left.json \
+  --right extracted-right.json \
+  --output orig-diff.json
+```
+
+For a cross-language comparison, pair the same message-group identities rather
+than their locale-qualified paths:
+
+```text
+route-planner diff-orig \
+  --left extracted-pal.json --left-locale fr \
+  --right extracted-pal.json --right-locale de \
+  --output fr-vs-de.json
+```
+
+Each stage, message-flow, and ignored-candidate record is classified as byte
+identical, raw-changed but decoded-semantic-equal, semantic-changed, or uncovered
+on one side. Locale comparisons also carry each side's decoded group count, so
+an absent or currently undecoded language bundle cannot produce a misleading
+empty-equivalence result. The artifact does not claim behavior equivalence for
+data the current extractors do not decode; adding those domains remains an
+explicit extraction task.
 
 ## Content-addressed reuse
 
@@ -162,6 +199,10 @@ digest before returning bytes.
 - registry lookup accepts only an exact fingerprint, reports unknown bytes as
   unsupported, and rejects a friendly-label override;
 - one call decodes synthetic stage and message archives into a canonical bundle;
+- group 0 is selected from its actual resource name and empty message candidates
+  remain explicit ignored-archive records;
+- raw/decoded comparisons distinguish semantic changes from container-only
+  changes, retain ignored candidates, and report one-sided locale coverage;
 - serialized output contains no host path; and
 - mutating an archive after creating the identity causes extraction to fail;
 - identical packs reuse one immutable cache entry; and
