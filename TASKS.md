@@ -1249,9 +1249,13 @@ and geometry set sizes without schema changes.
     (`d33d98d4...53482`; model `83b03421...724bc`; no-temporal report
     `a8813ade...4415`). Temporal input also raised contact recall from 12/30 to
     22/30 with one false positive in each treatment, but both still recalled
-    0/15 actor disappearances. Temporal state therefore carries real held-out
-    signal, but does not rescue the lifecycle head; actor selection/gating or a
-    stronger temporal set encoder remains an open, falsifiable next step.
+    0/15 actor disappearances. Separating the two families under the same budget
+    showed independent signal rather than one passenger family: core-only and
+    actor-only temporal views reached 81.71% and 81.64% test improvement and
+    each recalled 21/30 contacts (`f6fef6d1...ba175`,
+    `d856f2f9...30c2c`). Temporal state therefore carries real held-out signal,
+    but does not rescue the lifecycle head; actor selection/gating or a stronger
+    temporal set encoder remains an open, falsifiable next step.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad
