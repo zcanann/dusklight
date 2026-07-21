@@ -3,14 +3,15 @@
 use crate::artifact::Digest;
 use crate::identity::ContextSelector;
 use crate::state::{
-    ComponentBinding, ComponentKind, StateValue, validate_binding, validate_component_kind,
+    ComponentBindingReference, ComponentKind, StateValue, validate_binding_reference,
+    validate_component_kind,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v4";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v5";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -80,7 +81,7 @@ pub enum ValueReference {
     },
     BoundComponentField {
         component_kind: ComponentKind,
-        binding: ComponentBinding,
+        binding: ComponentBindingReference,
         field: String,
     },
     RawBits {
@@ -91,7 +92,7 @@ pub enum ValueReference {
     },
     BoundRawBits {
         component_kind: ComponentKind,
-        binding: ComponentBinding,
+        binding: ComponentBindingReference,
         byte_offset: u32,
         byte_width: u8,
         mask: u64,
@@ -151,7 +152,7 @@ pub enum PredicateExpression {
 #[serde(deny_unknown_fields)]
 pub struct RawFactBinding {
     pub component_kind: ComponentKind,
-    pub binding: ComponentBinding,
+    pub binding: ComponentBindingReference,
     pub byte_offset: u32,
     pub mask: Vec<u8>,
     pub expected: Vec<u8>,
@@ -399,7 +400,7 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             field,
         } => {
             validate_component_kind(component_kind)?;
-            validate_binding(binding)?;
+            validate_binding_reference(binding)?;
             validate_stable_id("value.field", field)
         }
         ValueReference::RawBits {
@@ -419,7 +420,7 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             ..
         } => {
             validate_component_kind(component_kind)?;
-            validate_binding(binding)?;
+            validate_binding_reference(binding)?;
             validate_raw_value_shape(*byte_width, *mask)
         }
         ValueReference::RuntimeSetting { key } => validate_stable_id("value.key", key),
@@ -479,6 +480,8 @@ fn validate_literal(value: &StateValue) -> Result<(), PlannerContractError> {
 }
 
 fn validate_raw_binding(binding: &RawFactBinding) -> Result<(), PlannerContractError> {
+    validate_component_kind(&binding.component_kind)?;
+    validate_binding_reference(&binding.binding)?;
     if binding.mask.is_empty()
         || binding.mask.len() > 64
         || binding.mask.len() != binding.expected.len()
@@ -536,6 +539,7 @@ fn reject_derived_cycles(facts: &BTreeMap<&str, &DerivedFact>) -> Result<(), Pla
 mod tests {
     use super::*;
     use crate::identity::ExactContext;
+    use crate::state::ComponentBinding;
 
     fn scope() -> ContextScope {
         ContextScope {
@@ -570,7 +574,9 @@ mod tests {
                 scope: scope(),
                 raw: RawFactBinding {
                     component_kind: ComponentKind::PersistentSave,
-                    binding: ComponentBinding::Global,
+                    binding: ComponentBindingReference::Exact {
+                        binding: ComponentBinding::Global,
+                    },
                     byte_offset: 4,
                     mask: vec![0x20],
                     expected: vec![0x20],
@@ -681,8 +687,10 @@ mod tests {
         let bound = PredicateExpression::Compare {
             left: ValueReference::BoundRawBits {
                 component_kind: ComponentKind::DungeonMemory,
-                binding: ComponentBinding::Stage {
-                    stage: "D_MN05".into(),
+                binding: ComponentBindingReference::Exact {
+                    binding: ComponentBinding::Stage {
+                        stage: "D_MN05".into(),
+                    },
                 },
                 byte_offset: 0x1c,
                 byte_width: 0,

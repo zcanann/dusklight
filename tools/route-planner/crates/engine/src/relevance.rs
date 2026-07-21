@@ -7,12 +7,12 @@
 use crate::PlannerContractError;
 use crate::logic::{FactCatalog, PredicateExpression, ValueReference};
 use crate::route_book::RouteActionRef;
-use crate::state::{ComponentBinding, ComponentKind};
+use crate::state::{ComponentBinding, ComponentBindingReference, ComponentKind};
 use crate::transition::{MechanicsCatalog, ObligationDetail, StateOperation};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-pub const BACKWARD_RELEVANCE_SCHEMA: &str = "dusklight.route-planner.backward-relevance/v1";
+pub const BACKWARD_RELEVANCE_SCHEMA: &str = "dusklight.route-planner.backward-relevance/v2";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -29,7 +29,7 @@ pub enum StateDependency {
     },
     BoundComponentField {
         component_kind: ComponentKind,
-        binding: ComponentBinding,
+        binding: ComponentBindingReference,
         field: String,
     },
     RawBits {
@@ -40,7 +40,7 @@ pub enum StateDependency {
     },
     BoundRawBits {
         component_kind: ComponentKind,
-        binding: ComponentBinding,
+        binding: ComponentBindingReference,
         byte_offset: u32,
         byte_width: u32,
     },
@@ -881,6 +881,22 @@ fn dependencies_overlap(left: &StateDependency, right: &StateDependency) -> bool
                 field: other_field,
             },
         ) => component_id == other && field == other_field,
+        (
+            D::BoundComponentField {
+                component_kind,
+                binding,
+                field,
+            },
+            D::BoundComponentField {
+                component_kind: other_kind,
+                binding: other_binding,
+                field: other_field,
+            },
+        ) => {
+            component_kind == other_kind
+                && binding_references_may_match(binding, other_binding)
+                && field == other_field
+        }
         (D::BoundComponentField { field, .. }, D::ComponentField { field: other, .. })
         | (D::ComponentField { field: other, .. }, D::BoundComponentField { field, .. }) => {
             field == other
@@ -906,6 +922,24 @@ fn dependencies_overlap(left: &StateDependency, right: &StateDependency) -> bool
                     *other_offset,
                     u32::from(*other_width),
                 )
+        }
+        (
+            D::BoundRawBits {
+                component_kind,
+                binding,
+                byte_offset,
+                byte_width,
+            },
+            D::BoundRawBits {
+                component_kind: other_kind,
+                binding: other_binding,
+                byte_offset: other_offset,
+                byte_width: other_width,
+            },
+        ) => {
+            component_kind == other_kind
+                && binding_references_may_match(binding, other_binding)
+                && ranges_overlap(*byte_offset, *byte_width, *other_offset, *other_width)
         }
         (
             D::BoundRawBits {
@@ -937,6 +971,32 @@ fn dependencies_overlap(left: &StateDependency, right: &StateDependency) -> bool
             u32::from(*other_width),
         ),
         _ => left == right,
+    }
+}
+
+fn binding_references_may_match(
+    left: &ComponentBindingReference,
+    right: &ComponentBindingReference,
+) -> bool {
+    use ComponentBindingReference as R;
+    match (left, right) {
+        (R::Exact { binding }, R::Exact { binding: other }) => binding == other,
+        (R::ActiveRuntimeFile, R::ActiveRuntimeFile)
+        | (R::CurrentStage, R::CurrentStage)
+        | (R::CurrentRoom, R::CurrentRoom) => true,
+        (R::ActiveRuntimeFile, R::Exact { binding })
+        | (R::Exact { binding }, R::ActiveRuntimeFile) => {
+            matches!(binding, ComponentBinding::RuntimeFile { .. })
+        }
+        (R::CurrentStage, R::Exact { binding })
+        | (R::Exact { binding }, R::CurrentStage) => {
+            matches!(binding, ComponentBinding::Stage { .. })
+        }
+        (R::CurrentRoom, R::Exact { binding })
+        | (R::Exact { binding }, R::CurrentRoom) => {
+            matches!(binding, ComponentBinding::Room { .. })
+        }
+        _ => false,
     }
 }
 

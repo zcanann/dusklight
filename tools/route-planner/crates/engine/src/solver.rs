@@ -2177,11 +2177,12 @@ mod tests {
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateDiff, StateSnapshot};
     use crate::state::{
-        ActorLifecycle, BackingAttachment, BoundaryKind, ComponentBinding, ComponentKind,
-        ComponentPayload, ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA,
-        ExecutionEnvironment, LiveWorldObject, PlayerForm, PlayerState, ProvenanceSourceKind,
-        RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
-        SerializationOwner, SpatialVolume, SpatialVolumeShape, StateComponent, StateValue,
+        ActorLifecycle, BackingAttachment, BoundaryKind, ComponentBinding,
+        ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
+        ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject,
+        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, SpatialVolume,
+        SpatialVolumeShape, StateComponent, StateValue,
     };
     use crate::transition::{
         ActivationContract, ActorReconstructionRule, CandidateTransition, FeasibilityObligation,
@@ -3180,8 +3181,10 @@ mod tests {
         let exact_scope = scope(&snapshot);
         let raw_binding = |stage: &str| RawFactBinding {
             component_kind: ComponentKind::StageMemory,
-            binding: ComponentBinding::Stage {
-                stage: stage.into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Stage {
+                    stage: stage.into(),
+                },
             },
             byte_offset: 0,
             mask: vec![0x01],
@@ -5639,8 +5642,10 @@ mod tests {
     fn keyed_door_uses_bound_fungible_keys_and_oob_does_not_mutate_it() {
         let dungeon_field = |dungeon: &str, field: &str| ValueReference::BoundComponentField {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Dungeon {
-                dungeon: dungeon.into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Dungeon {
+                    dungeon: dungeon.into(),
+                },
             },
             field: field.into(),
         };
@@ -6051,8 +6056,10 @@ mod tests {
         };
         let dungeon_field = |name: &str| ValueReference::BoundComponentField {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Dungeon {
-                dungeon: "forest-temple".into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Dungeon {
+                    dungeon: "forest-temple".into(),
+                },
             },
             field: name.into(),
         };
@@ -7991,7 +7998,7 @@ mod tests {
             scope: exact_scope.clone(),
             raw: RawFactBinding {
                 component_kind,
-                binding,
+                binding: ComponentBindingReference::Exact { binding },
                 byte_offset,
                 mask: vec![mask],
                 expected: vec![mask],

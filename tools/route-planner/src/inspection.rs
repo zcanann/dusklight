@@ -18,8 +18,8 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v7";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v6";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v8";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v7";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -290,7 +290,7 @@ pub fn inspect_state_diff(
         let after_fact = after_facts[fact_id];
         let mut causes = match before_fact.source_kind {
             InspectedFactKind::Alias => {
-                alias_delta_causes(before_fact.raw_binding.as_ref(), &state_diff)
+                alias_delta_causes(before_fact.raw_binding.as_ref(), &state_diff, before, after)
             }
             InspectedFactKind::Derived => {
                 let derived = facts.derived_facts.iter().find(|fact| fact.id == fact_id);
@@ -476,10 +476,14 @@ fn diff_gate_states(
 fn alias_delta_causes(
     binding: Option<&RawFactBinding>,
     state_diff: &StateDiff,
+    before: &PlannerExecutionState,
+    after: &PlannerExecutionState,
 ) -> Vec<FactDeltaCause> {
     let Some(binding) = binding else {
         return Vec::new();
     };
+    let binding_before = binding.binding.resolve(&before.snapshot.environment);
+    let binding_after = binding.binding.resolve(&after.snapshot.environment);
     let mut binding_components = Vec::new();
     let mut payload_components = Vec::new();
     for delta in &state_diff.component_deltas {
@@ -488,8 +492,8 @@ fn alias_delta_causes(
         if !matching_kind {
             continue;
         }
-        let matching_binding = delta.binding_before.as_ref() == Some(&binding.binding)
-            || delta.binding_after.as_ref() == Some(&binding.binding);
+        let matching_binding = delta.binding_before.as_ref() == Some(&binding_before)
+            || delta.binding_after.as_ref() == Some(&binding_after);
         if delta.binding_before != delta.binding_after && matching_binding {
             binding_components.push(delta.component_id.clone());
         }
@@ -583,10 +587,11 @@ mod tests {
     };
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::state::{
-        BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId, PlayerForm,
-        PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
-        SceneLocation, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+        BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
+        ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment,
+        PhysicalSlotId, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        SerializationOwner, StateComponent, StateValue,
     };
     use dusklight_route_planner::transition::{ComponentFieldTarget, StateOperation};
     use std::collections::BTreeMap;
@@ -718,8 +723,10 @@ mod tests {
                 },
                 raw: RawFactBinding {
                     component_kind: ComponentKind::Inventory,
-                    binding: ComponentBinding::RuntimeFile {
-                        runtime_file_id: "file-0".into(),
+                    binding: ComponentBindingReference::Exact {
+                        binding: ComponentBinding::RuntimeFile {
+                            runtime_file_id: "file-0".into(),
+                        },
                     },
                     byte_offset: 0,
                     mask: vec![0x04],

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v7";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v8";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -694,16 +694,20 @@ impl PlannerExecutionState {
                     component_kind,
                     binding,
                     ..
-                } => self
-                    .snapshot
-                    .environment
-                    .components
-                    .iter()
-                    .filter(|component| {
-                        component.component_kind == *component_kind && component.binding == *binding
-                    })
-                    .map(|component| component.id.clone())
-                    .collect(),
+                } => {
+                    let resolved_binding = binding.resolve(&self.snapshot.environment);
+                    self.snapshot
+                        .environment
+                        .components
+                        .iter()
+                        .filter(|component| {
+                            component.component_kind == *component_kind
+                                && component.binding == resolved_binding
+                                && matches!(component.payload, ComponentPayload::Raw { .. })
+                        })
+                        .map(|component| component.id.clone())
+                        .collect()
+                }
                 StateOperation::ClearComponent { selector }
                 | StateOperation::Preserve { selector }
                 | StateOperation::Serialize { selector, .. }
@@ -996,13 +1000,16 @@ impl PlannerExecutionState {
                 byte_width,
                 delta,
             } => {
+                let resolved_binding = binding.resolve(&self.snapshot.environment);
                 let matching_ids = self
                     .snapshot
                     .environment
                     .components
                     .iter()
                     .filter(|component| {
-                        component.component_kind == *component_kind && component.binding == *binding
+                        component.component_kind == *component_kind
+                            && component.binding == resolved_binding
+                            && matches!(component.payload, ComponentPayload::Raw { .. })
                     })
                     .map(|component| component.id.clone())
                     .collect::<Vec<_>>();
@@ -2390,9 +2397,9 @@ mod tests {
     use crate::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use crate::snapshot::STATE_SNAPSHOT_SCHEMA;
     use crate::state::{
-        BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBoundaryRule,
-        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId, PlayerForm,
-        PlayerMount, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
+        BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBindingReference,
+        ComponentBoundaryRule, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId,
+        PlayerForm, PlayerMount, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
         SceneLocation, SemanticLifetime,
     };
     use crate::transition::ComponentFieldTarget;
@@ -3387,6 +3394,7 @@ mod tests {
     #[test]
     fn bound_raw_unsigned_adjusts_only_one_known_stage_bank_atomically() {
         let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state.snapshot.environment.location.stage = "D_MN05".into();
         let mut bytes = vec![0_u8; 0x20];
         bytes[0x1c] = 2;
         state.snapshot.environment.components.push(StateComponent {
@@ -3415,9 +3423,7 @@ mod tests {
 
         let adjust = |delta| StateOperation::AdjustBoundRawUnsigned {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Stage {
-                stage: "D_MN05".into(),
-            },
+            binding: ComponentBindingReference::CurrentStage,
             byte_offset: 0x1c,
             byte_width: 1,
             delta,
@@ -3456,8 +3462,10 @@ mod tests {
                 "snapshot.not-produced",
                 &[StateOperation::AdjustBoundRawUnsigned {
                     component_kind: ComponentKind::DungeonMemory,
-                    binding: ComponentBinding::Stage {
-                        stage: "D_MN04".into(),
+                    binding: ComponentBindingReference::Exact {
+                        binding: ComponentBinding::Stage {
+                            stage: "D_MN04".into(),
+                        },
                     },
                     byte_offset: 0x1c,
                     byte_width: 1,
@@ -3816,6 +3824,17 @@ mod tests {
             unreachable!()
         };
         fields.insert("rupees".into(), StateValue::Unsigned(99));
+        let mut raw_counter = raw_component();
+        raw_counter.id = "save.raw-counter".into();
+        raw_counter.binding = ComponentBinding::RuntimeFile {
+            runtime_file_id: "file-0".into(),
+        };
+        let ComponentPayload::Raw { bytes, known_mask } = &mut raw_counter.payload else {
+            unreachable!()
+        };
+        bytes[0] = 4;
+        known_mask[0] = 0xff;
+        source.environment.components.push(raw_counter);
         source
             .environment
             .components
@@ -3854,7 +3873,7 @@ mod tests {
             source_runtime_file_id: "file-0".into(),
             destination_slot: PhysicalSlotId(1),
             destination_persistent_file_id: "persistent-slot-1".into(),
-            runtime_component_ids: vec!["save.main".into()],
+            runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
             stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
         };
         state
@@ -3905,7 +3924,7 @@ mod tests {
                     source_persistent_file_id: "persistent-slot-1".into(),
                     destination_runtime_file_id: "slot-1-runtime".into(),
                     destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
-                    runtime_component_ids: vec!["save.main".into()],
+                    runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
                     stage_bank_stages: vec!["F_SP103".into()],
                 }],
             )
@@ -3927,7 +3946,7 @@ mod tests {
                         source_persistent_file_id: "persistent-slot-1".into(),
                         destination_runtime_file_id: "slot-1-runtime".into(),
                         destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
-                        runtime_component_ids: vec!["save.main".into()],
+                        runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
                         stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
                     },
                     StateOperation::ActivateStageBank {
@@ -3980,6 +3999,49 @@ mod tests {
             field(&state, "session.recent-item", "item"),
             &StateValue::Unsigned(0x4a)
         );
+        assert_eq!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "save.raw-counter")
+                .unwrap()
+                .binding,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "slot-1-runtime".into(),
+            }
+        );
+        state
+            .apply_operations(
+                "transition.increment-loaded-counter",
+                "snapshot.loaded-counter-incremented",
+                &[StateOperation::AdjustBoundRawUnsigned {
+                    component_kind: ComponentKind::PersistentSave,
+                    binding: ComponentBindingReference::ActiveRuntimeFile,
+                    byte_offset: 0,
+                    byte_width: 1,
+                    delta: 1,
+                }],
+            )
+            .unwrap();
+        let loaded_counter = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.raw-counter")
+            .unwrap();
+        assert_eq!(
+            loaded_counter.binding,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "slot-1-runtime".into(),
+            }
+        );
+        let ComponentPayload::Raw { bytes, .. } = &loaded_counter.payload else {
+            unreachable!()
+        };
+        assert_eq!(bytes[0], 5);
         assert!(
             state
                 .serialized_components

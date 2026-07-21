@@ -148,6 +148,19 @@ pub enum ComponentBinding {
     Custom { kind_id: String, context_id: String },
 }
 
+/// Resolves the semantic backing selected by a rule at the instant that rule is
+/// evaluated. Components always retain a concrete [`ComponentBinding`]; this
+/// separate type prevents imported rules from hard-coding transient runtime-file
+/// IDs or the location at which they happened to be authored.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComponentBindingReference {
+    Exact { binding: ComponentBinding },
+    ActiveRuntimeFile,
+    CurrentStage,
+    CurrentRoom,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticLifetime {
@@ -604,6 +617,30 @@ impl ExecutionEnvironment {
     }
 }
 
+impl ComponentBindingReference {
+    pub fn resolve(&self, environment: &ExecutionEnvironment) -> ComponentBinding {
+        match self {
+            Self::Exact { binding } => binding.clone(),
+            Self::ActiveRuntimeFile => ComponentBinding::RuntimeFile {
+                runtime_file_id: environment.active_runtime_file.id.clone(),
+            },
+            Self::CurrentStage => ComponentBinding::Stage {
+                stage: environment.location.stage.clone(),
+            },
+            Self::CurrentRoom => ComponentBinding::Room {
+                stage: environment.location.stage.clone(),
+                room: environment.location.room,
+            },
+        }
+    }
+}
+
+impl From<ComponentBinding> for ComponentBindingReference {
+    fn from(binding: ComponentBinding) -> Self {
+        Self::Exact { binding }
+    }
+}
+
 impl BoundaryPolicy {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != BOUNDARY_POLICY_SCHEMA {
@@ -717,6 +754,17 @@ pub(crate) fn validate_binding(binding: &ComponentBinding) -> Result<(), Planner
             validate_stable_id("binding.context_id", context_id)
         }
         ComponentBinding::Global | ComponentBinding::Unbound => Ok(()),
+    }
+}
+
+pub(crate) fn validate_binding_reference(
+    reference: &ComponentBindingReference,
+) -> Result<(), PlannerContractError> {
+    match reference {
+        ComponentBindingReference::Exact { binding } => validate_binding(binding),
+        ComponentBindingReference::ActiveRuntimeFile
+        | ComponentBindingReference::CurrentStage
+        | ComponentBindingReference::CurrentRoom => Ok(()),
     }
 }
 
@@ -1250,5 +1298,40 @@ mod tests {
             .component_rules
             .push(duplicate.component_rules[0].clone());
         assert_eq!(duplicate.validate().unwrap_err().field(), "component_rules");
+    }
+
+    #[test]
+    fn binding_references_resolve_from_the_live_environment() {
+        let environment = file_zero_environment();
+        assert_eq!(
+            ComponentBindingReference::ActiveRuntimeFile.resolve(&environment),
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            }
+        );
+        assert_eq!(
+            ComponentBindingReference::CurrentStage.resolve(&environment),
+            ComponentBinding::Stage {
+                stage: "F_SP103".into(),
+            }
+        );
+        assert_eq!(
+            ComponentBindingReference::CurrentRoom.resolve(&environment),
+            ComponentBinding::Room {
+                stage: "F_SP103".into(),
+                room: 0,
+            }
+        );
+        let exact = ComponentBindingReference::Exact {
+            binding: ComponentBinding::Dungeon {
+                dungeon: "forest-temple".into(),
+            },
+        };
+        assert_eq!(
+            exact.resolve(&environment),
+            ComponentBinding::Dungeon {
+                dungeon: "forest-temple".into(),
+            }
+        );
     }
 }

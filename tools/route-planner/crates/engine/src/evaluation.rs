@@ -975,6 +975,7 @@ impl<'a> PredicateEvaluator<'a> {
     }
 
     fn evaluate_raw_binding(&self, binding: &RawFactBinding) -> EvaluatedTruth {
+        let resolved_binding = binding.binding.resolve(&self.snapshot.environment);
         let matches = self
             .snapshot
             .environment
@@ -982,7 +983,8 @@ impl<'a> PredicateEvaluator<'a> {
             .iter()
             .filter(|component| {
                 component.component_kind == binding.component_kind
-                    && component.binding == binding.binding
+                    && component.binding == resolved_binding
+                    && matches!(component.payload, ComponentPayload::Raw { .. })
             })
             .collect::<Vec<_>>();
         let [component] = matches.as_slice() else {
@@ -1031,13 +1033,16 @@ impl<'a> PredicateEvaluator<'a> {
                 binding,
                 field,
             } => {
+                let resolved_binding = binding.resolve(&self.snapshot.environment);
                 let mut matches = self
                     .snapshot
                     .environment
                     .components
                     .iter()
                     .filter(|component| {
-                        component.component_kind == *component_kind && component.binding == *binding
+                        component.component_kind == *component_kind
+                            && component.binding == resolved_binding
+                            && matches!(component.payload, ComponentPayload::Structured { .. })
                     });
                 let component = matches.next()?;
                 if matches.next().is_some() {
@@ -1068,13 +1073,16 @@ impl<'a> PredicateEvaluator<'a> {
                 byte_width,
                 mask,
             } => {
+                let resolved_binding = binding.resolve(&self.snapshot.environment);
                 let mut matches = self
                     .snapshot
                     .environment
                     .components
                     .iter()
                     .filter(|component| {
-                        component.component_kind == *component_kind && component.binding == *binding
+                        component.component_kind == *component_kind
+                            && component.binding == resolved_binding
+                            && matches!(component.payload, ComponentPayload::Raw { .. })
                     });
                 let component = matches.next()?;
                 if matches.next().is_some() {
@@ -1334,12 +1342,12 @@ mod tests {
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
-        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload,
-        ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject,
-        PlaneRelation, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
-        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
-        SerializationOwner, SpatialConnection, SpatialConnectionStatus, SpatialPlane,
-        SpatialVolume, SpatialVolumeShape, StateComponent,
+        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentBindingReference,
+        ComponentKind, ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA,
+        ExecutionEnvironment, LiveWorldObject, PlaneRelation, PlayerForm, PlayerState,
+        ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        SemanticLifetime, SerializationOwner, SpatialConnection, SpatialConnectionStatus,
+        SpatialPlane, SpatialVolume, SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
         ActivationContract, ObligationKind, StateOperation, TemporalWindow, TransitionKind,
@@ -1455,7 +1463,9 @@ mod tests {
                 scope: scope.clone(),
                 raw: RawFactBinding {
                     component_kind: ComponentKind::PersistentSave,
-                    binding: ComponentBinding::Global,
+                    binding: ComponentBindingReference::Exact {
+                        binding: ComponentBinding::Global,
+                    },
                     byte_offset: 0,
                     mask: vec![0x20],
                     expected: vec![0x20],
@@ -1549,8 +1559,10 @@ mod tests {
         let facts = facts(&snapshot, TruthStatus::Established);
         let reference = |dungeon: &str| ValueReference::BoundComponentField {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Dungeon {
-                dungeon: dungeon.into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Dungeon {
+                    dungeon: dungeon.into(),
+                },
             },
             field: "small_keys".into(),
         };
@@ -1638,8 +1650,10 @@ mod tests {
         let facts = facts(&snapshot, TruthStatus::Established);
         let stage_value = |stage: &str, byte_offset: u32, mask: u64| ValueReference::BoundRawBits {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Stage {
-                stage: stage.into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Stage {
+                    stage: stage.into(),
+                },
             },
             byte_offset,
             byte_width: 1,
@@ -1736,8 +1750,10 @@ mod tests {
         let facts = facts(&snapshot, TruthStatus::Established);
         let reference = |dungeon: &str| ValueReference::BoundRawBits {
             component_kind: ComponentKind::DungeonMemory,
-            binding: ComponentBinding::Dungeon {
-                dungeon: dungeon.into(),
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Dungeon {
+                    dungeon: dungeon.into(),
+                },
             },
             byte_offset: 0,
             byte_width: 1,
@@ -1781,6 +1797,90 @@ mod tests {
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
                 .resolve_value(&reference("goron-mines")),
             None
+        );
+    }
+
+    #[test]
+    fn bound_raw_bits_can_follow_the_current_stage() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.location.stage = "D_MN05".into();
+        snapshot.environment.components.push(StateComponent {
+            id: "stage.raw".into(),
+            component_kind: ComponentKind::DungeonMemory,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0b0000_0110],
+                known_mask: vec![0xff],
+            },
+            binding: ComponentBinding::Stage {
+                stage: "D_MN05".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: "D_MN05".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.current-stage-bank".into(),
+                source_sha256: Some(Digest([5; 32])),
+                transition_id: None,
+            }],
+        });
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let reference = ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: 0,
+            byte_width: 1,
+            mask: 0x0f,
+        };
+
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference),
+            Some(StateValue::Unsigned(6))
+        );
+
+        snapshot.environment.location.stage = "D_MN04".into();
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference),
+            None
+        );
+    }
+
+    #[test]
+    fn raw_alias_can_follow_the_active_runtime_file() {
+        let mut snapshot = snapshot(0xff);
+        let component = &mut snapshot.environment.components[0];
+        component.binding = ComponentBinding::RuntimeFile {
+            runtime_file_id: "file-0".into(),
+        };
+        let mut facts = facts(&snapshot, TruthStatus::Established);
+        facts.aliases[0].raw.binding = ComponentBindingReference::ActiveRuntimeFile;
+
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .evaluate(&fact("story.faron.twilight")),
+            EvaluatedTruth::True
+        );
+
+        snapshot.environment.active_runtime_file.id = "loaded-runtime".into();
+        let component = &mut snapshot.environment.components[0];
+        component.binding = ComponentBinding::RuntimeFile {
+            runtime_file_id: "loaded-runtime".into(),
+        };
+        component.serialization_owner = SerializationOwner::RuntimeFile {
+            runtime_file_id: "loaded-runtime".into(),
+        };
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .evaluate(&fact("story.faron.twilight")),
+            EvaluatedTruth::True
         );
     }
 
@@ -1837,7 +1937,9 @@ mod tests {
                 scope,
                 raw: RawFactBinding {
                     component_kind: ComponentKind::PersistentSave,
-                    binding: ComponentBinding::Global,
+                    binding: ComponentBindingReference::Exact {
+                        binding: ComponentBinding::Global,
+                    },
                     byte_offset: 0,
                     mask: vec![0x20],
                     expected: vec![0x20],

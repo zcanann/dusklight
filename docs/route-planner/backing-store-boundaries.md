@@ -107,10 +107,12 @@ Adding the runtime-file coordinate is a wire-format change, not a friendly-label
 reinterpretation. The milestone advances the directly containing schemas:
 
 - execution environment and state snapshot/diff/chain to v6;
-- execution state to v7 and boundary policy remains v2;
-- mechanics catalog to v13, refinement pack to v12, and composed catalog to v13;
-- cutscene program/compiled program to v5 and extracted world facts to v5; and
-- state inspection to v7, inspection diff to v6, and planner service to v19.
+- execution state to v8 and boundary policy remains v2;
+- fact catalog to v5, mechanics catalog to v14, refinement pack to v13, and
+  composed catalog to v14;
+- route book/edit batch to v5, graph projection to v7, cutscene program/compiled
+  program to v6, and extracted world facts to v6; and
+- state inspection to v8, inspection diff to v7, and planner service to v20.
 
 Canonical decoders fail closed on prior shapes. They do not synthesize a
 runtime-file ID for an old stage-only owner, because doing so could merge stores

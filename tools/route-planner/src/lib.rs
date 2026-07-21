@@ -440,10 +440,11 @@ mod tests {
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::solver::SearchStatus;
     use dusklight_route_planner::state::{
-        BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-        ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
-        PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
-        SceneLocation, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+        BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
+        ComponentPayload, ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA,
+        ExecutionEnvironment, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        SerializationOwner, StateComponent, StateValue,
     };
     use dusklight_route_planner::transition::{
         ActivationContract, CandidateTransition, Goal, MECHANICS_CATALOG_SCHEMA, StateOperation,
@@ -784,8 +785,10 @@ mod tests {
             scope: exact_scope.clone(),
             raw: RawFactBinding {
                 component_kind: ComponentKind::StageMemory,
-                binding: ComponentBinding::Stage {
-                    stage: stage.into(),
+                binding: ComponentBindingReference::Exact {
+                    binding: ComponentBinding::Stage {
+                        stage: stage.into(),
+                    },
                 },
                 byte_offset: 0,
                 mask: vec![0b0000_0100],

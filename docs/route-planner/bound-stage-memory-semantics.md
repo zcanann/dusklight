@@ -35,10 +35,17 @@ rules. A friendly label never makes this table universal by itself.
 
 ## Reads
 
-`bound_raw_bits` selects by component kind and exact semantic binding before
-reading a byte range. A small-key guard can therefore compare byte `0x1c`, width
-1, mask `0xff` against zero without naming the transient live component ID. A
-boss-key guard reads byte `0x1d`, width 1, mask `0x04`.
+`bound_raw_bits` selects by component kind and a semantic binding reference
+before reading a byte range. A reference may name an exact binding or resolve at
+evaluation time to the active runtime file, current stage, or current room. The
+resolved value is still a concrete `ComponentBinding`; components never acquire
+a dynamic or implicit owner.
+
+A small-key guard can therefore compare byte `0x1c`, width 1, mask `0xff`
+against zero without naming either the transient live component ID or a stage
+copied into every imported rule. A boss-key guard reads byte `0x1d`, width 1,
+mask `0x04`. After a scene or runtime-file change, the same rule resolves against
+the new environment and cannot accidentally keep reading the authoring context.
 
 Resolution fails to unknown when:
 
@@ -54,10 +61,11 @@ explicit hypothetical wrong-bank transfer.
 
 ## Count mutations
 
-`adjust_bound_raw_unsigned` applies a signed delta to the uniquely selected raw
-component. It requires a 1–8 byte fully known little-endian unsigned field and
-rejects missing, ambiguous, unknown, out-of-range, underflowing, or overflowing
-updates. The containing transition batch remains atomic.
+`adjust_bound_raw_unsigned` resolves the same binding-reference forms and applies
+a signed delta to the uniquely selected raw component. It requires a 1–8 byte
+fully known little-endian unsigned field and rejects missing, ambiguous, unknown,
+out-of-range, underflowing, or overflowing updates. The containing transition
+batch remains atomic.
 
 Consequently, any same-bank key pickup may increment `0x1c`, and a keyed door may
 decrement it. Provenance records the concrete producer or consumer action. A

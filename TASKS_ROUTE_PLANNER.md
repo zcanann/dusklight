@@ -526,7 +526,7 @@ The current code shows:
   digest-linked chain. This makes room/stage/save/load/void/title/BiT/BiTE test
   captures comparable without inferring the boundary label from coincidental
   state changes; representative captures for each boundary remain outstanding.
-- Extracted world-facts schema v5 now compiles an exact content identity,
+- Extracted world-facts schema v6 now compiles an exact content identity,
   runtime configuration, authenticated `WorldContext`, and its complete set of
   canonical world inventories into a content-addressed planner payload. The
   planner-owned `route-planner extract-world` command emits both that payload
@@ -540,8 +540,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v12, refinement-stack schema v2, and composed-catalog
-  schema v13 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v13, refinement-stack schema v2, and composed-catalog
+  schema v14 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -555,7 +555,7 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
-- Planner graph schema v6 is an independent, canonical projection of fact and
+- Planner graph schema v7 is an independent, canonical projection of fact and
   mechanics catalogs. It exposes typed fact, goal, transition, obligation,
   obstruction, resolver, technique, writer/gate/reader, reconstruction, and
   microtrace nodes with causal edge kinds. Every nested predicate is projected
@@ -563,14 +563,14 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Mechanics-catalog schema v13 makes writer, gate, and reader records executable
+- Mechanics-catalog schema v14 makes writer, gate, and reader records executable
   solver inputs rather than graph-only annotations. Reader proofs retain their
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
   inventing a default. The same schema distinguishes portal, void/death reload,
   title return, wrong-state respawn, and actor-driven transitions and provides
   typed operations for form, mount, control, and action changes.
-- Planner service schema v19 provides a typed JSON-lines transport owned by the
+- Planner service schema v20 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -583,7 +583,7 @@ The current code shows:
   obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
   planner-owned `project-feasibility-diff` command and service expose it without
   changing the base graph or route book.
-- State-inspection schema v7 preserves the full execution-state document—live
+- State-inspection schema v8 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
   while evaluating every friendly alias and derived fact under the selected
@@ -591,7 +591,7 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v6 combines the raw/component boundary diff with
+- State-inspection-diff schema v7 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   runtime-context changes, serialized owner-store changes, and sealed persistent-
@@ -600,20 +600,20 @@ The current code shows:
   and divergent history suffixes identify exactly which ordered operations
   separate two execution states.
   The standalone `diff-state` command and service expose the same report.
-- Route-book schema v4 is a validated, exact-context-scoped preference layer over
+- Route-book schema v5 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
   define alternative methods and nested plan regions, request pin/ban/prefer
   behavior, and attach non-semantic annotations. It deliberately has no effects
   or loss fields: every referenced action and predicate must validate against
   the fact/mechanics catalog. `route-planner validate-route-book` and the typed
   service validate books without composing them into mechanics.
-- Planner graph schema v6 can optionally project a route book as distinct plan
+- Planner graph schema v7 can optionally project a route book as distinct plan
   region, method, and reference-step nodes connected to the underlying causal
   actions. Region outcomes and step pre/postconditions remain nested predicate
   graphs. A book's collapse policy is surfaced, but the catalog projection does
   not mark a region collapsed before a solver proof establishes continuation
   equivalence or supplies residual-state differences.
-- Route-book edit-batch schema v4 provides revision-checked authoritative
+- Route-book edit-batch schema v5 provides revision-checked authoritative
   mutations. Each atomic batch names the expected book digest and can update
   goals, constraints, directives, steps, methods, regions, selection/collapse
   policy, and annotations. Rust applies edits to a clone, sorts canonical sets,
@@ -666,7 +666,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v13 includes explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v14 includes explicit cutscene scene-change and resource-
   load-failure transition classes, the reload/warp/actor transition classes above,
   player-state operations, and masked raw-knownness invalidation. This supports
   partial execution records that preserve confirmed prefix bytes while marking
@@ -680,7 +680,7 @@ The current code shows:
 - `CostAtMost` constraints accumulate every executed technique's authored
   `RouteCost` axes, retain the totals in search identity, prune paths exceeding
   the strictest active per-axis maximum, and report the reached route's totals.
-  Transitions and resolvers currently have no cost field in mechanics schema v13,
+  Transitions and resolvers currently have no cost field in mechanics schema v14,
   so no unmodeled cost is invented for them.
 - `EvidenceAtLeast` accepts only `established`, `contested`, or `hypothetical`
   and intersects that threshold with—never relaxes—the runtime evidence mode.
@@ -1758,6 +1758,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         that binding, allowing pickups/doors to mutate the same backing-derived
         count without naming a fixture-specific component ID; unknown bytes,
         ambiguity, and underflow/overflow fail atomically.
+  - [x] Let imported predicates, aliases, and bound mutations resolve the active
+        runtime-file, current-stage, or current-room binding at evaluation time.
+        Components retain concrete bindings and serialization owners; only rule
+        references are dynamic, so a reusable actor rule follows a location or
+        file change without retaining its authoring context.
 - [ ] Import hard door/actor guards and their state operations where decidable.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
@@ -2036,7 +2041,7 @@ Deliverable: a headless query API and deterministic fixture suite.
       each reached approach; retain the closest unresolved witness on failure.
 - [x] Show component transformation and provenance histories.
 - [x] Show last-writer and gate history for latched values.
-  - Execution-state schema v7 records every typed operation and every resolved
+  - Execution-state schema v8 records every typed operation and every resolved
     per-component boundary disposition with contiguous application-local order,
     affected component IDs, source sequence, and result snapshot. State
     inspection exposes the full log, a direct last-writer result for each live
@@ -2262,7 +2267,7 @@ sequence.
       routes only through backing-store semantics, with hypothesis provenance.
 - [x] Verify an OOB route that avoids the door does not falsely mark the door
       unlocked or consume a key.
-  - Fact-catalog schema v4 adds unambiguous bound structured-field and raw-bit
+  - Fact-catalog schema v5 adds unambiguous bound structured-field and raw-bit
     references: component kind plus exact backing binding, followed by either a
     field or byte range/mask. This lets extracted stage-memory bytes derive the
     same semantics without a hard-coded live component ID. The keyed-door fixture
@@ -2273,7 +2278,7 @@ sequence.
     hypothetical dungeon-bank rebind enables a different dungeon's door only
     through the changed binding, while the OOB avoidance edge mutates neither
     the count nor unlock state.
-  - Mechanics schema v13 adds a binding-sensitive unsigned raw adjustment. The
+  - Mechanics schema v14 adds a binding-sensitive unsigned raw adjustment. The
     raw stage-memory regression uses the audited `dSv_memBit_c` key byte, proves
     pickup/consumption history, and rejects wrong-bank, unknown, underflowing,
     and ambiguous targets atomically. See
