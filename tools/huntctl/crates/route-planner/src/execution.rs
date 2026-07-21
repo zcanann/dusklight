@@ -3,9 +3,9 @@
 use crate::artifact::Digest;
 use crate::snapshot::StateSnapshot;
 use crate::state::{
-    ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance, ComponentSelector,
-    ProvenanceSourceKind, SerializationOwner, StateComponent, StateValue,
-    validate_serialization_owner,
+    BoundaryDisposition, BoundaryPolicy, ComponentBinding, ComponentKind, ComponentPayload,
+    ComponentProvenance, ComponentSelector, ProvenanceSourceKind, SerializationOwner,
+    StateComponent, StateValue, validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, validate_stable_id};
@@ -133,6 +133,108 @@ impl PlannerExecutionState {
             source_snapshot_sha256,
             result_snapshot_sha256,
             operation_count: operations.len(),
+        })
+    }
+
+    /// Applies a boundary policy to every live component. An explicit
+    /// `Preserve` operation is a one-boundary override; otherwise exactly one
+    /// component rule or the default disposition controls the component.
+    /// `Unknown` fails the entire boundary instead of silently preserving data.
+    pub fn apply_boundary(
+        &mut self,
+        application_id: &str,
+        result_snapshot_id: &str,
+        policy: &BoundaryPolicy,
+        initializers: &BTreeMap<String, StateComponent>,
+    ) -> Result<OperationApplication, PlannerContractError> {
+        validate_stable_id("application_id", application_id)?;
+        validate_stable_id("result_snapshot_id", result_snapshot_id)?;
+        policy.validate()?;
+        for (id, component) in initializers {
+            validate_stable_id("initializers.id", id)?;
+            component.validate()?;
+        }
+        let source_snapshot_sha256 = self.snapshot.digest()?;
+        let mut next = self.clone();
+        let dispositions = next
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .map(|component| {
+                Ok((
+                    component.clone(),
+                    next.boundary_disposition(policy, component)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, PlannerContractError>>()?;
+
+        // Serialization completes before restoration so a policy naming both
+        // has deterministic writer-then-reader behavior.
+        for (component, disposition) in &dispositions {
+            if let BoundaryDisposition::Serialize { owner } = disposition {
+                let mut serialized = component.clone();
+                serialized.serialization_owner = owner.clone();
+                mark_transition(&mut serialized, application_id);
+                insert_serialized(&mut next.serialized_components, owner, serialized);
+            }
+        }
+
+        let mut resulting_components = Vec::new();
+        for (mut component, disposition) in dispositions {
+            match disposition {
+                BoundaryDisposition::Preserve => {
+                    mark_transition(&mut component, application_id);
+                    resulting_components.push(component);
+                }
+                BoundaryDisposition::Clear | BoundaryDisposition::Serialize { .. } => {}
+                BoundaryDisposition::Reinitialize { initializer_id } => {
+                    let mut initialized =
+                        initializers.get(&initializer_id).cloned().ok_or_else(|| {
+                            PlannerContractError::new(
+                                "boundary.initializer_id",
+                                "references an unavailable initializer",
+                            )
+                        })?;
+                    if initialized.id != component.id {
+                        return Err(PlannerContractError::new(
+                            "boundary.initializer_id",
+                            "initializer component ID must match the component it replaces",
+                        ));
+                    }
+                    mark_transition(&mut initialized, application_id);
+                    resulting_components.push(initialized);
+                }
+                BoundaryDisposition::Restore { owner } => {
+                    let mut restored =
+                        select_serialized(&next.serialized_components, &owner, &component.id)?
+                            .clone();
+                    restored.id = component.id;
+                    mark_transition(&mut restored, application_id);
+                    resulting_components.push(restored);
+                }
+                BoundaryDisposition::Unknown => {
+                    return Err(PlannerContractError::new(
+                        "boundary.disposition",
+                        format!("component {} has unknown boundary behavior", component.id),
+                    ));
+                }
+            }
+        }
+        next.snapshot.environment.components = resulting_components;
+        next.preserved_component_ids.clear();
+        next.snapshot.sequence = next.snapshot.sequence.checked_add(1).ok_or_else(|| {
+            PlannerContractError::new("snapshot.sequence", "cannot advance past u64::MAX")
+        })?;
+        next.snapshot.id = result_snapshot_id.into();
+        next.sort_components();
+        next.validate()?;
+        let result_snapshot_sha256 = next.snapshot.digest()?;
+        *self = next;
+        Ok(OperationApplication {
+            source_snapshot_sha256,
+            result_snapshot_sha256,
+            operation_count: policy.component_rules.len(),
         })
     }
 
@@ -546,6 +648,32 @@ impl PlannerExecutionState {
             .components
             .sort_by(|left, right| left.id.cmp(&right.id));
     }
+
+    fn boundary_disposition(
+        &self,
+        policy: &BoundaryPolicy,
+        component: &StateComponent,
+    ) -> Result<BoundaryDisposition, PlannerContractError> {
+        if self.preserved_component_ids.contains(&component.id) {
+            return Ok(BoundaryDisposition::Preserve);
+        }
+        let matching = policy
+            .component_rules
+            .iter()
+            .filter(|rule| selector_matches(&rule.selector, component))
+            .collect::<Vec<_>>();
+        match matching.as_slice() {
+            [] => Ok(policy.default_disposition.clone()),
+            [rule] => Ok(rule.disposition.clone()),
+            _ => Err(PlannerContractError::new(
+                "boundary.component_rules",
+                format!(
+                    "multiple rules match component {}; refine the selectors",
+                    component.id
+                ),
+            )),
+        }
+    }
 }
 
 fn selector_matches(selector: &ComponentSelector, component: &StateComponent) -> bool {
@@ -567,6 +695,43 @@ fn mark_transition(component: &mut StateComponent, application_id: &str) {
 
 fn no_selector_match(field: &str) -> PlannerContractError {
     PlannerContractError::new(field, "selector did not match any component")
+}
+
+fn insert_serialized(
+    stores: &mut BTreeMap<SerializationOwner, Vec<StateComponent>>,
+    owner: &SerializationOwner,
+    component: StateComponent,
+) {
+    let store = stores.entry(owner.clone()).or_default();
+    match store.binary_search_by(|existing| existing.id.cmp(&component.id)) {
+        Ok(index) => store[index] = component,
+        Err(index) => store.insert(index, component),
+    }
+}
+
+fn select_serialized<'a>(
+    stores: &'a BTreeMap<SerializationOwner, Vec<StateComponent>>,
+    owner: &SerializationOwner,
+    destination_component_id: &str,
+) -> Result<&'a StateComponent, PlannerContractError> {
+    let store = stores.get(owner).ok_or_else(|| {
+        PlannerContractError::new(
+            "operation.restore",
+            "references an owner with no serialized components",
+        )
+    })?;
+    if let Ok(index) =
+        store.binary_search_by(|component| component.id.as_str().cmp(destination_component_id))
+    {
+        Ok(&store[index])
+    } else if let [only] = store.as_slice() {
+        Ok(only)
+    } else {
+        Err(PlannerContractError::new(
+            "operation.restore",
+            "destination ID is ambiguous within the serialized owner store",
+        ))
+    }
 }
 
 fn adjust_value(value: &mut StateValue, delta: i64) -> Result<(), PlannerContractError> {
@@ -602,9 +767,10 @@ mod tests {
     use crate::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use crate::snapshot::STATE_SNAPSHOT_SCHEMA;
     use crate::state::{
-        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId,
-        PlayerForm, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
-        SceneLocation, SemanticLifetime,
+        BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBoundaryRule,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId, PlayerForm,
+        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        SemanticLifetime,
     };
     use crate::transition::ComponentFieldTarget;
 
@@ -831,6 +997,100 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.field(), "operation.clear_component");
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn boundary_policy_clears_unmentioned_components_and_honors_one_shot_preserve() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "technique.preserve-save",
+                "snapshot.preserve-armed",
+                &[StateOperation::Preserve {
+                    selector: id_selector("save.main"),
+                }],
+            )
+            .unwrap();
+        let policy = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.room-load".into(),
+            boundary: BoundaryKind::RoomTransition,
+            default_disposition: BoundaryDisposition::Clear,
+            component_rules: vec![ComponentBoundaryRule {
+                selector: id_selector("flow.main"),
+                disposition: BoundaryDisposition::Preserve,
+            }],
+        };
+        state
+            .apply_boundary(
+                "boundary.room-load",
+                "snapshot.after-room-load",
+                &policy,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        let ids = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["flow.main", "save.main"]);
+        assert!(state.preserved_component_ids.is_empty());
+    }
+
+    #[test]
+    fn unknown_boundary_behavior_fails_atomically() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let before = state.clone();
+        let policy = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.unknown".into(),
+            boundary: BoundaryKind::WrongStateRespawn,
+            default_disposition: BoundaryDisposition::Unknown,
+            component_rules: Vec::new(),
+        };
+        let error = state
+            .apply_boundary(
+                "boundary.unknown",
+                "snapshot.not-produced",
+                &policy,
+                &BTreeMap::new(),
+            )
+            .unwrap_err();
+        assert_eq!(error.field(), "boundary.disposition");
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn boundary_serialization_moves_selected_state_into_its_owner_store() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let owner = SerializationOwner::PhysicalSlot {
+            slot: PhysicalSlotId(1),
+        };
+        let policy = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.title-return".into(),
+            boundary: BoundaryKind::TitleReturn,
+            default_disposition: BoundaryDisposition::Clear,
+            component_rules: vec![ComponentBoundaryRule {
+                selector: id_selector("save.main"),
+                disposition: BoundaryDisposition::Serialize {
+                    owner: owner.clone(),
+                },
+            }],
+        };
+        state
+            .apply_boundary(
+                "boundary.title-return",
+                "snapshot.at-title",
+                &policy,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(state.snapshot.environment.components.is_empty());
+        assert_eq!(state.serialized_components[&owner][0].id, "save.main");
     }
 
     #[test]

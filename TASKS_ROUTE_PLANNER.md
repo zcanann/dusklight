@@ -1491,16 +1491,18 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
 
 ### Phase 4 — Component transfers and state splices
 
-- [ ] Implement per-component transition policies.
+- [x] Implement per-component transition policies.
 - [x] Implement project/preserve/clear/copy/rebind operations.
-- [ ] Prevent accidental preservation of unspecified components.
+- [x] Prevent accidental preservation of unspecified components.
 - [x] Support mixed provenance after cross-file operations.
   - Typed operation batches are atomic, retain copied provenance, append the
     responsible transition, and keep serialized owner stores separate from the
     visible snapshot. Masked raw writes establish only the bits they actually
     write, while checked relative adjustments model counters such as key use
     without replacing them with route-specific Booleans. Preservation requests
-    are explicit state consumed by the future boundary-policy executor.
+    are explicit one-boundary overrides. The boundary executor applies exactly
+    one matching rule or the declared default to every live component, rejects
+    overlapping selectors, and fails the whole atomic transition on `Unknown`.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
 - [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
