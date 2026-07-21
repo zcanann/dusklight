@@ -1180,7 +1180,7 @@
       $('predicateIdentity').hidden=false;
       $('predicateGoal').value=`${base}_goal`.slice(0,96);
       $('predicateName').value=predicate;
-      $('predicateSource').value=`milestones 1.3\n\n# Replace this deliberately unreachable placeholder with the observed boundary.\nmilestone ${predicate} {\n  phase post_sim\n  when tape.frame == 4294967295\n}\n`;
+      $('predicateSource').value=`milestones 1.7\n\n# Replace this deliberately unreachable placeholder with the observed boundary.\nmilestone ${predicate} {\n  phase post_sim\n  when tape.frame == 4294967295\n}\n`;
       predicateEditRevision='';
       predicateEditOwner={segment:segmentId};
       $('predicateError').textContent='';
