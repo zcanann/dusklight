@@ -368,17 +368,27 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     water modes (1/2), two solver flag states, 29 ground heights and 29 player
     positions (`3d8905e9...35ce75`). This proves action-driven capture
     variation, not a useful model representation or deliberate contact
-    coverage. Native collision-history v2 now derives bounded, episode-reset
+    coverage. Native collision-history v3 now derives bounded, episode-reset
     decision histories containing only the current pre-input state and already
     completed transitions; the current action's realized delta is isolated in
-    an auxiliary-target table. A depth-eight view over a live 250-transition
-    v12 shard retained 252 normalized boundary snapshots, all 250 solver
+    an auxiliary-target table. It preserves exact stage/room/layer and player
+    pose, Link-only contact validity, background surface identities and planes,
+    typed floor/roof/water/wall backing metadata, and collision-solver state.
+    Every transition says whether context, player, contacts, background,
+    surfaces and solver are comparable; contact begin/end/continuation and
+    surface appear/disappear/continue/switch events are generic derived labels.
+    Context/loading boundaries and non-Link players cannot silently become
+    zero-valued collision samples, and independently retained background and
+    surface identities must agree. The preceding v2 depth-eight view over a
+    live 250-transition v12 shard retained 252 normalized boundary snapshots,
+    all 250 solver
     decision states and 228 changing solver/background targets
     (`6dcedd43...365995`, content `a189887b...a34a4`). Its indexed snapshot and
     transition tables keep that artifact to 819,243 bytes instead of copying
-    state and history throughout every decision row. Legacy missingness,
-    future-history insertion, delta tampering and nonfinite state fail closed.
-    Deliberate generic contact probes remain open. A 30-tick
+    state and history throughout every decision row. V3 fixture tests cover
+    Link/non-Link missingness, context boundaries, future-history insertion,
+    detached surface identities, delta tampering and nonfinite state. A fresh
+    live v3 artifact and deliberate generic contact probes remain open. A 30-tick
     neutral follow-up proved that the initially empty wall table becomes the
     expected initialized three-circle solver (`63b32d58...c004fe04`), but it
     still does not establish action/contact variation, so the parent
@@ -690,7 +700,7 @@ human-authored successful setup.
       event types, zero priorities, status/payload disagreement and any
       detached or partially mismatched actor identity. Corpus and temporal
       reports expose the channel, and the planner projection retains every
-      request and role as generic pending-operation state. Cross-language v17
+      request and role as generic pending-operation state. Cross-language v18
       fixture `32155dd9...edac0d` plus legacy-missingness and tamper tests pass.
       This supplies evidence from whatever requests ordinary gameplay creates;
       it contains no selected actor, desired overlap, input timing, outcome,

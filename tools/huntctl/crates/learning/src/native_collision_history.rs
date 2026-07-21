@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_COLLISION_HISTORY_SCHEMA_V2: &str = "dusklight-native-collision-history/v2";
+pub const NATIVE_COLLISION_HISTORY_SCHEMA_V3: &str = "dusklight-native-collision-history/v3";
 pub const DEFAULT_COLLISION_HISTORY_DEPTH: usize = 4;
 pub const MAX_COLLISION_HISTORY_DEPTH: usize = 32;
 
@@ -25,6 +25,33 @@ pub enum CollisionChannelStatus {
     Unavailable,
     Absent,
     Present,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollisionPlayerStatus {
+    Absent,
+    NonLink,
+    Link,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollisionContactTransition {
+    Inactive,
+    Continued,
+    Began,
+    Ended,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollisionSurfaceTransition {
+    Absent,
+    Appeared,
+    Disappeared,
+    Continued,
+    Switched,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,9 +77,72 @@ pub struct CollisionBackgroundState {
     pub ground_height: f32,
     pub roof_height: f32,
     pub water_height: f32,
+    pub ground_identity: [u32; 3],
+    pub ground_plane: [f32; 4],
+    pub roof_identity: [u32; 3],
+    pub water_identity: [u32; 3],
+    pub wall_identities: [[u32; 3]; 3],
     pub wall_flags: [u16; 3],
     pub wall_angles_y: [i16; 3],
+    pub old_position: [f32; 3],
     pub resolved_frame_displacement: [f32; 3],
+    pub final_position: [f32; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollisionPlayerState {
+    pub process_id: u32,
+    pub actor_name: i16,
+    pub procedure: u16,
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub forward_speed: f32,
+    pub current_angle: [i16; 3],
+    pub shape_angle: [i16; 3],
+    pub mode_flags: u32,
+    pub ground_height: Option<f32>,
+    pub roof_height: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollisionSurfaceState {
+    pub flags: u32,
+    pub kind: u8,
+    pub wall_slot: u8,
+    pub backing_format: u8,
+    pub raw_code_presence_mask: u8,
+    pub bg_index: u16,
+    pub poly_index: u16,
+    pub owner_runtime_generation: u32,
+    pub material_index: u16,
+    pub group_index: u16,
+    pub raw_codes: [u32; 5],
+    pub raw_exit_id: u8,
+    pub source_room: i8,
+    pub scls_source_room: i8,
+    pub destination_room: i8,
+    pub destination_layer: i8,
+    pub destination_wipe: u8,
+    pub destination_wipe_time: u8,
+    pub destination_time_hour: i8,
+    pub destination_point: i16,
+    pub source_geometry_indices: Vec<u16>,
+    pub kcl_prism_height: f32,
+    pub destination_stage: String,
+    pub plane: Option<[f32; 4]>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollisionSurfaceSetState {
+    pub flags: u32,
+    pub current_room: i8,
+    pub raw_link_exit: u16,
+    pub pending_stage_match_mask: u8,
+    /// Ground, roof, water, then the three realized wall slots.
+    pub surfaces: [CollisionSurfaceState; 6],
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -90,10 +180,16 @@ pub struct CollisionSolverState {
 pub struct CollisionSnapshot {
     pub boundary_index: u64,
     pub state_identity_xxh3_128: String,
-    pub player_present: bool,
+    pub stage: String,
+    pub room: i8,
+    pub layer: i8,
+    pub player_status: CollisionPlayerStatus,
+    pub player: Option<CollisionPlayerState>,
     pub player_contacts: Option<u8>,
     pub background_status: CollisionChannelStatus,
     pub background: Option<CollisionBackgroundState>,
+    pub surfaces_status: CollisionChannelStatus,
+    pub surfaces: Option<CollisionSurfaceSetState>,
     pub solver_status: CollisionChannelStatus,
     pub solver: Option<CollisionSolverState>,
 }
@@ -147,8 +243,18 @@ pub struct CollisionSolverDelta {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionTransitionDelta {
+    pub same_context: bool,
+    pub same_player: bool,
+    pub contacts_comparable: bool,
+    pub background_comparable: bool,
+    pub surfaces_comparable: bool,
+    pub solver_comparable: bool,
     pub player_contacts_activated: Option<u8>,
     pub player_contacts_cleared: Option<u8>,
+    /// Ground, wall, roof, water-surface, and water-in transitions.
+    pub player_contact_transitions: Option<[CollisionContactTransition; 5]>,
+    /// Ground, roof, water, then the three realized wall slots.
+    pub surface_transitions: Option<[CollisionSurfaceTransition; 6]>,
     pub background: Option<CollisionBackgroundDelta>,
     pub solver: Option<CollisionSolverDelta>,
 }
@@ -245,7 +351,7 @@ impl NativeCollisionHistoryView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_COLLISION_HISTORY_SCHEMA_V2.into(),
+            schema: NATIVE_COLLISION_HISTORY_SCHEMA_V3.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             history_depth,
@@ -314,7 +420,7 @@ impl NativeCollisionHistoryView {
     }
 
     fn validate_content(&self) -> Result<(), NativeCollisionHistoryError> {
-        if self.schema != NATIVE_COLLISION_HISTORY_SCHEMA_V2
+        if self.schema != NATIVE_COLLISION_HISTORY_SCHEMA_V3
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !(1..=MAX_COLLISION_HISTORY_DEPTH).contains(&self.history_depth)
@@ -384,7 +490,7 @@ impl NativeCollisionHistoryView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeCollisionHistoryError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-collision-history/v2\0");
+        hasher.update(b"dusklight.native-collision-history/v3\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -423,9 +529,22 @@ fn snapshot(
                 ground_height: value.ground_height,
                 roof_height: value.roof_height,
                 water_height: value.water_height,
+                ground_identity: value.ground_identity,
+                ground_plane: value.ground_plane,
+                roof_identity: value.roof_identity,
+                water_identity: value.water_identity,
+                wall_identities: value.walls.each_ref().map(|wall| {
+                    [
+                        u32::from(wall.bg_index),
+                        u32::from(wall.poly_index),
+                        wall.owner_runtime_generation,
+                    ]
+                }),
                 wall_flags: value.walls.each_ref().map(|wall| wall.flags),
                 wall_angles_y: value.walls.each_ref().map(|wall| wall.angle_y),
+                old_position: value.old_position,
                 resolved_frame_displacement: value.resolved_frame_displacement,
+                final_position: value.final_position,
             });
     let solver = source
         .player_collision_solver
@@ -456,13 +575,81 @@ fn snapshot(
                     realized_radius: wall.realized_radius,
                 }),
         });
+    let surfaces =
+        source
+            .player_collision_surfaces
+            .as_ref()
+            .map(|value| CollisionSurfaceSetState {
+                flags: value.flags,
+                current_room: value.current_room,
+                raw_link_exit: value.raw_link_exit,
+                pending_stage_match_mask: value.pending_stage_match_mask,
+                surfaces: value
+                    .surfaces
+                    .iter()
+                    .map(|surface| CollisionSurfaceState {
+                        flags: surface.flags,
+                        kind: surface.kind,
+                        wall_slot: surface.wall_slot,
+                        backing_format: surface.backing_format,
+                        raw_code_presence_mask: surface.raw_code_presence_mask,
+                        bg_index: surface.bg_index,
+                        poly_index: surface.poly_index,
+                        owner_runtime_generation: surface.owner_runtime_generation,
+                        material_index: surface.material_index,
+                        group_index: surface.group_index,
+                        raw_codes: surface.raw_codes,
+                        raw_exit_id: surface.raw_exit_id,
+                        source_room: surface.source_room,
+                        scls_source_room: surface.scls_source_room,
+                        destination_room: surface.destination_room,
+                        destination_layer: surface.destination_layer,
+                        destination_wipe: surface.destination_wipe,
+                        destination_wipe_time: surface.destination_wipe_time,
+                        destination_time_hour: surface.destination_time_hour,
+                        destination_point: surface.destination_point,
+                        source_geometry_indices: surface.source_geometry_indices.clone(),
+                        kcl_prism_height: surface.kcl_prism_height,
+                        destination_stage: surface.destination_stage.clone(),
+                        plane: surface.plane,
+                    })
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .expect("native collision surface set always has six slots"),
+            });
+    let player_status = if !source.player_present {
+        CollisionPlayerStatus::Absent
+    } else if source.player_is_link {
+        CollisionPlayerStatus::Link
+    } else {
+        CollisionPlayerStatus::NonLink
+    };
+    let player = source.player_present.then_some(CollisionPlayerState {
+        process_id: source.player_process_id,
+        actor_name: source.player_actor_name,
+        procedure: source.player_procedure,
+        position: source.player_position,
+        velocity: source.player_velocity,
+        forward_speed: source.player_forward_speed,
+        current_angle: source.player_current_angle,
+        shape_angle: source.player_shape_angle,
+        mode_flags: source.player_mode_flags,
+        ground_height: source.player_ground_height,
+        roof_height: source.player_roof_height,
+    });
     let snapshot = CollisionSnapshot {
         boundary_index: source.boundary_index,
         state_identity_xxh3_128: lower_hex(&source.state_identity),
-        player_present: source.player_present,
-        player_contacts: source.player_present.then_some(source.player_contacts),
+        stage: source.stage.clone(),
+        room: source.room,
+        layer: source.layer,
+        player_status,
+        player,
+        player_contacts: source.player_is_link.then_some(source.player_contacts),
         background_status: status(source.player_background_collision_status),
         background,
+        surfaces_status: status(source.player_collision_surfaces_status),
+        surfaces,
         solver_status: status(source.player_collision_solver_status),
         solver,
     };
@@ -474,14 +661,57 @@ fn transition_delta(
     before: &CollisionSnapshot,
     after: &CollisionSnapshot,
 ) -> CollisionTransitionDelta {
-    let contacts = before.player_contacts.zip(after.player_contacts);
+    let same_context =
+        before.stage == after.stage && before.room == after.room && before.layer == after.layer;
+    let same_player = same_context
+        && before.player_status == after.player_status
+        && before
+            .player
+            .as_ref()
+            .zip(after.player.as_ref())
+            .is_some_and(|(left, right)| {
+                left.process_id == right.process_id && left.actor_name == right.actor_name
+            });
+    let contacts_comparable = same_player
+        && before.player_status == CollisionPlayerStatus::Link
+        && before.player_contacts.is_some()
+        && after.player_contacts.is_some();
+    let background_comparable = same_player
+        && before.background_status == CollisionChannelStatus::Present
+        && after.background_status == CollisionChannelStatus::Present;
+    let surfaces_comparable = same_player
+        && before.surfaces_status == CollisionChannelStatus::Present
+        && after.surfaces_status == CollisionChannelStatus::Present;
+    let solver_comparable = same_player
+        && before.solver_status == CollisionChannelStatus::Present
+        && after.solver_status == CollisionChannelStatus::Present;
+    let contacts = contacts_comparable
+        .then(|| before.player_contacts.zip(after.player_contacts))
+        .flatten();
     CollisionTransitionDelta {
+        same_context,
+        same_player,
+        contacts_comparable,
+        background_comparable,
+        surfaces_comparable,
+        solver_comparable,
         player_contacts_activated: contacts.map(|(left, right)| right & !left),
         player_contacts_cleared: contacts.map(|(left, right)| left & !right),
-        background: before
-            .background
-            .as_ref()
-            .zip(after.background.as_ref())
+        player_contact_transitions: contacts.map(|(left, right)| {
+            std::array::from_fn(|index| {
+                contact_transition(left & (1 << index) != 0, right & (1 << index) != 0)
+            })
+        }),
+        surface_transitions: surfaces_comparable.then(|| {
+            let left = before.surfaces.as_ref().expect("comparable surface set");
+            let right = after.surfaces.as_ref().expect("comparable surface set");
+            std::array::from_fn(|index| {
+                surface_transition(&left.surfaces[index], &right.surfaces[index])
+            })
+        }),
+        background: background_comparable
+            .then(|| before.background.as_ref().zip(after.background.as_ref()))
+            .flatten()
             .map(|(left, right)| CollisionBackgroundDelta {
                 flags_activated: right.flags & !left.flags,
                 flags_cleared: left.flags & !right.flags,
@@ -502,10 +732,9 @@ fn transition_delta(
                     left.resolved_frame_displacement,
                 ),
             }),
-        solver: before
-            .solver
-            .as_ref()
-            .zip(after.solver.as_ref())
+        solver: solver_comparable
+            .then(|| before.solver.as_ref().zip(after.solver.as_ref()))
+            .flatten()
             .map(|(left, right)| CollisionSolverDelta {
                 flags_activated: right.flags & !left.flags,
                 flags_cleared: left.flags & !right.flags,
@@ -531,6 +760,40 @@ fn transition_delta(
     }
 }
 
+fn contact_transition(before: bool, after: bool) -> CollisionContactTransition {
+    match (before, after) {
+        (false, false) => CollisionContactTransition::Inactive,
+        (true, true) => CollisionContactTransition::Continued,
+        (false, true) => CollisionContactTransition::Began,
+        (true, false) => CollisionContactTransition::Ended,
+    }
+}
+
+fn surface_transition(
+    before: &CollisionSurfaceState,
+    after: &CollisionSurfaceState,
+) -> CollisionSurfaceTransition {
+    let before_present = before.flags & 1 != 0;
+    let after_present = after.flags & 1 != 0;
+    match (before_present, after_present) {
+        (false, false) => CollisionSurfaceTransition::Absent,
+        (false, true) => CollisionSurfaceTransition::Appeared,
+        (true, false) => CollisionSurfaceTransition::Disappeared,
+        (true, true) if surface_identity(before) == surface_identity(after) => {
+            CollisionSurfaceTransition::Continued
+        }
+        (true, true) => CollisionSurfaceTransition::Switched,
+    }
+}
+
+fn surface_identity(value: &CollisionSurfaceState) -> (u16, u16, u32) {
+    (
+        value.bg_index,
+        value.poly_index,
+        value.owner_runtime_generation,
+    )
+}
+
 fn wall_delta(
     left: &CollisionSolverWallState,
     right: &CollisionSolverWallState,
@@ -549,20 +812,43 @@ fn wall_delta(
 }
 
 fn validate_snapshot(value: &CollisionSnapshot) -> Result<(), NativeCollisionHistoryError> {
+    let player_present = value.player_status != CollisionPlayerStatus::Absent;
+    let link_present = value.player_status == CollisionPlayerStatus::Link;
     if !is_lower_hex(&value.state_identity_xxh3_128, 32)
-        || value.player_present != value.player_contacts.is_some()
+        || player_present != value.player.is_some()
+        || link_present != value.player_contacts.is_some()
+        || value
+            .player_contacts
+            .is_some_and(|contacts| contacts & !0x1f != 0)
         || (value.background_status == CollisionChannelStatus::Present)
             != value.background.is_some()
+        || (value.surfaces_status == CollisionChannelStatus::Present) != value.surfaces.is_some()
         || (value.solver_status == CollisionChannelStatus::Present) != value.solver.is_some()
     {
         return Err(NativeCollisionHistoryError::new(
             "collision snapshot masks are invalid",
         ));
     }
+    if let Some(player) = &value.player
+        && player
+            .position
+            .iter()
+            .chain(&player.velocity)
+            .chain([&player.forward_speed])
+            .chain(player.ground_height.iter())
+            .chain(player.roof_height.iter())
+            .any(|value| !value.is_finite())
+    {
+        return Err(NativeCollisionHistoryError::new(
+            "nonfinite collision player state",
+        ));
+    }
     if let Some(background) = &value.background
         && background
-            .resolved_frame_displacement
+            .old_position
             .iter()
+            .chain(&background.resolved_frame_displacement)
+            .chain(&background.final_position)
             .chain([
                 &background.ground_height,
                 &background.roof_height,
@@ -604,10 +890,103 @@ fn validate_snapshot(value: &CollisionSnapshot) -> Result<(), NativeCollisionHis
             ));
         }
     }
+    if let Some(surfaces) = &value.surfaces {
+        validate_surfaces(surfaces)?;
+    }
+    if let (Some(background), Some(surfaces)) = (&value.background, &value.surfaces)
+        && !background_surfaces_agree(background, surfaces)
+    {
+        return Err(NativeCollisionHistoryError::new(
+            "background and typed collision surfaces disagree",
+        ));
+    }
     Ok(())
 }
 
+fn validate_surfaces(value: &CollisionSurfaceSetState) -> Result<(), NativeCollisionHistoryError> {
+    let expected = [(1_u8, 0_u8), (2, 0), (3, 0), (4, 0), (4, 1), (4, 2)];
+    for (surface, (kind, wall_slot)) in value.surfaces.iter().zip(expected) {
+        let identity_present = surface.flags & 1 != 0;
+        if surface.kind != kind
+            || surface.wall_slot != wall_slot
+            || surface.flags & !0x1fff != 0
+            || surface.raw_code_presence_mask & !0x1f != 0
+            || surface.source_geometry_indices.len() > 6
+            || surface.plane.is_some() && !identity_present
+            || surface
+                .plane
+                .iter()
+                .flatten()
+                .chain([&surface.kcl_prism_height])
+                .any(|value| !value.is_finite())
+        {
+            return Err(NativeCollisionHistoryError::new(
+                "collision surface state is invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn background_surfaces_agree(
+    background: &CollisionBackgroundState,
+    surfaces: &CollisionSurfaceSetState,
+) -> bool {
+    let agrees = |surface: &CollisionSurfaceState,
+                  identity: [u32; 3],
+                  identity_present: bool,
+                  owner_present: bool| {
+        (surface.flags & 1 != 0) == identity_present
+            && (surface.flags & (1 << 1) != 0) == owner_present
+            && (!identity_present
+                || (u32::from(surface.bg_index) == identity[0]
+                    && u32::from(surface.poly_index) == identity[1]))
+            && (!owner_present || surface.owner_runtime_generation == identity[2])
+    };
+    agrees(
+        &surfaces.surfaces[0],
+        background.ground_identity,
+        background.flags & (1 << 16) != 0,
+        background.flags & (1 << 5) != 0,
+    ) && agrees(
+        &surfaces.surfaces[1],
+        background.roof_identity,
+        background.flags & (1 << 17) != 0,
+        background.flags & (1 << 9) != 0,
+    ) && agrees(
+        &surfaces.surfaces[2],
+        background.water_identity,
+        background.flags & (1 << 18) != 0,
+        background.flags & (1 << 13) != 0,
+    ) && (0..3).all(|index| {
+        agrees(
+            &surfaces.surfaces[index + 3],
+            background.wall_identities[index],
+            background.wall_flags[index] & (1 << 2) != 0,
+            background.wall_flags[index] & (1 << 1) != 0,
+        )
+    })
+}
+
 fn validate_delta(value: &CollisionTransitionDelta) -> Result<(), NativeCollisionHistoryError> {
+    if value.same_player && !value.same_context
+        || value.contacts_comparable
+            != (value.player_contacts_activated.is_some()
+                && value.player_contacts_cleared.is_some()
+                && value.player_contact_transitions.is_some())
+        || value.background_comparable != value.background.is_some()
+        || value.surfaces_comparable != value.surface_transitions.is_some()
+        || value.solver_comparable != value.solver.is_some()
+        || (value.contacts_comparable
+            || value.background_comparable
+            || value.surfaces_comparable
+            || value.solver_comparable)
+            && !value.same_player
+    {
+        return Err(NativeCollisionHistoryError::new(
+            "collision transition comparability masks are invalid",
+        ));
+    }
     let background_finite = value.background.as_ref().is_none_or(|delta| {
         [
             delta.ground_height_delta,
@@ -765,6 +1144,26 @@ mod tests {
         assert_eq!(
             view.auxiliary_targets[1]
                 .delta
+                .player_contact_transitions
+                .unwrap()[1],
+            CollisionContactTransition::Began
+        );
+        assert!(view.auxiliary_targets[1].delta.same_context);
+        assert!(view.auxiliary_targets[1].delta.same_player);
+        assert!(view.auxiliary_targets[1].delta.contacts_comparable);
+        assert!(view.auxiliary_targets[1].delta.surfaces_comparable);
+        assert_eq!(
+            view.snapshots[view.decisions[0].current_snapshot_index as usize].player_status,
+            CollisionPlayerStatus::Link
+        );
+        assert!(
+            view.snapshots[view.decisions[0].current_snapshot_index as usize]
+                .surfaces
+                .is_some()
+        );
+        assert_eq!(
+            view.auxiliary_targets[1]
+                .delta
                 .solver
                 .as_ref()
                 .unwrap()
@@ -805,6 +1204,58 @@ mod tests {
     }
 
     #[test]
+    fn non_link_player_does_not_masquerade_as_observed_link_contacts() {
+        let mut shard = shard_v11_with_history();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        let make_non_link = |observation: &mut NativeLearningObservation| {
+            observation.player_is_link = false;
+            observation.player_contacts = 0x1f;
+            observation.player_background_collision_status = NativeChannelStatus::Unavailable;
+            observation.player_background_collision = None;
+            observation.player_collision_surfaces_status = NativeChannelStatus::Unavailable;
+            observation.player_collision_surfaces = None;
+            observation.player_collision_solver_status = NativeChannelStatus::Unavailable;
+            observation.player_collision_solver = None;
+        };
+        make_non_link(&mut shard.episodes[0].steps[0].pre_input);
+        make_non_link(&mut shard.episodes[0].steps[0].post_simulation);
+        let view = NativeCollisionHistoryView::build(&shard, 2).unwrap();
+        assert!(view.snapshots.iter().all(|snapshot| {
+            snapshot.player_status == CollisionPlayerStatus::NonLink
+                && snapshot.player.is_some()
+                && snapshot.player_contacts.is_none()
+        }));
+        let delta = &view.auxiliary_targets[0].delta;
+        assert!(!delta.contacts_comparable);
+        assert!(delta.player_contact_transitions.is_none());
+        assert!(delta.player_contacts_activated.is_none());
+    }
+
+    #[test]
+    fn context_boundaries_are_explicitly_noncomparable() {
+        let mut shard = shard_v11_with_history();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0].post_simulation.room = shard.episodes[0].steps[0]
+            .post_simulation
+            .room
+            .wrapping_add(1);
+        let view = NativeCollisionHistoryView::build(&shard, 2).unwrap();
+        let delta = &view.auxiliary_targets[0].delta;
+        assert!(!delta.same_context);
+        assert!(!delta.same_player);
+        assert!(!delta.contacts_comparable);
+        assert!(!delta.background_comparable);
+        assert!(!delta.surfaces_comparable);
+        assert!(!delta.solver_comparable);
+        assert!(delta.player_contact_transitions.is_none());
+        assert!(delta.surface_transitions.is_none());
+        assert!(delta.background.is_none());
+        assert!(delta.solver.is_none());
+    }
+
+    #[test]
     fn future_leakage_delta_tampering_and_nonfinite_state_fail_closed() {
         let view = NativeCollisionHistoryView::build(&shard_v11_with_history(), 4).unwrap();
 
@@ -832,5 +1283,14 @@ mod tests {
             .line_start[0] = f32::NAN;
         assert!(validate_snapshot(&nonfinite.snapshots[current_index]).is_err());
         assert!(nonfinite.compute_identity().is_err());
+
+        let mut detached_surface =
+            NativeCollisionHistoryView::build(&shard_v11_with_history(), 4).unwrap();
+        let current_index = detached_surface.decisions[0].current_snapshot_index as usize;
+        let snapshot = &mut detached_surface.snapshots[current_index];
+        let surface = &mut snapshot.surfaces.as_mut().unwrap().surfaces[0];
+        surface.poly_index = surface.poly_index.wrapping_add(1);
+        assert!(validate_snapshot(snapshot).is_err());
+        assert!(detached_surface.compute_identity().is_err());
     }
 }

@@ -83,7 +83,7 @@ fn collision_history_cli_separates_past_decisions_from_auxiliary_targets() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "dusklight-native-collision-history/v2");
+    assert_eq!(report["schema"], "dusklight-native-collision-history/v3");
     assert_eq!(report["history_depth"], 3);
     assert_eq!(report["snapshots"], 4);
     assert_eq!(report["decisions"], 2);
