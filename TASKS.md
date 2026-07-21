@@ -304,7 +304,14 @@ probe, demonstration, curriculum, option, reward term or preferred action.
   - [x] Add a generic contact sweep that exercises eight stick directions with
     neutral release phases while owning only port zero. It has no buttons,
     target, objective, stage-specific path or interaction sequence; its purpose
-    is to expose changing collision/contact fields for the coverage audit.
+    is to expose changing collision/contact fields for the coverage audit. A
+    four-origin, 160-tick pass over D_MN01, F_SP103, F_SP104 and F_SP115
+    authenticated every trace and exact applied PAD with zero rejected cases
+    (ledger `39461b82...7cca29`). Ordinary movement from F_SP103 crossed into
+    F_SP00, so the matrix attributes its 71 pre-transition and 89 post-transition
+    records to separate actual-stage cells instead of mislabeling all 160 as the
+    requested boot stage. The five-cell coverage report is
+    `3cd25180...3a8ac`; this is state-variation evidence, not route success.
   - [ ] Add general contact, actor-activation and loading probes without
     encoding a known route or interaction sequence, then run a stratified
     cross-map sample and report which typed fields actually vary.
