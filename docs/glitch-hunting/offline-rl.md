@@ -1085,15 +1085,25 @@ huntctl learn pretrain-native-encoder --dataset auxiliary-dataset.json `
 ```
 
 Families cover core player motion, action phase, event context, previous PAD,
-camera/collision/world context, RNG and goal state, plus actor population,
-identity, motion, lifecycle/physics, Link/parent relationships, attention,
-event participation, return-place writers, enemy state, trigger volumes and
-player relationships. Actor feature columns require `actor_population`; omit
-the population and every actor family for a control that cannot leak set
-cardinality. The artifact binds the exact retained family list and resulting
-feature schema.
+camera/collision/world context, RNG, goal state, attention-candidate context and
+past-only temporal deltas, plus actor population, identity, motion,
+lifecycle/physics, actor-local temporal deltas, Link/parent relationships,
+attention and attention-candidate membership, event participation, return-place
+writers, enemy state, trigger volumes and player relationships. Actor feature
+columns require `actor_population`; omit the population and every actor family
+for a control that cannot leak set cardinality. The artifact binds the exact
+retained family list and resulting feature schema.
 
-Report v3 includes rare-event classification diagnostics in addition to MSE.
+`core_temporal_delta` compares the current pre-input observation only with the
+preceding pre-input observation in the same episode. `actor_temporal_delta`
+joins current and prior actors by runtime generation and exposes masked motion,
+angle, component-presence and lifecycle-field changes. Episode starts, context
+changes and new actors remain explicit rather than becoming fabricated zero
+motion. These compact channels do not retain another complete actor set per
+sample and never expose the current transition's post-simulation state to a
+forward head.
+
+Report v4 includes rare-event classification diagnostics in addition to MSE.
 Contact, procedure, mode and actor-disappearance heads expose support and
 confusion counts, precision/recall, specificity, balanced accuracy, F1 and a
 clamped Brier score for both the learned model and training-mean baseline.
@@ -1108,7 +1118,7 @@ the answer into inverse dynamics. The standalone `encode(pre_state)` API stays
 state-only for policy use; action and post-state are training/evaluation head
 context, not live policy observation.
 
-Report v3 lists `pre_state_and_action` or `pre_and_post_state` for every target.
+Report v4 lists `pre_state_and_action` or `pre_and_post_state` for every target.
 Executable invariants require forward predictions to remain identical when
 only post-state changes and inverse predictions to remain identical when only
 the supplied action changes. A model that violates either separation is an
