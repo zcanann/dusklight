@@ -79,6 +79,28 @@ pub struct NativePlayerControlObservation {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeMessageSessionObservation {
+    pub procedure: u16,
+    pub message_id: u32,
+    pub message_index: i32,
+    pub node_index: u16,
+    pub flow_id: i16,
+    pub selection_count: u8,
+    pub selection_cursor: u8,
+    pub selection_push: u8,
+    pub output_type: u8,
+    pub talk_now: bool,
+    pub talk_message: bool,
+    pub auto_message: bool,
+    pub kill_pending: bool,
+    pub camera_cancel: bool,
+    pub send: bool,
+    pub send_control: bool,
+    pub talk_actor: NativeActorIdentity,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeEventHandoffObservation {
     pub pre_item_no: u8,
     pub get_item_no: u8,
@@ -196,4 +218,6 @@ pub struct NativeLearningObservation {
     pub restart: Option<NativeRestartObservation>,
     pub event_handoff_status: NativeChannelStatus,
     pub event_handoff: Option<NativeEventHandoffObservation>,
+    pub message_session_status: NativeChannelStatus,
+    pub message_session: Option<NativeMessageSessionObservation>,
 }

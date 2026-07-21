@@ -1039,6 +1039,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                             "player_collision_solver",
                             observation.player_collision_solver_status,
                         ),
+                        ("message_session", observation.message_session_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }

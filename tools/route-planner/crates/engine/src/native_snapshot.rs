@@ -4,7 +4,7 @@ use crate::artifact::Digest;
 use crate::identity::RuntimeConfiguration;
 use crate::native_observation::{
     NativeChannelStatus, NativeEventHandoffObservation, NativeLearningObservation,
-    NativePlayerResourcesObservation,
+    NativeMessageSessionObservation, NativePlayerResourcesObservation,
 };
 use crate::snapshot::{
     SNAPSHOT_CHAIN_SCHEMA, STATE_SNAPSHOT_SCHEMA, SnapshotChain, SnapshotChainEntry, StateDiff,
@@ -289,6 +289,22 @@ pub fn snapshot_native_observation(
         ComponentKind::PendingOperation,
         observation.event_handoff_status,
         observation.event_handoff.as_ref().map(event_handoff_fields),
+        ComponentBinding::Session {
+            session_id: context.session_id.clone(),
+        },
+        SemanticLifetime::Action,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "message-session",
+        ComponentKind::MessageFlow,
+        observation.message_session_status,
+        observation
+            .message_session
+            .as_ref()
+            .map(message_session_fields),
         ComponentBinding::Session {
             session_id: context.session_id.clone(),
         },
@@ -666,6 +682,57 @@ fn event_handoff_fields(value: &NativeEventHandoffObservation) -> BTreeMap<Strin
     output
 }
 
+fn message_session_fields(value: &NativeMessageSessionObservation) -> BTreeMap<String, StateValue> {
+    let mut output = fields([
+        ("procedure", StateValue::Unsigned(value.procedure.into())),
+        ("message_id", StateValue::Unsigned(value.message_id.into())),
+        (
+            "message_index",
+            StateValue::Signed(value.message_index.into()),
+        ),
+        ("node_index", StateValue::Unsigned(value.node_index.into())),
+        ("flow_id", StateValue::Signed(value.flow_id.into())),
+        (
+            "selection_count",
+            StateValue::Unsigned(value.selection_count.into()),
+        ),
+        (
+            "selection_cursor",
+            StateValue::Unsigned(value.selection_cursor.into()),
+        ),
+        (
+            "selection_push",
+            StateValue::Unsigned(value.selection_push.into()),
+        ),
+        (
+            "output_type",
+            StateValue::Unsigned(value.output_type.into()),
+        ),
+        ("talk_now", StateValue::Boolean(value.talk_now)),
+        ("talk_message", StateValue::Boolean(value.talk_message)),
+        ("auto_message", StateValue::Boolean(value.auto_message)),
+        ("kill_pending", StateValue::Boolean(value.kill_pending)),
+        ("camera_cancel", StateValue::Boolean(value.camera_cancel)),
+        ("send", StateValue::Boolean(value.send)),
+        ("send_control", StateValue::Boolean(value.send_control)),
+        (
+            "talk_actor_present",
+            StateValue::Boolean(value.talk_actor.present),
+        ),
+    ]);
+    if value.talk_actor.present {
+        output.insert(
+            "talk_actor_runtime_generation".into(),
+            StateValue::Unsigned(value.talk_actor.runtime_generation.into()),
+        );
+        output.insert(
+            "talk_actor_name".into(),
+            StateValue::Signed(value.talk_actor.actor_name.into()),
+        );
+    }
+    output
+}
+
 fn player_resource_fields(
     value: &NativePlayerResourcesObservation,
 ) -> BTreeMap<String, StateValue> {
@@ -820,6 +887,27 @@ mod tests {
                 message_cut_status: NativeChannelStatus::Unavailable,
                 ..Default::default()
             }),
+            message_session_status: NativeChannelStatus::Present,
+            message_session: Some(NativeMessageSessionObservation {
+                procedure: 6,
+                message_id: 0x123456,
+                message_index: 17,
+                node_index: 9,
+                flow_id: 0x777,
+                selection_count: 3,
+                selection_cursor: 1,
+                selection_push: 2,
+                output_type: 4,
+                talk_now: true,
+                talk_message: true,
+                send: true,
+                talk_actor: NativeActorIdentity {
+                    present: true,
+                    runtime_generation: 7,
+                    actor_name: 0x123,
+                },
+                ..Default::default()
+            }),
             actors: vec![NativeActorObservation {
                 runtime_generation: 42,
                 return_place_writer: Some(NativeReturnPlaceWriterObservation {
@@ -905,6 +993,30 @@ mod tests {
         observation.runtime_file = None;
         let error = snapshot_native_observation(&observation, context(1)).unwrap_err();
         assert_eq!(error.field(), "native_observation.runtime_file");
+    }
+
+    #[test]
+    fn projects_global_message_session_as_generic_flow_state() {
+        let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
+        let message = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "message-session")
+            .unwrap();
+        assert_eq!(message.component_kind, ComponentKind::MessageFlow);
+        let ComponentPayload::Structured { fields } = &message.payload else {
+            panic!("message session must be structured");
+        };
+        assert_eq!(fields["capture_status"], StateValue::Text("present".into()));
+        assert_eq!(fields["message_id"], StateValue::Unsigned(0x123456));
+        assert_eq!(fields["flow_id"], StateValue::Signed(0x777));
+        assert_eq!(fields["node_index"], StateValue::Unsigned(9));
+        assert_eq!(fields["talk_now"], StateValue::Boolean(true));
+        assert_eq!(
+            fields["talk_actor_runtime_generation"],
+            StateValue::Unsigned(7)
+        );
     }
 
     #[test]

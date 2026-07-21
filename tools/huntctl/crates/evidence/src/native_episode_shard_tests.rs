@@ -61,6 +61,10 @@ fn golden_v15() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v15.dseps")
 }
 
+fn golden_v16() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v16.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -767,6 +771,60 @@ fn decodes_v15_typed_enemy_base_component() {
                     .iter()
                     .chain(&step.post_simulation.actors)
                     .all(|actor| actor.enemy_base.is_none())
+            }))
+    );
+}
+
+#[test]
+fn decodes_v16_global_message_session_without_an_npc_layout_cast() {
+    let shard = NativeEpisodeShard::decode(golden_v16()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V16
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.message_session_status,
+            NativeChannelStatus::Present
+        );
+        let message = observation.message_session.as_ref().unwrap();
+        assert_eq!(message.procedure, 6);
+        assert_eq!(message.message_id, 0x123456);
+        assert_eq!(message.message_index, 17);
+        assert_eq!(message.node_index, 9);
+        assert_eq!(message.flow_id, 0x777);
+        assert_eq!(message.selection_count, 3);
+        assert_eq!(message.selection_cursor, 1);
+        assert_eq!(message.selection_push, 2);
+        assert_eq!(message.output_type, 4);
+        assert!(message.talk_now);
+        assert!(message.talk_message);
+        assert!(message.send);
+        assert!(!message.auto_message);
+        assert!(!message.kill_pending);
+        assert!(!message.camera_cancel);
+        assert!(!message.send_control);
+        assert_eq!(message.talk_actor.runtime_generation, 7);
+        assert_eq!(message.talk_actor.actor_name, 0x123);
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v15()).unwrap();
+    assert!(
+        legacy
+            .episodes
+            .iter()
+            .all(|episode| episode.steps.iter().all(|step| {
+                [&step.pre_input, &step.post_simulation]
+                    .into_iter()
+                    .all(|observation| {
+                        observation.message_session_status == NativeChannelStatus::NotSampled
+                            && observation.message_session.is_none()
+                    })
             }))
     );
 }
