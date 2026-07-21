@@ -540,6 +540,13 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
+- For the exact audited GZ2E01 fingerprint, the same importer recognizes the
+  `fpcNm_L1BOSS_DOOR_e` name family and joins each usable-side placement's
+  decoded exit index to one same-room SCLS record. The candidate reads the boss
+  key from current-stage dungeon memory, writes the decoded memory-switch bit,
+  and retains interaction and actor/event/collision phases as unknown
+  obligations. It does not generalize this source behavior to lookalike builds
+  or other boss-door families.
 - Refinement-pack schema v14, refinement-stack schema v2, and composed-catalog
   schema v15 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
@@ -1632,6 +1639,11 @@ evidenced overlays over the generated base rather than silent edits to it.
       gates, and temporal windows for representative NPC setups.
 - [ ] Audit keyed door/gate actor families, their key/boss-key guards, consumption,
       persistent unlock writes, and alternate activation paths.
+  - [x] Audit the GZ2E01 `fpcNm_L1BOSS_DOOR_e` family, including its actor-name
+        aliases, boss-key and usable-side hard guards, parameter decoder,
+        interaction bounds, unlock switch, event/collision/scene-change phases,
+        and Forest Temple representative placement. Other door families remain
+        open. See `docs/route-planner/gz2e01-boss-door-audit.md`.
 - [ ] Inventory static placement, persistent control, and transient instance state
       for representative actor families.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
@@ -1731,6 +1743,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         planner and remove all planner-to-Huntctl crate dependencies.
 - [ ] Import actor-driven transitions and any remaining map/room metadata not
       represented by the current world inventories.
+  - [x] Import exact-GZ2E01 L1-family boss-door candidates by joining actor
+        parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
+        non-audited-build, and unmodeled-switch-domain cases remain encoded facts
+        without invented transitions.
 - [ ] Model ordinary item/NPC/event producers.
 - [x] Implement normal bank commit/load and binding changes.
   - [x] Execute typed serialize/restore/bind/rebind operations against independent
@@ -1768,6 +1784,9 @@ Deliverable: replayable state evidence that can validate transition rules.
         exactly one raw component at the resolved backing and fail atomically on
         missing, ambiguous, non-raw, or out-of-range targets.
 - [ ] Import hard door/actor guards and their state operations where decidable.
+  - [x] Import the GZ2E01 L1-family boss-key/current-stage guard and memory-switch
+        write, while retaining interaction geometry and actor/event/collision
+        phases as separate unresolved obligations.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
       language resources where decidable.
