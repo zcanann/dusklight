@@ -11,12 +11,38 @@ const MAX_DECODED_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const RARC_FILE_ENTRY_SIZE: usize = 0x14;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str =
+    "dusklight.route-planner.extracted-stage-data/v2";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractedStageData {
     pub chunks: Vec<ExtractedStageChunk>,
+    pub stage_information: Option<ExtractedStageInformation>,
+    pub scene_transitions: Vec<ExtractedSceneTransition>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedStageInformation {
+    pub message_group: u8,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedSceneTransition {
+    /// Zero-based index consumed by `dStage_changeScene`.
+    pub exit_id: u32,
+    pub destination_stage: String,
+    pub destination_spawn: u8,
+    pub destination_room: i8,
+    pub scene_layer: Option<u8>,
+    pub time_hour: Option<u8>,
+    pub wipe: u8,
+    pub wipe_time: u8,
+    pub raw_hex: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -156,7 +182,10 @@ pub enum MessageFlowSwitchOperation {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageFlowSwitchStore {
-    Save,
+    /// The current stage's loaded `dSv_memBit_c` bank. It can later be
+    /// projected to that stage's persistent save table; it is not a generic
+    /// process-global switch store.
+    LoadedStageMemory,
     Dungeon,
     Zone,
     OneZone,
@@ -249,6 +278,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     require_range(input, 4, header_bytes, "orig.stage.headers")?;
     let records_floor = 4 + header_bytes;
     let mut chunks = Vec::with_capacity(chunk_count);
+    let mut stage_information = None;
+    let mut scene_transitions = Vec::new();
     let mut actor_placements = Vec::new();
     let mut recognized_ranges = Vec::new();
     let mut total_records = 0_usize;
@@ -267,14 +298,17 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             .to_owned();
         let record_count = read_u32(input, header + 4, "orig.stage.chunk.record_count")?;
         let data_offset = read_u32(input, header + 8, "orig.stage.chunk.data_offset")?;
-        let record_size = actor_record_layout(&tag).map(|layout| layout.0);
+        let actor_layout = actor_record_layout(&tag);
+        let record_size = actor_layout
+            .map(|layout| layout.0)
+            .or_else(|| recognized_stage_record_size(&tag));
         chunks.push(ExtractedStageChunk {
             tag: tag.clone(),
             record_count,
             data_offset,
             recognized_record_size: record_size.map(|size| size as u8),
         });
-        let Some((record_size, scaled, layer)) = actor_record_layout(&tag) else {
+        let Some(record_size) = record_size else {
             continue;
         };
         total_records = total_records
@@ -298,6 +332,61 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             .ok_or_else(|| PlannerContractError::new("orig.stage.records", "size overflow"))?;
         require_range(input, start, bytes, "orig.stage.records")?;
         recognized_ranges.push((start, start + bytes, tag.clone()));
+
+        if tag == "STAG" {
+            if record_count != 1 || stage_information.is_some() {
+                return Err(PlannerContractError::new(
+                    "orig.stage.stag",
+                    "must contain exactly one unique record",
+                ));
+            }
+            let record = &input[start..start + record_size];
+            stage_information = Some(ExtractedStageInformation {
+                message_group: record[0x28],
+                raw_hex: hex_bytes(record),
+            });
+            continue;
+        }
+
+        if tag == "SCLS" {
+            for exit_id in 0..record_count {
+                let offset = start + exit_id as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let name_end = record[..8].iter().position(|byte| *byte == 0).unwrap_or(8);
+                if name_end == 0 || !record[..name_end].iter().all(u8::is_ascii_graphic) {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.scls.destination_stage",
+                        "must contain a nonempty printable ASCII stage name",
+                    ));
+                }
+                let destination_stage = std::str::from_utf8(&record[..name_end])
+                    .map_err(|_| {
+                        PlannerContractError::new(
+                            "orig.stage.scls.destination_stage",
+                            "must be UTF-8",
+                        )
+                    })?
+                    .to_owned();
+                let raw_layer = record[0x0b] & 0x0f;
+                let raw_time = ((record[0x0a] >> 4) & 0x0f) | (record[0x0b] & 0x10);
+                scene_transitions.push(ExtractedSceneTransition {
+                    exit_id,
+                    destination_stage,
+                    destination_spawn: record[0x08],
+                    destination_room: record[0x09] as i8,
+                    scene_layer: (raw_layer < 15).then_some(raw_layer),
+                    time_hour: (raw_time < 31).then_some(raw_time),
+                    wipe: record[0x0c],
+                    wipe_time: (record[0x0b] >> 5) & 7,
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        let Some((_, scaled, layer)) = actor_layout else {
+            unreachable!("all other recognized records are actor placements")
+        };
 
         for record_index in 0..record_count {
             let offset = start + record_index as usize * record_size;
@@ -337,7 +426,7 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                 ],
                 set_id: read_u16(record, 30, "orig.stage.actor.set_id")?,
                 scale_raw: scaled.then(|| [record[32], record[33], record[34]]),
-                raw_hex: record.iter().map(|byte| format!("{byte:02x}")).collect(),
+                raw_hex: hex_bytes(record),
             });
         }
     }
@@ -355,8 +444,22 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     }
     Ok(ExtractedStageData {
         chunks,
+        stage_information,
+        scene_transitions,
         actor_placements,
     })
+}
+
+fn recognized_stage_record_size(tag: &str) -> Option<usize> {
+    match tag {
+        "STAG" => Some(0x3c),
+        "SCLS" => Some(0x0d),
+        _ => None,
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn actor_record_layout(tag: &str) -> Option<(usize, bool, Option<u8>)> {
@@ -684,7 +787,7 @@ pub fn parse_message_flow(input: &[u8]) -> Result<ExtractedMessageFlow, PlannerC
                 node_index: index,
                 operation: MessageFlowSwitchOperation::BranchTrueWhenClear,
                 store: match handler {
-                    13 => MessageFlowSwitchStore::Save,
+                    13 => MessageFlowSwitchStore::LoadedStageMemory,
                     15 => MessageFlowSwitchStore::Dungeon,
                     17 => MessageFlowSwitchStore::Zone,
                     19 => MessageFlowSwitchStore::OneZone,
@@ -746,7 +849,7 @@ fn persistent_flag_access(
 
 fn switch_store(selector: u16) -> Option<MessageFlowSwitchStore> {
     Some(match selector {
-        0 => MessageFlowSwitchStore::Save,
+        0 => MessageFlowSwitchStore::LoadedStageMemory,
         1 => MessageFlowSwitchStore::Dungeon,
         2 => MessageFlowSwitchStore::Zone,
         3 => MessageFlowSwitchStore::OneZone,
@@ -1039,6 +1142,48 @@ mod tests {
         assert_eq!(actor.position, [1.5, -2.0, 3.25]);
         assert_eq!(actor.angle, [42, -1, 9]);
         assert_eq!(actor.set_id, 7);
+    }
+
+    #[test]
+    fn parses_stage_message_group_and_indexed_scene_transitions() {
+        let mut stage = vec![0; 0xa9];
+        stage[0..4].copy_from_slice(&2_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"STAG");
+        stage[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[16..20].copy_from_slice(b"SCLS");
+        stage[20..24].copy_from_slice(&2_u32.to_be_bytes());
+        stage[24..28].copy_from_slice(&0x8f_u32.to_be_bytes());
+        stage[0x48] = 3;
+
+        let first = &mut stage[0x8f..0x9c];
+        first[..8].copy_from_slice(b"D_MN04\0\0");
+        first[8..13].copy_from_slice(&[1, 1, 0xf0, 0x1f, 0]);
+        let second = &mut stage[0x9c..0xa9];
+        second[..8].copy_from_slice(b"F_SP110\0");
+        second[8..13].copy_from_slice(&[3, 0, 0x70, 0x42, 13]);
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.stage_information.unwrap().message_group, 3);
+        assert_eq!(parsed.scene_transitions.len(), 2);
+        assert_eq!(
+            parsed.scene_transitions[0],
+            ExtractedSceneTransition {
+                exit_id: 0,
+                destination_stage: "D_MN04".into(),
+                destination_spawn: 1,
+                destination_room: 1,
+                scene_layer: None,
+                time_hour: None,
+                wipe: 0,
+                wipe_time: 0,
+                raw_hex: "445f4d4e303400000101f01f00".into(),
+            }
+        );
+        assert_eq!(parsed.scene_transitions[1].exit_id, 1);
+        assert_eq!(parsed.scene_transitions[1].scene_layer, Some(2));
+        assert_eq!(parsed.scene_transitions[1].time_hour, Some(7));
+        assert_eq!(parsed.scene_transitions[1].wipe_time, 2);
     }
 
     #[test]

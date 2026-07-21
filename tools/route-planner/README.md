@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns fifteen operations:
+The planner CLI currently owns seventeen operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -32,14 +32,23 @@ The planner CLI currently owns fifteen operations:
   planner facts and unresolved physical obligations.
 - `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely
   named resource from user-supplied retail data.
+- `scan-orig` discovers an extracted GameCube/Wii disc from either its game
+  root or a parent `orig/` directory, reads the product/revision header, hashes
+  every regular file, and emits a path-normalized sealed scan. It never trusts
+  the directory name and rejects ambiguous roots and symlinks.
+- `extract-orig` verifies that scan against a caller-supplied exact content
+  identity, then decodes every recognized stage/room archive and message bundle
+  into one canonical derived artifact plus a fact-pack manifest. Original bytes
+  and host paths are not copied into either output.
 - `extract-message-flow` emits the BMG flow labels, nodes, branch-target table,
   correctly resolved query-handler numbers, raw 32-bit event parameters, and
   source-derived temporary-bit, persistent-event-bit, and switch accesses. Raw
   query-table indices remain present so the two coordinate systems cannot be
   conflated.
-- `extract-stage-data` emits planner-owned DZS/DZR chunk records and authored
-  actor placements, including layer, parameters, position, rotations, and raw
-  bytes. Unknown chunk formats remain listed but uninterpreted.
+- `extract-stage-data` emits planner-owned DZS/DZR chunk records, STAG message
+  groups, indexed SCLS destinations, and authored actor placements including
+  layer, parameters, position, rotations, and raw bytes. Unknown chunk formats
+  remain listed but uninterpreted.
 - `inspect-state` exposes every live and serialized component store alongside
   exact-context friendly aliases and derived fact evaluations. It also retains
   ordered operation/boundary history, reports the last known writer of each live

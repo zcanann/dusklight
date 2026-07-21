@@ -1682,8 +1682,14 @@ Deliverable: replayable state evidence that can validate transition rules.
         message-flow and DZS/DZR actor-placement decoding with archive/resource
         digests; orchestration, input discovery, and sealed derived-pack output
         remain open.
-  - [ ] Add full input discovery/version verification and one-command extraction
+  - [x] Add full input discovery/version verification and one-command extraction
         from a supplied `orig/` tree.
+    - `scan-orig` reads the disc header, hashes a normalized complete file
+      manifest, rejects ambiguous roots and symlinks, and never trusts directory
+      labels. `extract-orig` requires an exact content identity, verifies the
+      complete fingerprint, and emits a canonical decoded stage/message bundle
+      plus sealed fact-pack manifest without host paths or original bytes. See
+      `docs/route-planner/orig-discovery-and-extraction.md`.
 - [ ] Auto-detect and verify supported inputs; reject label/digest disagreement
       and represent unknown inputs as unsupported rather than guessing.
 - [x] Import world-context stages, room/layer bindings, player spawns, static
@@ -2256,27 +2262,33 @@ sequence.
     `docs/route-planner/text-displacement-producer-model.md`.
 - [x] Identify Gor Coron's exact displaced-branch predicate and downstream
       persistent event/switch writes.
-  - GZ2E01 group 3 flow 6/9 requires M031 clear, A set, and B or C set; node 190
-    writes persistent label 62/M029 before nodes 189 and 208 clear A/B/C. The
-    extractor now emits persistent-bit and switch accesses as typed records.
+  - GZ2E01 group 3 flow 6 first requires M031 clear. A set C jumps to flow 9;
+    otherwise a set B writes C and ends through event 6/cut 4. A later flow-9
+    pass sets A when clear, and the following pass reaches node 190 to write
+    persistent label 62/M029 before nodes 189 and 208 clear A/B/C. Thus a
+    normal B-bit producer feeds three ordered talks, not one synthetic
+    `A && (B || C)` rule. The extractor emits persistent-bit and switch accesses
+    as typed records.
 - [x] Model invisible wall, elevator authorization, live NPC blockers, and room
       reload reconstruction independently.
-  - Separate auto-bound obstructions and resolvers cover live GRA_WALL deletion,
-    the switch-0x6f teach-elevator path, room-reloaded Goron state, and the
-    witnessed roll-past alternative; persisted-state actor reconstruction is
-    replayed independently.
+  - Separate rules cover live GRA_WALL deletion, the type-4 guide Goron's
+    switch-0x6f gate walk, the `dmele` actor's independently detected heavy
+    pressure/event movement, room-reloaded Goron state, and the witnessed
+    roll-past alternative. M029 does not directly authorize the elevator actor.
 - [x] Start with the Goron Mines encoded transition visible but non-executable;
       discharge each authorization and physical obligation causally.
   - The R_SP110 SCLS 0 edge remains a first-class encoded transition while a
-    blocked witness names the wall, elevator, and live-Goron obstructions.
+    blocked witness names its wall and live-Goron obstructions. The separate
+    elevator approach can block reaching the hall, but is not falsely attached
+    to SCLS 0.
 - [x] Verify the solver can work backward from the entrance to all enabled
       producers of the required text-bit pattern.
   - Backward relevance from D_MN04 includes all four Coro/Auru/Yeta/Ooccoo raw-bit
-    producers and the unchanged Gor Coron consumer.
+    producers and all three ordered Gor Coron consumer actions.
 - [x] Verify removing one producer or adding a hypothetical new interrupt changes
       reachability without changing the Goron consumer or entrance rules.
   - Isolating then removing each enabled producer blocks the route. A new
-    hypothetical C-bit writer restores it only under research evidence policy,
+    hypothetical B-bit writer restores it only under research evidence policy,
     with byte-for-byte-equal consumer and entrance records. See
     `docs/route-planner/text-displacement-message-state-audit.md`.
 
