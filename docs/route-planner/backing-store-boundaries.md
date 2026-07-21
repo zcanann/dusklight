@@ -41,6 +41,11 @@ separate `set_location` effect after the bank operation. This keeps storage
 semantics distinct from authorization, collision, doors, cutscenes, and other
 ways the map transition itself may be blocked or bypassed.
 
+Every serialized component must name the same owner as the store containing it.
+A stage-bank store additionally accepts only stage-load-lifetime components.
+These invariants are checked when an execution state is created, decoded, or
+committed, so malformed theorycraft data cannot silently alias another store.
+
 ## Binding is not ownership
 
 The source and destination bindings are explicit rather than inferred from the

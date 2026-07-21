@@ -2707,6 +2707,16 @@ mod tests {
             unreachable!()
         };
         assert_eq!(fields["marker"], StateValue::Unsigned(11));
+        let other_file_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-1".into(),
+            stage: "D_MN05".into(),
+        };
+        let ComponentPayload::Structured { fields } =
+            &state.serialized_components[&other_file_owner][0].payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(fields["marker"], StateValue::Unsigned(99));
         assert_eq!(state.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(
             state
