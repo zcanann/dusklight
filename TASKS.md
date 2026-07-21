@@ -227,6 +227,15 @@ relationship, coordinate corridor, or success sequence.
   9,084-candidate pass replayed 88 interrupted records in 1.92 seconds; merged
   status over 178 records remained 2.25 seconds while eight native workers
   continued producing classifications.
+  The completed first-attempt sweep then touched all 9,084 canonical cases and
+  cleanly folded 9,757 bounded attempts into ledger
+  `606ca6bb...6e813`: 2,750 cases were ready across 60 requested and observed
+  stages, 71 reached repeated host timeout, four reached repeated process
+  failure, and 6,259 retained one failed attempt while awaiting their allowed
+  second attempt. The ledger does not relabel those pending cases as failures
+  or successes. Its pinned learner population is observation v23 and actor
+  catalog v9, so it remains valid first-sweep evidence but cannot prove fields
+  added by later observation versions.
   The survey's observation identity v4 bound the then-current v24 native
   learner schema through the shared Rust evidence constant. This closed a
   fail-closed collector regression where the v21 native writer was rejected by
@@ -280,6 +289,16 @@ relationship, coordinate corridor, or success sequence.
     terminal snapshot belongs to F_SP00 after an ordinary load, so this is
     terminal-boundary coverage over a small sample, not proof of temporal
     variation or all-stage completeness; the parent item remains open.
+  - [x] Verify complete-population parity over every ready case in the first
+    all-catalog attempt sweep. The schema-pinned v6 coverage fold authenticated
+    and exact-compared 197,003 learner actors against the independent terminal
+    walk in all 2,750/2,750 ready cases, spanning 60 stages, 532 profiles,
+    15,947 enemy instances and 2,010 stage/profile cells with zero rejected
+    artifacts (`562b4813...d7d10`). Aggregate profile fields classify 25,178
+    present, 13,665 varying, 2,381 absent and 1,164 ambiguous paths; 21 profile
+    identities remain explicitly ambiguous. This closes the first sweep, not
+    the parent: 6,259 catalog cases still have one bounded retry available,
+    and later observation schemas require their own coverage identity.
 - [ ] Audit universal actor information: stable runtime identity and spawn
   generation, authored placement identity, transform, velocity, scale,
   collision/body information, action/procedure and animation state,
