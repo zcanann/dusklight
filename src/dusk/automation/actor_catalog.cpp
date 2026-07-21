@@ -61,6 +61,11 @@ struct ActorCatalogEntry {
     csXyz oldAngle{};
     float gravity = 0.0F;
     float maxFallSpeed = 0.0F;
+    bool enemyBasePresent = false;
+    std::uint16_t enemyFlags = 0;
+    std::uint8_t enemyThrowMode = 0;
+    cXyz enemyDownPosition{};
+    cXyz enemyHeadLockPosition{};
 };
 
 struct ActorCatalogCapture {
@@ -113,6 +118,14 @@ int capture_actor(void* candidate, void* context) {
     const char* symbolicName = fopAcM_getProcNameString(actor);
     if (symbolicName != nullptr) {
         std::snprintf(entry.symbolicName.data(), entry.symbolicName.size(), "%s", symbolicName);
+    }
+    if (actor->group == fopAc_ENEMY_e) {
+        const auto* enemy = static_cast<const fopEn_enemy_c*>(actor);
+        entry.enemyBasePresent = true;
+        entry.enemyFlags = enemy->mFlags;
+        entry.enemyThrowMode = enemy->mThrowMode;
+        entry.enemyDownPosition = enemy->mDownPos;
+        entry.enemyHeadLockPosition = enemy->mHeadLockPos;
     }
 
     if (capture->count < capture->entries.size()) {
@@ -181,6 +194,19 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
             {"eligible", actor.returnPlaceWriter.eligible},
         };
     }
+    json enemyBase = nullptr;
+    if (actor.enemyBasePresent) {
+        enemyBase = {
+            {"flags", actor.enemyBase.flags},
+            {"throw_mode", actor.enemyBase.throwMode},
+            {"down_position", position_json(actor.enemyBase.downPositionX,
+                                  actor.enemyBase.downPositionY,
+                                  actor.enemyBase.downPositionZ)},
+            {"head_lock_position", position_json(actor.enemyBase.headLockPositionX,
+                                       actor.enemyBase.headLockPositionY,
+                                       actor.enemyBase.headLockPositionZ)},
+        };
+    }
     return {
         {"runtime_generation", actor.runtimeGeneration},
         {"actor_type", actor.actorType},
@@ -225,6 +251,7 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
         {"attention", std::move(attention)},
         {"event_participation", std::move(eventParticipation)},
         {"return_place_writer", std::move(returnPlaceWriter)},
+        {"enemy_base", std::move(enemyBase)},
     };
 }
 
@@ -395,6 +422,15 @@ bool write_actor_catalog(
     json actors = json::array();
     for (std::size_t index = 0; index < capture.count; ++index) {
         const ActorCatalogEntry& actor = capture.entries[index];
+        json enemyBase = nullptr;
+        if (actor.enemyBasePresent) {
+            enemyBase = {
+                {"flags", actor.enemyFlags},
+                {"throw_mode", actor.enemyThrowMode},
+                {"down_position", position_json(actor.enemyDownPosition)},
+                {"head_lock_position", position_json(actor.enemyHeadLockPosition)},
+            };
+        }
         actors.push_back({
             {"process_id", actor.processId},
             {"parent_process_id", actor.parentProcessId},
@@ -432,6 +468,7 @@ bool write_actor_catalog(
             {"health", actor.health},
             {"status", actor.status},
             {"condition", actor.condition},
+            {"enemy_base", std::move(enemyBase)},
         });
     }
 
@@ -454,7 +491,7 @@ bool write_actor_catalog(
         nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
                                                           "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v7"},
+        {"schema", "dusklight.actor-catalog.v8"},
         {"build",
             {
                 {"version", build.version},

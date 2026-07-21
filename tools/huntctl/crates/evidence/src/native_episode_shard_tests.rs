@@ -57,6 +57,10 @@ fn golden_v14() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v14.dseps")
 }
 
+fn golden_v15() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v15.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -723,6 +727,48 @@ fn decodes_v14_return_place_writer_configuration_and_guards() {
         assert!(writer.switch_unset_satisfied);
         assert!(!writer.eligible);
     }
+}
+
+#[test]
+fn decodes_v15_typed_enemy_base_component() {
+    let shard = NativeEpisodeShard::decode(golden_v15()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V15
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert!(observation.actors.iter().all(|actor| actor.group == 2));
+        assert!(
+            observation
+                .actors
+                .iter()
+                .all(|actor| actor.enemy_base.is_some())
+        );
+        let enemy = observation.actors[0].enemy_base.as_ref().unwrap();
+        assert_eq!(enemy.flags, 0x89);
+        assert_eq!(enemy.throw_mode, 0x04);
+        assert_eq!(enemy.down_position, [12.0, 3.5, -7.5]);
+        assert_eq!(enemy.head_lock_position, [12.5, 7.0, -8.0]);
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v14()).unwrap();
+    assert!(
+        legacy
+            .episodes
+            .iter()
+            .all(|episode| episode.steps.iter().all(|step| {
+                step.pre_input
+                    .actors
+                    .iter()
+                    .chain(&step.post_simulation.actors)
+                    .all(|actor| actor.enemy_base.is_none())
+            }))
+    );
 }
 
 #[test]

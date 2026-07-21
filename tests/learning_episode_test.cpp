@@ -130,6 +130,18 @@ struct ObservationFixture {
                     .mapToolId = 8,
                     .index = 2,
                 },
+            .enemyBasePresent = true,
+            .enemyBase =
+                {
+                    .flags = 0x89,
+                    .throwMode = 0x04,
+                    .downPositionX = 12.0F,
+                    .downPositionY = 3.5F,
+                    .downPositionZ = -7.5F,
+                    .headLockPositionX = 12.5F,
+                    .headLockPositionY = 7.0F,
+                    .headLockPositionZ = -8.0F,
+                },
         };
         dynamicColliders[0] = {
             .registrationIndex = 0,

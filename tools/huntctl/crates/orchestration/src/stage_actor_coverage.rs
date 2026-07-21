@@ -20,7 +20,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const STAGE_ACTOR_COVERAGE_SCHEMA_V5: &str = "dusklight-stage-actor-coverage/v5";
+pub const STAGE_ACTOR_COVERAGE_SCHEMA_V6: &str = "dusklight-stage-actor-coverage/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -175,6 +175,7 @@ struct ActorCatalogActor {
     home_angle: [i16; 3],
     old_angle: [i16; 3],
     is_enemy: bool,
+    enemy_base: Option<LearningActorEnemyBase>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,6 +231,16 @@ struct LearningActor {
     attention: Option<LearningActorAttention>,
     event_participation: Option<LearningActorEventParticipation>,
     return_place_writer: Option<LearningActorReturnPlaceWriter>,
+    enemy_base: Option<LearningActorEnemyBase>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorEnemyBase {
+    flags: u16,
+    throw_mode: u8,
+    down_position: [f32; 3],
+    head_lock_position: [f32; 3],
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -502,7 +513,7 @@ impl StageActorCoverageReport {
             .filter(|case| case.status == StageActorEvidenceStatus::VerifiedCompleteSnapshot)
             .count() as u32;
         let mut report = Self {
-            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V5.into(),
+            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V6.into(),
             catalog_sha256,
             ledger_sha256,
             ready_case_count: cases.len() as u32,
@@ -519,7 +530,7 @@ impl StageActorCoverageReport {
     }
 
     pub fn validate(&self) -> Result<(), StageActorCoverageError> {
-        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V5
+        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V6
             || self.catalog_sha256 == Digest::ZERO
             || self.ledger_sha256 == Digest::ZERO
             || self.report_sha256 == Digest::ZERO
@@ -815,7 +826,7 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.runtime_generation)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v7"
+    if snapshot.schema != "dusklight.actor-catalog.v8"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -829,7 +840,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != "dusklight-learning-observation/v14"
+    if learning.source_schema != "dusklight-learning-observation/v15"
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -862,6 +873,7 @@ fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) 
         && catalog.old_room == learner.old_room
         && catalog.current_room == learner.current_room
         && catalog.group == learner.group
+        && catalog.enemy_base == learner.enemy_base
         && catalog.argument == learner.argument
         && catalog.pause_flag == learner.pause_flag
         && catalog.process_init_state == learner.process_init_state
@@ -1012,7 +1024,7 @@ mod tests {
                 "old_position": [3.0, 4.0, 5.0], "current_position": [4.0, 5.0, 6.0],
                 "scale": [1.0, 1.0, 1.0], "gravity": -1.0, "max_fall_speed": -20.0,
                 "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
-                "old_angle": [4, 5, 6], "is_enemy": false}),
+                "old_angle": [4, 5, 6], "is_enemy": false, "enemy_base": null}),
             json!({"process_id": 8, "parent_process_id": 4, "actor_type": 6,
                 "process_subtype": 7, "parameters": 3, "status": 4, "condition": 5,
                 "actor_name": 291, "profile_name": 291, "symbolic_name": "fpcNm_NPC_e",
@@ -1025,7 +1037,10 @@ mod tests {
                 "current_position": [10.0, 11.0, 12.0], "scale": [2.0, 2.0, 2.0],
                 "gravity": -2.0, "max_fall_speed": -30.0,
                 "eye_position": [10.0, 13.0, 12.0], "home_angle": [7, 8, 9],
-                "old_angle": [10, 11, 12], "is_enemy": true}),
+                "old_angle": [10, 11, 12], "is_enemy": true,
+                "enemy_base": {"flags": 137, "throw_mode": 4,
+                    "down_position": [12.0, 3.5, -7.5],
+                    "head_lock_position": [12.5, 7.0, -8.0]}}),
         ];
         let learning_actors = vec![
             json!({"runtime_generation": first_learning_generation,
@@ -1043,7 +1058,8 @@ mod tests {
                 "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
                 "old_angle": [4, 5, 6], "current_angle": [5, 6, 7],
                 "shape_angle": [6, 7, 8], "attention": null,
-                "event_participation": null, "return_place_writer": null}),
+                "event_participation": null, "return_place_writer": null,
+                "enemy_base": null}),
             json!({"runtime_generation": 8, "parent_runtime_generation": 4,
                 "actor_type": 6, "process_subtype": 7, "parameters": 3, "status": 4,
                 "condition": 5, "actor_name": 291, "profile_name": 291, "set_id": 1,
@@ -1062,14 +1078,17 @@ mod tests {
                     "distance_indices": [0,1,2,3,4,5,6,7,8], "auxiliary": 2},
                 "event_participation": {"command": 1, "condition": 2,
                     "event_id": 3, "map_tool_id": 4, "index": 5},
-                "return_place_writer": null}),
+                "return_place_writer": null,
+                "enemy_base": {"flags": 137, "throw_mode": 4,
+                    "down_position": [12.0, 3.5, -7.5],
+                    "head_lock_position": [12.5, 7.0, -8.0]}}),
         ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v7", "simulation_tick": 29,
+            "schema": "dusklight.actor-catalog.v8", "simulation_tick": 29,
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": "dusklight-learning-observation/v14",
+                "source_schema": "dusklight-learning-observation/v15",
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }

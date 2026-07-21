@@ -19,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V5: &str = "dusklight-native-actor-view/v5";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V6: &str = "dusklight-native-actor-view/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,6 +93,7 @@ pub struct NativeActorRelation {
     pub parameters: u32,
     pub status: u32,
     pub base_state: Option<NativeActorBaseState>,
+    pub enemy_base: Option<NativeActorEnemyBaseState>,
     pub absolute_position: [f32; 3],
     pub absolute_home_position: [f32; 3],
     pub absolute_velocity: [f32; 3],
@@ -142,6 +143,15 @@ pub struct NativeActorBaseState {
     pub absolute_eye_position: [f32; 3],
     pub home_angle: [i16; 3],
     pub old_angle: [i16; 3],
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorEnemyBaseState {
+    pub flags: u16,
+    pub throw_mode: u8,
+    pub absolute_down_position: [f32; 3],
+    pub absolute_head_lock_position: [f32; 3],
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -323,7 +333,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V5.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V6.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -357,7 +367,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V5
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V6
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -390,7 +400,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v5\0");
+        hasher.update(b"dusklight.native-actor-view/v6\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -719,6 +729,15 @@ fn materialize_actor(
             home_angle: actor.home_angle,
             old_angle: actor.old_angle,
         }),
+        enemy_base: actor
+            .enemy_base
+            .as_ref()
+            .map(|enemy| NativeActorEnemyBaseState {
+                flags: enemy.flags,
+                throw_mode: enemy.throw_mode,
+                absolute_down_position: enemy.down_position,
+                absolute_head_lock_position: enemy.head_lock_position,
+            }),
         absolute_position: actor.position,
         absolute_home_position: actor.home_position,
         absolute_velocity: actor.velocity,
@@ -944,6 +963,14 @@ fn validate_observation(
                 .chain(&base_state.absolute_eye_position)
                 .all(|value| value.is_finite())
         });
+        let enemy_base_valid = actor.enemy_base.as_ref().is_none_or(|enemy| {
+            actor.group == 2
+                && enemy
+                    .absolute_down_position
+                    .iter()
+                    .chain(&enemy.absolute_head_lock_position)
+                    .all(|value| value.is_finite())
+        });
         let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
             attention.flags != 0
                 && observation.player_present == attention.link_relative_position.is_some()
@@ -958,6 +985,7 @@ fn validate_observation(
             || !option_consistent
             || !attention_consistent
             || !base_state_finite
+            || !enemy_base_valid
             || !finite
         {
             return Err(NativeActorViewError::new(
@@ -1132,6 +1160,16 @@ mod tests {
         shard
     }
 
+    fn shard_v15() -> NativeEpisodeShard {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v15.dseps"
+        ))
+        .unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard
+    }
+
     #[test]
     fn builds_complete_absolute_link_camera_and_parent_relations() {
         let mut shard = shard();
@@ -1219,6 +1257,36 @@ mod tests {
                     .actors
                     .iter()
                     .all(|actor| actor.base_state.is_none())
+        }));
+    }
+
+    #[test]
+    fn exposes_v15_typed_enemy_state_without_fabricating_legacy_values() {
+        let mut v15_shard = shard_v15();
+        let catalog = catalog_for(&v15_shard);
+        v15_shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&v15_shard, &catalog).unwrap();
+        for observation in &view.observations {
+            assert!(observation.actors.iter().all(|actor| actor.group == 2));
+            let enemy = observation.actors[0]
+                .enemy_base
+                .as_ref()
+                .expect("v15 enemy base state");
+            assert_eq!(enemy.flags, 0x89);
+            assert_eq!(enemy.throw_mode, 0x04);
+            assert_eq!(enemy.absolute_down_position, [12.0, 3.5, -7.5]);
+            assert_eq!(enemy.absolute_head_lock_position, [12.5, 7.0, -8.0]);
+        }
+
+        let mut legacy = shard_v10();
+        let catalog = catalog_for(&legacy);
+        legacy.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&legacy, &catalog).unwrap();
+        assert!(view.observations.iter().all(|observation| {
+            observation
+                .actors
+                .iter()
+                .all(|actor| actor.enemy_base.is_none())
         }));
     }
 

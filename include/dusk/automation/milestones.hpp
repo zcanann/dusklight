@@ -335,6 +335,19 @@ struct MilestoneObservation {
             bool eligible = false;
         };
 
+        // Shared fopEn_enemy_c state. This is a typed optional component gated
+        // by the actor's enemy group, never a guessed profile offset.
+        struct EnemyBaseComponent {
+            std::uint16_t flags = 0;
+            std::uint8_t throwMode = 0;
+            float downPositionX = 0.0f;
+            float downPositionY = 0.0f;
+            float downPositionZ = 0.0f;
+            float headLockPositionX = 0.0f;
+            float headLockPositionY = 0.0f;
+            float headLockPositionZ = 0.0f;
+        };
+
         std::uint64_t runtimeGeneration = 0;
         std::int32_t actorType = 0;
         std::int32_t processSubtype = 0;
@@ -403,6 +416,8 @@ struct MilestoneObservation {
         EventParticipationComponent eventParticipation;
         bool returnPlaceWriterPresent = false;
         ReturnPlaceWriterComponent returnPlaceWriter;
+        bool enemyBasePresent = false;
+        EnemyBaseComponent enemyBase;
     };
     std::span<const Actor> actors;
     // Total actor population visited by the observer. Current native learning

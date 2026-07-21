@@ -560,6 +560,29 @@ fn record_persistent_actor_changes(
         "return_place_writer",
         before.return_place_writer != after.return_place_writer,
     );
+    record_changed_field(
+        profile,
+        "enemy_base.present",
+        before.enemy_base.is_some() != after.enemy_base.is_some(),
+    );
+    if let (Some(before), Some(after)) = (&before.enemy_base, &after.enemy_base) {
+        record_changed_field(profile, "enemy_base.flags", before.flags != after.flags);
+        record_changed_field(
+            profile,
+            "enemy_base.throw_mode",
+            before.throw_mode != after.throw_mode,
+        );
+        record_changed_field(
+            profile,
+            "enemy_base.down_position",
+            float_array_changed(before.down_position, after.down_position),
+        );
+        record_changed_field(
+            profile,
+            "enemy_base.head_lock_position",
+            float_array_changed(before.head_lock_position, after.head_lock_position),
+        );
+    }
 }
 
 fn record_actor_temporal_episode(

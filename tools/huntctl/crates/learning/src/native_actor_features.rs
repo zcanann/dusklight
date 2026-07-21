@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2: &str = "dusklight-native-actor-feature-view/v2";
+pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3: &str = "dusklight-native-actor-feature-view/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,12 +30,13 @@ pub enum ActorFeatureFamily {
     ParentRelative,
     Attention,
     EventParticipation,
+    EnemyBase,
     GoalRelative,
     PlayerRelationships,
 }
 
 impl ActorFeatureFamily {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Identity,
         Self::AbsoluteMotion,
         Self::BaseLifecycle,
@@ -45,6 +46,7 @@ impl ActorFeatureFamily {
         Self::ParentRelative,
         Self::Attention,
         Self::EventParticipation,
+        Self::EnemyBase,
         Self::GoalRelative,
         Self::PlayerRelationships,
     ];
@@ -198,7 +200,7 @@ impl NativeActorFeatureView {
             })
             .collect();
         let mut view = Self {
-            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2.into(),
+            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3.into(),
             source_actor_view_sha256: source.view_sha256,
             spec,
             columns,
@@ -231,7 +233,7 @@ impl NativeActorFeatureView {
     pub fn validate(&self) -> Result<(), NativeActorFeatureError> {
         self.spec.validate()?;
         let expected_columns = columns_for(&self.spec, self.columns.goal_anchor_count);
-        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V2
+        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3
             || self.source_actor_view_sha256 == Digest::ZERO
             || self.observations.is_empty()
             || self.columns != expected_columns
@@ -266,7 +268,7 @@ impl NativeActorFeatureView {
     fn compute_identity(&self) -> Result<Digest, NativeActorFeatureError> {
         let mut canonical = self.clone();
         canonical.view_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.native-actor-feature-view/v2\0", &canonical)
+        canonical_digest(b"dusklight.native-actor-feature-view/v3\0", &canonical)
     }
 }
 
@@ -369,6 +371,11 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
                 "event_index",
             ],
         );
+    }
+    if spec.contains(ActorFeatureFamily::EnemyBase) {
+        extend_names(&mut categorical, &["enemy_flags", "enemy_throw_mode"]);
+        extend_vec3_names(&mut continuous, "enemy_absolute_down_position");
+        extend_vec3_names(&mut continuous, "enemy_absolute_head_lock_position");
     }
     if spec.contains(ActorFeatureFamily::PlayerRelationships) {
         extend_names(
@@ -536,6 +543,20 @@ fn materialize_actor(
             );
         } else {
             extend_categories(&mut row, &[0; 5], false);
+        }
+    }
+    if spec.contains(ActorFeatureFamily::EnemyBase) {
+        if let Some(enemy) = &actor.enemy_base {
+            extend_categories(
+                &mut row,
+                &[i64::from(enemy.flags), i64::from(enemy.throw_mode)],
+                true,
+            );
+            extend_continuous(&mut row, &enemy.absolute_down_position, true);
+            extend_continuous(&mut row, &enemy.absolute_head_lock_position, true);
+        } else {
+            extend_categories(&mut row, &[0; 2], false);
+            extend_continuous(&mut row, &[0.0; 6], false);
         }
     }
     if spec.contains(ActorFeatureFamily::GoalRelative) {
@@ -920,6 +941,43 @@ mod tests {
                 .iter()
                 .all(|actor| !actor.binary[targeted] && !actor.binary_present[targeted])
         );
+    }
+
+    #[test]
+    fn v15_enemy_base_is_selectable_and_legacy_values_are_masked() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v15.dseps"
+        ));
+        let view = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::EnemyBase]).unwrap(),
+        )
+        .unwrap();
+        let actor = &view.observations[0].actors[0];
+        let flags = categorical(&view, "enemy_flags");
+        let throw_mode = categorical(&view, "enemy_throw_mode");
+        let down_x = continuous(&view, "enemy_absolute_down_position_x");
+        let head_y = continuous(&view, "enemy_absolute_head_lock_position_y");
+        assert_eq!(actor.categorical[flags], 0x89);
+        assert_eq!(actor.categorical[throw_mode], 0x04);
+        assert!(actor.categorical_present[flags]);
+        assert_eq!(actor.continuous[down_x], 12.0);
+        assert_eq!(actor.continuous[head_y], 7.0);
+        assert!(actor.continuous_present[head_y]);
+
+        let legacy = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v10.dseps"
+        ));
+        let legacy = NativeActorFeatureView::build(
+            &legacy,
+            ActorFeatureSpec::new([ActorFeatureFamily::EnemyBase]).unwrap(),
+        )
+        .unwrap();
+        let actor = &legacy.observations[0].actors[0];
+        assert_eq!(actor.categorical[flags], 0);
+        assert!(!actor.categorical_present[flags]);
+        assert_eq!(actor.continuous[down_x], 0.0);
+        assert!(!actor.continuous_present[down_x]);
     }
 
     #[test]

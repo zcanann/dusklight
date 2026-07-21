@@ -34,6 +34,7 @@ const OBSERVATION_VERSION_V11: u16 = 11;
 const OBSERVATION_VERSION_V12: u16 = 12;
 const OBSERVATION_VERSION_V13: u16 = 13;
 const OBSERVATION_VERSION_V14: u16 = 14;
+const OBSERVATION_VERSION_V15: u16 = 15;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -72,6 +73,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V11: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V12: &str = "dusklight-learning-observation/v12";
 pub const LEARNING_OBSERVATION_SCHEMA_V13: &str = "dusklight-learning-observation/v13";
 pub const LEARNING_OBSERVATION_SCHEMA_V14: &str = "dusklight-learning-observation/v14";
+pub const LEARNING_OBSERVATION_SCHEMA_V15: &str = "dusklight-learning-observation/v15";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -327,6 +329,15 @@ pub struct NativeActorObservation {
     pub attention: Option<NativeActorAttentionComponent>,
     pub event_participation: Option<NativeActorEventParticipationComponent>,
     pub return_place_writer: Option<NativeReturnPlaceWriterComponent>,
+    pub enemy_base: Option<NativeEnemyBaseComponent>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeEnemyBaseComponent {
+    pub flags: u16,
+    pub throw_mode: u8,
+    pub down_position: [f32; 3],
+    pub head_lock_position: [f32; 3],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -700,6 +711,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V12
                 | OBSERVATION_VERSION_V13
                 | OBSERVATION_VERSION_V14
+                | OBSERVATION_VERSION_V15
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -828,6 +840,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V12 => LEARNING_OBSERVATION_SCHEMA_V12,
         OBSERVATION_VERSION_V13 => LEARNING_OBSERVATION_SCHEMA_V13,
         OBSERVATION_VERSION_V14 => LEARNING_OBSERVATION_SCHEMA_V14,
+        OBSERVATION_VERSION_V15 => LEARNING_OBSERVATION_SCHEMA_V15,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2209,7 +2222,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V11
         | OBSERVATION_VERSION_V12
         | OBSERVATION_VERSION_V13
-        | OBSERVATION_VERSION_V14 => {
+        | OBSERVATION_VERSION_V14
+        | OBSERVATION_VERSION_V15 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2360,10 +2374,13 @@ fn decode_observation(
             attention: None,
             event_participation: None,
             return_place_writer: None,
+            enemy_base: None,
         };
         if observation_version >= OBSERVATION_VERSION_V6 {
             let component_mask = reader.u16()?;
-            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V14 {
+            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V15 {
+                0xf
+            } else if observation_version >= OBSERVATION_VERSION_V14 {
                 0x7
             } else {
                 0x3
@@ -2501,6 +2518,39 @@ fn decode_observation(
                 {
                     return Err(NativeEpisodeShardError::new(
                         "absent return-place writer component has a payload",
+                    ));
+                }
+            }
+            if observation_version >= OBSERVATION_VERSION_V15 {
+                let enemy_flags = reader.u16()?;
+                let enemy_throw_mode = reader.u8()?;
+                if reader.u8()? != 0 {
+                    return Err(NativeEpisodeShardError::new(
+                        "nonzero enemy-base reserved byte",
+                    ));
+                }
+                let down_position = reader.f32x3()?;
+                let head_lock_position = reader.f32x3()?;
+                if component_mask & 8 != 0 {
+                    if actor.group != 2 {
+                        return Err(NativeEpisodeShardError::new(
+                            "enemy-base component belongs to a non-enemy actor",
+                        ));
+                    }
+                    actor.enemy_base = Some(NativeEnemyBaseComponent {
+                        flags: enemy_flags,
+                        throw_mode: enemy_throw_mode,
+                        down_position,
+                        head_lock_position,
+                    });
+                } else if actor.group == 2
+                    || enemy_flags != 0
+                    || enemy_throw_mode != 0
+                    || down_position != [0.0; 3]
+                    || head_lock_position != [0.0; 3]
+                {
+                    return Err(NativeEpisodeShardError::new(
+                        "absent enemy-base component has a payload or enemy owner",
                     ));
                 }
             }
