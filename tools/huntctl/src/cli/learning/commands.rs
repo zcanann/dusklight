@@ -621,25 +621,35 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let solver_present = view
                 .decisions
                 .iter()
-                .filter(|decision| decision.current.solver.is_some())
+                .filter(|decision| {
+                    view.snapshots[decision.current_snapshot_index as usize]
+                        .solver
+                        .is_some()
+                })
                 .count();
             let background_present = view
                 .decisions
                 .iter()
-                .filter(|decision| decision.current.background.is_some())
+                .filter(|decision| {
+                    view.snapshots[decision.current_snapshot_index as usize]
+                        .background
+                        .is_some()
+                })
                 .count();
             let solver_changes = view
                 .auxiliary_targets
                 .iter()
                 .filter(|target| {
-                    target.delta.solver.as_ref().is_some_and(|delta| {
-                        delta.flags_activated != 0
-                            || delta.flags_cleared != 0
-                            || delta.wall_table_size_delta != 0
-                            || delta.water_mode_changed
-                            || delta.line_start_delta != [0.0; 3]
-                            || delta.line_end_delta != [0.0; 3]
-                    })
+                    view.snapshots[target.before_snapshot_index as usize].solver
+                        != view.snapshots[target.after_snapshot_index as usize].solver
+                })
+                .count();
+            let background_changes = view
+                .auxiliary_targets
+                .iter()
+                .filter(|target| {
+                    view.snapshots[target.before_snapshot_index as usize].background
+                        != view.snapshots[target.after_snapshot_index as usize].background
                 })
                 .count();
             println!(
@@ -652,11 +662,13 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "artifact_store": artifact_store,
                     "content_blob": content_blob,
                     "history_depth": view.history_depth,
+                    "snapshots": view.snapshots.len(),
                     "decisions": view.decisions.len(),
                     "auxiliary_targets": view.auxiliary_targets.len(),
                     "solver_present": solver_present,
                     "background_present": background_present,
                     "solver_changes": solver_changes,
+                    "background_changes": background_changes,
                 }))?
             );
             Ok(())

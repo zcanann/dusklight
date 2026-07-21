@@ -80,8 +80,9 @@ fn collision_history_cli_separates_past_decisions_from_auxiliary_targets() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "dusklight-native-collision-history/v1");
+    assert_eq!(report["schema"], "dusklight-native-collision-history/v2");
     assert_eq!(report["history_depth"], 3);
+    assert_eq!(report["snapshots"], 4);
     assert_eq!(report["decisions"], 2);
     assert_eq!(report["auxiliary_targets"], 2);
     assert_eq!(report["solver_present"], 2);
@@ -92,9 +93,12 @@ fn collision_history_cli_separates_past_decisions_from_auxiliary_targets() {
     assert!(
         view.decisions
             .iter()
-            .all(|decision| decision.completed_history.is_empty())
+            .all(|decision| decision.completed_transition_indices.is_empty())
     );
-    assert_eq!(view.decisions[0].current, view.auxiliary_targets[0].before);
+    assert_eq!(
+        view.decisions[0].current_snapshot_index,
+        view.auxiliary_targets[0].before_snapshot_index
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

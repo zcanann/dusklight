@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_COLLISION_HISTORY_SCHEMA_V1: &str = "dusklight-native-collision-history/v1";
+pub const NATIVE_COLLISION_HISTORY_SCHEMA_V2: &str = "dusklight-native-collision-history/v2";
 pub const DEFAULT_COLLISION_HISTORY_DEPTH: usize = 4;
 pub const MAX_COLLISION_HISTORY_DEPTH: usize = 32;
 
@@ -159,16 +159,8 @@ pub struct CollisionTransitionTarget {
     pub episode_id: String,
     pub step_index: u32,
     pub consumed_pad: CollisionHistoryPad,
-    pub before: CollisionSnapshot,
-    pub after: CollisionSnapshot,
-    pub delta: CollisionTransitionDelta,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct CollisionHistoryEntry {
-    pub step_index: u32,
-    pub consumed_pad: CollisionHistoryPad,
+    pub before_snapshot_index: u32,
+    pub after_snapshot_index: u32,
     pub delta: CollisionTransitionDelta,
 }
 
@@ -177,9 +169,10 @@ pub struct CollisionHistoryEntry {
 pub struct CollisionHistoryDecision {
     pub episode_id: String,
     pub step_index: u32,
-    pub current: CollisionSnapshot,
-    /// Oldest to newest; every entry is strictly earlier than `step_index`.
-    pub completed_history: Vec<CollisionHistoryEntry>,
+    pub current_snapshot_index: u32,
+    /// Oldest to newest indices into `auxiliary_targets`. Every referenced
+    /// transition is complete and strictly earlier than this decision.
+    pub completed_transition_indices: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -189,6 +182,7 @@ pub struct NativeCollisionHistoryView {
     pub native_shard_sha256: Digest,
     pub observation_schema: String,
     pub history_depth: usize,
+    pub snapshots: Vec<CollisionSnapshot>,
     pub decisions: Vec<CollisionHistoryDecision>,
     pub auxiliary_targets: Vec<CollisionTransitionTarget>,
     pub view_sha256: Digest,
@@ -207,44 +201,55 @@ impl NativeCollisionHistoryView {
                 "collision history requires an authenticated shard and bounded nonzero depth",
             ));
         }
+        let mut snapshots = Vec::new();
         let mut decisions = Vec::new();
         let mut auxiliary_targets = Vec::new();
         for episode in &shard.episodes {
-            let mut completed = Vec::<CollisionHistoryEntry>::new();
+            let mut completed = Vec::<u32>::new();
+            let mut prior_after_snapshot_index = None;
             for (step_index, step) in episode.steps.iter().enumerate() {
                 let step_index = u32::try_from(step_index)
                     .map_err(|_| NativeCollisionHistoryError::new("step index overflowed"))?;
                 let before = snapshot(&step.pre_input)?;
                 let after = snapshot(&step.post_simulation)?;
                 let delta = transition_delta(&before, &after);
+                let before_snapshot_index = if let Some(index) = prior_after_snapshot_index
+                    && snapshots.get(index as usize) == Some(&before)
+                {
+                    index
+                } else {
+                    push_snapshot(&mut snapshots, before)?
+                };
+                let after_snapshot_index = push_snapshot(&mut snapshots, after)?;
+                prior_after_snapshot_index = Some(after_snapshot_index);
+                let target_index = u32::try_from(auxiliary_targets.len()).map_err(|_| {
+                    NativeCollisionHistoryError::new("transition target index overflowed")
+                })?;
                 let retained_from = completed.len().saturating_sub(history_depth);
                 decisions.push(CollisionHistoryDecision {
                     episode_id: episode.id.clone(),
                     step_index,
-                    current: before.clone(),
-                    completed_history: completed[retained_from..].to_vec(),
+                    current_snapshot_index: before_snapshot_index,
+                    completed_transition_indices: completed[retained_from..].to_vec(),
                 });
                 let consumed_pad = pad(step.consumed_pad);
                 auxiliary_targets.push(CollisionTransitionTarget {
                     episode_id: episode.id.clone(),
                     step_index,
                     consumed_pad,
-                    before,
-                    after,
-                    delta: delta.clone(),
-                });
-                completed.push(CollisionHistoryEntry {
-                    step_index,
-                    consumed_pad,
+                    before_snapshot_index,
+                    after_snapshot_index,
                     delta,
                 });
+                completed.push(target_index);
             }
         }
         let mut view = Self {
-            schema: NATIVE_COLLISION_HISTORY_SCHEMA_V1.into(),
+            schema: NATIVE_COLLISION_HISTORY_SCHEMA_V2.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             history_depth,
+            snapshots,
             decisions,
             auxiliary_targets,
             view_sha256: Digest::ZERO,
@@ -272,6 +277,32 @@ impl NativeCollisionHistoryView {
         Ok(view)
     }
 
+    pub fn resolved_history(
+        &self,
+        decision_index: usize,
+    ) -> Result<Vec<&CollisionTransitionTarget>, NativeCollisionHistoryError> {
+        self.validate()?;
+        let decision = self.decisions.get(decision_index).ok_or_else(|| {
+            NativeCollisionHistoryError::new("collision history decision index is out of range")
+        })?;
+        Ok(decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| &self.auxiliary_targets[*index as usize])
+            .collect())
+    }
+
+    pub fn current_snapshot(
+        &self,
+        decision_index: usize,
+    ) -> Result<&CollisionSnapshot, NativeCollisionHistoryError> {
+        self.validate()?;
+        let decision = self.decisions.get(decision_index).ok_or_else(|| {
+            NativeCollisionHistoryError::new("collision history decision index is out of range")
+        })?;
+        Ok(&self.snapshots[decision.current_snapshot_index as usize])
+    }
+
     pub fn validate(&self) -> Result<(), NativeCollisionHistoryError> {
         self.validate_content()?;
         if self.view_sha256 != self.compute_identity()? {
@@ -283,10 +314,11 @@ impl NativeCollisionHistoryView {
     }
 
     fn validate_content(&self) -> Result<(), NativeCollisionHistoryError> {
-        if self.schema != NATIVE_COLLISION_HISTORY_SCHEMA_V1
+        if self.schema != NATIVE_COLLISION_HISTORY_SCHEMA_V2
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !(1..=MAX_COLLISION_HISTORY_DEPTH).contains(&self.history_depth)
+            || self.snapshots.is_empty()
             || self.decisions.is_empty()
             || self.decisions.len() != self.auxiliary_targets.len()
         {
@@ -295,34 +327,52 @@ impl NativeCollisionHistoryView {
             ));
         }
         let mut prior_episode: Option<&str> = None;
-        let mut completed = Vec::<CollisionHistoryEntry>::new();
-        for (decision, target) in self.decisions.iter().zip(&self.auxiliary_targets) {
+        let mut completed = Vec::<u32>::new();
+        let mut prior_after_snapshot_index = None;
+        for (target_index, (decision, target)) in self
+            .decisions
+            .iter()
+            .zip(&self.auxiliary_targets)
+            .enumerate()
+        {
             if prior_episode != Some(decision.episode_id.as_str()) {
                 completed.clear();
+                prior_after_snapshot_index = None;
                 prior_episode = Some(&decision.episode_id);
             }
             let retained_from = completed.len().saturating_sub(self.history_depth);
+            let before = self
+                .snapshots
+                .get(target.before_snapshot_index as usize)
+                .ok_or_else(|| {
+                    NativeCollisionHistoryError::new("before snapshot index is invalid")
+                })?;
+            let after = self
+                .snapshots
+                .get(target.after_snapshot_index as usize)
+                .ok_or_else(|| {
+                    NativeCollisionHistoryError::new("after snapshot index is invalid")
+                })?;
             if decision.episode_id.is_empty()
                 || decision.episode_id != target.episode_id
                 || decision.step_index != target.step_index
                 || usize::try_from(decision.step_index).ok() != Some(completed.len())
-                || decision.current != target.before
-                || decision.completed_history != completed[retained_from..]
-                || target.delta != transition_delta(&target.before, &target.after)
-                || target.before.boundary_index >= target.after.boundary_index
+                || decision.current_snapshot_index != target.before_snapshot_index
+                || decision.completed_transition_indices != completed[retained_from..]
+                || prior_after_snapshot_index
+                    .is_some_and(|index| index != target.before_snapshot_index)
+                || target.delta != transition_delta(before, after)
+                || before.boundary_index >= after.boundary_index
             {
                 return Err(NativeCollisionHistoryError::new(
                     "collision history ordering, phase, or auxiliary target is invalid",
                 ));
             }
-            validate_snapshot(&decision.current)?;
-            validate_snapshot(&target.after)?;
             validate_delta(&target.delta)?;
-            completed.push(CollisionHistoryEntry {
-                step_index: target.step_index,
-                consumed_pad: target.consumed_pad,
-                delta: target.delta.clone(),
-            });
+            prior_after_snapshot_index = Some(target.after_snapshot_index);
+            completed.push(u32::try_from(target_index).map_err(|_| {
+                NativeCollisionHistoryError::new("transition target index overflowed")
+            })?);
         }
         Ok(())
     }
@@ -334,26 +384,31 @@ impl NativeCollisionHistoryView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeCollisionHistoryError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-collision-history/v1\0");
+        hasher.update(b"dusklight.native-collision-history/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
 
     fn validate_hashable_payload(&self) -> Result<(), NativeCollisionHistoryError> {
-        for decision in &self.decisions {
-            validate_snapshot(&decision.current)?;
-            for entry in &decision.completed_history {
-                validate_delta(&entry.delta)?;
-            }
+        for snapshot in &self.snapshots {
+            validate_snapshot(snapshot)?;
         }
         for target in &self.auxiliary_targets {
-            validate_snapshot(&target.before)?;
-            validate_snapshot(&target.after)?;
             validate_delta(&target.delta)?;
         }
         Ok(())
     }
+}
+
+fn push_snapshot(
+    snapshots: &mut Vec<CollisionSnapshot>,
+    snapshot: CollisionSnapshot,
+) -> Result<u32, NativeCollisionHistoryError> {
+    let index = u32::try_from(snapshots.len())
+        .map_err(|_| NativeCollisionHistoryError::new("collision snapshot index overflowed"))?;
+    snapshots.push(snapshot);
+    Ok(index)
 }
 
 fn snapshot(
@@ -699,11 +754,10 @@ mod tests {
     fn bounded_history_is_past_only_and_resets_between_episodes() {
         let view = NativeCollisionHistoryView::build(&shard_v11_with_history(), 4).unwrap();
         assert_eq!(view.decisions.len(), 4);
-        assert!(view.decisions[0].completed_history.is_empty());
-        assert_eq!(view.decisions[1].completed_history.len(), 1);
-        assert_eq!(view.decisions[1].completed_history[0].step_index, 0);
-        assert!(view.decisions[2].completed_history.is_empty());
-        assert_eq!(view.decisions[3].completed_history.len(), 1);
+        assert!(view.decisions[0].completed_transition_indices.is_empty());
+        assert_eq!(view.decisions[1].completed_transition_indices, [0]);
+        assert!(view.decisions[2].completed_transition_indices.is_empty());
+        assert_eq!(view.decisions[3].completed_transition_indices, [2]);
         assert_eq!(
             view.auxiliary_targets[1].delta.player_contacts_activated,
             Some(2)
@@ -717,9 +771,12 @@ mod tests {
                 .wall_table_size_delta,
             1
         );
+        let resolved = view.resolved_history(1).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].step_index, 0);
         assert_ne!(
             view.auxiliary_targets[1].consumed_pad,
-            view.decisions[1].completed_history[0].consumed_pad
+            resolved[0].consumed_pad
         );
         let bytes = view.canonical_bytes().unwrap();
         assert_eq!(
@@ -737,8 +794,8 @@ mod tests {
         shard.episodes.truncate(1);
         let view = NativeCollisionHistoryView::build(&shard, 2).unwrap();
         assert!(view.decisions.iter().all(|decision| {
-            decision.current.solver_status == CollisionChannelStatus::NotSampled
-                && decision.current.solver.is_none()
+            let current = &view.snapshots[decision.current_snapshot_index as usize];
+            current.solver_status == CollisionChannelStatus::NotSampled && current.solver.is_none()
         }));
         assert!(
             view.auxiliary_targets
@@ -752,13 +809,7 @@ mod tests {
         let view = NativeCollisionHistoryView::build(&shard_v11_with_history(), 4).unwrap();
 
         let mut future = view.clone();
-        future.decisions[0]
-            .completed_history
-            .push(CollisionHistoryEntry {
-                step_index: 0,
-                consumed_pad: future.auxiliary_targets[0].consumed_pad,
-                delta: future.auxiliary_targets[0].delta.clone(),
-            });
+        future.decisions[0].completed_transition_indices.push(0);
         future.view_sha256 = future.compute_identity().unwrap();
         assert!(future.validate().is_err());
 
@@ -773,18 +824,13 @@ mod tests {
         assert!(changed_delta.validate().is_err());
 
         let mut nonfinite = view;
-        nonfinite.decisions[0]
-            .current
+        let current_index = nonfinite.decisions[0].current_snapshot_index as usize;
+        nonfinite.snapshots[current_index]
             .solver
             .as_mut()
             .unwrap()
             .line_start[0] = f32::NAN;
-        nonfinite.auxiliary_targets[0].before = nonfinite.decisions[0].current.clone();
-        nonfinite.auxiliary_targets[0].delta = transition_delta(
-            &nonfinite.auxiliary_targets[0].before,
-            &nonfinite.auxiliary_targets[0].after,
-        );
-        assert!(validate_snapshot(&nonfinite.decisions[0].current).is_err());
+        assert!(validate_snapshot(&nonfinite.snapshots[current_index]).is_err());
         assert!(nonfinite.compute_identity().is_err());
     }
 }
