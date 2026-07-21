@@ -1,0 +1,697 @@
+//! Loss-aware projection from authenticated native observations into planner snapshots.
+
+use crate::artifact::Digest;
+use crate::identity::RuntimeConfiguration;
+use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+use crate::state::{
+    BackingAttachment, CaptureStatus, ComponentBinding, ComponentKind, ComponentPayload,
+    ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId,
+    PhysicalSlotObservation, PlayerForm, PlayerMount, PlayerState, ProvenanceSourceKind,
+    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+    SerializationOwner, StateComponent, StateValue,
+};
+use crate::{PlannerContractError, validate_stable_id};
+use dusklight_evidence::native_episode_shard::{
+    NativeChannelStatus, NativeEventHandoffObservation, NativeLearningObservation,
+    NativePlayerResourcesObservation,
+};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug)]
+pub struct NativeSnapshotContext {
+    pub snapshot_id: String,
+    pub sequence: u64,
+    pub runtime_configuration: RuntimeConfiguration,
+    pub runtime_file_id: String,
+    pub session_id: String,
+    pub evidence_id: String,
+    pub evidence_sha256: Digest,
+}
+
+/// Projects one complete native boundary observation without inventing unavailable state.
+///
+/// A planner `StateSnapshot` requires a location and player pose, so observations without a
+/// present Link actor are rejected rather than being filled with default values. Unknown runtime
+/// origin, backing, control, slot contents, and unsupported component payloads remain explicit.
+pub fn snapshot_native_observation(
+    observation: &NativeLearningObservation,
+    context: NativeSnapshotContext,
+) -> Result<StateSnapshot, PlannerContractError> {
+    validate_context(&context)?;
+    if observation.stage.is_empty() {
+        return Err(PlannerContractError::new(
+            "native_observation.stage",
+            "is unavailable",
+        ));
+    }
+    if !observation.player_present || !observation.player_is_link {
+        return Err(PlannerContractError::new(
+            "native_observation.player",
+            "must contain a present Link actor",
+        ));
+    }
+    if observation.runtime_file_status != NativeChannelStatus::Present {
+        return Err(PlannerContractError::new(
+            "native_observation.runtime_file",
+            "must be present to identify the active runtime",
+        ));
+    }
+    let runtime = observation.runtime_file.as_ref().ok_or_else(|| {
+        PlannerContractError::new(
+            "native_observation.runtime_file",
+            "status is present but payload is absent",
+        )
+    })?;
+    let backing = match (
+        runtime.backing_attachment_status,
+        runtime.attached_physical_slot,
+    ) {
+        (NativeChannelStatus::Present, Some(slot)) => BackingAttachment::CardBacked {
+            slot: PhysicalSlotId(slot),
+        },
+        _ => BackingAttachment::Unknown,
+    };
+    let physical_slot_observations = runtime
+        .physical_slots
+        .iter()
+        .map(|slot| PhysicalSlotObservation {
+            slot: PhysicalSlotId(slot.number),
+            content_status: capture_status(slot.content_status),
+            attached_to_active_runtime: slot.attached_to_runtime,
+        })
+        .collect();
+
+    let provenance = ComponentProvenance {
+        source_kind: ProvenanceSourceKind::TraceObservation,
+        source_id: context.evidence_id.clone(),
+        source_sha256: Some(context.evidence_sha256),
+        transition_id: None,
+    };
+    let runtime_binding = ComponentBinding::RuntimeFile {
+        runtime_file_id: context.runtime_file_id.clone(),
+    };
+    let runtime_owner = SerializationOwner::RuntimeFile {
+        runtime_file_id: context.runtime_file_id.clone(),
+    };
+    let mut components = Vec::new();
+    components.push(structured_component(
+        "runtime-file.header",
+        ComponentKind::Session,
+        fields([
+            (
+                "no_file_raw",
+                StateValue::Unsigned(runtime.no_file_raw.into()),
+            ),
+            (
+                "data_num_raw",
+                StateValue::Unsigned(runtime.data_num_raw.into()),
+            ),
+            (
+                "backing_attachment_status",
+                StateValue::Text(status_text(runtime.backing_attachment_status).into()),
+            ),
+        ]),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    ));
+    push_raw_component(
+        &mut components,
+        "flags.event",
+        ComponentKind::PersistentSave,
+        observation.event_flags.as_deref(),
+        None,
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "flags.temporary",
+        ComponentKind::TemporaryFlags,
+        observation.temporary_flags.as_deref(),
+        None,
+        runtime_binding.clone(),
+        SemanticLifetime::StageLoad,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "flags.temporary-event-registers",
+        ComponentKind::TemporaryFlags,
+        observation.temporary_event_bytes.as_deref(),
+        Some(256),
+        runtime_binding.clone(),
+        SemanticLifetime::StageLoad,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "flags.dungeon",
+        ComponentKind::DungeonMemory,
+        observation.dungeon_flags.as_deref(),
+        None,
+        ComponentBinding::Stage {
+            stage: observation.stage.clone(),
+        },
+        SemanticLifetime::StageLoad,
+        SerializationOwner::StageBank {
+            stage: observation.stage.clone(),
+        },
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "flags.switch",
+        ComponentKind::ZoneMemory,
+        observation.switch_flags.as_deref(),
+        None,
+        ComponentBinding::Room {
+            stage: observation.stage.clone(),
+            room: observation.switch_flag_room,
+        },
+        SemanticLifetime::RoomLoad,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "return-place",
+        ComponentKind::PersistentSave,
+        observation.return_place_status,
+        observation.return_place.as_ref().map(|value| {
+            fields([
+                ("stage", StateValue::Text(value.stage.clone())),
+                ("room", StateValue::Signed(value.room.into())),
+                (
+                    "player_status",
+                    StateValue::Unsigned(value.player_status.into()),
+                ),
+            ])
+        }),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "restart",
+        ComponentKind::Restart,
+        observation.restart_status,
+        observation.restart.as_ref().map(|value| {
+            fields([
+                ("room", StateValue::Signed(value.room.into())),
+                ("start_point", StateValue::Signed(value.start_point.into())),
+                ("angle_y", StateValue::Signed(value.angle_y.into())),
+                ("position", StateValue::Bytes(f32_bytes(&value.position))),
+                ("room_param", StateValue::Unsigned(value.room_param.into())),
+                (
+                    "last_speed_f32_bits",
+                    StateValue::Unsigned(value.last_speed.to_bits().into()),
+                ),
+                ("last_mode", StateValue::Unsigned(value.last_mode.into())),
+                (
+                    "last_angle_y",
+                    StateValue::Signed(value.last_angle_y.into()),
+                ),
+            ])
+        }),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "event-handoff",
+        ComponentKind::PendingOperation,
+        observation.event_handoff_status,
+        observation.event_handoff.as_ref().map(event_handoff_fields),
+        ComponentBinding::Session {
+            session_id: context.session_id.clone(),
+        },
+        SemanticLifetime::Action,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "inventory-and-resources",
+        ComponentKind::Inventory,
+        observation.player_resources_status,
+        observation
+            .player_resources
+            .as_ref()
+            .map(player_resource_fields),
+        runtime_binding,
+        SemanticLifetime::RuntimeFile,
+        runtime_owner,
+        &provenance,
+    );
+    components.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let player = PlayerState {
+        form: if observation.player_form_present {
+            if observation.player_is_wolf {
+                PlayerForm::Wolf
+            } else {
+                PlayerForm::Human
+            }
+        } else {
+            PlayerForm::Unknown
+        },
+        mount: observed_mount(observation),
+        position: canonical_vec3(observation.player_position),
+        rotation: observation.player_current_angle,
+        has_control: None,
+        action: observation.player_action.as_ref().map_or_else(
+            || "unknown".into(),
+            |action| format!("procedure.{:04x}", action.procedure_id),
+        ),
+    };
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: context.snapshot_id,
+        sequence: context.sequence,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration: context.runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: context.runtime_file_id,
+                origin: RuntimeFileOrigin::Unknown,
+                backing,
+                allowed_serialization_targets: vec![
+                    PhysicalSlotId(1),
+                    PhysicalSlotId(2),
+                    PhysicalSlotId(3),
+                ],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            physical_slots: Vec::new(),
+            physical_slot_observations,
+            location: SceneLocation {
+                stage: observation.stage.clone(),
+                room: observation.room,
+                layer: observation.layer,
+                spawn: observation.point,
+            },
+            player,
+            components,
+            static_world_objects: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
+fn validate_context(context: &NativeSnapshotContext) -> Result<(), PlannerContractError> {
+    validate_stable_id("snapshot_id", &context.snapshot_id)?;
+    validate_stable_id("runtime_file_id", &context.runtime_file_id)?;
+    validate_stable_id("session_id", &context.session_id)?;
+    validate_stable_id("evidence_id", &context.evidence_id)?;
+    if context.evidence_sha256 == Digest::ZERO {
+        return Err(PlannerContractError::new(
+            "evidence_sha256",
+            "must be nonzero",
+        ));
+    }
+    context.runtime_configuration.validate()
+}
+
+fn capture_status(status: NativeChannelStatus) -> CaptureStatus {
+    match status {
+        NativeChannelStatus::NotSampled => CaptureStatus::NotSampled,
+        NativeChannelStatus::Present => CaptureStatus::Present,
+        NativeChannelStatus::Absent => CaptureStatus::Absent,
+        NativeChannelStatus::Unavailable => CaptureStatus::Unavailable,
+    }
+}
+
+fn status_text(status: NativeChannelStatus) -> &'static str {
+    match status {
+        NativeChannelStatus::NotSampled => "not_sampled",
+        NativeChannelStatus::Present => "present",
+        NativeChannelStatus::Absent => "absent",
+        NativeChannelStatus::Unavailable => "unavailable",
+    }
+}
+
+fn fields<const N: usize>(
+    entries: [(&'static str, StateValue); N],
+) -> BTreeMap<String, StateValue> {
+    entries
+        .into_iter()
+        .map(|(key, value)| (key.into(), value))
+        .collect()
+}
+
+fn structured_component(
+    id: &str,
+    component_kind: ComponentKind,
+    fields: BTreeMap<String, StateValue>,
+    binding: ComponentBinding,
+    lifetime: SemanticLifetime,
+    serialization_owner: SerializationOwner,
+    provenance: &ComponentProvenance,
+) -> StateComponent {
+    StateComponent {
+        id: id.into(),
+        component_kind,
+        payload: ComponentPayload::Structured { fields },
+        binding,
+        lifetime,
+        serialization_owner,
+        provenance: vec![provenance.clone()],
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_raw_component(
+    components: &mut Vec<StateComponent>,
+    id: &str,
+    component_kind: ComponentKind,
+    bytes: Option<&[u8]>,
+    expected_bytes: Option<u32>,
+    binding: ComponentBinding,
+    lifetime: SemanticLifetime,
+    serialization_owner: SerializationOwner,
+    provenance: &ComponentProvenance,
+) {
+    let payload = bytes.map_or(ComponentPayload::Unknown { expected_bytes }, |bytes| {
+        ComponentPayload::Raw {
+            bytes: bytes.to_vec(),
+            known_mask: vec![0xff; bytes.len()],
+        }
+    });
+    components.push(StateComponent {
+        id: id.into(),
+        component_kind,
+        payload,
+        binding,
+        lifetime,
+        serialization_owner,
+        provenance: vec![provenance.clone()],
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_statused_structured(
+    components: &mut Vec<StateComponent>,
+    id: &str,
+    component_kind: ComponentKind,
+    status: NativeChannelStatus,
+    value: Option<BTreeMap<String, StateValue>>,
+    binding: ComponentBinding,
+    lifetime: SemanticLifetime,
+    serialization_owner: SerializationOwner,
+    provenance: &ComponentProvenance,
+) {
+    let payload = match (status, value) {
+        (NativeChannelStatus::Present, Some(mut fields)) => {
+            fields.insert("capture_status".into(), StateValue::Text("present".into()));
+            ComponentPayload::Structured { fields }
+        }
+        _ => ComponentPayload::Structured {
+            fields: fields([(
+                "capture_status",
+                StateValue::Text(status_text(status).into()),
+            )]),
+        },
+    };
+    components.push(StateComponent {
+        id: id.into(),
+        component_kind,
+        payload,
+        binding,
+        lifetime,
+        serialization_owner,
+        provenance: vec![provenance.clone()],
+    });
+}
+
+fn event_handoff_fields(value: &NativeEventHandoffObservation) -> BTreeMap<String, StateValue> {
+    let mut output = fields([
+        (
+            "pre_item_no",
+            StateValue::Unsigned(value.pre_item_no.into()),
+        ),
+        (
+            "get_item_no",
+            StateValue::Unsigned(value.get_item_no.into()),
+        ),
+        (
+            "event_flags",
+            StateValue::Unsigned(value.event_flags.into()),
+        ),
+        (
+            "secondary_flags",
+            StateValue::Unsigned(value.secondary_flags.into()),
+        ),
+        ("hind_flags", StateValue::Unsigned(value.hind_flags.into())),
+        (
+            "talk_xy_type",
+            StateValue::Unsigned(value.talk_xy_type.into()),
+        ),
+        ("compulsory", StateValue::Unsigned(value.compulsory.into())),
+        ("room_info_set", StateValue::Boolean(value.room_info_set)),
+        ("skip_timer", StateValue::Signed(value.skip_timer.into())),
+        (
+            "skip_parameter",
+            StateValue::Signed(value.skip_parameter.into()),
+        ),
+        (
+            "event_name_status",
+            StateValue::Text(status_text(value.event_name_status).into()),
+        ),
+        (
+            "message_flow_status",
+            StateValue::Text(status_text(value.message_flow_status).into()),
+        ),
+        (
+            "pending_cleanup_status",
+            StateValue::Text(status_text(value.pending_cleanup_status).into()),
+        ),
+        (
+            "player_control_status",
+            StateValue::Text(status_text(value.player_control_status).into()),
+        ),
+        (
+            "no_telop_status",
+            StateValue::Text(status_text(value.no_telop_status).into()),
+        ),
+    ]);
+    if let Some(event_name) = &value.event_name {
+        output.insert("event_name".into(), StateValue::Text(event_name.clone()));
+    }
+    if let Some(flow) = value.message_flow {
+        output.insert("flow_id".into(), StateValue::Unsigned(flow.flow_id.into()));
+        output.insert(
+            "node_index".into(),
+            StateValue::Unsigned(flow.node_index.into()),
+        );
+        output.insert(
+            "cut_name_hash".into(),
+            StateValue::Unsigned(flow.cut_name_hash.into()),
+        );
+    }
+    if let Some(flags) = value.pending_cleanup_flags {
+        output.insert(
+            "pending_cleanup_flags".into(),
+            StateValue::Unsigned(flags.into()),
+        );
+    }
+    if let Some(control) = value.player_control {
+        output.insert(
+            "player_mode_flags".into(),
+            StateValue::Unsigned(control.mode_flags.into()),
+        );
+        output.insert(
+            "player_do_status".into(),
+            StateValue::Unsigned(control.do_status.into()),
+        );
+    }
+    if let Some(no_telop) = value.no_telop {
+        output.insert("no_telop".into(), StateValue::Boolean(no_telop));
+    }
+    output.insert(
+        "item_partner_present".into(),
+        StateValue::Boolean(value.item_partner.present),
+    );
+    if value.item_partner.present {
+        output.insert(
+            "item_partner_runtime_generation".into(),
+            StateValue::Unsigned(value.item_partner.runtime_generation.into()),
+        );
+        output.insert(
+            "item_partner_actor_name".into(),
+            StateValue::Signed(value.item_partner.actor_name.into()),
+        );
+    }
+    output
+}
+
+fn player_resource_fields(
+    value: &NativePlayerResourcesObservation,
+) -> BTreeMap<String, StateValue> {
+    fields([
+        (
+            "maximum_life",
+            StateValue::Unsigned(value.maximum_life.into()),
+        ),
+        ("life", StateValue::Unsigned(value.life.into())),
+        ("rupees", StateValue::Unsigned(value.rupees.into())),
+        ("small_keys", StateValue::Unsigned(value.small_keys.into())),
+        ("dungeon_map", StateValue::Boolean(value.dungeon_map)),
+        (
+            "dungeon_compass",
+            StateValue::Boolean(value.dungeon_compass),
+        ),
+        (
+            "dungeon_boss_key",
+            StateValue::Boolean(value.dungeon_boss_key),
+        ),
+        ("dungeon_warp", StateValue::Boolean(value.dungeon_warp)),
+        ("inventory", StateValue::Bytes(value.inventory.to_vec())),
+        (
+            "selected_items",
+            StateValue::Bytes(value.selected_items.to_vec()),
+        ),
+        ("mixed_items", StateValue::Bytes(value.mixed_items.to_vec())),
+        ("equipment", StateValue::Bytes(value.equipment.to_vec())),
+        ("bomb_counts", StateValue::Bytes(value.bomb_counts.to_vec())),
+        (
+            "bomb_capacities",
+            StateValue::Bytes(value.bomb_capacities.to_vec()),
+        ),
+        (
+            "bottle_quantities",
+            StateValue::Bytes(value.bottle_quantities.to_vec()),
+        ),
+        (
+            "acquired_item_bits",
+            StateValue::Bytes(value.acquired_item_bits.to_vec()),
+        ),
+        (
+            "collect_item_bits",
+            StateValue::Bytes(value.collect_item_bits.to_vec()),
+        ),
+    ])
+}
+
+fn observed_mount(observation: &NativeLearningObservation) -> Option<PlayerMount> {
+    if observation.player_relationships_status != NativeChannelStatus::Present {
+        return Some(PlayerMount::Unknown);
+    }
+    observation
+        .player_relationships
+        .as_ref()
+        .and_then(|relationships| relationships.ride_actor.as_ref())
+        .map(|actor| PlayerMount::Other {
+            id: format!("actor-name.{:04x}", actor.actor_name as u16),
+        })
+}
+
+fn canonical_vec3(mut values: [f32; 3]) -> [f32; 3] {
+    for value in &mut values {
+        if *value == 0.0 {
+            *value = 0.0;
+        }
+    }
+    values
+}
+
+fn f32_bytes(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_bits().to_le_bytes())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
+    use dusklight_evidence::native_episode_shard::{
+        LEARNING_OBSERVATION_SCHEMA_V12, NativeEpisodeShard,
+    };
+
+    fn context(sequence: u64) -> NativeSnapshotContext {
+        NativeSnapshotContext {
+            snapshot_id: format!("native.snapshot.{sequence}"),
+            sequence,
+            runtime_configuration: RuntimeConfiguration {
+                schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+                content_sha256: Digest([1; 32]),
+                language: "en".into(),
+                settings: BTreeMap::new(),
+            },
+            runtime_file_id: "runtime.fixture".into(),
+            session_id: "session.fixture".into(),
+            evidence_id: "native.fixture.v12".into(),
+            evidence_sha256: Digest([2; 32]),
+        }
+    }
+
+    #[test]
+    fn projects_v12_backing_components_and_explicit_unknowns() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v12.dseps"
+        ))
+        .unwrap();
+        assert_eq!(
+            shard.metadata.observation_schema,
+            LEARNING_OBSERVATION_SCHEMA_V12
+        );
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let snapshot = snapshot_native_observation(observation, context(1)).unwrap();
+        snapshot.validate().unwrap();
+        assert_eq!(
+            snapshot.environment.active_runtime_file.backing,
+            BackingAttachment::CardBacked {
+                slot: PhysicalSlotId(2)
+            }
+        );
+        assert!(snapshot.environment.physical_slots.is_empty());
+        assert_eq!(snapshot.environment.physical_slot_observations.len(), 3);
+        assert!(
+            snapshot
+                .environment
+                .physical_slot_observations
+                .iter()
+                .all(|slot| slot.content_status == CaptureStatus::NotSampled)
+        );
+        let handoff = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "event-handoff")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &handoff.payload else {
+            panic!("event handoff must be structured");
+        };
+        assert_eq!(
+            fields["message_flow_status"],
+            StateValue::Text("unavailable".into())
+        );
+        assert_eq!(fields["get_item_no"], StateValue::Unsigned(0x43));
+    }
+
+    #[test]
+    fn refuses_to_invent_a_runtime_or_player_for_legacy_missing_channels() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v9.dseps"
+        ))
+        .unwrap();
+        let error = snapshot_native_observation(&shard.episodes[0].steps[0].pre_input, context(1))
+            .unwrap_err();
+        assert_eq!(error.field(), "native_observation.runtime_file");
+    }
+}

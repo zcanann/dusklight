@@ -444,6 +444,14 @@ The current code shows:
   active runtime and selected slot number, not trustworthy simultaneous payloads
   for all three card slots. A future card-boundary observer must populate those
   descriptors without copying the active runtime into them.
+- Planner snapshot schema v2 losslessly projects v12 native observations into
+  independently bound runtime, stage, room/zone, temporary, inventory, restart,
+  return-place, and event-handoff components. Every projected component carries
+  trace provenance; raw banks carry byte-knownness masks; unavailable structured
+  channels retain their capture status instead of receiving zero values.
+- Snapshot v2 keeps observed slot descriptors separate from verified serialized
+  slot contents, permits unknown runtime origin/backing and player-control state,
+  and diffs slot observation changes independently from slot-content changes.
 
 Primary source anchors:
 
@@ -1381,11 +1389,11 @@ Deliverable: one validated runtime representation independent of authoring forma
 
 ### Phase 2 — Observation, snapshots, and diffs
 
-- [ ] Extend the current tape/trace format with runtime-file identity and backing
+- [x] Extend the current tape/trace format with runtime-file identity and backing
       attachment.
-- [ ] Capture physical slots separately from the active runtime.
-- [ ] Snapshot typed components plus unknown/raw regions where possible.
-- [ ] Record binding changes and component provenance.
+- [x] Capture physical slots separately from the active runtime.
+- [x] Snapshot typed components plus unknown/raw regions where possible.
+- [x] Record binding changes and component provenance.
 - [ ] Record return/restart values, gates, and relevant actor writes.
 - [ ] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
       pending cleanup, item partner, event name, and player-control transitions.

@@ -3,17 +3,17 @@
 use crate::artifact::Digest;
 use crate::state::{
     BoundaryKind, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-    ExecutionEnvironment, PhysicalSlot, RuntimeFile, SemanticLifetime, SerializationOwner,
-    StateComponent,
+    ExecutionEnvironment, PhysicalSlot, PhysicalSlotObservation, RuntimeFile, SemanticLifetime,
+    SerializationOwner, StateComponent,
 };
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v1";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v1";
-pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v1";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v2";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v2";
+pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +91,15 @@ pub struct SlotDelta {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct SlotObservationDelta {
+    pub slot: u8,
+    pub delta_kind: DeltaKind,
+    pub before: Option<PhysicalSlotObservation>,
+    pub after: Option<PhysicalSlotObservation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SemanticDelta {
     pub fact_id: String,
     pub before: Option<ObservationStatus>,
@@ -109,6 +118,7 @@ pub struct StateDiff {
     pub location_changed: bool,
     pub player_changed: bool,
     pub slot_deltas: Vec<SlotDelta>,
+    pub slot_observation_deltas: Vec<SlotObservationDelta>,
     pub component_deltas: Vec<ComponentDelta>,
     pub semantic_deltas: Vec<SemanticDelta>,
 }
@@ -215,6 +225,10 @@ impl StateDiff {
                 &before.environment.physical_slots,
                 &after.environment.physical_slots,
             ),
+            slot_observation_deltas: diff_slot_observations(
+                &before.environment.physical_slot_observations,
+                &after.environment.physical_slot_observations,
+            ),
             component_deltas: diff_components(
                 &before.environment.components,
                 &after.environment.components,
@@ -242,6 +256,10 @@ impl StateDiff {
         validate_delta_order(
             "slot_deltas",
             self.slot_deltas.iter().map(|delta| delta.slot),
+        )?;
+        validate_delta_order(
+            "slot_observation_deltas",
+            self.slot_observation_deltas.iter().map(|delta| delta.slot),
         )?;
         validate_delta_order(
             "component_deltas",
@@ -325,6 +343,49 @@ fn diff_slots(before: &[PhysicalSlot], after: &[PhysicalSlot]) -> Vec<SlotDelta>
                 after: None,
             }),
             (None, Some(right)) => Some(SlotDelta {
+                slot,
+                delta_kind: DeltaKind::Added,
+                before: None,
+                after: Some((*right).clone()),
+            }),
+            (None, None) => None,
+        })
+        .collect()
+}
+
+fn diff_slot_observations(
+    before: &[PhysicalSlotObservation],
+    after: &[PhysicalSlotObservation],
+) -> Vec<SlotObservationDelta> {
+    let before = before
+        .iter()
+        .map(|slot| (slot.slot.0, slot))
+        .collect::<BTreeMap<_, _>>();
+    let after = after
+        .iter()
+        .map(|slot| (slot.slot.0, slot))
+        .collect::<BTreeMap<_, _>>();
+    before
+        .keys()
+        .chain(after.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|slot| match (before.get(&slot), after.get(&slot)) {
+            (Some(left), Some(right)) if left == right => None,
+            (Some(left), Some(right)) => Some(SlotObservationDelta {
+                slot,
+                delta_kind: DeltaKind::Changed,
+                before: Some((*left).clone()),
+                after: Some((*right).clone()),
+            }),
+            (Some(left), None) => Some(SlotObservationDelta {
+                slot,
+                delta_kind: DeltaKind::Removed,
+                before: Some((*left).clone()),
+                after: None,
+            }),
+            (None, Some(right)) => Some(SlotObservationDelta {
                 slot,
                 delta_kind: DeltaKind::Added,
                 before: None,
@@ -495,9 +556,9 @@ mod tests {
     use super::*;
     use crate::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use crate::state::{
-        BackingAttachment, ComponentPayload, PhysicalSlotId, PlayerForm, PlayerState,
-        ProvenanceSourceKind, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        StateComponent,
+        BackingAttachment, CaptureStatus, ComponentPayload, PhysicalSlotId,
+        PhysicalSlotObservation, PlayerForm, PlayerState, ProvenanceSourceKind,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, StateComponent,
     };
 
     fn component(bytes: Vec<u8>, known_mask: Vec<u8>, binding: ComponentBinding) -> StateComponent {
@@ -540,6 +601,7 @@ mod tests {
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
                 physical_slots: Vec::new(),
+                physical_slot_observations: Vec::new(),
                 location: SceneLocation {
                     stage: "F_SP103".into(),
                     room: 0,
@@ -551,7 +613,7 @@ mod tests {
                     mount: None,
                     position: [0.0, 0.0, 0.0],
                     rotation: [0, 0, 0],
-                    has_control: true,
+                    has_control: Some(true),
                     action: "idle".into(),
                 },
                 components: vec![component],
@@ -619,7 +681,15 @@ mod tests {
                 runtime_file_id: "file-0".into(),
             },
         );
-        let before = snapshot(1, component.clone());
+        let mut before = snapshot(1, component.clone());
+        before
+            .environment
+            .physical_slot_observations
+            .push(PhysicalSlotObservation {
+                slot: PhysicalSlotId(1),
+                content_status: CaptureStatus::NotSampled,
+                attached_to_active_runtime: false,
+            });
         let mut after = snapshot(2, component);
         after.environment.physical_slots.push(PhysicalSlot {
             slot: PhysicalSlotId(1),
@@ -629,10 +699,23 @@ mod tests {
         after.environment.active_runtime_file.backing = BackingAttachment::CardBacked {
             slot: PhysicalSlotId(1),
         };
+        after
+            .environment
+            .physical_slot_observations
+            .push(PhysicalSlotObservation {
+                slot: PhysicalSlotId(1),
+                content_status: CaptureStatus::Present,
+                attached_to_active_runtime: true,
+            });
         let diff = StateDiff::between(&before, &after, BoundaryKind::SaveRuntimeToSlot).unwrap();
         assert_ne!(diff.runtime_file_before, diff.runtime_file_after);
         assert_eq!(diff.slot_deltas.len(), 1);
         assert_eq!(diff.slot_deltas[0].delta_kind, DeltaKind::Added);
+        assert_eq!(diff.slot_observation_deltas.len(), 1);
+        assert_eq!(
+            diff.slot_observation_deltas[0].delta_kind,
+            DeltaKind::Changed
+        );
     }
 
     #[test]

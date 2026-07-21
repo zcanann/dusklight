@@ -476,6 +476,7 @@ name = "dusklight-route-planner"
 version = "0.1.0"
 dependencies = [
  "dusklight-automation-contracts",
+ "dusklight-evidence",
  "serde",
  "serde_json",
  "sha2",

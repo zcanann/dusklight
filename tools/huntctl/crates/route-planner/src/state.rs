@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v1";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v2";
 pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v1";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
@@ -22,6 +22,7 @@ pub enum RuntimeFileOrigin {
     TitleFile0,
     NewFile,
     LoadedSlot { slot: PhysicalSlotId },
+    Unknown,
     Other { id: String },
 }
 
@@ -30,6 +31,7 @@ pub enum RuntimeFileOrigin {
 pub enum BackingAttachment {
     MemoryOnly,
     CardBacked { slot: PhysicalSlotId },
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -58,6 +60,23 @@ pub struct PhysicalSlot {
     pub serialized_state_sha256: Digest,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureStatus {
+    NotSampled,
+    Present,
+    Absent,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhysicalSlotObservation {
+    pub slot: PhysicalSlotId,
+    pub content_status: CaptureStatus,
+    pub attached_to_active_runtime: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneLocation {
@@ -72,6 +91,7 @@ pub struct SceneLocation {
 pub enum PlayerForm {
     Human,
     Wolf,
+    Unknown,
     Other { id: String },
 }
 
@@ -80,6 +100,7 @@ pub enum PlayerForm {
 pub enum PlayerMount {
     Epona,
     Boar,
+    Unknown,
     Other { id: String },
 }
 
@@ -90,7 +111,7 @@ pub struct PlayerState {
     pub mount: Option<PlayerMount>,
     pub position: [f32; 3],
     pub rotation: [i16; 3],
-    pub has_control: bool,
+    pub has_control: Option<bool>,
     pub action: String,
 }
 
@@ -251,6 +272,7 @@ pub struct ExecutionEnvironment {
     pub runtime_configuration: RuntimeConfiguration,
     pub active_runtime_file: RuntimeFile,
     pub physical_slots: Vec<PhysicalSlot>,
+    pub physical_slot_observations: Vec<PhysicalSlotObservation>,
     pub location: SceneLocation,
     pub player: PlayerState,
     pub components: Vec<StateComponent>,
@@ -397,6 +419,12 @@ impl ExecutionEnvironment {
             },
         )?;
         validate_sorted_collection(
+            "physical_slot_observations",
+            &self.physical_slot_observations,
+            |slot| slot.slot.0,
+            |slot| slot.slot.validate("physical_slot_observations.slot"),
+        )?;
+        validate_sorted_collection(
             "components",
             &self.components,
             |component| component.id.clone(),
@@ -465,14 +493,16 @@ fn validate_runtime_origin(origin: &RuntimeFileOrigin) -> Result<(), PlannerCont
     match origin {
         RuntimeFileOrigin::LoadedSlot { slot } => slot.validate("runtime_file.origin.slot"),
         RuntimeFileOrigin::Other { id } => validate_stable_id("runtime_file.origin.id", id),
-        RuntimeFileOrigin::TitleFile0 | RuntimeFileOrigin::NewFile => Ok(()),
+        RuntimeFileOrigin::TitleFile0 | RuntimeFileOrigin::NewFile | RuntimeFileOrigin::Unknown => {
+            Ok(())
+        }
     }
 }
 
 fn validate_backing(backing: &BackingAttachment) -> Result<(), PlannerContractError> {
     match backing {
         BackingAttachment::CardBacked { slot } => slot.validate("runtime_file.backing.slot"),
-        BackingAttachment::MemoryOnly => Ok(()),
+        BackingAttachment::MemoryOnly | BackingAttachment::Unknown => Ok(()),
     }
 }
 
@@ -502,14 +532,14 @@ fn validate_player(player: &PlayerState) -> Result<(), PlannerContractError> {
 fn validate_player_form(form: &PlayerForm) -> Result<(), PlannerContractError> {
     match form {
         PlayerForm::Other { id } => validate_stable_id("player.form.id", id),
-        PlayerForm::Human | PlayerForm::Wolf => Ok(()),
+        PlayerForm::Human | PlayerForm::Wolf | PlayerForm::Unknown => Ok(()),
     }
 }
 
 fn validate_player_mount(mount: &PlayerMount) -> Result<(), PlannerContractError> {
     match mount {
         PlayerMount::Other { id } => validate_stable_id("player.mount.id", id),
-        PlayerMount::Epona | PlayerMount::Boar => Ok(()),
+        PlayerMount::Epona | PlayerMount::Boar | PlayerMount::Unknown => Ok(()),
     }
 }
 
@@ -763,6 +793,7 @@ mod tests {
                 lifecycle: RuntimeFileLifecycle::Active,
             },
             physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
             location: SceneLocation {
                 stage: "F_SP103".into(),
                 room: 0,
@@ -774,7 +805,7 @@ mod tests {
                 mount: None,
                 position: [0.0, 1.0, 2.0],
                 rotation: [0, 0, 0],
-                has_control: true,
+                has_control: Some(true),
                 action: "idle".into(),
             },
             components: vec![
