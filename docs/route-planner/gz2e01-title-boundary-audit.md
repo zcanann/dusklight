@@ -32,6 +32,7 @@ The semantic audit uses these source-family snapshots:
 | `src/d/d_s_play.cpp` | `c8f30a83c45d6c42078945b09f6e4e3459c832184e641ff442fa7d0e49258077` |
 | `src/d/actor/d_a_title.cpp` | `39378bcbc78e5ffae3287f127cc48cd2c22e18723cf31cfeb5bd84a2becdc4cb` |
 | `src/d/d_s_name.cpp` | `f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b` |
+| `src/d/d_file_select.cpp` | `aee1cb134ec92953fd04dc321f4dae5f5c98ed1d2e766d1306a70d932294eb0d` |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` |
 | `src/d/d_meter2_info.cpp` | `73b58242c7f742f4ac46ddda5f5c8b39d24e73beebffaaa5aa2d8d011a641b6e` |
 
@@ -165,17 +166,43 @@ request: requesting `PROC_OPENING_SCENE` does not itself prove that
 `dComIfGs_init()` executed. Unknown runtime origin also remains unknown instead
 of being silently classified as file 0.
 
+## Title input and normal file-select creation
+
+The next source-audited suffix is represented as three independently guarded
+transitions rather than one opaque jump:
+
+1. While `PROC_OPENING_SCENE` remains active and the title actor is observed in
+   `key_wait`, an observed A or Start trigger advances its control state to
+   `next_scene`. Reset-active or overlap-peek state blocks the actor exactly as
+   in `daTitle_c::Execute`.
+2. The next title update submits `fopScnM_ChangeReq(..., PROC_NAME_SCENE, ...)`
+   and records `scene_requested`. It deliberately leaves the execution context
+   at `PROC_OPENING_SCENE`: a request is not evidence that the process manager
+   completed the handoff.
+3. Only an independently observed active `PROC_NAME_SCENE` at
+   `create_file_select` authorizes the route-relevant projection of
+   `dFile_select_c::_create` and `dScnName_c::create`.
+
+The third transition runs the same audited `dComIfGs_init()` projection again,
+then writes `mNewFile = 0` and, for the normal GCN name scene, `mNoFile = 0`.
+Consequently it clears the title-opening Epona bit and sword/shield collection
+masks, restores base Ordon clothes with no sword or shield selected, and resets
+the projected return place, stage memory, event bytes, temporary bytes, and
+active-runtime serialized dungeon stores. It does not begin another runtime
+lifetime, change `mDataNum`, mutate the restart record, touch unrelated inactive
+stores, or alter any sealed physical-slot image.
+
+The title and name-scene control components are scheduler/actor observations,
+not invented persistent flags. A missing phase, trigger, reset state, overlap
+state, or active-process observation makes the corresponding transition
+unknown or blocked. This preserves the distinction between an input, a scene
+request, process activation, and completed file-select initialization.
+
 ## Remaining audited suffix, not yet executable
 
-The later source chain is important but intentionally not folded into this
-prefix:
-
-- opening-scene phase 4 also creates the title actor/process; its actor creation
-  success and later input state are not yet executable;
-- the title actor requests `PROC_NAME_SCENE` after title input;
-- GCN name-scene creation sets `mNoFile` to `0`;
-- file-select paths load a selected card image or construct new-file/no-card
-  state, and successful saving updates `mDataNum` and `mNoFile`.
+File-select branches load a selected card image or construct new-file/no-card
+state, and successful saving updates `mDataNum` and `mNoFile`. Those member-level
+branches remain separate from the now-modeled normal file-select creation.
 
 That member-level distinction is central to file-0 and Back in Time reasoning.
 Future projection coverage must continue adding ordered writers and explicitly
@@ -184,7 +211,6 @@ all.”
 
 Still open:
 
-- model title input and name/file-select processes;
 - model no-card, new-file, selected-slot, and successful-save branches;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and

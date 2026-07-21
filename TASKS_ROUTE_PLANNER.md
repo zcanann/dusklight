@@ -1671,7 +1671,12 @@ evidenced overlays over the generated base rather than silent edits to it.
         banks without touching unrelated inactive stores or physical images.
         A non-title runtime now enters a fresh memory-backed title-file-0
         lifetime atomically at that same phase boundary. Unprojected save
-        members, no-file/file-select, void, and death suffixes remain open. See
+        members, file-select branches, void, and death suffixes remain open. The
+        source-audited title A/Start input, pending `PROC_NAME_SCENE` request,
+        and normal GCN file-select creation are now separate guarded actions;
+        the latter repeats the save-domain initializer and writes
+        `mNewFile = 0` and `mNoFile = 0` only after the name process/create phase
+        is independently observed. See
         `docs/route-planner/gz2e01-title-boundary-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
@@ -1979,6 +1984,11 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Add a generic runtime-lifetime handoff that ends the incoming runtime,
           derives a fresh identity, and rekeys all of its live and serialized
           backing stores without copying session state or mutating card images.
+    - [x] Model the source-audited GZ2E01 title key input, pending normal
+          name-scene request, and file-select create projection without treating
+          `fopScnM_ChangeReq` as completed process activation. The create step
+          requires independent `PROC_NAME_SCENE`/phase observation, repeats the
+          audited save-domain reset, and writes `mNewFile = 0` and `mNoFile = 0`.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2338,6 +2348,11 @@ Deliverable: route confidence is mechanically explainable.
   - [x] Enter that GZ2E01 title-origin runtime from a loaded or new non-title
         runtime as one atomic phase-4 lifetime/reset transition; the source
         lifetime ends and the derived file 0 remains slotless.
+  - [x] Continue the GZ2E01 title flow through observed A/Start input and a
+        pending name-scene request, then apply the second exact save-domain
+        initialization only after the active name process/create phase is
+        independently observed. This exposes the distinct pre-file-select and
+        file-select-open file-0 payloads rather than conflating them.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.

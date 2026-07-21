@@ -24,6 +24,9 @@ use std::collections::BTreeMap;
 const RESET_CONTROL_COMPONENT: &str = "reset-control";
 const RESTART_COMPONENT: &str = "restart";
 const OPENING_PROCESS_CONTROL_COMPONENT: &str = "opening-process-control";
+const TITLE_CONTROL_COMPONENT: &str = "title-control";
+const NAME_SCENE_CONTROL_COMPONENT: &str = "name-scene-control";
+const RUNTIME_FILE_HEADER_COMPONENT: &str = "runtime-file.header";
 const PERSISTENT_EVENT_COMPONENT: &str = "flags.persistent-event-registers";
 const OBSERVED_EVENT_COMPONENT: &str = "flags.event";
 const LIGHT_DROP_COMPONENT: &str = "save.player-light-drop";
@@ -220,85 +223,28 @@ pub fn gz2e01_reset_to_opening_mechanics(
         operator: ComparisonOperator::Equal,
         right: ValueReference::Literal { value },
     };
-    let mut event_bytes = vec![0; 256];
-    event_bytes[6] = 1;
-    let mut loaded_stage_known_mask = vec![0xff; 0x20];
-    // dSv_memBit_c::init writes bytes 0x00..0x1d. Its two tail-padding
-    // bytes are not written and therefore remain explicitly unknown.
-    loaded_stage_known_mask[0x1e] = 0;
-    loaded_stage_known_mask[0x1f] = 0;
-    let opening_effects = vec![
-        StateOperation::InvalidatePayloads {
-            selector: ComponentSelector::Kind {
-                component_kind: ComponentKind::DungeonMemory,
-            },
-            include_active_runtime_serialized_stores: true,
-        },
-        StateOperation::ReplacePayload {
-            component_id: LOADED_STAGE_MEMORY_COMPONENT.into(),
-            payload: ComponentPayload::Raw {
-                bytes: vec![0; 0x20],
-                known_mask: loaded_stage_known_mask,
-            },
-        },
-        StateOperation::ReplacePayload {
+    let mut opening_effects = dcomifgs_init_effects();
+    opening_effects.extend([
+        StateOperation::WriteRaw {
             component_id: PERSISTENT_EVENT_COMPONENT.into(),
-            payload: ComponentPayload::Raw {
-                bytes: event_bytes,
-                known_mask: vec![0xff; 256],
-            },
+            byte_offset: 6,
+            mask: vec![1],
+            value: vec![1],
         },
-        StateOperation::ReplacePayload {
-            component_id: OBSERVED_EVENT_COMPONENT.into(),
-            payload: ComponentPayload::Unknown {
-                expected_bytes: None,
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: LIGHT_DROP_COMPONENT.into(),
-            payload: ComponentPayload::Raw {
-                bytes: vec![0; 5],
-                known_mask: vec![0xff; 5],
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: OBSERVED_TEMPORARY_COMPONENT.into(),
-            payload: ComponentPayload::Unknown {
-                expected_bytes: None,
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: TEMPORARY_EVENT_COMPONENT.into(),
-            payload: ComponentPayload::Raw {
-                bytes: vec![0; 256],
-                known_mask: vec![0xff; 256],
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: DUNGEON_SESSION_LABEL_COMPONENT.into(),
-            payload: ComponentPayload::Unknown {
-                expected_bytes: None,
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: ROOM_SWITCH_LABEL_COMPONENT.into(),
-            payload: ComponentPayload::Unknown {
-                expected_bytes: None,
-            },
-        },
-        StateOperation::ReplacePayload {
-            component_id: RETURN_PLACE_COMPONENT.into(),
-            payload: ComponentPayload::Structured {
-                fields: BTreeMap::from([
-                    ("player_status".into(), StateValue::Unsigned(0)),
-                    ("room".into(), StateValue::Signed(1)),
-                    ("stage".into(), StateValue::Text("F_SP108".into())),
-                ]),
-            },
-        },
-        StateOperation::ReplacePayload {
+        StateOperation::WriteFields {
             component_id: INVENTORY_COMPONENT.into(),
-            payload: title_inventory_payload(),
+            fields: BTreeMap::from([
+                ("maximum_life".into(), StateValue::Unsigned(15)),
+                ("life".into(), StateValue::Unsigned(12)),
+                (
+                    "equipment".into(),
+                    StateValue::Bytes(vec![0x2f, 0x28, 0x2c, 0xff, 0xff, 0]),
+                ),
+                (
+                    "collect_item_bits".into(),
+                    StateValue::Bytes(vec![0, 1, 4, 0, 0, 0, 0, 0]),
+                ),
+            ]),
         },
         StateOperation::CompletePendingWorldLoad,
         StateOperation::Write {
@@ -308,7 +254,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
             },
             value: StateValue::Text("complete".into()),
         },
-    ];
+    ]);
     let opening_process_guards = vec![
         pending_compare(
             ValueReference::ExecutionProcess,
@@ -378,7 +324,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
         approach_id: "process.opening-scene.phase-4".into(),
         activation: ActivationContract {
             hard_guards: PredicateExpression::All {
-                terms: std::iter::once(title_file_0_guard)
+                terms: std::iter::once(title_file_0_guard.clone())
                     .chain(opening_process_guards)
                     .collect(),
             },
@@ -388,12 +334,185 @@ pub fn gz2e01_reset_to_opening_mechanics(
         },
         evidence: opening_evidence,
     };
+    let title_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.gz2e01.title-key-and-name-scene-request".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(parse_digest(
+                "39378bcbc78e5ffae3287f127cc48cd2c22e18723cf31cfeb5bd84a2becdc4cb",
+            )),
+            note: "GZ2E01 source audit: title keyWait accepts A/Start, advances to nextScene, and nextScene requests PROC_NAME_SCENE only while reset and overlap-peek are clear.".into(),
+        }],
+    };
+    let title_field = |field: &str| ValueReference::ComponentField {
+        component_id: TITLE_CONTROL_COMPONENT.into(),
+        field: field.into(),
+    };
+    let title_key_accept_transition = CandidateTransition {
+        id: "transition.gz2e01.title-key-accept".into(),
+        label: "Accept A or Start at the title prompt".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "title.input.key-wait".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    pending_compare(
+                        ValueReference::ExecutionProcess,
+                        StateValue::Text("PROC_OPENING_SCENE".into()),
+                    ),
+                    pending_compare(
+                        ValueReference::ComponentField {
+                            component_id: OPENING_PROCESS_CONTROL_COMPONENT.into(),
+                            field: "phase".into(),
+                        },
+                        StateValue::Text("complete".into()),
+                    ),
+                    pending_compare(title_field("phase"), StateValue::Text("key_wait".into())),
+                    pending_compare(title_field("reset_requested"), StateValue::Boolean(false)),
+                    pending_compare(title_field("overlap_peek"), StateValue::Boolean(false)),
+                    PredicateExpression::Any {
+                        terms: vec![
+                            pending_compare(title_field("a_triggered"), StateValue::Boolean(true)),
+                            pending_compare(
+                                title_field("start_triggered"),
+                                StateValue::Boolean(true),
+                            ),
+                        ],
+                    },
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: TITLE_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                value: StateValue::Text("next_scene".into()),
+            }],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: title_evidence.clone(),
+    };
+    let title_request_name_scene_transition = CandidateTransition {
+        id: "transition.gz2e01.title-request-name-scene".into(),
+        label: "Request the normal name and file-select scene".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::ActorDriven,
+        approach_id: "title.next-scene.normal".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    pending_compare(
+                        ValueReference::ExecutionProcess,
+                        StateValue::Text("PROC_OPENING_SCENE".into()),
+                    ),
+                    pending_compare(title_field("phase"), StateValue::Text("next_scene".into())),
+                    pending_compare(title_field("reset_requested"), StateValue::Boolean(false)),
+                    pending_compare(title_field("overlap_peek"), StateValue::Boolean(false)),
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            // `fopScnM_ChangeReq` submits a process change. It does not prove
+            // that the process manager has destroyed the opening process or
+            // completed `dScnName_c::create`, so retain the active process and
+            // record only the request here. A later observed NAME_SCENE process
+            // and create phase authorize the file-select initializer below.
+            effects: vec![StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: TITLE_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                value: StateValue::Text("scene_requested".into()),
+            }],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: title_evidence,
+    };
+    let file_select_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: "source.gz2e01.name-scene-create".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
+                )),
+                note: "GZ2E01 source audit: the normal name-scene create path constructs file select, then writes mNoFile = 0.".into(),
+            },
+            EvidenceRecord {
+                id: "source.gz2e01.file-select-create".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "aee1cb134ec92953fd04dc321f4dae5f5c98ed1d2e766d1306a70d932294eb0d",
+                )),
+                note: "GZ2E01 source audit: dFile_select_c::_create runs dComIfGs_init and then writes mNewFile = 0 before the name scene enters file-select-open.".into(),
+            },
+        ],
+    };
+    let mut file_select_create_effects = dcomifgs_init_effects();
+    file_select_create_effects.extend([
+        StateOperation::Write {
+            target: ComponentFieldTarget {
+                component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                field: "new_file_raw".into(),
+            },
+            value: StateValue::Unsigned(0),
+        },
+        StateOperation::Write {
+            target: ComponentFieldTarget {
+                component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                field: "no_file_raw".into(),
+            },
+            value: StateValue::Unsigned(0),
+        },
+        StateOperation::Write {
+            target: ComponentFieldTarget {
+                component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                field: "phase".into(),
+            },
+            value: StateValue::Text("file_select_open".into()),
+        },
+    ]);
+    let name_scene_file_select_transition = CandidateTransition {
+        id: "transition.gz2e01.name-scene-file-select-initialize".into(),
+        label: "Construct file select and reset its title-file-0 save image".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "name-scene.create.file-select".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    title_file_0_guard,
+                    pending_compare(
+                        ValueReference::ExecutionProcess,
+                        StateValue::Text("PROC_NAME_SCENE".into()),
+                    ),
+                    pending_compare(
+                        ValueReference::ComponentField {
+                            component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                            field: "phase".into(),
+                        },
+                        StateValue::Text("create_file_select".into()),
+                    ),
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: file_select_create_effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: file_select_evidence,
+    };
     let catalog = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
         transitions: vec![
+            name_scene_file_select_transition,
             enter_and_initialize_transition,
             opening_transition,
             reset_transition,
+            title_key_accept_transition,
+            title_request_name_scene_transition,
         ],
         obligations: Vec::new(),
         writers: Vec::new(),
@@ -423,7 +542,89 @@ fn exact_function_evidence(id: &str, artifact_sha256: &str, note: &str) -> Evide
     }
 }
 
-fn title_inventory_payload() -> ComponentPayload {
+fn dcomifgs_init_effects() -> Vec<StateOperation> {
+    let mut loaded_stage_known_mask = vec![0xff; 0x20];
+    // dSv_memBit_c::init writes bytes 0x00..0x1d. Its two tail-padding
+    // bytes are not written and therefore remain explicitly unknown.
+    loaded_stage_known_mask[0x1e] = 0;
+    loaded_stage_known_mask[0x1f] = 0;
+    vec![
+        StateOperation::InvalidatePayloads {
+            selector: ComponentSelector::Kind {
+                component_kind: ComponentKind::DungeonMemory,
+            },
+            include_active_runtime_serialized_stores: true,
+        },
+        StateOperation::ReplacePayload {
+            component_id: LOADED_STAGE_MEMORY_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 0x20],
+                known_mask: loaded_stage_known_mask,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: PERSISTENT_EVENT_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 256],
+                known_mask: vec![0xff; 256],
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: OBSERVED_EVENT_COMPONENT.into(),
+            payload: ComponentPayload::Unknown {
+                expected_bytes: None,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: LIGHT_DROP_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 5],
+                known_mask: vec![0xff; 5],
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: OBSERVED_TEMPORARY_COMPONENT.into(),
+            payload: ComponentPayload::Unknown {
+                expected_bytes: None,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: TEMPORARY_EVENT_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 256],
+                known_mask: vec![0xff; 256],
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: DUNGEON_SESSION_LABEL_COMPONENT.into(),
+            payload: ComponentPayload::Unknown {
+                expected_bytes: None,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: ROOM_SWITCH_LABEL_COMPONENT.into(),
+            payload: ComponentPayload::Unknown {
+                expected_bytes: None,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: RETURN_PLACE_COMPONENT.into(),
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    ("player_status".into(), StateValue::Unsigned(0)),
+                    ("room".into(), StateValue::Signed(1)),
+                    ("stage".into(), StateValue::Text("F_SP108".into())),
+                ]),
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: INVENTORY_COMPONENT.into(),
+            payload: base_inventory_payload(),
+        },
+    ]
+}
+
+fn base_inventory_payload() -> ComponentPayload {
     ComponentPayload::Structured {
         fields: BTreeMap::from([
             ("maximum_life".into(), StateValue::Unsigned(15)),
@@ -434,7 +635,7 @@ fn title_inventory_payload() -> ComponentPayload {
             ("mixed_items".into(), StateValue::Bytes(vec![0xff; 4])),
             (
                 "equipment".into(),
-                StateValue::Bytes(vec![0x2f, 0x28, 0x2c, 0xff, 0xff, 0]),
+                StateValue::Bytes(vec![0x2e, 0xff, 0xff, 0xff, 0xff, 0]),
             ),
             ("bomb_counts".into(), StateValue::Bytes(vec![0; 3])),
             (
@@ -443,10 +644,7 @@ fn title_inventory_payload() -> ComponentPayload {
             ),
             ("bottle_quantities".into(), StateValue::Bytes(vec![0; 4])),
             ("acquired_item_bits".into(), StateValue::Bytes(vec![0; 32])),
-            (
-                "collect_item_bits".into(),
-                StateValue::Bytes(vec![0, 1, 4, 0, 0, 0, 0, 0]),
-            ),
+            ("collect_item_bits".into(), StateValue::Bytes(vec![0; 8])),
         ]),
     }
 }
@@ -596,6 +794,40 @@ mod tests {
             OPENING_PROCESS_CONTROL_COMPONENT,
             ComponentKind::Session,
             [("phase", StateValue::Text("phase_4".into()))],
+        );
+        component.binding = ComponentBinding::Session {
+            session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
+        component
+    }
+
+    fn title_control() -> StateComponent {
+        let mut component = component(
+            TITLE_CONTROL_COMPONENT,
+            ComponentKind::Title,
+            [
+                ("phase", StateValue::Text("key_wait".into())),
+                ("reset_requested", StateValue::Boolean(false)),
+                ("overlap_peek", StateValue::Boolean(false)),
+                ("a_triggered", StateValue::Boolean(true)),
+                ("start_triggered", StateValue::Boolean(false)),
+            ],
+        );
+        component.binding = ComponentBinding::Session {
+            session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
+        component
+    }
+
+    fn name_scene_control() -> StateComponent {
+        let mut component = component(
+            NAME_SCENE_CONTROL_COMPONENT,
+            ComponentKind::Title,
+            [("phase", StateValue::Text("create_file_select".into()))],
         );
         component.binding = ComponentBinding::Session {
             session_id: "process".into(),
@@ -767,10 +999,11 @@ mod tests {
                         ],
                     ),
                     component(
-                        "runtime-file.header",
+                        RUNTIME_FILE_HEADER_COMPONENT,
                         ComponentKind::Session,
                         [
                             ("data_num_raw", StateValue::Unsigned(3)),
+                            ("new_file_raw", StateValue::Unsigned(9)),
                             ("no_file_raw", StateValue::Unsigned(7)),
                         ],
                     ),
@@ -1202,6 +1435,244 @@ mod tests {
                     } => runtime_file_id == "new-file.title-file-0",
                     _ => unreachable!(),
                 })
+        );
+    }
+
+    #[test]
+    fn title_input_and_file_select_create_reset_only_the_audited_file_state() {
+        let (content, runtime) = context();
+        let catalog = gz2e01_reset_to_opening_mechanics(&content, &runtime).unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let transition = |id: &str| {
+            catalog
+                .transitions
+                .iter()
+                .find(|transition| transition.id == id)
+                .unwrap()
+        };
+        let mut state = PlannerExecutionState::new(snapshot(runtime)).unwrap();
+        state
+            .apply_operations(
+                "transition.gz2e01.reset-to-opening",
+                "snapshot.title-chain.reset",
+                &transition("transition.gz2e01.reset-to-opening")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        state
+            .snapshot
+            .environment
+            .components
+            .push(opening_process_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state
+            .apply_operations(
+                "transition.gz2e01.opening-file0-initialize",
+                "snapshot.title-chain.opening-complete",
+                &transition("transition.gz2e01.opening-file0-initialize")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&state, INVENTORY_COMPONENT)["equipment"],
+            StateValue::Bytes(vec![0x2f, 0x28, 0x2c, 0xff, 0xff, 0])
+        );
+        let ComponentPayload::Raw { bytes, .. } =
+            &component_for(&state, PERSISTENT_EVENT_COMPONENT).payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(bytes[6] & 1, 1);
+
+        state.snapshot.environment.components.push(title_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.title-key-accept"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::Executable
+        );
+        state
+            .apply_operations(
+                "transition.gz2e01.title-key-accept",
+                "snapshot.title-chain.key-accepted",
+                &transition("transition.gz2e01.title-key-accept")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        state
+            .apply_operations(
+                "transition.gz2e01.title-request-name-scene",
+                "snapshot.title-chain.name-requested",
+                &transition("transition.gz2e01.title-request-name-scene")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            state.snapshot.environment.execution_context,
+            ExecutionContext::Process {
+                process_name: "PROC_OPENING_SCENE".into(),
+                pending_world_load: None,
+            },
+            "a process ChangeReq must not masquerade as completed activation"
+        );
+
+        state
+            .snapshot
+            .environment
+            .components
+            .push(name_scene_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.name-scene-file-select-initialize"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::GuardBlocked,
+            "a create-phase observation cannot activate while opening is still the current process"
+        );
+        // Independent scheduler/process observation: NAME_SCENE is now the
+        // active process and has reached the file-select construction phase.
+        state.snapshot.environment.execution_context = ExecutionContext::Process {
+            process_name: "PROC_NAME_SCENE".into(),
+            pending_world_load: None,
+        };
+        state.validate().unwrap();
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.name-scene-file-select-initialize"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::Executable
+        );
+        let active_runtime_before = state.snapshot.environment.active_runtime_file.clone();
+        let inactive_runtimes_before = state.snapshot.environment.inactive_runtime_files.clone();
+        let restart_before = fields_for(&state, RESTART_COMPONENT).clone();
+        state
+            .apply_operations(
+                "transition.gz2e01.name-scene-file-select-initialize",
+                "snapshot.title-chain.file-select-open",
+                &transition("transition.gz2e01.name-scene-file-select-initialize")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file,
+            active_runtime_before
+        );
+        assert_eq!(
+            state.snapshot.environment.inactive_runtime_files,
+            inactive_runtimes_before
+        );
+        assert_eq!(fields_for(&state, RESTART_COMPONENT), &restart_before);
+        assert_eq!(
+            fields_for(&state, RUNTIME_FILE_HEADER_COMPONENT),
+            &BTreeMap::from([
+                ("data_num_raw".into(), StateValue::Unsigned(3)),
+                ("new_file_raw".into(), StateValue::Unsigned(0)),
+                ("no_file_raw".into(), StateValue::Unsigned(0)),
+            ])
+        );
+        assert_eq!(
+            fields_for(&state, INVENTORY_COMPONENT)["equipment"],
+            StateValue::Bytes(vec![0x2e, 0xff, 0xff, 0xff, 0xff, 0])
+        );
+        assert_eq!(
+            fields_for(&state, INVENTORY_COMPONENT)["collect_item_bits"],
+            StateValue::Bytes(vec![0; 8])
+        );
+        let ComponentPayload::Raw { bytes, known_mask } =
+            &component_for(&state, PERSISTENT_EVENT_COMPONENT).payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(bytes, &vec![0; 256]);
+        assert_eq!(known_mask, &vec![0xff; 256]);
+        assert_eq!(
+            fields_for(&state, NAME_SCENE_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("file_select_open".into())
+        );
+        assert_eq!(
+            fields_for(&state, TITLE_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("scene_requested".into())
+        );
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.name-scene-file-select-initialize"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::GuardBlocked
         );
     }
 
