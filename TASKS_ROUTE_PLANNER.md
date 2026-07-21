@@ -1474,6 +1474,12 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [ ] Model active-runtime lifecycle/backing attachment and concrete normal
         save/load/title sequences as evidenced transition programs.
 - [ ] Implement writer/gate/reader evaluation and last-writer provenance.
+  - [x] Evaluate scoped/evidenced writer activation separately from active and
+        unknown blocking gates, resolve reader source values separately from
+        friendly interpretations, and append the responsible transition to every
+        component mutation.
+  - [ ] Execute ordered writer/gate/read programs from imported mechanics and
+        retain a queryable last-writer/gate event history across search states.
 - [ ] Generate the upper-bound authorization graph.
   - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
         per-transition upper-bound assessment; unknown raw bits, absent values,

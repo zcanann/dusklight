@@ -6,7 +6,7 @@ use crate::logic::{
     TruthStatus, ValueReference,
 };
 use crate::state::{ComponentPayload, PlayerForm, PlayerMount, StateComponent, StateValue};
-use crate::transition::CandidateTransition;
+use crate::transition::{CandidateTransition, GateRule, ReaderRule, WriterRule};
 use crate::{PlannerContractError, validate_stable_id};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,7 +45,7 @@ impl EvidencePolicy {
         allow_hypothetical: true,
     };
 
-    fn permits(self, truth: TruthStatus) -> bool {
+    pub fn permits(self, truth: TruthStatus) -> bool {
         match truth {
             TruthStatus::Established => true,
             TruthStatus::Contested => self.allow_contested,
@@ -79,6 +79,44 @@ pub struct TransitionAssessment {
     pub hard_guard: EvaluatedTruth,
     pub outstanding_obligation_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GateAssessment {
+    pub gate_id: String,
+    pub scope_applies: bool,
+    pub evidence_permitted: bool,
+    pub active: EvaluatedTruth,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriterClassification {
+    Inapplicable,
+    Inactive,
+    ActivationUnknown,
+    GateBlocked,
+    GateUnknown,
+    Executable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WriterAssessment {
+    pub writer_id: String,
+    pub classification: WriterClassification,
+    pub scope_applies: bool,
+    pub evidence_permitted: bool,
+    pub activation: EvaluatedTruth,
+    pub active_gate_ids: Vec<String>,
+    pub unknown_gate_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReaderAssessment {
+    pub reader_id: String,
+    pub scope_applies: bool,
+    pub evidence_permitted: bool,
+    pub source_value: Option<StateValue>,
+    pub interpretation: Option<EvaluatedTruth>,
 }
 
 /// Evaluates facts and guards against one immutable snapshot. Missing values,
@@ -194,6 +232,94 @@ impl<'a> PredicateEvaluator<'a> {
         }
     }
 
+    pub fn assess_gate(&self, gate: &GateRule) -> GateAssessment {
+        let scope_applies = self.scope_applies(&gate.scope);
+        let evidence_permitted = self.policy.permits(gate.evidence.truth);
+        let active = if scope_applies && evidence_permitted {
+            self.evaluate(&gate.active_when)
+        } else {
+            EvaluatedTruth::Unknown
+        };
+        GateAssessment {
+            gate_id: gate.id.clone(),
+            scope_applies,
+            evidence_permitted,
+            active,
+        }
+    }
+
+    pub fn assess_writer(&self, writer: &WriterRule, gates: &[GateRule]) -> WriterAssessment {
+        let scope_applies = self.scope_applies(&writer.scope);
+        let evidence_permitted = self.policy.permits(writer.evidence.truth);
+        let activation = if scope_applies && evidence_permitted {
+            self.evaluate(&writer.activation)
+        } else {
+            EvaluatedTruth::Unknown
+        };
+        let mut active_gate_ids = Vec::new();
+        let mut unknown_gate_ids = Vec::new();
+        for gate in gates.iter().filter(|gate| {
+            gate.blocked_writer_ids
+                .iter()
+                .any(|writer_id| writer_id == &writer.id)
+        }) {
+            let assessment = self.assess_gate(gate);
+            match assessment.active {
+                EvaluatedTruth::True => active_gate_ids.push(gate.id.clone()),
+                EvaluatedTruth::Unknown => unknown_gate_ids.push(gate.id.clone()),
+                EvaluatedTruth::False => {}
+            }
+        }
+        let classification = if !scope_applies {
+            WriterClassification::Inapplicable
+        } else if activation == EvaluatedTruth::False {
+            WriterClassification::Inactive
+        } else if !evidence_permitted || activation == EvaluatedTruth::Unknown {
+            WriterClassification::ActivationUnknown
+        } else if !active_gate_ids.is_empty() {
+            WriterClassification::GateBlocked
+        } else if !unknown_gate_ids.is_empty() {
+            WriterClassification::GateUnknown
+        } else {
+            WriterClassification::Executable
+        };
+        WriterAssessment {
+            writer_id: writer.id.clone(),
+            classification,
+            scope_applies,
+            evidence_permitted,
+            activation,
+            active_gate_ids,
+            unknown_gate_ids,
+        }
+    }
+
+    pub fn assess_reader(&self, reader: &ReaderRule) -> ReaderAssessment {
+        let scope_applies = self.scope_applies(&reader.scope);
+        let evidence_permitted = self.policy.permits(reader.evidence.truth);
+        let source_value = if scope_applies && evidence_permitted {
+            self.resolve_value(&reader.source)
+        } else {
+            None
+        };
+        let interpretation = if scope_applies && evidence_permitted {
+            reader.interpretation_fact_id.as_ref().map(|fact_id| {
+                self.evaluate(&PredicateExpression::Fact {
+                    fact_id: fact_id.clone(),
+                })
+            })
+        } else {
+            None
+        };
+        ReaderAssessment {
+            reader_id: reader.id.clone(),
+            scope_applies,
+            evidence_permitted,
+            source_value,
+            interpretation,
+        }
+    }
+
     fn evaluate_inner(
         &self,
         expression: &PredicateExpression,
@@ -207,7 +333,7 @@ impl<'a> PredicateEvaluator<'a> {
                 left,
                 operator,
                 right,
-            } => match (self.value(left), self.value(right)) {
+            } => match (self.resolve_value(left), self.resolve_value(right)) {
                 (Some(left), Some(right)) => compare_values(&left, *operator, &right),
                 _ => EvaluatedTruth::Unknown,
             },
@@ -326,7 +452,7 @@ impl<'a> PredicateEvaluator<'a> {
         EvaluatedTruth::True
     }
 
-    fn value(&self, reference: &ValueReference) -> Option<StateValue> {
+    pub fn resolve_value(&self, reference: &ValueReference) -> Option<StateValue> {
         match reference {
             ValueReference::Literal { value } => Some(value.clone()),
             ValueReference::ComponentField {
@@ -906,5 +1032,74 @@ mod tests {
             assessment.unknown_requirement_ids,
             vec!["unknown.trigger-semantics"]
         );
+    }
+
+    #[test]
+    fn writer_activation_and_gate_suppression_are_distinct_states() {
+        let snapshot = snapshot(0xff);
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let writer = WriterRule {
+            id: "writer.return-place".into(),
+            scope: scope(&snapshot),
+            activation: PredicateExpression::True,
+            operation: crate::transition::StateOperation::SetLocation {
+                location: snapshot.environment.location.clone(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let mut gate = GateRule {
+            id: "gate.no-teleport".into(),
+            scope: scope(&snapshot),
+            active_when: PredicateExpression::True,
+            blocked_writer_ids: vec![writer.id.clone()],
+            lifetime: SemanticLifetime::RuntimeFile,
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        let blocked = evaluator.assess_writer(&writer, &[gate.clone()]);
+        assert_eq!(blocked.classification, WriterClassification::GateBlocked);
+        assert_eq!(blocked.active_gate_ids, vec!["gate.no-teleport"]);
+
+        gate.active_when = PredicateExpression::Fact {
+            fact_id: "missing.gate-source".into(),
+        };
+        let uncertain = evaluator.assess_writer(&writer, &[gate.clone()]);
+        assert_eq!(uncertain.classification, WriterClassification::GateUnknown);
+        assert_eq!(uncertain.unknown_gate_ids, vec!["gate.no-teleport"]);
+
+        gate.active_when = PredicateExpression::False;
+        assert_eq!(
+            evaluator.assess_writer(&writer, &[gate]).classification,
+            WriterClassification::Executable
+        );
+
+        let mut inactive = writer;
+        inactive.activation = PredicateExpression::False;
+        assert_eq!(
+            evaluator.assess_writer(&inactive, &[]).classification,
+            WriterClassification::Inactive
+        );
+    }
+
+    #[test]
+    fn readers_keep_raw_source_and_friendly_interpretation_separate() {
+        let snapshot = snapshot(0xff);
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let reader = ReaderRule {
+            id: "reader.savewarp".into(),
+            scope: scope(&snapshot),
+            source: ValueReference::LocationStage,
+            consuming_transition_id: "transition.savewarp".into(),
+            interpretation_fact_id: Some("story.faron.twilight".into()),
+            evidence: evidence(TruthStatus::Established),
+        };
+        let assessment = evaluator.assess_reader(&reader);
+        assert_eq!(
+            assessment.source_value,
+            Some(StateValue::Text("F_SP103".into()))
+        );
+        assert_eq!(assessment.interpretation, Some(EvaluatedTruth::True));
     }
 }
