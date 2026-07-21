@@ -1577,7 +1577,7 @@ Deliverable: researchers can extend the model without editing core code.
       context using only appropriately scoped/equivalent rules.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
-  - [ ] Expose canonical fact/mechanics/execution-state artifacts through a
+  - [x] Expose canonical fact/mechanics/execution-state artifacts through a
         standalone planner runtime boundary, isolated from huntctl's TAS CLI and
         workbench implementation.
 - [ ] Report minimal missing obligations/assumptions where practical.
@@ -1607,6 +1607,10 @@ Deliverable: every route and failure is inspectable rather than magical.
 - [ ] Define an independent versioned planner graph-projection schema and Rust
       crate/server API; do not overload timeline `WorkbenchGraph` or playback
       segment semantics.
+  - [x] Establish `tools/route-planner` as a separate Cargo workspace, library
+        API, CLI, and versioned solve-report owner without registering anything
+        in Huntctl.
+  - [ ] Add the planner-specific graph projection and server transport.
 - [ ] Match the Route Workbench's visual grammar and navigation conventions with
       a side-by-side design inventory of reusable colors, spacing, node anatomy,
       camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.

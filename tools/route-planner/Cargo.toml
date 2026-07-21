@@ -1,0 +1,22 @@
+[package]
+name = "dusklight-route-planner-runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Independent runtime boundary for the Twilight Princess causal route planner"
+
+[dependencies]
+dusklight-route-planner = { path = "../huntctl/crates/route-planner" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "dusklight_route_planner_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "route-planner"
+path = "src/main.rs"
+
+[workspace]
+resolver = "3"
