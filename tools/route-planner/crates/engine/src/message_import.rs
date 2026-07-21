@@ -23,7 +23,7 @@ use sha2::{Digest as _, Sha256};
 pub const MESSAGE_FLOW_RESOURCE_OVERLAY_SET_SCHEMA: &str =
     "dusklight.route-planner.message-flow-resource-overlay-set/v2";
 pub const COMPILED_MESSAGE_FLOW_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-set/v3";
+    "dusklight.route-planner.compiled-message-flow-set/v4";
 pub const MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA: &str =
     "dusklight.route-planner.message-flow-entry-contract-set/v2";
 pub const COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA: &str =
@@ -1801,7 +1801,7 @@ mod tests {
         );
         assert_eq!(
             set.compiled_message_flow_set_sha256.to_string(),
-            "8f073cf312168fe65c8033d0ce2c58c6398315e15289b91f46b58a8466db9f31"
+            "65f664fdf9eba2749379903b115d3c1c7b340817f9a23e8baa680fe9c9f90927"
         );
         let entry = &set.entries[0];
         assert_eq!(entry.message_group, 8);

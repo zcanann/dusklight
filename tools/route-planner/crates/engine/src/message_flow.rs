@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v2";
 pub const COMPILED_MESSAGE_FLOW_PROGRAM_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-program/v3";
+    "dusklight.route-planner.compiled-message-flow-program/v4";
 pub const MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA: &str =
     "dusklight.route-planner.message-flow-import-profile/v2";
 pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
@@ -583,6 +583,8 @@ impl MessageFlowProgram {
                     raw_parameter_u32,
                     ..
                 } => {
+                    let encoded_successor =
+                        self.extracted.branch_targets[usize::from(*next_target_index)];
                     let contract = contracts.get(index).copied();
                     let (mut operations, unknowns, fully_decoded, generic_continuation) = self
                         .compile_generic_event(
@@ -621,7 +623,7 @@ impl MessageFlowProgram {
                         format!("Execute message event {event_index} at node {index}"),
                         operations,
                         unknowns,
-                        *next_target_index,
+                        encoded_successor,
                         &terminal_node_id,
                         &evidence,
                         continuation == MessageEventContinuation::EncodedSuccessor,
@@ -948,6 +950,40 @@ impl MessageFlowProgram {
                     }
                 }
                 operations.len() + unknowns.len() == 1
+            }
+            8 => {
+                operations.extend([
+                    (
+                        0,
+                        StateOperation::Write {
+                            target: ComponentFieldTarget {
+                                component_id: self.flow_component_id.clone(),
+                                field: "event_id".into(),
+                            },
+                            value: StateValue::Unsigned(parameter_0.into()),
+                        },
+                    ),
+                    (
+                        1,
+                        StateOperation::Write {
+                            target: ComponentFieldTarget {
+                                component_id: self.flow_component_id.clone(),
+                                field: "item_id".into(),
+                            },
+                            value: StateValue::Unsigned(parameter_1.into()),
+                        },
+                    ),
+                ]);
+                if parameter_0 == 27 {
+                    unknowns.push(unknown_requirement(
+                        token,
+                        node_index,
+                        "fundraising-side-effect",
+                        "Event request 27 also updates message-object fundraising state whose backing is not yet imported".into(),
+                        &self.evidence,
+                    ));
+                }
+                true
             }
             9 => {
                 continuation = MessageEventContinuation::ContractControlled;
@@ -1427,11 +1463,21 @@ fn validate_extracted(extracted: &ExtractedMessageFlow) -> Result<(), PlannerCon
         match node {
             MessageFlowNode::Message {
                 next_node_index, ..
-            }
-            | MessageFlowNode::Event {
-                next_target_index: next_node_index,
-                ..
             } => validate_node_target(*next_node_index, extracted.node_count)?,
+            MessageFlowNode::Event {
+                next_target_index, ..
+            } => {
+                let Some(target) = extracted
+                    .branch_targets
+                    .get(usize::from(*next_target_index))
+                else {
+                    return Err(PlannerContractError::new(
+                        "message_flow_program.extracted.event",
+                        "must reference one encoded target-table entry",
+                    ));
+                };
+                validate_node_target(*target, extracted.node_count)?;
+            }
             MessageFlowNode::Branch {
                 next_target_index, ..
             } => {
@@ -2160,7 +2206,7 @@ mod tests {
                 header_declared_size: 100,
                 resource_size: 100,
                 node_count: 6,
-                branch_target_count: 2,
+                branch_target_count: 6,
                 labels: vec![MessageFlowLabel {
                     flow_id: 42,
                     node_index: 0,
@@ -2169,7 +2215,7 @@ mod tests {
                     MessageFlowNode::Event {
                         index: 0,
                         event_index: 10,
-                        next_target_index: 1,
+                        next_target_index: 2,
                         parameter_0: 51,
                         parameter_1: 0,
                         raw_parameter_u32: 51 << 16,
@@ -2186,7 +2232,7 @@ mod tests {
                     MessageFlowNode::Event {
                         index: 2,
                         event_index: 0,
-                        next_target_index: u16::MAX,
+                        next_target_index: 3,
                         parameter_0: 62,
                         parameter_1: 0,
                         raw_parameter_u32: 62 << 16,
@@ -2195,7 +2241,7 @@ mod tests {
                     MessageFlowNode::Event {
                         index: 3,
                         event_index: 14,
-                        next_target_index: u16::MAX,
+                        next_target_index: 4,
                         parameter_0: 0,
                         parameter_1: 12,
                         raw_parameter_u32: 12,
@@ -2204,7 +2250,7 @@ mod tests {
                     MessageFlowNode::Event {
                         index: 4,
                         event_index: 17,
-                        next_target_index: u16::MAX,
+                        next_target_index: 5,
                         parameter_0: 7,
                         parameter_1: 0,
                         raw_parameter_u32: 7 << 16,
@@ -2216,7 +2262,7 @@ mod tests {
                         raw: [9; 8],
                     },
                 ],
-                branch_targets: vec![2, 3],
+                branch_targets: vec![2, 3, 1, u16::MAX, u16::MAX, u16::MAX],
                 temporary_flag_accesses: vec![
                     MessageFlowTemporaryFlagAccess {
                         node_index: 0,
@@ -2473,6 +2519,11 @@ mod tests {
     fn exact_flow_jumps_override_encoded_successors_and_dynamic_jumps_stay_unknown() {
         let mut program = program();
         program.extracted.node_count = 12;
+        program.extracted.branch_target_count = 10;
+        program
+            .extracted
+            .branch_targets
+            .extend([u16::MAX, 9, 10, 11]);
         program.extracted.labels.push(MessageFlowLabel {
             flow_id: 99,
             node_index: 7,
@@ -2481,7 +2532,7 @@ mod tests {
             MessageFlowNode::Event {
                 index: 6,
                 event_index: 9,
-                next_target_index: u16::MAX,
+                next_target_index: 6,
                 parameter_0: 0,
                 parameter_1: 99,
                 raw_parameter_u32: 99,
@@ -2497,7 +2548,7 @@ mod tests {
             MessageFlowNode::Event {
                 index: 8,
                 event_index: 12,
-                next_target_index: 9,
+                next_target_index: 7,
                 parameter_0: 0,
                 parameter_1: 0,
                 raw_parameter_u32: 0,
@@ -2506,7 +2557,7 @@ mod tests {
             MessageFlowNode::Event {
                 index: 9,
                 event_index: 19,
-                next_target_index: 10,
+                next_target_index: 8,
                 parameter_0: 0,
                 parameter_1: 0,
                 raw_parameter_u32: 0,
@@ -2515,7 +2566,7 @@ mod tests {
             MessageFlowNode::Event {
                 index: 10,
                 event_index: 42,
-                next_target_index: 11,
+                next_target_index: 9,
                 parameter_0: 0,
                 parameter_1: 0,
                 raw_parameter_u32: 0,
@@ -2542,7 +2593,7 @@ mod tests {
             jump.activation.effects.as_slice(),
             [StateOperation::AdvanceFlow { node_id, .. }] if node_id.ends_with(".7")
         ));
-        for event_index in [12_u8, 19, 42] {
+        for (event_index, destination) in [(12_u8, 9_u16), (19, 10), (42, 11)] {
             let transition = compiled
                 .mechanics
                 .transitions
@@ -2552,7 +2603,8 @@ mod tests {
             assert!(transition.activation.unknown_requirements.is_empty());
             assert!(matches!(
                 transition.activation.effects.as_slice(),
-                [StateOperation::AdvanceFlow { .. }]
+                [StateOperation::AdvanceFlow { node_id, .. }]
+                    if node_id.ends_with(&format!(".{destination}"))
             ));
         }
 
@@ -2782,7 +2834,7 @@ mod tests {
         *next_target_index = 99;
         assert_eq!(
             bad_target.validate().unwrap_err().field(),
-            "message_flow_program.extracted.target"
+            "message_flow_program.extracted.event"
         );
 
         let mut bad_contract = program();

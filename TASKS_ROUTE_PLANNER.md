@@ -1866,6 +1866,10 @@ Deliverable: replayable state evidence that can validate transition rules.
           labels without also applying their encoded successors. Keep dynamic
           jump-zero group selection unknown, and treat source-inert handlers
           12/19/42 as encoded-successor edges without invented state effects.
+    - [x] Resolve event successors through their single shared target-table entry
+          while keeping message-node direct successors and branch-node paired
+          target entries distinct. Real node 315 now reaches its encoded terminal
+          target instead of being misread as direct node 201.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

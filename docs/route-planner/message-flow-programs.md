@@ -30,9 +30,11 @@ unresolved nodes. Nothing depends on Huntctl or the TAS workbench.
 ## Graph compilation
 
 Each known node receives its own flow-node guard. Message and event nodes follow
-their encoded direct successor; `0xffff` becomes a stable terminal node. A
-branch node produces two distinct `BranchFlow` transitions using the two
-entries beginning at its encoded branch-target-table index.
+their encoded successor; `0xffff` becomes a stable terminal node. Message nodes
+encode that node directly. Event nodes encode one index into the shared target
+table, while branch nodes encode the first of two adjacent target-table entries.
+The compiler resolves those different coordinate systems before emitting
+transitions instead of treating an event's table index as a node number.
 
 For the audited `true when clear` handlers, branch outcome 1 requires the raw
 bit to equal zero and branch outcome 0 requires the selected bit to be set. The
