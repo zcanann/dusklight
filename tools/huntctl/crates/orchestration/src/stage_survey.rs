@@ -4,7 +4,7 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
-use dusklight_trace::trace::{self, TraceChannel};
+use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
 use dusklight_world::stage_boot_catalog::{StageBootCandidate, StageBootCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -33,6 +33,36 @@ const SURVEY_CVARS: [&str; 4] = [
     "backend.wasPresetChosen=true",
     "game.enableMenuPointer=false",
 ];
+const BUTTON_L: u16 = 0x0040;
+const BUTTON_A: u16 = 0x0100;
+const BUTTON_B: u16 = 0x0200;
+const BUTTON_X: u16 = 0x0400;
+const BUTTON_Y: u16 = 0x0800;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageSurveyProbeKind {
+    #[default]
+    Neutral,
+    Movement,
+    Camera,
+    Targeting,
+    BasicActions,
+}
+
+impl StageSurveyProbeKind {
+    pub const fn minimum_ticks(self) -> u32 {
+        match self {
+            Self::Neutral => 1,
+            Self::Movement | Self::Camera | Self::Targeting => 4,
+            Self::BasicActions => 16,
+        }
+    }
+}
+
+fn is_neutral_probe(value: &StageSurveyProbeKind) -> bool {
+    *value == StageSurveyProbeKind::Neutral
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +79,8 @@ pub struct StageSurveyIdentity {
 #[serde(deny_unknown_fields)]
 pub struct StageSurveyPolicy {
     pub probe_ticks: u32,
+    #[serde(default, skip_serializing_if = "is_neutral_probe")]
+    pub probe: StageSurveyProbeKind,
     pub host_timeout_millis: u64,
     pub maximum_attempts_per_case: u8,
     pub fidelity_profile: String,
@@ -287,7 +319,7 @@ impl StageSurveyLedger {
                 )));
             }
         }
-        if self.policy.probe_ticks == 0
+        if self.policy.probe_ticks < self.policy.probe.minimum_ticks()
             || self.policy.host_timeout_millis == 0
             || self.policy.maximum_attempts_per_case == 0
             || self.policy.maximum_attempts_per_case > MAX_ATTEMPTS_PER_CASE
@@ -513,7 +545,7 @@ pub fn execute_stage_survey_attempt(
     config: &StageSurveyExecutionConfig,
 ) -> Result<StageSurveyAttempt, StageSurveyError> {
     if attempt_number == 0
-        || policy.probe_ticks == 0
+        || policy.probe_ticks < policy.probe.minimum_ticks()
         || policy.host_timeout_millis == 0
         || policy.fidelity_profile != STAGE_SURVEY_FIDELITY
         || !config.executable.is_file()
@@ -540,7 +572,7 @@ pub fn execute_stage_survey_attempt(
     let actor_catalog_path = attempt_root.join("actors.json");
     let stdout_path = attempt_root.join("stdout.log");
     let stderr_path = attempt_root.join("stderr.log");
-    let tape = neutral_probe_tape(candidate, policy.probe_ticks)?;
+    let tape = survey_probe_tape(candidate, policy)?;
     fs::write(
         &tape_path,
         tape.encode()
@@ -688,15 +720,49 @@ pub fn execute_stage_survey_attempt(
     }
 }
 
-fn neutral_probe_tape(
+fn survey_probe_tape(
     candidate: &StageBootCandidate,
-    probe_ticks: u32,
+    policy: &StageSurveyPolicy,
 ) -> Result<InputTape, StageSurveyError> {
-    let frame_count = usize::try_from(probe_ticks)
+    if policy.probe_ticks < policy.probe.minimum_ticks() {
+        return Err(StageSurveyError::invalid(
+            "probe tick count is below the selected probe minimum",
+        ));
+    }
+    let frame_count = usize::try_from(policy.probe_ticks)
         .map_err(|_| StageSurveyError::invalid("probe tick count does not fit memory"))?;
     let mut frame = InputFrame::default();
     frame.owned_ports = 1;
     frame.pads[0] = RawPadState::default();
+    let mut frames = vec![frame; frame_count];
+    match policy.probe {
+        StageSurveyProbeKind::Neutral => {}
+        StageSurveyProbeKind::Movement => {
+            for frame in active_probe_frames(&mut frames) {
+                frame.pads[0].stick_y = 100;
+            }
+        }
+        StageSurveyProbeKind::Camera => {
+            for frame in active_probe_frames(&mut frames) {
+                frame.pads[0].substick_x = 80;
+            }
+        }
+        StageSurveyProbeKind::Targeting => {
+            for frame in active_probe_frames(&mut frames) {
+                frame.pads[0].buttons = BUTTON_L;
+            }
+        }
+        StageSurveyProbeKind::BasicActions => {
+            let stride = frame_count / 5;
+            for (index, button) in [BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y]
+                .into_iter()
+                .enumerate()
+            {
+                let frame_index = stride * (index + 1);
+                frames[frame_index].pads[0].buttons = button;
+            }
+        }
+    }
     Ok(InputTape {
         boot: TapeBoot::Stage {
             stage: candidate.stage.clone(),
@@ -708,8 +774,14 @@ fn neutral_probe_tape(
         },
         tick_rate_numerator: 30,
         tick_rate_denominator: 1,
-        frames: vec![frame; frame_count],
+        frames,
     })
+}
+
+fn active_probe_frames(frames: &mut [InputFrame]) -> &mut [InputFrame] {
+    let margin = frames.len() / 4;
+    let end = frames.len() - margin;
+    &mut frames[margin..end]
 }
 
 fn validate_successful_probe(
@@ -734,6 +806,14 @@ fn validate_successful_probe(
         || decoded.records.len() != policy.probe_ticks as usize
     {
         return Err("trace_envelope_mismatch");
+    }
+    if decoded
+        .records
+        .iter()
+        .zip(&tape.frames)
+        .any(|(record, frame)| !applied_pad_matches_frame(record.applied_pads.as_ref(), frame))
+    {
+        return Err("trace_applied_pad_mismatch");
     }
     let origin = decoded.records.first().ok_or("trace_empty")?;
     if origin.stage_name != candidate.stage
@@ -823,6 +903,20 @@ fn validate_successful_probe(
             player_ready: final_observation.player_session_process_id.is_some(),
         }),
         diagnostic_code: None,
+    })
+}
+
+fn applied_pad_matches_frame(applied: Option<&TraceAppliedPads>, frame: &InputFrame) -> bool {
+    let Some(applied) = applied else {
+        return false;
+    };
+    if applied.owned_ports != frame.owned_ports {
+        return false;
+    }
+    (0..applied.pads.len()).all(|port| {
+        let bit = 1_u8 << port;
+        frame.owned_ports & bit == 0
+            || (applied.valid_ports & bit != 0 && applied.pads[port] == frame.pads[port])
     })
 }
 
@@ -1115,6 +1209,7 @@ mod tests {
             },
             StageSurveyPolicy {
                 probe_ticks: 30,
+                probe: StageSurveyProbeKind::Neutral,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: maximum_attempts,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1251,7 +1346,17 @@ mod tests {
     #[test]
     fn neutral_probe_owns_only_port_zero_and_preserves_exact_boot_origin() {
         let candidate = &catalog().candidates[0];
-        let tape = neutral_probe_tape(candidate, 30).unwrap();
+        let tape = survey_probe_tape(
+            candidate,
+            &StageSurveyPolicy {
+                probe_ticks: 30,
+                probe: StageSurveyProbeKind::Neutral,
+                host_timeout_millis: 120_000,
+                maximum_attempts_per_case: 1,
+                fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
+            },
+        )
+        .unwrap();
         assert_eq!(
             tape.boot,
             TapeBoot::Stage {
@@ -1269,5 +1374,122 @@ mod tests {
                 frame.owned_ports == 1 && frame.pads == [RawPadState::default(); 4]
             })
         );
+    }
+
+    #[test]
+    fn generic_probe_profiles_change_only_the_declared_pad_factor() {
+        let candidate = &catalog().candidates[0];
+        let build = |probe| {
+            survey_probe_tape(
+                candidate,
+                &StageSurveyPolicy {
+                    probe_ticks: 20,
+                    probe,
+                    host_timeout_millis: 120_000,
+                    maximum_attempts_per_case: 1,
+                    fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
+                },
+            )
+            .unwrap()
+        };
+
+        let movement = build(StageSurveyProbeKind::Movement);
+        assert!(movement.frames[..5].iter().all(neutral_frame));
+        assert!(movement.frames[15..].iter().all(neutral_frame));
+        assert!(movement.frames[5..15].iter().all(|frame| {
+            frame.owned_ports == 1
+                && frame.pads[0].stick_y == 100
+                && frame.pads[0].stick_x == 0
+                && frame.pads[0].buttons == 0
+        }));
+
+        let camera = build(StageSurveyProbeKind::Camera);
+        assert!(camera.frames[5..15].iter().all(|frame| {
+            frame.pads[0].substick_x == 80
+                && frame.pads[0].substick_y == 0
+                && frame.pads[0].buttons == 0
+        }));
+
+        let targeting = build(StageSurveyProbeKind::Targeting);
+        assert!(
+            targeting.frames[5..15]
+                .iter()
+                .all(|frame| frame.pads[0].buttons == BUTTON_L)
+        );
+
+        let actions = build(StageSurveyProbeKind::BasicActions);
+        let presses = actions
+            .frames
+            .iter()
+            .filter_map(|frame| (frame.pads[0].buttons != 0).then_some(frame.pads[0].buttons))
+            .collect::<Vec<_>>();
+        assert_eq!(presses, [BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y]);
+        assert!(actions.frames.iter().all(|frame| {
+            frame.owned_ports == 1
+                && frame.pads[0].stick_x == 0
+                && frame.pads[0].stick_y == 0
+                && frame.pads[0].substick_x == 0
+                && frame.pads[0].substick_y == 0
+        }));
+    }
+
+    #[test]
+    fn neutral_policy_preserves_legacy_canonical_shape_and_probe_minima_fail_closed() {
+        let catalog = catalog();
+        let neutral = ledger(&catalog, 1);
+        let bytes = neutral.canonical_bytes(&catalog).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(!text.contains("\"probe\":"));
+        assert_eq!(
+            StageSurveyLedger::decode_canonical(&bytes, &catalog).unwrap(),
+            neutral
+        );
+
+        let mut movement = neutral.clone();
+        movement.policy.probe = StageSurveyProbeKind::Movement;
+        movement.policy.probe_ticks = 2;
+        assert!(movement.validate(&catalog).is_err());
+        assert!(survey_probe_tape(&catalog.candidates[0], &movement.policy).is_err());
+
+        movement.policy.probe_ticks = 4;
+        let bytes = movement.canonical_bytes(&catalog).unwrap();
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("\"probe\":\"movement\"")
+        );
+    }
+
+    #[test]
+    fn probe_acceptance_requires_exact_consumed_pad_on_every_owned_port() {
+        let mut frame = InputFrame {
+            owned_ports: 1,
+            ..InputFrame::default()
+        };
+        frame.pads[0].stick_y = 100;
+        let mut applied = TraceAppliedPads {
+            valid_ports: 1,
+            owned_ports: 1,
+            pads: frame.pads,
+        };
+        assert!(applied_pad_matches_frame(Some(&applied), &frame));
+
+        applied.pads[0].stick_y = 99;
+        assert!(!applied_pad_matches_frame(Some(&applied), &frame));
+        applied.pads[0] = frame.pads[0];
+        applied.valid_ports = 0;
+        assert!(!applied_pad_matches_frame(Some(&applied), &frame));
+        applied.valid_ports = 1;
+        applied.owned_ports = 3;
+        assert!(!applied_pad_matches_frame(Some(&applied), &frame));
+        assert!(!applied_pad_matches_frame(None, &frame));
+
+        applied.owned_ports = 1;
+        applied.pads[1].buttons = BUTTON_A;
+        assert!(applied_pad_matches_frame(Some(&applied), &frame));
+    }
+
+    fn neutral_frame(frame: &InputFrame) -> bool {
+        frame.owned_ports == 1 && frame.pads == [RawPadState::default(); 4]
     }
 }

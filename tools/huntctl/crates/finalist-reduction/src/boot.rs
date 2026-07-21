@@ -305,7 +305,7 @@ pub fn golf_boot(config: &BootGolfConfig) -> Result<BootGolfSummary, EvaluateErr
         || (config.resume && config.output_root.join("golf.summary.json").exists())
     {
         return Err(EvaluateError::InvalidConfig(
-            "boot timing golf requires valid execution inputs and either a new output root or --resume with an incomplete matching output root"
+            "boot timing golf requires valid execution inputs, at least two repetitions, and either a new output root or --resume with an incomplete matching output root"
                 .into(),
         ));
     }

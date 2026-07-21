@@ -72,6 +72,8 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
         .args(["--dvd"])
         .arg(&dvd_path)
         .args([
+            "--probe",
+            "movement",
             "--probe-ticks",
             "12",
             "--timeout-ms",
@@ -104,6 +106,23 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
     assert_eq!(document["progress"]["pending"], 1);
     assert_eq!(document["progress"]["attempted"], 0);
     assert_eq!(document["policy"]["probe_ticks"], 12);
+    assert_eq!(document["policy"]["probe"], "movement");
+
+    let invalid_probe_ledger = root.join("invalid-probe-ledger.json");
+    let invalid_probe = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "init", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&invalid_probe_ledger)
+        .args(["--game"])
+        .arg(&game_path)
+        .args(["--dvd"])
+        .arg(&dvd_path)
+        .args(["--probe", "benchmark-route"])
+        .output()
+        .unwrap();
+    assert!(!invalid_probe.status.success());
+    assert!(String::from_utf8_lossy(&invalid_probe.stderr).contains("unknown survey probe"));
 
     let unknown = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["survey", "run", "--catalog"])

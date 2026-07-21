@@ -605,7 +605,7 @@ mod tests {
     use super::*;
     use crate::stage_survey::{
         STAGE_SURVEY_FIDELITY, StageSurveyAttempt, StageSurveyIdentity, StageSurveyObservedOrigin,
-        StageSurveyPolicy,
+        StageSurveyPolicy, StageSurveyProbeKind,
     };
     use dusklight_world::stage_boot_catalog::{
         BootLayerSource, BootLayerSourceKind, BootPointSource, BootPointSourceKind,
@@ -681,6 +681,7 @@ mod tests {
             },
             StageSurveyPolicy {
                 probe_ticks: 30,
+                probe: StageSurveyProbeKind::Neutral,
                 host_timeout_millis: 1_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),

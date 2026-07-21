@@ -5,7 +5,7 @@ use huntctl::stage_actor_coverage::StageActorCoverageReport;
 use huntctl::stage_boot_catalog::StageBootCatalog;
 use huntctl::stage_survey::{
     STAGE_SURVEY_FIDELITY, StageSurveyExecutionConfig, StageSurveyLedger, StageSurveyPolicy,
-    execute_stage_survey_attempt, stage_survey_identity,
+    StageSurveyProbeKind, execute_stage_survey_attempt, stage_survey_identity,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -237,6 +237,19 @@ fn policy_from_args(args: &[String]) -> Result<StageSurveyPolicy, Box<dyn Error>
         .unwrap_or(2);
     Ok(StageSurveyPolicy {
         probe_ticks: u32_option(args, "--probe-ticks", 30)?,
+        probe: match option(args, "--probe").as_deref().unwrap_or("neutral") {
+            "neutral" => StageSurveyProbeKind::Neutral,
+            "movement" => StageSurveyProbeKind::Movement,
+            "camera" => StageSurveyProbeKind::Camera,
+            "targeting" => StageSurveyProbeKind::Targeting,
+            "basic-actions" => StageSurveyProbeKind::BasicActions,
+            value => {
+                return Err(format!(
+                    "unknown survey probe {value:?}; expected neutral, movement, camera, targeting, or basic-actions"
+                )
+                .into());
+            }
+        },
         host_timeout_millis: u64_option(args, "--timeout-ms", 120_000)?,
         maximum_attempts_per_case: attempts,
         fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
