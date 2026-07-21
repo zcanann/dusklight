@@ -570,7 +570,7 @@ The current code shows:
   inventing a default. The same schema distinguishes portal, void/death reload,
   title return, wrong-state respawn, and actor-driven transitions and provides
   typed operations for form, mount, control, and action changes.
-- Planner service schema v16 provides a typed JSON-lines transport owned by the
+- Planner service schema v17 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -591,13 +591,14 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v5 combines the raw/component boundary diff with
+- State-inspection-diff schema v6 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
-  and runtime-context changes separately. An unchanged payload digest and empty
-  raw-byte delta therefore remain visible when rebind alone changes an alias;
-  common-prefix and divergent history suffixes identify exactly which ordered
-  operations separate two execution states.
+  runtime-context changes, serialized owner-store changes, and sealed persistent-
+  file image changes separately. An unchanged payload digest and empty raw-byte
+  delta therefore remain visible when rebind alone changes an alias; common-prefix
+  and divergent history suffixes identify exactly which ordered operations
+  separate two execution states.
   The standalone `diff-state` command and service expose the same report.
 - Route-book schema v3 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
@@ -2080,6 +2081,9 @@ Deliverable: every route and failure is inspectable rather than magical.
   - [x] Add a planner-owned headless state-inspection projection for live and
         serialized stores, raw/structured payloads, bindings, provenance, and
         exact-context friendly/derived fact evaluations.
+  - [x] Diff serialized owner stores and sealed persistent-file images by stable
+        owner/file identity, payload digest, component manifest, and source
+        runtime, alongside active/ended runtime and physical-slot deltas.
   - [ ] Add the visual inspector and before/after route-step diff interaction.
 - [ ] Add raw flag catalogue search and friendly aliases.
 - [ ] Add obstruction and requirement inspectors.

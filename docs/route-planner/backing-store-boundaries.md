@@ -110,7 +110,7 @@ reinterpretation. The milestone advances the directly containing schemas:
 - execution state to v7 and boundary policy remains v2;
 - mechanics catalog to v11, refinement pack to v10, and composed catalog to v11;
 - cutscene program/compiled program to v3 and extracted world facts to v3; and
-- state inspection to v7, inspection diff to v5, and planner service to v16.
+- state inspection to v7, inspection diff to v6, and planner service to v17.
 
 Canonical decoders fail closed on prior shapes. They do not synthesize a
 runtime-file ID for an old stage-only owner, because doing so could merge stores

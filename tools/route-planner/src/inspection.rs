@@ -12,13 +12,14 @@ use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::{
     FactCatalog, PredicateExpression, RawFactBinding, TruthStatus, ValueReference,
 };
-use dusklight_route_planner::snapshot::StateDiff;
-use dusklight_route_planner::state::{BoundaryKind, ComponentPayload};
+use dusklight_route_planner::snapshot::{DeltaKind, StateDiff};
+use dusklight_route_planner::state::{BoundaryKind, ComponentPayload, SerializationOwner};
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v7";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v5";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v6";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -87,6 +88,8 @@ pub struct StateInspectionDiff {
     pub fact_catalog_sha256: Digest,
     pub evidence_mode: RuntimeEvidenceMode,
     pub state_diff: StateDiff,
+    pub serialized_store_deltas: Vec<SerializedStoreDelta>,
+    pub persistent_file_image_deltas: Vec<PersistentFileImageDelta>,
     pub gate_state_deltas: Vec<GateStateDelta>,
     pub execution_history_common_prefix_len: usize,
     pub before_execution_history_suffix: Vec<ExecutionHistoryEvent>,
@@ -100,6 +103,28 @@ pub struct GateStateDelta {
     pub gate_id: String,
     pub before: Option<bool>,
     pub after: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerializedStoreDelta {
+    pub owner: SerializationOwner,
+    pub delta_kind: DeltaKind,
+    pub before_sha256: Option<Digest>,
+    pub after_sha256: Option<Digest>,
+    pub component_ids_before: Vec<String>,
+    pub component_ids_after: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistentFileImageDelta {
+    pub persistent_file_id: String,
+    pub delta_kind: DeltaKind,
+    pub before_sha256: Option<Digest>,
+    pub after_sha256: Option<Digest>,
+    pub source_runtime_file_id_before: Option<String>,
+    pub source_runtime_file_id_after: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -322,6 +347,8 @@ pub fn inspect_state_diff(
         fact_catalog_sha256: facts.digest()?,
         evidence_mode,
         state_diff,
+        serialized_store_deltas: diff_serialized_stores(before, after)?,
+        persistent_file_image_deltas: diff_persistent_file_images(before, after)?,
         gate_state_deltas: diff_gate_states(&before.gate_states, &after.gate_states),
         execution_history_common_prefix_len,
         before_execution_history_suffix: before.execution_history
@@ -332,6 +359,97 @@ pub fn inspect_state_diff(
             .to_vec(),
         fact_deltas,
     })
+}
+
+fn diff_serialized_stores(
+    before: &PlannerExecutionState,
+    after: &PlannerExecutionState,
+) -> Result<Vec<SerializedStoreDelta>, PlannerContractError> {
+    before
+        .serialized_components
+        .keys()
+        .chain(after.serialized_components.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|owner| {
+            let before_components = before.serialized_components.get(&owner);
+            let after_components = after.serialized_components.get(&owner);
+            (before_components != after_components).then_some((
+                owner,
+                before_components,
+                after_components,
+            ))
+        })
+        .map(|(owner, before_components, after_components)| {
+            Ok(SerializedStoreDelta {
+                delta_kind: delta_kind(before_components.is_some(), after_components.is_some()),
+                before_sha256: before_components
+                    .map(|components| digest_json(&(&owner, components)))
+                    .transpose()?,
+                after_sha256: after_components
+                    .map(|components| digest_json(&(&owner, components)))
+                    .transpose()?,
+                component_ids_before: component_ids(before_components.map(Vec::as_slice)),
+                component_ids_after: component_ids(after_components.map(Vec::as_slice)),
+                owner,
+            })
+        })
+        .collect()
+}
+
+fn diff_persistent_file_images(
+    before: &PlannerExecutionState,
+    after: &PlannerExecutionState,
+) -> Result<Vec<PersistentFileImageDelta>, PlannerContractError> {
+    before
+        .persistent_file_images
+        .keys()
+        .chain(after.persistent_file_images.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|id| {
+            let before_image = before.persistent_file_images.get(&id);
+            let after_image = after.persistent_file_images.get(&id);
+            (before_image != after_image).then_some((id, before_image, after_image))
+        })
+        .map(|(persistent_file_id, before_image, after_image)| {
+            Ok(PersistentFileImageDelta {
+                delta_kind: delta_kind(before_image.is_some(), after_image.is_some()),
+                before_sha256: before_image.map(|image| image.digest()).transpose()?,
+                after_sha256: after_image.map(|image| image.digest()).transpose()?,
+                source_runtime_file_id_before: before_image
+                    .map(|image| image.source_runtime_file_id.clone()),
+                source_runtime_file_id_after: after_image
+                    .map(|image| image.source_runtime_file_id.clone()),
+                persistent_file_id,
+            })
+        })
+        .collect()
+}
+
+fn delta_kind(before: bool, after: bool) -> DeltaKind {
+    match (before, after) {
+        (false, true) => DeltaKind::Added,
+        (true, false) => DeltaKind::Removed,
+        (true, true) => DeltaKind::Changed,
+        (false, false) => unreachable!("a reported delta has at least one side"),
+    }
+}
+
+fn component_ids(
+    components: Option<&[dusklight_route_planner::state::StateComponent]>,
+) -> Vec<String> {
+    components
+        .into_iter()
+        .flatten()
+        .map(|component| component.id.clone())
+        .collect()
+}
+
+fn digest_json(value: &impl Serialize) -> Result<Digest, PlannerContractError> {
+    Ok(Digest(Sha256::digest(serde_json::to_vec(value)?).into()))
 }
 
 fn diff_gate_states(
@@ -466,9 +584,9 @@ mod tests {
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::state::{
         BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm, PlayerState,
-        ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId, PlayerForm,
+        PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
+        SceneLocation, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
     };
     use dusklight_route_planner::transition::{ComponentFieldTarget, StateOperation};
     use std::collections::BTreeMap;
@@ -636,7 +754,13 @@ mod tests {
         assert_eq!(inspection.gate_histories.len(), 1);
         assert_eq!(inspection.gate_histories[0].events.len(), 1);
 
-        let before = state;
+        let mut before = state;
+        before
+            .snapshot
+            .environment
+            .active_runtime_file
+            .allowed_serialization_targets = vec![PhysicalSlotId(1)];
+        before.validate().unwrap();
         let mut after = before.clone();
         after.snapshot.id = "snapshot.inspect-rebound".into();
         after.snapshot.sequence = before.snapshot.sequence + 1;
@@ -706,6 +830,62 @@ mod tests {
         assert!(progressed_diff.before_execution_history_suffix.is_empty());
         assert_eq!(progressed_diff.after_execution_history_suffix.len(), 1);
         assert_eq!(progressed_diff.gate_state_deltas.len(), 1);
+
+        let mut backed = before.clone();
+        backed
+            .apply_operations(
+                "boundary.save-and-cache",
+                "snapshot.inspect-backed",
+                &[
+                    StateOperation::SaveRuntimeToSlot {
+                        source_runtime_file_id: "file-0".into(),
+                        destination_slot: PhysicalSlotId(1),
+                        destination_persistent_file_id: "persistent-file-1".into(),
+                        runtime_component_ids: vec![
+                            "inventory.active".into(),
+                            "save.return".into(),
+                        ],
+                        stage_bank_stages: Vec::new(),
+                    },
+                    StateOperation::Serialize {
+                        selector: dusklight_route_planner::state::ComponentSelector::Id {
+                            component_id: "save.return".into(),
+                        },
+                        owner: SerializationOwner::Custom {
+                            id: "research-cache".into(),
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+        let backing_diff = inspect_state_diff(
+            &before,
+            &backed,
+            BoundaryKind::SaveRuntimeToSlot,
+            &facts,
+            &[],
+            RuntimeEvidenceMode::EstablishedOnly,
+        )
+        .unwrap();
+        assert_eq!(backing_diff.state_diff.slot_deltas.len(), 1);
+        assert_eq!(backing_diff.serialized_store_deltas.len(), 1);
+        assert_eq!(
+            backing_diff.serialized_store_deltas[0].delta_kind,
+            DeltaKind::Added
+        );
+        assert_eq!(
+            backing_diff.serialized_store_deltas[0].component_ids_after,
+            vec![String::from("save.return")]
+        );
+        assert_eq!(backing_diff.persistent_file_image_deltas.len(), 1);
+        assert_eq!(
+            backing_diff.persistent_file_image_deltas[0].persistent_file_id,
+            "persistent-file-1"
+        );
+        assert_eq!(
+            backing_diff.persistent_file_image_deltas[0].delta_kind,
+            DeltaKind::Added
+        );
 
         assert_eq!(
             diff_gate_states(
