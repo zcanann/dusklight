@@ -52,11 +52,14 @@ streams contain 387 commands and 817 paragraph headers. The command stream has
 29 explicit ends, 189 waits, 3 suspends, 166 paragraph bundles, and no explicit
 relative jumps.
 
-This is structural rather than semantic coverage. The object streams comprise
-actors, camera, Link, message, control, particle, and sound objects, and expose
-26 object-specific paragraph type codes plus reserved raw-data paragraphs. Their
-adaptor meanings, actor-resource requests, and gameplay writes remain
-unresolved.
+The structural artifact remains version-neutral. A separate exact-GZ2E01
+adaptor profile resolves all 695 object-specific paragraph occurrences through
+29 selector rules while retaining 122 reserved controls. Its canonical semantic
+artifact SHA-256 is
+`a560e4f30d55403a68ab65e533e08bcd0c84d8164c1dc3de557c21c230890da5`.
+This types actor shape/animation resource requests, camera/particle/sound
+behavior, and demo-message IDs without proving which operations execute on the
+corruption path or promoting any of them to gameplay writes.
 
 ## Exact room-loader writer evidence
 
@@ -153,6 +156,12 @@ route-planner extract-jstudio-stb \
   --archive files/res/Object/Demo07_02.arc \
   --resource demo07_02.stb \
   --output gz2e01-demo07_02-program.json
+
+route-planner resolve-jstudio-stb \
+  --archive files/res/Object/Demo07_02.arc \
+  --resource demo07_02.stb \
+  --content-identity gz2e01-content.json \
+  --output gz2e01-demo07_02-semantics.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,

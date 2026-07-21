@@ -14,6 +14,9 @@ use dusklight_route_planner::fact_pack_cache::{load_fact_pack, store_fact_pack};
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::jstudio_import::parse_jstudio_stb;
+use dusklight_route_planner::jstudio_semantics::{
+    JstudioAdaptorProfile, bundled_gz2e01_adaptor_profile, resolve_jstudio_stb_semantics,
+};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::message_flow::{MessageFlowImportProfile, MessageFlowProgramSet};
 use dusklight_route_planner::message_import::{
@@ -77,6 +80,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-event-list") => extract_event_list(&args[1..]),
         Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
+        Some("resolve-jstudio-stb") => resolve_jstudio_stb(&args[1..]),
         Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
@@ -774,6 +778,41 @@ fn extract_jstudio_stb(args: &[String]) -> Result<(), Box<dyn Error>> {
             "resource_sha256": program.source.resource_sha256,
             "blocks": program.blocks.len(),
             "objects": object_count,
+            "coverage": program.coverage,
+        }))?
+    );
+    Ok(())
+}
+
+fn resolve_jstudio_stb(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource")
+        .ok_or_else(|| "missing required --resource <file.stb>".to_owned())?;
+    let content_path = required_path(args, "--content-identity")?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let profile = match option(args, "--profile") {
+        Some(profile_path) => JstudioAdaptorProfile::decode_canonical(&fs::read(profile_path)?)?,
+        None => bundled_gz2e01_adaptor_profile()?,
+    };
+    let program = resolve_jstudio_stb_semantics(
+        &content,
+        &profile,
+        Digest(Sha256::digest(&archive).into()),
+        &resource_name,
+        &resource,
+    )?;
+    write_file(&output, &program.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": program.schema,
+            "output": output,
+            "sha256": program.digest()?,
+            "source_program_sha256": program.source_program_sha256,
+            "profile_sha256": program.profile_sha256,
             "coverage": program.coverage,
         }))?
     );
@@ -1647,6 +1686,7 @@ fn print_usage() {
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
             "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",
+            "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",

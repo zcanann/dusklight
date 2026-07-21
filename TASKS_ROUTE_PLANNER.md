@@ -2599,8 +2599,12 @@ sequence.
         possible JStudio/glitch-path writers remain open.
   - [x] Structurally decode and seal `demo07_02.stb`: 30 outer blocks, 200 FVB
         functions, 29 object streams, 387 commands, and 817 paragraph headers.
-        Keep all 26 object-specific paragraph type meanings unresolved until
-        their TP adaptors are audited.
+        Keep executable-specific meanings out of the structural schema.
+  - [x] Add exact-content JStudio adaptor profiles and a separate semantic
+        resolver. The GZ2E01 profile resolves all 695 object-specific paragraphs
+        through 29 audited selector rules while retaining 122 reserved controls;
+        it types actor resource requests and the three demo-message IDs without
+        implying actor execution, message completion, or scene change.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.

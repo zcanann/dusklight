@@ -95,6 +95,9 @@ The planner CLI currently owns twenty-eight operations:
   IDs, sequence commands, waits/suspends/jumps, and paragraph boundaries while
   hashing rather than embedding animation/camera payloads. Object-specific
   paragraph effects remain explicitly unresolved.
+- `resolve-jstudio-stb` applies an exact-content adaptor profile to those
+  paragraphs, decoding proven variable/adaptor payload contracts and retaining
+  unsupported dispatches as unresolved records.
 - `extract-cutscene-wrapper` joins one named REVT/LBNK/SCLS event to its exact
   `event_list.dat` staff/cut/parameter graph. Its coverage record keeps JStudio
   phases, exceptional load flow, and return-place writers unresolved until a
