@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twelve operations:
+The planner CLI currently owns fifteen operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -30,6 +30,15 @@ The planner CLI currently owns twelve operations:
   a new semantic interpretation remain visible.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
+- `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely
+  named resource from user-supplied retail data.
+- `extract-message-flow` emits the BMG flow labels, nodes, branch-target table,
+  correctly resolved query-handler numbers, and source-derived temporary-bit
+  accesses. Raw query-table indices remain present so the two coordinate
+  systems cannot be conflated.
+- `extract-stage-data` emits planner-owned DZS/DZR chunk records and authored
+  actor placements, including layer, parameters, position, rotations, and raw
+  bytes. Unknown chunk formats remain listed but uninterpreted.
 - `inspect-state` exposes every live and serialized component store alongside
   exact-context friendly aliases and derived fact evaluations. It also retains
   ordered operation/boundary history, reports the last known writer of each live
@@ -75,3 +84,8 @@ The planner CLI currently owns twelve operations:
   independently, and reports whether the route reaches its goal everywhere.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients, including portable solves.
+
+The three low-level extraction commands are read-only with respect to `orig/`.
+They write only the explicitly named output and record SHA-256 identities for
+both the source archive and extracted resource. They do not call or link
+Huntctl/TAS tooling.

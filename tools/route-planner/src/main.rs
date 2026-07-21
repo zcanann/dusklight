@@ -8,6 +8,9 @@ use dusklight_route_planner::fact_pack::{
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
+use dusklight_route_planner::orig_extraction::{
+    extract_unique_rarc_resource, parse_message_flow, parse_stage_data,
+};
 use dusklight_route_planner::refinement::{
     ComposedPlannerCatalog, RefinementLayers, RefinementPack,
 };
@@ -46,6 +49,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("compose") => compose(&args[1..]),
+        Some("extract-message-flow") => extract_message_flow(&args[1..]),
+        Some("extract-resource") => extract_resource(&args[1..]),
+        Some("extract-stage-data") => extract_stage_data(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
         Some("edit-route-book") => edit_route_book(&args[1..]),
         Some("inspect-state") => inspect_state_command(&args[1..]),
@@ -66,6 +72,97 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn extract_stage_data(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource")
+        .ok_or_else(|| "missing required --resource <stage.dzs|room.dzr>".to_owned())?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let stage = parse_stage_data(&resource)?;
+    let archive_sha256 = Digest(Sha256::digest(&archive).into());
+    let resource_sha256 = Digest(Sha256::digest(&resource).into());
+    let bytes = serde_json::to_vec_pretty(&json!({
+        "schema": "dusklight.route-planner.extracted-stage-data/v1",
+        "archive": archive_path,
+        "archive_sha256": archive_sha256,
+        "resource": resource_name,
+        "resource_sha256": resource_sha256,
+        "stage": stage,
+    }))?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "dusklight.route-planner.extracted-stage-data/v1",
+            "output": output,
+            "archive_sha256": archive_sha256,
+            "resource_sha256": resource_sha256,
+            "chunks": stage.chunks.len(),
+            "actor_placements": stage.actor_placements.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_resource(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource")
+        .ok_or_else(|| "missing required --resource <basename>".to_owned())?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let archive_sha256 = Digest(Sha256::digest(&archive).into());
+    let resource_sha256 = Digest(Sha256::digest(&resource).into());
+    write_file(&output, &resource)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "dusklight.route-planner.extracted-resource/v1",
+            "output": output,
+            "archive": archive_path,
+            "archive_sha256": archive_sha256,
+            "resource": resource_name,
+            "resource_sha256": resource_sha256,
+            "bytes": resource.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_message_flow(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource")
+        .ok_or_else(|| "missing required --resource <basename>".to_owned())?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let flow = parse_message_flow(&resource)?;
+    let archive_sha256 = Digest(Sha256::digest(&archive).into());
+    let resource_sha256 = Digest(Sha256::digest(&resource).into());
+    let bytes = serde_json::to_vec_pretty(&json!({
+        "schema": "dusklight.route-planner.extracted-message-flow/v1",
+        "archive": archive_path,
+        "archive_sha256": archive_sha256,
+        "resource": resource_name,
+        "resource_sha256": resource_sha256,
+        "flow": flow,
+    }))?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": "dusklight.route-planner.extracted-message-flow/v1",
+            "output": output,
+            "archive_sha256": archive_sha256,
+            "resource_sha256": resource_sha256,
+            "nodes": flow.node_count,
+            "labels": flow.labels.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn edit_route_book(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -743,6 +840,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json\n  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE\n  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

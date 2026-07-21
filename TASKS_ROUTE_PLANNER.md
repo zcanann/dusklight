@@ -1678,6 +1678,10 @@ Deliverable: replayable state evidence that can validate transition rules.
       planner runtime.
   - [x] Compile canonical world inventories into a strict exact-context payload
         and sealed manifest, and cache both in the immutable content store.
+  - [x] Add planner-owned, bounded Yaz0/RARC resource extraction plus BMG
+        message-flow and DZS/DZR actor-placement decoding with archive/resource
+        digests; orchestration, input discovery, and sealed derived-pack output
+        remain open.
   - [ ] Add full input discovery/version verification and one-command extraction
         from a supplied `orig/` tree.
 - [ ] Auto-detect and verify supported inputs; reject label/digest disagreement
@@ -2233,8 +2237,14 @@ sequence.
 
 #### 11J. Text Displacement to Goron Mines
 
-- [ ] Extract raw shared message-progress bits and their generic flow-node writers,
+- [x] Extract raw shared message-progress bits and their generic flow-node writers,
       readers, and cleanup paths.
+  - The planner-owned BMG extractor preserves the raw `mQueryList` index and
+    separately resolves the numbered query handler, derives event010 set,
+    event011 clear, and query011 branch-when-clear accesses, and attaches the
+    exact packed backing coordinates for shared flow-control A–J. The source
+    audit also records both normal event cleanup and Ooccoo-warp cleanup. See
+    `docs/route-planner/text-displacement-message-state-audit.md`.
 - [ ] Model at least Coro, Auru, Yeta, and Ooccoo producer routes as distinct
       interruption/advancement proofs where evidence exists.
 - [ ] Identify Gor Coron's exact displaced-branch predicate and downstream

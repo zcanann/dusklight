@@ -15,6 +15,7 @@ pub mod identity;
 pub mod logic;
 pub mod native_observation;
 pub mod native_snapshot;
+pub mod orig_extraction;
 pub mod refinement;
 pub mod relevance;
 pub mod route_book;
