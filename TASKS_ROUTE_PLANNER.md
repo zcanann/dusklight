@@ -2630,8 +2630,11 @@ sequence.
 - [ ] Vary the incoming return place across a witnessed actor-corruption trace;
       the GZ2E01 room-loader call is already proven to preserve it generically,
       but the complete failure suffix is not yet bounded.
-- [ ] Keep the route unknown in established mode until the relevant partial
-      effects and scene-change branch have source or trace evidence.
+- [x] Keep the route unknown in established mode until the relevant partial
+      effects and scene-change branch have source or trace evidence. The
+      producer remains `unknown` (not merely hypothetical), is rejected by both
+      standard evidence policies, and requires an explicit refinement/replacement
+      before any what-if search can traverse it.
 
 ---
 

@@ -307,6 +307,7 @@ pub fn compile_actor_corruption_hypothesis(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evaluation::EvidencePolicy;
 
     #[test]
     fn hypothesis_rejects_a_direct_location_effect() {
@@ -327,6 +328,14 @@ mod tests {
             hypothesis.validate().unwrap_err().field(),
             "cutscene_corruption_hypothesis.producer"
         );
+    }
+
+    #[test]
+    fn unknown_producer_is_not_admitted_by_established_or_research_evidence_policy() {
+        let hypothesis = fixture();
+        assert!(!EvidencePolicy::ESTABLISHED_ONLY.permits(hypothesis.producer.evidence.truth));
+        assert!(!EvidencePolicy::RESEARCH.permits(hypothesis.producer.evidence.truth));
+        assert_eq!(hypothesis.producer.activation.unknown_requirements.len(), 3);
     }
 
     fn fixture() -> CutsceneCorruptionHypothesis {
