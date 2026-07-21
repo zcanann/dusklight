@@ -168,6 +168,14 @@ independent wall-clock watchdog. The decoder remains
 compatible with v1, v2, and v3.0 tapes. Older tapes retain process-boot or
 stage-without-save semantics as originally encoded.
 
+`huntctl survey run` durably appends each coordinator-accepted process result to
+an authenticated, hash-chained `LEDGER.json.journal`. Status, coverage,
+compaction, and resumed runs transparently replay complete canonical records; an
+incomplete final append is truncated when collection resumes. A clean batch
+atomically folds the journal into the canonical ledger and removes it. This
+preserves every acknowledged classification across interruption while avoiding a
+full ledger rewrite for every catalog entry.
+
 V3.2 can embed one canonical, self-contained scenario descriptor in a stage-boot tape. Compile
 the checked JSON descriptor alongside the TAS source:
 

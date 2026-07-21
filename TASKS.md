@@ -218,7 +218,16 @@ relationship, coordinate corridor, or success sequence.
   Bounded parallel execution persists each completion independently; an
   eight-client smoke batch classified the first 16 entries as ready with
   64-145 of 64-145 actors retained per entry and no truncation.
-  The survey's observation identity is now v4 and binds the current v21 native
+  High-volume collection now writes each coordinator-accepted result as one
+  canonical, authenticated hash-chain record in a durable side journal, then
+  folds that journal into the canonical ledger at a clean batch boundary.
+  Resumption, status and coverage replay the same records fail-closed, tolerate
+  only an incomplete final append, and use one prevalidated append session
+  rather than rescanning and rewriting the growing ledger per result. The live
+  9,084-candidate pass replayed 88 interrupted records in 1.92 seconds; merged
+  status over 178 records remained 2.25 seconds while eight native workers
+  continued producing classifications.
+  The survey's observation identity is now v4 and binds the current v23 native
   learner schema through the shared Rust evidence constant. This closes a
   fail-closed collector regression where the v21 native writer was rejected by
   stale v20 survey and actor-coverage checks; older evidence remains distinct

@@ -12,7 +12,7 @@ use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
 use dusklight_world::stage_boot_catalog::{StageBootCandidate, StageBootCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File};
@@ -235,6 +235,18 @@ pub struct StageSurveyExecutionConfig {
     pub game_args: Vec<String>,
 }
 
+/// A prevalidated append session for high-volume survey collection.
+///
+/// Construction validates the complete catalog and ledger once. While the
+/// recorder holds its exclusive ledger borrow, each append checks the target
+/// candidate, attempt, and resulting case classification incrementally. This
+/// preserves the same invariants as [`StageSurveyLedger::record_attempt`]
+/// without rescanning thousands of unrelated cases for every completion.
+pub struct StageSurveyLedgerRecorder<'ledger, 'catalog> {
+    ledger: &'ledger mut StageSurveyLedger,
+    candidate_ids: BTreeSet<&'catalog str>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ActorCatalogSummary {
     schema: String,
@@ -440,50 +452,16 @@ impl StageSurveyLedger {
         &mut self,
         catalog: &StageBootCatalog,
         candidate_id: &str,
-        mut attempt: StageSurveyAttempt,
+        attempt: StageSurveyAttempt,
     ) -> Result<(), StageSurveyError> {
-        self.validate(catalog)?;
-        if !catalog
-            .candidates
-            .iter()
-            .any(|candidate| candidate.id == candidate_id)
-        {
-            return Err(StageSurveyError::invalid("unknown survey candidate"));
-        }
-        let index = match self
-            .cases
-            .binary_search_by(|case| case.candidate_id.as_str().cmp(candidate_id))
-        {
-            Ok(index) => index,
-            Err(index) => {
-                self.cases.insert(
-                    index,
-                    StageSurveyCase {
-                        candidate_id: candidate_id.into(),
-                        attempts: Vec::new(),
-                        classification: None,
-                    },
-                );
-                index
-            }
-        };
-        let case = &mut self.cases[index];
-        if case.classification.is_some() {
-            return Err(StageSurveyError::invalid(
-                "finalized survey case cannot accept another attempt",
-            ));
-        }
-        if case.attempts.len() >= usize::from(self.policy.maximum_attempts_per_case) {
-            return Err(StageSurveyError::invalid(
-                "survey case exhausted its bounded attempt budget",
-            ));
-        }
-        attempt.number = u8::try_from(case.attempts.len() + 1)
-            .map_err(|_| StageSurveyError::invalid("survey attempt number overflowed"))?;
-        validate_attempt(&attempt)?;
-        case.attempts.push(attempt);
-        auto_finalize(case, self.policy.maximum_attempts_per_case);
-        self.validate(catalog)
+        StageSurveyLedgerRecorder::new(self, catalog)?.record_attempt(candidate_id, attempt)
+    }
+
+    pub fn recorder<'ledger, 'catalog>(
+        &'ledger mut self,
+        catalog: &'catalog StageBootCatalog,
+    ) -> Result<StageSurveyLedgerRecorder<'ledger, 'catalog>, StageSurveyError> {
+        StageSurveyLedgerRecorder::new(self, catalog)
     }
 
     pub fn classify(
@@ -559,6 +537,73 @@ impl StageSurveyLedger {
         Ok(Digest(
             Sha256::digest(self.canonical_bytes(catalog)?).into(),
         ))
+    }
+}
+
+impl<'ledger, 'catalog> StageSurveyLedgerRecorder<'ledger, 'catalog> {
+    fn new(
+        ledger: &'ledger mut StageSurveyLedger,
+        catalog: &'catalog StageBootCatalog,
+    ) -> Result<Self, StageSurveyError> {
+        ledger.validate(catalog)?;
+        let candidate_ids = catalog
+            .candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect();
+        Ok(Self {
+            ledger,
+            candidate_ids,
+        })
+    }
+
+    pub fn ledger(&self) -> &StageSurveyLedger {
+        self.ledger
+    }
+
+    pub fn record_attempt(
+        &mut self,
+        candidate_id: &str,
+        mut attempt: StageSurveyAttempt,
+    ) -> Result<(), StageSurveyError> {
+        if !self.candidate_ids.contains(candidate_id) {
+            return Err(StageSurveyError::invalid("unknown survey candidate"));
+        }
+        let index = match self
+            .ledger
+            .cases
+            .binary_search_by(|case| case.candidate_id.as_str().cmp(candidate_id))
+        {
+            Ok(index) => index,
+            Err(index) => {
+                self.ledger.cases.insert(
+                    index,
+                    StageSurveyCase {
+                        candidate_id: candidate_id.into(),
+                        attempts: Vec::new(),
+                        classification: None,
+                    },
+                );
+                index
+            }
+        };
+        let case = &mut self.ledger.cases[index];
+        if case.classification.is_some() {
+            return Err(StageSurveyError::invalid(
+                "finalized survey case cannot accept another attempt",
+            ));
+        }
+        if case.attempts.len() >= usize::from(self.ledger.policy.maximum_attempts_per_case) {
+            return Err(StageSurveyError::invalid(
+                "survey case exhausted its bounded attempt budget",
+            ));
+        }
+        attempt.number = u8::try_from(case.attempts.len() + 1)
+            .map_err(|_| StageSurveyError::invalid("survey attempt number overflowed"))?;
+        validate_attempt(&attempt)?;
+        case.attempts.push(attempt);
+        auto_finalize(case, self.ledger.policy.maximum_attempts_per_case);
+        validate_classification(case, self.ledger.policy.maximum_attempts_per_case)
     }
 }
 
