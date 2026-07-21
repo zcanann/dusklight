@@ -18,7 +18,7 @@ use crate::state::{
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
-    MechanicsCatalog, StateOperation, TransitionKind,
+    MechanicsCatalog, StateOperation, TransitionKind, UnknownRequirement,
 };
 use std::collections::BTreeMap;
 
@@ -739,6 +739,13 @@ pub fn gz2e01_reset_to_opening_mechanics(
             owner: file_select_buffer_owner(1),
             component_ids: initialized_buffer_component_ids,
         },
+        StateOperation::WriteFields {
+            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+            fields: BTreeMap::from([
+                ("no_file_raw".into(), StateValue::Unsigned(1)),
+                ("data_num_raw".into(), StateValue::Unsigned(0)),
+            ]),
+        },
         StateOperation::InvalidateActiveRuntimeSerializedPayloads {
             selector: ComponentSelector::Kind {
                 component_kind: ComponentKind::DungeonMemory,
@@ -930,14 +937,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
     transitions.sort_by(|left, right| left.id.cmp(&right.id));
     let catalog = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
-        transitions: vec![
-            name_scene_file_select_transition,
-            enter_and_initialize_transition,
-            opening_transition,
-            reset_transition,
-            title_key_accept_transition,
-            title_request_name_scene_transition,
-        ],
+        transitions,
         obligations: Vec::new(),
         writers: Vec::new(),
         gates: Vec::new(),
@@ -1406,6 +1406,25 @@ mod tests {
             panic!("{id} should be structured")
         };
         fields
+    }
+
+    fn set_structured_field(
+        state: &mut PlannerExecutionState,
+        component_id: &str,
+        field: &str,
+        value: StateValue,
+    ) {
+        let component = state
+            .snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == component_id)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut component.payload else {
+            panic!("{component_id} should be structured")
+        };
+        fields.insert(field.into(), value);
     }
 
     fn snapshot(runtime: RuntimeConfiguration) -> StateSnapshot {
