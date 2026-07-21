@@ -19,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V6: &str = "dusklight-native-actor-view/v6";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V7: &str = "dusklight-native-actor-view/v7";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,6 +94,7 @@ pub struct NativeActorRelation {
     pub status: u32,
     pub base_state: Option<NativeActorBaseState>,
     pub enemy_base: Option<NativeActorEnemyBaseState>,
+    pub trigger_volume: Option<NativeActorTriggerVolumeState>,
     pub absolute_position: [f32; 3],
     pub absolute_home_position: [f32; 3],
     pub absolute_velocity: [f32; 3],
@@ -152,6 +153,40 @@ pub struct NativeActorEnemyBaseState {
     pub throw_mode: u8,
     pub absolute_down_position: [f32; 3],
     pub absolute_head_lock_position: [f32; 3],
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeActorTriggerVolumeKind {
+    SceneExit,
+    SceneExitCylinder,
+    EventArea,
+    ScriptedEvent,
+    MappedEvent,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeActorTriggerVolumeShape {
+    Box,
+    EllipticCylinder,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorTriggerVolumeState {
+    pub kind: NativeActorTriggerVolumeKind,
+    pub shape: NativeActorTriggerVolumeShape,
+    pub enabled: bool,
+    pub vertical_unbounded: bool,
+    pub behavior: u16,
+    pub absolute_center: [f32; 3],
+    pub half_extent: [f32; 3],
+    pub yaw: i16,
+    pub link_relative_center: Option<[f32; 3]>,
+    pub camera_relative_center: Option<[f32; 3]>,
+    pub yaw_relative_to_link: Option<[f32; 2]>,
+    pub yaw_relative_to_camera: Option<[f32; 2]>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -333,7 +368,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V6.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V7.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -367,7 +402,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V6
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V7
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -738,6 +773,47 @@ fn materialize_actor(
                 absolute_down_position: enemy.down_position,
                 absolute_head_lock_position: enemy.head_lock_position,
             }),
+        trigger_volume: actor.trigger_volume.as_ref().map(|trigger| {
+            use dusklight_evidence::native_episode_shard::{
+                NativeTriggerVolumeKind as SourceKind, NativeTriggerVolumeShape as SourceShape,
+            };
+            NativeActorTriggerVolumeState {
+                kind: match trigger.kind {
+                    SourceKind::SceneExit => NativeActorTriggerVolumeKind::SceneExit,
+                    SourceKind::SceneExitCylinder => {
+                        NativeActorTriggerVolumeKind::SceneExitCylinder
+                    }
+                    SourceKind::EventArea => NativeActorTriggerVolumeKind::EventArea,
+                    SourceKind::ScriptedEvent => NativeActorTriggerVolumeKind::ScriptedEvent,
+                    SourceKind::MappedEvent => NativeActorTriggerVolumeKind::MappedEvent,
+                },
+                shape: match trigger.shape {
+                    SourceShape::Box => NativeActorTriggerVolumeShape::Box,
+                    SourceShape::EllipticCylinder => {
+                        NativeActorTriggerVolumeShape::EllipticCylinder
+                    }
+                },
+                enabled: trigger.enabled,
+                vertical_unbounded: trigger.vertical_unbounded,
+                behavior: trigger.behavior,
+                absolute_center: trigger.center,
+                half_extent: trigger.half_extent,
+                yaw: trigger.yaw,
+                link_relative_center: observation.player_present.then(|| {
+                    relative_yaw(
+                        trigger.center,
+                        observation.player_position,
+                        observation.player_shape_angle[1],
+                    )
+                }),
+                camera_relative_center: camera_frame.map(|frame| frame.point(trigger.center)),
+                yaw_relative_to_link: observation.player_present.then(|| {
+                    angle_pair(trigger.yaw.wrapping_sub(observation.player_shape_angle[1]))
+                }),
+                yaw_relative_to_camera: camera_frame
+                    .map(|frame| angle_pair(trigger.yaw.wrapping_sub(frame.view_yaw))),
+            }
+        }),
         absolute_position: actor.position,
         absolute_home_position: actor.home_position,
         absolute_velocity: actor.velocity,
@@ -951,6 +1027,36 @@ fn validate_observation(
                     .iter()
                     .flat_map(|attention| attention.camera_relative_position.iter().flatten()),
             )
+            .chain(
+                actor
+                    .trigger_volume
+                    .iter()
+                    .flat_map(|trigger| trigger.absolute_center.iter().chain(&trigger.half_extent)),
+            )
+            .chain(
+                actor
+                    .trigger_volume
+                    .iter()
+                    .flat_map(|trigger| trigger.link_relative_center.iter().flatten()),
+            )
+            .chain(
+                actor
+                    .trigger_volume
+                    .iter()
+                    .flat_map(|trigger| trigger.camera_relative_center.iter().flatten()),
+            )
+            .chain(
+                actor
+                    .trigger_volume
+                    .iter()
+                    .flat_map(|trigger| trigger.yaw_relative_to_link.iter().flatten()),
+            )
+            .chain(
+                actor
+                    .trigger_volume
+                    .iter()
+                    .flat_map(|trigger| trigger.yaw_relative_to_camera.iter().flatten()),
+            )
             .chain(actor.goal_relative_positions.iter().flatten().flatten())
             .all(|value| value.is_finite());
         let base_state_finite = actor.base_state.as_ref().is_none_or(|base_state| {
@@ -971,6 +1077,15 @@ fn validate_observation(
                     .chain(&enemy.absolute_head_lock_position)
                     .all(|value| value.is_finite())
         });
+        let trigger_volume_valid = actor.trigger_volume.as_ref().is_none_or(|trigger| {
+            trigger.half_extent.iter().all(|value| *value >= 0.0)
+                && (!trigger.vertical_unbounded
+                    || trigger.shape == NativeActorTriggerVolumeShape::EllipticCylinder)
+                && observation.player_present == trigger.link_relative_center.is_some()
+                && observation.player_present == trigger.yaw_relative_to_link.is_some()
+                && observation.camera_frame_present == trigger.camera_relative_center.is_some()
+                && observation.camera_frame_present == trigger.yaw_relative_to_camera.is_some()
+        });
         let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
             attention.flags != 0
                 && observation.player_present == attention.link_relative_position.is_some()
@@ -986,6 +1101,7 @@ fn validate_observation(
             || !attention_consistent
             || !base_state_finite
             || !enemy_base_valid
+            || !trigger_volume_valid
             || !finite
         {
             return Err(NativeActorViewError::new(
@@ -1170,6 +1286,13 @@ mod tests {
         shard
     }
 
+    fn shard_v17() -> NativeEpisodeShard {
+        NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v17.dseps"
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn builds_complete_absolute_link_camera_and_parent_relations() {
         let mut shard = shard();
@@ -1288,6 +1411,42 @@ mod tests {
                 .iter()
                 .all(|actor| actor.enemy_base.is_none())
         }));
+    }
+
+    #[test]
+    fn exposes_v17_trigger_geometry_with_relative_frames_and_legacy_masks() {
+        let mut shard = shard_v17();
+        let catalog = catalog_for(&shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&shard, &catalog).unwrap();
+        for observation in &view.observations {
+            let trigger = observation.actors[1]
+                .trigger_volume
+                .as_ref()
+                .expect("v17 trigger volume");
+            assert_eq!(trigger.kind, NativeActorTriggerVolumeKind::SceneExit);
+            assert_eq!(trigger.shape, NativeActorTriggerVolumeShape::Box);
+            assert_eq!(trigger.absolute_center, [10.0, 20.0, -30.0]);
+            assert!(trigger.link_relative_center.is_some());
+            assert!(trigger.camera_relative_center.is_some());
+            assert!(trigger.yaw_relative_to_link.is_some());
+            assert!(trigger.yaw_relative_to_camera.is_some());
+        }
+
+        let mut legacy = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v16.dseps"
+        ))
+        .unwrap();
+        let legacy_catalog = catalog_for(&legacy);
+        legacy.metadata.actor_profile_catalog_identity = Some(legacy_catalog.identity.clone());
+        let legacy_view = NativeEpisodeActorView::build(&legacy, &legacy_catalog).unwrap();
+        assert!(
+            legacy_view
+                .observations
+                .iter()
+                .flat_map(|observation| &observation.actors)
+                .all(|actor| actor.trigger_volume.is_none())
+        );
     }
 
     #[test]

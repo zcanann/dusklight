@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <vector>
 
+class fopAc_ac_c;
+
 namespace dusk::automation {
 
 // Fork-owned storage for one bounded controller observation. No game pointer
@@ -40,6 +42,12 @@ struct MilestoneObservationStorage {
 };
 
 [[nodiscard]] bool game_state_observers_enabled();
+
+// Shared typed read adapter used by the episode and independent actor-catalog
+// walks. It copies only already-realized trigger state and never evaluates a
+// gameplay transition.
+[[nodiscard]] bool capture_actor_trigger_volume(
+    const fopAc_ac_c& actor, MilestoneObservation::Actor::TriggerVolumeComponent& output);
 
 // These functions copy already-realized state only. Their implementation is
 // compiled in one explicitly gated translation unit and contains the complete

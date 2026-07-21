@@ -4,7 +4,13 @@
 
 #include "d/actor/d_a_alink.h"
 #include "d/actor/d_a_kytag14.h"
+#include "d/actor/d_a_npc.h"
 #include "d/actor/d_a_npc4.h"
+#include "d/actor/d_a_scene_exit.h"
+#include "d/actor/d_a_scene_exit2.h"
+#include "d/actor/d_a_tag_event.h"
+#include "d/actor/d_a_tag_evt.h"
+#include "d/actor/d_a_tag_evtarea.h"
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
@@ -83,6 +89,173 @@ struct MilestoneMessageFlowReadAdapter {
     }
     static std::uint16_t flowId(const dMsgFlow_c& flow) { return flow.mFlow; }
     static std::uint16_t nodeIndex(const dMsgFlow_c& flow) { return flow.mNodeIdx; }
+};
+
+struct MilestoneTriggerReadAdapter {
+    using Actor = MilestoneObservation::Actor;
+    using Component = Actor::TriggerVolumeComponent;
+    using Kind = Actor::TriggerVolumeKind;
+    using Shape = Actor::TriggerVolumeShape;
+
+    static int eventAreaType(const daTag_EvtArea_c& area) {
+        const u16 type = area.shape_angle.z & 0xff;
+        return type == 0xff ? 0 : type;
+    }
+
+    static bool eventAreaEnabled(const daTag_EvtArea_c& area) {
+        if (area.field_0x56c != 0)
+            return false;
+        const u32 parameters = fopAcM_GetParam(&area);
+        const u32 onEventBit = parameters & 0xfff;
+        const u8 onSwitch = area.home.angle.x & 0xff;
+        return (onEventBit != 0xfff && daNpcT_chkEvtBit(onEventBit)) ||
+               (onSwitch != 0xff && dComIfGs_isSwitch(onSwitch, fopAcM_GetRoomNo(&area))) ||
+               (onEventBit == 0xfff && onSwitch == 0xff);
+    }
+
+    static bool sceneExitEnabled(const daScex_c& exit) {
+        const u32 parameters = fopAcM_GetParam(&exit);
+        const u8 argument = (parameters >> 8) & 0xff;
+        const u8 switchNumber = parameters >> 24;
+        if (argument == 0xff || argument == 0 || argument == 3) {
+            if (fopAcM_isSwitch(&exit, switchNumber))
+                return false;
+        } else if ((argument == 1 || argument == 2 || argument == 4) && switchNumber != 0xff &&
+                   !fopAcM_isSwitch(&exit, switchNumber))
+        {
+            return false;
+        }
+        const u16 offEventBit = exit.home.angle.z & 0x0fff;
+        if (offEventBit != 0x0fff &&
+            dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[offEventBit]))
+        {
+            return false;
+        }
+        const u16 onEventBit = exit.home.angle.x & 0x0fff;
+        return onEventBit == 0x0fff ||
+               dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[onEventBit]);
+    }
+
+    static bool scriptedEventDeleted(const daTag_Evt_c& tag) {
+        if (tag.field_0x5E0 != 0xfff || tag.field_0x5E2 != 0xfff) {
+            if (tag.field_0x5E0 != 0xfff && !daNpcT_chkEvtBit(tag.field_0x5E0))
+                return true;
+            return tag.field_0x5E2 != 0xfff && daNpcT_chkEvtBit(tag.field_0x5E2);
+        }
+        if (tag.field_0x5DD != 0xff || tag.field_0x5DE != 0xff) {
+            if (tag.field_0x5DD != 0xff &&
+                !dComIfGs_isSwitch(tag.field_0x5DD, fopAcM_GetRoomNo(&tag)))
+            {
+                return true;
+            }
+            return dComIfGs_isSwitch(tag.field_0x5DE, fopAcM_GetRoomNo(&tag));
+        }
+        return false;
+    }
+
+    static bool mappedEventEnabled(const daTag_Event_c& tag) {
+        if (tag.mAction != daTag_Event_c::ACTION_ARRIVAL &&
+            tag.mAction != daTag_Event_c::ACTION_HUNT)
+        {
+            return false;
+        }
+        const u32 parameters = fopAcM_GetParam(&tag);
+        const u8 switchNumber = (parameters >> 8) & 0xff;
+        if (switchNumber != 0xff && dComIfGs_isSwitch(switchNumber, fopAcM_GetRoomNo(&tag)))
+            return false;
+        const u8 requiredSwitch = (parameters >> 16) & 0xff;
+        if (requiredSwitch != 0xff && !dComIfGs_isSwitch(requiredSwitch, fopAcM_GetRoomNo(&tag))) {
+            return false;
+        }
+        const u16 invalidEvent = tag.home.angle.x & 0x7fff;
+        if (invalidEvent != 0x7fff && invalidEvent != 0 && daNpcT_chkEvtBit(invalidEvent))
+            return false;
+        const u16 requiredEvent = tag.home.angle.z;
+        return requiredEvent == 0xffff || requiredEvent == 0 || daNpcT_chkEvtBit(requiredEvent);
+    }
+
+    static bool capture(const fopAc_ac_c& actor, Component& output) {
+        const s16 name = fopAcM_GetName(&actor);
+        if (name == fpcNm_SCENE_EXIT_e) {
+            const auto& exit = static_cast<const daScex_c&>(actor);
+            output.kind = Kind::SceneExit;
+            output.shape = Shape::Box;
+            output.enabled = sceneExitEnabled(exit);
+            output.behavior = (fopAcM_GetParam(&exit) >> 8) & 0xff;
+            output.centerX = exit.current.pos.x;
+            output.centerY = exit.current.pos.y + exit.scale.y * 0.5f;
+            output.centerZ = exit.current.pos.z;
+            output.halfExtentX = std::abs(exit.scale.x);
+            output.halfExtentY = std::abs(exit.scale.y) * 0.5f;
+            output.halfExtentZ = std::abs(exit.scale.z);
+            output.yaw = exit.shape_angle.y;
+            return true;
+        }
+        if (name == fpcNm_SCENE_EXIT2_e) {
+            const auto& exit = static_cast<const daScExit_c&>(actor);
+            output.kind = Kind::SceneExitCylinder;
+            output.shape = Shape::EllipticCylinder;
+            output.enabled = exit.mAction == daScExit_c::ACTION_WAIT_e;
+            output.verticalUnbounded = true;
+            output.behavior = exit.mAction;
+            output.centerX = exit.current.pos.x;
+            output.centerY = exit.current.pos.y;
+            output.centerZ = exit.current.pos.z;
+            output.halfExtentX = std::abs(exit.mRadius);
+            output.halfExtentZ = std::abs(exit.mRadius);
+            return true;
+        }
+        if (name == fpcNm_TAG_EVTAREA_e) {
+            const auto& area = static_cast<const daTag_EvtArea_c&>(actor);
+            const int type = eventAreaType(area);
+            output.kind = Kind::EventArea;
+            output.shape = type == 15 || type == 16 ? Shape::Box : Shape::EllipticCylinder;
+            output.enabled = eventAreaEnabled(area);
+            output.verticalUnbounded = type == 21;
+            output.behavior = static_cast<std::uint16_t>(type);
+            output.centerX = type == 15 || type == 16 ? area.home.pos.x : area.current.pos.x;
+            output.centerY = type == 15 || type == 16 ?
+                                 area.current.pos.y + area.scale.y * 0.5f :
+                                 area.current.pos.y - 10.0f + std::abs(area.scale.y) * 0.5f;
+            output.centerZ = type == 15 || type == 16 ? area.home.pos.z : area.current.pos.z;
+            output.halfExtentX = std::abs(area.scale.x);
+            output.halfExtentY = output.verticalUnbounded ? 0.0f : std::abs(area.scale.y) * 0.5f;
+            output.halfExtentZ = std::abs(area.scale.z);
+            output.yaw = type == 15 || type == 16 ? area.current.angle.y : area.shape_angle.y;
+            return true;
+        }
+        if (name == fpcNm_TAG_EVT_e) {
+            const auto& tag = static_cast<const daTag_Evt_c&>(actor);
+            output.kind = Kind::ScriptedEvent;
+            output.shape = Shape::EllipticCylinder;
+            output.enabled = (tag.field_0x5E4 == 0 || tag.field_0x5E4 == 1) &&
+                             tag.field_0x5D0 == 0 && !scriptedEventDeleted(tag);
+            output.behavior = static_cast<std::uint8_t>(tag.field_0x5E4);
+            output.centerX = tag.current.pos.x;
+            output.centerY = tag.current.pos.y;
+            output.centerZ = tag.current.pos.z;
+            output.halfExtentX = std::abs(tag.scale.x);
+            output.halfExtentY = std::abs(tag.scale.y);
+            output.halfExtentZ = std::abs(tag.scale.x);
+            return true;
+        }
+        if (name == fpcNm_TAG_EVENT_e) {
+            const auto& tag = static_cast<const daTag_Event_c&>(actor);
+            const bool box = (tag.home.angle.x & 0x8000) != 0;
+            output.kind = Kind::MappedEvent;
+            output.shape = box ? Shape::Box : Shape::EllipticCylinder;
+            output.enabled = mappedEventEnabled(tag);
+            output.behavior = tag.mAction;
+            output.centerX = tag.current.pos.x;
+            output.centerY = box ? tag.current.pos.y + tag.scale.y * 0.5f : tag.current.pos.y;
+            output.centerZ = tag.current.pos.z;
+            output.halfExtentX = std::abs(tag.scale.x) * (box ? 0.5f : 1.0f);
+            output.halfExtentY = std::abs(tag.scale.y) * (box ? 0.5f : 1.0f);
+            output.halfExtentZ = std::abs(box ? tag.scale.z * 0.5f : tag.scale.x);
+            return true;
+        }
+        return false;
+    }
 };
 
 TitleMenuObservation MenuStateObserver::captureTitle() {
@@ -281,6 +454,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         component.headLockPositionY = enemy->mHeadLockPos.y;
         component.headLockPositionZ = enemy->mHeadLockPos.z;
     }
+    snapshot.triggerVolumePresent = capture_actor_trigger_volume(*actor, snapshot.triggerVolume);
     storage->actors.push_back(snapshot);
     return 1;
 }
@@ -389,6 +563,12 @@ void capture_dynamic_colliders(MilestoneObservationStorage& storage, const bool 
 
 bool game_state_observers_enabled() {
     return true;
+}
+
+bool capture_actor_trigger_volume(
+    const fopAc_ac_c& actor, MilestoneObservation::Actor::TriggerVolumeComponent& output) {
+    output = {};
+    return MilestoneTriggerReadAdapter::capture(actor, output);
 }
 
 ControllerObservation capture_controller_observation(ControllerObservationStorage& storage) {

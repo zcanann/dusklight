@@ -1,20 +1,14 @@
 #include "dusk/trigger_view.hpp"
 
-#include "d/actor/d_a_scene_exit.h"
-#include "d/actor/d_a_scene_exit2.h"
-#include "d/actor/d_a_npc.h"
-#include "d/actor/d_a_tag_event.h"
-#include "d/actor/d_a_tag_evt.h"
-#include "d/actor/d_a_tag_evtarea.h"
 #include "d/d_bg_w.h"
 #include "d/d_bg_w_kcol.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_debug_viewer.h"
+#include "dusk/automation/game_state_observer.hpp"
 #include "dusk/main.h"
 #include "dusk/settings.h"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
-#include "f_pc/f_pc_name.h"
 #include "m_Do/m_Do_mtx.h"
 
 #include <algorithm>
@@ -25,40 +19,21 @@
 namespace dusk {
 
 struct TriggerViewReadAdapter {
-    static std::size_t kcl_prism_count(const dBgWKCol& collision) {
+    static std::size_t kclPrismCount(const dBgWKCol& collision) {
         const KC_Header* header = collision.m_pkc_head;
-        if (header == nullptr)
+        if (header == nullptr || header->m_prism_data == nullptr || header->m_block_data == nullptr)
             return 0;
         const KC_PrismData* prisms = header->m_prism_data;
         const BE(u32)* blocks = header->m_block_data;
-        if (prisms == nullptr || blocks == nullptr)
-            return 0;
-        const auto prism_address = reinterpret_cast<std::uintptr_t>(prisms);
-        const auto block_address = reinterpret_cast<std::uintptr_t>(blocks);
-        if (block_address <= prism_address ||
-            (block_address - prism_address) % sizeof(KC_PrismData) != 0)
+        const auto prismAddress = reinterpret_cast<std::uintptr_t>(prisms);
+        const auto blockAddress = reinterpret_cast<std::uintptr_t>(blocks);
+        if (blockAddress <= prismAddress ||
+            (blockAddress - prismAddress) % sizeof(KC_PrismData) != 0)
         {
             return 0;
         }
-        const std::size_t count = (block_address - prism_address) / sizeof(KC_PrismData);
+        const std::size_t count = (blockAddress - prismAddress) / sizeof(KC_PrismData);
         return count <= std::numeric_limits<u16>::max() ? count : 0;
-    }
-
-    static int event_area_type(const daTag_EvtArea_c& area) {
-        const u16 type = area.shape_angle.z & 0xff;
-        return type == 0xff ? 0 : type;
-    }
-
-    static bool event_area_enabled(const daTag_EvtArea_c& area) {
-        if (area.field_0x56c != 0)
-            return false;
-
-        const u32 parameters = fopAcM_GetParam(&area);
-        const u32 on_event_bit = parameters & 0xfff;
-        const u8 on_switch = area.home.angle.x & 0xff;
-        return (on_event_bit != 0xfff && daNpcT_chkEvtBit(on_event_bit)) ||
-               (on_switch != 0xff && dComIfGs_isSwitch(on_switch, fopAcM_GetRoomNo(&area))) ||
-               (on_event_bit == 0xfff && on_switch == 0xff);
     }
 };
 
@@ -111,16 +86,32 @@ void draw_box(cXyz center, const cXyz& half_extent, const s16 angle, const GXCol
     const float y = std::abs(half_extent.y);
     const float z = std::abs(half_extent.z);
     cXyz local[8] = {
-        cXyz(-x, -y, -z), cXyz(x, -y, -z), cXyz(x, -y, z), cXyz(-x, -y, z),
-        cXyz(-x, y, -z), cXyz(x, y, -z), cXyz(x, y, z), cXyz(-x, y, z),
+        cXyz(-x, -y, -z),
+        cXyz(x, -y, -z),
+        cXyz(x, -y, z),
+        cXyz(-x, -y, z),
+        cXyz(-x, y, -z),
+        cXyz(x, y, -z),
+        cXyz(x, y, z),
+        cXyz(-x, y, z),
     };
     cXyz points[8];
     for (int point = 0; point < 8; ++point) {
         cMtx_multVec(transform, &local[point], &points[point]);
     }
     constexpr int edges[12][2] = {
-        {0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
-        {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+        {0, 1},
+        {1, 2},
+        {2, 3},
+        {3, 0},
+        {4, 5},
+        {5, 6},
+        {6, 7},
+        {7, 4},
+        {0, 4},
+        {1, 5},
+        {2, 6},
+        {3, 7},
     };
     for (const auto& edge : edges) {
         dDbVw_drawLineXlu(points[edge[0]], points[edge[1]], color, TRUE, 2);
@@ -157,7 +148,7 @@ std::size_t collision_polygon_count(dBgW_Base& collision, bool& kcl) {
     kcl = false;
     if (const auto* value = dynamic_cast<const dBgWKCol*>(&collision); value != nullptr) {
         kcl = true;
-        return TriggerViewReadAdapter::kcl_prism_count(*value);
+        return TriggerViewReadAdapter::kclPrismCount(*value);
     }
     if (const auto* value = dynamic_cast<const cBgW*>(&collision); value != nullptr) {
         const cBgD_t* data = value->GetBgd();
@@ -204,37 +195,9 @@ void draw_collision_exit_view(const cXyz& player, const TriggerViewSettings& set
                 points[2] += offset;
             }
             const bool enabled = collision_exit_enabled(collision.GetGrpRoomIndex(info), exit_id);
-            draw_triangle(
-                points, enabled ? enabled_color : disabled_color, settings.wireframeOnly);
+            draw_triangle(points, enabled ? enabled_color : disabled_color, settings.wireframeOnly);
         }
     }
-}
-
-bool scene_exit_enabled(const daScex_c& exit) {
-    const u32 parameters = fopAcM_GetParam(&exit);
-    const u8 argument = (parameters >> 8) & 0xff;
-    const u8 switch_number = parameters >> 24;
-    if (argument == 0xff || argument == 0 || argument == 3) {
-        if (fopAcM_isSwitch(&exit, switch_number))
-            return false;
-    } else if ((argument == 1 || argument == 2 || argument == 4) && switch_number != 0xff) {
-        if (!fopAcM_isSwitch(&exit, switch_number))
-            return false;
-    }
-
-    const u16 off_event_bit = exit.home.angle.z & 0x0fff;
-    if (off_event_bit != 0x0fff &&
-        dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[off_event_bit]))
-    {
-        return false;
-    }
-    const u16 on_event_bit = exit.home.angle.x & 0x0fff;
-    if (on_event_bit != 0x0fff &&
-        !dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[on_event_bit]))
-    {
-        return false;
-    }
-    return true;
 }
 
 struct ActorTriggerDrawContext {
@@ -244,8 +207,8 @@ struct ActorTriggerDrawContext {
     GXColor disabledColor;
 };
 
-void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const GXColor& color,
-    const bool wireframe) {
+void draw_elliptic_cylinder(
+    cXyz base, const cXyz& size, const s16 angle, const GXColor& color, const bool wireframe) {
     constexpr int kSegments = 16;
     constexpr float kFullTurn = 6.28318530717958647692f;
     Mtx transform;
@@ -292,175 +255,52 @@ void draw_elliptic_cylinder(cXyz base, const cXyz& size, const s16 angle, const 
     }
 }
 
-void draw_event_area(const daTag_EvtArea_c& area, const ActorTriggerDrawContext& context) {
-    if (!finite(area.current.pos) || !finite(area.home.pos) || !finite(area.scale))
-        return;
-    const float extent =
-        std::max({std::abs(area.scale.x), std::abs(area.scale.y), std::abs(area.scale.z)});
-    if ((area.current.pos - context.player).abs2() >
-        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
-    {
-        return;
-    }
-
-    const int type = TriggerViewReadAdapter::event_area_type(area);
-    const GXColor color = event_area_color(TriggerViewReadAdapter::event_area_enabled(area),
-        context.settings.opacity, context.settings.wireframeOnly);
-    if (type == 15 || type == 16) {
-        cXyz center(area.home.pos.x, area.current.pos.y + area.scale.y * 0.5f, area.home.pos.z);
-        cXyz half_extent(
-            std::abs(area.scale.x), std::abs(area.scale.y) * 0.5f, std::abs(area.scale.z));
-        draw_box(center, half_extent, area.current.angle.y, color, context.settings.wireframeOnly);
-        return;
-    }
-
-    cXyz base = area.current.pos;
-    cXyz size = area.scale;
-    base.y -= 10.0f;
-    if (type == 21) {
-        base.y = context.player.y - context.settings.drawRange;
-        size.y = context.settings.drawRange * 2.0f;
-    }
-    draw_elliptic_cylinder(
-        base, size, area.shape_angle.y, color, context.settings.wireframeOnly);
-}
-
-bool scripted_event_tag_deleted(const daTag_Evt_c& tag) {
-    if (tag.field_0x5E0 != 0xfff || tag.field_0x5E2 != 0xfff) {
-        if (tag.field_0x5E0 != 0xfff && !daNpcT_chkEvtBit(tag.field_0x5E0))
-            return true;
-        return tag.field_0x5E2 != 0xfff && daNpcT_chkEvtBit(tag.field_0x5E2);
-    }
-    if (tag.field_0x5DD != 0xff || tag.field_0x5DE != 0xff) {
-        if (tag.field_0x5DD != 0xff &&
-            !dComIfGs_isSwitch(tag.field_0x5DD, fopAcM_GetRoomNo(&tag)))
-        {
-            return true;
-        }
-        // Mirrors the native comparison bug: this u8 field is always compared
-        // as a real switch number, including 0xff.
-        return dComIfGs_isSwitch(tag.field_0x5DE, fopAcM_GetRoomNo(&tag));
-    }
-    return false;
-}
-
-void draw_scripted_event_tag(const daTag_Evt_c& tag, const ActorTriggerDrawContext& context) {
-    if (!finite(tag.current.pos) || !finite(tag.scale))
-        return;
-    const float radius = std::abs(tag.scale.x);
-    const float half_height = std::abs(tag.scale.y);
-    const float extent = std::max(radius, half_height);
-    if ((tag.current.pos - context.player).abs2() >
-        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
-    {
-        return;
-    }
-
-    const bool enabled = (tag.field_0x5E4 == 0 || tag.field_0x5E4 == 1) &&
-                         tag.field_0x5D0 == 0 && !scripted_event_tag_deleted(tag);
-    const GXColor color =
-        event_area_color(enabled, context.settings.opacity, context.settings.wireframeOnly);
-    cXyz base = tag.current.pos;
-    base.y -= half_height;
-    draw_elliptic_cylinder(base, cXyz(radius, half_height * 2.0f, radius), 0, color,
-        context.settings.wireframeOnly);
-}
-
-bool mapped_event_tag_enabled(const daTag_Event_c& tag) {
-    if (tag.mAction != daTag_Event_c::ACTION_ARRIVAL && tag.mAction != daTag_Event_c::ACTION_HUNT)
-        return false;
-
-    const u32 parameters = fopAcM_GetParam(&tag);
-    const u8 switch_number = (parameters >> 8) & 0xff;
-    if (switch_number != 0xff && dComIfGs_isSwitch(switch_number, fopAcM_GetRoomNo(&tag)))
-        return false;
-    const u8 required_switch = (parameters >> 16) & 0xff;
-    if (required_switch != 0xff &&
-        !dComIfGs_isSwitch(required_switch, fopAcM_GetRoomNo(&tag)))
-    {
-        return false;
-    }
-
-    const u16 invalid_event = tag.home.angle.x & 0x7fff;
-    if (invalid_event != 0x7fff && invalid_event != 0 && daNpcT_chkEvtBit(invalid_event))
-        return false;
-    const u16 required_event = tag.home.angle.z;
-    return required_event == 0xffff || required_event == 0 || daNpcT_chkEvtBit(required_event);
-}
-
-void draw_mapped_event_tag(const daTag_Event_c& tag, const ActorTriggerDrawContext& context) {
-    if (!finite(tag.current.pos) || !finite(tag.scale))
-        return;
-    const float extent =
-        std::max({std::abs(tag.scale.x), std::abs(tag.scale.y), std::abs(tag.scale.z)});
-    if ((tag.current.pos - context.player).abs2() >
-        (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
-    {
-        return;
-    }
-
-    const GXColor color = event_area_color(mapped_event_tag_enabled(tag), context.settings.opacity,
-        context.settings.wireframeOnly);
-    if ((tag.home.angle.x & 0x8000) != 0) {
-        cXyz center = tag.current.pos;
-        center.y += tag.scale.y * 0.5f;
-        cXyz half_extent(std::abs(tag.scale.x) * 0.5f, std::abs(tag.scale.y) * 0.5f,
-            std::abs(tag.scale.z) * 0.5f);
-        draw_box(center, half_extent, 0, color, context.settings.wireframeOnly);
-        return;
-    }
-
-    cXyz base = tag.current.pos;
-    base.y -= std::abs(tag.scale.y);
-    draw_elliptic_cylinder(base,
-        cXyz(std::abs(tag.scale.x), std::abs(tag.scale.y) * 2.0f,
-            std::abs(tag.scale.x)),
-        0, color, context.settings.wireframeOnly);
-}
-
 int draw_actor_trigger(void* candidate, void* raw_context) {
     const auto* actor = static_cast<const fopAc_ac_c*>(candidate);
     auto& context = *static_cast<ActorTriggerDrawContext*>(raw_context);
-    const s16 actor_name = fopAcM_GetName(actor);
+    using Actor = automation::MilestoneObservation::Actor;
+    Actor::TriggerVolumeComponent trigger;
+    if (!automation::capture_actor_trigger_volume(*actor, trigger))
+        return 1;
 
-    if (context.settings.enableSceneExitView && actor_name == fpcNm_SCENE_EXIT_e) {
-        const auto& exit = *static_cast<const daScex_c*>(actor);
-        if (!finite(exit.current.pos) || !finite(exit.scale))
-            return 1;
-        const float extent = std::max({exit.scale.x, exit.scale.y, exit.scale.z, 0.0f});
-        if ((exit.current.pos - context.player).abs2() >
-            (context.settings.drawRange + extent) * (context.settings.drawRange + extent))
-        {
-            return 1;
-        }
-        cXyz center = exit.current.pos;
-        center.y += exit.scale.y * 0.5f;
-        cXyz half_extent(exit.scale.x, exit.scale.y * 0.5f, exit.scale.z);
-        GXColor color = scene_exit_enabled(exit) ? context.enabledColor : context.disabledColor;
-        draw_box(center, half_extent, exit.shape_angle.y, color, context.settings.wireframeOnly);
-    } else if (context.settings.enableSceneExitView && actor_name == fpcNm_SCENE_EXIT2_e) {
-        const auto& exit = *static_cast<const daScExit_c*>(actor);
-        if (!finite(exit.current.pos) || !std::isfinite(exit.mRadius) || exit.mRadius < 0.0f)
-            return 1;
-        const cXyz horizontal_delta(
-            exit.current.pos.x - context.player.x, 0.0f, exit.current.pos.z - context.player.z);
-        const float visible_radius = context.settings.drawRange + exit.mRadius;
-        if (horizontal_delta.abs2() > visible_radius * visible_radius)
-            return 1;
-        cXyz base(
-            exit.current.pos.x, context.player.y - context.settings.drawRange, exit.current.pos.z);
-        const bool enabled = exit.mAction == daScExit_c::ACTION_WAIT_e;
-        GXColor color = enabled ? context.enabledColor : context.disabledColor;
-        draw_elliptic_cylinder(base,
-            cXyz(exit.mRadius, context.settings.drawRange * 2.0f, exit.mRadius), 0, color,
-            context.settings.wireframeOnly);
-    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVTAREA_e) {
-        draw_event_area(*static_cast<const daTag_EvtArea_c*>(actor), context);
-    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVT_e) {
-        draw_scripted_event_tag(*static_cast<const daTag_Evt_c*>(actor), context);
-    } else if (context.settings.enableEventAreaView && actor_name == fpcNm_TAG_EVENT_e) {
-        draw_mapped_event_tag(*static_cast<const daTag_Event_c*>(actor), context);
+    const bool sceneExit = trigger.kind == Actor::TriggerVolumeKind::SceneExit ||
+                           trigger.kind == Actor::TriggerVolumeKind::SceneExitCylinder;
+    if ((sceneExit && !context.settings.enableSceneExitView) ||
+        (!sceneExit && !context.settings.enableEventAreaView))
+    {
+        return 1;
     }
+
+    const cXyz center(trigger.centerX, trigger.centerY, trigger.centerZ);
+    const cXyz halfExtent(trigger.halfExtentX, trigger.halfExtentY, trigger.halfExtentZ);
+    if (!finite(center) || !finite(halfExtent))
+        return 1;
+    const float extent = std::max({halfExtent.x, halfExtent.y, halfExtent.z});
+    const cXyz delta = center - context.player;
+    const float distanceSquared =
+        trigger.verticalUnbounded ? cXyz(delta.x, 0.0f, delta.z).abs2() : delta.abs2();
+    const float visibleRange = context.settings.drawRange + extent;
+    if (distanceSquared > visibleRange * visibleRange)
+        return 1;
+
+    const GXColor color = sceneExit ?
+                              (trigger.enabled ? context.enabledColor : context.disabledColor) :
+                              event_area_color(trigger.enabled, context.settings.opacity,
+                                  context.settings.wireframeOnly);
+    if (trigger.shape == Actor::TriggerVolumeShape::Box) {
+        draw_box(center, halfExtent, trigger.yaw, color, context.settings.wireframeOnly);
+        return 1;
+    }
+
+    cXyz base = center;
+    cXyz size(halfExtent.x, halfExtent.y * 2.0f, halfExtent.z);
+    if (trigger.verticalUnbounded) {
+        base.y = context.player.y - context.settings.drawRange;
+        size.y = context.settings.drawRange * 2.0f;
+    } else {
+        base.y -= halfExtent.y;
+    }
+    draw_elliptic_cylinder(base, size, trigger.yaw, color, context.settings.wireframeOnly);
     return 1;
 }
 

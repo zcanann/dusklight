@@ -65,6 +65,10 @@ fn golden_v16() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v16.dseps")
 }
 
+fn golden_v17() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v17.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -827,6 +831,53 @@ fn decodes_v16_global_message_session_without_an_npc_layout_cast() {
                     })
             }))
     );
+}
+
+#[test]
+fn decodes_v17_typed_trigger_volume_component() {
+    let shard = NativeEpisodeShard::decode(golden_v17()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V17
+    );
+    for episode in &shard.episodes {
+        for observation in episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        {
+            let trigger = observation.actors[1]
+                .trigger_volume
+                .as_ref()
+                .expect("v17 trigger volume");
+            assert_eq!(trigger.kind, NativeTriggerVolumeKind::SceneExit);
+            assert_eq!(trigger.shape, NativeTriggerVolumeShape::Box);
+            assert!(trigger.enabled);
+            assert!(!trigger.vertical_unbounded);
+            assert_eq!(trigger.behavior, 3);
+            assert_eq!(trigger.center, [10.0, 20.0, -30.0]);
+            assert_eq!(trigger.half_extent, [40.0, 50.0, 60.0]);
+            assert_eq!(trigger.yaw, 0x1234);
+        }
+    }
+
+    let mut legacy = NativeEpisodeShard::decode(golden_v16()).unwrap();
+    for episode in &mut legacy.episodes {
+        for step in &mut episode.steps {
+            assert!(
+                step.pre_input
+                    .actors
+                    .iter()
+                    .all(|actor| actor.trigger_volume.is_none())
+            );
+            assert!(
+                step.post_simulation
+                    .actors
+                    .iter()
+                    .all(|actor| actor.trigger_volume.is_none())
+            );
+        }
+    }
 }
 
 #[test]

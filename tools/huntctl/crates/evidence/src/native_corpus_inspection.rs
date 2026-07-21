@@ -583,6 +583,41 @@ fn record_persistent_actor_changes(
             float_array_changed(before.head_lock_position, after.head_lock_position),
         );
     }
+    record_changed_field(
+        profile,
+        "trigger_volume.present",
+        before.trigger_volume.is_some() != after.trigger_volume.is_some(),
+    );
+    if let (Some(before), Some(after)) = (&before.trigger_volume, &after.trigger_volume) {
+        record_changed_field(profile, "trigger_volume.kind", before.kind != after.kind);
+        record_changed_field(profile, "trigger_volume.shape", before.shape != after.shape);
+        record_changed_field(
+            profile,
+            "trigger_volume.enabled",
+            before.enabled != after.enabled,
+        );
+        record_changed_field(
+            profile,
+            "trigger_volume.vertical_unbounded",
+            before.vertical_unbounded != after.vertical_unbounded,
+        );
+        record_changed_field(
+            profile,
+            "trigger_volume.behavior",
+            before.behavior != after.behavior,
+        );
+        record_changed_field(
+            profile,
+            "trigger_volume.center",
+            float_array_changed(before.center, after.center),
+        );
+        record_changed_field(
+            profile,
+            "trigger_volume.half_extent",
+            float_array_changed(before.half_extent, after.half_extent),
+        );
+        record_changed_field(profile, "trigger_volume.yaw", before.yaw != after.yaw);
+    }
 }
 
 fn record_actor_temporal_episode(
