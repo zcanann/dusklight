@@ -327,7 +327,7 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     part of the open parent audit.
   - [x] Carry the complete immutable authored-placement population into the
     world-bound learner artifact instead of exposing only active processes and
-    nearby collision. Geometry view v3 stores every ACT*/SCO*/TRES placement
+    nearby collision. Geometry view v4 stores every ACT*/SCO*/TRES placement
     and player spawn once per stage, including content-derived stable identity,
     stage/room and layer scope, categorical actor token and placement kind,
     parameters, absolute transform, set ID and the ordinary loader's semantic
@@ -335,10 +335,16 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     resolve applicability without duplicating placements per tick. Construction
     is bound to the authenticated inventory/world context, preserves empty
     worlds explicitly, sorts and rejects duplicate identities, and rejects
-    nonfinite or inconsistent placement semantics. Raw DZS/DZR bytes, proximity
-    selection, active-state guesses, targets, rewards and actions are excluded.
-    Profile-specific parameter decoding and proven active-process-to-placement
-    joins remain open.
+    nonfinite or inconsistent placement semantics. It now also classifies every
+    actor in every complete observation as a unique semantic placement match,
+    ambiguous, unmatched or historically not sampled. Matching uses exact
+    authored scope/layer, set ID, parameters, home transform and loader scale;
+    it never guesses from proximity or actor-token similarity. The complete
+    join set is source-verified against the authenticated native shard, so a
+    resealed shortened or changed set fails closed. V3 artifacts remain
+    canonical with explicitly absent joins. Raw DZS/DZR bytes, active-state
+    guesses, targets, rewards and actions are excluded. Profile-specific
+    parameter decoding and live cross-stage join coverage remain open.
   - [x] Retain the complete dynamic collision set processed by the immediately
     preceding collision pass without calling collision code: registration
     identity, owning actor, attack/target/correction enable and hit state, hit
