@@ -31,6 +31,7 @@ pub enum ContentKind {
     NativeActorView,
     NativeGeometryView,
     NativeCollisionHistory,
+    NativeReplayCorpus,
     Screenshot,
     Model,
     DatasetManifest,
@@ -55,6 +56,7 @@ impl ContentKind {
             Self::NativeCollisionHistory => {
                 "application/vnd.dusklight.native-collision-history+json"
             }
+            Self::NativeReplayCorpus => "application/vnd.dusklight.native-replay-corpus+json",
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
@@ -517,6 +519,7 @@ mod tests {
             ContentKind::NativeActorView,
             ContentKind::NativeGeometryView,
             ContentKind::NativeCollisionHistory,
+            ContentKind::NativeReplayCorpus,
             ContentKind::Screenshot,
             ContentKind::Model,
             ContentKind::DatasetManifest,

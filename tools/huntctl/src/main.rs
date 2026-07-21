@@ -216,6 +216,9 @@ fn print_usage() {
     );
     eprintln!("  huntctl learn inspect-episode --input IMMUTABLE-EPISODE.json");
     eprintln!(
+        "  huntctl learn native-replay --source SOURCE.json [--source MORE.json] --output CORPUS.json [--previous CORPUS.json] [--artifact-store ROOT]"
+    );
+    eprintln!(
         "  huntctl learn collision-history --input EPISODES.dseps --output VIEW.json [--history-depth N] [--artifact-store ROOT]"
     );
     eprintln!("  actor-view goal binding: add --milestones PROGRAM.dmsp --milestone-goal NAME");

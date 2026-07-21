@@ -990,6 +990,30 @@ that selected actors are not full heap-allocation evidence.
 
 ## Corpus lifecycle operations
 
+Rich native episodes remain the replay authority instead of being flattened
+into the legacy transition schema. Build an immutable replay-corpus generation
+from one or more small source descriptors:
+
+```powershell
+huntctl learn native-replay --source demo.json --source coverage.json `
+  --output replay-generation.json --artifact-store build/content
+```
+
+Each `dusklight-native-replay-source/v1` descriptor names an authenticated
+`.dseps` shard, episode ID, and one role: `demonstration`, `policy_rollout`,
+`randomized_coverage`, or `alternate_terminal`. Policy rollouts also bind their
+policy lineage. Pass `--previous replay-generation.json` to append a new
+generation without mutating or copying prior episodes. The generation records
+checkpoint and objective identities, exact episode payload identities, branch
+parents, successes and failures, and complete role counts. Duplicate source
+episodes, missing branch parents, detached identities, invalid role metadata,
+or incompatible predecessor schemas are rejected.
+
+The replay corpus deliberately references complete native observations. Model
+views may derive bounded tensors, actor sets, collision graphs, or temporal
+windows from those observations, but those lossy views do not replace the
+native evidence.
+
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
 
