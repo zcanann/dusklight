@@ -642,6 +642,17 @@ silent truncation or future leakage, and preserves deterministic cold playback.
 - [ ] Implement a true no-present render sink: no visible window, presentation,
   shader compilation, or GPU submission during farming while retaining any
   CPU-side work still required for equivalent gameplay.
+  - [x] Discard simulation-only frame packets before per-frame pipeline lookup,
+    GPU command encoding and queue submission while retaining the ordinary CPU
+    draw traversal and GX FIFO drain. The legacy null-backend submission path
+    remains available only as an explicit audit comparator. A live
+    discard/submit/discard proof ran the same two 125-tick candidates in fresh
+    processes: both discard runs reported zero submissions and 250 discarded
+    frames, while the comparator reported 251 submissions and zero discarded
+    frames. The six authenticated episode payloads formed two groups of three
+    byte-identical trajectories with no determinism conflict. Aurora still
+    creates its null device and startup-only utility pipelines, so the parent
+    item remains open until startup shader compilation is removed and audited.
 - [ ] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
   identical future gameplay across representative movement, actor, event and
   loading states. A mismatch blocks the optimization.

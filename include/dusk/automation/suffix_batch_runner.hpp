@@ -152,6 +152,8 @@ private:
         std::uint64_t stateValidationSamples = 0;
         std::uint64_t cpuDrawTraversalSamples = 0;
         std::uint64_t cpuRendererSubmissionSamples = 0;
+        std::uint64_t submittedCommandBuffersAtStart = 0;
+        std::uint64_t discardedGpuFramesAtStart = 0;
         bool active = false;
         bool complete = false;
         bool sourceCheckpointReused = false;

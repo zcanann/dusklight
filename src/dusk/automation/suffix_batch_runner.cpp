@@ -18,6 +18,7 @@
 #include <xxhash.h>
 
 #include <aurora/dvd.h>
+#include <aurora/gfx.h>
 
 namespace dusk::automation {
 namespace {
@@ -570,6 +571,9 @@ void SuffixBatchRunner::endCpuRendererSubmissionProfile() {
 
 void SuffixBatchRunner::resetBatchProfile(const bool sourceCheckpointReused) {
     mProfile = {};
+    const AuroraStats* renderer = aurora_get_stats();
+    mProfile.submittedCommandBuffersAtStart = renderer->submittedCommandBufferCount;
+    mProfile.discardedGpuFramesAtStart = renderer->discardedGpuFrameCount;
     mProfile.batchStart = ProfileClock::now();
     mProfile.active = true;
     mProfile.sourceCheckpointReused = sourceCheckpointReused;
@@ -880,6 +884,13 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         return nlohmann::json{{"status", "measured"}, {"micros", micros},
             {"samples", samples}};
     };
+    const AuroraStats* renderer = aurora_get_stats();
+    const std::uint64_t submittedCommandBuffers =
+        renderer->submittedCommandBufferCount - mProfile.submittedCommandBuffersAtStart;
+    const std::uint64_t discardedGpuFrames =
+        renderer->discardedGpuFrameCount - mProfile.discardedGpuFramesAtStart;
+    const bool gpuFramesDiscarded = submittedCommandBuffers == 0 &&
+                                    discardedGpuFrames >= candidateTicks;
     const nlohmann::json timing{
         {"schema", "dusklight-suffix-batch-timing/v1"},
         {"batch_wall_micros", mProfile.complete ? nlohmann::json(mProfile.batchWallMicros) :
@@ -929,8 +940,15 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                                               mProfile.cpuDrawTraversalSamples)},
             {"cpu_renderer_submission", measured(mProfile.cpuRendererSubmissionMicros,
                                                    mProfile.cpuRendererSubmissionSamples)},
-            {"gpu_work", {{"status", "unavailable"}, {"micros", nullptr},
-                {"reason", "Aurora exposes draw counts but no authenticated GPU timestamps"}}},
+            {"gpu_work", {
+                {"status", gpuFramesDiscarded ? "discarded" : "timestamp_unavailable"},
+                {"micros", nullptr},
+                {"submitted_command_buffers", submittedCommandBuffers},
+                {"discarded_frames", discardedGpuFrames},
+                {"reason", gpuFramesDiscarded
+                    ? "simulation-only render sink discarded every candidate frame before GPU encoding"
+                    : "Aurora exposes submission counts but no authenticated GPU timestamps"},
+            }},
         }},
     };
     nlohmann::json result{

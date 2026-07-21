@@ -216,3 +216,30 @@ source fingerprint `ac7c32788fc3b5c59046386d95b9b5b4`, none reached the
 terminal predicate, and the best endpoint remained 66.6412 signed units from
 the exit edge. Because that is far worse than the retained 2.7813-unit exact
 input near miss, the family was rejected without new controller code.
+
+## Simulation-only frame sink
+
+Headless farming now retains the ordinary CPU draw traversal and GX FIFO drain,
+but discards each completed renderer packet before per-frame pipeline lookup,
+GPU command encoding, and queue submission. The prior Dawn null-backend path is
+available through `--headless-submit-gpu-frames` only as an audit comparator.
+Suffix-batch timing artifacts report command-buffer submissions and discarded
+frames explicitly; absent authenticated GPU timestamps remain `null` rather
+than being reported as zero time.
+
+A Windows discard/submit/discard proof on 2026-07-20 ran the same two 125-tick
+Ordon candidates from the same 440-tick source boundary. The discard runs each
+reported zero submitted command buffers and 250 discarded frames. The null
+backend comparator reported 251 submissions and zero discarded frames. Across
+the three runs, the six authenticated native episode payloads formed two
+duplicate-trajectory groups with three byte-identical copies each and no
+determinism conflict. The complete observation stream included 1,500 samples,
+47-48 actors per sample, 24-25 dynamic colliders, six player collision
+surfaces, and no truncated actor observations.
+
+This is a renderer-work invariant, not a throughput win claim. The three batch
+wall times were 5.498, 5.714, and 5.540 seconds; state validation dominated this
+particular two-candidate run, and the Dawn null backend made submission removal
+smaller than run-to-run noise. Aurora still creates the null device and
+startup-only utility pipelines, so the full no-shader-compilation task remains
+open.

@@ -2181,6 +2181,7 @@ int game_main(int argc, char* argv[]) {
             ("fixed-step-speed-percent", "Host pacing for fixed-step visual automation (0=uncapped, 1-400%, default 100)", cxxopts::value<std::uint16_t>()->default_value("100"))
             ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("headless", "Use the null render backend with an invisible window; implies --unpaced and requires --dvd", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("headless-submit-gpu-frames", "Audit comparator: retain null-backend GPU frame submission instead of the simulation-only render sink", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("deterministic-time-start", "Initial signed OS timer tick for fixed-step modes (default 0)", cxxopts::value<std::int64_t>())
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
             ("input-tape-fast-forward-frames", "Run this many absolute tape frames unpaced before selected-segment playback (hidden unless --input-tape-fast-forward-visible)", cxxopts::value<std::size_t>())
@@ -2310,6 +2311,13 @@ int game_main(int argc, char* argv[]) {
         return 1;
     }
     headlessMainLoop = parsed_arg_options["headless"].as<bool>();
+    const bool headlessSubmitGpuFrames =
+        parsed_arg_options["headless-submit-gpu-frames"].as<bool>();
+    if (headlessSubmitGpuFrames && !headlessMainLoop) {
+        fprintf(stderr,
+                "Headless Error: --headless-submit-gpu-frames requires --headless\n");
+        return 1;
+    }
     frameCaptureEnabled = parsed_arg_options.count("frame-capture-png") != 0;
     playbackThumbnailCaptureEnabled =
         parsed_arg_options.count("input-tape-thumbnail-png") != 0;
@@ -3774,6 +3782,7 @@ int game_main(int argc, char* argv[]) {
         config.imGuiInitCallback = &aurora_imgui_init_callback;
         config.allowTextureDumps = false;
         config.disablePresentation = headlessMainLoop || frameCaptureEnabled;
+        config.discardGpuFrames = headlessMainLoop && !headlessSubmitGpuFrames;
         config.blockOnPipelineCompilation = deterministicAutomationIo && !headlessMainLoop;
         pipelineWarmupGateEnabled = config.blockOnPipelineCompilation;
         if (config.blockOnPipelineCompilation) {
@@ -3821,6 +3830,9 @@ int game_main(int argc, char* argv[]) {
             aurora_shutdown();
             return 1;
         }
+        DuskLog.info("Headless renderer: CPU draw traversal retained; GPU frames {}",
+                     headlessSubmitGpuFrames ? "submitted to the null backend (audit comparator)" :
+                                               "discarded before encoding and submission");
     }
     if (inputTapeFastForwardActive && !inputTapeFastForwardVisible &&
         (SDL_GetWindowFlags(auroraInfo.window) & SDL_WINDOW_HIDDEN) == 0u) {
