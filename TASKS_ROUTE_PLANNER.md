@@ -606,6 +606,19 @@ The current code shows:
   deterministic closest witnessed blocker state for each transition, including
   guard truth and unknown requirements; portable solve-report schema v2 embeds
   those per-context proofs.
+- Predicate obligations now derive satisfied, unsatisfied, or unknown status
+  directly from each propagated snapshot and are recomputed after setup writes.
+  A technique that changes the referenced backing state can therefore unlock a
+  transition without naming that obligation in a handwritten discharge list.
+  Interaction obligations with no geometric/temporal terms use their pose
+  predicate the same way; incomplete volume, timing, geometry, and unresolved
+  details remain explicitly unmodeled/unknown.
+- Predicate-backed feasibility obligations now derive satisfied, unsatisfied, or
+  unknown status from the exact propagated snapshot and evidence policy. Search
+  re-evaluates them after state-producing actions, so an ordinary state write can
+  open a later transition without naming that obligation in a technique. Volume,
+  geometry, and witnessed timing details remain explicitly unmodeled until their
+  respective evaluators exist.
 - Soft action and method preferences use deterministic lexicographic search:
   minimize action depth first, then maximize total preference weight among
   equal-depth routes. Each directive contributes at most once, preference and
@@ -1735,6 +1748,17 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
         outstanding.
   - [ ] Evaluate authored obstruction/resolver catalogs and obligation details to
         derive discharged-obligation sets rather than accepting them as input.
+    - [x] Derive predicate obligations from propagated state with distinct false,
+          unknown, unsupported-scope, and disallowed-evidence outcomes; recompute
+          after setup operations before transition assessment.
+    - [ ] Derive required/excluded volume, direction, geometry, witnessed timing,
+          and void-plane obligations from their typed details and observations.
+    - [x] Derive predicate-only obligations (and interaction pose when it is the
+          complete obligation) from tri-state snapshot evaluation; re-evaluate
+          after propagated operations and retain unknown obligation IDs in proofs.
+    - [ ] Derive required/excluded volume, geometry/region, and witnessed temporal
+          obligations from their typed evidence instead of explicit discharge
+          claims.
 - [ ] Expose upper-bound versus modeled-feasible graph diffs.
 
 Deliverable: flag-permitted nonsense is visible but no longer reported as a

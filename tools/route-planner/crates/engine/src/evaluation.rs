@@ -6,7 +6,9 @@ use crate::logic::{
     TruthStatus, ValueReference,
 };
 use crate::state::{ComponentPayload, PlayerForm, PlayerMount, StateComponent, StateValue};
-use crate::transition::{CandidateTransition, GateRule, ReaderRule, WriterRule};
+use crate::transition::{
+    CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule, WriterRule,
+};
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
 use serde::Serialize;
@@ -82,7 +84,26 @@ pub struct TransitionAssessment {
     pub evidence_permitted: bool,
     pub hard_guard: EvaluatedTruth,
     pub outstanding_obligation_ids: Vec<String>,
+    pub unknown_obligation_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationClassification {
+    Inapplicable,
+    EvidenceUnknown,
+    Satisfied,
+    Unsatisfied,
+    EvaluationUnknown,
+    Unmodeled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObligationAssessment {
+    pub obligation_id: String,
+    pub classification: ObligationClassification,
+    pub predicate: Option<EvaluatedTruth>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -159,7 +180,9 @@ pub struct TechniqueAssessment {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeasibilityResolution {
+    pub claimed_obligation_ids: BTreeSet<String>,
     pub discharged_obligation_ids: BTreeSet<String>,
+    pub unknown_obligation_ids: BTreeSet<String>,
     pub active_obstruction_ids: Vec<String>,
     pub unknown_obstruction_ids: Vec<String>,
     pub applied_resolver_ids: Vec<String>,
@@ -239,6 +262,7 @@ impl<'a> PredicateEvaluator<'a> {
         &self,
         transition: &CandidateTransition,
         discharged_obligation_ids: &BTreeSet<String>,
+        unknown_obligation_ids: &BTreeSet<String>,
         mode: FeasibilityMode,
     ) -> TransitionAssessment {
         let scope_applies = self.scope_applies(&transition.scope);
@@ -261,12 +285,20 @@ impl<'a> PredicateEvaluator<'a> {
             .iter()
             .map(|requirement| requirement.id.clone())
             .collect::<Vec<_>>();
+        let unknown_obligation_ids = transition
+            .activation
+            .physical_obligation_ids
+            .iter()
+            .filter(|id| unknown_obligation_ids.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
         let classification = if !scope_applies {
             TransitionClassification::Inapplicable
         } else if hard_guard == EvaluatedTruth::False {
             TransitionClassification::GuardBlocked
         } else if !evidence_permitted
             || hard_guard == EvaluatedTruth::Unknown
+            || (mode == FeasibilityMode::Modeled && !unknown_obligation_ids.is_empty())
             || !unknown_requirement_ids.is_empty()
         {
             TransitionClassification::FeasibilityUnknown
@@ -282,7 +314,72 @@ impl<'a> PredicateEvaluator<'a> {
             evidence_permitted,
             hard_guard,
             outstanding_obligation_ids,
+            unknown_obligation_ids,
             unknown_requirement_ids,
+        }
+    }
+
+    pub fn assess_obligation(&self, obligation: &FeasibilityObligation) -> ObligationAssessment {
+        let (classification, predicate) = if !self.scope_applies(&obligation.scope) {
+            (ObligationClassification::Inapplicable, None)
+        } else if !self.policy.permits(obligation.evidence.truth) {
+            (ObligationClassification::EvidenceUnknown, None)
+        } else {
+            match &obligation.detail {
+                ObligationDetail::Predicate { predicate } => {
+                    let result = self.evaluate(predicate);
+                    (
+                        match result {
+                            EvaluatedTruth::True => ObligationClassification::Satisfied,
+                            EvaluatedTruth::False => ObligationClassification::Unsatisfied,
+                            EvaluatedTruth::Unknown => ObligationClassification::EvaluationUnknown,
+                        },
+                        Some(result),
+                    )
+                }
+                ObligationDetail::Interaction {
+                    required_volumes,
+                    excluded_volumes,
+                    pose_predicate,
+                    temporal_window,
+                    ..
+                } => {
+                    let pose = self.evaluate(pose_predicate);
+                    if pose == EvaluatedTruth::False {
+                        (ObligationClassification::Unsatisfied, Some(pose))
+                    } else if required_volumes.is_empty()
+                        && excluded_volumes.is_empty()
+                        && temporal_window.is_none()
+                    {
+                        (
+                            if pose == EvaluatedTruth::True {
+                                ObligationClassification::Satisfied
+                            } else {
+                                ObligationClassification::EvaluationUnknown
+                            },
+                            Some(pose),
+                        )
+                    } else {
+                        (ObligationClassification::Unmodeled, Some(pose))
+                    }
+                }
+                ObligationDetail::Temporal { precondition, .. } => {
+                    let precondition = self.evaluate(precondition);
+                    if precondition == EvaluatedTruth::False {
+                        (ObligationClassification::Unsatisfied, Some(precondition))
+                    } else {
+                        (ObligationClassification::Unmodeled, Some(precondition))
+                    }
+                }
+                ObligationDetail::Geometry { .. } | ObligationDetail::Unresolved { .. } => {
+                    (ObligationClassification::Unmodeled, None)
+                }
+            }
+        };
+        ObligationAssessment {
+            obligation_id: obligation.id.clone(),
+            classification,
+            predicate,
         }
     }
 
@@ -424,13 +521,16 @@ impl<'a> PredicateEvaluator<'a> {
     pub fn resolve_feasibility(
         &self,
         transition: &CandidateTransition,
+        obligations: &[FeasibilityObligation],
         obstructions: &[Obstruction],
         resolvers: &[ObstructionResolver],
         techniques: &[Technique],
         selection: FeasibilitySelection<'_>,
     ) -> FeasibilityResolution {
         let mut resolution = FeasibilityResolution {
-            discharged_obligation_ids: selection.already_discharged.clone(),
+            claimed_obligation_ids: selection.already_discharged.clone(),
+            discharged_obligation_ids: BTreeSet::new(),
+            unknown_obligation_ids: BTreeSet::new(),
             active_obstruction_ids: Vec::new(),
             unknown_obstruction_ids: Vec::new(),
             applied_resolver_ids: Vec::new(),
@@ -444,10 +544,10 @@ impl<'a> PredicateEvaluator<'a> {
             let assessment = self.assess_technique(technique);
             if assessment.classification == RuleClassification::Active {
                 resolution
-                    .discharged_obligation_ids
+                    .claimed_obligation_ids
                     .extend(assessment.discharged_obligation_ids);
                 for introduced in assessment.introduced_obligation_ids {
-                    resolution.discharged_obligation_ids.remove(&introduced);
+                    resolution.claimed_obligation_ids.remove(&introduced);
                 }
                 resolution
                     .applicable_technique_ids
@@ -476,7 +576,7 @@ impl<'a> PredicateEvaluator<'a> {
                         .collect::<Vec<_>>();
                     if !applicable.is_empty() {
                         resolution
-                            .discharged_obligation_ids
+                            .claimed_obligation_ids
                             .extend(obstruction.obligation_ids.iter().cloned());
                         resolution
                             .applied_resolver_ids
@@ -491,7 +591,48 @@ impl<'a> PredicateEvaluator<'a> {
                 RuleClassification::Inapplicable | RuleClassification::Inactive => {}
             }
         }
+        self.refresh_obligation_assessments(transition, obligations, &mut resolution);
         resolution
+    }
+
+    pub fn refresh_obligation_assessments(
+        &self,
+        transition: &CandidateTransition,
+        obligations: &[FeasibilityObligation],
+        resolution: &mut FeasibilityResolution,
+    ) {
+        resolution.discharged_obligation_ids = resolution.claimed_obligation_ids.clone();
+        resolution.unknown_obligation_ids.clear();
+        for obligation_id in &transition.activation.physical_obligation_ids {
+            if resolution.claimed_obligation_ids.contains(obligation_id) {
+                continue;
+            }
+            let Some(obligation) = obligations
+                .iter()
+                .find(|record| record.id == *obligation_id)
+            else {
+                resolution
+                    .unknown_obligation_ids
+                    .insert(obligation_id.clone());
+                continue;
+            };
+            match self.assess_obligation(obligation).classification {
+                ObligationClassification::Satisfied => {
+                    resolution
+                        .discharged_obligation_ids
+                        .insert(obligation.id.clone());
+                }
+                ObligationClassification::Inapplicable
+                | ObligationClassification::EvidenceUnknown
+                | ObligationClassification::EvaluationUnknown
+                | ObligationClassification::Unmodeled => {
+                    resolution
+                        .unknown_obligation_ids
+                        .insert(obligation.id.clone());
+                }
+                ObligationClassification::Unsatisfied => {}
+            }
+        }
     }
 
     fn assess_rule(
@@ -906,7 +1047,9 @@ mod tests {
         ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
         SemanticLifetime, SerializationOwner, StateComponent,
     };
-    use crate::transition::{ActivationContract, TransitionKind, UnknownRequirement};
+    use crate::transition::{
+        ActivationContract, ObligationKind, TransitionKind, UnknownRequirement,
+    };
 
     fn evidence(truth: TruthStatus) -> RuleEvidence {
         RuleEvidence {
@@ -1191,19 +1334,32 @@ mod tests {
         let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
         let mut candidate = transition(&snapshot, fact("story.faron.twilight"));
 
-        let upper =
-            evaluator.assess_transition(&candidate, &BTreeSet::new(), FeasibilityMode::UpperBound);
+        let upper = evaluator.assess_transition(
+            &candidate,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            FeasibilityMode::UpperBound,
+        );
         assert_eq!(upper.classification, TransitionClassification::Executable);
         assert_eq!(upper.outstanding_obligation_ids, vec!["obligation.wall"]);
 
-        let modeled =
-            evaluator.assess_transition(&candidate, &BTreeSet::new(), FeasibilityMode::Modeled);
+        let modeled = evaluator.assess_transition(
+            &candidate,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            FeasibilityMode::Modeled,
+        );
         assert_eq!(modeled.classification, TransitionClassification::Obstructed);
 
         candidate.activation.hard_guards = PredicateExpression::False;
         assert_eq!(
             evaluator
-                .assess_transition(&candidate, &BTreeSet::new(), FeasibilityMode::Modeled,)
+                .assess_transition(
+                    &candidate,
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
                 .classification,
             TransitionClassification::GuardBlocked
         );
@@ -1217,6 +1373,7 @@ mod tests {
         let assessment = evaluator.assess_transition(
             &candidate,
             &BTreeSet::from(["obligation.wall".into()]),
+            &BTreeSet::new(),
             FeasibilityMode::UpperBound,
         );
         assert_eq!(
@@ -1327,6 +1484,7 @@ mod tests {
 
         let unresolved = evaluator.resolve_feasibility(
             &candidate,
+            &[],
             &[obstruction.clone()],
             &[],
             &[],
@@ -1348,6 +1506,7 @@ mod tests {
 
         let resolved = evaluator.resolve_feasibility(
             &candidate,
+            &[],
             &[obstruction.clone()],
             &[resolver],
             &[],
@@ -1374,6 +1533,7 @@ mod tests {
         obstruction.active_when = fact("missing.obstruction-state");
         let uncertain = evaluator.resolve_feasibility(
             &candidate,
+            &[],
             &[obstruction],
             &[],
             &[],
@@ -1412,6 +1572,7 @@ mod tests {
             &candidate,
             &[],
             &[],
+            &[],
             &[technique],
             FeasibilitySelection {
                 resolver_ids: &BTreeSet::new(),
@@ -1432,6 +1593,84 @@ mod tests {
             !resolution
                 .discharged_obligation_ids
                 .contains("obligation.precise-movement")
+        );
+    }
+
+    #[test]
+    fn predicate_obligations_derive_discharge_and_unknownness_from_state() {
+        let snapshot = snapshot(0xff);
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let candidate = transition(&snapshot, PredicateExpression::True);
+        let mut obligation = FeasibilityObligation {
+            id: "obligation.wall".into(),
+            label: "State-derived wall condition".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Twilight,
+            detail: ObligationDetail::Predicate {
+                predicate: fact("story.faron.twilight"),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        let satisfied = evaluator.resolve_feasibility(
+            &candidate,
+            std::slice::from_ref(&obligation),
+            &[],
+            &[],
+            &[],
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
+        );
+        assert!(
+            satisfied
+                .discharged_obligation_ids
+                .contains("obligation.wall")
+        );
+        assert!(satisfied.unknown_obligation_ids.is_empty());
+
+        obligation.detail = ObligationDetail::Predicate {
+            predicate: PredicateExpression::False,
+        };
+        let unsatisfied = evaluator.resolve_feasibility(
+            &candidate,
+            std::slice::from_ref(&obligation),
+            &[],
+            &[],
+            &[],
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
+        );
+        assert!(unsatisfied.discharged_obligation_ids.is_empty());
+        assert!(unsatisfied.unknown_obligation_ids.is_empty());
+
+        obligation.detail = ObligationDetail::Predicate {
+            predicate: PredicateExpression::Fact {
+                fact_id: "missing.twilight-state".into(),
+            },
+        };
+        let unknown = evaluator.resolve_feasibility(
+            &candidate,
+            &[obligation],
+            &[],
+            &[],
+            &[],
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
+        );
+        assert!(unknown.discharged_obligation_ids.is_empty());
+        assert_eq!(
+            unknown.unknown_obligation_ids,
+            BTreeSet::from(["obligation.wall".into()])
         );
     }
 }

@@ -38,6 +38,10 @@ The planner CLI currently owns ten operations:
   ordered conditioned methods, cost/evidence thresholds, and deterministic soft
   preferences. Reached steps retain obstruction/resolver/obligation choices;
   failed searches retain a deterministic closest blocker witness per transition.
+  Predicate-shaped physical obligations are recomputed from each propagated
+  state, so a state write can unlock a transition without a named route shortcut.
+  Predicate-backed obligations are re-evaluated from propagated state, so an
+  operation can satisfy one without a hand-authored named discharge claim.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

@@ -381,6 +381,7 @@ pub struct SearchStep {
     pub unknown_obstruction_ids: Vec<String>,
     pub discharged_obligation_ids: Vec<String>,
     pub outstanding_obligation_ids: Vec<String>,
+    pub unknown_obligation_ids: Vec<String>,
     pub introduced_obligation_ids: Vec<String>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
@@ -399,6 +400,7 @@ pub struct BlockedTransitionWitness {
     pub unknown_obstruction_ids: Vec<String>,
     pub discharged_obligation_ids: Vec<String>,
     pub outstanding_obligation_ids: Vec<String>,
+    pub unknown_obligation_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
 }
 
@@ -775,6 +777,7 @@ impl<'a> ForwardSolver<'a> {
                         unknown_obstruction_ids: Vec::new(),
                         discharged_obligation_ids: technique.discharged_obligation_ids.clone(),
                         outstanding_obligation_ids: Vec::new(),
+                        unknown_obligation_ids: Vec::new(),
                         introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
@@ -854,8 +857,9 @@ impl<'a> ForwardSolver<'a> {
                             hit_search_limit = true;
                             break;
                         }
-                        let resolution = evaluator.resolve_feasibility(
+                        let mut resolution = evaluator.resolve_feasibility(
                             transition,
+                            &self.mechanics.obligations,
                             &self.mechanics.obstructions,
                             &self.mechanics.resolvers,
                             &self.mechanics.techniques,
@@ -884,6 +888,7 @@ impl<'a> ForwardSolver<'a> {
                             let preliminary = evaluator.assess_transition(
                                 transition,
                                 &resolution.discharged_obligation_ids,
+                                &resolution.unknown_obligation_ids,
                                 self.options.feasibility_mode,
                             );
                             record_blocked_transition_witness(
@@ -917,6 +922,7 @@ impl<'a> ForwardSolver<'a> {
                                         .collect(),
                                     outstanding_obligation_ids: preliminary
                                         .outstanding_obligation_ids,
+                                    unknown_obligation_ids: preliminary.unknown_obligation_ids,
                                     unknown_requirement_ids: preliminary.unknown_requirement_ids,
                                 },
                             );
@@ -1002,16 +1008,22 @@ impl<'a> ForwardSolver<'a> {
                         if setup_failed {
                             continue;
                         }
-                        let assessment = PredicateEvaluator::new(
+                        let post_setup_evaluator = PredicateEvaluator::new(
                             &next.snapshot,
                             self.facts,
                             self.equivalence_sets,
                             &next.gate_states,
                             search_evidence_policy,
-                        )?
-                        .assess_transition(
+                        )?;
+                        post_setup_evaluator.refresh_obligation_assessments(
+                            transition,
+                            &self.mechanics.obligations,
+                            &mut resolution,
+                        );
+                        let assessment = post_setup_evaluator.assess_transition(
                             transition,
                             &resolution.discharged_obligation_ids,
+                            &resolution.unknown_obligation_ids,
                             self.options.feasibility_mode,
                         );
                         match assessment.classification {
@@ -1076,6 +1088,7 @@ impl<'a> ForwardSolver<'a> {
                                 outstanding_obligation_ids: assessment
                                     .outstanding_obligation_ids
                                     .clone(),
+                                unknown_obligation_ids: assessment.unknown_obligation_ids.clone(),
                                 introduced_obligation_ids: resolution
                                     .applicable_technique_ids
                                     .iter()
@@ -1354,6 +1367,7 @@ fn blocked_witness(
             .cloned()
             .collect(),
         outstanding_obligation_ids: assessment.outstanding_obligation_ids.clone(),
+        unknown_obligation_ids: assessment.unknown_obligation_ids.clone(),
         unknown_requirement_ids: assessment.unknown_requirement_ids.clone(),
     })
 }
@@ -1376,6 +1390,7 @@ fn blocker_rank(witness: &BlockedTransitionWitness) -> (usize, u8, Digest) {
         .len()
         .saturating_add(witness.unknown_obstruction_ids.len())
         .saturating_add(witness.outstanding_obligation_ids.len())
+        .saturating_add(witness.unknown_obligation_ids.len())
         .saturating_add(witness.unknown_requirement_ids.len())
         .saturating_add(usize::from(witness.hard_guard != EvaluatedTruth::True));
     let classification = match witness.classification {
@@ -1711,6 +1726,60 @@ mod tests {
             result.steps[0].source_state_sha256,
             result.steps[0].result_state_sha256
         );
+    }
+
+    #[test]
+    fn state_operations_can_satisfy_predicate_obligations_without_named_discharge_claims() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            vec!["obligation.gate-open".into()],
+        )]);
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.gate-open".into(),
+            label: "Gate state is open".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::ActorState,
+            detail: ObligationDetail::Predicate {
+                predicate: gate_is("gate.path-open", true),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.techniques = vec![Technique {
+            id: "technique.open-gate".into(),
+            label: "Open the gate".into(),
+            scope: scope(&snapshot),
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::SetGate {
+                gate_id: "gate.path-open".into(),
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(result.steps.len(), 2);
+        assert_eq!(result.steps[0].action_id, "technique.open-gate");
+        assert_eq!(result.steps[1].action_id, "transition.a-to-b");
+        assert_eq!(
+            result.steps[1].discharged_obligation_ids,
+            vec!["obligation.gate-open"]
+        );
+        assert!(result.steps[1].selected_technique_ids.is_empty());
     }
 
     #[test]
