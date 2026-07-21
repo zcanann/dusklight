@@ -525,6 +525,16 @@ pub fn gz2e01_reset_to_opening_mechanics(
                 )),
                 note: "dSv_info_c::card_to_memory copies dSv_save_c only, then performs load-time life/key/item-layout normalization; live header and other non-save runtime metadata are outside that projection.".into(),
             },
+            exact_function_evidence(
+                "binary.gz2e01.card-to-memory",
+                "fca390c69693273eab6336a9ce094473227ea9c98f4e13a627c12452ddc12352",
+                "card_to_memory__10dSv_info_cFPci at VA 0x80035a04, size 0x1cc, code SHA-256 5f50141704f8daa60900f0559ef6f2272965b195fa673d29e73ceef82a593dc0.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.set-line-up-item",
+                "f9edd7f12fcbce48fb6c07b036ae3018abb07d8fb1510044f848a05eacbf7a14",
+                "setLineUpItem__17dSv_player_item_cFv at VA 0x800332f8, size 0x5c, code SHA-256 08c250dbed9821493d7a25ae234328a99fe912228b8ac54bcffe5314b5c1e323.",
+            ),
         ],
     };
     let name_field = |field: &str| ValueReference::ComponentField {
@@ -695,6 +705,13 @@ pub fn gz2e01_reset_to_opening_mechanics(
                         ],
                         carried_runtime_component_ids: carried_runtime_component_ids.clone(),
                     },
+                    StateOperation::ClampUnsignedMinimum {
+                        target: ComponentFieldTarget {
+                            component_id: INVENTORY_COMPONENT.into(),
+                            field: "life".into(),
+                        },
+                        minimum: 12,
+                    },
                     StateOperation::Write {
                         target: ComponentFieldTarget {
                             component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
@@ -712,7 +729,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
                 ],
                 unknown_requirements: vec![UnknownRequirement {
                     id: "unknown.file-select-card-to-memory-normalization".into(),
-                    description: "Project the life clamp, dungeon-6 key clear, hookshot slot rewrites, lineup rebuild, vibration, and save-stage display writes performed after the selected dSv_save_c copy.".into(),
+                    description: "Project the dungeon-6 key clear, hookshot slot rewrites, lineup rebuild, vibration, and save-stage display writes performed after the selected dSv_save_c copy. The life floor is modeled separately.".into(),
                     evidence: RuleEvidence {
                         truth: TruthStatus::Unknown,
                         records: file_select_branch_evidence.records.clone(),
@@ -2219,6 +2236,18 @@ mod tests {
                 .environment
                 .components
                 .sort_by(|left, right| left.id.cmp(&right.id));
+            if with_existing_slot {
+                let inventory = before
+                    .environment
+                    .components
+                    .iter_mut()
+                    .find(|component| component.id == INVENTORY_COMPONENT)
+                    .unwrap();
+                let ComponentPayload::Structured { fields } = &mut inventory.payload else {
+                    unreachable!()
+                };
+                fields.insert("life".into(), StateValue::Unsigned(4));
+            }
             let mut state = PlannerExecutionState::new(before).unwrap();
             if with_existing_slot {
                 state
@@ -2543,8 +2572,8 @@ mod tests {
         );
         assert_eq!(
             fields_for(&existing, INVENTORY_COMPONENT)["life"],
-            StateValue::Unsigned(80),
-            "the selected sealed image replaces the title initializer payload"
+            StateValue::Unsigned(12),
+            "the selected sealed image replaces the title initializer payload before the exact post-copy life floor"
         );
         assert_eq!(
             fields_for(&existing, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],

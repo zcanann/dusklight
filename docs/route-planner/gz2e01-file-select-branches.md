@@ -142,7 +142,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-Mechanics catalog v23 and execution state v15 now prove the backing-store and
+Mechanics catalog v24 and execution state v15 now prove the backing-store and
 branching subset below:
 
 - blank, existing, and no-card guards cannot all execute from one observed
@@ -162,21 +162,29 @@ branching subset below:
   selected sealed manifest at execution time rather than embedding ephemeral
   runtime/persistent IDs in authored mechanics.
 
-Existing-slot Start deliberately retains an explicit unknown requirement for
-the post-copy life clamp, dungeon-6 key clear, hookshot slot rewrites, lineup
-rebuild, vibration, and displayed save-stage update. Those effects, name-entry
-completion, and successful-save work remain open; the backing-store load alone
-does not claim them. Once `selection_end` is independently observed, separate
+Exact DOL artifacts seal `card_to_memory__10dSv_info_cFPci` at `0x80035a04`
+(460 bytes, artifact `fca390c6...dc12352`) and
+`setLineUpItem__17dSv_player_item_cFv` at `0x800332f8` (92 bytes, artifact
+`f9edd7f1...bf7a14`) against the recognized executable and symbol-table
+identities. Existing-slot Start now executes the conditional 12-life minimum
+through a generic typed unsigned clamp: lower values rise to 12 and higher
+values retain their value and last-writer provenance.
+
+The transition deliberately retains an explicit unknown requirement for the
+dungeon-6 key clear, hookshot slot rewrites, lineup rebuild, vibration, and
+displayed save-stage update. Those effects, name-entry completion, and
+successful-save work remain open; the backing-store load alone does not claim
+them. Once `selection_end` is independently observed, separate
 new-file and existing-file transitions record the requested `PROC_PLAY_SCENE`
 and pending destination while keeping `PROC_NAME_SCENE` active and the retained
 last world non-traversable.
 
 The existing-slot transition is intentionally classified feasibility-unknown:
-its digest-verified sealed image copy and lifetime cut are executable as an
-upper bound, but life-floor, dungeon-6 key clearing, hookshot layout, lineup,
-vibration, and displayed-stage normalization remain one explicit unresolved
-requirement. Blank/no-card selection and both pending play-scene request shapes
-are executable without crossing that unknown boundary.
+its digest-verified sealed image copy, lifetime cut, and life floor are
+executable as an upper bound, but dungeon-6 key clearing, hookshot layout,
+lineup, vibration, and displayed-stage normalization remain one explicit
+unresolved requirement. Blank/no-card selection and both pending play-scene
+request shapes are executable without crossing that unknown boundary.
 
 The save-time `memory_to_card` normalization path, successful physical write,
 void/death restart selection, and build/platform variants remain separate audit

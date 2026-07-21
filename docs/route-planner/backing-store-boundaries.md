@@ -173,10 +173,12 @@ outside-lifetime live components and sealed physical-file images. It does not
 encode a game-specific list of alleged BiT losses.
 
 The reconciled file-select milestone advances execution state to v15, fact
-catalog to v9, mechanics catalog to v23, and planner service to v28. Custom buffer
+catalog to v9, mechanics catalog to v24, and planner service to v28. Custom buffer
 stores and derived active-runtime loads are generic operations; their GZ2E01 use
-remains scoped to the exact source-audited context, and unprojected
-`card_to_memory` normalization stays an explicit unknown requirement. Physical
+remains scoped to the exact source-audited context. Exact DOL function evidence
+binds `card_to_memory` and its lineup helper; the conditional 12-life floor now
+executes through a typed unsigned clamp, while the remaining key/item-layout,
+lineup, vibration, and display normalization stays explicit unknown. Physical
 slot availability is a three-valued state reference: verified image presence is
 true, an explicit absent observation is false, and uncaptured/not-sampled state
 remains unknown. A structured-field operation can attach a return-place-derived

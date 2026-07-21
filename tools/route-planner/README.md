@@ -42,8 +42,10 @@ The planner CLI currently owns thirty-eight operations:
   stores or physical-slot images. No-card initialization uses three explicit
   custom session buffers and copies buffer 1 into live state without creating a
   card image. Existing-slot Start derives the selected sealed manifest and a
-  fresh runtime identity at execution time, while its remaining retail
-  `card_to_memory` normalization is reported as an unknown requirement. Once
+  fresh runtime identity at execution time. Exact GZ2E01 DOL evidence now seals
+  `card_to_memory` and `setLineUpItem`, and a typed unsigned-floor operation
+  executes the conditional 12-life minimum. The remaining key/item-layout,
+  lineup, vibration, and display normalization stays explicit unknown. Once
   selection completion is independently observed, new/existing play-scene
   actions retain `PROC_NAME_SCENE` and record only the fixed or return-place-
   derived pending world load and requested `PROC_PLAY_SCENE`.

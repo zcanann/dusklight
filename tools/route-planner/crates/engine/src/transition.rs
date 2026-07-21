@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v23";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v24";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -96,6 +96,12 @@ pub enum StateOperation {
     Adjust {
         target: ComponentFieldTarget,
         delta: i64,
+    },
+    /// Raises a known unsigned structured value to the supplied floor while
+    /// preserving values already at or above it.
+    ClampUnsignedMinimum {
+        target: ComponentFieldTarget,
+        minimum: u64,
     },
     AdjustBoundRawUnsigned {
         component_kind: ComponentKind,
@@ -725,6 +731,16 @@ impl StateOperation {
                 if *delta == 0 {
                     return Err(PlannerContractError::new(
                         "operation.adjust.delta",
+                        "must be nonzero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::ClampUnsignedMinimum { target, minimum } => {
+                validate_field_target(target)?;
+                if *minimum == 0 {
+                    return Err(PlannerContractError::new(
+                        "operation.clamp_unsigned_minimum.minimum",
                         "must be nonzero",
                     ));
                 }
@@ -2034,6 +2050,21 @@ mod tests {
         assert_eq!(
             write.validate().unwrap_err().field(),
             "operation.bound_raw.binding"
+        );
+    }
+
+    #[test]
+    fn unsigned_minimum_clamp_requires_a_nonzero_floor() {
+        let operation = StateOperation::ClampUnsignedMinimum {
+            target: ComponentFieldTarget {
+                component_id: "save.main".into(),
+                field: "life".into(),
+            },
+            minimum: 0,
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.clamp_unsigned_minimum.minimum"
         );
     }
 }

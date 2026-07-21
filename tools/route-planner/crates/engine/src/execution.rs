@@ -684,6 +684,23 @@ impl PlannerExecutionState {
             | StateOperation::Adjust { target, .. }
             | StateOperation::ClearField { target }
             | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
+            StateOperation::ClampUnsignedMinimum { target, minimum } => self
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == target.component_id)
+                .and_then(|component| match &component.payload {
+                    ComponentPayload::Structured { fields } => fields.get(&target.field),
+                    _ => None,
+                })
+                .and_then(|value| match value {
+                    StateValue::Unsigned(current) if current < minimum => {
+                        Some(vec![target.component_id.clone()])
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default(),
             StateOperation::WriteFields { component_id, .. }
             | StateOperation::ReplacePayload { component_id, .. } => {
                 vec![component_id.clone()]
@@ -1246,6 +1263,31 @@ impl PlannerExecutionState {
                 })?;
                 adjust_value(value, *delta)?;
                 mark_transition(component, application_id);
+            }
+            StateOperation::ClampUnsignedMinimum { target, minimum } => {
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.clamp_unsigned_minimum",
+                        "requires a structured destination component",
+                    ));
+                };
+                let value = fields.get_mut(&target.field).ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.clamp_unsigned_minimum",
+                        "references an absent field",
+                    )
+                })?;
+                let StateValue::Unsigned(current) = value else {
+                    return Err(PlannerContractError::new(
+                        "operation.clamp_unsigned_minimum",
+                        "requires an unsigned destination field",
+                    ));
+                };
+                if *current < *minimum {
+                    *current = *minimum;
+                    mark_transition(component, application_id);
+                }
             }
             StateOperation::AdjustBoundRawUnsigned {
                 component_kind,
@@ -2945,6 +2987,13 @@ fn history_event_writes_field(
             | StateOperation::InvalidateField { target } => {
                 target.component_id == component_id && target.field == field
             }
+            StateOperation::ClampUnsignedMinimum { target, .. } => {
+                target.component_id == component_id
+                    && target.field == field
+                    && affected_component_ids
+                        .binary_search_by(|id| id.as_str().cmp(component_id))
+                        .is_ok()
+            }
             StateOperation::WriteFields {
                 component_id: changed,
                 fields,
@@ -4118,6 +4167,68 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.field(), "operation.clear_component");
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn unsigned_minimum_clamp_raises_only_values_below_the_floor() {
+        let target = ComponentFieldTarget {
+            component_id: "save.main".into(),
+            field: "life".into(),
+        };
+        let mut low = PlannerExecutionState::new(snapshot()).unwrap();
+        low.apply_operations(
+            "fixture.low-life",
+            "snapshot.low-life",
+            &[StateOperation::Write {
+                target: target.clone(),
+                value: StateValue::Unsigned(4),
+            }],
+        )
+        .unwrap();
+        low.apply_operations(
+            "normalizer.life-floor",
+            "snapshot.life-clamped",
+            &[StateOperation::ClampUnsignedMinimum {
+                target: target.clone(),
+                minimum: 12,
+            }],
+        )
+        .unwrap();
+        assert_eq!(field(&low, "save.main", "life"), &StateValue::Unsigned(12));
+        assert_eq!(
+            low.last_field_writer("save.main", "life")
+                .unwrap()
+                .application_id,
+            "normalizer.life-floor"
+        );
+
+        let mut high = PlannerExecutionState::new(snapshot()).unwrap();
+        high.apply_operations(
+            "fixture.high-life",
+            "snapshot.high-life",
+            &[StateOperation::Write {
+                target: target.clone(),
+                value: StateValue::Unsigned(20),
+            }],
+        )
+        .unwrap();
+        high
+            .apply_operations(
+                "normalizer.life-floor",
+                "snapshot.life-preserved",
+                &[StateOperation::ClampUnsignedMinimum {
+                    target,
+                    minimum: 12,
+                }],
+            )
+            .unwrap();
+        assert_eq!(field(&high, "save.main", "life"), &StateValue::Unsigned(20));
+        assert_eq!(
+            high.last_field_writer("save.main", "life")
+                .unwrap()
+                .application_id,
+            "fixture.high-life"
+        );
     }
 
     #[test]

@@ -650,6 +650,12 @@ impl RelevanceBuilder {
                     byte_width: u32::from(*byte_width),
                 });
             }
+            StateOperation::ClampUnsignedMinimum { target, .. } => {
+                self.dependencies.insert(StateDependency::ComponentField {
+                    component_id: target.component_id.clone(),
+                    field: target.field.clone(),
+                });
+            }
             StateOperation::ActivateStageBank { component_id, .. } => {
                 self.dependencies.insert(StateDependency::Component {
                     component_id: component_id.clone(),
@@ -772,6 +778,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
     match operation {
         StateOperation::Write { target, .. }
         | StateOperation::Adjust { target, .. }
+        | StateOperation::ClampUnsignedMinimum { target, .. }
         | StateOperation::ClearField { target }
         | StateOperation::InvalidateField { target }
         | StateOperation::CopyValue { target, .. }

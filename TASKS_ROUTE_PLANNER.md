@@ -1690,9 +1690,10 @@ evidenced overlays over the generated base rather than silent edits to it.
         existing-slot `card_to_memory`, no-save/no-card initialization, header
         writers, load-time normalization, and the pending play-scene request are separated
         in `docs/route-planner/gz2e01-file-select-branches.md`. The branch and
-        backing-store subset plus pending play-scene requests are now executable;
-        post-copy normalization, name/save suffixes, and retail-DOL evidence
-        remain open.
+        backing-store subset plus pending play-scene requests are now executable.
+        Exact GZ2E01 DOL artifacts seal `card_to_memory` and `setLineUpItem`,
+        and the conditional 12-life floor executes as a typed unsigned clamp;
+        the remaining post-copy normalization and name/save suffixes stay open.
   - [x] Source-audit the distinct GZ2E01 void/hazard collision-exit and held
         restart-room branches, lethal diversion, four death-continue destination
         families, return-to-title reset handoff, and pre-restart live mutations.
@@ -2016,8 +2017,10 @@ Deliverable: replayable state evidence that can validate transition rules.
           no-card initializes three explicit custom session buffers and copies
           entry 0 into the memory-only live runtime; existing Start derives the
           selected sealed manifest, fresh runtime identity, and explicit
-          header/restart/temporary carry set. Post-copy normalization remains an
-          unknown requirement rather than an assumed success.
+          header/restart/temporary carry set. Exact DOL evidence and a typed
+          unsigned clamp now execute the conditional 12-life floor; the
+          remaining post-copy normalization stays an unknown requirement rather
+          than an assumed success.
     - [x] Model fixed new-file and return-place-derived existing-file play-scene
           requests after independently observed selection completion. Both retain
           active `PROC_NAME_SCENE`; the pending destination does not make the
