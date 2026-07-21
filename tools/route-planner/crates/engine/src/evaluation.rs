@@ -1188,6 +1188,29 @@ impl<'a> PredicateEvaluator<'a> {
                 pending_world_load(&self.snapshot.environment.execution_context)
                     .map(|location| StateValue::Signed(location.spawn.into()))
             }
+            ValueReference::PhysicalSlotImageAvailable { slot } => {
+                if self
+                    .snapshot
+                    .environment
+                    .physical_slots
+                    .iter()
+                    .any(|physical_slot| physical_slot.slot == *slot)
+                {
+                    Some(StateValue::Boolean(true))
+                } else {
+                    self.snapshot
+                        .environment
+                        .physical_slot_observations
+                        .iter()
+                        .find(|observation| observation.slot == *slot)
+                        .and_then(|observation| match observation.content_status {
+                            crate::state::CaptureStatus::Absent => Some(StateValue::Boolean(false)),
+                            crate::state::CaptureStatus::NotSampled
+                            | crate::state::CaptureStatus::Present
+                            | crate::state::CaptureStatus::Unavailable => None,
+                        })
+                }
+            }
             ValueReference::RuntimeSetting { key } => self
                 .snapshot
                 .environment

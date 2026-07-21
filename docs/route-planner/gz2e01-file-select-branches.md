@@ -142,8 +142,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-Mechanics catalog v21 and execution state v14 now prove the backing-store and
-branching subset below:
+The executable model now proves all of the following:
 
 - blank, existing, and no-card guards cannot all execute from one observed
   control state;
@@ -154,18 +153,18 @@ branching subset below:
   ends the previous runtime lifetime atomically;
 - omitted runtime metadata dies at that lifetime cut;
 - no-card initialization is represented as a session-buffer-to-live copy, not a
-  physical-slot load;
+  physical-slot load, and all three initialized buffer entries remain explicit,
+  independently inspectable custom stores after entry 0 is copied;
 - `mNewFile`, `mNoFile`, and `mDataNum` follow their actual independent writers;
   and
-- a generic active-runtime load derives both its fresh lifetime ID and the exact
-  selected sealed manifest at execution time rather than embedding ephemeral
-  runtime/persistent IDs in authored mechanics.
+- play-scene requests remain pending until process/world activation is observed.
 
-Existing-slot Start deliberately retains an explicit unknown requirement for
-the post-copy life clamp, dungeon-6 key clear, hookshot slot rewrites, lineup
-rebuild, vibration, and displayed save-stage update. Those effects, name-entry
-completion, and the play-scene request still require executable projection;
-the backing-store load alone does not claim them.
+The existing-slot transition is intentionally classified feasibility-unknown:
+its digest-verified sealed image copy and lifetime cut are executable as an
+upper bound, but life-floor, dungeon-6 key clearing, hookshot layout, lineup,
+vibration, and displayed-stage normalization remain one explicit unresolved
+requirement. Blank/no-card selection and both pending play-scene request shapes
+are executable without crossing that unknown boundary.
 
 The save-time `memory_to_card` normalization path, successful physical write,
 void/death restart selection, and build/platform variants remain separate audit

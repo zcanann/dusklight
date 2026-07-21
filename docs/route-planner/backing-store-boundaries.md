@@ -102,20 +102,11 @@ store are removed. A missing, duplicate, unsorted, card-overlapping, session,
 stage-bank, or otherwise invalid carry entry fails the whole load atomically.
 This is the generic splice required for BiTE-like preservation; which concrete
 components a retail BiTE setup carries remains an evidence-matrix task.
-The source-audited GZ2E01 file-select transitions also use an active-runtime
-form of the load. It resolves the persistent identity and complete sealed
-manifest from the selected populated slot, derives the destination runtime ID
-from the actual active lifetime plus a stable suffix, and then applies the same
-checked load. This avoids embedding ephemeral runtime/persistent IDs or partial
-stage manifests in authored mechanics.
-
-Process buffers use separate custom owner stores. `replace_custom_store`
-installs one exact, sorted component manifest without touching runtime or
-physical stores. `restore_payloads_from_custom_store` requires its authored IDs
-to match that store exactly, copies each payload into a same-ID/same-kind live
-component, propagates source provenance, and retains the destination's live
-binding/lifetime/owner. GZ2E01 no-card selection uses three such session stores;
-none populates a physical slot.
+The source-audited GZ2E01 file-select use of the generic mechanism is separated
+in `gz2e01-file-select-branches.md`. Its concrete branch transitions resolve a
+selected physical-slot image at execution time, retain exact slot availability
+as a three-valued fact, and keep the card load's unaudited normalization as an
+explicit unknown rather than silently accepting the upper-bound copy.
 
 `activate_stage_bank` is the initial `getSave(stage)` half: it restores one
 loaded stage entry into an absent live component without committing a previous
@@ -172,8 +163,13 @@ destination payload/ownership fate, then separately reports unchanged/changed
 outside-lifetime live components and sealed physical-file images. It does not
 encode a game-specific list of alleged BiT losses.
 
-The file-select backing milestone advances execution state to v14, mechanics
-catalog to v21, and planner service to v27. Custom buffer stores and derived
-active-runtime loads are generic operations; their GZ2E01 use remains scoped to
-the exact source-audited context, and unprojected `card_to_memory`
-normalization stays an explicit unknown requirement.
+The reconciled file-select branch milestone advances execution state to v15,
+fact catalog to v9, mechanics catalog to v23, and planner service to v28. A dynamic
+`load_runtime_from_slot_image` resolves the sealed manifest and persistent-file
+identity from an actually populated physical slot, while a serialized-only
+invalidation operation models `card_to_memory` replacing stored dungeon banks
+without erasing the current live stage/temporary state. A structured
+return-place reader can attach a pending world load to the still-active process;
+it does not activate the retained destination map. Explicit custom backing-store
+operations also preserve each of the three process/session-owned `mSaveData`
+buffers independently from live runtime state and physical slot images.

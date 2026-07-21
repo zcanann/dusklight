@@ -3,15 +3,15 @@
 use crate::artifact::Digest;
 use crate::identity::ContextSelector;
 use crate::state::{
-    ComponentBindingReference, ComponentKind, StateValue, validate_binding_reference,
-    validate_component_kind,
+    ComponentBindingReference, ComponentKind, PhysicalSlotId, StateValue,
+    validate_binding_reference, validate_component_kind,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v8";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v9";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -105,6 +105,12 @@ pub enum ValueReference {
     PendingWorldLoadRoom,
     PendingWorldLoadLayer,
     PendingWorldLoadSpawn,
+    /// True only when the execution state contains a digest-verified sealed
+    /// image for this physical slot. An observed-but-uncaptured card entry is
+    /// unknown rather than loadable.
+    PhysicalSlotImageAvailable {
+        slot: PhysicalSlotId,
+    },
     RuntimeSetting {
         key: String,
     },
@@ -431,6 +437,7 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             validate_raw_value_shape(*byte_width, *mask)
         }
         ValueReference::RuntimeSetting { key } => validate_stable_id("value.key", key),
+        ValueReference::PhysicalSlotImageAvailable { slot } => slot.validate("value.slot"),
         ValueReference::ActorField { instance_id, field } => {
             validate_stable_id("value.instance_id", instance_id)?;
             validate_stable_id("value.field", field)
