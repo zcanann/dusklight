@@ -550,28 +550,40 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v3 provides a typed JSON-lines transport owned by the
+- Planner service schema v6 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
   every response retains its request ID and
   returns either a typed payload or a structured field/detail error. It imports
   no Huntctl CLI, TAS timeline, WorkbenchGraph, playback, or browser-state types.
-- State-inspection schema v1 preserves the full execution-state document—live
+- Feasibility-graph-diff schema v1 evaluates the same catalog twice at one exact
+  executable state: permissive authorization and modeled feasibility. It emits
+  only differing or physically annotated transitions, retaining hard guards,
+  obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
+  planner-owned `project-feasibility-diff` command and service expose it without
+  changing the base graph or route book.
+- State-inspection schema v3 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
   while evaluating every friendly alias and derived fact under the selected
   exact context and evidence policy. `route-planner inspect-state` and the
   service protocol expose the same projection, so raw inventory/flag bytes and
   their semantic names remain inspectable together.
-- Route-book schema v1 is a validated, exact-context-scoped preference layer over
+- State-inspection-diff schema v1 combines the raw/component boundary diff with
+  before/after friendly fact evaluations. It classifies binding-only changes,
+  payload changes, direct derived-fact dependency changes, relevant gate reads,
+  and runtime-context changes separately. An unchanged payload digest and empty
+  raw-byte delta therefore remain visible when rebind alone changes an alias.
+  The standalone `diff-state` command and service expose the same report.
+- Route-book schema v2 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
   define alternative methods and nested plan regions, request pin/ban/prefer
   behavior, and attach non-semantic annotations. It deliberately has no effects
   or loss fields: every referenced action and predicate must validate against
   the fact/mechanics catalog. `route-planner validate-route-book` and the typed
   service validate books without composing them into mechanics.
-- Planner graph schema v2 can optionally project a route book as distinct plan
+- Planner graph schema v4 can optionally project a route book as distinct plan
   region, method, and reference-step nodes connected to the underlying causal
   actions. Region outcomes and step pre/postconditions remain nested predicate
   graphs. A book's collapse policy is surfaced, but the catalog projection does
@@ -1726,7 +1738,7 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
 - [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
 - [ ] Add a hypothetical local-bank rebind refinement for testing.
-- [ ] Add diagnostics for aliases that change under a binding.
+- [x] Add diagnostics for aliases that change under a binding.
 
 Deliverable: one generic system for known and proposed wrong-state transfers.
 
@@ -1791,7 +1803,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
             directly; no named technique claim is required.
       - [x] Directed region/plane observations and matching microtrace witnesses
             derive discharge directly and retain source IDs in solver proof.
-- [ ] Expose upper-bound versus modeled-feasible graph diffs.
+- [x] Expose upper-bound versus modeled-feasible graph diffs.
 
 Deliverable: flag-permitted nonsense is visible but no longer reported as a
 verified route.
@@ -1987,7 +1999,7 @@ Deliverable: route confidence is mechanically explainable.
 
 - [ ] Snapshot a Forest Temple-bound payload.
 - [ ] Add hypothetical preservation and Temple of Time rebind.
-- [ ] Verify raw bytes remain identical while aliases change.
+- [x] Verify raw bytes remain identical while aliases change.
 - [ ] Derive downstream effects only from the new interpretation.
 - [ ] Display mixed provenance and hypothesis dependency.
 - [ ] Remove overlay and verify base reachability returns unchanged.

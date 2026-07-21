@@ -1,21 +1,23 @@
 //! Typed request/response boundary for planner-owned editor and automation clients.
 
-use crate::inspection::{StateInspection, inspect_state};
+use crate::inspection::{StateInspection, StateInspectionDiff, inspect_state, inspect_state_diff};
 use crate::{
     PortableSolveReport, RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal,
     solve_composed_portable_route_book_goal, solve_composed_route_book_goal,
 };
 use dusklight_route_planner::artifact::Digest;
+use dusklight_route_planner::evaluation::EvidencePolicy;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
-use dusklight_route_planner::graph::PlannerGraph;
+use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
+use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v4";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v6";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -53,9 +55,25 @@ pub enum PlannerServiceRequest {
         catalog: Box<ComposedPlannerCatalog>,
         route_book: Option<Box<RouteBook>>,
     },
+    ProjectFeasibilityDiff {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     InspectState {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
+    DiffState {
+        request_id: String,
+        before: Box<PlannerExecutionStateDocument>,
+        after: Box<PlannerExecutionStateDocument>,
+        boundary: BoundaryKind,
         catalog: Box<ComposedPlannerCatalog>,
         equivalence_sets: Vec<EquivalenceSet>,
         evidence_mode: crate::RuntimeEvidenceMode,
@@ -89,7 +107,9 @@ impl PlannerServiceRequest {
             | Self::EditRouteBook { request_id, .. }
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
+            | Self::ProjectFeasibilityDiff { request_id, .. }
             | Self::InspectState { request_id, .. }
+            | Self::DiffState { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -135,8 +155,15 @@ pub enum PlannerServicePayload {
         graph: Box<PlannerGraph>,
         graph_sha256: Digest,
     },
+    FeasibilityGraphDiff {
+        diff: Box<PlannerFeasibilityGraphDiff>,
+        diff_sha256: Digest,
+    },
     StateInspection {
         inspection: Box<StateInspection>,
+    },
+    StateInspectionDiff {
+        inspection_diff: Box<StateInspectionDiff>,
     },
     SolveReport {
         report: Box<SolveReport>,
@@ -214,6 +241,31 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 })
             })
         }
+        PlannerServiceRequest::ProjectFeasibilityDiff {
+            state,
+            catalog,
+            equivalence_sets,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            let policy = match evidence_mode {
+                crate::RuntimeEvidenceMode::EstablishedOnly => EvidencePolicy::ESTABLISHED_ONLY,
+                crate::RuntimeEvidenceMode::Research => EvidencePolicy::RESEARCH,
+            };
+            PlannerFeasibilityGraphDiff::project_composed(
+                &state,
+                &catalog,
+                &equivalence_sets,
+                policy,
+            )
+            .and_then(|diff| {
+                let diff_sha256 = diff.digest()?;
+                Ok(PlannerServicePayload::FeasibilityGraphDiff {
+                    diff: Box::new(diff),
+                    diff_sha256,
+                })
+            })
+        }),
         PlannerServiceRequest::InspectState {
             state,
             catalog,
@@ -226,6 +278,31 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                     inspection: Box::new(inspection),
                 },
             )
+        }),
+        PlannerServiceRequest::DiffState {
+            before,
+            after,
+            boundary,
+            catalog,
+            equivalence_sets,
+            evidence_mode,
+            ..
+        } => (*before).into_state().and_then(|before| {
+            (*after).into_state().and_then(|after| {
+                inspect_state_diff(
+                    &before,
+                    &after,
+                    boundary,
+                    &catalog.facts,
+                    &equivalence_sets,
+                    evidence_mode,
+                )
+                .map(|inspection_diff| {
+                    PlannerServicePayload::StateInspectionDiff {
+                        inspection_diff: Box::new(inspection_diff),
+                    }
+                })
+            })
         }),
         PlannerServiceRequest::Solve {
             state,

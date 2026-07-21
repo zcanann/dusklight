@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns ten operations:
+The planner CLI currently owns twelve operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog. Authored obstruction selectors bind to
@@ -22,6 +22,10 @@ The planner CLI currently owns ten operations:
   without route-book wiring.
 - `edit-route-book` applies an atomic, expected-digest-checked batch of typed
   route-book edits and emits a fully revalidated canonical revision.
+- `diff-state` compares two executable states across a named boundary, retaining
+  raw/component deltas and recomputed friendly-fact deltas. Binding-only changes
+  are identified separately from payload changes, so identical bytes receiving
+  a new semantic interpretation remain visible.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
 - `inspect-state` exposes every live and serialized component store alongside
@@ -29,6 +33,9 @@ The planner CLI currently owns ten operations:
 - `project-graph` emits a planner-native causal graph with typed relations and
   collapsible predicate regions and optional route-book plan regions; it does
   not use TAS timeline graph schemas.
+- `project-feasibility-diff` evaluates each candidate at one exact executable
+  state and emits only edges whose permissive upper-bound and modeled results
+  differ, including obstruction, obligation, and microtrace proof details.
 - `state-from-snapshot` materializes an executable planner state.
 - `validate-route-book` checks a route book's goals, predicates, action
   references, nested regions, methods, directives, and annotations against an
