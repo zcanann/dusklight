@@ -2996,10 +2996,12 @@ mod tests {
         let profile = bundled_gz2e01_english_message_flow_profile().unwrap();
         assert_eq!(profile.id, "gcn-us-1.0-gz2e01-en");
         assert_eq!(profile.flow_component_id, "message-session");
+        assert_eq!(profile.language_bundles.len(), 1);
         assert_eq!(
             profile.language_bundles.get("en").map(String::as_str),
             Some("us")
         );
+        assert!(!profile.language_bundles.contains_key("fr"));
         assert!(profile.bindings.temporary_flags.is_some());
         assert_eq!(
             profile.bindings.persistent_flags,

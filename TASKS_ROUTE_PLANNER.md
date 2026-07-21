@@ -1634,6 +1634,15 @@ evidenced overlays over the generated base rather than silent edits to it.
         coverage remain open.
 - [ ] Audit how language/configuration is selected, persisted, changed, and used
       to select message or other resource variants.
+  - [x] Separate external console language, the serialized-but-nonauthoritative
+        player-config language byte, and concrete mounted message-resource
+        identity. Prove GZ2E01's fixed `Msgus` group path from exact DOL bytes
+        and source-audit the GameCube PAL `Msguk`/`Msgde`/`Msgfr`/`Msgsp`/`Msgit`
+        selection table and mount boundaries. See
+        `docs/route-planner/runtime-language-selection-audit.md`.
+  - [ ] Reproduce exact PAL, Wii, and HD executable/resource identities and bind
+        every supported runtime language to its actual base and numbered message
+        archives; source-family branches alone must not enable planner facts.
 - [x] Define the supported-input policy: pre-generated known fact packs for normal
       use, optional `orig/` extraction for verification/new inputs, and explicit
       unsupported behavior for unknown identities.
