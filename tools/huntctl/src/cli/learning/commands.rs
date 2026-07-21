@@ -18,6 +18,9 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::factorized_policy_suffix_batch::{
+    FactorizedPolicyOutputSet, NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicySuffixBatch,
+};
 use huntctl::learning::multitask_set_encoder::{
     CompleteSetMultiTaskEncoder, MultiTaskSetPooling, NativeEncoderChannelFamily,
     NativeEncoderFeatureSpec, NativeMultiTaskActorCorpus,
@@ -289,6 +292,56 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
 
 pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("factorized-policy-batch") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "factorized policy batch output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let maximum_ticks = usize_option(learn_args, "--maximum-ticks", 125)?;
+            let output_set: FactorizedPolicyOutputSet = serde_json::from_slice(&fs::read(&input)?)?;
+            let batch = NativeFactorizedPolicySuffixBatch::build(
+                output_set,
+                NativeFactorizedPolicyBatchConfig {
+                    source_frame: usize_option(learn_args, "--source-frame", 440)?,
+                    source_boundary_fingerprint: option(
+                        learn_args,
+                        "--source-boundary-fingerprint",
+                    )
+                    .ok_or("missing required --source-boundary-fingerprint VALUE")?,
+                    checkpoint_validation_ticks: usize_option(
+                        learn_args,
+                        "--checkpoint-validation-ticks",
+                        maximum_ticks.min(8),
+                    )?,
+                    maximum_ticks,
+                    verify_state_hashes: learn_args
+                        .iter()
+                        .any(|argument| argument == "--verify-state-hashes"),
+                },
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&batch)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!(
+                "wrote {} factorized policy candidates ({} ticks each) to {}",
+                batch.candidates.len(),
+                batch.maximum_ticks,
+                output.display()
+            );
+            Ok(())
+        }
         Some("cql") => command_conservative_q(&args[1..]),
         Some("iql") => cli::learning::command_iql(&args[1..]),
         Some("ensemble-q") => cli::learning::command_ensemble_q(&args[1..]),
