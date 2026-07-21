@@ -18,6 +18,9 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::native_auxiliary_dataset::{
+    AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V1, NativeAuxiliaryDataset,
+};
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -701,6 +704,76 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "artifact_store": artifact_store,
                     "content_blob": content_blob,
                     "report": corpus.report,
+                }))?
+            );
+            Ok(())
+        }
+        Some("auxiliary-dataset") => {
+            let learn_args = &args[1..];
+            let corpus_path = required_path(learn_args, "--corpus")?;
+            let input_paths = repeated_option(learn_args, "--input");
+            if input_paths.is_empty() || input_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn auxiliary-dataset requires 1..={MAX_LEARN_INPUT_CORPORA} --input EPISODES.dseps"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "native auxiliary dataset output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let corpus: NativeReplayCorpus = serde_json::from_slice(&fs::read(&corpus_path)?)?;
+            corpus.validate()?;
+            let shards = input_paths
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let defaults = AuxiliarySplitConfig::default();
+            let training_basis_points = usize_option(
+                learn_args,
+                "--training-basis-points",
+                usize::from(defaults.training_basis_points),
+            )?;
+            let validation_basis_points = usize_option(
+                learn_args,
+                "--validation-basis-points",
+                usize::from(defaults.validation_basis_points),
+            )?;
+            let split_config = AuxiliarySplitConfig {
+                training_basis_points: u16::try_from(training_basis_points)
+                    .map_err(|_| "training basis points exceed u16")?,
+                validation_basis_points: u16::try_from(validation_basis_points)
+                    .map_err(|_| "validation basis points exceed u16")?,
+                seed: u64_option(learn_args, "--seed", defaults.seed)?,
+            };
+            let dataset = NativeAuxiliaryDataset::build(&corpus, &shards, split_config)?;
+            let bytes = serde_json::to_vec_pretty(&dataset)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeAuxiliaryDataset)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V1,
+                    "dataset_sha256": dataset.dataset_sha256,
+                    "replay_corpus_sha256": dataset.replay_corpus_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": dataset.report,
                 }))?
             );
             Ok(())

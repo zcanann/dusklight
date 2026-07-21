@@ -40,6 +40,7 @@ pub mod model_ownership;
 pub mod model_representation;
 pub mod native_actor_features;
 pub mod native_actor_view;
+pub mod native_auxiliary_dataset;
 pub mod native_collision_history;
 pub mod native_collision_view;
 pub mod native_episode_history;

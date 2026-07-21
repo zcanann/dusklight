@@ -955,6 +955,15 @@ and geometry set sizes without schema changes.
   contact/surface transition, actor lifecycle, action phase, event/loading and
   short-horizon reachability. These objectives teach representation; they must
   not replace the real predicate and tick cost as outcome authority.
+  - [x] Materialize a sealed, episode-split auxiliary dataset directly from a
+    native replay-corpus generation and its authenticated `.dseps` shards.
+    Every row references the complete pre-input and post-simulation states,
+    retains exact consumed PAD, and derives player-motion, contact, complete
+    actor-lifecycle, action-phase, event/loading and 1/2/4/8-tick terminal
+    targets without flattening the source actor/collider sets. Train,
+    validation and test assignment is deterministic per complete episode, not
+    per frame. Training the shared encoder and reporting held-out auxiliary
+    performance remain open before the parent item can close.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

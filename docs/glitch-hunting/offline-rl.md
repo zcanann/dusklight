@@ -1014,6 +1014,22 @@ views may derive bounded tensors, actor sets, collision graphs, or temporal
 windows from those observations, but those lossy views do not replace the
 native evidence.
 
+Build phase-correct auxiliary-training rows from that corpus with:
+
+```powershell
+huntctl learn auxiliary-dataset --corpus replay-generation.json `
+  --input episodes.dseps --output auxiliary-dataset.json
+```
+
+The dataset assigns complete episodes—not adjacent frames—to deterministic
+train, validation, and test splits. Each row references its complete pre-input
+and post-simulation native observations and separately records exact consumed
+PAD plus generic player-motion, contact, actor-lifecycle, action-phase,
+event/loading, and short-horizon terminal targets. The post-simulation target
+is never a policy input. Actor and collider populations remain in the native
+episode by reference, so a later set/graph encoder can change without
+recollecting or pretending that a flat tensor was the raw evidence.
+
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
 

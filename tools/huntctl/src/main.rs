@@ -219,6 +219,9 @@ fn print_usage() {
         "  huntctl learn native-replay --source SOURCE.json [--source MORE.json] --output CORPUS.json [--previous CORPUS.json] [--artifact-store ROOT]"
     );
     eprintln!(
+        "  huntctl learn auxiliary-dataset --corpus CORPUS.json --input EPISODES.dseps [--input MORE.dseps] --output DATASET.json [--training-basis-points N] [--validation-basis-points N] [--seed N] [--artifact-store ROOT]"
+    );
+    eprintln!(
         "  huntctl learn collision-history --input EPISODES.dseps --output VIEW.json [--history-depth N] [--artifact-store ROOT]"
     );
     eprintln!(
