@@ -456,6 +456,11 @@ The current code shows:
 - Snapshot v2 keeps observed slot descriptors separate from verified serialized
   slot contents, permits unknown runtime origin/backing and player-control state,
   and diffs slot observation changes independently from slot-content changes.
+- Native snapshot sequences accept an explicit incoming boundary kind, emit
+  semantic/component/raw-byte diffs, and seal each snapshot into a contiguous
+  digest-linked chain. This makes room/stage/save/load/void/title/BiT/BiTE test
+  captures comparable without inferring the boundary label from coincidental
+  state changes; representative captures for each boundary remain outstanding.
 
 Primary source anchors:
 

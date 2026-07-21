@@ -2,13 +2,16 @@
 
 use crate::artifact::Digest;
 use crate::identity::RuntimeConfiguration;
-use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+use crate::snapshot::{
+    SNAPSHOT_CHAIN_SCHEMA, STATE_SNAPSHOT_SCHEMA, SnapshotChain, SnapshotChainEntry, StateDiff,
+    StateSnapshot,
+};
 use crate::state::{
-    BackingAttachment, CaptureStatus, ComponentBinding, ComponentKind, ComponentPayload,
-    ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId,
-    PhysicalSlotObservation, PlayerForm, PlayerMount, PlayerState, ProvenanceSourceKind,
-    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
-    SerializationOwner, StateComponent, StateValue,
+    BackingAttachment, BoundaryKind, CaptureStatus, ComponentBinding, ComponentKind,
+    ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment,
+    PhysicalSlotId, PhysicalSlotObservation, PlayerForm, PlayerMount, PlayerState,
+    ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+    SemanticLifetime, SerializationOwner, StateComponent, StateValue,
 };
 use crate::{PlannerContractError, validate_stable_id};
 use dusklight_evidence::native_episode_shard::{
@@ -26,6 +29,59 @@ pub struct NativeSnapshotContext {
     pub session_id: String,
     pub evidence_id: String,
     pub evidence_sha256: Digest,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeStateEvidence {
+    pub snapshots: Vec<StateSnapshot>,
+    pub diffs: Vec<StateDiff>,
+    pub chain: SnapshotChain,
+}
+
+impl NativeStateEvidence {
+    pub fn begin(
+        observation: &NativeLearningObservation,
+        context: NativeSnapshotContext,
+    ) -> Result<Self, PlannerContractError> {
+        let snapshot = snapshot_native_observation(observation, context)?;
+        let digest = snapshot.digest()?;
+        Ok(Self {
+            snapshots: vec![snapshot],
+            diffs: Vec::new(),
+            chain: SnapshotChain {
+                schema: SNAPSHOT_CHAIN_SCHEMA.into(),
+                entries: vec![SnapshotChainEntry {
+                    snapshot_sha256: digest,
+                    previous_snapshot_sha256: None,
+                    incoming_boundary: None,
+                }],
+            },
+        })
+    }
+
+    pub fn append(
+        &mut self,
+        observation: &NativeLearningObservation,
+        context: NativeSnapshotContext,
+        boundary: BoundaryKind,
+    ) -> Result<(), PlannerContractError> {
+        let before = self.snapshots.last().ok_or_else(|| {
+            PlannerContractError::new("native_state_evidence", "has no initial snapshot")
+        })?;
+        let after = snapshot_native_observation(observation, context)?;
+        let diff = StateDiff::between(before, &after, boundary.clone())?;
+        diff.validate()?;
+        let previous_snapshot_sha256 = before.digest()?;
+        let snapshot_sha256 = after.digest()?;
+        self.snapshots.push(after);
+        self.diffs.push(diff);
+        self.chain.entries.push(SnapshotChainEntry {
+            snapshot_sha256,
+            previous_snapshot_sha256: Some(previous_snapshot_sha256),
+            incoming_boundary: Some(boundary),
+        });
+        self.chain.validate()
+    }
 }
 
 /// Projects one complete native boundary observation without inventing unavailable state.
@@ -703,5 +759,50 @@ mod tests {
         let error = snapshot_native_observation(&shard.episodes[0].steps[0].pre_input, context(1))
             .unwrap_err();
         assert_eq!(error.field(), "native_observation.runtime_file");
+    }
+
+    #[test]
+    fn chains_label_boundaries_and_retain_exact_raw_byte_diffs() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v13.dseps"
+        ))
+        .unwrap();
+        let first = &shard.episodes[0].steps[0].pre_input;
+        let mut second = first.clone();
+        second.temporary_event_bytes.as_mut().unwrap()[19] ^= 0x04;
+        second
+            .event_handoff
+            .as_mut()
+            .unwrap()
+            .message_flow
+            .as_mut()
+            .unwrap()
+            .node_index += 1;
+
+        let mut evidence = NativeStateEvidence::begin(first, context(1)).unwrap();
+        evidence
+            .append(&second, context(2), BoundaryKind::DialogueInterruption)
+            .unwrap();
+        assert_eq!(evidence.snapshots.len(), 2);
+        assert_eq!(evidence.diffs.len(), 1);
+        assert_eq!(evidence.chain.entries.len(), 2);
+        assert_eq!(
+            evidence.chain.entries[1].incoming_boundary,
+            Some(BoundaryKind::DialogueInterruption)
+        );
+        let temporary_delta = evidence.diffs[0]
+            .component_deltas
+            .iter()
+            .find(|delta| delta.component_id == "flags.temporary-event-registers")
+            .unwrap();
+        assert_eq!(temporary_delta.raw_byte_deltas.len(), 1);
+        assert_eq!(temporary_delta.raw_byte_deltas[0].offset, 19);
+        assert!(
+            evidence.diffs[0]
+                .component_deltas
+                .iter()
+                .any(|delta| delta.component_id == "event-handoff")
+        );
+        evidence.chain.validate().unwrap();
     }
 }
