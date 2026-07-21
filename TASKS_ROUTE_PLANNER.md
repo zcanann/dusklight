@@ -2245,8 +2245,15 @@ sequence.
     exact packed backing coordinates for shared flow-control A–J. The source
     audit also records both normal event cleanup and Ooccoo-warp cleanup. See
     `docs/route-planner/text-displacement-message-state-audit.md`.
-- [ ] Model at least Coro, Auru, Yeta, and Ooccoo producer routes as distinct
+- [x] Model at least Coro, Auru, Yeta, and Ooccoo producer routes as distinct
       interruption/advancement proofs where evidence exists.
+  - The acceptance fixture writes the same source-audited raw A/B bits through
+    four independent causal programs: Coro and Yeta require their own one-frame
+    microtraces, Auru requires two interactions inside the talk volume but
+    outside the cutscene trigger, and Zombie Ooccoo requires a one-time death
+    pull followed by a second advancement. Removing the Coro witness blocks only
+    that producer; overlapping Auru's trigger fails the spatial obligation. See
+    `docs/route-planner/text-displacement-producer-model.md`.
 - [ ] Identify Gor Coron's exact displaced-branch predicate and downstream
       persistent event/switch writes.
 - [ ] Model invisible wall, elevator authorization, live NPC blockers, and room

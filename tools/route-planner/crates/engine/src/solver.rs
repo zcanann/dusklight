@@ -2177,11 +2177,11 @@ mod tests {
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateDiff, StateSnapshot};
     use crate::state::{
-        BackingAttachment, BoundaryKind, ComponentBinding, ComponentKind, ComponentPayload,
-        ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment,
-        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
-        StateValue,
+        ActorLifecycle, BackingAttachment, BoundaryKind, ComponentBinding, ComponentKind,
+        ComponentPayload, ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA,
+        ExecutionEnvironment, LiveWorldObject, PlayerForm, PlayerState, ProvenanceSourceKind,
+        RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        SerializationOwner, SpatialVolume, SpatialVolumeShape, StateComponent, StateValue,
     };
     use crate::transition::{
         ActivationContract, ActorReconstructionRule, CandidateTransition, FeasibilityObligation,
@@ -7297,5 +7297,555 @@ mod tests {
             savewarp.reader_results[0].source_value,
             StateValue::Text("F_SP104".into())
         );
+    }
+
+    #[test]
+    fn text_displacement_producers_are_distinct_proofs_over_the_same_raw_bits() {
+        const FLOW_A: u8 = 0x04;
+        const FLOW_B: u8 = 0x02;
+        let mut base = snapshot();
+        base.environment.components = vec![
+            StateComponent {
+                id: "message.active-flow".into(),
+                component_kind: ComponentKind::MessageFlow,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("flow_id".into(), StateValue::Text("producer".into())),
+                        ("node_id".into(), StateValue::Text("producer-ready".into())),
+                    ]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01.message-flow-producer".into(),
+                    source_sha256: Some(Digest([0x71; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "route.text-displacement".into(),
+                component_kind: ComponentKind::Custom {
+                    id: "text-displacement-route".into(),
+                },
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("auru_talk_count".into(), StateValue::Unsigned(0)),
+                        ("coro_bottle_text_reached".into(), StateValue::Boolean(true)),
+                        ("ooccoo_intro_unused".into(), StateValue::Boolean(true)),
+                        ("ooccoo_zombie_pull_done".into(), StateValue::Boolean(false)),
+                        ("yeta_first_talk_unused".into(), StateValue::Boolean(true)),
+                    ]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "route.td-producer-start".into(),
+                    source_sha256: Some(Digest([0x72; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "temporary.event-flags".into(),
+                component_kind: ComponentKind::TemporaryFlags,
+                payload: ComponentPayload::Raw {
+                    bytes: vec![0; 6],
+                    known_mask: vec![0xff; 6],
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01.temp-event-backing".into(),
+                    source_sha256: Some(Digest([0x73; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+        base.environment.components.sort_by(|a, b| a.id.cmp(&b.id));
+        base.environment.live_world_objects = vec![LiveWorldObject {
+            instance_id: "actor.auru".into(),
+            static_object_id: Some("placement.auru".into()),
+            actor_type: "npc_rafrel".into(),
+            lifecycle: ActorLifecycle::Loaded,
+            fields: BTreeMap::new(),
+        }];
+        base.environment.spatial_volumes = vec![
+            SpatialVolume {
+                object_id: "actor.auru".into(),
+                volume_id: "cutscene-trigger".into(),
+                shape: SpatialVolumeShape::Sphere {
+                    center: [0.0, 0.0, 0.0],
+                    radius: 5.0,
+                },
+                source_sha256: Digest([0x74; 32]),
+            },
+            SpatialVolume {
+                object_id: "actor.auru".into(),
+                volume_id: "talk".into(),
+                shape: SpatialVolumeShape::Sphere {
+                    center: [0.0, 0.0, 0.0],
+                    radius: 10.0,
+                },
+                source_sha256: Digest([0x75; 32]),
+            },
+        ];
+        base.environment.spatial_volumes.sort_by(|a, b| {
+            (a.object_id.as_str(), a.volume_id.as_str())
+                .cmp(&(b.object_id.as_str(), b.volume_id.as_str()))
+        });
+        let exact_scope = scope(&base);
+        let field_is = |field: &str, value: StateValue| PredicateExpression::Compare {
+            left: ValueReference::ComponentField {
+                component_id: "route.text-displacement".into(),
+                field: field.into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal { value },
+        };
+        let flow_node_is = |node: &str| PredicateExpression::Compare {
+            left: ValueReference::FlowNode {
+                flow_component_id: "message.active-flow".into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text(node.into()),
+            },
+        };
+        let raw_bit_is = |mask: u8, set: bool| PredicateExpression::Compare {
+            left: ValueReference::RawBits {
+                component_id: "temporary.event-flags".into(),
+                byte_offset: 0,
+                byte_width: 1,
+                mask: u64::from(mask),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Unsigned(if set { u64::from(mask) } else { 0 }),
+            },
+        };
+        let write_raw_bit = |mask: u8| StateOperation::WriteRaw {
+            component_id: "temporary.event-flags".into(),
+            byte_offset: 0,
+            mask: vec![mask],
+            value: vec![mask],
+        };
+        let write_route = |field: &str, value: StateValue| StateOperation::Write {
+            target: crate::transition::ComponentFieldTarget {
+                component_id: "route.text-displacement".into(),
+                field: field.into(),
+            },
+            value,
+        };
+        let candidate =
+            |id: &str,
+             stage: &str,
+             guards: Vec<PredicateExpression>,
+             obligations: Vec<&str>,
+             effects: Vec<StateOperation>| CandidateTransition {
+                id: id.into(),
+                label: id.replace('.', " "),
+                scope: exact_scope.clone(),
+                transition_kind: TransitionKind::MessageAction,
+                approach_id: format!("approach.{id}"),
+                activation: ActivationContract {
+                    hard_guards: PredicateExpression::All {
+                        terms: std::iter::once(stage_is(stage)).chain(guards).collect(),
+                    },
+                    physical_obligation_ids: obligations.into_iter().map(str::to_owned).collect(),
+                    effects,
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: RuleEvidence {
+                    truth: TruthStatus::Established,
+                    records: vec![EvidenceRecord {
+                        id: format!("community.{id}"),
+                        kind: EvidenceKind::CommunityReported,
+                        source_sha256: None,
+                        note: "Version-scoped route witness; backing-bit effect is source audited."
+                            .into(),
+                    }],
+                },
+            };
+        let interrupted_effects = |action_id: &str, input: &str, mask: u8| {
+            vec![
+                StateOperation::ScheduleCleanup {
+                    cleanup_id: "cleanup.general-message-flow-bits".into(),
+                },
+                write_raw_bit(mask),
+                StateOperation::Interrupt {
+                    action_id: action_id.into(),
+                    window: TemporalWindow {
+                        earliest_frame: 0,
+                        latest_frame: 0,
+                        required_input: Some(input.into()),
+                    },
+                },
+                StateOperation::CancelCleanup {
+                    cleanup_id: "cleanup.general-message-flow-bits".into(),
+                },
+            ]
+        };
+
+        let mut mechanics = catalog(vec![
+            candidate(
+                "transition.td-auru-first-edge-talk",
+                "AURU",
+                vec![field_is("auru_talk_count", StateValue::Unsigned(0))],
+                vec!["obligation.td-auru-talk-outside-trigger"],
+                vec![
+                    write_raw_bit(FLOW_A),
+                    write_route("auru_talk_count", StateValue::Unsigned(1)),
+                ],
+            ),
+            candidate(
+                "transition.td-auru-second-edge-talk",
+                "AURU",
+                vec![
+                    field_is("auru_talk_count", StateValue::Unsigned(1)),
+                    raw_bit_is(FLOW_A, true),
+                ],
+                vec!["obligation.td-auru-talk-outside-trigger"],
+                vec![
+                    write_raw_bit(FLOW_B),
+                    write_route("auru_talk_count", StateValue::Unsigned(2)),
+                ],
+            ),
+            candidate(
+                "transition.td-coro-interrupt-after-bottle",
+                "CORO",
+                vec![
+                    field_is("coro_bottle_text_reached", StateValue::Boolean(true)),
+                    flow_node_is("coro.after-bottle-before-next-line"),
+                ],
+                vec!["obligation.td-coro-one-frame-ooccoo-pull"],
+                interrupted_effects("dialogue.coro-after-bottle", "ooccoo", FLOW_B),
+            ),
+            candidate(
+                "transition.td-ooccoo-zombie-death-pull",
+                "OOCCOO",
+                vec![
+                    field_is("ooccoo_intro_unused", StateValue::Boolean(true)),
+                    flow_node_is("ooccoo.first-warp-introduction"),
+                ],
+                vec!["obligation.td-ooccoo-death-pull"],
+                {
+                    let mut effects = interrupted_effects(
+                        "dialogue.ooccoo-first-warp-on-death",
+                        "ooccoo",
+                        FLOW_A,
+                    );
+                    effects.push(write_route(
+                        "ooccoo_intro_unused",
+                        StateValue::Boolean(false),
+                    ));
+                    effects.push(write_route(
+                        "ooccoo_zombie_pull_done",
+                        StateValue::Boolean(true),
+                    ));
+                    effects
+                },
+            ),
+            candidate(
+                "transition.td-ooccoo-advance-second-bit",
+                "OOCCOO",
+                vec![
+                    field_is("ooccoo_zombie_pull_done", StateValue::Boolean(true)),
+                    raw_bit_is(FLOW_A, true),
+                    raw_bit_is(FLOW_B, false),
+                ],
+                Vec::new(),
+                vec![write_raw_bit(FLOW_B)],
+            ),
+            candidate(
+                "transition.td-yeta-map-talk-interrupt",
+                "YETA",
+                vec![
+                    field_is("yeta_first_talk_unused", StateValue::Boolean(true)),
+                    flow_node_is("yeta.first-snowpeak-talk"),
+                ],
+                vec!["obligation.td-yeta-map-same-frame"],
+                {
+                    let mut effects =
+                        interrupted_effects("dialogue.yeta-first-talk", "talk-map", FLOW_B);
+                    effects.push(write_route(
+                        "yeta_first_talk_unused",
+                        StateValue::Boolean(false),
+                    ));
+                    effects
+                },
+            ),
+        ]);
+        mechanics.transitions.sort_by(|a, b| a.id.cmp(&b.id));
+        mechanics.obligations = vec![
+            FeasibilityObligation {
+                id: "obligation.td-auru-talk-outside-trigger".into(),
+                label: "Stand in Auru's talk volume but outside his cutscene trigger".into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::Interaction,
+                detail: ObligationDetail::Interaction {
+                    actor_instance_id: "actor.auru".into(),
+                    interaction_mode: "talk".into(),
+                    required_volumes: vec![crate::transition::VolumeReference {
+                        object_id: "actor.auru".into(),
+                        volume_id: "talk".into(),
+                    }],
+                    excluded_volumes: vec![crate::transition::VolumeReference {
+                        object_id: "actor.auru".into(),
+                        volume_id: "cutscene-trigger".into(),
+                    }],
+                    pose_predicate: PredicateExpression::All {
+                        terms: vec![
+                            PredicateExpression::Compare {
+                                left: ValueReference::PlayerControl,
+                                operator: ComparisonOperator::Equal,
+                                right: ValueReference::Literal {
+                                    value: StateValue::Boolean(true),
+                                },
+                            },
+                            PredicateExpression::Compare {
+                                left: ValueReference::PlayerAction,
+                                operator: ComparisonOperator::Equal,
+                                right: ValueReference::Literal {
+                                    value: StateValue::Text("talk".into()),
+                                },
+                            },
+                        ],
+                    },
+                    temporal_requirement: None,
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            FeasibilityObligation {
+                id: "obligation.td-coro-one-frame-ooccoo-pull".into(),
+                label: "Pull Ooccoo on the one frame after Coro's bottle text".into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::Timing,
+                detail: ObligationDetail::Temporal {
+                    requirement: TemporalRequirement {
+                        action_id: "dialogue.coro-after-bottle".into(),
+                        window: TemporalWindow {
+                            earliest_frame: 0,
+                            latest_frame: 0,
+                            required_input: Some("ooccoo".into()),
+                        },
+                    },
+                    precondition: flow_node_is("coro.after-bottle-before-next-line"),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            FeasibilityObligation {
+                id: "obligation.td-ooccoo-death-pull".into(),
+                label: "Pull Ooccoo on the lethal frame of the first introduction".into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::Timing,
+                detail: ObligationDetail::Temporal {
+                    requirement: TemporalRequirement {
+                        action_id: "dialogue.ooccoo-first-warp-on-death".into(),
+                        window: TemporalWindow {
+                            earliest_frame: 0,
+                            latest_frame: 0,
+                            required_input: Some("ooccoo".into()),
+                        },
+                    },
+                    precondition: flow_node_is("ooccoo.first-warp-introduction"),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            FeasibilityObligation {
+                id: "obligation.td-yeta-map-same-frame".into(),
+                label: "Open the map on the first Yeta talk frame and roll away".into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::Timing,
+                detail: ObligationDetail::Temporal {
+                    requirement: TemporalRequirement {
+                        action_id: "dialogue.yeta-first-talk".into(),
+                        window: TemporalWindow {
+                            earliest_frame: 0,
+                            latest_frame: 0,
+                            required_input: Some("talk-map".into()),
+                        },
+                    },
+                    precondition: flow_node_is("yeta.first-snowpeak-talk"),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+        let trace = |id: &str, action_id: &str, input: &str, node: &str| WitnessedMicrotrace {
+            id: id.into(),
+            scope: exact_scope.clone(),
+            precondition: flow_node_is(node),
+            operations: vec![StateOperation::Interrupt {
+                action_id: action_id.into(),
+                window: TemporalWindow {
+                    earliest_frame: 0,
+                    latest_frame: 0,
+                    required_input: Some(input.into()),
+                },
+            }],
+            postcondition: PredicateExpression::True,
+            timing: TemporalWindow {
+                earliest_frame: 0,
+                latest_frame: 0,
+                required_input: Some(input.into()),
+            },
+            evidence: RuleEvidence {
+                truth: TruthStatus::Established,
+                records: vec![EvidenceRecord {
+                    id: format!("community.{id}"),
+                    kind: EvidenceKind::RouteWitnessed,
+                    source_sha256: None,
+                    note: "Observed producer-specific interruption window.".into(),
+                }],
+            },
+        };
+        mechanics.microtraces = vec![
+            trace(
+                "microtrace.td-coro-ooccoo-frame",
+                "dialogue.coro-after-bottle",
+                "ooccoo",
+                "coro.after-bottle-before-next-line",
+            ),
+            trace(
+                "microtrace.td-ooccoo-death-frame",
+                "dialogue.ooccoo-first-warp-on-death",
+                "ooccoo",
+                "ooccoo.first-warp-introduction",
+            ),
+            trace(
+                "microtrace.td-yeta-map-frame",
+                "dialogue.yeta-first-talk",
+                "talk-map",
+                "yeta.first-snowpeak-talk",
+            ),
+        ];
+        let goal = raw_bit_is(FLOW_B, true);
+        let run = |stage: &str, node: &str, position: [f32; 3], action: &str| {
+            let mut start = base.clone();
+            start.environment.location.stage = stage.into();
+            start.environment.player.position = position;
+            start.environment.player.action = action.into();
+            let flow = start
+                .environment
+                .components
+                .iter_mut()
+                .find(|component| component.id == "message.active-flow")
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &mut flow.payload else {
+                unreachable!()
+            };
+            fields.insert("node_id".into(), StateValue::Text(node.into()));
+            ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+                .unwrap()
+                .solve(PlannerExecutionState::new(start).unwrap(), &goal)
+                .unwrap()
+        };
+
+        let coro = run(
+            "CORO",
+            "coro.after-bottle-before-next-line",
+            [0.0; 3],
+            "ooccoo",
+        );
+        let auru = run("AURU", "auru.ready", [8.0, 0.0, 0.0], "talk");
+        let yeta = run("YETA", "yeta.first-snowpeak-talk", [0.0; 3], "talk-map");
+        let ooccoo = run(
+            "OOCCOO",
+            "ooccoo.first-warp-introduction",
+            [0.0; 3],
+            "ooccoo",
+        );
+        for result in [&coro, &auru, &yeta, &ooccoo] {
+            assert_eq!(result.status, SearchStatus::Reached);
+        }
+        assert_eq!(
+            coro.steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transition.td-coro-interrupt-after-bottle"]
+        );
+        assert_eq!(
+            coro.steps[0].supporting_microtrace_ids,
+            vec!["microtrace.td-coro-ooccoo-frame"]
+        );
+        assert_eq!(
+            auru.steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "transition.td-auru-first-edge-talk",
+                "transition.td-auru-second-edge-talk"
+            ]
+        );
+        assert_eq!(
+            yeta.steps[0].supporting_microtrace_ids,
+            vec!["microtrace.td-yeta-map-frame"]
+        );
+        assert_eq!(
+            ooccoo
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "transition.td-ooccoo-zombie-death-pull",
+                "transition.td-ooccoo-advance-second-bit"
+            ]
+        );
+
+        let auru_trigger_overlap = run("AURU", "auru.ready", [0.0, 0.0, 0.0], "talk");
+        assert_ne!(auru_trigger_overlap.status, SearchStatus::Reached);
+        assert!(
+            auru_trigger_overlap
+                .blocked_transition_witnesses
+                .iter()
+                .any(|witness| {
+                    witness.transition_id == "transition.td-auru-first-edge-talk"
+                        && witness.outstanding_obligation_ids
+                            == vec!["obligation.td-auru-talk-outside-trigger"]
+                })
+        );
+
+        let mut no_coro_witness = mechanics.clone();
+        no_coro_witness
+            .microtraces
+            .retain(|trace| trace.id != "microtrace.td-coro-ooccoo-frame");
+        let mut coro_start = base;
+        coro_start.environment.location.stage = "CORO".into();
+        let flow = coro_start
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "message.active-flow")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut flow.payload else {
+            unreachable!()
+        };
+        fields.insert(
+            "node_id".into(),
+            StateValue::Text("coro.after-bottle-before-next-line".into()),
+        );
+        let blocked = ForwardSolver::new(&facts(), &no_coro_witness, &[], SolverOptions::default())
+            .unwrap()
+            .solve(PlannerExecutionState::new(coro_start).unwrap(), &goal)
+            .unwrap();
+        assert_ne!(blocked.status, SearchStatus::Reached);
+        assert!(blocked.blocked_transition_witnesses.iter().any(|witness| {
+            witness.transition_id == "transition.td-coro-interrupt-after-bottle"
+                && witness.unknown_obligation_ids
+                    == vec!["obligation.td-coro-one-frame-ooccoo-pull"]
+        }));
     }
 }
