@@ -1667,9 +1667,11 @@ evidenced overlays over the generated base rather than silent edits to it.
 - [ ] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
       Text Displacement, and Ordon/twilight route evidence without prematurely
       encoding conclusions.
-- [ ] Establish a glossary: build, runtime file, backing, slot, component, payload,
+- [x] Establish a glossary: build, runtime file, backing, slot, component, payload,
       binding, fact, technique, obstruction, obligation, refinement, route book,
-      proof.
+      proof. See `docs/route-planner/glossary.md`; it also fixes the meanings of
+      runtime configuration, candidate transition, writer/reader/gate/latch,
+      plan region, and evidence status.
 
 Deliverable: an evidence index and a list of explicit unknowns.
 
