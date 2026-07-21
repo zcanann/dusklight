@@ -556,7 +556,7 @@ The current code shows:
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
   inventing a default.
-- Planner service schema v12 provides a typed JSON-lines transport owned by the
+- Planner service schema v13 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -609,7 +609,7 @@ The current code shows:
   and technique directives. Required actions are part of search identity, so a
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
-  digest into solve-report schema v7. Standalone writer rules are now ordinary
+  digest into solve-report schema v8. Standalone writer rules are now ordinary
   searchable actions: activation and all bound gates are reevaluated at each
   state, their typed operation executes transactionally, and reached or blocked
   proofs retain writer/gate evidence. Microtrace execution outside an exact
@@ -624,7 +624,7 @@ The current code shows:
   transition, preserving intermediate states instead of treating setup as one
   opaque mutation. Unknown hard method conditions produce `unknown`, and an
   uncertain banned-method match cannot be reported as a known reachable route.
-- Solve-report schema v7 retains active/unknown obstructions, selected
+- Solve-report schema v8 retains active/unknown obstructions, selected
   resolvers/techniques, discharged/outstanding/introduced obligations, and
   semantic state identities on successful steps. Failed searches keep the
   deterministic closest witnessed blocker state for each transition, including
@@ -632,7 +632,9 @@ The current code shows:
   activation, active/unknown gates, state identity, and weakest evidence;
   successful transition steps retain every in-scope reader's exact source value
   and interpretation, and missing/disallowed readers fail unknown. Portable
-  solve-report schema v6 embeds those per-context proofs.
+  solve-report schema v7 embeds those per-context proofs. Each result also
+  embeds its backward-relevance proof and says whether it pruned forward
+  actions.
 - Predicate-backed feasibility obligations derive satisfied, unsatisfied, or
   unknown status from the exact propagated snapshot and evidence policy. Search
   re-evaluates them after state-producing actions, so an ordinary state write can
@@ -1883,13 +1885,20 @@ Deliverable: researchers can extend the model without editing core code.
     temporal actions. It retains unresolved frontier dependencies and all
     relevant IDs, handles OR producers and cycles, excludes unrelated mechanics,
     and deliberately makes no forward reachability claim.
-- [ ] Combine it with forward stateful feasibility from the start.
+- [x] Combine it with forward stateful feasibility from the start.
   - [x] Implement bounded forward state search over exact snapshots, typed
         transition effects, action-local resolver/technique selections, and
         modeled versus upper-bound feasibility.
-  - [ ] Add backward relevance pruning and the remaining route/path constraints
-        before treating this as the production solver.
-- [ ] Support OR producers, AND requirements, and ordered writer/gate/read setups.
+  - [x] Add backward relevance pruning for catalog-goal solves. Unrelated
+        actions are not explored, and the result retains the relevance proof.
+        Route-book solves deliberately disable pruning until directives can be
+        added as independent backward roots.
+  - [ ] Add the remaining route/path constraints before treating this as the
+        production solver.
+- [x] Support OR producers, AND requirements, and ordered writer/gate/read setups.
+  - Backward expansion retains every matching producer and terminates through
+    causal cycles. Forward search evaluates nested predicates and preserves
+    exact writer, gate, and consuming-reader order in the reached proof.
 - [ ] Implement state hashing, dominance, cycles, and continuation-safe merging.
   - [x] Add semantic search-state hashing that includes backing stores, bindings,
         gates, preservation, and pending cleanup while excluding snapshot labels

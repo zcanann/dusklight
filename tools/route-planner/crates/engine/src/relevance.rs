@@ -811,8 +811,10 @@ mod tests {
     };
     use crate::state::{SemanticLifetime, StateValue};
     use crate::transition::{
-        ActivationContract, CandidateTransition, ComponentFieldTarget, GateRule,
-        MECHANICS_CATALOG_SCHEMA, ReaderRule, TransitionKind, WriterRule,
+        ActivationContract, CandidateTransition, ComponentFieldTarget, FeasibilityObligation,
+        GateRule, MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind, Obstruction,
+        ObstructionResolver, ReaderRule, ResolutionKind, RouteCost, Technique, TemporalRequirement,
+        TemporalWindow, TransitionKind, WitnessedMicrotrace, WriterRule,
     };
 
     fn scope() -> ContextScope {
@@ -978,5 +980,118 @@ mod tests {
         assert_eq!(relevance.reader_ids, vec!["reader.goal-recent-item"]);
         assert!(!relevance.contains_transition("transition.noise"));
         assert!(relevance.frontier_dependencies.is_empty());
+    }
+
+    #[test]
+    fn pulls_feasibility_alternatives_and_exact_temporal_witnesses_inward() {
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let timing = TemporalWindow {
+            earliest_frame: 12,
+            latest_frame: 12,
+            required_input: Some("sidehop".into()),
+        };
+        let mut target = transition(
+            "transition.target",
+            PredicateExpression::True,
+            vec![write("final", 1)],
+        );
+        target.approach_id = "approach.target".into();
+        target.activation.physical_obligation_ids = vec!["obligation.timing".into()];
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: vec![target],
+            obligations: vec![FeasibilityObligation {
+                id: "obligation.timing".into(),
+                label: "Witness the exact interruption".into(),
+                scope: scope(),
+                obligation_kind: ObligationKind::Timing,
+                detail: ObligationDetail::Temporal {
+                    requirement: TemporalRequirement {
+                        action_id: "dialogue.overwrite".into(),
+                        window: timing.clone(),
+                    },
+                    precondition: equals("armed", 1),
+                },
+                evidence: evidence(),
+            }],
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: vec![Obstruction {
+                id: "obstruction.target".into(),
+                label: "Target is physically obstructed".into(),
+                scope: scope(),
+                blocked_action_id: "transition.target".into(),
+                approach_id: "approach.target".into(),
+                active_when: equals("blocked", 1),
+                obligation_ids: vec!["obligation.timing".into()],
+                evidence: evidence(),
+            }],
+            resolvers: vec![ObstructionResolver {
+                id: "resolver.target".into(),
+                label: "Bypass the target obstruction".into(),
+                scope: scope(),
+                obstruction_id: "obstruction.target".into(),
+                resolution_kind: ResolutionKind::Bypass,
+                applicable_when: equals("resolver_ready", 1),
+                operations: Vec::new(),
+                evidence: evidence(),
+            }],
+            techniques: vec![Technique {
+                id: "technique.timing".into(),
+                label: "Perform the timing setup".into(),
+                scope: scope(),
+                prerequisites: equals("technique_ready", 1),
+                operations: Vec::new(),
+                discharged_obligation_ids: vec!["obligation.timing".into()],
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: Default::default(),
+                },
+                evidence: evidence(),
+            }],
+            microtraces: vec![WitnessedMicrotrace {
+                id: "microtrace.timing".into(),
+                scope: scope(),
+                precondition: equals("trace_ready", 1),
+                operations: vec![StateOperation::Interrupt {
+                    action_id: "dialogue.overwrite".into(),
+                    window: timing.clone(),
+                }],
+                postcondition: PredicateExpression::True,
+                timing,
+                evidence: evidence(),
+            }],
+            goals: Vec::new(),
+        };
+
+        let relevance = BackwardRelevance::analyze(&facts, &mechanics, &equals("final", 1))
+            .expect("catalog should expand");
+        assert_eq!(relevance.obligation_ids, vec!["obligation.timing"]);
+        assert_eq!(relevance.obstruction_ids, vec!["obstruction.target"]);
+        assert_eq!(relevance.resolver_ids, vec!["resolver.target"]);
+        assert_eq!(relevance.technique_ids, vec!["technique.timing"]);
+        assert_eq!(relevance.microtrace_ids, vec!["microtrace.timing"]);
+        for field in [
+            "armed",
+            "blocked",
+            "resolver_ready",
+            "technique_ready",
+            "trace_ready",
+        ] {
+            assert!(
+                relevance
+                    .dependencies
+                    .contains(&StateDependency::ComponentField {
+                        component_id: "state.route".into(),
+                        field: field.into(),
+                    })
+            );
+        }
     }
 }

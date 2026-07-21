@@ -8,6 +8,7 @@ use crate::evaluation::{
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
 use crate::logic::{FactCatalog, PredicateExpression, RuleEvidence, TruthStatus};
+use crate::relevance::BackwardRelevance;
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
@@ -465,6 +466,8 @@ pub struct BlockedWriterWitness {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchResult {
+    pub backward_relevance: BackwardRelevance,
+    pub backward_pruning_applied: bool,
     pub status: SearchStatus,
     pub steps: Vec<SearchStep>,
     pub explored_states: usize,
@@ -626,6 +629,11 @@ impl<'a> ForwardSolver<'a> {
             .route_book
             .map(|book| compile_route_policy(book, &start_evaluator, self.options.evidence_policy))
             .transpose()?;
+        let backward_relevance = BackwardRelevance::analyze(self.facts, self.mechanics, goal)?;
+        // Route books can require actions and predicates that do not write the
+        // goal itself. Until those directives become additional backward roots,
+        // retain the complete action set for route-book solves.
+        let backward_pruning_applied = route_policy.is_none();
         let search_evidence_policy = route_policy
             .as_ref()
             .map_or(self.options.evidence_policy, |policy| {
@@ -749,6 +757,8 @@ impl<'a> ForwardSolver<'a> {
                         && !node.route_condition_unknown =>
                 {
                     return Ok(SearchResult {
+                        backward_relevance,
+                        backward_pruning_applied,
                         status: SearchStatus::Reached,
                         steps: node.steps,
                         explored_states: visited.len(),
@@ -780,9 +790,14 @@ impl<'a> ForwardSolver<'a> {
                 EvaluatedTruth::False => {}
             }
             if node.depth >= self.options.max_depth {
-                if !self.mechanics.transitions.is_empty()
-                    || !self.mechanics.techniques.is_empty()
-                    || !self.mechanics.writers.is_empty()
+                if (!backward_pruning_applied
+                    && (!self.mechanics.transitions.is_empty()
+                        || !self.mechanics.techniques.is_empty()
+                        || !self.mechanics.writers.is_empty()))
+                    || (backward_pruning_applied
+                        && (!backward_relevance.transition_ids.is_empty()
+                            || !backward_relevance.technique_ids.is_empty()
+                            || !backward_relevance.writer_ids.is_empty()))
                 {
                     hit_search_limit = true;
                 }
@@ -793,6 +808,9 @@ impl<'a> ForwardSolver<'a> {
             // and every gate that names them are reevaluated against each
             // concrete state before the operation is applied.
             for writer in &self.mechanics.writers {
+                if backward_pruning_applied && !backward_relevance.contains_writer(&writer.id) {
+                    continue;
+                }
                 let action = RouteActionRef::Writer {
                     writer_id: writer.id.clone(),
                 };
@@ -894,6 +912,10 @@ impl<'a> ForwardSolver<'a> {
             // considered separately when combining a technique with a target
             // transition below.
             for technique in &self.mechanics.techniques {
+                if backward_pruning_applied && !backward_relevance.contains_technique(&technique.id)
+                {
+                    continue;
+                }
                 let action = RouteActionRef::Technique {
                     technique_id: technique.id.clone(),
                 };
@@ -961,6 +983,11 @@ impl<'a> ForwardSolver<'a> {
             }
 
             for transition in &self.mechanics.transitions {
+                if backward_pruning_applied
+                    && !backward_relevance.contains_transition(&transition.id)
+                {
+                    continue;
+                }
                 let transition_action = RouteActionRef::Transition {
                     transition_id: transition.id.clone(),
                 };
@@ -1381,6 +1408,8 @@ impl<'a> ForwardSolver<'a> {
             || !unknown_writer_ids.is_empty()
             || !execution_error_ids.is_empty();
         Ok(SearchResult {
+            backward_relevance,
+            backward_pruning_applied,
             status: if unknown {
                 SearchStatus::Unknown
             } else {
@@ -2380,7 +2409,7 @@ mod tests {
     #[test]
     fn forward_search_reaches_a_goal_and_retains_the_transition_proof() {
         let snapshot = snapshot();
-        let mechanics = catalog(vec![
+        let mut mechanics = catalog(vec![
             transition(
                 &snapshot,
                 "transition.a-to-b",
@@ -2396,6 +2425,19 @@ mod tests {
                 Vec::new(),
             ),
         ]);
+        mechanics.writers = vec![WriterRule {
+            id: "writer.irrelevant-missing-component".into(),
+            scope: scope(&snapshot),
+            activation: PredicateExpression::True,
+            operation: StateOperation::Write {
+                target: crate::transition::ComponentFieldTarget {
+                    component_id: "state.irrelevant".into(),
+                    field: "noise".into(),
+                },
+                value: StateValue::Unsigned(1),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
         let facts = facts();
         let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
         let result = solver
@@ -2417,6 +2459,9 @@ mod tests {
             result.steps[0].source_state_sha256,
             result.steps[0].result_state_sha256
         );
+        assert!(result.backward_pruning_applied);
+        assert!(result.backward_relevance.writer_ids.is_empty());
+        assert!(result.execution_error_ids.is_empty());
     }
 
     #[test]
@@ -3473,6 +3518,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.status, SearchStatus::Reached);
+        assert!(!result.backward_pruning_applied);
         assert_eq!(
             result
                 .steps
