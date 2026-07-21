@@ -26,15 +26,17 @@ The actor's committed decoders make those bytes semantic
 [parameter accessors](../../include/d/actor/d_a_npc_seirei.h)):
 
 - low byte `0x02`: spirit type 2 (Lanayru);
-- bits `12..19`: current-room switch `0x0c`;
+- bits `12..19`: switch ID `0x0c`;
 - bit 8 is set: the optional first-meeting Do-status helper is disabled;
 - high parameter nibble `0`: particle form, with no modeled spirit heap;
 - home angle X `21`: message flow 21.
 
 The placement is loaded only on layer 13. With a default scene layer, Lake
-Hylia/Lanayru twilight first selects layer 14. If `M_032` is set, the shared
-layer selector replaces 14 with 13 for `F_SP115`; `M_032` has raw event label
-`0x0880` and means the Zora river ice was melted with the magma rock
+Hylia room 1 selects twilight layer 14 while player-status-B byte `0x31`, mask
+`0x04` (`mDarkClearLevelFlag[Lanayru]`), is clear. If `M_032` is also set, the
+shared layer selector replaces 14 with 13 for `F_SP115`; `M_032` is event byte
+`0x08`, mask `0x80` (raw label `0x0880`) and means the Zora river ice was melted
+with the magma rock
 ([layer selection](../../src/d/d_com_inf_game.cpp),
 [raw label](../../include/d/d_save_bit_labels.inc)). An explicitly forced layer
 13 can load the same placement without reproducing that normal derivation, so
@@ -59,12 +61,25 @@ scale_raw  (0x46, 0x46, 0x46)
 raw        5377417265614300ff0cff0c4199b1ec4350d273c4ee8f9e00ff00000000ffff464646ff
 ```
 
-Its type is 0, output switch is `0x0c`, secondary switch is `0xff`, and event ID
-is `0xff`. While the player is inside its box it turns current-room switch
-`0x0c` on; outside it turns the switch off. It does not permanently award a
-story flag ([switch-area execution](../../src/d/actor/d_a_swc00.cpp)).
+Its type is 0, shape is 3 (cylinder), scale mode is 0, output switch is `0x0c`,
+secondary switch is `0xff`, condition is `0xff`, and event ID is `0xff`. The raw
+scale bytes become actor scale `7.0`: the accepted volume is horizontal distance
+less than `730` and vertical delta strictly between `-100` and `700`. Condition
+`0xff` adds no human/wolf, mount, or carried-flame restriction. While the player
+is inside this cylinder the actor turns switch `0x0c` on; outside it turns the
+switch off. Type 0 also clears a preexisting `0x0c` during actor creation
+([switch-area execution](../../src/d/actor/d_a_swc00.cpp)).
 
-The spirit independently reads that same current-room switch. When `0x0c` is
+Despite the API taking the actor's room number, this is **not room-local state**.
+`dSv_info_c::{on,off,is}Switch` routes IDs below `0x80` to the live
+`dSv_memory_c` stage bank. Therefore `0x0c` is F_SP115 stage memory,
+`mSwitch[0]` bit 12 (raw `dSv_memBit_c` byte `0x0a`, mask `0x10`), serialized
+through that stage's save bank. The placement is room-local; its output is not.
+This is exactly the backing/semantic distinction the planner must preserve
+([switch dispatch](../../src/d/d_save.cpp),
+[memory layout](../../include/d/d_save.h)).
+
+The spirit independently reads that same stage-memory switch. When `0x0c` is
 on, particle form emits the two spirit particle effects and advertises the
 `SPEAK` attention flag; when it is off, both disappear
 ([attention and particles](../../src/d/actor/d_a_npc_seirei.cpp)). The exact
@@ -76,15 +91,21 @@ AND scene.room == 1
 AND selected_layer == 13
 AND ACTd[0] Seirei resource creation completed
 AND actor.parameters == 0x0000c102
-AND player_position is inside SCOd[0] SwAreaC's decoded box
-AND room_switch(F_SP115, room 1, 0x0c) == true
+AND SCOd[0] SwAreaC resource creation completed
+AND player_position is inside SCOd[0] SwAreaC's decoded cylinder
+AND stage_memory(F_SP115).switch[0x0c] == true
 AND no incompatible event currently owns interaction control
 ```
 
-The final line is an engine scheduling/attention condition, not an authored
-story bit. `M_034` (raw `0x0820`) is consulted by `chkFirstMeeting()` for type 2,
-but the placed actor's bit-8 setting makes that predicate irrelevant to its
-disabled Do-status helper. `F_0615` is not an appearance or attention guard.
+The cylinder is the normal writer prerequisite, not a hidden predicate in the
+spirit: the spirit itself reads only switch `0x0c`. A transferred switch can
+therefore produce a transient eligible state, but `SwAreaC` clears it on create
+or on its next outside-volume execution. Actual talk additionally needs the
+engine attention-distance/facing/input checks and usable player/event control.
+The normal GZ2E01 type-2 path has no form, mount, or temporary-bit prerequisite.
+`M_034` (raw `0x0820`) is consulted by `chkFirstMeeting()`, but the placed
+actor's bit-8 setting makes that predicate irrelevant to its disabled Do-status
+helper. `F_0615` is not an appearance or attention guard.
 
 ## Exact flow 21
 
@@ -133,6 +154,22 @@ the Vessel backing setter implies it. This distinction explains the otherwise
 surprising intermediate state `Vessel owned && F_0615 clear` during normal
 presentation and makes item injection/duplication theorycrafting representable.
 
+The remaining exact GZ2E01 backing coordinates are:
+
+| Meaning | Backing coordinate |
+| --- | --- |
+| Lanayru twilight cleared | player status B byte `0x31`, mask `0x04` |
+| Vessel owned | player light-drop byte `0x118`, mask `0x04` |
+| Lanayru tear count | player light-drop byte `0x116` |
+| `M_032` | event byte `0x08`, mask `0x80` |
+| `F_0615` | event byte `0x4b`, mask `0x04` |
+| activation switch `0x0c` | live/serialized F_SP115 `dSv_memBit_c::mSwitch[0]` bit 12; component byte `0x0a`, mask `0x10` |
+| post-flow switch 105 | same F_SP115 stage bank, `mSwitch[3]` bit 9; component byte `0x16`, mask `0x02` |
+
+Message-flow `event014(0, 105)` uses `dComIfGs_onSaveSwitch(105)`, so the final
+switch is in the same live F_SP115 stage-memory component as activation switch
+`0x0c`; it is not part of the global event-bit array or room-local zone memory.
+
 Tear count is another store again: `mLightDropNum[LANAYRU_VESSEL]`. Individual
 tear actors increment the count through `dComIfGs_setLightDropNum`, the
 `KYTAG04` controller authors the required-count runtime value and compares it
@@ -140,15 +177,47 @@ against the current dark-area count, message-flow query 027 reads it, and meter,
 map, player-effect, save-HIO, and twilight-end consumers display or react to it.
 Vessel ownership must not be inferred from a nonzero tear count, nor vice versa.
 
+The source-reference audit has one gameplay writer for collected-tear count:
+`daObjDrop_c::dropGet` marks the tear's treasure bit, reads the current dark-area
+byte, and writes back `count + 1`. Initialization clears all four count bytes.
+The Vessel flag has two normal gameplay writers—generic item `0xa3` and
+message-flow event017—plus initialization/explicit setter APIs and debug-only
+editors. Its gameplay consumers are the item-owned query, tear pickup range,
+the twilight Kargarok route, field-map visibility, and HUD/effect code. Count
+consumers are `daObjDrop` completion, `KYTAG04`, message query027, field-map
+visibility, and HUD/player effects. `d_save_HIO` observes both for debugging.
+This list is derived from every committed reference to the accessor and backing
+symbols; new direct-memory users must be added when discovered.
+
+## Tear completion is a later controller flow
+
+GZ2E01 `F_SP115/STG_00.arc` (SHA-256
+`a7783343c82477903b18dc0a63c7d41235cf6d1709ef2298f74df19345a125c6`)
+contains common `ACTR[0]` actor `DK_tag` with parameters `0xff0d0100`, angle Z
+`0xff10` (low byte `16`), and this raw record:
+
+```text
+444b5f7461670000ff0d0100c7a74c02c63062234778bac700000000ff10ffff
+```
+
+`KYTAG04` decodes that as type 1, exit 0, switch 13, and required count 16. It
+writes the required count to session/play storage, watches Lanayru tear count,
+and changes through SCLS exit 0 after switch 13 is authored. Exit 0 is
+`F_SP115`, room 1, point 20, layer 8. Loading point 20 makes `d_s_play` set
+`mDarkClearLevelFlag[2]`, ending Lanayru twilight. These are later transitions;
+none is a prerequisite for the initial layer-13 spirit interaction.
+
 ## Route-planner implications
 
 - Alternate entrances and wrong-state respawns work only if their selected
-  layer is 13 and they place Link inside or allow Link to reach the switch box.
+  layer is 13 and they place Link inside or allow Link to reach the switch
+  cylinder.
 - A forced wrong layer can reach the room while omitting both `Seirei` and
   `SwAreaC`; location alone is insufficient.
-- Directly transferring current-room switch `0x0c` can make the spirit visible,
-  but the type-0 switch-area actor will clear it on its next outside-volume
-  execution. A durable hypothetical transfer must also account for that writer.
+- Directly transferring F_SP115 stage switch `0x0c` can make the spirit visible,
+  but the type-0 switch-area actor clears it during creation if already set, or
+  on its next outside-volume execution. A hypothetical transfer must account
+  for that ordered writer or prevent/bypass the actor's execution.
 - Transferring only the Vessel bit changes flow 21 to the item-present branch;
   it does not create the actor, select layer 13, or satisfy spatial interaction.
 - Transferring only `F_0615` makes flow 21 take its completed dialogue branch;

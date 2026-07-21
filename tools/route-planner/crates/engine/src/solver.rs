@@ -4806,7 +4806,11 @@ mod tests {
                 provenance: vec![ComponentProvenance {
                     source_kind: ProvenanceSourceKind::ExtractedFact,
                     source_id: "gz2e01:f_sp115/r01/actd/0".into(),
-                    source_sha256: Some(Digest([0xc9; 32])),
+                    source_sha256: Some(
+                        "c904e517476e46884cd719930d45129a480cefd6405f05e48fa0cb43737db4c8"
+                            .parse()
+                            .unwrap(),
+                    ),
                     transition_id: None,
                 }],
             },
@@ -4829,30 +4833,59 @@ mod tests {
                 provenance: vec![ComponentProvenance {
                     source_kind: ProvenanceSourceKind::ExtractedFact,
                     source_id: "gz2e01:msgus/bmgres8/flow/21".into(),
-                    source_sha256: Some(Digest([0x25; 32])),
+                    source_sha256: Some(
+                        "2562ae9662648e71b8f30a5682dbc440dae3a7de55782bbd5992e4192e38e2cb"
+                            .parse()
+                            .unwrap(),
+                    ),
                     transition_id: None,
                 }],
             },
             StateComponent {
-                id: "room.f_sp115-r01-switches".into(),
-                component_kind: ComponentKind::ZoneMemory,
+                id: "actor.f_sp115-sw-area-0c".into(),
+                component_kind: ComponentKind::ActorInstance,
                 payload: ComponentPayload::Structured {
                     fields: BTreeMap::from([
-                        ("inside_switch_area_0c".into(), StateValue::Boolean(false)),
-                        ("save_switch_105".into(), StateValue::Boolean(false)),
-                        ("switch_0c".into(), StateValue::Boolean(false)),
+                        ("inside".into(), StateValue::Boolean(false)),
+                        ("loaded".into(), StateValue::Boolean(false)),
                     ]),
                 },
-                binding: ComponentBinding::Room {
-                    stage: "F_SP115".into(),
-                    room: 1,
+                binding: ComponentBinding::Actor {
+                    instance_id: "actor.f_sp115-sw-area-0c".into(),
                 },
                 lifetime: SemanticLifetime::RoomLoad,
                 serialization_owner: SerializationOwner::None,
                 provenance: vec![ComponentProvenance {
                     source_kind: ProvenanceSourceKind::ExtractedFact,
                     source_id: "gz2e01:f_sp115/r01/scod/0".into(),
-                    source_sha256: Some(Digest([0xc9; 32])),
+                    source_sha256: Some(
+                        "c904e517476e46884cd719930d45129a480cefd6405f05e48fa0cb43737db4c8"
+                            .parse()
+                            .unwrap(),
+                    ),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "stage.f_sp115-memory".into(),
+                component_kind: ComponentKind::StageMemory,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("switch_0c".into(), StateValue::Boolean(false)),
+                        ("switch_105".into(), StateValue::Boolean(false)),
+                    ]),
+                },
+                binding: ComponentBinding::Stage {
+                    stage: "F_SP115".into(),
+                },
+                lifetime: SemanticLifetime::StageLoad,
+                serialization_owner: SerializationOwner::StageBank {
+                    stage: "F_SP115".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.f-sp115-stage-memory".into(),
+                    source_sha256: Some(Digest([0x34; 32])),
                     transition_id: None,
                 }],
             },
@@ -4956,6 +4989,11 @@ mod tests {
         let no_vessel = raw_is("save.player-light-drop", 4, 0x04, 0);
         let f0615 = raw_is("save.event-flags", 0x4b, 0x04, 0x04);
         let no_f0615 = raw_is("save.event-flags", 0x4b, 0x04, 0);
+        let switch_0c_off = component_is(
+            "stage.f_sp115-memory",
+            "switch_0c",
+            StateValue::Boolean(false),
+        );
         let field = |component_id: &str, name: &str| crate::transition::ComponentFieldTarget {
             component_id: component_id.into(),
             field: name.into(),
@@ -5006,6 +5044,7 @@ mod tests {
                             "parameters",
                             StateValue::Unsigned(0x0000_c102),
                         ),
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(false)),
                     ],
                 },
                 vec![StateOperation::Write {
@@ -5014,33 +5053,95 @@ mod tests {
                 }],
             ),
             transition(
+                "transition.lanayru-02b-load-scod0",
+                TransitionKind::ActorDriven,
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_scene(13),
+                        component_is(
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(false),
+                        ),
+                    ],
+                },
+                vec![
+                    StateOperation::Write {
+                        target: field("actor.f_sp115-sw-area-0c", "loaded"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: field("stage.f_sp115-memory", "switch_0c"),
+                        value: StateValue::Boolean(false),
+                    },
+                ],
+            ),
+            transition(
                 "transition.lanayru-03-enter-scod0-switch-area",
                 TransitionKind::ActorDriven,
                 PredicateExpression::All {
                     terms: vec![
                         exact_scene(13),
-                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
+                        component_is(
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(true),
+                        ),
                     ],
                 },
                 vec![
                     StateOperation::Write {
-                        target: field("room.f_sp115-r01-switches", "inside_switch_area_0c"),
+                        target: field("actor.f_sp115-sw-area-0c", "inside"),
                         value: StateValue::Boolean(true),
                     },
                     StateOperation::Write {
-                        target: field("room.f_sp115-r01-switches", "switch_0c"),
+                        target: field("stage.f_sp115-memory", "switch_0c"),
                         value: StateValue::Boolean(true),
                     },
                 ],
+            ),
+            transition(
+                "transition.lanayru-03b-sw-area-outside-tick",
+                TransitionKind::ActorDriven,
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_scene(13),
+                        component_is(
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(true),
+                        ),
+                        component_is(
+                            "actor.f_sp115-sw-area-0c",
+                            "inside",
+                            StateValue::Boolean(false),
+                        ),
+                        component_is(
+                            "stage.f_sp115-memory",
+                            "switch_0c",
+                            StateValue::Boolean(true),
+                        ),
+                    ],
+                },
+                vec![StateOperation::Write {
+                    target: field("stage.f_sp115-memory", "switch_0c"),
+                    value: StateValue::Boolean(false),
+                }],
             ),
             transition(
                 "transition.lanayru-04-start-talk-flow21",
                 TransitionKind::MessageAction,
                 PredicateExpression::All {
                     terms: vec![
+                        exact_scene(13),
                         component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
                         component_is(
-                            "room.f_sp115-r01-switches",
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(true),
+                        ),
+                        component_is(
+                            "stage.f_sp115-memory",
                             "switch_0c",
                             StateValue::Boolean(true),
                         ),
@@ -5094,6 +5195,8 @@ mod tests {
                 TransitionKind::Cutscene,
                 PredicateExpression::All {
                     terms: vec![
+                        exact_scene(13),
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
                         component_is("flow.lanayru-21", "event_id", StateValue::Unsigned(1)),
                         component_is(
                             "flow.lanayru-21",
@@ -5159,6 +5262,13 @@ mod tests {
                 TransitionKind::MessageAction,
                 PredicateExpression::All {
                     terms: vec![
+                        exact_scene(13),
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
+                        component_is(
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(true),
+                        ),
                         vessel.clone(),
                         no_f0615.clone(),
                         component_is(
@@ -5167,16 +5277,22 @@ mod tests {
                             StateValue::Boolean(true),
                         ),
                         component_is(
-                            "room.f_sp115-r01-switches",
+                            "stage.f_sp115-memory",
                             "switch_0c",
                             StateValue::Boolean(true),
                         ),
                     ],
                 },
-                vec![StateOperation::Write {
-                    target: field("flow.lanayru-21", "cursor"),
-                    value: StateValue::Unsigned(321),
-                }],
+                vec![
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "active"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(321),
+                    },
+                ],
             ),
             transition(
                 "transition.lanayru-09-flow21-owned-branch",
@@ -5192,6 +5308,26 @@ mod tests {
                     target: field("flow.lanayru-21", "cursor"),
                     value: StateValue::Unsigned(314),
                 }],
+            ),
+            transition(
+                "transition.lanayru-09b-flow21-complete-dialogue-branch",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(321)),
+                        f0615.clone(),
+                    ],
+                },
+                vec![
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "active"),
+                        value: StateValue::Boolean(false),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(0xffff),
+                    },
+                ],
             ),
             transition(
                 "transition.lanayru-10-flow21-set-f0615",
@@ -5238,7 +5374,7 @@ mod tests {
                 component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(326)),
                 vec![
                     StateOperation::Write {
-                        target: field("room.f_sp115-r01-switches", "save_switch_105"),
+                        target: field("stage.f_sp115-memory", "switch_105"),
                         value: StateValue::Boolean(true),
                     },
                     StateOperation::Write {
@@ -5280,7 +5416,12 @@ mod tests {
                         exact_scene(13),
                         component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
                         component_is(
-                            "room.f_sp115-r01-switches",
+                            "actor.f_sp115-sw-area-0c",
+                            "loaded",
+                            StateValue::Boolean(true),
+                        ),
+                        component_is(
+                            "stage.f_sp115-memory",
                             "switch_0c",
                             StateValue::Boolean(true),
                         ),
@@ -5299,8 +5440,8 @@ mod tests {
                     terms: vec![
                         f0615.clone(),
                         component_is(
-                            "room.f_sp115-r01-switches",
-                            "save_switch_105",
+                            "stage.f_sp115-memory",
+                            "switch_105",
                             StateValue::Boolean(true),
                         ),
                     ],
@@ -5319,7 +5460,7 @@ mod tests {
             .solve(initial.clone(), &mechanics.goals[1].predicate)
             .unwrap();
         assert_eq!(visible.status, SearchStatus::Reached);
-        assert_eq!(visible.steps.len(), 3);
+        assert_eq!(visible.steps.len(), 4);
         assert_eq!(
             visible.steps.last().unwrap().action_id,
             "transition.lanayru-03-enter-scod0-switch-area"
@@ -5335,14 +5476,14 @@ mod tests {
             !owned
                 .steps
                 .iter()
-                .any(|step| { step.action_id == "transition.lanayru-09-flow21-set-f0615" })
+                .any(|step| { step.action_id == "transition.lanayru-10-flow21-set-f0615" })
         );
 
         let completed = solver
             .solve(initial, &mechanics.goals[0].predicate)
             .unwrap();
         assert_eq!(completed.status, SearchStatus::Reached);
-        assert_eq!(completed.steps.len(), 12);
+        assert_eq!(completed.steps.len(), 13);
         let completed_ids = completed
             .steps
             .iter()
@@ -5391,6 +5532,31 @@ mod tests {
                 || step.action_id == "transition.lanayru-07-generic-vessel-grant"
         }));
 
+        let mut transferred_switch_outside = start.clone();
+        transferred_switch_outside.environment.location.layer = 13;
+        for component in &mut transferred_switch_outside.environment.components {
+            let ComponentPayload::Structured { fields } = &mut component.payload else {
+                continue;
+            };
+            if component.id == "actor.f_sp115-sw-area-0c" {
+                fields.insert("loaded".into(), StateValue::Boolean(true));
+            } else if component.id == "stage.f_sp115-memory" {
+                fields.insert("switch_0c".into(), StateValue::Boolean(true));
+            }
+        }
+        let cleared_transfer = solver
+            .solve(
+                PlannerExecutionState::new(transferred_switch_outside).unwrap(),
+                &switch_0c_off,
+            )
+            .unwrap();
+        assert_eq!(cleared_transfer.status, SearchStatus::Reached);
+        assert_eq!(cleared_transfer.steps.len(), 1);
+        assert_eq!(
+            cleared_transfer.steps[0].action_id,
+            "transition.lanayru-03b-sw-area-outside-tick"
+        );
+
         let mut f0615_without_vessel = start.clone();
         let event_flags = f0615_without_vessel
             .environment
@@ -5427,6 +5593,16 @@ mod tests {
             unreachable!();
         };
         bytes[0x08] = 0;
+        let stage_memory = wrong_layer
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "stage.f_sp115-memory")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut stage_memory.payload else {
+            unreachable!();
+        };
+        fields.insert("switch_0c".into(), StateValue::Boolean(true));
         let established_wrong_layer = solver
             .solve(
                 PlannerExecutionState::new(wrong_layer.clone()).unwrap(),
@@ -5857,6 +6033,565 @@ mod tests {
                 "technique.hypothetical-key-bank-rebind",
                 "transition.goron-mines-door-01-unlock"
             ]
+        );
+    }
+
+    #[test]
+    fn gz2e01_forest_door1_requires_live_unlock_and_open_before_room2() {
+        let actor_id = "actor.gz2e01-d-mn05-door-1";
+        let dungeon_id = "dungeon.d-mn05-memory";
+        let key_delta_id = "session.pending-key-delta";
+        let actor_field = |name: &str| ValueReference::ComponentField {
+            component_id: actor_id.into(),
+            field: name.into(),
+        };
+        let dungeon_field = |name: &str| ValueReference::BoundComponentField {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Dungeon {
+                dungeon: "forest-temple".into(),
+            },
+            field: name.into(),
+        };
+        let key_delta_field = || ValueReference::ComponentField {
+            component_id: key_delta_id.into(),
+            field: "pending_delta".into(),
+        };
+        let compare = |left: ValueReference, operator: ComparisonOperator, value: StateValue| {
+            PredicateExpression::Compare {
+                left,
+                operator,
+                right: ValueReference::Literal { value },
+            }
+        };
+        let component_target =
+            |component_id: &str, field: &str| crate::transition::ComponentFieldTarget {
+                component_id: component_id.into(),
+                field: field.into(),
+            };
+        let room_is = |room: i64| {
+            compare(
+                ValueReference::LocationRoom,
+                ComparisonOperator::Equal,
+                StateValue::Signed(room),
+            )
+        };
+
+        let mut start = snapshot();
+        start.id = "snapshot.gz2e01-d-mn05-r01-door1-closed".into();
+        start.environment.location = SceneLocation {
+            stage: "D_MN05".into(),
+            room: 1,
+            layer: 0,
+            spawn: 0,
+        };
+        start.environment.components = vec![
+            StateComponent {
+                id: actor_id.into(),
+                component_kind: ComponentKind::ActorInstance,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("adjoining_room_loaded".into(), StateValue::Boolean(true)),
+                        ("door_animation".into(), StateValue::Text("closed".into())),
+                        ("approach_permitted".into(), StateValue::Boolean(true)),
+                        ("back_option".into(), StateValue::Unsigned(0)),
+                        ("back_room".into(), StateValue::Unsigned(2)),
+                        ("collision_registered".into(), StateValue::Boolean(true)),
+                        ("event_offered".into(), StateValue::Boolean(false)),
+                        ("front_option".into(), StateValue::Unsigned(2)),
+                        ("front_room".into(), StateValue::Unsigned(1)),
+                        ("keyhole_present".into(), StateValue::Boolean(true)),
+                        (
+                            "keyhole_animation".into(),
+                            StateValue::Text("closed".into()),
+                        ),
+                        ("kind".into(), StateValue::Unsigned(1)),
+                        ("locked".into(), StateValue::Boolean(true)),
+                        ("next_room".into(), StateValue::Unsigned(1)),
+                        ("parameters".into(), StateValue::Unsigned(0x6c10_2201)),
+                        ("unlock_switch".into(), StateValue::Unsigned(0x0b)),
+                    ]),
+                },
+                binding: ComponentBinding::Actor {
+                    instance_id: actor_id.into(),
+                },
+                lifetime: SemanticLifetime::RoomLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01:d_mn05/stage.dzs/door/1".into(),
+                    source_sha256: Some(
+                        "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4"
+                            .parse()
+                            .unwrap(),
+                    ),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: dungeon_id.into(),
+                component_kind: ComponentKind::DungeonMemory,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("small_keys".into(), StateValue::Unsigned(1)),
+                        ("switch_0b".into(), StateValue::Boolean(false)),
+                    ]),
+                },
+                binding: ComponentBinding::Dungeon {
+                    dungeon: "forest-temple".into(),
+                },
+                lifetime: SemanticLifetime::StageLoad,
+                serialization_owner: SerializationOwner::StageBank {
+                    stage: "D_MN05".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "gz2e01:dsv-memory/d-mn05".into(),
+                    source_sha256: Some(Digest([0x45; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: key_delta_id.into(),
+                component_kind: ComponentKind::Session,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("pending_delta".into(), StateValue::Signed(0))]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.dcomifgp-item-key-delta".into(),
+                    source_sha256: Some(Digest([0x46; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+
+        let candidate =
+            |id: &str,
+             label: &str,
+             hard_guards: PredicateExpression,
+             effects: Vec<StateOperation>| CandidateTransition {
+                id: id.into(),
+                label: label.into(),
+                scope: scope(&start),
+                transition_kind: TransitionKind::Door,
+                approach_id: "approach.gz2e01-d-mn05-door1-front".into(),
+                activation: ActivationContract {
+                    hard_guards,
+                    physical_obligation_ids: Vec::new(),
+                    effects,
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            };
+        let at_front = || PredicateExpression::All {
+            terms: vec![stage_is("D_MN05"), room_is(1)],
+        };
+        let actor_is = |field: &str, value: StateValue| {
+            compare(actor_field(field), ComparisonOperator::Equal, value)
+        };
+        let dungeon_is = |field: &str, value: StateValue| {
+            compare(dungeon_field(field), ComparisonOperator::Equal, value)
+        };
+
+        let offer_event = candidate(
+            "transition.gz2e01-door1-01-offer-event",
+            "Offer the front-side shutter event",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("adjoining_room_loaded", StateValue::Boolean(true)),
+                    actor_is("approach_permitted", StateValue::Boolean(true)),
+                    actor_is("event_offered", StateValue::Boolean(false)),
+                    PredicateExpression::Any {
+                        terms: vec![
+                            dungeon_is("switch_0b", StateValue::Boolean(true)),
+                            compare(
+                                dungeon_field("small_keys"),
+                                ComparisonOperator::GreaterThan,
+                                StateValue::Unsigned(0),
+                            ),
+                        ],
+                    },
+                ],
+            },
+            vec![StateOperation::Write {
+                target: component_target(actor_id, "event_offered"),
+                value: StateValue::Boolean(true),
+            }],
+        );
+        let unlock_action = candidate(
+            "transition.gz2e01-door1-02-demo-action8",
+            "Run keyed shutter demo action 8",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("event_offered", StateValue::Boolean(true)),
+                    actor_is("front_option", StateValue::Unsigned(2)),
+                    actor_is("locked", StateValue::Boolean(true)),
+                    dungeon_is("switch_0b", StateValue::Boolean(false)),
+                    compare(
+                        dungeon_field("small_keys"),
+                        ComparisonOperator::GreaterThan,
+                        StateValue::Unsigned(0),
+                    ),
+                    compare(
+                        key_delta_field(),
+                        ComparisonOperator::Equal,
+                        StateValue::Signed(0),
+                    ),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: component_target(dungeon_id, "switch_0b"),
+                    value: StateValue::Boolean(true),
+                },
+                StateOperation::Write {
+                    target: component_target(key_delta_id, "pending_delta"),
+                    value: StateValue::Signed(-1),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "keyhole_animation"),
+                    value: StateValue::Text("keyhole-opening".into()),
+                },
+            ],
+        );
+        let finish_keyhole = candidate(
+            "transition.gz2e01-door1-03-finish-keyhole",
+            "Finish the keyhole child animation",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    dungeon_is("switch_0b", StateValue::Boolean(true)),
+                    actor_is("locked", StateValue::Boolean(true)),
+                    actor_is(
+                        "keyhole_animation",
+                        StateValue::Text("keyhole-opening".into()),
+                    ),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: component_target(actor_id, "locked"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "keyhole_animation"),
+                    value: StateValue::Text("open".into()),
+                },
+            ],
+        );
+        let flush_key_delta = candidate(
+            "transition.gz2e01-door1-04-flush-key-delta",
+            "Apply dComIfGp pending key delta to active stage memory",
+            compare(
+                key_delta_field(),
+                ComparisonOperator::Equal,
+                StateValue::Signed(-1),
+            ),
+            vec![
+                StateOperation::Adjust {
+                    target: component_target(dungeon_id, "small_keys"),
+                    delta: -1,
+                },
+                StateOperation::Write {
+                    target: component_target(key_delta_id, "pending_delta"),
+                    value: StateValue::Signed(0),
+                },
+            ],
+        );
+        let open_init = candidate(
+            "transition.gz2e01-door1-05-open-init",
+            "Release shutter collision and select room 2",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("event_offered", StateValue::Boolean(true)),
+                    actor_is("locked", StateValue::Boolean(false)),
+                    actor_is("collision_registered", StateValue::Boolean(true)),
+                    actor_is("door_animation", StateValue::Text("closed".into())),
+                    dungeon_is("switch_0b", StateValue::Boolean(true)),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: component_target(actor_id, "collision_registered"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "door_animation"),
+                    value: StateValue::Text("opening".into()),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "next_room"),
+                    value: StateValue::Unsigned(2),
+                },
+            ],
+        );
+        let open_proc = candidate(
+            "transition.gz2e01-door1-06-open-proc",
+            "Finish the wooden shutter opening animation",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("opening".into())),
+                ],
+            },
+            vec![StateOperation::Write {
+                target: component_target(actor_id, "door_animation"),
+                value: StateValue::Text("open".into()),
+            }],
+        );
+        let cross = candidate(
+            "transition.gz2e01-door1-07-cross-room-adjacency",
+            "Cross the encoded room-1 to room-2 adjacency",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("next_room", StateValue::Unsigned(2)),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("open".into())),
+                ],
+            },
+            vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "D_MN05".into(),
+                    room: 2,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+        );
+        let close_init = candidate(
+            "transition.gz2e01-door1-08-close-init",
+            "Re-register shutter collision after crossing",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("D_MN05"),
+                    room_is(2),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("open".into())),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: component_target(actor_id, "collision_registered"),
+                    value: StateValue::Boolean(true),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "door_animation"),
+                    value: StateValue::Text("closing".into()),
+                },
+            ],
+        );
+        let close_end = candidate(
+            "transition.gz2e01-door1-09-close-end",
+            "Finish closing the unlocked shutter",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("D_MN05"),
+                    room_is(2),
+                    actor_is("collision_registered", StateValue::Boolean(true)),
+                    actor_is("door_animation", StateValue::Text("closing".into())),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: component_target(actor_id, "door_animation"),
+                    value: StateValue::Text("closed".into()),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "keyhole_present"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "keyhole_animation"),
+                    value: StateValue::Text("deleted".into()),
+                },
+                StateOperation::Write {
+                    target: component_target(actor_id, "event_offered"),
+                    value: StateValue::Boolean(false),
+                },
+            ],
+        );
+
+        let mut mechanics = catalog(vec![
+            offer_event,
+            unlock_action,
+            finish_keyhole,
+            flush_key_delta,
+            open_init,
+            open_proc,
+            cross,
+            close_init,
+            close_end,
+        ]);
+        let reconstruct =
+            |id: &str, unlocked: bool, locked: bool, keyhole: bool| ActorReconstructionRule {
+                id: id.into(),
+                label: format!(
+                    "Reconstruct GZ2E01 Forest door 1 as {}",
+                    if unlocked { "unlocked" } else { "locked" }
+                ),
+                scope: scope(&start),
+                actor_type: "door20".into(),
+                instantiate_when: dungeon_is("switch_0b", StateValue::Boolean(unlocked)),
+                initialization_operations: vec![
+                    StateOperation::Write {
+                        target: component_target(actor_id, "locked"),
+                        value: StateValue::Boolean(locked),
+                    },
+                    StateOperation::Write {
+                        target: component_target(actor_id, "keyhole_present"),
+                        value: StateValue::Boolean(keyhole),
+                    },
+                    StateOperation::Write {
+                        target: component_target(actor_id, "collision_registered"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: component_target(actor_id, "door_animation"),
+                        value: StateValue::Text("closed".into()),
+                    },
+                    StateOperation::Write {
+                        target: component_target(actor_id, "keyhole_animation"),
+                        value: StateValue::Text(if keyhole { "closed" } else { "deleted" }.into()),
+                    },
+                ],
+                evidence: evidence(TruthStatus::Established),
+            };
+        mechanics.reconstruction_rules = vec![
+            reconstruct("reconstruct.gz2e01-door1-locked", false, true, true),
+            reconstruct("reconstruct.gz2e01-door1-unlocked", true, false, false),
+        ];
+        mechanics.validate().unwrap();
+
+        let completed_goal = PredicateExpression::All {
+            terms: vec![
+                stage_is("D_MN05"),
+                room_is(2),
+                dungeon_is("switch_0b", StateValue::Boolean(true)),
+                dungeon_is("small_keys", StateValue::Unsigned(0)),
+                actor_is("collision_registered", StateValue::Boolean(true)),
+                actor_is("door_animation", StateValue::Text("closed".into())),
+                actor_is("keyhole_present", StateValue::Boolean(false)),
+            ],
+        };
+        let solved = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(start.clone()).unwrap(),
+                &completed_goal,
+            )
+            .unwrap();
+        assert_eq!(solved.status, SearchStatus::Reached);
+        assert_eq!(solved.steps.len(), 9);
+        assert_eq!(
+            solved
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "transition.gz2e01-door1-01-offer-event",
+                "transition.gz2e01-door1-02-demo-action8",
+                "transition.gz2e01-door1-03-finish-keyhole",
+                "transition.gz2e01-door1-04-flush-key-delta",
+                "transition.gz2e01-door1-05-open-init",
+                "transition.gz2e01-door1-06-open-proc",
+                "transition.gz2e01-door1-07-cross-room-adjacency",
+                "transition.gz2e01-door1-08-close-init",
+                "transition.gz2e01-door1-09-close-end",
+            ])
+        );
+
+        let mut no_key = start.clone();
+        let ComponentPayload::Structured { fields } = &mut no_key
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == dungeon_id)
+            .unwrap()
+            .payload
+        else {
+            unreachable!()
+        };
+        fields.insert("small_keys".into(), StateValue::Unsigned(0));
+        let blocked = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(PlannerExecutionState::new(no_key).unwrap(), &room_is(2))
+            .unwrap();
+        assert_ne!(blocked.status, SearchStatus::Reached);
+        assert!(blocked.steps.is_empty());
+
+        let unlocked_rule = mechanics
+            .reconstruction_rules
+            .iter()
+            .find(|rule| rule.id == "reconstruct.gz2e01-door1-unlocked")
+            .unwrap();
+        let mut reconstructed = start;
+        let ComponentPayload::Structured { fields } = &mut reconstructed
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == dungeon_id)
+            .unwrap()
+            .payload
+        else {
+            unreachable!()
+        };
+        fields.insert("switch_0b".into(), StateValue::Boolean(true));
+        fields.insert("small_keys".into(), StateValue::Unsigned(0));
+        let mut reconstructed = PlannerExecutionState::new(reconstructed).unwrap();
+        reconstructed
+            .apply_operations(
+                &unlocked_rule.id,
+                "snapshot.gz2e01-door1-reloaded",
+                &unlocked_rule.initialization_operations,
+            )
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &reconstructed
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == actor_id)
+            .unwrap()
+            .payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(fields["locked"], StateValue::Boolean(false));
+        assert_eq!(fields["keyhole_present"], StateValue::Boolean(false));
+        assert_eq!(fields["collision_registered"], StateValue::Boolean(true));
+        assert_eq!(fields["door_animation"], StateValue::Text("closed".into()));
+        assert_eq!(
+            fields["keyhole_animation"],
+            StateValue::Text("deleted".into())
+        );
+
+        let reopened = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(reconstructed, &room_is(2))
+            .unwrap();
+        assert_eq!(reopened.status, SearchStatus::Reached);
+        assert!(
+            !reopened
+                .steps
+                .iter()
+                .any(|step| step.action_id == "transition.gz2e01-door1-02-demo-action8")
+        );
+        assert!(
+            !reopened
+                .steps
+                .iter()
+                .any(|step| step.action_id == "transition.gz2e01-door1-04-flush-key-delta")
         );
     }
 

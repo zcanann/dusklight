@@ -2134,14 +2134,19 @@ independent portal, return-place, restart, scene-change, or transfer producer.
 Source-audit checkpoint: `docs/route-planner/lanayru-spirit-vessel-audit.md`
 now decodes the supplied GZ2E01 resources exactly. `F_SP115/R01` layer 13 has
 `Seirei` parameters `0x0000c102` and a colocated type-0 `SwAreaC` writer for
-current-room switch `0x0c`; normal layer selection derives 13 from Lanayru
-twilight plus `M_032` (`0x0880`). Message group 8 flow 21 checks `F_0615`, then
-item `0xa3`, requests presentation through event 1, and on the item-owned
+F_SP115 stage-memory switch `0x0c`; the room argument does not make switch IDs
+below `0x80` room-local. Normal layer selection derives 13 from uncleared
+Lanayru twilight plus `M_032` (`0x0880`). Message group 8 flow 21 checks
+`F_0615`, then item `0xa3`, requests presentation through event 1, and on the item-owned
 follow-up writes `F_0615`, reasserts the Vessel bit, and sets save-switch 105.
 The acceptance fixture preserves each of those steps, rejects a wrong layer in
 established mode, admits an explicit hypothetical layer-13 respawn only in
 research mode, and proves that transferred Vessel and `F_0615` bits affect
 different branches. Other builds still require original-data comparison.
+The audit also records the exact persistent byte/mask coordinates, the
+switch-area creation/outside clearers, the exhaustive committed writer/consumer
+set, and the distinct 16-tear `KYTAG04` -> switch 13 -> point-20 twilight-clear
+sequence.
 
 - [ ] Locate the spirit actor/event flow and every build-specific placement.
 - [x] Identify the raw event bits, temporary bits, room/layer, form, twilight,
@@ -2156,11 +2161,11 @@ different branches. Other builds still require original-data comparison.
 
 #### 11H. Keyed dungeon transition
 
-- [ ] Extract one representative small-key door's encoded destination without
+- [x] Extract one representative small-key door's encoded destination without
       making it immediately executable.
 - [x] Derive the bound dungeon key count from the live per-stage backing store.
 - [x] Model key pickup provenance independently from the fungible count.
-- [ ] Audit and model the door actor's guard, key consumption, persistent unlock
+- [x] Audit and model the door actor's guard, key consumption, persistent unlock
       write, live animation/collision, and reload reconstruction.
 - [x] Verify any key from the same bound dungeon store can satisfy the door.
 - [x] Add a hypothetical key-store preserve/rebind overlay and verify it opens
@@ -2176,6 +2181,13 @@ different branches. Other builds still require original-data comparison.
     hypothetical dungeon-bank rebind enables a different dungeon's door only
     through the changed binding, while the OOB avoidance edge mutates neither
     the count nor unlock state.
+  - The GZ2E01 source audit binds Forest Temple `Door[1]` to the raw
+    `yodoor` placement (`0x6c102201`, switch `0x0b`) and decodes its room-1 to
+    room-2 adjacency without granting traversal. Its acceptance fixture keeps
+    event offer, action-8 switch write, transient key delta, persistent key
+    flush, keyhole completion, collision release, open/cross/close animation,
+    and reload reconstruction separate. See
+    `docs/route-planner/gz2e01-forest-temple-small-key-door-audit.md`.
 
 #### 11I. Auru recent-item grant
 
