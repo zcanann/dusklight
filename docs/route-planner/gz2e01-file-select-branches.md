@@ -19,8 +19,20 @@ The audited source artifacts are:
   `b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761`.
 
 These are exact current source-family artifacts for the GZ2E01 audit. Binary
-function-range extraction remains required before promoting source-only details
-to exact retail-DOL evidence.
+function-range extraction seals the promoted load-normalization and name-entry
+details to the recognized retail DOL. The name-entry artifacts are:
+
+| Function | VA | Size | Code SHA-256 | Artifact SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| `nameInput__14dFile_select_cFv` | `0x801873bc` | `0x13c` | `0388366b478b3a51aa2a7cd4c7825eb7370dec67b14e3b7db98e2c9aad284ba5` | `fd93ea0a72e1008434af10c19cd8f59a430f01bd8a044f5173bd97e78bd6ae0a` |
+| `nameInputFade__14dFile_select_cFv` | `0x8018759c` | `0x104` | `1972401d18a34e1f1d8c6ab180df465df2c17d34a9fc03dbcdda37b1229249d8` | `ecb601568e64364a3adfc779bf737949371a1460c1daca3651ec31ef1631c726` |
+| `nameInput2Move__14dFile_select_cFv` | `0x801876a0` | `0xac` | `a96931c928651f29eea71bf214964abe46f8af5a7a3006581153fef732c614e5` | `9da639084fa4d342c1154c2669aa65eb22c81d3fa52b9281f0ab100c15a86f33` |
+| `nameInput2__14dFile_select_cFv` | `0x8018774c` | `0xd8` | `32fb5e79113d0a52bde235fd8c1fb3c052b66445bc1b7264e8c065d53e5ea87b` | `e7a2a4b3ed67e42938aa0a28f2deaa66edab757618d0bcacdaef3598e627cc13` |
+
+All four artifacts record executable SHA-256
+`e7f197436815e66c4a11df3d7bd557d66083b641ff8a8e76439f3caba7ae60e8`
+and symbol-table SHA-256
+`8b8c98b86b6270543709adbbd489ca4a5cd4fa5c30fd4a410420702fd37a085a`.
 
 ## Storage domains
 
@@ -122,6 +134,40 @@ This branch is mutually exclusive with ordinary blank/existing selection at the
 decision point because it is guarded by the no-save prompt control phase rather
 than the data-select phase.
 
+## Name-entry completion
+
+Player information is a runtime-file-owned `dSv_save_c` component. The planner
+keeps each meaningful NUL-terminated name as bytes, not UTF-8 text: the retail
+setters copy game-encoded data and the model must not reinterpret it. Bytes
+after the terminator in each 17-byte destination array are unprojected because
+`strcpy` does not establish them. The exact GZ2E01/English initializer supplies
+the `Link` and `Epona` byte strings. `initdata_to_card` instead writes an empty
+string to each name in every transient file-select buffer; the no-card branch
+restores that blank projection and then writes both localized defaults before
+input opens.
+
+The successful new-file suffix is now an ordered executable chain:
+
+1. player confirmation copies the observed submitted byte string into live
+   player info and enters the 15-tick fade;
+2. fade completion restores the default horse name and starts the second fade;
+3. horse input becomes available only after its timer reaches zero while reset
+   is clear; and
+4. horse confirmation copies the observed bytes and writes
+   `mIsSelectEnd = true`, represented by `selection_end`.
+
+Horse Back executes both 15-tick return phases before player input becomes
+active again; the confirmed player bytes survive. Player Back is split by
+`mNoFile`: an ordinary blank-slot path moves toward data selection, while a
+no-card path returns to memory-card status checking. Input results, timers, and
+reset state are observed transient control fields. Missing observations leave
+the edge unknown instead of silently finishing the UI.
+
+None of these operations writes a physical slot. In particular,
+`dFile_select_c::nameInput2()` sets `mIsSelectEnd` but never calls `dataSave()`.
+The later memory-to-card normalization and successful platform write remain a
+separate open audit.
+
 ## Transition to play scene
 
 Name-scene control observes `mIsSelectEnd`, closes file select, optionally runs
@@ -157,7 +203,9 @@ branching subset below:
   physical-slot load, and all three initialized buffer entries remain explicit,
   independently inspectable custom stores after entry 0 is copied;
 - `mNewFile`, `mNoFile`, and `mDataNum` follow their actual independent writers;
-  and
+- submitted name bytes enter the runtime-file save projection only on their
+  respective confirmation edges, horse Back preserves the player name, and
+  neither confirmation creates or changes a physical slot; and
 - a generic active-runtime load derives both its fresh lifetime ID and the exact
   selected sealed manifest at execution time rather than embedding ephemeral
   runtime/persistent IDs in authored mechanics.
@@ -175,11 +223,12 @@ hookshot slot rewrites, rebuilds the 24-byte lineup in the audited 23-slot
 priority order, copies saved vibration into live session state, and derives the
 displayed save-stage from the restored return place. The item operation is
 generic and parameterized by slot/item values and lineup order; it does not
-embed GZ2E01 constants in the executor. Name-entry completion and
-successful-save work remain open. Once `selection_end` is independently
-observed, separate new-file and existing-file transitions record the requested
-`PROC_PLAY_SCENE` and pending destination while keeping `PROC_NAME_SCENE` active
-and the retained last world non-traversable.
+embed GZ2E01 constants in the executor. Exact-DOL-sealed confirmation/fade
+transitions and source-audited Back transitions now produce `selection_end`
+from observed input bytes and timer/reset state. Separate new-file and
+existing-file transitions then record the requested `PROC_PLAY_SCENE` and
+pending destination while keeping `PROC_NAME_SCENE` active and the retained
+last world non-traversable.
 
 The existing-slot transition is executable for this audited post-copy prefix:
 its digest-verified sealed image copy, lifetime cut, and all route-relevant

@@ -23,6 +23,13 @@ and symbol table:
 | `init__25dSv_player_return_place_cFv` | `0x80032cc8` | `0x54` | `252007ca2690e54e6a13019527739c4e55dff0f1ac1e7ec6ff8b1d425ed6ab87` | `0eeb93826008824d6810499ce61ec1c8e8065c7a06c8a9576022b76532f75917` |
 | `dComIfGs_setSelectEquipSword__FUc` | `0x8002eec0` | `0xd4` | `b0cdfc30b3f91a906cf4c8066f8eb5ec7055df50de7ade590c5c721ea0732761` | `1d014bd60aa88951beb555a13853be0068f91790989639909bcff8a088decd9e` |
 | `dComIfGs_setSelectEquipShield__FUc` | `0x8002ef94` | `0xac` | `beeb64d1fa6897f83de2674e9053189416486ca4066c39d1efb4e647bf7c7e14` | `7a7920012416bdf116d20be436514da59bf00da2e6cbab28dcc0842e33078a23` |
+| `nameInput__14dFile_select_cFv` | `0x801873bc` | `0x13c` | `0388366b478b3a51aa2a7cd4c7825eb7370dec67b14e3b7db98e2c9aad284ba5` | `fd93ea0a72e1008434af10c19cd8f59a430f01bd8a044f5173bd97e78bd6ae0a` |
+| `nameInputFade__14dFile_select_cFv` | `0x8018759c` | `0x104` | `1972401d18a34e1f1d8c6ab180df465df2c17d34a9fc03dbcdda37b1229249d8` | `ecb601568e64364a3adfc779bf737949371a1460c1daca3651ec31ef1631c726` |
+| `nameInput2Move__14dFile_select_cFv` | `0x801876a0` | `0xac` | `a96931c928651f29eea71bf214964abe46f8af5a7a3006581153fef732c614e5` | `9da639084fa4d342c1154c2669aa65eb22c81d3fa52b9281f0ab100c15a86f33` |
+| `nameInput2__14dFile_select_cFv` | `0x8018774c` | `0xd8` | `32fb5e79113d0a52bde235fd8c1fb3c052b66445bc1b7264e8c065d53e5ea87b` | `e7a2a4b3ed67e42938aa0a28f2deaa66edab757618d0bcacdaef3598e627cc13` |
+
+The retained artifacts use symbol-table SHA-256
+`8b8c98b86b6270543709adbbd489ca4a5cd4fa5c30fd4a410420702fd37a085a`.
 
 The semantic audit uses these source-family snapshots:
 
@@ -156,10 +163,13 @@ touched.
 The initializer preserves `mRestart`, `mTurnRestart`, `mDataNum`, `mNewFile`,
 `mNoFile`, and time controls because `dSv_info_c::init()` does not write them.
 The canonical `restart` and `runtime-file.header` components are therefore
-unchanged. Option-pointer, transform-status, names/configuration, minigame,
-all 32 saved stage banks, the secondary visited-room banks, dungeon working
-memory, and zone-array fields are not all projected by current native snapshots;
-this milestone does not claim those absent fields as modeled defaults.
+unchanged. The player-info projection now includes the exact English
+NUL-terminated default player and horse name byte strings. The unused array
+tails remain unprojected. Option-pointer,
+transform-status, the remaining player-info/configuration fields, minigame, all
+32 saved stage banks, the secondary visited-room banks, dungeon working memory,
+and zone-array fields are not all projected by current native snapshots; this
+milestone does not claim those absent fields as modeled defaults.
 
 The lifetime handoff is attached to phase 4 rather than the earlier reset
 request: requesting `PROC_OPENING_SCENE` does not itself prove that
@@ -217,8 +227,16 @@ exact lineup rebuild, saved-vibration application, and return-place-derived
 display stage now execute as typed operations after the backing projection. See
 `gz2e01-file-select-branches.md`.
 
-After independently observed `selection_end`, the next source-audited actions
-remain process requests rather than world activation. A new file records the
+The new-file name suffix is also executable. Exact DOL artifacts seal player
+confirmation, default-horse setup, fade-to-horse-input, and horse confirmation.
+Observed submitted names remain encoded NUL-terminated bytes in
+runtime-file-owned player info. The two horse Back fade phases return to player
+input without discarding the confirmed player bytes; player Back distinguishes
+ordinary-card and no-card destinations. Horse confirmation is the writer that
+produces `selection_end`; it does not create or mutate a physical save image.
+
+After that `selection_end`, the next source-audited actions remain process
+requests rather than world activation. A new file records the
 fixed pending F_SP108/room 1/spawn 21/layer 13 destination. An existing file
 reads stage, room, and player-status/spawn from its restored return-place
 component with layer -1. Both retain active `PROC_NAME_SCENE`, record the
@@ -231,7 +249,8 @@ all.”
 
 Still open:
 
-- finish name confirmation and successful-save branches;
+- audit save-time `memory_to_card` normalization and the successful physical
+  save branch;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and
 - produce traces that distinguish pending scene requests from completed world

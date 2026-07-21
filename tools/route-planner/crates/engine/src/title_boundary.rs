@@ -31,6 +31,7 @@ const RUNTIME_FILE_HEADER_COMPONENT: &str = "runtime-file.header";
 const PERSISTENT_EVENT_COMPONENT: &str = "flags.persistent-event-registers";
 const OBSERVED_EVENT_COMPONENT: &str = "flags.event";
 const LIGHT_DROP_COMPONENT: &str = "save.player-light-drop";
+const PLAYER_INFO_COMPONENT: &str = "save.player-info";
 const OBSERVED_TEMPORARY_COMPONENT: &str = "flags.temporary";
 const TEMPORARY_EVENT_COMPONENT: &str = "flags.temporary-event-registers";
 const DUNGEON_SESSION_LABEL_COMPONENT: &str = "flags.dungeon-session-labels";
@@ -49,6 +50,8 @@ const ITEM_DOUBLE_CLAWSHOT: u8 = 0x47;
 const ITEM_LINEUP_ORDER: [u8; 23] = [
     10, 8, 6, 2, 9, 4, 3, 0, 1, 23, 20, 5, 15, 16, 17, 11, 12, 13, 14, 19, 18, 22, 21,
 ];
+const DEFAULT_PLAYER_NAME_BYTES: &[u8] = b"Link\0";
+const DEFAULT_HORSE_NAME_BYTES: &[u8] = b"Epona\0";
 
 /// Compiles the exact successful prefix of `dComIfG_resetToOpening` for
 /// GZ2E01. It records the scheduled opening process/load and the restart-room
@@ -603,6 +606,13 @@ pub fn gz2e01_reset_to_opening_mechanics(
                     },
                     StateOperation::Write {
                         target: ComponentFieldTarget {
+                            component_id: PLAYER_INFO_COMPONENT.into(),
+                            field: "player_name_bytes".into(),
+                        },
+                        value: StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
                             component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
                             field: "phase".into(),
                         },
@@ -739,6 +749,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
         INVENTORY_COMPONENT.into(),
         RETURN_PLACE_COMPONENT.into(),
         DUNGEON_SIX_SAVE_COMPONENT.into(),
+        PLAYER_INFO_COMPONENT.into(),
         LIGHT_DROP_COMPONENT.into(),
     ];
     let mut no_card_effects = (1_u8..=3)
@@ -750,6 +761,19 @@ pub fn gz2e01_reset_to_opening_mechanics(
     no_card_effects.push(StateOperation::RestorePayloadsFromCustomStore {
         owner: file_select_buffer_owner(1),
         component_ids: initialized_buffer_component_ids,
+    });
+    no_card_effects.push(StateOperation::WriteFields {
+        component_id: PLAYER_INFO_COMPONENT.into(),
+        fields: BTreeMap::from([
+            (
+                "horse_name_bytes".into(),
+                StateValue::Bytes(DEFAULT_HORSE_NAME_BYTES.to_vec()),
+            ),
+            (
+                "player_name_bytes".into(),
+                StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
+            ),
+        ]),
     });
     no_card_effects.extend(file_select_post_copy_normalization());
     no_card_effects.extend([
@@ -809,6 +833,349 @@ pub fn gz2e01_reset_to_opening_mechanics(
         },
         evidence: file_select_branch_evidence.clone(),
     });
+    let name_confirmation_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: "source.gz2e01.file-select-name-confirmation".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "aee1cb134ec92953fd04dc321f4dae5f5c98ed1d2e766d1306a70d932294eb0d",
+                )),
+                note: "Source audit establishes both name confirmations, default horse setup, both Back paths, and final mIsSelectEnd. These mutate live dSv_save_c player-info; no physical save API is called.".into(),
+            },
+            exact_function_evidence(
+                "binary.gz2e01.file-select-name-input",
+                "fd93ea0a72e1008434af10c19cd8f59a430f01bd8a044f5173bd97e78bd6ae0a",
+                "nameInput__14dFile_select_cFv at VA 0x801873bc, size 0x13c, code SHA-256 0388366b478b3a51aa2a7cd4c7825eb7370dec67b14e3b7db98e2c9aad284ba5.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.file-select-name-input-fade",
+                "ecb601568e64364a3adfc779bf737949371a1460c1daca3651ec31ef1631c726",
+                "nameInputFade__14dFile_select_cFv at VA 0x8018759c, size 0x104, code SHA-256 1972401d18a34e1f1d8c6ab180df465df2c17d34a9fc03dbcdda37b1229249d8.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.file-select-name-input-2-move",
+                "9da639084fa4d342c1154c2669aa65eb22c81d3fa52b9281f0ab100c15a86f33",
+                "nameInput2Move__14dFile_select_cFv at VA 0x801876a0, size 0xac, code SHA-256 a96931c928651f29eea71bf214964abe46f8af5a7a3006581153fef732c614e5.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.file-select-name-input-2",
+                "e7a2a4b3ed67e42938aa0a28f2deaa66edab757618d0bcacdaef3598e627cc13",
+                "nameInput2__14dFile_select_cFv at VA 0x8018774c, size 0xd8, code SHA-256 32fb5e79113d0a52bde235fd8c1fb3c052b66445bc1b7264e8c065d53e5ea87b.",
+            ),
+        ],
+    };
+    let runtime_header_field = |field: &str| ValueReference::ComponentField {
+        component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+        field: field.into(),
+    };
+    file_select_branch_transitions.extend([
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-confirm".into(),
+            label: "Confirm the new file's player name".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.player.confirm".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(name_field("phase"), StateValue::Text("name_entry".into())),
+                        pending_compare(name_field("input_result_raw"), StateValue::Unsigned(2)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::CopyValue {
+                        source: ComponentFieldTarget {
+                            component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                            field: "submitted_name_bytes".into(),
+                        },
+                        target: ComponentFieldTarget {
+                            component_id: PLAYER_INFO_COMPONENT.into(),
+                            field: "player_name_bytes".into(),
+                        },
+                    },
+                    StateOperation::WriteFields {
+                        component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                        fields: BTreeMap::from([
+                            ("fade_timer_raw".into(), StateValue::Unsigned(15)),
+                            ("phase".into(), StateValue::Text("player_name_fade".into())),
+                        ]),
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-cancel-to-data-select".into(),
+            label: "Back out of player-name entry to file selection".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.player.back.card".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(name_field("phase"), StateValue::Text("name_entry".into())),
+                        pending_compare(name_field("input_result_raw"), StateValue::Unsigned(1)),
+                        pending_compare(
+                            runtime_header_field("no_file_raw"),
+                            StateValue::Unsigned(0),
+                        ),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                        field: "phase".into(),
+                    },
+                    value: StateValue::Text("name_to_data_select_move".into()),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-cancel-to-card-check".into(),
+            label: "Back out of no-card player-name entry".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.player.back.no-card".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(name_field("phase"), StateValue::Text("name_entry".into())),
+                        pending_compare(name_field("input_result_raw"), StateValue::Unsigned(1)),
+                        pending_compare(
+                            runtime_header_field("no_file_raw"),
+                            StateValue::Unsigned(1),
+                        ),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        (
+                            "card_check_phase".into(),
+                            StateValue::Text("stat_check".into()),
+                        ),
+                        ("phase".into(), StateValue::Text("memcard_check".into())),
+                    ]),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-fade-complete".into(),
+            label: "Initialize the default horse name after player-name fade".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.horse.initialize".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("player_name_fade".into()),
+                        ),
+                        pending_compare(name_field("fade_timer_raw"), StateValue::Unsigned(0)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: PLAYER_INFO_COMPONENT.into(),
+                            field: "horse_name_bytes".into(),
+                        },
+                        value: StateValue::Bytes(DEFAULT_HORSE_NAME_BYTES.to_vec()),
+                    },
+                    StateOperation::WriteFields {
+                        component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                        fields: BTreeMap::from([
+                            ("fade_timer_raw".into(), StateValue::Unsigned(15)),
+                            ("phase".into(), StateValue::Text("horse_name_move".into())),
+                        ]),
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-horse-name-entry-ready".into(),
+            label: "Finish the fade into horse-name entry".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.horse.ready".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("horse_name_move".into()),
+                        ),
+                        pending_compare(name_field("fade_timer_raw"), StateValue::Unsigned(0)),
+                        pending_compare(name_field("reset_requested"), StateValue::Boolean(false)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                        field: "phase".into(),
+                    },
+                    value: StateValue::Text("horse_name_entry".into()),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-horse-name-confirm".into(),
+            label: "Confirm the horse name and end file selection".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.horse.confirm".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("horse_name_entry".into()),
+                        ),
+                        pending_compare(name_field("input_result_raw"), StateValue::Unsigned(2)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::CopyValue {
+                        source: ComponentFieldTarget {
+                            component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                            field: "submitted_name_bytes".into(),
+                        },
+                        target: ComponentFieldTarget {
+                            component_id: PLAYER_INFO_COMPONENT.into(),
+                            field: "horse_name_bytes".into(),
+                        },
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                            field: "phase".into(),
+                        },
+                        value: StateValue::Text("selection_end".into()),
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-horse-name-back".into(),
+            label: "Back from horse-name entry toward player-name entry".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.horse.back".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("horse_name_entry".into()),
+                        ),
+                        pending_compare(name_field("input_result_raw"), StateValue::Unsigned(1)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        ("fade_timer_raw".into(), StateValue::Unsigned(15)),
+                        (
+                            "phase".into(),
+                            StateValue::Text("player_name_back_fade".into()),
+                        ),
+                    ]),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-back-fade-complete".into(),
+            label: "Finish the fade back to player-name movement".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.player.back-fade".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("player_name_back_fade".into()),
+                        ),
+                        pending_compare(name_field("fade_timer_raw"), StateValue::Unsigned(0)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        ("fade_timer_raw".into(), StateValue::Unsigned(15)),
+                        (
+                            "phase".into(),
+                            StateValue::Text("player_name_back_move".into()),
+                        ),
+                    ]),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence.clone(),
+        },
+        CandidateTransition {
+            id: "transition.gz2e01.file-select-player-name-back-ready".into(),
+            label: "Return from horse-name entry to player-name entry".into(),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: "file-select.name-entry.player.back-ready".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("player_name_back_move".into()),
+                        ),
+                        pending_compare(name_field("fade_timer_raw"), StateValue::Unsigned(0)),
+                        pending_compare(name_field("reset_requested"), StateValue::Boolean(false)),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                        field: "phase".into(),
+                    },
+                    value: StateValue::Text("name_entry".into()),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: name_confirmation_evidence,
+        },
+    ]);
     let play_scene_request_evidence = RuleEvidence {
         truth: TruthStatus::Established,
         records: vec![
@@ -1027,6 +1394,21 @@ fn dcomifgs_init_effects() -> Vec<StateOperation> {
             },
         },
         StateOperation::ReplacePayload {
+            component_id: PLAYER_INFO_COMPONENT.into(),
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    (
+                        "horse_name_bytes".into(),
+                        StateValue::Bytes(DEFAULT_HORSE_NAME_BYTES.to_vec()),
+                    ),
+                    (
+                        "player_name_bytes".into(),
+                        StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
+                    ),
+                ]),
+            },
+        },
+        StateOperation::ReplacePayload {
             component_id: OBSERVED_TEMPORARY_COMPONENT.into(),
             payload: ComponentPayload::Unknown {
                 expected_bytes: None,
@@ -1212,6 +1594,18 @@ fn initialized_file_select_buffer(slot: u8) -> Vec<StateComponent> {
             },
         ),
         component(
+            PLAYER_INFO_COMPONENT,
+            ComponentKind::Custom {
+                id: "player-info".into(),
+            },
+            ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    ("horse_name_bytes".into(), StateValue::Bytes(vec![0])),
+                    ("player_name_bytes".into(), StateValue::Bytes(vec![0])),
+                ]),
+            },
+        ),
+        component(
             LIGHT_DROP_COMPONENT,
             ComponentKind::Custom {
                 id: "player-light-drop".into(),
@@ -1386,6 +1780,25 @@ mod tests {
         };
         fields.insert("life".into(), StateValue::Unsigned(80));
         component
+    }
+
+    fn player_info_component() -> StateComponent {
+        component(
+            PLAYER_INFO_COMPONENT,
+            ComponentKind::Custom {
+                id: "player-info".into(),
+            },
+            [
+                (
+                    "horse_name_bytes",
+                    StateValue::Bytes(DEFAULT_HORSE_NAME_BYTES.to_vec()),
+                ),
+                (
+                    "player_name_bytes",
+                    StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
+                ),
+            ],
+        )
     }
 
     fn session_value_component(
@@ -1635,6 +2048,7 @@ mod tests {
                         ],
                     ),
                     saved_dungeon_six_component(),
+                    player_info_component(),
                     raw_component(
                         LIGHT_DROP_COMPONENT,
                         ComponentKind::Custom {
@@ -2355,6 +2769,19 @@ mod tests {
                 fields.insert("inventory".into(), StateValue::Bytes(items));
                 fields.insert("item_lineup".into(), StateValue::Bytes(vec![23; 24]));
                 fields.insert("vibration".into(), StateValue::Unsigned(1));
+                let player_info = before
+                    .environment
+                    .components
+                    .iter_mut()
+                    .find(|component| component.id == PLAYER_INFO_COMPONENT)
+                    .unwrap();
+                let ComponentPayload::Structured { fields } = &mut player_info.payload else {
+                    unreachable!()
+                };
+                fields.insert(
+                    "player_name_bytes".into(),
+                    StateValue::Bytes(b"SlotOne\0".to_vec()),
+                );
                 let dungeon_six = before
                     .environment
                     .components
@@ -2381,6 +2808,7 @@ mod tests {
                                 INVENTORY_COMPONENT.into(),
                                 RETURN_PLACE_COMPONENT.into(),
                                 DUNGEON_SIX_SAVE_COMPONENT.into(),
+                                PLAYER_INFO_COMPONENT.into(),
                                 LIGHT_DROP_COMPONENT.into(),
                             ],
                             stage_bank_stages: Vec::new(),
@@ -2470,11 +2898,220 @@ mod tests {
             fields_for(&blank, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
             StateValue::Unsigned(1)
         );
+        assert_eq!(
+            fields_for(&blank, PLAYER_INFO_COMPONENT)["player_name_bytes"],
+            StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec())
+        );
+        let player_name = StateValue::Bytes(b"Midna\0".to_vec());
         set_structured_field(
             &mut blank,
             NAME_SCENE_CONTROL_COMPONENT,
-            "phase",
-            StateValue::Text("selection_end".into()),
+            "submitted_name_bytes",
+            player_name.clone(),
+        );
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "input_result_raw",
+            StateValue::Unsigned(2),
+        );
+        assert_eq!(
+            classify(&blank, "transition.gz2e01.file-select-player-name-confirm"),
+            TransitionClassification::Executable
+        );
+        assert_eq!(
+            classify(
+                &blank,
+                "transition.gz2e01.file-select-player-name-cancel-to-data-select"
+            ),
+            TransitionClassification::GuardBlocked
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-confirm",
+                "snapshot.player-name-confirmed",
+                &transition("transition.gz2e01.file-select-player-name-confirm")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&blank, PLAYER_INFO_COMPONENT)["player_name_bytes"],
+            player_name
+        );
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-fade-complete",
+                "snapshot.horse-name-initialized",
+                &transition("transition.gz2e01.file-select-player-name-fade-complete")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&blank, PLAYER_INFO_COMPONENT)["horse_name_bytes"],
+            StateValue::Bytes(DEFAULT_HORSE_NAME_BYTES.to_vec())
+        );
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "reset_requested",
+            StateValue::Boolean(false),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-horse-name-entry-ready",
+                "snapshot.horse-name-ready",
+                &transition("transition.gz2e01.file-select-horse-name-entry-ready")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+
+        // Exercise the exact horse-name Back chain before confirming. It must
+        // return to player-name input without undoing the confirmed player name.
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "input_result_raw",
+            StateValue::Unsigned(1),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-horse-name-back",
+                "snapshot.horse-name-backed-out",
+                &transition("transition.gz2e01.file-select-horse-name-back")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-back-fade-complete",
+                "snapshot.player-name-back-moving",
+                &transition("transition.gz2e01.file-select-player-name-back-fade-complete")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-back-ready",
+                "snapshot.player-name-ready-again",
+                &transition("transition.gz2e01.file-select-player-name-back-ready")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&blank, PLAYER_INFO_COMPONENT)["player_name_bytes"],
+            player_name
+        );
+
+        // Reconfirm the player name, finish the two fades, and confirm the
+        // horse name. This is the real path to selection_end.
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "input_result_raw",
+            StateValue::Unsigned(2),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-confirm",
+                "snapshot.player-name-reconfirmed",
+                &transition("transition.gz2e01.file-select-player-name-confirm")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-player-name-fade-complete",
+                "snapshot.horse-name-reinitialized",
+                &transition("transition.gz2e01.file-select-player-name-fade-complete")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "fade_timer_raw",
+            StateValue::Unsigned(0),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-horse-name-entry-ready",
+                "snapshot.horse-name-ready-again",
+                &transition("transition.gz2e01.file-select-horse-name-entry-ready")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        let horse_name = StateValue::Bytes(b"Epona!\0".to_vec());
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "submitted_name_bytes",
+            horse_name.clone(),
+        );
+        set_structured_field(
+            &mut blank,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "input_result_raw",
+            StateValue::Unsigned(2),
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-horse-name-confirm",
+                "snapshot.name-entry-complete",
+                &transition("transition.gz2e01.file-select-horse-name-confirm")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&blank, PLAYER_INFO_COMPONENT)["horse_name_bytes"],
+            horse_name
+        );
+        assert_eq!(
+            fields_for(&blank, NAME_SCENE_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("selection_end".into())
+        );
+        assert!(
+            blank.snapshot.environment.physical_slots.is_empty(),
+            "name confirmation must not fabricate the later successful save"
         );
         let retained_world_location = blank.snapshot.environment.location.clone();
         assert_eq!(
@@ -2586,6 +3223,26 @@ mod tests {
         assert_eq!(
             fields_for(&no_card, SAVE_STAGE_DISPLAY_COMPONENT)["stage"],
             StateValue::Text("F_SP108".into())
+        );
+        set_structured_field(
+            &mut no_card,
+            NAME_SCENE_CONTROL_COMPONENT,
+            "input_result_raw",
+            StateValue::Unsigned(1),
+        );
+        assert_eq!(
+            classify(
+                &no_card,
+                "transition.gz2e01.file-select-player-name-cancel-to-card-check"
+            ),
+            TransitionClassification::Executable
+        );
+        assert_eq!(
+            classify(
+                &no_card,
+                "transition.gz2e01.file-select-player-name-cancel-to-data-select"
+            ),
+            TransitionClassification::GuardBlocked
         );
         assert_eq!(
             no_card
@@ -2738,6 +3395,11 @@ mod tests {
         assert_eq!(
             fields_for(&existing, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
             StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields_for(&existing, PLAYER_INFO_COMPONENT)["player_name_bytes"],
+            StateValue::Bytes(b"SlotOne\0".to_vec()),
+            "player info must come from the selected sealed save projection"
         );
         assert_eq!(
             fields_for(&existing, NAME_SCENE_CONTROL_COMPONENT)["phase"],

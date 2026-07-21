@@ -47,10 +47,12 @@ The planner CLI currently owns thirty-nine operations:
   operations execute the conditional 12-life minimum, dungeon-6 key reset,
   hookshot migration, and exact lineup rebuild. Saved vibration and return-place
   stage are copied into their session consumers, closing the existing-slot
-  post-copy normalization edge. Once
-  selection completion is independently observed, new/existing play-scene
-  actions retain `PROC_NAME_SCENE` and record only the fixed or return-place-
-  derived pending world load and requested `PROC_PLAY_SCENE`.
+  post-copy normalization edge. Exact-DOL confirmation/fade evidence and
+  source-audited Back transitions copy observed encoded player/horse byte
+  strings into runtime-file player info and make horse confirmation the actual
+  `selection_end` writer without touching a physical slot. New/existing
+  play-scene actions then retain `PROC_NAME_SCENE` and record only the fixed or
+  return-place-derived pending world load and requested `PROC_PLAY_SCENE`.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.
