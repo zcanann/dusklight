@@ -2382,8 +2382,11 @@ sequence.
 - [x] Identify all writers and consumers of the Vessel and tear-count state.
 - [x] Test whether alternate entrances, wrong layers, wrong-state respawns, or
       component transfers can satisfy or bypass individual prerequisites.
-- [ ] Produce both a friendly explanation and the exact raw predicate for each
-      supported build, with unknown conditions called out explicitly.
+- [x] Produce both a friendly explanation and the exact raw predicate for each
+      supported build, with unknown conditions called out explicitly. GZ2E01 is
+      currently the sole registered supported identity; the audit now separates
+      load, visibility, interaction, offer, grant, and follow-up predicates and
+      labels shared attention/presentation execution as unresolved obligations.
 
 #### 11H. Keyed dungeon transition
 

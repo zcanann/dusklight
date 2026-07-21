@@ -5,6 +5,49 @@ unverified. Actor placement, spatial switch writer, layer selection, message
 flow, item presentation, persistent Vessel backing, and post-grant story writes
 are separate predicates and transitions.
 
+## Preconditions at a glance
+
+For the only currently registered supported build, GZ2E01 with runtime language
+`en`, “the Lanayru spirit gives the Vessel” is not one predicate:
+
+1. **Load the actor:** be in `F_SP115`, room 1, selected layer 13, with exact
+   layer-13 `ACTd[0] Seirei` (`parameters = 0x0000c102`) and successful
+   `Seirei1` resource creation. Normal layer selection requires Lanayru twilight
+   uncleared and `M_032` set, but an explicitly forced layer 13 is an alternate
+   producer of the same selected-layer state.
+2. **Make the particle speak-eligible:** exact `SCOd[0] SwAreaC` must be live,
+   Link must be inside its decoded cylinder, and F_SP115 stage-memory switch
+   `0x0c` must therefore be on. The spirit reads that switch; it does not infer
+   the cylinder directly.
+3. **Start the interaction:** the live spirit must win the normal attention,
+   distance, facing, input, player-control, and event-owner checks. Those shared
+   engine checks remain an explicit interaction obligation rather than a fact
+   inferred from actor placement.
+4. **Take the first flow-21 branch:** persistent `F_0615` must be clear and the
+   Lanayru Vessel ownership bit must be clear. The dialogue then requests event
+   1/item `0xa3`; this request does not itself grant the item.
+5. **Complete presentation:** the presentation item actor must reach the shared
+   generic get-item consumer, which sets the Vessel backing. Its execution is a
+   separate actor-state obligation.
+6. **Complete the follow-up:** after the actor reorders the speak event, flow 21
+   sees the Vessel bit set, writes `F_0615`, idempotently reasserts the Vessel,
+   and sets F_SP115 save-switch 105.
+
+The exact backing predicates used by those steps are:
+
+| Friendly predicate | Exact GZ2E01 backing |
+| --- | --- |
+| Lanayru twilight uncleared | player-status-B byte `0x31`, mask `0x04`, clear |
+| `M_032` set | persistent event byte `0x08`, mask `0x80`, set |
+| Spirit activation switch | F_SP115 stage-memory component byte `0x0a`, mask `0x10`, set |
+| `F_0615` clear | persistent event byte `0x4b`, mask `0x04`, clear |
+| Vessel not owned | player-light-drop component byte `0x04` (player-info absolute offset `0x118`), mask `0x04`, clear |
+| Follow-up save-switch 105 | F_SP115 stage-memory component byte `0x16`, mask `0x02`, set after follow-up |
+
+There is no normal human/wolf, mount, temporary-bit, or tear-count prerequisite
+for the initial Vessel offer. Tear count and twilight clearing belong to the
+later 16-tear completion controller.
+
 ## Exact GZ2E01 placement and layer
 
 `orig/GZ2E01/files/res/Stage/F_SP115/R01_00.arc` has SHA-256
