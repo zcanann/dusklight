@@ -7,6 +7,7 @@
 #include "dusk/automation/suffix_batch.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -38,6 +39,14 @@ public:
         std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error);
     /** After tape injection and immediately before PADRead. */
     void applyCandidateInput();
+    /** Exact exclusive game/audio simulation interval after PADRead. */
+    void beginSimulationProfile();
+    /** CPU traversal of gameplay draw callbacks inside fpcM_Management. */
+    void beginCpuDrawTraversalProfile();
+    void endCpuDrawTraversalProfile();
+    /** CPU-side GX painter/submission work inside fpcM_Management. */
+    void beginCpuRendererSubmissionProfile();
+    void endCpuRendererSubmissionProfile();
     /** Exact PADRead output before JUTGamePad clamps it. */
     void recordConsumedPads(std::span<const PADStatus, kInputPortCount> statuses);
     /** After game simulation and deterministic clock advancement. */
@@ -117,7 +126,39 @@ private:
         std::string& error);
     bool finishCandidate(
         const MilestoneObservation& observation, bool success, std::string& error);
+    void resetBatchProfile(bool sourceCheckpointReused);
+    void finishSimulationProfile();
+    void finishBatchProfile();
     void fail(std::string message);
+
+    using ProfileClock = std::chrono::steady_clock;
+
+    struct BatchProfile {
+        ProfileClock::time_point batchStart{};
+        ProfileClock::time_point simulationStart{};
+        ProfileClock::time_point cpuDrawStart{};
+        ProfileClock::time_point cpuRendererStart{};
+        std::uint64_t batchWallMicros = 0;
+        std::uint64_t policyApplicationNanos = 0;
+        std::uint64_t simulationMicros = 0;
+        std::uint64_t observationCaptureMicros = 0;
+        std::uint64_t stateValidationMicros = 0;
+        std::uint64_t corpusEncodingMicros = 0;
+        std::uint64_t cpuDrawTraversalMicros = 0;
+        std::uint64_t cpuRendererSubmissionMicros = 0;
+        std::uint64_t policyApplicationSamples = 0;
+        std::uint64_t simulationSamples = 0;
+        std::uint64_t observationCaptureSamples = 0;
+        std::uint64_t stateValidationSamples = 0;
+        std::uint64_t cpuDrawTraversalSamples = 0;
+        std::uint64_t cpuRendererSubmissionSamples = 0;
+        bool active = false;
+        bool complete = false;
+        bool sourceCheckpointReused = false;
+        bool simulationActive = false;
+        bool cpuDrawActive = false;
+        bool cpuRendererActive = false;
+    };
 
     bool mEnabled = false;
     bool mCompleted = false;
@@ -153,6 +194,7 @@ private:
     std::uint64_t mCaptureMicros = 0;
     std::string mActualSourceBoundaryFingerprint;
     std::vector<std::uint64_t> mRestoreMicros;
+    BatchProfile mProfile;
     std::string mError;
 };
 

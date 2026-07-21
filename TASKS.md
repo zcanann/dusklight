@@ -562,14 +562,30 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   along arbitrary recorded trajectories remain open.
 - [ ] Profile checkpoint restore, simulation, observation capture, policy
   inference, corpus encoding, GPU work and CPU draw traversal independently.
+  - [x] Publish engine-resident suffix timing v1 with explicit accounting
+    boundaries for source capture/reuse, checkpoint restore, raw action
+    application, exclusive post-PAD simulation, observation capture, state
+    validation, episode encoding/compression, CPU draw traversal and CPU-side
+    renderer submission. Policy inference is marked `not_present`, and GPU time
+    is marked `unavailable` because Aurora exposes no authenticated timestamp
+    queries; neither is fabricated as zero. A live same-PID two-batch proof
+    measured exactly 250 policy, simulation, draw and renderer samples plus 500
+    observation boundaries per batch. The second batch reported checkpoint
+    `reused`; both retained identical candidate payloads, restore identity and
+    episode SHA-256 `25eb7105...ba2a98`. Real policy-inference and GPU timestamp
+    instrumentation remain before the parent item can close.
 - [ ] Implement a true no-present render sink: no visible window, presentation,
   shader compilation, or GPU submission during farming while retaining any
   CPU-side work still required for equivalent gameplay.
 - [ ] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
   identical future gameplay across representative movement, actor, event and
   loading states. A mismatch blocks the optimization.
-- [ ] Run fixed logical ticks uncapped; never alter the simulated framerate to
-  increase throughput.
+- [x] Run fixed logical ticks uncapped; never alter the simulated framerate to
+  increase throughput. Headless mode selects the unpaced host loop while
+  enabling one deterministic 30 Hz simulation tick per admitted outer-loop
+  iteration. The same-PID profile proof completed two 250-tick batches with
+  identical candidate evidence and episode bytes; host pacing changed neither
+  consumed inputs nor realized gameplay.
 - [ ] Scale persistent workers only after measuring the single-worker loop.
   Choose process count with checkpoint memory bandwidth and crash isolation in
   mind rather than an arbitrary client limit.

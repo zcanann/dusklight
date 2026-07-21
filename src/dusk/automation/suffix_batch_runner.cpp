@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <numeric>
 #include <system_error>
 #include <utility>
 
@@ -20,6 +21,40 @@
 
 namespace dusk::automation {
 namespace {
+
+using ProfileClock = std::chrono::steady_clock;
+
+std::uint64_t elapsed_micros(const ProfileClock::time_point start) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+        ProfileClock::now() - start).count();
+    return elapsed < 0 ? 0 : static_cast<std::uint64_t>(elapsed);
+}
+
+std::uint64_t elapsed_nanos(const ProfileClock::time_point start) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        ProfileClock::now() - start).count();
+    return elapsed < 0 ? 0 : static_cast<std::uint64_t>(elapsed);
+}
+
+class AccumulateMicros {
+public:
+    explicit AccumulateMicros(std::uint64_t& destination) : mDestination(destination) {}
+    ~AccumulateMicros() { mDestination += elapsed_micros(mStart); }
+
+private:
+    std::uint64_t& mDestination;
+    ProfileClock::time_point mStart = ProfileClock::now();
+};
+
+class AccumulateNanos {
+public:
+    explicit AccumulateNanos(std::uint64_t& destination) : mDestination(destination) {}
+    ~AccumulateNanos() { mDestination += elapsed_nanos(mStart); }
+
+private:
+    std::uint64_t& mDestination;
+    ProfileClock::time_point mStart = ProfileClock::now();
+};
 
 constexpr std::uint64_t LearningTraceChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::Stage) |
@@ -161,6 +196,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mRestoreMicros.reserve(mDefinition.candidates.size());
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
+    resetBatchProfile(true);
     mError.clear();
     mCompleted = false;
     mArtifactsWritten = false;
@@ -179,6 +215,7 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         error = "suffix batch capture requires synchronous simulation-thread I/O";
         return false;
     }
+    resetBatchProfile(false);
     const MilestoneObservation sourceObservation =
         capture_milestone_observation(mSourceMilestoneStorage);
     mActualSourceBoundaryFingerprint = compute_milestone_boundary_fingerprint(
@@ -373,31 +410,41 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         error = "learning episode pre-input boundary was captured twice or out of range";
         return false;
     }
-    if (mCandidateTick == 0)
+    if (mCandidateTick == 0) {
+        AccumulateMicros encoding(mProfile.corpusEncodingMicros);
         begin_learning_episode(mCurrentEpisode);
-    const MilestoneObservation observation =
-        capture_milestone_observation(mEpisodeMilestoneStorage);
-    const ControllerObservation controller =
-        capture_controller_observation(mEpisodeControllerStorage);
-    const GameplayCollisionCorrectionObservation collision =
-        capture_gameplay_collision_correction();
-    GameplayTraceSample gameplayTrace;
-    if (!capture_gameplay_trace_sample(
-            {
-                .boundaryIndex = simulationTick,
-                .simulationTick = simulationTick,
-                .tapeFrame = static_cast<std::uint64_t>(
-                    mDefinition.sourceFrame + mCandidateTick),
-                .phase = GameplayTracePhase::PreInput,
-            },
-            LearningTraceChannels, gameplayTrace))
-    {
-        error = "native learning mechanics observation is unavailable";
-        return false;
     }
-    const GameplayCollisionPlanesObservation collisionPlanes =
-        capture_gameplay_collision_planes();
-    const GameplayPlayerFormObservation playerForm = capture_gameplay_player_form();
+    MilestoneObservation observation;
+    ControllerObservation controller;
+    GameplayCollisionCorrectionObservation collision;
+    GameplayTraceSample gameplayTrace;
+    {
+        AccumulateMicros capture(mProfile.observationCaptureMicros);
+        ++mProfile.observationCaptureSamples;
+        observation = capture_milestone_observation(mEpisodeMilestoneStorage);
+        controller = capture_controller_observation(mEpisodeControllerStorage);
+        collision = capture_gameplay_collision_correction();
+        if (!capture_gameplay_trace_sample(
+                {
+                    .boundaryIndex = simulationTick,
+                    .simulationTick = simulationTick,
+                    .tapeFrame = static_cast<std::uint64_t>(
+                        mDefinition.sourceFrame + mCandidateTick),
+                    .phase = GameplayTracePhase::PreInput,
+                },
+                LearningTraceChannels, gameplayTrace))
+        {
+            error = "native learning mechanics observation is unavailable";
+            return false;
+        }
+    }
+    GameplayCollisionPlanesObservation collisionPlanes;
+    GameplayPlayerFormObservation playerForm;
+    {
+        AccumulateMicros capture(mProfile.observationCaptureMicros);
+        collisionPlanes = capture_gameplay_collision_planes();
+        playerForm = capture_gameplay_player_form();
+    }
     RawPadState previousInput{};
     if (mCandidateTick != 0) {
         previousInput = mConsumedPads.back();
@@ -424,8 +471,11 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .playerForm = playerForm,
         .goal = summarize_learning_goal(mGoalTracker),
     };
-    if (!append_learning_observation(mCurrentEpisode, observation, context, error))
-        return false;
+    {
+        AccumulateMicros encoding(mProfile.corpusEncodingMicros);
+        if (!append_learning_observation(mCurrentEpisode, observation, context, error))
+            return false;
+    }
     mEpisodePreInputCaptured = true;
     return true;
 }
@@ -465,10 +515,73 @@ void SuffixBatchRunner::applyCandidateInput() {
         mCandidateIndex >= mDefinition.candidates.size() ||
         mCandidateTick >= mDefinition.maximumTicks)
         return;
+    AccumulateNanos policy(mProfile.policyApplicationNanos);
+    ++mProfile.policyApplicationSamples;
     if (mDefinition.candidates[mCandidateIndex].tapePassthrough) return;
     const PADStatus status = raw_pad_state_to_pad_status(
         mDefinition.candidates[mCandidateIndex].pads[mCandidateTick]);
     PADSetAutomationStatus(0, &status);
+}
+
+void SuffixBatchRunner::beginSimulationProfile() {
+    if (!mProfile.active || mProfile.complete || mProfile.simulationActive ||
+        mPhase != Phase::Candidate)
+        return;
+    mProfile.simulationStart = ProfileClock::now();
+    mProfile.simulationActive = true;
+}
+
+void SuffixBatchRunner::finishSimulationProfile() {
+    if (!mProfile.simulationActive) return;
+    mProfile.simulationMicros += elapsed_micros(mProfile.simulationStart);
+    ++mProfile.simulationSamples;
+    mProfile.simulationActive = false;
+}
+
+void SuffixBatchRunner::beginCpuDrawTraversalProfile() {
+    if (!mProfile.active || mProfile.complete || mProfile.cpuDrawActive ||
+        mPhase != Phase::Candidate)
+        return;
+    mProfile.cpuDrawStart = ProfileClock::now();
+    mProfile.cpuDrawActive = true;
+}
+
+void SuffixBatchRunner::endCpuDrawTraversalProfile() {
+    if (!mProfile.cpuDrawActive) return;
+    mProfile.cpuDrawTraversalMicros += elapsed_micros(mProfile.cpuDrawStart);
+    ++mProfile.cpuDrawTraversalSamples;
+    mProfile.cpuDrawActive = false;
+}
+
+void SuffixBatchRunner::beginCpuRendererSubmissionProfile() {
+    if (!mProfile.active || mProfile.complete || mProfile.cpuRendererActive ||
+        mPhase != Phase::Candidate)
+        return;
+    mProfile.cpuRendererStart = ProfileClock::now();
+    mProfile.cpuRendererActive = true;
+}
+
+void SuffixBatchRunner::endCpuRendererSubmissionProfile() {
+    if (!mProfile.cpuRendererActive) return;
+    mProfile.cpuRendererSubmissionMicros += elapsed_micros(mProfile.cpuRendererStart);
+    ++mProfile.cpuRendererSubmissionSamples;
+    mProfile.cpuRendererActive = false;
+}
+
+void SuffixBatchRunner::resetBatchProfile(const bool sourceCheckpointReused) {
+    mProfile = {};
+    mProfile.batchStart = ProfileClock::now();
+    mProfile.active = true;
+    mProfile.sourceCheckpointReused = sourceCheckpointReused;
+}
+
+void SuffixBatchRunner::finishBatchProfile() {
+    finishSimulationProfile();
+    endCpuDrawTraversalProfile();
+    endCpuRendererSubmissionProfile();
+    if (!mProfile.active || mProfile.complete) return;
+    mProfile.batchWallMicros = elapsed_micros(mProfile.batchStart);
+    mProfile.complete = true;
 }
 
 void SuffixBatchRunner::recordConsumedPads(
@@ -488,28 +601,38 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         error = "learning episode post-simulation boundary lacks its pre-input action";
         return false;
     }
-    append_learning_action(mCurrentEpisode, chosenPad, mConsumedPads.back());
-    const ControllerObservation controller =
-        capture_controller_observation(mEpisodeControllerStorage);
-    const GameplayCollisionCorrectionObservation collision =
-        capture_gameplay_collision_correction();
-    GameplayTraceSample gameplayTrace;
-    if (!capture_gameplay_trace_sample(
-            {
-                .boundaryIndex = simulationTick + 1,
-                .simulationTick = simulationTick,
-                .tapeFrame = static_cast<std::uint64_t>(
-                    mDefinition.sourceFrame + mCandidateTick),
-                .phase = GameplayTracePhase::PostSimulation,
-            },
-            LearningTraceChannels, gameplayTrace))
     {
-        error = "native learning mechanics observation is unavailable";
-        return false;
+        AccumulateMicros encoding(mProfile.corpusEncodingMicros);
+        append_learning_action(mCurrentEpisode, chosenPad, mConsumedPads.back());
     }
-    const GameplayCollisionPlanesObservation collisionPlanes =
-        capture_gameplay_collision_planes();
-    const GameplayPlayerFormObservation playerForm = capture_gameplay_player_form();
+    ControllerObservation controller;
+    GameplayCollisionCorrectionObservation collision;
+    GameplayTraceSample gameplayTrace;
+    {
+        AccumulateMicros capture(mProfile.observationCaptureMicros);
+        controller = capture_controller_observation(mEpisodeControllerStorage);
+        collision = capture_gameplay_collision_correction();
+        if (!capture_gameplay_trace_sample(
+                {
+                    .boundaryIndex = simulationTick + 1,
+                    .simulationTick = simulationTick,
+                    .tapeFrame = static_cast<std::uint64_t>(
+                        mDefinition.sourceFrame + mCandidateTick),
+                    .phase = GameplayTracePhase::PostSimulation,
+                },
+                LearningTraceChannels, gameplayTrace))
+        {
+            error = "native learning mechanics observation is unavailable";
+            return false;
+        }
+    }
+    GameplayCollisionPlanesObservation collisionPlanes;
+    GameplayPlayerFormObservation playerForm;
+    {
+        AccumulateMicros capture(mProfile.observationCaptureMicros);
+        collisionPlanes = capture_gameplay_collision_planes();
+        playerForm = capture_gameplay_player_form();
+    }
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PostSimulation,
         .terminalReason = !terminal ? LearningTerminalReason::None :
@@ -533,11 +656,15 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         .playerForm = playerForm,
         .goal = summarize_learning_goal(mGoalTracker),
     };
-    if (!append_learning_observation(mCurrentEpisode, observation, context, error))
-        return false;
+    {
+        AccumulateMicros encoding(mProfile.corpusEncodingMicros);
+        if (!append_learning_observation(mCurrentEpisode, observation, context, error))
+            return false;
+    }
     mEpisodePreInputCaptured = false;
     if (!terminal)
         return true;
+    AccumulateMicros encoding(mProfile.corpusEncodingMicros);
     return finish_learning_episode(
         mCurrentEpisode, static_cast<std::uint32_t>(mCandidateTick + 1), error);
 }
@@ -592,8 +719,11 @@ bool SuffixBatchRunner::finishCandidate(
         .remainingTicks = static_cast<std::uint32_t>(
             mDefinition.maximumTicks - result.ticksExecuted),
     };
-    if (!mEpisodeShard.append(episode, mCurrentEpisode, error))
-        return false;
+    {
+        AccumulateMicros encoding(mProfile.corpusEncodingMicros);
+        if (!mEpisodeShard.append(episode, mCurrentEpisode, error))
+            return false;
+    }
 
     mResults.push_back(std::move(result));
     const std::size_t resultIndex = mResults.size() - 1;
@@ -609,6 +739,7 @@ bool SuffixBatchRunner::finishCandidate(
 bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame, std::string& error) {
     if (!mEnabled || mPhase != Phase::Candidate || mCompleted || mFailed) return false;
+    finishSimulationProfile();
     const auto& candidate = mDefinition.candidates[mCandidateIndex];
     const RawPadState& expectedPad = candidate.tapePassthrough
         ? input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0]
@@ -621,6 +752,8 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         return true;
     }
     if (mDefinition.verifyStateHashes) {
+        AccumulateMicros validation(mProfile.stateValidationMicros);
+        ++mProfile.stateValidationSamples;
         std::string digest;
         const StateCheckpointError checkpointError = mCheckpoint.currentDigest(digest);
         if (checkpointError != StateCheckpointError::None) {
@@ -631,8 +764,13 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         mStateDigestMaterial += digest;
     }
 
-    const MilestoneObservation observation = capture_milestone_observation(mMilestoneStorage);
-    mGoalTracker.observe(observation, simulationTick, tapeFrame);
+    MilestoneObservation observation;
+    {
+        AccumulateMicros capture(mProfile.observationCaptureMicros);
+        ++mProfile.observationCaptureSamples;
+        observation = capture_milestone_observation(mMilestoneStorage);
+        mGoalTracker.observe(observation, simulationTick, tapeFrame);
+    }
     const bool success = mGoalTracker.goalReached();
     const bool exhausted = mCandidateTick + 1 == mDefinition.maximumTicks;
     if (!appendEpisodePostSimulation(
@@ -651,9 +789,12 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     }
     ++mCandidateIndex;
     if (mCandidateIndex == mDefinition.candidates.size()) {
-        if (!mEpisodeShard.finish(error)) {
-            fail(error);
-            return true;
+        {
+            AccumulateMicros encoding(mProfile.corpusEncodingMicros);
+            if (!mEpisodeShard.finish(error)) {
+                fail(error);
+                return true;
+            }
         }
         // Preserve the final candidate's ordinary milestone result for the
         // standard artifact writer. Every candidate retains its own complete
@@ -661,6 +802,7 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         milestone_tracker() = mGoalTracker;
         mPhase = Phase::Complete;
         mCompleted = true;
+        finishBatchProfile();
         return true;
     }
     mPhase = Phase::RestoreNext;
@@ -714,8 +856,85 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             }},
         });
     }
+    const std::uint64_t candidateTicks = std::accumulate(mResults.begin(), mResults.end(),
+        std::uint64_t{0}, [](const std::uint64_t total, const CandidateResult& candidate) {
+            return total + candidate.ticksExecuted;
+        });
+    const std::size_t expectedRestores = mDefinition.candidates.size() - 1 +
+                                         (mProfile.sourceCheckpointReused ? 1 : 0);
+    const bool profileVerified = mProfile.complete &&
+                                 mProfile.policyApplicationSamples == candidateTicks &&
+                                 mProfile.simulationSamples == candidateTicks &&
+                                 mProfile.observationCaptureSamples == candidateTicks * 2 &&
+                                 mProfile.cpuDrawTraversalSamples == candidateTicks &&
+                                 mProfile.cpuRendererSubmissionSamples == candidateTicks &&
+                                 mRestoreMicros.size() == expectedRestores &&
+                                 mEpisodeShard.episodeCount() == mResults.size() &&
+                                 (!mDefinition.verifyStateHashes ||
+                                     mProfile.stateValidationSamples == candidateTicks);
+    if (mCompleted && !profileVerified) {
+        error = "completed suffix batch has incomplete phase-profile sample coverage";
+        return false;
+    }
+    const auto measured = [](const std::uint64_t micros, const std::uint64_t samples) {
+        return nlohmann::json{{"status", "measured"}, {"micros", micros},
+            {"samples", samples}};
+    };
+    const nlohmann::json timing{
+        {"schema", "dusklight-suffix-batch-timing/v1"},
+        {"batch_wall_micros", mProfile.complete ? nlohmann::json(mProfile.batchWallMicros) :
+                                                  nlohmann::json(nullptr)},
+        {"candidate_ticks", candidateTicks},
+        {"verified", profileVerified},
+        {"accounting", {
+            {"batch_boundary", "source-capture-or-rearm through sealed episode shard"},
+            {"simulation_boundary", "after PADRead through deterministic clock commit"},
+            {"nested_simulation_phases", {"cpu_draw_traversal",
+                "cpu_renderer_submission"}},
+        }},
+        {"phases", {
+            {"checkpoint_capture", {
+                {"status", mProfile.sourceCheckpointReused ? "reused" : "measured"},
+                {"micros", mProfile.sourceCheckpointReused ? nlohmann::json(nullptr) :
+                                                             nlohmann::json(mCaptureMicros)},
+                {"session_capture_micros", mCaptureMicros},
+            }},
+            {"checkpoint_restore", {
+                {"status", "measured"},
+                {"micros", std::accumulate(mRestoreMicros.begin(), mRestoreMicros.end(),
+                    std::uint64_t{0})},
+                {"samples", mRestoreMicros.size()},
+            }},
+            {"policy_inference", {{"status", "not_present"}, {"micros", nullptr}}},
+            {"policy_application", {
+                {"status", "measured"},
+                {"micros", mProfile.policyApplicationNanos / 1'000},
+                {"nanoseconds", mProfile.policyApplicationNanos},
+                {"samples", mProfile.policyApplicationSamples},
+            }},
+            {"simulation", measured(mProfile.simulationMicros, mProfile.simulationSamples)},
+            {"observation_capture", measured(mProfile.observationCaptureMicros,
+                                               mProfile.observationCaptureSamples)},
+            {"state_validation", mDefinition.verifyStateHashes
+                ? measured(mProfile.stateValidationMicros, mProfile.stateValidationSamples)
+                : nlohmann::json{{"status", "disabled"}, {"micros", nullptr}}},
+            {"corpus_encoding", {
+                {"status", "measured"},
+                {"micros", mProfile.corpusEncodingMicros},
+                {"episodes", mEpisodeShard.episodeCount()},
+                {"uncompressed_bytes", mEpisodeShard.uncompressedBytes()},
+                {"compressed_bytes", mEpisodeShard.compressedBytes()},
+            }},
+            {"cpu_draw_traversal", measured(mProfile.cpuDrawTraversalMicros,
+                                              mProfile.cpuDrawTraversalSamples)},
+            {"cpu_renderer_submission", measured(mProfile.cpuRendererSubmissionMicros,
+                                                   mProfile.cpuRendererSubmissionSamples)},
+            {"gpu_work", {{"status", "unavailable"}, {"micros", nullptr},
+                {"reason", "Aurora exposes draw counts but no authenticated GPU timestamps"}}},
+        }},
+    };
     nlohmann::json result{
-        {"schema", "dusklight-suffix-batch-result/v2"},
+        {"schema", "dusklight-suffix-batch-result/v3"},
         {"status", mCompleted ? "passed" : mFailed ? "failed" : "incomplete"},
         {"source_frame", mDefinition.sourceFrame},
         {"source_boundary", {
@@ -737,6 +956,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                                                       : nlohmann::json(mImage.digest)},
         {"capture_micros", mCaptureMicros},
         {"restore_micros", mRestoreMicros},
+        {"timing", timing},
         {"audio_callback_quiesced", mAudioCallbackQuiesced},
         {"episode_shard", {
             {"schema", LearningEpisodeShardSchema},

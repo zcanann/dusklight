@@ -447,6 +447,7 @@ void main01(void) {
                     }
                     mDoCPd_c::read();
                     begin_automation_simulation_tick();
+                    dusk::automation::suffix_batch_runner().beginSimulationProfile();
                     if (auxiliary_live_input_enabled()) {
                         dusk::mouse::read();
                         dusk::gyro::read(pacing.sim_pace);
@@ -487,6 +488,7 @@ void main01(void) {
                 // Game Inputs
                 mDoCPd_c::read();
                 begin_automation_simulation_tick();
+                dusk::automation::suffix_batch_runner().beginSimulationProfile();
                 if (auxiliary_live_input_enabled()) {
                     dusk::mouse::read();
                     dusk::gyro::read(pacing.presentation_dt_seconds);

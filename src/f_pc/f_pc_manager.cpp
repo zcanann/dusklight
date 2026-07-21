@@ -20,6 +20,7 @@
 #include "f_pc/f_pc_pause.h"
 #include "f_pc/f_pc_priority.h"
 #include "m_Do/m_Do_controller_pad.h"
+#include "dusk/automation/suffix_batch_runner.hpp"
 
 #include "tracy/Tracy.hpp"
 
@@ -68,7 +69,10 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
             if (!dusk::frame_interp::is_enabled())
 #endif
             {
+                auto& suffixBatch = dusk::automation::suffix_batch_runner();
+                suffixBatch.beginCpuRendererSubmissionProfile();
                 cAPIGph_Painter();
+                suffixBatch.endCpuRendererSubmissionProfile();
             }
 
             if (!dPa_control_c::isStatus(1)) {
@@ -94,7 +98,10 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
             }
 
             if (!fapGm_HIO_c::isCaptureScreen() || fapGm_HIO_c::getCaptureScreenDivH() != 1) {
+                auto& suffixBatch = dusk::automation::suffix_batch_runner();
+                suffixBatch.beginCpuDrawTraversalProfile();
                 fpcDw_Handler((fpcDw_HandlerFuncFunc)fpcM_DrawIterater, (fpcDw_HandlerFunc)fpcM_Draw);
+                suffixBatch.endCpuDrawTraversalProfile();
             }
 
             if (i_postExecuteFn != NULL) {
