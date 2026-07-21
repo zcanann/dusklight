@@ -66,6 +66,8 @@ struct ActorCatalogEntry {
     std::uint8_t enemyThrowMode = 0;
     cXyz enemyDownPosition{};
     cXyz enemyHeadLockPosition{};
+    bool triggerVolumePresent = false;
+    MilestoneObservation::Actor::TriggerVolumeComponent triggerVolume;
 };
 
 struct ActorCatalogCapture {
@@ -127,6 +129,7 @@ int capture_actor(void* candidate, void* context) {
         entry.enemyDownPosition = enemy->mDownPos;
         entry.enemyHeadLockPosition = enemy->mHeadLockPos;
     }
+    entry.triggerVolumePresent = capture_actor_trigger_volume(*actor, entry.triggerVolume);
 
     if (capture->count < capture->entries.size()) {
         capture->entries[capture->count++] = entry;
@@ -153,6 +156,31 @@ json position_json(const float x, const float y, const float z) {
 
 json angle_json(const std::int16_t x, const std::int16_t y, const std::int16_t z) {
     return json::array({x, y, z});
+}
+
+json trigger_volume_json(
+    const bool present, const MilestoneObservation::Actor::TriggerVolumeComponent& trigger) {
+    if (!present)
+        return nullptr;
+    using Kind = MilestoneObservation::Actor::TriggerVolumeKind;
+    using Shape = MilestoneObservation::Actor::TriggerVolumeShape;
+    const char* kind = trigger.kind == Kind::SceneExit         ? "scene_exit" :
+                       trigger.kind == Kind::SceneExitCylinder ? "scene_exit_cylinder" :
+                       trigger.kind == Kind::EventArea         ? "event_area" :
+                       trigger.kind == Kind::ScriptedEvent     ? "scripted_event" :
+                                                                 "mapped_event";
+    const char* shape = trigger.shape == Shape::Box ? "box" : "elliptic_cylinder";
+    return {
+        {"kind", kind},
+        {"shape", shape},
+        {"enabled", trigger.enabled},
+        {"vertical_unbounded", trigger.verticalUnbounded},
+        {"behavior", trigger.behavior},
+        {"center", position_json(trigger.centerX, trigger.centerY, trigger.centerZ)},
+        {"half_extent",
+            position_json(trigger.halfExtentX, trigger.halfExtentY, trigger.halfExtentZ)},
+        {"yaw", trigger.yaw},
+    };
 }
 
 json learning_actor_json(const MilestoneObservation::Actor& actor) {
@@ -200,11 +228,10 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
             {"flags", actor.enemyBase.flags},
             {"throw_mode", actor.enemyBase.throwMode},
             {"down_position", position_json(actor.enemyBase.downPositionX,
-                                  actor.enemyBase.downPositionY,
-                                  actor.enemyBase.downPositionZ)},
-            {"head_lock_position", position_json(actor.enemyBase.headLockPositionX,
-                                       actor.enemyBase.headLockPositionY,
-                                       actor.enemyBase.headLockPositionZ)},
+                                  actor.enemyBase.downPositionY, actor.enemyBase.downPositionZ)},
+            {"head_lock_position",
+                position_json(actor.enemyBase.headLockPositionX, actor.enemyBase.headLockPositionY,
+                    actor.enemyBase.headLockPositionZ)},
         };
     }
     return {
@@ -252,6 +279,7 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
         {"event_participation", std::move(eventParticipation)},
         {"return_place_writer", std::move(returnPlaceWriter)},
         {"enemy_base", std::move(enemyBase)},
+        {"trigger_volume", trigger_volume_json(actor.triggerVolumePresent, actor.triggerVolume)},
     };
 }
 
@@ -370,12 +398,9 @@ json learning_player_relationships_json(
         {"hookshot_roof_wait_actor",
             learning_actor_identity_json(relationships.hookshotRoofWaitActor)},
         {"chain_grab_actor", learning_actor_identity_json(relationships.chainGrabActor)},
-        {"attention_hint_actor",
-            learning_actor_identity_json(relationships.attentionHintActor)},
-        {"attention_catch_actor",
-            learning_actor_identity_json(relationships.attentionCatchActor)},
-        {"attention_look_actor",
-            learning_actor_identity_json(relationships.attentionLookActor)},
+        {"attention_hint_actor", learning_actor_identity_json(relationships.attentionHintActor)},
+        {"attention_catch_actor", learning_actor_identity_json(relationships.attentionCatchActor)},
+        {"attention_look_actor", learning_actor_identity_json(relationships.attentionLookActor)},
     };
 }
 
@@ -469,6 +494,8 @@ bool write_actor_catalog(
             {"status", actor.status},
             {"condition", actor.condition},
             {"enemy_base", std::move(enemyBase)},
+            {"trigger_volume",
+                trigger_volume_json(actor.triggerVolumePresent, actor.triggerVolume)},
         });
     }
 
@@ -491,7 +518,7 @@ bool write_actor_catalog(
         nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
                                                           "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v8"},
+        {"schema", "dusklight.actor-catalog.v9"},
         {"build",
             {
                 {"version", build.version},

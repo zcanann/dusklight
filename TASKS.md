@@ -301,6 +301,20 @@ probe, demonstration, curriculum, option, reward term or preferred action.
   terrain triangles, contact normals and correction, materials, ceilings,
   floors, walls, triggers, exits, switches, event state and inactive authored
   placements.
+  - [x] Retain profile-bound active trigger volumes as typed optional actor
+    components instead of expecting a learner to infer them from opaque actor
+    parameters. Observation v17 covers ordinary scene-exit boxes, vertically
+    unbounded scene-exit cylinders, event areas, scripted-event areas and
+    mapped-event areas with their realized shape, center, half-extents, yaw,
+    subtype/action, vertical-bounds status and current read-only gate result.
+    Actor view v7 derives Link- and camera-relative centers and headings;
+    actor-feature view v4 exposes the family with explicit masks. Actor catalog
+    v9 walks the same complete population independently and parity-checks the
+    learner copy. A neutral 30-tick F_SP103 boot retained 130/130 actors and one
+    enabled scene-exit box identically in both populations. This supplies state only:
+    no trigger is selected, approached or activated, and no action, reward or
+    desired outcome is encoded. Collision-backed exits and inactive authored
+    trigger placements remain part of the open parent audit.
   - [x] Retain the complete dynamic collision set processed by the immediately
     preceding collision pass without calling collision code: registration
     identity, owning actor, attack/target/correction enable and hit state, hit
@@ -643,6 +657,12 @@ human-authored successful setup.
       A clean-build neutral live sample remains unclaimed because upstream
       Aurora's Null backend failed during renderer initialization before the
       first simulation tick.
+    - [x] Add complete active actor-trigger volumes and their current gate
+      status as a selectable, profile-bound component. Observation v17,
+      actor-view v7 and actor-feature view v4 preserve exact absolute geometry,
+      derive relative geometry offline and mask absence for v2-v16 shards.
+      This does not yet cover collision-backed exits, inactive placements or
+      richer loading/event clocks, so the parent remains open.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

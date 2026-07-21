@@ -378,6 +378,38 @@ struct MilestoneObservation {
             float headLockPositionZ = 0.0f;
         };
 
+        // Profile-bound trigger geometry already interpreted by the native
+        // actor. This is a read-only description of the active volume and its
+        // current gate state; it does not invoke the trigger or nominate one
+        // as an objective.
+        enum class TriggerVolumeKind : std::uint8_t {
+            SceneExit = 1,
+            SceneExitCylinder = 2,
+            EventArea = 3,
+            ScriptedEvent = 4,
+            MappedEvent = 5,
+        };
+
+        enum class TriggerVolumeShape : std::uint8_t {
+            Box = 1,
+            EllipticCylinder = 2,
+        };
+
+        struct TriggerVolumeComponent {
+            TriggerVolumeKind kind = TriggerVolumeKind::SceneExit;
+            TriggerVolumeShape shape = TriggerVolumeShape::Box;
+            bool enabled = false;
+            bool verticalUnbounded = false;
+            std::uint16_t behavior = 0;
+            float centerX = 0.0f;
+            float centerY = 0.0f;
+            float centerZ = 0.0f;
+            float halfExtentX = 0.0f;
+            float halfExtentY = 0.0f;
+            float halfExtentZ = 0.0f;
+            std::int16_t yaw = 0;
+        };
+
         std::uint64_t runtimeGeneration = 0;
         std::int32_t actorType = 0;
         std::int32_t processSubtype = 0;
@@ -448,6 +480,8 @@ struct MilestoneObservation {
         ReturnPlaceWriterComponent returnPlaceWriter;
         bool enemyBasePresent = false;
         EnemyBaseComponent enemyBase;
+        bool triggerVolumePresent = false;
+        TriggerVolumeComponent triggerVolume;
     };
     std::span<const Actor> actors;
     // Total actor population visited by the observer. Current native learning

@@ -495,6 +495,21 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .switchUnsetSatisfied = true,
         .eligible = false,
     };
+    completeActors[1].actorName = fpcNm_SCENE_EXIT_e;
+    completeActors[1].triggerVolumePresent = true;
+    completeActors[1].triggerVolume = {
+        .kind = MilestoneObservation::Actor::TriggerVolumeKind::SceneExit,
+        .shape = MilestoneObservation::Actor::TriggerVolumeShape::Box,
+        .enabled = true,
+        .behavior = 3,
+        .centerX = 10.0F,
+        .centerY = 20.0F,
+        .centerZ = -30.0F,
+        .halfExtentX = 40.0F,
+        .halfExtentY = 50.0F,
+        .halfExtentZ = 60.0F,
+        .yaw = 0x1234,
+    };
     completeActors.back().attentionPresent = false;
     completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
@@ -813,6 +828,22 @@ void test_return_place_writer_guards_fail_closed() {
     REQUIRE(error.find("inconsistent return-place writer") != std::string::npos);
 }
 
+void test_trigger_volume_geometry_fails_closed() {
+    ObservationFixture fixture;
+    fixture.actors[0].actorName = fpcNm_SCENE_EXIT_e;
+    fixture.actors[0].triggerVolumePresent = true;
+    fixture.actors[0].triggerVolume.halfExtentX = -1.0F;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent trigger-volume") != std::string::npos);
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -829,6 +860,7 @@ int main(const int argc, char** argv) {
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();
+    test_trigger_volume_geometry_fails_closed();
     std::cout << "learning episode tests passed\n";
     return 0;
 }

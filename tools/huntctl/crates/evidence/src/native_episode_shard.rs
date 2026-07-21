@@ -36,6 +36,7 @@ const OBSERVATION_VERSION_V13: u16 = 13;
 const OBSERVATION_VERSION_V14: u16 = 14;
 const OBSERVATION_VERSION_V15: u16 = 15;
 const OBSERVATION_VERSION_V16: u16 = 16;
+const OBSERVATION_VERSION_V17: u16 = 17;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -76,6 +77,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V13: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V14: &str = "dusklight-learning-observation/v14";
 pub const LEARNING_OBSERVATION_SCHEMA_V15: &str = "dusklight-learning-observation/v15";
 pub const LEARNING_OBSERVATION_SCHEMA_V16: &str = "dusklight-learning-observation/v16";
+pub const LEARNING_OBSERVATION_SCHEMA_V17: &str = "dusklight-learning-observation/v17";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -332,6 +334,7 @@ pub struct NativeActorObservation {
     pub event_participation: Option<NativeActorEventParticipationComponent>,
     pub return_place_writer: Option<NativeReturnPlaceWriterComponent>,
     pub enemy_base: Option<NativeEnemyBaseComponent>,
+    pub trigger_volume: Option<NativeTriggerVolumeComponent>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -340,6 +343,33 @@ pub struct NativeEnemyBaseComponent {
     pub throw_mode: u8,
     pub down_position: [f32; 3],
     pub head_lock_position: [f32; 3],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTriggerVolumeKind {
+    SceneExit,
+    SceneExitCylinder,
+    EventArea,
+    ScriptedEvent,
+    MappedEvent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeTriggerVolumeShape {
+    Box,
+    EllipticCylinder,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeTriggerVolumeComponent {
+    pub kind: NativeTriggerVolumeKind,
+    pub shape: NativeTriggerVolumeShape,
+    pub enabled: bool,
+    pub vertical_unbounded: bool,
+    pub behavior: u16,
+    pub center: [f32; 3],
+    pub half_extent: [f32; 3],
+    pub yaw: i16,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -717,6 +747,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V14
                 | OBSERVATION_VERSION_V15
                 | OBSERVATION_VERSION_V16
+                | OBSERVATION_VERSION_V17
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -847,6 +878,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V14 => LEARNING_OBSERVATION_SCHEMA_V14,
         OBSERVATION_VERSION_V15 => LEARNING_OBSERVATION_SCHEMA_V15,
         OBSERVATION_VERSION_V16 => LEARNING_OBSERVATION_SCHEMA_V16,
+        OBSERVATION_VERSION_V17 => LEARNING_OBSERVATION_SCHEMA_V17,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2309,7 +2341,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V13
         | OBSERVATION_VERSION_V14
         | OBSERVATION_VERSION_V15
-        | OBSERVATION_VERSION_V16 => {
+        | OBSERVATION_VERSION_V16
+        | OBSERVATION_VERSION_V17 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2461,10 +2494,13 @@ fn decode_observation(
             event_participation: None,
             return_place_writer: None,
             enemy_base: None,
+            trigger_volume: None,
         };
         if observation_version >= OBSERVATION_VERSION_V6 {
             let component_mask = reader.u16()?;
-            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V15 {
+            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V17 {
+                0x1f
+            } else if observation_version >= OBSERVATION_VERSION_V15 {
                 0xf
             } else if observation_version >= OBSERVATION_VERSION_V14 {
                 0x7
@@ -2637,6 +2673,72 @@ fn decode_observation(
                 {
                     return Err(NativeEpisodeShardError::new(
                         "absent enemy-base component has a payload or enemy owner",
+                    ));
+                }
+            }
+            if observation_version >= OBSERVATION_VERSION_V17 {
+                let kind = reader.u8()?;
+                let shape = reader.u8()?;
+                let trigger_flags = reader.u8()?;
+                if trigger_flags & !0x3 != 0 || reader.u8()? != 0 {
+                    return Err(NativeEpisodeShardError::new(
+                        "invalid trigger-volume header",
+                    ));
+                }
+                let behavior = reader.u16()?;
+                let yaw = reader.i16()?;
+                let center = reader.f32x3()?;
+                let half_extent = reader.f32x3()?;
+                if component_mask & 16 != 0 {
+                    let kind = match kind {
+                        1 => NativeTriggerVolumeKind::SceneExit,
+                        2 => NativeTriggerVolumeKind::SceneExitCylinder,
+                        3 => NativeTriggerVolumeKind::EventArea,
+                        4 => NativeTriggerVolumeKind::ScriptedEvent,
+                        5 => NativeTriggerVolumeKind::MappedEvent,
+                        _ => {
+                            return Err(NativeEpisodeShardError::new(
+                                "unknown trigger-volume kind",
+                            ));
+                        }
+                    };
+                    let shape = match shape {
+                        1 => NativeTriggerVolumeShape::Box,
+                        2 => NativeTriggerVolumeShape::EllipticCylinder,
+                        _ => {
+                            return Err(NativeEpisodeShardError::new(
+                                "unknown trigger-volume shape",
+                            ));
+                        }
+                    };
+                    let vertical_unbounded = trigger_flags & 2 != 0;
+                    if half_extent.iter().any(|value| *value < 0.0)
+                        || vertical_unbounded && shape != NativeTriggerVolumeShape::EllipticCylinder
+                    {
+                        return Err(NativeEpisodeShardError::new(
+                            "inconsistent trigger-volume geometry",
+                        ));
+                    }
+                    actor.trigger_volume = Some(NativeTriggerVolumeComponent {
+                        kind,
+                        shape,
+                        enabled: trigger_flags & 1 != 0,
+                        vertical_unbounded,
+                        behavior,
+                        center,
+                        half_extent,
+                        yaw,
+                    });
+                } else if kind != 0
+                    || shape != 0
+                    || trigger_flags != 0
+                    || behavior != 0
+                    || yaw != 0
+                    || center != [0.0; 3]
+                    || half_extent != [0.0; 3]
+                {
+                    return Err(NativeEpisodeShardError::new(
+                        "absent trigger-volume component has a payload",
                     ));
                 }
             }

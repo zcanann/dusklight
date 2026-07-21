@@ -592,6 +592,27 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             error = "learning observation has inconsistent enemy-base component";
             return false;
         }
+        if (actor.triggerVolumePresent) {
+            const auto& trigger = actor.triggerVolume;
+            using Kind = MilestoneObservation::Actor::TriggerVolumeKind;
+            using Shape = MilestoneObservation::Actor::TriggerVolumeShape;
+            const bool kindMatchesActor =
+                (trigger.kind == Kind::SceneExit && actor.actorName == fpcNm_SCENE_EXIT_e) ||
+                (trigger.kind == Kind::SceneExitCylinder &&
+                    actor.actorName == fpcNm_SCENE_EXIT2_e) ||
+                (trigger.kind == Kind::EventArea && actor.actorName == fpcNm_TAG_EVTAREA_e) ||
+                (trigger.kind == Kind::ScriptedEvent && actor.actorName == fpcNm_TAG_EVT_e) ||
+                (trigger.kind == Kind::MappedEvent && actor.actorName == fpcNm_TAG_EVENT_e);
+            const bool shapeValid =
+                trigger.shape == Shape::Box || trigger.shape == Shape::EllipticCylinder;
+            if (!kindMatchesActor || !shapeValid || trigger.halfExtentX < 0.0f ||
+                trigger.halfExtentY < 0.0f || trigger.halfExtentZ < 0.0f ||
+                (trigger.verticalUnbounded && trigger.shape != Shape::EllipticCylinder))
+            {
+                error = "learning observation has inconsistent trigger-volume component";
+                return false;
+            }
+        }
     }
     const auto& relationships = observation.playerRelationships;
     const std::array<const MilestoneObservation::ActorIdentity*, 11> relationshipActors{
@@ -811,6 +832,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         componentMask |= actor.eventParticipationPresent ? 1u << 1 : 0;
         componentMask |= actor.returnPlaceWriterPresent ? 1u << 2 : 0;
         componentMask |= actor.enemyBasePresent ? 1u << 3 : 0;
+        componentMask |= actor.triggerVolumePresent ? 1u << 4 : 0;
         append_integer(output, componentMask);
         append_integer<std::uint16_t>(output, 0);
 
@@ -873,6 +895,28 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
                  enemy.headLockPositionX, enemy.headLockPositionY, enemy.headLockPositionZ})
         {
             if (!append_float(output, actor.enemyBasePresent ? value : 0.0F, error))
+                return false;
+        }
+
+        const auto& trigger = actor.triggerVolume;
+        std::uint8_t triggerFlags = 0;
+        if (actor.triggerVolumePresent) {
+            triggerFlags |= trigger.enabled ? 1u << 0 : 0;
+            triggerFlags |= trigger.verticalUnbounded ? 1u << 1 : 0;
+        }
+        append_integer(output,
+            actor.triggerVolumePresent ? static_cast<std::uint8_t>(trigger.kind) : std::uint8_t{0});
+        append_integer(output, actor.triggerVolumePresent ?
+                                   static_cast<std::uint8_t>(trigger.shape) :
+                                   std::uint8_t{0});
+        append_integer(output, triggerFlags);
+        append_integer<std::uint8_t>(output, 0);
+        append_integer(output, actor.triggerVolumePresent ? trigger.behavior : std::uint16_t{0});
+        append_integer(output, actor.triggerVolumePresent ? trigger.yaw : std::int16_t{0});
+        for (const float value : {trigger.centerX, trigger.centerY, trigger.centerZ,
+                 trigger.halfExtentX, trigger.halfExtentY, trigger.halfExtentZ})
+        {
+            if (!append_float(output, actor.triggerVolumePresent ? value : 0.0F, error))
                 return false;
         }
 

@@ -176,6 +176,7 @@ struct ActorCatalogActor {
     old_angle: [i16; 3],
     is_enemy: bool,
     enemy_base: Option<LearningActorEnemyBase>,
+    trigger_volume: Option<LearningActorTriggerVolume>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +233,7 @@ struct LearningActor {
     event_participation: Option<LearningActorEventParticipation>,
     return_place_writer: Option<LearningActorReturnPlaceWriter>,
     enemy_base: Option<LearningActorEnemyBase>,
+    trigger_volume: Option<LearningActorTriggerVolume>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -241,6 +243,19 @@ struct LearningActorEnemyBase {
     throw_mode: u8,
     down_position: [f32; 3],
     head_lock_position: [f32; 3],
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorTriggerVolume {
+    kind: String,
+    shape: String,
+    enabled: bool,
+    vertical_unbounded: bool,
+    behavior: u16,
+    center: [f32; 3],
+    half_extent: [f32; 3],
+    yaw: i16,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -826,7 +841,7 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.runtime_generation)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v8"
+    if snapshot.schema != "dusklight.actor-catalog.v9"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -840,7 +855,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != "dusklight-learning-observation/v16"
+    if learning.source_schema != "dusklight-learning-observation/v17"
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -874,6 +889,7 @@ fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) 
         && catalog.current_room == learner.current_room
         && catalog.group == learner.group
         && catalog.enemy_base == learner.enemy_base
+        && catalog.trigger_volume == learner.trigger_volume
         && catalog.argument == learner.argument
         && catalog.pause_flag == learner.pause_flag
         && catalog.process_init_state == learner.process_init_state
@@ -1024,7 +1040,11 @@ mod tests {
                 "old_position": [3.0, 4.0, 5.0], "current_position": [4.0, 5.0, 6.0],
                 "scale": [1.0, 1.0, 1.0], "gravity": -1.0, "max_fall_speed": -20.0,
                 "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
-                "old_angle": [4, 5, 6], "is_enemy": false, "enemy_base": null}),
+                "old_angle": [4, 5, 6], "is_enemy": false, "enemy_base": null,
+                "trigger_volume": {"kind": "scene_exit", "shape": "box",
+                    "enabled": true, "vertical_unbounded": false, "behavior": 0,
+                    "center": [1.0, 2.0, 3.0], "half_extent": [4.0, 5.0, 6.0],
+                    "yaw": 7}}),
             json!({"process_id": 8, "parent_process_id": 4, "actor_type": 6,
                 "process_subtype": 7, "parameters": 3, "status": 4, "condition": 5,
                 "actor_name": 291, "profile_name": 291, "symbolic_name": "fpcNm_NPC_e",
@@ -1059,7 +1079,11 @@ mod tests {
                 "old_angle": [4, 5, 6], "current_angle": [5, 6, 7],
                 "shape_angle": [6, 7, 8], "attention": null,
                 "event_participation": null, "return_place_writer": null,
-                "enemy_base": null}),
+                "enemy_base": null,
+                "trigger_volume": {"kind": "scene_exit", "shape": "box",
+                    "enabled": true, "vertical_unbounded": false, "behavior": 0,
+                    "center": [1.0, 2.0, 3.0], "half_extent": [4.0, 5.0, 6.0],
+                    "yaw": 7}}),
             json!({"runtime_generation": 8, "parent_runtime_generation": 4,
                 "actor_type": 6, "process_subtype": 7, "parameters": 3, "status": 4,
                 "condition": 5, "actor_name": 291, "profile_name": 291, "set_id": 1,
@@ -1084,11 +1108,11 @@ mod tests {
                     "head_lock_position": [12.5, 7.0, -8.0]}}),
         ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v8", "simulation_tick": 29,
+            "schema": "dusklight.actor-catalog.v9", "simulation_tick": 29,
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": "dusklight-learning-observation/v16",
+                "source_schema": "dusklight-learning-observation/v17",
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }
@@ -1174,6 +1198,16 @@ mod tests {
                 distinct_nonnull_values: 1,
             }
         );
+        let trigger_enabled = link
+            .fields
+            .iter()
+            .find(|field| field.path == "trigger_volume.enabled")
+            .unwrap();
+        assert_eq!(
+            trigger_enabled.status,
+            StageActorFieldCoverageStatus::Present
+        );
+        assert_eq!(trigger_enabled.true_samples, 1);
         assert_eq!(link.stages.len(), 1);
         assert_eq!(link.stages[0].stage, "F_SP103");
         assert_eq!(link.stages[0].verified_case_count, 1);

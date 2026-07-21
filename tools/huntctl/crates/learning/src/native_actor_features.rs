@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3: &str = "dusklight-native-actor-feature-view/v3";
+pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4: &str = "dusklight-native-actor-feature-view/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,12 +31,13 @@ pub enum ActorFeatureFamily {
     Attention,
     EventParticipation,
     EnemyBase,
+    TriggerVolume,
     GoalRelative,
     PlayerRelationships,
 }
 
 impl ActorFeatureFamily {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Identity,
         Self::AbsoluteMotion,
         Self::BaseLifecycle,
@@ -47,6 +48,7 @@ impl ActorFeatureFamily {
         Self::Attention,
         Self::EventParticipation,
         Self::EnemyBase,
+        Self::TriggerVolume,
         Self::GoalRelative,
         Self::PlayerRelationships,
     ];
@@ -200,7 +202,7 @@ impl NativeActorFeatureView {
             })
             .collect();
         let mut view = Self {
-            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3.into(),
+            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4.into(),
             source_actor_view_sha256: source.view_sha256,
             spec,
             columns,
@@ -233,7 +235,7 @@ impl NativeActorFeatureView {
     pub fn validate(&self) -> Result<(), NativeActorFeatureError> {
         self.spec.validate()?;
         let expected_columns = columns_for(&self.spec, self.columns.goal_anchor_count);
-        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V3
+        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4
             || self.source_actor_view_sha256 == Digest::ZERO
             || self.observations.is_empty()
             || self.columns != expected_columns
@@ -376,6 +378,22 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
         extend_names(&mut categorical, &["enemy_flags", "enemy_throw_mode"]);
         extend_vec3_names(&mut continuous, "enemy_absolute_down_position");
         extend_vec3_names(&mut continuous, "enemy_absolute_head_lock_position");
+    }
+    if spec.contains(ActorFeatureFamily::TriggerVolume) {
+        extend_names(
+            &mut categorical,
+            &["trigger_kind", "trigger_shape", "trigger_behavior"],
+        );
+        extend_vec3_names(&mut continuous, "trigger_absolute_center");
+        extend_vec3_names(&mut continuous, "trigger_half_extent");
+        extend_vec3_names(&mut continuous, "trigger_link_relative_center");
+        extend_vec3_names(&mut continuous, "trigger_camera_relative_center");
+        extend_vec2_names(&mut continuous, "trigger_yaw_relative_to_link_sin_cos");
+        extend_vec2_names(&mut continuous, "trigger_yaw_relative_to_camera_sin_cos");
+        extend_names(
+            &mut binary,
+            &["trigger_enabled", "trigger_vertical_unbounded"],
+        );
     }
     if spec.contains(ActorFeatureFamily::PlayerRelationships) {
         extend_names(
@@ -557,6 +575,34 @@ fn materialize_actor(
         } else {
             extend_categories(&mut row, &[0; 2], false);
             extend_continuous(&mut row, &[0.0; 6], false);
+        }
+    }
+    if spec.contains(ActorFeatureFamily::TriggerVolume) {
+        if let Some(trigger) = &actor.trigger_volume {
+            extend_categories(
+                &mut row,
+                &[
+                    trigger.kind as u8 as i64,
+                    trigger.shape as u8 as i64,
+                    i64::from(trigger.behavior),
+                ],
+                true,
+            );
+            extend_continuous(&mut row, &trigger.absolute_center, true);
+            extend_continuous(&mut row, &trigger.half_extent, true);
+            extend_optional_vec3(&mut row, trigger.link_relative_center);
+            extend_optional_vec3(&mut row, trigger.camera_relative_center);
+            extend_optional_vec2(&mut row, trigger.yaw_relative_to_link);
+            extend_optional_vec2(&mut row, trigger.yaw_relative_to_camera);
+            extend_binary(
+                &mut row,
+                &[trigger.enabled, trigger.vertical_unbounded],
+                true,
+            );
+        } else {
+            extend_categories(&mut row, &[0; 3], false);
+            extend_continuous(&mut row, &[0.0; 16], false);
+            extend_binary(&mut row, &[false; 2], false);
         }
     }
     if spec.contains(ActorFeatureFamily::GoalRelative) {
@@ -978,6 +1024,48 @@ mod tests {
         assert!(!actor.categorical_present[flags]);
         assert_eq!(actor.continuous[down_x], 0.0);
         assert!(!actor.continuous_present[down_x]);
+    }
+
+    #[test]
+    fn v17_trigger_volume_is_selectable_and_legacy_values_are_masked() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v17.dseps"
+        ));
+        let view = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::TriggerVolume]).unwrap(),
+        )
+        .unwrap();
+        let actor = &view.observations[0].actors[1];
+        let kind = categorical(&view, "trigger_kind");
+        let behavior = categorical(&view, "trigger_behavior");
+        let center_x = continuous(&view, "trigger_absolute_center_x");
+        let link_x = continuous(&view, "trigger_link_relative_center_x");
+        let enabled = binary(&view, "trigger_enabled");
+        assert_eq!(actor.categorical[kind], 0);
+        assert_eq!(actor.categorical[behavior], 3);
+        assert!(actor.categorical_present[kind]);
+        assert_eq!(actor.continuous[center_x], 10.0);
+        assert!(actor.continuous_present[link_x]);
+        assert!(actor.binary[enabled]);
+        assert!(actor.binary_present[enabled]);
+
+        let legacy = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v16.dseps"
+        ));
+        let legacy = NativeActorFeatureView::build(
+            &legacy,
+            ActorFeatureSpec::new([ActorFeatureFamily::TriggerVolume]).unwrap(),
+        )
+        .unwrap();
+        assert!(legacy.observations[0].actors.iter().all(|actor| {
+            actor.categorical[kind] == 0
+                && !actor.categorical_present[kind]
+                && actor.continuous[center_x] == 0.0
+                && !actor.continuous_present[center_x]
+                && !actor.binary[enabled]
+                && !actor.binary_present[enabled]
+        }));
     }
 
     #[test]

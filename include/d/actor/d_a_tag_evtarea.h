@@ -7,8 +7,10 @@
 // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: declaration only; adapter body lives
 // outside native gameplay code and may inspect observer state without mutation.
 namespace dusk {
-struct TriggerViewReadAdapter;
-}
+namespace automation {
+struct MilestoneTriggerReadAdapter;
+}  // namespace automation
+}  // namespace dusk
 #endif
 
 class daTag_EvtArea_c : public fopAc_ac_c {
@@ -56,7 +58,7 @@ public:
 private:
 #if TARGET_PC
     // DUSKLIGHT DEBUG-VIEW READ-ONLY APERTURE: const observer reads only.
-    friend struct dusk::TriggerViewReadAdapter;
+    friend struct dusk::automation::MilestoneTriggerReadAdapter;
 #endif
     /* 0x568 vtable */
     /* 0x56C */ u8 field_0x56c;
