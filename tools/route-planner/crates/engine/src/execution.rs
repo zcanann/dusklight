@@ -3,9 +3,10 @@
 use crate::artifact::Digest;
 use crate::snapshot::StateSnapshot;
 use crate::state::{
-    BoundaryDisposition, BoundaryPolicy, ComponentBinding, ComponentKind, ComponentPayload,
-    ComponentProvenance, ComponentSelector, ProvenanceSourceKind, SerializationOwner,
-    StateComponent, StateValue, validate_serialization_owner,
+    BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding, ComponentKind,
+    ComponentPayload, ComponentProvenance, ComponentSelector, PhysicalSlot, ProvenanceSourceKind,
+    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SerializationOwner, StateComponent,
+    StateValue, validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
@@ -13,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v6";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v7";
+pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -95,6 +97,77 @@ impl ExecutionHistoryEvent {
     }
 }
 
+impl PersistentFileImage {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != PERSISTENT_FILE_IMAGE_SCHEMA {
+            return Err(PlannerContractError::new(
+                "persistent_file_image.schema",
+                "is unsupported",
+            ));
+        }
+        validate_stable_id("persistent_file_image.id", &self.id)?;
+        validate_stable_id(
+            "persistent_file_image.source_runtime_file_id",
+            &self.source_runtime_file_id,
+        )?;
+        if self.runtime_components.is_empty() && self.stage_banks.is_empty() {
+            return Err(PlannerContractError::new(
+                "persistent_file_image",
+                "must contain at least one serialized component or stage bank",
+            ));
+        }
+        let runtime_owner = SerializationOwner::RuntimeFile {
+            runtime_file_id: self.id.clone(),
+        };
+        validate_component_store(&runtime_owner, &self.runtime_components, true)?;
+        for component in &self.runtime_components {
+            validate_persistent_image_binding(&self.id, component)?;
+        }
+        let mut previous_owner = None;
+        for store in &self.stage_banks {
+            if previous_owner
+                .as_ref()
+                .is_some_and(|owner: &SerializationOwner| owner >= &store.owner)
+            {
+                return Err(PlannerContractError::new(
+                    "persistent_file_image.stage_banks",
+                    "must be unique and sorted by owner",
+                ));
+            }
+            let SerializationOwner::StageBank {
+                runtime_file_id, ..
+            } = &store.owner
+            else {
+                return Err(PlannerContractError::new(
+                    "persistent_file_image.stage_banks.owner",
+                    "must contain only stage-bank owners",
+                ));
+            };
+            if runtime_file_id != &self.id {
+                return Err(PlannerContractError::new(
+                    "persistent_file_image.stage_banks.owner",
+                    "must be scoped to the persistent file image",
+                ));
+            }
+            validate_component_store(&store.owner, &store.components, false)?;
+            for component in &store.components {
+                validate_persistent_image_binding(&self.id, component)?;
+            }
+            previous_owner = Some(store.owner.clone());
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
 /// Mutable search state that keeps non-save backing stores separate from the
 /// visible execution snapshot. Applying a batch is transactional: a failed
 /// operation leaves every store and the snapshot unchanged.
@@ -103,6 +176,7 @@ pub struct PlannerExecutionState {
     pub snapshot: StateSnapshot,
     pub gate_states: BTreeMap<String, bool>,
     pub serialized_components: BTreeMap<SerializationOwner, Vec<StateComponent>>,
+    pub persistent_file_images: BTreeMap<String, PersistentFileImage>,
     pub preserved_component_ids: BTreeSet<String>,
     pub scheduled_cleanup_ids: BTreeSet<String>,
     pub interruption_log: Vec<InterruptionRecord>,
@@ -123,6 +197,16 @@ pub struct SerializedComponentStore {
     pub components: Vec<StateComponent>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistentFileImage {
+    pub schema: String,
+    pub id: String,
+    pub source_runtime_file_id: String,
+    pub runtime_components: Vec<StateComponent>,
+    pub stage_banks: Vec<SerializedComponentStore>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannerExecutionStateDocument {
@@ -130,6 +214,7 @@ pub struct PlannerExecutionStateDocument {
     pub snapshot: StateSnapshot,
     pub gate_states: BTreeMap<String, bool>,
     pub serialized_component_stores: Vec<SerializedComponentStore>,
+    pub persistent_file_images: Vec<PersistentFileImage>,
     pub preserved_component_ids: BTreeSet<String>,
     pub scheduled_cleanup_ids: BTreeSet<String>,
     pub interruption_log: Vec<InterruptionRecord>,
@@ -141,6 +226,7 @@ struct ExecutionStateIdentity<'a> {
     snapshot_sha256: Digest,
     gate_states: &'a BTreeMap<String, bool>,
     serialized_components: Vec<SerializedOwnerIdentity<'a>>,
+    persistent_file_images: Vec<&'a PersistentFileImage>,
     preserved_component_ids: &'a BTreeSet<String>,
     scheduled_cleanup_ids: &'a BTreeSet<String>,
     interruption_log: &'a [InterruptionRecord],
@@ -159,6 +245,7 @@ impl PlannerExecutionState {
             snapshot,
             gate_states: BTreeMap::new(),
             serialized_components: BTreeMap::new(),
+            persistent_file_images: BTreeMap::new(),
             preserved_component_ids: BTreeSet::new(),
             scheduled_cleanup_ids: BTreeSet::new(),
             interruption_log: Vec::new(),
@@ -174,43 +261,45 @@ impl PlannerExecutionState {
             validate_stable_id("gate_states.id", id)?;
         }
         for (owner, components) in &self.serialized_components {
-            validate_serialization_owner(owner)?;
-            if *owner == SerializationOwner::None {
+            validate_component_store(owner, components, false)?;
+        }
+        for (id, image) in &self.persistent_file_images {
+            if id != &image.id {
                 return Err(PlannerContractError::new(
-                    "serialized_components.owner",
-                    "cannot use the none owner as a backing store",
+                    "persistent_file_images.id",
+                    "map key and image ID disagree",
                 ));
             }
-            if components.is_empty() {
+            image.validate()?;
+        }
+        let referenced_images = self
+            .snapshot
+            .environment
+            .physical_slots
+            .iter()
+            .map(|slot| slot.persistent_file_id.as_str())
+            .collect::<BTreeSet<_>>();
+        if referenced_images.len() != self.persistent_file_images.len() {
+            return Err(PlannerContractError::new(
+                "persistent_file_images",
+                "must correspond one-to-one with populated physical slots",
+            ));
+        }
+        for slot in &self.snapshot.environment.physical_slots {
+            let image = self
+                .persistent_file_images
+                .get(&slot.persistent_file_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "physical_slots.persistent_file_id",
+                        "references an unavailable persistent file image",
+                    )
+                })?;
+            if image.digest()? != slot.serialized_state_sha256 {
                 return Err(PlannerContractError::new(
-                    "serialized_components",
-                    "cannot contain an empty owner store",
+                    "physical_slots.serialized_state_sha256",
+                    "does not seal the referenced persistent file image",
                 ));
-            }
-            let mut previous = None;
-            for component in components {
-                component.validate()?;
-                if &component.serialization_owner != owner {
-                    return Err(PlannerContractError::new(
-                        "serialized_components.owner",
-                        "store key and component serialization owner disagree",
-                    ));
-                }
-                if matches!(owner, SerializationOwner::StageBank { .. })
-                    && component.lifetime != crate::state::SemanticLifetime::StageLoad
-                {
-                    return Err(PlannerContractError::new(
-                        "serialized_components.stage_bank",
-                        "can contain only stage-load-lifetime components",
-                    ));
-                }
-                if previous.is_some_and(|id: &str| id >= component.id.as_str()) {
-                    return Err(PlannerContractError::new(
-                        "serialized_components",
-                        "components must be unique and sorted by ID within each owner",
-                    ));
-                }
-                previous = Some(component.id.as_str());
             }
         }
         for id in &self.preserved_component_ids {
@@ -297,6 +386,7 @@ impl PlannerExecutionState {
                 .iter()
                 .map(|(owner, components)| SerializedOwnerIdentity { owner, components })
                 .collect(),
+            persistent_file_images: self.persistent_file_images.values().collect(),
             preserved_component_ids: &self.preserved_component_ids,
             scheduled_cleanup_ids: &self.scheduled_cleanup_ids,
             interruption_log: &self.interruption_log,
@@ -313,6 +403,11 @@ impl PlannerExecutionState {
         let mut normalized = self.clone();
         normalized.snapshot.id = "search-state".into();
         normalized.snapshot.sequence = 0;
+        normalized
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .clear();
         for component in &mut normalized.snapshot.environment.components {
             normalize_provenance(component);
         }
@@ -320,6 +415,21 @@ impl PlannerExecutionState {
             for component in components {
                 normalize_provenance(component);
             }
+        }
+        for image in normalized.persistent_file_images.values_mut() {
+            image.source_runtime_file_id = "search-source".into();
+            for component in &mut image.runtime_components {
+                normalize_provenance(component);
+            }
+            for store in &mut image.stage_banks {
+                for component in &mut store.components {
+                    normalize_provenance(component);
+                }
+            }
+        }
+        for slot in &mut normalized.snapshot.environment.physical_slots {
+            slot.serialized_state_sha256 =
+                normalized.persistent_file_images[&slot.persistent_file_id].digest()?;
         }
         normalized.interruption_log.clear();
         normalized.execution_history.clear();
@@ -340,6 +450,7 @@ impl PlannerExecutionState {
                     components: components.clone(),
                 })
                 .collect(),
+            persistent_file_images: self.persistent_file_images.values().cloned().collect(),
             preserved_component_ids: self.preserved_component_ids.clone(),
             scheduled_cleanup_ids: self.scheduled_cleanup_ids.clone(),
             interruption_log: self.interruption_log.clone(),
@@ -565,65 +676,137 @@ impl PlannerExecutionState {
     }
 
     fn affected_component_ids(&self, operation: &StateOperation) -> Vec<String> {
-        let mut ids = match operation {
-            StateOperation::Write { target, .. }
-            | StateOperation::CopyValue { target, .. }
-            | StateOperation::SetBitFromValue { target, .. }
-            | StateOperation::Adjust { target, .. }
-            | StateOperation::ClearField { target }
-            | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
-            StateOperation::WriteRaw { component_id, .. }
-            | StateOperation::InvalidateRaw { component_id, .. }
-            | StateOperation::CommitLoadStageBank { component_id, .. } => {
-                vec![component_id.clone()]
-            }
-            StateOperation::ClearComponent { selector }
-            | StateOperation::Preserve { selector }
-            | StateOperation::Serialize { selector, .. }
-            | StateOperation::Bind { selector, .. }
-            | StateOperation::Rebind { selector, .. } => {
-                self.matching_ids(selector).into_iter().collect()
-            }
-            StateOperation::Initialize { component } => vec![component.id.clone()],
-            StateOperation::Copy {
-                destination_component_id,
-                ..
-            }
-            | StateOperation::Restore {
-                destination_component_id,
-                ..
-            } => vec![destination_component_id.clone()],
-            StateOperation::Move {
-                source,
-                destination_component_id,
-                ..
-            } => {
-                let mut ids = self.matching_ids(source).into_iter().collect::<Vec<_>>();
-                ids.push(destination_component_id.clone());
-                ids
-            }
-            StateOperation::Project { component_ids, .. } => component_ids.clone(),
-            StateOperation::Consume {
-                pending_operation_id,
-            } => vec![pending_operation_id.clone()],
-            StateOperation::AdvanceFlow {
-                flow_component_id, ..
-            }
-            | StateOperation::BranchFlow {
-                flow_component_id, ..
-            } => vec![flow_component_id.clone()],
-            StateOperation::SetActiveRuntimeFile { .. }
-            | StateOperation::SetLocation { .. }
-            | StateOperation::SetPlayerForm { .. }
-            | StateOperation::SetPlayerMount { .. }
-            | StateOperation::SetPlayerControl { .. }
-            | StateOperation::SetPlayerAction { .. }
-            | StateOperation::SetGate { .. }
-            | StateOperation::ClearGate { .. }
-            | StateOperation::ScheduleCleanup { .. }
-            | StateOperation::CancelCleanup { .. }
-            | StateOperation::Interrupt { .. } => Vec::new(),
-        };
+        let mut ids =
+            match operation {
+                StateOperation::Write { target, .. }
+                | StateOperation::CopyValue { target, .. }
+                | StateOperation::SetBitFromValue { target, .. }
+                | StateOperation::Adjust { target, .. }
+                | StateOperation::ClearField { target }
+                | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
+                StateOperation::WriteRaw { component_id, .. }
+                | StateOperation::InvalidateRaw { component_id, .. }
+                | StateOperation::CommitLoadStageBank { component_id, .. }
+                | StateOperation::ActivateStageBank { component_id, .. } => {
+                    vec![component_id.clone()]
+                }
+                StateOperation::ClearComponent { selector }
+                | StateOperation::Preserve { selector }
+                | StateOperation::Serialize { selector, .. }
+                | StateOperation::Bind { selector, .. }
+                | StateOperation::Rebind { selector, .. } => {
+                    self.matching_ids(selector).into_iter().collect()
+                }
+                StateOperation::Initialize { component } => vec![component.id.clone()],
+                StateOperation::Copy {
+                    destination_component_id,
+                    ..
+                }
+                | StateOperation::Restore {
+                    destination_component_id,
+                    ..
+                } => vec![destination_component_id.clone()],
+                StateOperation::Move {
+                    source,
+                    destination_component_id,
+                    ..
+                } => {
+                    let mut ids = self.matching_ids(source).into_iter().collect::<Vec<_>>();
+                    ids.push(destination_component_id.clone());
+                    ids
+                }
+                StateOperation::Project { component_ids, .. } => component_ids.clone(),
+                StateOperation::SaveRuntimeToSlot {
+                    source_runtime_file_id,
+                    runtime_component_ids,
+                    stage_bank_stages,
+                    ..
+                } => {
+                    let selected_stages = stage_bank_stages
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<BTreeSet<_>>();
+                    let mut ids = runtime_component_ids.clone();
+                    ids.extend(
+                        self.snapshot
+                            .environment
+                            .components
+                            .iter()
+                            .filter(|component| {
+                                matches!(
+                                    &component.serialization_owner,
+                                    SerializationOwner::StageBank { runtime_file_id, stage }
+                                        if runtime_file_id == source_runtime_file_id
+                                            && selected_stages.contains(stage.as_str())
+                                )
+                            })
+                            .map(|component| component.id.clone()),
+                    );
+                    ids.extend(self.serialized_components.iter().flat_map(
+                        |(owner, components)| {
+                            let selected = matches!(
+                                owner,
+                                SerializationOwner::StageBank { runtime_file_id, stage }
+                                    if runtime_file_id == source_runtime_file_id
+                                        && selected_stages.contains(stage.as_str())
+                            );
+                            components
+                                .iter()
+                                .filter(move |_| selected)
+                                .map(|component| component.id.clone())
+                        },
+                    ));
+                    ids
+                }
+                StateOperation::LoadRuntimeFromSlot {
+                    source_runtime_file_id,
+                    runtime_component_ids,
+                    ..
+                } => {
+                    let mut ids = runtime_component_ids.clone();
+                    ids.extend(
+                        self.snapshot
+                            .environment
+                            .components
+                            .iter()
+                            .filter(|component| {
+                                component_belongs_to_runtime(component, source_runtime_file_id)
+                            })
+                            .map(|component| component.id.clone()),
+                    );
+                    ids.extend(
+                        self.serialized_components
+                            .iter()
+                            .filter(|(owner, _)| {
+                                owner_belongs_to_runtime(owner, source_runtime_file_id)
+                            })
+                            .flat_map(|(_, components)| {
+                                components.iter().map(|component| component.id.clone())
+                            }),
+                    );
+                    ids
+                }
+                StateOperation::Consume {
+                    pending_operation_id,
+                } => vec![pending_operation_id.clone()],
+                StateOperation::AdvanceFlow {
+                    flow_component_id, ..
+                }
+                | StateOperation::BranchFlow {
+                    flow_component_id, ..
+                } => vec![flow_component_id.clone()],
+                StateOperation::SetActiveRuntimeFile { .. }
+                | StateOperation::SetLocation { .. }
+                | StateOperation::SetPlayerForm { .. }
+                | StateOperation::SetPlayerMount { .. }
+                | StateOperation::SetPlayerControl { .. }
+                | StateOperation::SetPlayerAction { .. }
+                | StateOperation::SetGate { .. }
+                | StateOperation::ClearGate { .. }
+                | StateOperation::ScheduleCleanup { .. }
+                | StateOperation::CancelCleanup { .. }
+                | StateOperation::Interrupt { .. } => Vec::new(),
+            };
         ids.sort();
         ids.dedup();
         ids
@@ -931,6 +1114,15 @@ impl PlannerExecutionState {
             operation @ StateOperation::CommitLoadStageBank { .. } => {
                 self.commit_load_stage_bank(application_id, operation)?
             }
+            operation @ StateOperation::ActivateStageBank { .. } => {
+                self.activate_stage_bank(application_id, operation)?
+            }
+            operation @ StateOperation::SaveRuntimeToSlot { .. } => {
+                self.save_runtime_to_slot(application_id, operation)?
+            }
+            operation @ StateOperation::LoadRuntimeFromSlot { .. } => {
+                self.load_runtime_from_slot(application_id, operation)?
+            }
             StateOperation::Bind { selector, binding } => {
                 let ids = self.matching_ids(selector);
                 if ids.is_empty() {
@@ -1159,6 +1351,438 @@ impl PlannerExecutionState {
         Ok(())
     }
 
+    fn activate_stage_bank(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::ActivateStageBank {
+            component_id,
+            runtime_file_id,
+            stage,
+            binding,
+        } = operation
+        else {
+            unreachable!("stage activation helper is called only for its operation variant")
+        };
+        if self.snapshot.environment.active_runtime_file.id != runtime_file_id.as_str() {
+            return Err(PlannerContractError::new(
+                "operation.activate_stage_bank.runtime_file_id",
+                "does not name the active runtime file",
+            ));
+        }
+        self.require_absent_component(component_id)?;
+        let owner = SerializationOwner::StageBank {
+            runtime_file_id: runtime_file_id.clone(),
+            stage: stage.clone(),
+        };
+        let mut restored = select_serialized(&self.serialized_components, &owner, component_id)
+            .map_err(|error| {
+                PlannerContractError::new("operation.activate_stage_bank.source", error.detail())
+            })?
+            .clone();
+        if restored.id != component_id.as_str()
+            || restored.binding != *binding
+            || restored.serialization_owner != owner
+            || restored.lifetime != crate::state::SemanticLifetime::StageLoad
+        {
+            return Err(PlannerContractError::new(
+                "operation.activate_stage_bank.source",
+                "stored component does not match the exact activation contract",
+            ));
+        }
+        mark_save_restore(&mut restored, application_id);
+        self.snapshot.environment.components.push(restored);
+        Ok(())
+    }
+
+    fn save_runtime_to_slot(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::SaveRuntimeToSlot {
+            source_runtime_file_id,
+            destination_slot,
+            destination_persistent_file_id,
+            runtime_component_ids,
+            stage_bank_stages,
+        } = operation
+        else {
+            unreachable!("save helper is called only for its operation variant")
+        };
+        let active = &self.snapshot.environment.active_runtime_file;
+        if active.id != source_runtime_file_id.as_str() {
+            return Err(PlannerContractError::new(
+                "operation.save_runtime_to_slot.source_runtime_file_id",
+                "does not name the active runtime file",
+            ));
+        }
+        if active
+            .allowed_serialization_targets
+            .binary_search(destination_slot)
+            .is_err()
+        {
+            return Err(PlannerContractError::new(
+                "operation.save_runtime_to_slot.destination_slot",
+                "is not an allowed serialization target for the active runtime",
+            ));
+        }
+
+        let mut runtime_components = Vec::with_capacity(runtime_component_ids.len());
+        for component_id in runtime_component_ids {
+            let component = self
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| &component.id == component_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.save_runtime_to_slot.runtime_component_ids",
+                        "references an absent live component",
+                    )
+                })?;
+            if component.serialization_owner
+                != (SerializationOwner::RuntimeFile {
+                    runtime_file_id: source_runtime_file_id.clone(),
+                })
+            {
+                return Err(PlannerContractError::new(
+                    "operation.save_runtime_to_slot.runtime_component_ids",
+                    "component is not owned by the active runtime file",
+                ));
+            }
+            let mut serialized = component.clone();
+            rekey_component_runtime(
+                &mut serialized,
+                source_runtime_file_id,
+                destination_persistent_file_id,
+            );
+            serialized.serialization_owner = SerializationOwner::RuntimeFile {
+                runtime_file_id: destination_persistent_file_id.clone(),
+            };
+            mark_save_restore(&mut serialized, application_id);
+            runtime_components.push(serialized);
+        }
+
+        // Saving performs the normal putSave(current stage) commit for every
+        // selected stage-bank component that is presently live.
+        let selected_stages = stage_bank_stages
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let live_stage_components = self
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .filter_map(|component| match &component.serialization_owner {
+                SerializationOwner::StageBank {
+                    runtime_file_id,
+                    stage,
+                } if runtime_file_id == source_runtime_file_id
+                    && selected_stages.contains(stage.as_str()) =>
+                {
+                    Some(component.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for mut component in live_stage_components {
+            let owner = component.serialization_owner.clone();
+            mark_save_restore(&mut component, application_id);
+            insert_serialized(&mut self.serialized_components, &owner, component);
+        }
+
+        let mut stage_banks = Vec::with_capacity(stage_bank_stages.len());
+        for stage in stage_bank_stages {
+            let source_owner = SerializationOwner::StageBank {
+                runtime_file_id: source_runtime_file_id.clone(),
+                stage: stage.clone(),
+            };
+            let source = self
+                .serialized_components
+                .get(&source_owner)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.save_runtime_to_slot.stage_bank_stages",
+                        "references an unavailable stage-bank store",
+                    )
+                })?;
+            let destination_owner = SerializationOwner::StageBank {
+                runtime_file_id: destination_persistent_file_id.clone(),
+                stage: stage.clone(),
+            };
+            let mut components = source.clone();
+            for component in &mut components {
+                rekey_component_runtime(
+                    component,
+                    source_runtime_file_id,
+                    destination_persistent_file_id,
+                );
+                component.serialization_owner = destination_owner.clone();
+                mark_save_restore(component, application_id);
+            }
+            stage_banks.push(SerializedComponentStore {
+                owner: destination_owner,
+                components,
+            });
+        }
+        let image = PersistentFileImage {
+            schema: PERSISTENT_FILE_IMAGE_SCHEMA.into(),
+            id: destination_persistent_file_id.clone(),
+            source_runtime_file_id: source_runtime_file_id.clone(),
+            runtime_components,
+            stage_banks,
+        };
+        image.validate()?;
+        let image_sha256 = image.digest()?;
+
+        if self.snapshot.environment.physical_slots.iter().any(|slot| {
+            slot.slot != *destination_slot
+                && slot.persistent_file_id == *destination_persistent_file_id
+        }) {
+            return Err(PlannerContractError::new(
+                "operation.save_runtime_to_slot.destination_persistent_file_id",
+                "is already attached to a different physical slot",
+            ));
+        }
+        let old_image_id = match self
+            .snapshot
+            .environment
+            .physical_slots
+            .binary_search_by_key(&destination_slot.0, |slot| slot.slot.0)
+        {
+            Ok(index) => {
+                let old = self.snapshot.environment.physical_slots[index]
+                    .persistent_file_id
+                    .clone();
+                self.snapshot.environment.physical_slots[index] = PhysicalSlot {
+                    slot: *destination_slot,
+                    persistent_file_id: destination_persistent_file_id.clone(),
+                    serialized_state_sha256: image_sha256,
+                };
+                Some(old)
+            }
+            Err(index) => {
+                self.snapshot.environment.physical_slots.insert(
+                    index,
+                    PhysicalSlot {
+                        slot: *destination_slot,
+                        persistent_file_id: destination_persistent_file_id.clone(),
+                        serialized_state_sha256: image_sha256,
+                    },
+                );
+                None
+            }
+        };
+        if let Some(old_image_id) = old_image_id
+            && old_image_id != *destination_persistent_file_id
+        {
+            self.persistent_file_images.remove(&old_image_id);
+        }
+        self.persistent_file_images
+            .insert(destination_persistent_file_id.clone(), image);
+        Ok(())
+    }
+
+    fn load_runtime_from_slot(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::LoadRuntimeFromSlot {
+            source_runtime_file_id,
+            source_slot,
+            source_persistent_file_id,
+            destination_runtime_file_id,
+            destination_allowed_serialization_targets,
+            runtime_component_ids,
+            stage_bank_stages,
+        } = operation
+        else {
+            unreachable!("load helper is called only for its operation variant")
+        };
+        if self.snapshot.environment.active_runtime_file.id != source_runtime_file_id.as_str() {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.source_runtime_file_id",
+                "does not name the active runtime file",
+            ));
+        }
+        if source_runtime_file_id == destination_runtime_file_id
+            || self
+                .snapshot
+                .environment
+                .inactive_runtime_files
+                .iter()
+                .any(|runtime| runtime.id == *destination_runtime_file_id)
+        {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.destination_runtime_file_id",
+                "must name a fresh runtime-file lifetime",
+            ));
+        }
+        let slot = self
+            .snapshot
+            .environment
+            .physical_slots
+            .iter()
+            .find(|slot| slot.slot == *source_slot)
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "operation.load_runtime_from_slot.source_slot",
+                    "is not populated",
+                )
+            })?;
+        if slot.persistent_file_id != *source_persistent_file_id {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.source_persistent_file_id",
+                "does not match the selected slot",
+            ));
+        }
+        let image = self
+            .persistent_file_images
+            .get(source_persistent_file_id)
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "operation.load_runtime_from_slot.source_persistent_file_id",
+                    "references an unavailable persistent file image",
+                )
+            })?
+            .clone();
+        if image.digest()? != slot.serialized_state_sha256 {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.source_slot",
+                "persistent file image fails its slot digest",
+            ));
+        }
+        let image_component_ids = image
+            .runtime_components
+            .iter()
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+        if image_component_ids
+            != runtime_component_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.runtime_component_ids",
+                "must exactly match the persistent image manifest",
+            ));
+        }
+        let image_stages = image
+            .stage_banks
+            .iter()
+            .map(|store| match &store.owner {
+                SerializationOwner::StageBank { stage, .. } => stage.as_str(),
+                _ => unreachable!("validated image contains only stage banks"),
+            })
+            .collect::<Vec<_>>();
+        if image_stages
+            != stage_bank_stages
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        {
+            return Err(PlannerContractError::new(
+                "operation.load_runtime_from_slot.stage_bank_stages",
+                "must exactly match the persistent image manifest",
+            ));
+        }
+
+        self.snapshot
+            .environment
+            .components
+            .retain(|component| !component_belongs_to_runtime(component, source_runtime_file_id));
+        self.preserved_component_ids.retain(|component_id| {
+            self.snapshot
+                .environment
+                .components
+                .iter()
+                .any(|component| component.id == *component_id)
+        });
+        self.serialized_components
+            .retain(|owner, _| !owner_belongs_to_runtime(owner, source_runtime_file_id));
+
+        for mut component in image.runtime_components {
+            if self
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .any(|existing| existing.id == component.id)
+            {
+                return Err(PlannerContractError::new(
+                    "operation.load_runtime_from_slot.runtime_component_ids",
+                    "collides with a preserved non-file component",
+                ));
+            }
+            rekey_component_runtime(
+                &mut component,
+                source_persistent_file_id,
+                destination_runtime_file_id,
+            );
+            component.serialization_owner = SerializationOwner::RuntimeFile {
+                runtime_file_id: destination_runtime_file_id.clone(),
+            };
+            mark_save_restore(&mut component, application_id);
+            self.snapshot.environment.components.push(component);
+        }
+        for store in image.stage_banks {
+            let SerializationOwner::StageBank { stage, .. } = &store.owner else {
+                unreachable!("validated image contains only stage banks")
+            };
+            let destination_owner = SerializationOwner::StageBank {
+                runtime_file_id: destination_runtime_file_id.clone(),
+                stage: stage.clone(),
+            };
+            let mut components = store.components;
+            for component in &mut components {
+                rekey_component_runtime(
+                    component,
+                    source_persistent_file_id,
+                    destination_runtime_file_id,
+                );
+                component.serialization_owner = destination_owner.clone();
+                mark_save_restore(component, application_id);
+            }
+            if self
+                .serialized_components
+                .insert(destination_owner, components)
+                .is_some()
+            {
+                return Err(PlannerContractError::new(
+                    "operation.load_runtime_from_slot.stage_bank_stages",
+                    "destination runtime already owns a selected stage bank",
+                ));
+            }
+        }
+
+        let mut ended = self.snapshot.environment.active_runtime_file.clone();
+        ended.lifecycle = RuntimeFileLifecycle::Ended;
+        let insert_at = self
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .binary_search_by(|runtime| runtime.id.cmp(&ended.id))
+            .unwrap_err();
+        self.snapshot
+            .environment
+            .inactive_runtime_files
+            .insert(insert_at, ended);
+        self.snapshot.environment.active_runtime_file = RuntimeFile {
+            id: destination_runtime_file_id.clone(),
+            origin: RuntimeFileOrigin::LoadedSlot { slot: *source_slot },
+            backing: BackingAttachment::CardBacked { slot: *source_slot },
+            allowed_serialization_targets: destination_allowed_serialization_targets.clone(),
+            lifecycle: RuntimeFileLifecycle::Active,
+        };
+        Ok(())
+    }
+
     fn structured_value(
         &self,
         target: &crate::transition::ComponentFieldTarget,
@@ -1327,10 +1951,26 @@ impl PlannerExecutionStateDocument {
             previous = Some(store.owner.clone());
             stores.insert(store.owner, store.components);
         }
+        let mut images = BTreeMap::new();
+        let mut previous_image_id = None;
+        for image in self.persistent_file_images {
+            if previous_image_id
+                .as_deref()
+                .is_some_and(|id: &str| id >= image.id.as_str())
+            {
+                return Err(PlannerContractError::new(
+                    "persistent_file_images",
+                    "must be unique and sorted by ID",
+                ));
+            }
+            previous_image_id = Some(image.id.clone());
+            images.insert(image.id.clone(), image);
+        }
         let state = PlannerExecutionState {
             snapshot: self.snapshot,
             gate_states: self.gate_states,
             serialized_components: stores,
+            persistent_file_images: images,
             preserved_component_ids: self.preserved_component_ids,
             scheduled_cleanup_ids: self.scheduled_cleanup_ids,
             interruption_log: self.interruption_log,
@@ -1368,6 +2008,26 @@ fn selector_matches(selector: &ComponentSelector, component: &StateComponent) ->
         ComponentSelector::Kind { component_kind } => component.component_kind == *component_kind,
         ComponentSelector::Binding { binding } => component.binding == *binding,
     }
+}
+
+fn component_belongs_to_runtime(component: &StateComponent, runtime_file_id: &str) -> bool {
+    component.binding
+        == (ComponentBinding::RuntimeFile {
+            runtime_file_id: runtime_file_id.into(),
+        })
+        || owner_belongs_to_runtime(&component.serialization_owner, runtime_file_id)
+}
+
+fn owner_belongs_to_runtime(owner: &SerializationOwner, runtime_file_id: &str) -> bool {
+    matches!(
+        owner,
+        SerializationOwner::RuntimeFile {
+            runtime_file_id: owner_runtime
+        } | SerializationOwner::StageBank {
+            runtime_file_id: owner_runtime,
+            ..
+        } if owner_runtime == runtime_file_id
+    )
 }
 
 fn history_event_writes_field(
@@ -1409,6 +2069,10 @@ fn history_event_writes_field(
             StateOperation::CommitLoadStageBank {
                 component_id: changed,
                 ..
+            }
+            | StateOperation::ActivateStageBank {
+                component_id: changed,
+                ..
             } => changed == component_id,
             StateOperation::Copy {
                 destination_component_id,
@@ -1425,10 +2089,14 @@ fn history_event_writes_field(
             StateOperation::ClearComponent { .. } => affected_component_ids
                 .binary_search_by(|id| id.as_str().cmp(component_id))
                 .is_ok(),
+            StateOperation::LoadRuntimeFromSlot { .. } => affected_component_ids
+                .binary_search_by(|id| id.as_str().cmp(component_id))
+                .is_ok(),
             StateOperation::WriteRaw { .. }
             | StateOperation::InvalidateRaw { .. }
             | StateOperation::Preserve { .. }
             | StateOperation::Serialize { .. }
+            | StateOperation::SaveRuntimeToSlot { .. }
             | StateOperation::Bind { .. }
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
@@ -1457,6 +2125,15 @@ fn mark_transition(component: &mut StateComponent, application_id: &str) {
     });
 }
 
+fn mark_save_restore(component: &mut StateComponent, application_id: &str) {
+    component.provenance.push(ComponentProvenance {
+        source_kind: ProvenanceSourceKind::SaveRestore,
+        source_id: application_id.into(),
+        source_sha256: None,
+        transition_id: Some(application_id.into()),
+    });
+}
+
 fn normalize_provenance(component: &mut StateComponent) {
     component.provenance = vec![ComponentProvenance {
         source_kind: ProvenanceSourceKind::Initialized,
@@ -1468,6 +2145,79 @@ fn normalize_provenance(component: &mut StateComponent) {
 
 fn no_selector_match(field: &str) -> PlannerContractError {
     PlannerContractError::new(field, "selector did not match any component")
+}
+
+fn validate_component_store(
+    owner: &SerializationOwner,
+    components: &[StateComponent],
+    allow_empty: bool,
+) -> Result<(), PlannerContractError> {
+    validate_serialization_owner(owner)?;
+    if *owner == SerializationOwner::None {
+        return Err(PlannerContractError::new(
+            "serialized_components.owner",
+            "cannot use the none owner as a backing store",
+        ));
+    }
+    if components.is_empty() && !allow_empty {
+        return Err(PlannerContractError::new(
+            "serialized_components",
+            "cannot contain an empty owner store",
+        ));
+    }
+    let mut previous = None;
+    for component in components {
+        component.validate()?;
+        if &component.serialization_owner != owner {
+            return Err(PlannerContractError::new(
+                "serialized_components.owner",
+                "store key and component serialization owner disagree",
+            ));
+        }
+        if matches!(owner, SerializationOwner::StageBank { .. })
+            && component.lifetime != crate::state::SemanticLifetime::StageLoad
+        {
+            return Err(PlannerContractError::new(
+                "serialized_components.stage_bank",
+                "can contain only stage-load-lifetime components",
+            ));
+        }
+        if previous.is_some_and(|id: &str| id >= component.id.as_str()) {
+            return Err(PlannerContractError::new(
+                "serialized_components",
+                "components must be unique and sorted by ID within each owner",
+            ));
+        }
+        previous = Some(component.id.as_str());
+    }
+    Ok(())
+}
+
+fn validate_persistent_image_binding(
+    persistent_file_id: &str,
+    component: &StateComponent,
+) -> Result<(), PlannerContractError> {
+    if let ComponentBinding::RuntimeFile { runtime_file_id } = &component.binding
+        && runtime_file_id != persistent_file_id
+    {
+        return Err(PlannerContractError::new(
+            "persistent_file_image.binding",
+            "runtime-file binding does not name the persistent image",
+        ));
+    }
+    Ok(())
+}
+
+fn rekey_component_runtime(component: &mut StateComponent, source: &str, destination: &str) {
+    if component.binding
+        == (ComponentBinding::RuntimeFile {
+            runtime_file_id: source.into(),
+        })
+    {
+        component.binding = ComponentBinding::RuntimeFile {
+            runtime_file_id: destination.into(),
+        };
+    }
 }
 
 fn insert_serialized(
@@ -1625,6 +2375,7 @@ mod tests {
                     allowed_serialization_targets: vec![PhysicalSlotId(1)],
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
+                inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
                 location: SceneLocation {
@@ -2779,6 +3530,267 @@ mod tests {
             "operation.commit_load_stage_bank.destination"
         );
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn file_zero_save_and_load_preserve_nested_stores_and_end_only_the_runtime_lifetime() {
+        let stage_component = |stage: &str, marker: u64| {
+            let mut component = structured_component(
+                "stage.live",
+                ComponentKind::StageMemory,
+                ComponentBinding::Stage {
+                    stage: stage.into(),
+                },
+            );
+            component.lifetime = SemanticLifetime::StageLoad;
+            component.serialization_owner = SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: stage.into(),
+            };
+            let ComponentPayload::Structured { fields } = &mut component.payload else {
+                unreachable!()
+            };
+            fields.insert("marker".into(), StateValue::Unsigned(marker));
+            component
+        };
+        let mut source = snapshot();
+        let save = source
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "save.main")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut save.payload else {
+            unreachable!()
+        };
+        fields.insert("rupees".into(), StateValue::Unsigned(99));
+        source
+            .environment
+            .components
+            .push(stage_component("F_SP103", 11));
+        let mut session = structured_component(
+            "session.recent-item",
+            ComponentKind::Session,
+            ComponentBinding::Session {
+                session_id: "process".into(),
+            },
+        );
+        session.lifetime = SemanticLifetime::Session;
+        session.serialization_owner = SerializationOwner::None;
+        let ComponentPayload::Structured { fields } = &mut session.payload else {
+            unreachable!()
+        };
+        fields.insert("item".into(), StateValue::Unsigned(0x4a));
+        source.environment.components.push(session);
+        source
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let mut state = PlannerExecutionState::new(source).unwrap();
+        for (stage, marker) in [("D_MN05", 22), ("F_SP103", 1)] {
+            let owner = SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: stage.into(),
+            };
+            let mut component = stage_component(stage, marker);
+            component.serialization_owner = owner.clone();
+            state.serialized_components.insert(owner, vec![component]);
+        }
+        state.validate().unwrap();
+
+        let save_operation = StateOperation::SaveRuntimeToSlot {
+            source_runtime_file_id: "file-0".into(),
+            destination_slot: PhysicalSlotId(1),
+            destination_persistent_file_id: "persistent-slot-1".into(),
+            runtime_component_ids: vec!["save.main".into()],
+            stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
+        };
+        state
+            .apply_operations(
+                "boundary.save-file-0",
+                "snapshot.file-0-saved",
+                &[save_operation],
+            )
+            .unwrap();
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::TitleFile0
+        );
+        assert_eq!(state.snapshot.environment.physical_slots.len(), 1);
+        let image = &state.persistent_file_images["persistent-slot-1"];
+        assert_eq!(image.stage_banks.len(), 2);
+        let saved_faron = image
+            .stage_banks
+            .iter()
+            .find(|store| {
+                matches!(
+                    &store.owner,
+                    SerializationOwner::StageBank { stage, .. } if stage == "F_SP103"
+                )
+            })
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &saved_faron.components[0].payload else {
+            unreachable!()
+        };
+        assert_eq!(fields["marker"], StateValue::Unsigned(11));
+        assert_eq!(
+            image.runtime_components[0]
+                .provenance
+                .last()
+                .unwrap()
+                .source_kind,
+            ProvenanceSourceKind::SaveRestore
+        );
+
+        let before_failed_load = state.clone();
+        let error = state
+            .apply_operations(
+                "boundary.incomplete-load",
+                "snapshot.not-produced",
+                &[StateOperation::LoadRuntimeFromSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    source_slot: PhysicalSlotId(1),
+                    source_persistent_file_id: "persistent-slot-1".into(),
+                    destination_runtime_file_id: "slot-1-runtime".into(),
+                    destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                    runtime_component_ids: vec!["save.main".into()],
+                    stage_bank_stages: vec!["F_SP103".into()],
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.field(),
+            "operation.load_runtime_from_slot.stage_bank_stages"
+        );
+        assert_eq!(state, before_failed_load);
+
+        state
+            .apply_operations(
+                "boundary.load-slot-1",
+                "snapshot.slot-1-loaded",
+                &[
+                    StateOperation::LoadRuntimeFromSlot {
+                        source_runtime_file_id: "file-0".into(),
+                        source_slot: PhysicalSlotId(1),
+                        source_persistent_file_id: "persistent-slot-1".into(),
+                        destination_runtime_file_id: "slot-1-runtime".into(),
+                        destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                        runtime_component_ids: vec!["save.main".into()],
+                        stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
+                    },
+                    StateOperation::ActivateStageBank {
+                        component_id: "stage.live".into(),
+                        runtime_file_id: "slot-1-runtime".into(),
+                        stage: "F_SP103".into(),
+                        binding: ComponentBinding::Stage {
+                            stage: "F_SP103".into(),
+                        },
+                    },
+                    StateOperation::SetLocation {
+                        location: SceneLocation {
+                            stage: "F_SP103".into(),
+                            room: 0,
+                            layer: 0,
+                            spawn: 0,
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file,
+            RuntimeFile {
+                id: "slot-1-runtime".into(),
+                origin: RuntimeFileOrigin::LoadedSlot {
+                    slot: PhysicalSlotId(1)
+                },
+                backing: BackingAttachment::CardBacked {
+                    slot: PhysicalSlotId(1)
+                },
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            }
+        );
+        assert_eq!(state.snapshot.environment.inactive_runtime_files.len(), 1);
+        assert_eq!(
+            state.snapshot.environment.inactive_runtime_files[0].lifecycle,
+            RuntimeFileLifecycle::Ended
+        );
+        assert_eq!(
+            field(&state, "save.main", "rupees"),
+            &StateValue::Unsigned(99)
+        );
+        assert_eq!(
+            field(&state, "stage.live", "marker"),
+            &StateValue::Unsigned(11)
+        );
+        assert_eq!(
+            field(&state, "session.recent-item", "item"),
+            &StateValue::Unsigned(0x4a)
+        );
+        assert!(
+            state
+                .serialized_components
+                .contains_key(&SerializationOwner::StageBank {
+                    runtime_file_id: "slot-1-runtime".into(),
+                    stage: "D_MN05".into(),
+                })
+        );
+        assert!(
+            !state
+                .serialized_components
+                .keys()
+                .any(|owner| { owner_belongs_to_runtime(owner, "file-0") })
+        );
+
+        let sealed_slot_digest =
+            state.snapshot.environment.physical_slots[0].serialized_state_sha256;
+        state
+            .apply_operations(
+                "transition.spend-rupees",
+                "snapshot.runtime-diverged-from-slot",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: "save.main".into(),
+                        field: "rupees".into(),
+                    },
+                    value: StateValue::Unsigned(1),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&state, "save.main", "rupees"),
+            &StateValue::Unsigned(1)
+        );
+        let ComponentPayload::Structured { fields } =
+            &state.persistent_file_images["persistent-slot-1"].runtime_components[0].payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(fields["rupees"], StateValue::Unsigned(99));
+        assert_eq!(
+            state.snapshot.environment.physical_slots[0].serialized_state_sha256,
+            sealed_slot_digest
+        );
+
+        let document = state.to_document().unwrap();
+        let decoded =
+            PlannerExecutionStateDocument::decode_canonical(&document.canonical_bytes().unwrap())
+                .unwrap()
+                .into_state()
+                .unwrap();
+        assert_eq!(decoded, state);
+        let semantic_with_history = state.semantic_digest().unwrap();
+        let mut without_ended_history = state.clone();
+        without_ended_history
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .clear();
+        assert_eq!(
+            semantic_with_history,
+            without_ended_history.semantic_digest().unwrap()
+        );
     }
 
     #[test]

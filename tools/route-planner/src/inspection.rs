@@ -17,8 +17,8 @@ use dusklight_route_planner::state::{BoundaryKind, ComponentPayload};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v6";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v4";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v7";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v5";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -497,6 +497,7 @@ mod tests {
                     allowed_serialization_targets: Vec::new(),
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
+                inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
                 location: SceneLocation {

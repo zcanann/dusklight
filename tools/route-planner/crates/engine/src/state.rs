@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v5";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v6";
 pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v2";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
@@ -344,6 +344,7 @@ pub struct ExecutionEnvironment {
     pub schema: String,
     pub runtime_configuration: RuntimeConfiguration,
     pub active_runtime_file: RuntimeFile,
+    pub inactive_runtime_files: Vec<RuntimeFile>,
     pub physical_slots: Vec<PhysicalSlot>,
     pub physical_slot_observations: Vec<PhysicalSlotObservation>,
     pub location: SceneLocation,
@@ -483,6 +484,33 @@ impl ExecutionEnvironment {
         }
         self.runtime_configuration.validate()?;
         self.active_runtime_file.validate()?;
+        if self.active_runtime_file.lifecycle != RuntimeFileLifecycle::Active {
+            return Err(PlannerContractError::new(
+                "active_runtime_file.lifecycle",
+                "must be active",
+            ));
+        }
+        validate_sorted_collection(
+            "inactive_runtime_files",
+            &self.inactive_runtime_files,
+            |runtime| runtime.id.clone(),
+            |runtime| {
+                runtime.validate()?;
+                if runtime.lifecycle == RuntimeFileLifecycle::Active {
+                    return Err(PlannerContractError::new(
+                        "inactive_runtime_files.lifecycle",
+                        "cannot contain an active runtime file",
+                    ));
+                }
+                if runtime.id == self.active_runtime_file.id {
+                    return Err(PlannerContractError::new(
+                        "inactive_runtime_files.id",
+                        "duplicates the active runtime file",
+                    ));
+                }
+                Ok(())
+            },
+        )?;
         validate_location(&self.location)?;
         validate_player(&self.player)?;
         validate_sorted_collection(
@@ -501,6 +529,15 @@ impl ExecutionEnvironment {
                 )
             },
         )?;
+        let mut persistent_file_ids = BTreeSet::new();
+        for slot in &self.physical_slots {
+            if !persistent_file_ids.insert(slot.persistent_file_id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "physical_slots.persistent_file_id",
+                    "must be unique across physical slots",
+                ));
+            }
+        }
         validate_sorted_collection(
             "physical_slot_observations",
             &self.physical_slot_observations,
@@ -989,6 +1026,7 @@ mod tests {
                 ],
                 lifecycle: RuntimeFileLifecycle::Active,
             },
+            inactive_runtime_files: Vec::new(),
             physical_slots: Vec::new(),
             physical_slot_observations: Vec::new(),
             location: SceneLocation {

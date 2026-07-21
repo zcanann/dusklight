@@ -129,3 +129,12 @@ commit the live source payload, restore the exact destination payload, and apply
 explicit source/destination semantic bindings. Scene movement stays a separate
 effect, preventing a bank swap from silently inventing a map transition. See
 `docs/route-planner/backing-store-boundaries.md`.
+
+Physical saves use a second level of ownership. A populated slot points to a
+digest-sealed persistent-file image containing an explicit runtime-component
+manifest and its nested stage-bank stores. `save_runtime_to_slot` creates or
+overwrites that image without pretending file 0 became slot 0;
+`load_runtime_from_slot` restores it into a fresh card-backed runtime identity,
+records the prior runtime as ended, and leaves session-owned components outside
+the projection. `activate_stage_bank` performs the initial stage-bank restore,
+while `set_location` remains a separate effect.

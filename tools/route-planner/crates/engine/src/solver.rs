@@ -2212,6 +2212,7 @@ mod tests {
                     allowed_serialization_targets: Vec::new(),
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
+                inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
                 location: SceneLocation {

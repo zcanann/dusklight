@@ -480,6 +480,7 @@ pub fn snapshot_native_observation(
                 ],
                 lifecycle: RuntimeFileLifecycle::Active,
             },
+            inactive_runtime_files: Vec::new(),
             physical_slots: Vec::new(),
             physical_slot_observations,
             location: SceneLocation {

@@ -3,9 +3,9 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentSelector, PlaneRelation, PlayerForm, PlayerMount, RuntimeFile,
-    RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
-    validate_binding as validate_component_binding, validate_component_kind,
+    ComponentBinding, ComponentSelector, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount,
+    RuntimeFile, RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent,
+    StateValue, validate_binding as validate_component_binding, validate_component_kind,
     validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v10";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v11";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -104,6 +104,37 @@ pub enum StateOperation {
         destination_stage: String,
         source_binding: ComponentBinding,
         destination_binding: ComponentBinding,
+    },
+    /// Restores one already-loaded stage-bank component into the live bank
+    /// without committing a prior live stage. This is the `getSave(stage)` half
+    /// used after a physical file load or new-file initialization.
+    ActivateStageBank {
+        component_id: String,
+        runtime_file_id: String,
+        stage: String,
+        binding: ComponentBinding,
+    },
+    /// Projects the explicitly named runtime-file components and stage banks
+    /// into a persistent file identity attached to a physical slot. The active
+    /// runtime remains active until a separate load or lifecycle operation.
+    SaveRuntimeToSlot {
+        source_runtime_file_id: String,
+        destination_slot: PhysicalSlotId,
+        destination_persistent_file_id: String,
+        runtime_component_ids: Vec<String>,
+        stage_bank_stages: Vec<String>,
+    },
+    /// Ends the current runtime-file lifetime, restores the exact persistent
+    /// projection from a physical slot, and activates a new loaded runtime.
+    /// Session-owned state is not part of the file projection and survives.
+    LoadRuntimeFromSlot {
+        source_runtime_file_id: String,
+        source_slot: PhysicalSlotId,
+        source_persistent_file_id: String,
+        destination_runtime_file_id: String,
+        destination_allowed_serialization_targets: Vec<PhysicalSlotId>,
+        runtime_component_ids: Vec<String>,
+        stage_bank_stages: Vec<String>,
     },
     Bind {
         selector: ComponentSelector,
@@ -611,6 +642,82 @@ impl StateOperation {
                     ));
                 }
                 Ok(())
+            }
+            Self::ActivateStageBank {
+                component_id,
+                runtime_file_id,
+                stage,
+                binding,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                validate_stable_id("operation.runtime_file_id", runtime_file_id)?;
+                validate_binding(&ComponentBinding::Stage {
+                    stage: stage.clone(),
+                })?;
+                validate_binding(binding)?;
+                if matches!(binding, ComponentBinding::Unbound) {
+                    return Err(PlannerContractError::new(
+                        "operation.activate_stage_bank.binding",
+                        "must be explicit",
+                    ));
+                }
+                Ok(())
+            }
+            Self::SaveRuntimeToSlot {
+                source_runtime_file_id,
+                destination_slot,
+                destination_persistent_file_id,
+                runtime_component_ids,
+                stage_bank_stages,
+            } => {
+                validate_stable_id("operation.source_runtime_file_id", source_runtime_file_id)?;
+                destination_slot.validate("operation.destination_slot")?;
+                validate_stable_id(
+                    "operation.destination_persistent_file_id",
+                    destination_persistent_file_id,
+                )?;
+                validate_id_list(
+                    "operation.runtime_component_ids",
+                    runtime_component_ids,
+                    false,
+                )?;
+                validate_stage_list("operation.stage_bank_stages", stage_bank_stages)
+            }
+            Self::LoadRuntimeFromSlot {
+                source_runtime_file_id,
+                source_slot,
+                source_persistent_file_id,
+                destination_runtime_file_id,
+                destination_allowed_serialization_targets,
+                runtime_component_ids,
+                stage_bank_stages,
+            } => {
+                validate_stable_id("operation.source_runtime_file_id", source_runtime_file_id)?;
+                source_slot.validate("operation.source_slot")?;
+                validate_stable_id(
+                    "operation.source_persistent_file_id",
+                    source_persistent_file_id,
+                )?;
+                validate_stable_id(
+                    "operation.destination_runtime_file_id",
+                    destination_runtime_file_id,
+                )?;
+                if source_runtime_file_id == destination_runtime_file_id {
+                    return Err(PlannerContractError::new(
+                        "operation.destination_runtime_file_id",
+                        "must begin a distinct runtime-file lifetime",
+                    ));
+                }
+                validate_slot_list(
+                    "operation.destination_allowed_serialization_targets",
+                    destination_allowed_serialization_targets,
+                )?;
+                validate_id_list(
+                    "operation.runtime_component_ids",
+                    runtime_component_ids,
+                    false,
+                )?;
+                validate_stage_list("operation.stage_bank_stages", stage_bank_stages)
             }
             Self::Bind { selector, binding } | Self::Rebind { selector, binding } => {
                 validate_component_selector(selector)?;
@@ -1185,6 +1292,50 @@ fn validate_id_list(
             ));
         }
         previous = Some(id.as_str());
+    }
+    Ok(())
+}
+
+fn validate_stage_list(field: &str, stages: &[String]) -> Result<(), PlannerContractError> {
+    if stages.len() > 4_096 {
+        return Err(PlannerContractError::new(
+            field,
+            "must contain at most 4096 stage names",
+        ));
+    }
+    let mut previous = None;
+    for stage in stages {
+        validate_binding(&ComponentBinding::Stage {
+            stage: stage.clone(),
+        })?;
+        if previous.is_some_and(|prior: &str| prior >= stage.as_str()) {
+            return Err(PlannerContractError::new(
+                field,
+                "must be unique and sorted",
+            ));
+        }
+        previous = Some(stage.as_str());
+    }
+    Ok(())
+}
+
+fn validate_slot_list(field: &str, slots: &[PhysicalSlotId]) -> Result<(), PlannerContractError> {
+    if slots.is_empty() || slots.len() > 3 {
+        return Err(PlannerContractError::new(
+            field,
+            "must contain between one and three physical slots",
+        ));
+    }
+    let mut previous = None;
+    for slot in slots {
+        slot.validate(field)?;
+        if previous.is_some_and(|prior: PhysicalSlotId| prior >= *slot) {
+            return Err(PlannerContractError::new(
+                field,
+                "must be unique and sorted",
+            ));
+        }
+        previous = Some(*slot);
     }
     Ok(())
 }

@@ -3,17 +3,17 @@
 use crate::artifact::Digest;
 use crate::state::{
     BoundaryKind, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-    ExecutionEnvironment, PhysicalSlot, PhysicalSlotObservation, RuntimeFile, SemanticLifetime,
-    SerializationOwner, StateComponent,
+    ExecutionEnvironment, PhysicalSlot, PhysicalSlotObservation, RuntimeFile, RuntimeFileLifecycle,
+    SemanticLifetime, SerializationOwner, StateComponent,
 };
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v5";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v5";
-pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v5";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v6";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v6";
+pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +115,8 @@ pub struct StateDiff {
     pub boundary: BoundaryKind,
     pub runtime_file_before: RuntimeFile,
     pub runtime_file_after: RuntimeFile,
+    pub inactive_runtime_files_before: Vec<RuntimeFile>,
+    pub inactive_runtime_files_after: Vec<RuntimeFile>,
     pub location_changed: bool,
     pub player_changed: bool,
     pub static_world_objects_changed: bool,
@@ -225,6 +227,8 @@ impl StateDiff {
             boundary,
             runtime_file_before: before.environment.active_runtime_file.clone(),
             runtime_file_after: after.environment.active_runtime_file.clone(),
+            inactive_runtime_files_before: before.environment.inactive_runtime_files.clone(),
+            inactive_runtime_files_after: after.environment.inactive_runtime_files.clone(),
             location_changed: before.environment.location != after.environment.location,
             player_changed: before.environment.player != after.environment.player,
             static_world_objects_changed: before.environment.static_world_objects
@@ -271,6 +275,14 @@ impl StateDiff {
         }
         self.runtime_file_before.validate()?;
         self.runtime_file_after.validate()?;
+        validate_inactive_runtime_files(
+            "inactive_runtime_files_before",
+            &self.inactive_runtime_files_before,
+        )?;
+        validate_inactive_runtime_files(
+            "inactive_runtime_files_after",
+            &self.inactive_runtime_files_after,
+        )?;
         validate_delta_order(
             "slot_deltas",
             self.slot_deltas.iter().map(|delta| delta.slot),
@@ -329,6 +341,30 @@ impl SnapshotChain {
         }
         Ok(())
     }
+}
+
+fn validate_inactive_runtime_files(
+    field: &str,
+    runtimes: &[RuntimeFile],
+) -> Result<(), PlannerContractError> {
+    let mut previous = None;
+    for runtime in runtimes {
+        runtime.validate()?;
+        if runtime.lifecycle == RuntimeFileLifecycle::Active {
+            return Err(PlannerContractError::new(
+                field,
+                "cannot contain an active runtime-file lifetime",
+            ));
+        }
+        if previous.is_some_and(|id: &str| id >= runtime.id.as_str()) {
+            return Err(PlannerContractError::new(
+                field,
+                "must be unique and sorted by runtime-file ID",
+            ));
+        }
+        previous = Some(runtime.id.as_str());
+    }
+    Ok(())
 }
 
 fn diff_slots(before: &[PhysicalSlot], after: &[PhysicalSlot]) -> Vec<SlotDelta> {
@@ -619,6 +655,7 @@ mod tests {
                     allowed_serialization_targets: vec![PhysicalSlotId(1)],
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
+                inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
                 location: SceneLocation {
@@ -721,6 +758,13 @@ mod tests {
         after.environment.active_runtime_file.backing = BackingAttachment::CardBacked {
             slot: PhysicalSlotId(1),
         };
+        let mut ended_runtime = before.environment.active_runtime_file.clone();
+        ended_runtime.id = "file-previous".into();
+        ended_runtime.lifecycle = RuntimeFileLifecycle::Ended;
+        after
+            .environment
+            .inactive_runtime_files
+            .push(ended_runtime.clone());
         after
             .environment
             .physical_slot_observations
@@ -731,6 +775,8 @@ mod tests {
             });
         let diff = StateDiff::between(&before, &after, BoundaryKind::SaveRuntimeToSlot).unwrap();
         assert_ne!(diff.runtime_file_before, diff.runtime_file_after);
+        assert!(diff.inactive_runtime_files_before.is_empty());
+        assert_eq!(diff.inactive_runtime_files_after, vec![ended_runtime]);
         assert_eq!(diff.slot_deltas.len(), 1);
         assert_eq!(diff.slot_deltas[0].delta_kind, DeltaKind::Added);
         assert_eq!(diff.slot_observation_deltas.len(), 1);

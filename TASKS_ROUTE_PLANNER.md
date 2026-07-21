@@ -449,6 +449,12 @@ The current code shows:
   aliasing. The executable `commit_load_stage_bank` operation verifies the
   active runtime, current scene, exact source/destination owners, semantic
   bindings, and stage-load lifetime before atomically committing and restoring.
+- Planner persistent-file images preserve explicitly selected runtime components
+  plus nested stage-bank stores. `save_runtime_to_slot` seals that projection in
+  physical slot 1–3; `load_runtime_from_slot` verifies the complete manifest,
+  retires the active runtime, restores a fresh card-backed runtime, and preserves
+  unrelated session-owned state. Initial `getSave(stage)` activation and scene
+  location change remain separate ordered operations.
 - The same per-stage `dSv_memory_c`/`dSv_memBit_c` payload contains chest bits,
   switches, item bits, a small-key count, and dungeon-item bits including the boss
   key. Key and boss-key semantics therefore derive from the bound backing store,
@@ -511,16 +517,16 @@ The current code shows:
   actor-bound components with trace provenance. The target, raw predicate
   selectors, evaluated guard values, and eligibility remain distinct fields so
   later source/extracted rules can connect them to their real backing stores.
-- Snapshot schema v5 keeps observed slot descriptors separate from verified
+- Snapshot schema v6 keeps observed slot descriptors separate from verified
   serialized slot contents, permits unknown runtime origin/backing and
-  player-control state, and diffs slot observation changes independently from
-  slot-content changes.
+  player-control state, retains ended/suspended runtime-file lifetimes, and
+  diffs those lifetimes plus slot observation/content changes independently.
 - Native snapshot sequences accept an explicit incoming boundary kind, emit
   semantic/component/raw-byte diffs, and seal each snapshot into a contiguous
   digest-linked chain. This makes room/stage/save/load/void/title/BiT/BiTE test
   captures comparable without inferring the boundary label from coincidental
   state changes; representative captures for each boundary remain outstanding.
-- Extracted world-facts schema v2 now compiles an exact content identity,
+- Extracted world-facts schema v3 now compiles an exact content identity,
   runtime configuration, authenticated `WorldContext`, and its complete set of
   canonical world inventories into a content-addressed planner payload. The
   planner-owned `route-planner extract-world` command emits both that payload
@@ -534,8 +540,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v9, refinement-stack schema v2, and composed-catalog
-  schema v10 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v10, refinement-stack schema v2, and composed-catalog
+  schema v11 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -557,14 +563,14 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Mechanics-catalog schema v10 makes writer, gate, and reader records executable
+- Mechanics-catalog schema v11 makes writer, gate, and reader records executable
   solver inputs rather than graph-only annotations. Reader proofs retain their
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
   inventing a default. The same schema distinguishes portal, void/death reload,
   title return, wrong-state respawn, and actor-driven transitions and provides
   typed operations for form, mount, control, and action changes.
-- Planner service schema v15 provides a typed JSON-lines transport owned by the
+- Planner service schema v16 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -577,7 +583,7 @@ The current code shows:
   obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
   planner-owned `project-feasibility-diff` command and service expose it without
   changing the base graph or route book.
-- State-inspection schema v6 preserves the full execution-state document—live
+- State-inspection schema v7 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
   while evaluating every friendly alias and derived fact under the selected
@@ -585,7 +591,7 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v4 combines the raw/component boundary diff with
+- State-inspection-diff schema v5 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   and runtime-context changes separately. An unchanged payload digest and empty
@@ -659,7 +665,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v10 includes explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v11 includes explicit cutscene scene-change and resource-
   load-failure transition classes, the reload/warp/actor transition classes above,
   player-state operations, and masked raw-knownness invalidation. This supports
   partial execution records that preserve confirmed prefix bytes while marking
@@ -673,7 +679,7 @@ The current code shows:
 - `CostAtMost` constraints accumulate every executed technique's authored
   `RouteCost` axes, retain the totals in search identity, prune paths exceeding
   the strictest active per-axis maximum, and report the reached route's totals.
-  Transitions and resolvers currently have no cost field in mechanics schema v10,
+  Transitions and resolvers currently have no cost field in mechanics schema v11,
   so no unmodeled cost is invented for them.
 - `EvidenceAtLeast` accepts only `established`, `contested`, or `hypothetical`
   and intersects that threshold with—never relaxes—the runtime evidence mode.
@@ -1769,8 +1775,15 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Implement save/load/title/runtime-file operations.
   - [x] Add transactional primitives for serialization, restoration, explicit
         component projection between runtime-file bindings, and location changes.
-  - [ ] Model active-runtime lifecycle/backing attachment and concrete normal
-        save/load/title sequences as evidenced transition programs.
+  - [x] Model persistent-file images, populated physical slots, active-runtime
+        retirement/backing attachment, exact projection manifests, and concrete
+        executable save/load/stage-activation operations with a file-0 sequence
+        fixture. File 0 can be projected into slots 1–3 and then end when a fresh
+        card-backed runtime loads; session-owned state is independent and the
+        loaded runtime's future save targets remain explicit. See
+        `docs/route-planner/backing-store-boundaries.md`.
+  - [ ] Model concrete title-return/void handling and build-specific save-time
+        normalization/clearing as evidenced transition programs.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2005,7 +2018,7 @@ Deliverable: a headless query API and deterministic fixture suite.
       each reached approach; retain the closest unresolved witness on failure.
 - [x] Show component transformation and provenance histories.
 - [x] Show last-writer and gate history for latched values.
-  - Execution-state schema v6 records every typed operation and every resolved
+  - Execution-state schema v7 records every typed operation and every resolved
     per-component boundary disposition with contiguous application-local order,
     affected component IDs, source sequence, and result snapshot. State
     inspection exposes the full log, a direct last-writer result for each live
@@ -2112,8 +2125,11 @@ Deliverable: route confidence is mechanically explainable.
 
 - [ ] Enter the slotless title-origin runtime file and import its exact initialized
       persistent-domain stores per build.
-- [ ] Show physical slots 1–3 separately.
+- [x] Show physical slots 1–3 separately.
+  - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.
+  - [x] Model the chosen-slot projection/load mechanics independently of the
+        still-unmodeled void/title-state preconditions and normalization rules.
 - [ ] Model BiTE as a selected component splice into an existing file.
 - [ ] Allow an unsaved file-0 goal and hypothetical escape overlay.
 - [ ] Explain exactly which components die when a file-0 lifetime ends.

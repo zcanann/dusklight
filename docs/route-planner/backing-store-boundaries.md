@@ -58,19 +58,59 @@ guessing their meaning.
 The current operation requires the destination entry to exist. Extraction or an
 initializer must seed first-entry payloads; absence is an execution failure, not
 an implicit zero-filled bank. Physical-slot save/load and title/file lifecycle
-programs remain separate tasks because they operate over different owners and
-reset domains.
+programs operate over a second owner level.
+
+## Persistent file images and physical slots
+
+A populated physical slot does not directly own a flat component list. It names
+one canonical `persistent-file-image/v1` containing:
+
+- an explicit, sorted set of runtime-file components selected by the save
+  policy; and
+- explicit, sorted stage-bank stores whose owners are rekeyed to the persistent
+  file identity.
+
+The slot stores the image digest. Execution-state validation requires a
+one-to-one correspondence between populated slots and images and re-verifies
+every digest. Two physical slots cannot silently name one persistent identity.
+
+`save_runtime_to_slot` checks that the source is active and the destination is
+one of its allowed slots. It commits live components belonging to selected
+stage banks, projects only the authored runtime-component/stage manifest, marks
+the copies with save/restore provenance, and atomically installs the sealed
+image. The source runtime stays active; this operation alone does not claim that
+file 0 ended or that title/void preconditions were satisfied.
+
+`load_runtime_from_slot` requires its authored component and stage lists to
+match the sealed image exactly. It then:
+
+1. removes only live and stored components owned by the source runtime;
+2. retains unrelated session/process components;
+3. restores the image under a fresh runtime-file identity;
+4. records the source runtime with `ended` lifecycle; and
+5. activates the fresh runtime with `loaded_slot` origin, card backing, and the
+   explicitly authored set of future save targets.
+
+`activate_stage_bank` is the initial `getSave(stage)` half: it restores one
+loaded stage entry into an absent live component without committing a previous
+stage. A following `set_location` chooses the scene. When all operations are in
+one transition batch, a missing image, incomplete manifest, component collision,
+missing stage bank, or bad location rolls the entire batch back.
+
+The exact file-0 initial image, void/title prerequisites, and build-specific
+save normalization/clearing remain evidence tasks. The mechanism deliberately
+does not invent them.
 
 ## Schema revision
 
 Adding the runtime-file coordinate is a wire-format change, not a friendly-label
 reinterpretation. The milestone advances the directly containing schemas:
 
-- execution environment and state snapshot/diff/chain to v5;
-- execution state to v6 and boundary policy to v2;
-- mechanics catalog to v10, refinement pack to v9, and composed catalog to v10;
-- cutscene program/compiled program to v2 and extracted world facts to v2; and
-- state inspection to v6, inspection diff to v4, and planner service to v15.
+- execution environment and state snapshot/diff/chain to v6;
+- execution state to v7 and boundary policy remains v2;
+- mechanics catalog to v11, refinement pack to v10, and composed catalog to v11;
+- cutscene program/compiled program to v3 and extracted world facts to v3; and
+- state inspection to v7, inspection diff to v5, and planner service to v16.
 
 Canonical decoders fail closed on prior shapes. They do not synthesize a
 runtime-file ID for an old stage-only owner, because doing so could merge stores

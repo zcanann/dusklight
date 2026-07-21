@@ -613,6 +613,27 @@ impl RelevanceBuilder {
                 });
                 self.dependencies.insert(StateDependency::LocationStage);
             }
+            StateOperation::ActivateStageBank { component_id, .. } => {
+                self.dependencies.insert(StateDependency::Component {
+                    component_id: component_id.clone(),
+                });
+                self.dependencies.insert(StateDependency::AnyState);
+            }
+            StateOperation::SaveRuntimeToSlot {
+                runtime_component_ids,
+                ..
+            } => {
+                self.dependencies.extend(
+                    runtime_component_ids
+                        .iter()
+                        .cloned()
+                        .map(|component_id| StateDependency::Component { component_id }),
+                );
+                self.dependencies.insert(StateDependency::AnyState);
+            }
+            StateOperation::LoadRuntimeFromSlot { .. } => {
+                self.dependencies.insert(StateDependency::AnyState);
+            }
             StateOperation::Write { .. }
             | StateOperation::WriteRaw { .. }
             | StateOperation::InvalidateRaw { .. }
@@ -725,6 +746,15 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             },
             StateDependency::AnyState,
         ],
+        StateOperation::ActivateStageBank { component_id, .. } => vec![
+            StateDependency::Component {
+                component_id: component_id.clone(),
+            },
+            StateDependency::AnyState,
+        ],
+        StateOperation::SaveRuntimeToSlot { .. } | StateOperation::LoadRuntimeFromSlot { .. } => {
+            vec![StateDependency::AnyState]
+        }
         StateOperation::SetLocation { .. } => vec![
             StateDependency::LocationStage,
             StateDependency::LocationRoom,
