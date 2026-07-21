@@ -4,7 +4,7 @@ use crate::stage_survey_artifact::{
     compact_survey_artifact, compressed_artifact_path, read_survey_artifact,
 };
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
+use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
 use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V23;
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
@@ -42,6 +42,17 @@ const BUTTON_A: u16 = 0x0100;
 const BUTTON_B: u16 = 0x0200;
 const BUTTON_X: u16 = 0x0400;
 const BUTTON_Y: u16 = 0x0800;
+const STICK_DIRECTIONS: [(i8, i8); 8] = [
+    (0, 100),
+    (71, 71),
+    (100, 0),
+    (71, -71),
+    (0, -100),
+    (-71, -71),
+    (-100, 0),
+    (-71, 71),
+];
+const ACTIVATION_BUTTONS: [u16; 5] = [BUTTON_L, BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y];
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +64,8 @@ pub enum StageSurveyProbeKind {
     Targeting,
     BasicActions,
     ContactSweep,
+    ActorActivation,
+    LoadingSweep,
 }
 
 impl StageSurveyProbeKind {
@@ -62,6 +75,8 @@ impl StageSurveyProbeKind {
             Self::Movement | Self::Camera | Self::Targeting => 4,
             Self::BasicActions => 16,
             Self::ContactSweep => 80,
+            Self::ActorActivation => 360,
+            Self::LoadingSweep => 720,
         }
     }
 }
@@ -886,9 +901,10 @@ pub(crate) fn survey_probe_tape(
     }
     let frame_count = usize::try_from(policy.probe_ticks)
         .map_err(|_| StageSurveyError::invalid("probe tick count does not fit memory"))?;
-    let mut frame = InputFrame::default();
-    frame.owned_ports = 1;
-    frame.pads[0] = RawPadState::default();
+    let frame = InputFrame {
+        owned_ports: 1,
+        ..InputFrame::default()
+    };
     let mut frames = vec![frame; frame_count];
     match policy.probe {
         StageSurveyProbeKind::Neutral => {}
@@ -918,22 +934,43 @@ pub(crate) fn survey_probe_tape(
             }
         }
         StageSurveyProbeKind::ContactSweep => {
-            const DIRECTIONS: [(i8, i8); 8] = [
-                (0, 100),
-                (71, 71),
-                (100, 0),
-                (71, -71),
-                (0, -100),
-                (-71, -71),
-                (-100, 0),
-                (-71, 71),
-            ];
             let active = active_probe_frames(&mut frames);
             let active_len = active.len();
             for (index, frame) in active.iter_mut().enumerate() {
-                let phase = index * (DIRECTIONS.len() * 2) / active_len;
-                if phase % 2 == 0 {
-                    let (stick_x, stick_y) = DIRECTIONS[phase / 2];
+                let phase = index * (STICK_DIRECTIONS.len() * 2) / active_len;
+                if phase.is_multiple_of(2) {
+                    let (stick_x, stick_y) = STICK_DIRECTIONS[phase / 2];
+                    frame.pads[0].stick_x = stick_x;
+                    frame.pads[0].stick_y = stick_y;
+                }
+            }
+        }
+        StageSurveyProbeKind::ActorActivation => {
+            let active = active_probe_frames(&mut frames);
+            let active_len = active.len();
+            let combination_count = (STICK_DIRECTIONS.len() + 1) * ACTIVATION_BUTTONS.len();
+            for (index, frame) in active.iter_mut().enumerate() {
+                let phase = index * (combination_count * 2) / active_len;
+                if !phase.is_multiple_of(2) {
+                    continue;
+                }
+                let combination = phase / 2;
+                let direction = combination / ACTIVATION_BUTTONS.len();
+                if direction != 0 {
+                    let (stick_x, stick_y) = STICK_DIRECTIONS[direction - 1];
+                    frame.pads[0].stick_x = stick_x;
+                    frame.pads[0].stick_y = stick_y;
+                }
+                frame.pads[0].buttons = ACTIVATION_BUTTONS[combination % ACTIVATION_BUTTONS.len()];
+            }
+        }
+        StageSurveyProbeKind::LoadingSweep => {
+            let active = active_probe_frames(&mut frames);
+            let active_len = active.len();
+            for (index, frame) in active.iter_mut().enumerate() {
+                let phase = index * (STICK_DIRECTIONS.len() * 2) / active_len;
+                if phase.is_multiple_of(2) {
+                    let (stick_x, stick_y) = STICK_DIRECTIONS[phase / 2];
                     frame.pads[0].stick_x = stick_x;
                     frame.pads[0].stick_y = stick_y;
                 }
@@ -1329,6 +1366,7 @@ fn classification_name(classification: StageSurveyClassification) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_automation_contracts::tape::RawPadState;
     use dusklight_world::stage_boot_catalog::{
         BootLayerSource, BootLayerSourceKind, BootPointSource, BootPointSourceKind,
         STAGE_BOOT_CATALOG_SCHEMA, StageCatalogStatus, StageInventoryStatus,
@@ -1738,6 +1776,85 @@ mod tests {
     }
 
     #[test]
+    fn actor_activation_sweep_crosses_ordinary_pad_factors_without_selecting_an_actor() {
+        let tape = survey_probe_tape(
+            &catalog().candidates[0],
+            &StageSurveyPolicy {
+                probe_ticks: StageSurveyProbeKind::ActorActivation.minimum_ticks(),
+                probe: StageSurveyProbeKind::ActorActivation,
+                host_timeout_millis: 120_000,
+                maximum_attempts_per_case: 1,
+                fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
+            },
+        )
+        .unwrap();
+        assert!(tape.frames[..90].iter().all(neutral_frame));
+        assert!(tape.frames[270..].iter().all(neutral_frame));
+        let active = &tape.frames[90..270];
+        for button in ACTIVATION_BUTTONS {
+            assert!(active.iter().any(|frame| {
+                frame.pads[0].buttons == button
+                    && frame.pads[0].stick_x == 0
+                    && frame.pads[0].stick_y == 0
+            }));
+            for (stick_x, stick_y) in STICK_DIRECTIONS {
+                assert!(active.iter().any(|frame| {
+                    frame.pads[0].buttons == button
+                        && frame.pads[0].stick_x == stick_x
+                        && frame.pads[0].stick_y == stick_y
+                }));
+            }
+        }
+        assert!(active.iter().any(neutral_frame));
+        assert!(tape.frames.iter().all(|frame| {
+            frame.owned_ports == 1
+                && frame.pads[1..] == [RawPadState::default(); 3]
+                && frame.pads[0].buttons.count_ones() <= 1
+                && frame.pads[0].substick_x == 0
+                && frame.pads[0].substick_y == 0
+                && frame.pads[0].trigger_left == 0
+                && frame.pads[0].trigger_right == 0
+        }));
+    }
+
+    #[test]
+    fn loading_sweep_uses_only_sustained_directional_motion_and_release() {
+        let tape = survey_probe_tape(
+            &catalog().candidates[0],
+            &StageSurveyPolicy {
+                probe_ticks: StageSurveyProbeKind::LoadingSweep.minimum_ticks(),
+                probe: StageSurveyProbeKind::LoadingSweep,
+                host_timeout_millis: 120_000,
+                maximum_attempts_per_case: 1,
+                fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
+            },
+        )
+        .unwrap();
+        assert!(tape.frames[..180].iter().all(neutral_frame));
+        assert!(tape.frames[540..].iter().all(neutral_frame));
+        let active = &tape.frames[180..540];
+        for direction in STICK_DIRECTIONS {
+            assert!(
+                active
+                    .iter()
+                    .filter(|frame| { (frame.pads[0].stick_x, frame.pads[0].stick_y) == direction })
+                    .count()
+                    >= 22
+            );
+        }
+        assert!(active.iter().any(neutral_frame));
+        assert!(tape.frames.iter().all(|frame| {
+            frame.owned_ports == 1
+                && frame.pads[1..] == [RawPadState::default(); 3]
+                && frame.pads[0].buttons == 0
+                && frame.pads[0].substick_x == 0
+                && frame.pads[0].substick_y == 0
+                && frame.pads[0].trigger_left == 0
+                && frame.pads[0].trigger_right == 0
+        }));
+    }
+
+    #[test]
     fn neutral_policy_preserves_legacy_canonical_shape_and_probe_minima_fail_closed() {
         let catalog = catalog();
         let neutral = ledger(&catalog, 1);
@@ -1767,6 +1884,18 @@ mod tests {
         movement.policy.probe_ticks = 79;
         assert!(movement.validate(&catalog).is_err());
         movement.policy.probe_ticks = 80;
+        assert!(movement.validate(&catalog).is_ok());
+
+        movement.policy.probe = StageSurveyProbeKind::ActorActivation;
+        movement.policy.probe_ticks = 359;
+        assert!(movement.validate(&catalog).is_err());
+        movement.policy.probe_ticks = 360;
+        assert!(movement.validate(&catalog).is_ok());
+
+        movement.policy.probe = StageSurveyProbeKind::LoadingSweep;
+        movement.policy.probe_ticks = 719;
+        assert!(movement.validate(&catalog).is_err());
+        movement.policy.probe_ticks = 720;
         assert!(movement.validate(&catalog).is_ok());
     }
 

@@ -497,7 +497,7 @@ relationship, coordinate corridor, or success sequence.
     address, allocator detail or inferred capacity crosses the boundary.
     Actor-slot capacity, resource-load outcomes, allocation failure and live
     variation remain open.
-- [ ] Run short generic observation probes where safe—idle, movement, camera,
+- [x] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
   - [x] Add identity-bound neutral, movement, camera, targeting and basic-action
@@ -515,7 +515,7 @@ relationship, coordinate corridor, or success sequence.
     neutral release phases while owning only port zero. It has no buttons,
     target, objective, stage-specific path or interaction sequence; its purpose
     is to expose changing collision/contact fields for the coverage audit.
-  - [ ] Add general contact, actor-activation and loading probes without
+  - [x] Add general contact, actor-activation and loading probes without
     encoding a known route or interaction sequence, then run a stratified
     cross-map sample and report which typed fields actually vary.
     - [x] Run the same 160-tick contact sweep from four catalog identities in
@@ -529,8 +529,8 @@ relationship, coordinate corridor, or success sequence.
       temporarily absent player/camera/collision channels remain explicit. The
       sealed report is `3cd25180...3a8ac`. This is broad observation coverage,
       not evidence that the sweep sought or completed any particular contact or
-      interaction. Actor activation and a dedicated loading perturbation remain
-      open.
+      interaction. Actor activation and a dedicated loading perturbation are
+      covered by the common stratum below.
     - [x] Expand the identical sweep through 340 deterministically ordered
       catalog identities in bounded parallel batches. Of those finalized cases,
       331 classified ready and retained 52,960 exact-PAD records across 32
@@ -547,6 +547,26 @@ relationship, coordinate corridor, or success sequence.
       compaction reproduced those exact report digests. This remains a
       340/9,084-candidate sample and supplies no route label, desired value or
       preferred action.
+    - [x] Add an actor-activation profile that crosses neutral plus eight stick
+      directions with each of L, A, B, X and Y, always separated by neutral
+      release, and a dedicated loading profile that sustains the same eight
+      directions with release phases. Both own only port zero; neither contains
+      an actor selector, route, stage-specific input, goal or reward. A common
+      eight-identity stratum spanning three dungeons, three fields and two
+      interiors completed 16/16 exact-PAD runs and retained 8,640 authenticated
+      records. Each profile verified 601 complete terminal actors across 100
+      profiles with zero rejected snapshots. F_SP103 crossed its ordinary
+      F_SP00 boundary in both runs, so each observation report contains nine
+      actual-stage cells. Actor activation classified 981 cell/path entries as
+      varying and exposed 158 unique varying paths in 2,880 records
+      (`9e84c26c...531adb`; actor report `0c523a37...5e4597`; ledger
+      `3cdc36c4...0513c`). Loading classified 979 entries as varying and exposed
+      155 unique varying paths in 5,760 records (`548cd907...ded30`; actor report
+      `e8220b7e...778d0`; ledger `ae7df1d0...90827`). Both families varied
+      player motion/action, camera, collision/contact, scene-exit, RNG and actor
+      fields without assigning any preferred outcome; bounded selected-actor
+      payloads remain explicitly truncated while the paired terminal catalogs
+      remain complete.
     - [x] Exercise a second generic action family across eight dungeon stages in
       one repeatable explicit-candidate batch. The nine-worker basic-action pass
       retained 720 authenticated records and 613 complete terminal actors across

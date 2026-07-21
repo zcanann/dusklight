@@ -109,6 +109,36 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
     assert_eq!(document["policy"]["probe_ticks"], 12);
     assert_eq!(document["policy"]["probe"], "movement");
 
+    for (probe, encoded_probe, ticks) in [
+        ("actor-activation", "actor_activation", "360"),
+        ("loading-sweep", "loading_sweep", "720"),
+    ] {
+        let probe_ledger = root.join(format!("{probe}-ledger.json"));
+        let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+            .args(["survey", "init", "--catalog"])
+            .arg(&catalog_path)
+            .args(["--ledger"])
+            .arg(&probe_ledger)
+            .args(["--game"])
+            .arg(&game_path)
+            .args(["--dvd"])
+            .arg(&dvd_path)
+            .args(["--probe", probe, "--probe-ticks", ticks])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document: Value = serde_json::from_slice(&fs::read(probe_ledger).unwrap()).unwrap();
+        assert_eq!(document["policy"]["probe"], encoded_probe);
+        assert_eq!(
+            document["policy"]["probe_ticks"],
+            ticks.parse::<u64>().unwrap()
+        );
+    }
+
     let invalid_probe_ledger = root.join("invalid-probe-ledger.json");
     let invalid_probe = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["survey", "init", "--catalog"])

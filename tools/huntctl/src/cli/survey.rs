@@ -309,9 +309,9 @@ fn select_run_candidates(
                 .get(candidate_id.as_str())
                 .ok_or_else(|| format!("unknown survey candidate: {candidate_id}"))?;
             if !pending.contains(candidate_id.as_str()) {
-                return Err(
-                    format!("survey candidate is already finalized: {candidate_id}").into(),
-                );
+                return Err(format!(
+                    "survey candidate is already finalized: {candidate_id}"
+                ));
             }
             Ok((*candidate).clone())
         })
@@ -333,9 +333,11 @@ fn policy_from_args(args: &[String]) -> Result<StageSurveyPolicy, Box<dyn Error>
             "targeting" => StageSurveyProbeKind::Targeting,
             "basic-actions" => StageSurveyProbeKind::BasicActions,
             "contact-sweep" => StageSurveyProbeKind::ContactSweep,
+            "actor-activation" => StageSurveyProbeKind::ActorActivation,
+            "loading-sweep" => StageSurveyProbeKind::LoadingSweep,
             value => {
                 return Err(format!(
-                    "unknown survey probe {value:?}; expected neutral, movement, camera, targeting, basic-actions, or contact-sweep"
+                    "unknown survey probe {value:?}; expected neutral, movement, camera, targeting, basic-actions, contact-sweep, actor-activation, or loading-sweep"
                 )
                 .into());
             }

@@ -10,6 +10,9 @@ use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 
+type TimedWaypoint = (u32, [f32; 3]);
+type TimedButtonLayer = (u32, u32, u16);
+
 pub(crate) fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("compile") if args.len() == 3 => {
@@ -72,7 +75,7 @@ pub(crate) fn command_controller(args: &[String]) -> Result<(), Box<dyn Error>> 
             Ok(())
         }
         Some("derive-waypoint-policy") if args.len() >= 2 => derive_waypoint_policy(&args[1..]),
-        Some("waypoint-policy") if args.len() >= 1 => waypoint_policy(&args[1..]),
+        Some("waypoint-policy") => waypoint_policy(&args[1..]),
         _ => usage_error(),
     }
 }
@@ -448,7 +451,7 @@ fn parse_frame_list(value: &str) -> Result<Vec<u32>, Box<dyn Error>> {
         .collect()
 }
 
-fn parse_waypoint_list(value: &str) -> Result<Vec<(u32, [f32; 3])>, Box<dyn Error>> {
+fn parse_waypoint_list(value: &str) -> Result<Vec<TimedWaypoint>, Box<dyn Error>> {
     if value.is_empty() {
         return Ok(Vec::new());
     }
@@ -473,7 +476,7 @@ fn parse_waypoint_list(value: &str) -> Result<Vec<(u32, [f32; 3])>, Box<dyn Erro
         .collect()
 }
 
-fn parse_button_layer_list(value: &str) -> Result<Vec<(u32, u32, u16)>, Box<dyn Error>> {
+fn parse_button_layer_list(value: &str) -> Result<Vec<TimedButtonLayer>, Box<dyn Error>> {
     if value.is_empty() {
         return Ok(Vec::new());
     }

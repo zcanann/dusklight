@@ -960,8 +960,10 @@ mod tests {
             channel_formats: BTreeMap::new(),
             records: vec![first, second],
         };
-        let mut accumulator = CellAccumulator::default();
-        accumulator.case_count = 1;
+        let mut accumulator = CellAccumulator {
+            case_count: 1,
+            ..CellAccumulator::default()
+        };
         accumulate_records(&mut accumulator, trace.records.iter()).unwrap();
         let cell = finish_cell("D_MN01".into(), StageSurveyProbeKind::Movement, accumulator);
 
