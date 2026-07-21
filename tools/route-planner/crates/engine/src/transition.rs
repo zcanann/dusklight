@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v1";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v2";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -34,6 +34,11 @@ pub enum StateOperation {
         byte_offset: u32,
         mask: Vec<u8>,
         value: Vec<u8>,
+    },
+    InvalidateRaw {
+        component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
     },
     Adjust {
         target: ComponentFieldTarget,
@@ -135,6 +140,8 @@ pub enum TransitionKind {
     ItemAcquisition,
     NpcReward,
     Cutscene,
+    CutsceneSceneChange,
+    ResourceLoadFailure,
     BossCompletion,
     FormChange,
     MountChange,
@@ -424,6 +431,26 @@ impl StateOperation {
                 if mask.iter().all(|byte| *byte == 0) {
                     return Err(PlannerContractError::new(
                         "operation.write_raw.mask",
+                        "must select at least one bit",
+                    ));
+                }
+                Ok(())
+            }
+            Self::InvalidateRaw {
+                component_id,
+                byte_offset: _,
+                mask,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                if mask.is_empty() || mask.len() > crate::state::MAX_COMPONENT_BYTES {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_raw.mask",
+                        "must have a nonzero bounded length",
+                    ));
+                }
+                if mask.iter().all(|byte| *byte == 0) {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_raw.mask",
                         "must select at least one bit",
                     ));
                 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v1";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v2";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -93,6 +93,10 @@ pub enum ValueReference {
     PlayerForm,
     PlayerMount,
     PlayerControl,
+    PlayerRotationX,
+    PlayerRotationY,
+    PlayerRotationZ,
+    PlayerAction,
     ActorField {
         instance_id: String,
         field: String,
@@ -417,7 +421,11 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
         | ValueReference::LocationSpawn
         | ValueReference::PlayerForm
         | ValueReference::PlayerMount
-        | ValueReference::PlayerControl => Ok(()),
+        | ValueReference::PlayerControl
+        | ValueReference::PlayerRotationX
+        | ValueReference::PlayerRotationY
+        | ValueReference::PlayerRotationZ
+        | ValueReference::PlayerAction => Ok(()),
     }
 }
 

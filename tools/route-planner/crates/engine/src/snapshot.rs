@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v2";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v2";
-pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v2";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v3";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v3";
+pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,6 +117,10 @@ pub struct StateDiff {
     pub runtime_file_after: RuntimeFile,
     pub location_changed: bool,
     pub player_changed: bool,
+    pub static_world_objects_changed: bool,
+    pub spatial_volumes_changed: bool,
+    pub persisted_object_controls_changed: bool,
+    pub live_world_objects_changed: bool,
     pub slot_deltas: Vec<SlotDelta>,
     pub slot_observation_deltas: Vec<SlotObservationDelta>,
     pub component_deltas: Vec<ComponentDelta>,
@@ -221,6 +225,14 @@ impl StateDiff {
             runtime_file_after: after.environment.active_runtime_file.clone(),
             location_changed: before.environment.location != after.environment.location,
             player_changed: before.environment.player != after.environment.player,
+            static_world_objects_changed: before.environment.static_world_objects
+                != after.environment.static_world_objects,
+            spatial_volumes_changed: before.environment.spatial_volumes
+                != after.environment.spatial_volumes,
+            persisted_object_controls_changed: before.environment.persisted_object_controls
+                != after.environment.persisted_object_controls,
+            live_world_objects_changed: before.environment.live_world_objects
+                != after.environment.live_world_objects,
             slot_deltas: diff_slots(
                 &before.environment.physical_slots,
                 &after.environment.physical_slots,
@@ -618,6 +630,7 @@ mod tests {
                 },
                 components: vec![component],
                 static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },

@@ -1496,6 +1496,7 @@ mod tests {
                 },
                 components: Vec::new(),
                 static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },

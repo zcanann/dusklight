@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v2";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v3";
 pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v1";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
@@ -239,6 +239,24 @@ pub struct StaticWorldObject {
     pub parameters: BTreeMap<String, StateValue>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SpatialVolumeShape {
+    AxisAlignedBox {
+        minimum: [f32; 3],
+        maximum: [f32; 3],
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialVolume {
+    pub object_id: String,
+    pub volume_id: String,
+    pub shape: SpatialVolumeShape,
+    pub source_sha256: Digest,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedObjectControl {
@@ -277,6 +295,7 @@ pub struct ExecutionEnvironment {
     pub player: PlayerState,
     pub components: Vec<StateComponent>,
     pub static_world_objects: Vec<StaticWorldObject>,
+    pub spatial_volumes: Vec<SpatialVolume>,
     pub persisted_object_controls: Vec<PersistedObjectControl>,
     pub live_world_objects: Vec<LiveWorldObject>,
 }
@@ -441,6 +460,12 @@ impl ExecutionEnvironment {
             &self.static_world_objects,
             |object| object.id.clone(),
             validate_static_object,
+        )?;
+        validate_sorted_collection(
+            "spatial_volumes",
+            &self.spatial_volumes,
+            |volume| (volume.object_id.clone(), volume.volume_id.clone()),
+            validate_spatial_volume,
         )?;
         validate_sorted_collection(
             "persisted_object_controls",
@@ -659,6 +684,31 @@ pub(crate) fn validate_static_object(
     validate_state_fields(&object.parameters)
 }
 
+fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContractError> {
+    validate_stable_id("spatial_volumes.object_id", &volume.object_id)?;
+    validate_stable_id("spatial_volumes.volume_id", &volume.volume_id)?;
+    require_digest("spatial_volumes.source_sha256", volume.source_sha256)?;
+    match &volume.shape {
+        SpatialVolumeShape::AxisAlignedBox { minimum, maximum } => {
+            if minimum
+                .iter()
+                .chain(maximum)
+                .any(|value| !value.is_finite() || value.to_bits() == (-0.0_f32).to_bits())
+                || minimum
+                    .iter()
+                    .zip(maximum)
+                    .any(|(minimum, maximum)| minimum > maximum)
+            {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.shape",
+                    "must contain finite canonical bounds with minimum <= maximum",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_persisted_control(
     control: &PersistedObjectControl,
 ) -> Result<(), PlannerContractError> {
@@ -821,6 +871,7 @@ mod tests {
                 component("progress", ComponentKind::PersistentSave),
             ],
             static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
             persisted_object_controls: Vec::new(),
             live_world_objects: Vec::new(),
         }
@@ -913,6 +964,38 @@ mod tests {
         assert_eq!(environment.static_world_objects.len(), 1);
         assert_eq!(environment.persisted_object_controls.len(), 1);
         assert_eq!(environment.live_world_objects.len(), 1);
+    }
+
+    #[test]
+    fn spatial_volumes_require_canonical_ordered_evidenced_bounds() {
+        let mut environment = file_zero_environment();
+        environment.spatial_volumes.push(SpatialVolume {
+            object_id: "actor.auru".into(),
+            volume_id: "talk".into(),
+            shape: SpatialVolumeShape::AxisAlignedBox {
+                minimum: [-1.0, 0.0, -2.0],
+                maximum: [1.0, 2.0, 2.0],
+            },
+            source_sha256: Digest([4; 32]),
+        });
+        environment.validate().unwrap();
+
+        let mut invalid_bounds = environment.clone();
+        invalid_bounds.spatial_volumes[0].shape = SpatialVolumeShape::AxisAlignedBox {
+            minimum: [2.0, 0.0, 0.0],
+            maximum: [1.0, 1.0, 1.0],
+        };
+        assert_eq!(
+            invalid_bounds.validate().unwrap_err().field(),
+            "spatial_volumes.shape"
+        );
+
+        let mut invalid_digest = environment;
+        invalid_digest.spatial_volumes[0].source_sha256 = Digest::ZERO;
+        assert_eq!(
+            invalid_digest.validate().unwrap_err().field(),
+            "spatial_volumes.source_sha256"
+        );
     }
 
     #[test]

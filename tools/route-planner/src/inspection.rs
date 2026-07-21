@@ -11,7 +11,7 @@ use dusklight_route_planner::logic::{
 };
 use serde::Serialize;
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v1";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v2";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +200,7 @@ mod tests {
                     }],
                 }],
                 static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },

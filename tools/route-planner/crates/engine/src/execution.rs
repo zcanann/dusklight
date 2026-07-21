@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v1";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -385,6 +385,38 @@ impl PlannerExecutionState {
                     bytes[offset + index] =
                         (bytes[offset + index] & !selected) | (value[index] & selected);
                     known_mask[offset + index] |= selected;
+                }
+                mark_transition(component, application_id);
+            }
+            StateOperation::InvalidateRaw {
+                component_id,
+                byte_offset,
+                mask,
+            } => {
+                let component = self.component_mut(component_id)?;
+                let ComponentPayload::Raw { bytes, known_mask } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_raw",
+                        "requires a raw destination component",
+                    ));
+                };
+                let offset = usize::try_from(*byte_offset).map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.invalidate_raw.byte_offset",
+                        "does not fit this host",
+                    )
+                })?;
+                let end = offset.checked_add(mask.len()).ok_or_else(|| {
+                    PlannerContractError::new("operation.invalidate_raw", "range overflows")
+                })?;
+                if end > bytes.len() || end > known_mask.len() {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_raw",
+                        "range exceeds the destination component",
+                    ));
+                }
+                for index in 0..mask.len() {
+                    known_mask[offset + index] &= !mask[index];
                 }
                 mark_transition(component, application_id);
             }
@@ -1054,6 +1086,7 @@ mod tests {
                     ),
                 ],
                 static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },
@@ -1292,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_writes_establish_only_selected_bits_and_counters_adjust_relatively() {
+    fn raw_writes_and_invalidation_change_only_selected_knownness_bits() {
         let mut state = PlannerExecutionState::new(snapshot()).unwrap();
         state
             .apply_operations(
@@ -1302,8 +1335,13 @@ mod tests {
                     StateOperation::WriteRaw {
                         component_id: "raw.flags".into(),
                         byte_offset: 0,
-                        mask: vec![0x20],
-                        value: vec![0x20],
+                        mask: vec![0x30],
+                        value: vec![0x30],
+                    },
+                    StateOperation::InvalidateRaw {
+                        component_id: "raw.flags".into(),
+                        byte_offset: 0,
+                        mask: vec![0x10],
                     },
                     StateOperation::Write {
                         target: ComponentFieldTarget {
@@ -1336,7 +1374,7 @@ mod tests {
         assert_eq!(
             raw.payload,
             ComponentPayload::Raw {
-                bytes: vec![0x20],
+                bytes: vec![0x30],
                 known_mask: vec![0x20]
             }
         );

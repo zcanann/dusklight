@@ -40,8 +40,10 @@ The planner CLI currently owns ten operations:
   failed searches retain a deterministic closest blocker witness per transition.
   Predicate-shaped physical obligations are recomputed from each propagated
   state, so a state write can unlock a transition without a named route shortcut.
-  Predicate-backed obligations are re-evaluated from propagated state, so an
-  operation can satisfy one without a hand-authored named discharge claim.
+  Interaction obligations can also derive required/excluded axis-aligned volume,
+  loaded-actor, player rotation, action, and control conditions from the exact
+  state; absent actors or geometry remain unknown instead of being treated as
+  present or outside a volume.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

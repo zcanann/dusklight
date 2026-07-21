@@ -5,9 +5,13 @@ use crate::logic::{
     ComparisonOperator, ContextScope, FactCatalog, PredicateExpression, RawFactBinding,
     TruthStatus, ValueReference,
 };
-use crate::state::{ComponentPayload, PlayerForm, PlayerMount, StateComponent, StateValue};
+use crate::state::{
+    ActorLifecycle, ComponentPayload, PlayerForm, PlayerMount, SpatialVolumeShape, StateComponent,
+    StateValue,
+};
 use crate::transition::{
-    CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule, WriterRule,
+    CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule,
+    VolumeReference, WriterRule,
 };
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
@@ -338,6 +342,7 @@ impl<'a> PredicateEvaluator<'a> {
                     )
                 }
                 ObligationDetail::Interaction {
+                    actor_instance_id,
                     required_volumes,
                     excluded_volumes,
                     pose_predicate,
@@ -345,22 +350,30 @@ impl<'a> PredicateEvaluator<'a> {
                     ..
                 } => {
                     let pose = self.evaluate(pose_predicate);
-                    if pose == EvaluatedTruth::False {
-                        (ObligationClassification::Unsatisfied, Some(pose))
-                    } else if required_volumes.is_empty()
-                        && excluded_volumes.is_empty()
-                        && temporal_window.is_none()
-                    {
+                    let actor = self.interaction_actor_loaded(actor_instance_id);
+                    let spatial = required_volumes
+                        .iter()
+                        .map(|volume| self.player_inside_volume(volume))
+                        .chain(
+                            excluded_volumes
+                                .iter()
+                                .map(|volume| self.player_inside_volume(volume).not()),
+                        )
+                        .fold(EvaluatedTruth::True, and_evaluated_truth);
+                    let combined = and_evaluated_truth(and_evaluated_truth(pose, actor), spatial);
+                    if combined == EvaluatedTruth::False {
+                        (ObligationClassification::Unsatisfied, Some(combined))
+                    } else if temporal_window.is_some() {
+                        (ObligationClassification::Unmodeled, Some(combined))
+                    } else {
                         (
-                            if pose == EvaluatedTruth::True {
+                            if combined == EvaluatedTruth::True {
                                 ObligationClassification::Satisfied
                             } else {
                                 ObligationClassification::EvaluationUnknown
                             },
-                            Some(pose),
+                            Some(combined),
                         )
-                    } else {
-                        (ObligationClassification::Unmodeled, Some(pose))
                     }
                 }
                 ObligationDetail::Temporal { precondition, .. } => {
@@ -380,6 +393,51 @@ impl<'a> PredicateEvaluator<'a> {
             obligation_id: obligation.id.clone(),
             classification,
             predicate,
+        }
+    }
+
+    fn player_inside_volume(&self, reference: &VolumeReference) -> EvaluatedTruth {
+        let Some(volume) = self
+            .snapshot
+            .environment
+            .spatial_volumes
+            .iter()
+            .find(|volume| {
+                volume.object_id == reference.object_id && volume.volume_id == reference.volume_id
+            })
+        else {
+            return EvaluatedTruth::Unknown;
+        };
+        let position = self.snapshot.environment.player.position;
+        match &volume.shape {
+            SpatialVolumeShape::AxisAlignedBox { minimum, maximum } => {
+                if position
+                    .iter()
+                    .zip(minimum.iter().zip(maximum))
+                    .all(|(value, (minimum, maximum))| value >= minimum && value <= maximum)
+                {
+                    EvaluatedTruth::True
+                } else {
+                    EvaluatedTruth::False
+                }
+            }
+        }
+    }
+
+    fn interaction_actor_loaded(&self, instance_id: &str) -> EvaluatedTruth {
+        match self
+            .snapshot
+            .environment
+            .live_world_objects
+            .iter()
+            .find(|object| object.instance_id == instance_id)
+            .map(|object| object.lifecycle)
+        {
+            Some(ActorLifecycle::Loaded) => EvaluatedTruth::True,
+            Some(
+                ActorLifecycle::Unloading | ActorLifecycle::Unloaded | ActorLifecycle::Destroyed,
+            ) => EvaluatedTruth::False,
+            None => EvaluatedTruth::Unknown,
         }
     }
 
@@ -858,6 +916,18 @@ impl<'a> PredicateEvaluator<'a> {
                 .player
                 .has_control
                 .map(StateValue::Boolean),
+            ValueReference::PlayerRotationX => Some(StateValue::Signed(
+                self.snapshot.environment.player.rotation[0].into(),
+            )),
+            ValueReference::PlayerRotationY => Some(StateValue::Signed(
+                self.snapshot.environment.player.rotation[1].into(),
+            )),
+            ValueReference::PlayerRotationZ => Some(StateValue::Signed(
+                self.snapshot.environment.player.rotation[2].into(),
+            )),
+            ValueReference::PlayerAction => Some(StateValue::Text(
+                self.snapshot.environment.player.action.clone(),
+            )),
             ValueReference::ActorField { instance_id, field } => self
                 .snapshot
                 .environment
@@ -938,6 +1008,14 @@ fn player_mount_value(mount: &PlayerMount) -> Option<StateValue> {
         PlayerMount::Boar => Some(StateValue::Text("boar".into())),
         PlayerMount::Other { id } => Some(StateValue::Text(id.clone())),
         PlayerMount::Unknown => None,
+    }
+}
+
+fn and_evaluated_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> EvaluatedTruth {
+    match (left, right) {
+        (EvaluatedTruth::False, _) | (_, EvaluatedTruth::False) => EvaluatedTruth::False,
+        (EvaluatedTruth::Unknown, _) | (_, EvaluatedTruth::Unknown) => EvaluatedTruth::Unknown,
+        (EvaluatedTruth::True, EvaluatedTruth::True) => EvaluatedTruth::True,
     }
 }
 
@@ -1042,13 +1120,14 @@ mod tests {
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
-        BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm, PlayerState,
-        ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        SemanticLifetime, SerializationOwner, StateComponent,
+        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload,
+        ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject,
+        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, SpatialVolume,
+        SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
-        ActivationContract, ObligationKind, TransitionKind, UnknownRequirement,
+        ActivationContract, ObligationKind, TransitionKind, UnknownRequirement, VolumeReference,
     };
 
     fn evidence(truth: TruthStatus) -> RuleEvidence {
@@ -1127,6 +1206,7 @@ mod tests {
                 },
                 components: vec![component(known_mask)],
                 static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },
@@ -1671,6 +1751,153 @@ mod tests {
         assert_eq!(
             unknown.unknown_obligation_ids,
             BTreeSet::from(["obligation.wall".into()])
+        );
+    }
+
+    #[test]
+    fn interaction_obligations_derive_volume_pose_direction_and_action_from_state() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.spatial_volumes = vec![
+            SpatialVolume {
+                object_id: "actor.auru".into(),
+                volume_id: "cutscene-trigger".into(),
+                shape: SpatialVolumeShape::AxisAlignedBox {
+                    minimum: [0.5, 0.5, 0.5],
+                    maximum: [1.5, 1.5, 1.5],
+                },
+                source_sha256: Digest([5; 32]),
+            },
+            SpatialVolume {
+                object_id: "actor.auru".into(),
+                volume_id: "talk".into(),
+                shape: SpatialVolumeShape::AxisAlignedBox {
+                    minimum: [-2.0, -2.0, -2.0],
+                    maximum: [2.0, 2.0, 2.0],
+                },
+                source_sha256: Digest([6; 32]),
+            },
+        ];
+        snapshot.environment.live_world_objects = vec![LiveWorldObject {
+            instance_id: "actor.auru".into(),
+            static_object_id: Some("actor.auru".into()),
+            actor_type: "npc.auru".into(),
+            lifecycle: ActorLifecycle::Loaded,
+            fields: BTreeMap::new(),
+        }];
+        snapshot.environment.player.rotation[1] = 0x1000;
+        snapshot.environment.validate().unwrap();
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let pose = PredicateExpression::All {
+            terms: vec![
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerRotationY,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Signed(0x1000),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerAction,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("idle".into()),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerControl,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Boolean(true),
+                    },
+                },
+            ],
+        };
+        let mut obligation = FeasibilityObligation {
+            id: "obligation.auru-talk".into(),
+            label: "Talk to Auru without entering his cutscene trigger".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Interaction,
+            detail: ObligationDetail::Interaction {
+                actor_instance_id: "actor.auru".into(),
+                interaction_mode: "talk".into(),
+                required_volumes: vec![VolumeReference {
+                    object_id: "actor.auru".into(),
+                    volume_id: "talk".into(),
+                }],
+                excluded_volumes: vec![VolumeReference {
+                    object_id: "actor.auru".into(),
+                    volume_id: "cutscene-trigger".into(),
+                }],
+                pose_predicate: pose,
+                temporal_window: None,
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation)
+                .classification,
+            ObligationClassification::Satisfied
+        );
+
+        snapshot.environment.player.position = [1.0, 1.0, 1.0];
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation)
+                .classification,
+            ObligationClassification::Unsatisfied
+        );
+
+        let ObligationDetail::Interaction {
+            required_volumes, ..
+        } = &mut obligation.detail
+        else {
+            unreachable!();
+        };
+        required_volumes[0].volume_id = "missing-talk-volume".into();
+        snapshot.environment.player.position = [0.0, 0.0, 0.0];
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation)
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+
+        let ObligationDetail::Interaction {
+            required_volumes,
+            temporal_window,
+            ..
+        } = &mut obligation.detail
+        else {
+            unreachable!();
+        };
+        required_volumes[0].volume_id = "talk".into();
+        *temporal_window = Some(crate::transition::TemporalWindow {
+            earliest_frame: 0,
+            latest_frame: 1,
+            required_input: Some("sidehop".into()),
+        });
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation)
+                .classification,
+            ObligationClassification::Unmodeled
+        );
+
+        let ObligationDetail::Interaction {
+            temporal_window, ..
+        } = &mut obligation.detail
+        else {
+            unreachable!();
+        };
+        *temporal_window = None;
+        snapshot.environment.live_world_objects[0].lifecycle = ActorLifecycle::Destroyed;
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation)
+                .classification,
+            ObligationClassification::Unsatisfied
         );
     }
 }
