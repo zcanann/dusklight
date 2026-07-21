@@ -35,6 +35,52 @@ cargo run --manifest-path tools/huntctl/Cargo.toml -- learn benchmark
 Its pass condition is structural: both held-out states must select the known
 shortest-path action. Seeded fitting and ranking are reproducible.
 
+## Native factorized policy-row execution
+
+`huntctl learn factorized-policy-batch` is the bounded host bridge between a
+continuous policy head and native suffix execution. Its input is a
+`dusklight-factorized-policy-output-set/v1` document with one authenticated
+head configuration and one or more candidate row sequences:
+
+```json
+{
+  "schema": "dusklight-factorized-policy-output-set/v1",
+  "policy_head": {
+    "schema": "dusklight-factorized-pad-policy-head/v1",
+    "maximum_duration_ticks": 2,
+    "button_logit_threshold": 0.0
+  },
+  "candidates": [{
+    "id": "candidate-0",
+    "policy_outputs": [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+  }]
+}
+```
+
+Each row has exactly 25 finite values: four stick axes, four analog channels,
+sixteen independent button logits, and duration. The builder runs the shared
+Rust decoder over every row, requires each candidate's decoded durations to
+expand to exactly `--maximum-ticks`, enforces the native candidate/tick bounds,
+and rejects noncanonical source fingerprints or candidate IDs. It then writes
+the exact `dusklight-suffix-batch/v4` document consumed by Dusklight:
+
+```console
+huntctl learn factorized-policy-batch \
+  --input policy-outputs.json --output native-batch.json \
+  --source-frame 500 \
+  --source-boundary-fingerprint 1f849e432274771426236d60fbf7d72f \
+  --maximum-ticks 3 --checkpoint-validation-ticks 2
+```
+
+The native runner selects the row for each expanded tick, decodes it again at
+the actual controller-input boundary, checks it against the prevalidated PAD,
+and records the chosen and consumed PAD in the ordinary authenticated episode
+shard. Timing reports `policy_head_decode` separately. It deliberately reports
+`policy_inference: not_present`: this path executes precomputed continuous rows
+but does not load a model or claim observation-conditioned inference. The
+sealed live proof is
+`benchmarks/factorized-policy-online-20260721.json`.
+
 ## Compact transition batches
 
 The `.dtcz` file is a compressed binary artifact, not a JSON tape substitute.

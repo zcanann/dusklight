@@ -1,0 +1,139 @@
+{
+  "schema": "dusklight-factorized-policy-online-report/v1",
+  "recorded_date": "2026-07-21",
+  "verified": true,
+  "control_plane": {
+    "dusklight_commit": "78bdf04f110b8f192ed9419e1942c8922d04e14b",
+    "command": "huntctl learn factorized-policy-batch",
+    "input_schema": "dusklight-factorized-policy-output-set/v1",
+    "output_schema": "dusklight-suffix-batch/v4",
+    "candidate_count": 1,
+    "rejected_contracts": [
+      "unknown schema",
+      "noncanonical source boundary fingerprint",
+      "invalid or duplicate candidate id",
+      "empty or over-bound candidate set",
+      "nonfinite or detached-width policy row",
+      "decoded duration not equal to maximum_ticks"
+    ]
+  },
+  "native_build": {
+    "dusklight_commit": "5407016c060da90ecb9c6b463c4218177bd22d21",
+    "aurora_commit": "ce4baccedb2aabddce5b552f0573674e857fb7c3",
+    "profile": "Debug",
+    "executable_sha256": "dac5a1d84a54269cf54b161741af4f07743c233d987747614f5f15f67bf219e8"
+  },
+  "trajectory": {
+    "input_tape_sha256": "fad64d9c0610ef954a9f18c348d663dd249ae14d54a164471e766a2d38107f6f",
+    "input_tape_frames": 566,
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "world_context_sha256": "194cbb4b0a68e525e92fddf93a387fd72b6d6277d269f485a8e3f5d8656e3b71",
+    "card_fixture_identity": "card-fixture:empty/v1",
+    "fresh_data_root": true
+  },
+  "request": {
+    "policy_output_set_sha256": "f9a4d8b8dc3c884be136dbef6fe593397819961e3b05706e5c631c8f33c911ca",
+    "native_batch_sha256": "fb8521fe7656fd85179a7c5e409963804aeeddd8d57455d5b7f42c774b327ce5",
+    "source_frame": 500,
+    "source_boundary_fingerprint": "1f849e432274771426236d60fbf7d72f",
+    "checkpoint_validation": {
+      "kind": "recorded_replay_window",
+      "ticks": 2
+    },
+    "maximum_ticks": 3,
+    "verify_state_hashes": false,
+    "candidate": {
+      "id": "factorized-online-neutral-extreme",
+      "policy_head": {
+        "schema": "dusklight-factorized-pad-policy-head/v1",
+        "maximum_duration_ticks": 2,
+        "button_logit_threshold": 0.0
+      },
+      "policy_output_rows": 2,
+      "decoded_durations": [
+        1,
+        2
+      ],
+      "expected_expanded_pad": [
+        {
+          "ticks": 1,
+          "buttons": 0,
+          "stick": [0, 0],
+          "substick": [0, 0],
+          "analog": [0, 0, 0, 0]
+        },
+        {
+          "ticks": 2,
+          "buttons": 1,
+          "stick": [127, -128],
+          "substick": [64, -64],
+          "analog": [255, 128, 64, 0]
+        }
+      ]
+    }
+  },
+  "execution": {
+    "result_schema": "dusklight-suffix-batch-result/v4",
+    "status": "passed",
+    "candidate_count": 1,
+    "completed_candidates": 1,
+    "candidate_success": false,
+    "candidate_ticks_executed": 3,
+    "source_fingerprint_verified": true,
+    "checkpoint_bytes": 294694644,
+    "checkpoint_restore_identity": "8477907e42fcb8641cc1bddde4188372",
+    "checkpoint_validation_verified": true,
+    "checkpoint_fresh_sequence_digest": "bbe18a032178ff007125f2738066c7b2",
+    "checkpoint_restored_sequence_digest": "bbe18a032178ff007125f2738066c7b2",
+    "timing_verified": true,
+    "policy_head_decode": {
+      "status": "measured",
+      "schema": "dusklight-factorized-pad-policy-head/v1",
+      "input": "precomputed continuous policy-output row",
+      "samples": 3,
+      "nanoseconds": 2084
+    },
+    "policy_application": {
+      "status": "measured",
+      "samples": 3,
+      "nanoseconds": 125
+    },
+    "policy_inference": {
+      "status": "not_present",
+      "micros": null
+    }
+  },
+  "episode_shard": {
+    "schema": "dusklight-native-episode-shard/v2",
+    "sha256": "7a202023703bb8573c97bfcc7492aded42bf490a982c27d92a572c2adeedb8af",
+    "action_schema": "dusklight-raw-pad-action/v2",
+    "observation_schema": "dusklight-learning-observation/v23",
+    "episode_count": 1,
+    "transition_count": 3,
+    "observation_count": 6,
+    "terminal_observation_count": 1,
+    "unique_chosen_pad_states": 2,
+    "unique_consumed_pad_states": 2,
+    "chosen_consumed_pad_mismatches": 0,
+    "button_mask_counts": {
+      "0x0000": 1,
+      "0x0001": 2
+    },
+    "stick_sample_counts": {
+      "0,0": 1,
+      "127,-128": 2
+    },
+    "validated_non_finite_values": 0,
+    "validated_phase_discontinuities": 0,
+    "determinism_conflicts": 0
+  },
+  "artifacts": {
+    "result_sha256": "2e2145491b6d6a872ae0607efb5a1f6cafedfb6122bf21df3db38ecc5819a317",
+    "inspection_sha256": "39b091c1f7a46ae103f888b55f8377b63b651f5da42650df6ac34eae9c2407de"
+  },
+  "limitations": [
+    "The candidate intentionally did not satisfy the route predicate; the proof concerns online action execution and evidence integrity.",
+    "Policy output rows were precomputed, so this does not prove model loading or observation-conditioned native inference.",
+    "State hashing was disabled; recorded checkpoint replay validation and chosen-versus-consumed PAD verification remained enabled."
+  ]
+}
