@@ -13,6 +13,7 @@ pub mod cutscene_corruption;
 pub mod cutscene_import;
 pub mod cutscene_outer;
 pub mod cutscene_runtime;
+pub mod demo_actor;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;

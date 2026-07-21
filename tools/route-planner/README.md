@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns thirty-six operations:
+The planner CLI currently owns thirty-seven operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -103,6 +103,10 @@ The planner CLI currently owns thirty-six operations:
   IDs, sequence commands, waits/suspends/jumps, and paragraph boundaries while
   hashing rather than embedding animation/camera payloads. Object-specific
   paragraph effects remain explicitly unresolved.
+- `extract-demo-actor-program` exact-binds GZ2E01 `d_actN` objects to the retail
+  generic demo actor and decodes type-`0x80` status-51 packed command words. It
+  identifies persistent and temporary event-bit writes without claiming that
+  the authored actor was successfully created or executed.
 - `resolve-jstudio-stb` applies an exact-content adaptor profile to those
   paragraphs, decoding proven variable/adaptor payload contracts and retaining
   unsupported dispatches as unresolved records.

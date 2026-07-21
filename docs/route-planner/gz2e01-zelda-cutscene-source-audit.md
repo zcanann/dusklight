@@ -216,6 +216,54 @@ predicate with an unknown exceptional suffix, never as a direct warp to
 `R_SP107` or `F_SP116`. The no-op proof narrows the unknown suffix: this specific
 room-loader site is a confirmed preservation, not an ambiguous writer.
 
+## Generic demo commands and room-actor reconstruction
+
+The type-`0x80` JStudio paragraphs are not inert payloads. For `d_actN` objects,
+`dDemo_actor_c::JSGSetData` stores the raw data and `daDemo00_c::execute`
+decodes status-51 packed big-endian words. Packed opcode 1 sets a persistent
+event-label index and opcode 3 sets a temporary event-label index. The relevant
+source digests are
+`4a35b703eb94b6de67440690398509bf3f8bae872581f7ba905d8fcd03f8de2c`
+for `d_demo.cpp`,
+`5fa637be377cefbbbf818ca065e7224ddb1f886b3ad06eb59f996d0a42d0ff5a`
+for `d_a_demo00.cpp`, and
+`5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad`
+for the `d_act` through `d_act31` actor-name table in `d_stage.cpp`.
+
+`extract-demo-actor-program` preserves this as a separate exact-content
+artifact rather than broadening the general adaptor profile. For retail
+`demo07_01.stb`, the canonical artifact SHA-256 is
+`6f133db1cb3b73fdd7e9968959b484a6b94cfc26943d7f4edd31fa771cfd9121`.
+It contains three generic actor streams (`d_act0`, `d_act15`, and `d_act1`), 14
+raw writes, and 25 decoded commands. None has opcode 1 or 3 in argument class
+zero, so this STB has zero persistent and zero temporary event-bit writes. In
+particular, it does not set M_012 through the generic demo actor. Authored raw
+commands on Link and Midna remain counted separately as 41 non-generic raw
+paragraphs because their actor implementations have different consumers.
+
+After the demo-archive request is rejected, `d_s_room.cpp` clears the archive
+name but continues through room initialization and calls
+`dStage_dt_c_roomReLoader`. That reload walks the static actor placements. Each
+placement first calls `fopAcM_CreateAppend`, backed by `cMl::Heap`, and silently
+skips the actor when that allocation returns null. A successful append is then
+passed to `fpcSCtRq_Request`, whose create-request allocation can independently
+return the error process ID. The room-data loop does not turn either failure
+into a room-load failure. The additional source digests are
+`09b6c83f1e40b8931a46e2d32c8061b24c0d268d01a04c0d4c3775ce46721c80`
+for `f_op_actor_mng.cpp`,
+`2863073dc547598cc34934bb84019155240b351e228f6ca919f3f30293df70f0`
+for `f_pc_create_req.cpp`, and
+`c8cd29a6942542532b8fb6a14c1e6b8865f929ccf29cd8694fc761cccfff320e`
+for `c_malloc.cpp`.
+
+This proves that the tower `Savmem` actor can be absent even though room loading
+continues, but it does not prove that this is what the witnessed setup does.
+`Demo07_01.arc` normally allocates from the archive heap, whereas the actor
+append and create-request records use `cMl::Heap`; a visible archive allocation
+failure is not an execution trace for the latter heap. The decisive remaining
+witness is therefore the exact `Savmem` append/request/create/execute result and
+its three guard values on the corruption path.
+
 The next importer must preserve the incoming return place across the proven
 no-op, invalidate it only if another potential writer's execution is ambiguous,
 and leave the route unknown in established mode until a source or trace witness
@@ -259,6 +307,12 @@ route-planner extract-jstudio-stb \
   --archive files/res/Object/Demo07_02.arc \
   --resource demo07_02.stb \
   --output gz2e01-demo07_02-program.json
+
+route-planner extract-demo-actor-program \
+  --archive files/res/Object/Demo07_01.arc \
+  --resource demo07_01.stb \
+  --content-identity gz2e01-content.json \
+  --output gz2e01-demo07_01-demo-actors.json
 
 route-planner resolve-jstudio-stb \
   --archive files/res/Object/Demo07_02.arc \

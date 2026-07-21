@@ -15,6 +15,7 @@ use dusklight_route_planner::cutscene_runtime::{
     CutscenePackageRuntimeProfile, bundled_gz2e01_cutscene_runtime_profile,
     resolve_cutscene_package,
 };
+use dusklight_route_planner::demo_actor::extract_gz2e01_demo_actor_program;
 use dusklight_route_planner::evaluation::EvidencePolicy;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::fact_pack::{
@@ -96,6 +97,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("diff-orig") => diff_orig(&args[1..]),
         Some("extract-binary-range-evidence") => extract_binary_range_evidence(&args[1..]),
         Some("extract-event-list") => extract_event_list(&args[1..]),
+        Some("extract-demo-actor-program") => extract_demo_actor_program(&args[1..]),
         Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
         Some("resolve-jstudio-stb") => resolve_jstudio_stb(&args[1..]),
@@ -845,6 +847,36 @@ fn extract_jstudio_stb(args: &[String]) -> Result<(), Box<dyn Error>> {
             "resource_sha256": program.source.resource_sha256,
             "blocks": program.blocks.len(),
             "objects": object_count,
+            "coverage": program.coverage,
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_demo_actor_program(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource")
+        .ok_or_else(|| "missing required --resource <file.stb>".to_owned())?;
+    let content_path = required_path(args, "--content-identity")?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let program = extract_gz2e01_demo_actor_program(
+        &content,
+        Digest(Sha256::digest(&archive).into()),
+        &resource_name,
+        &resource,
+    )?;
+    write_file(&output, &program.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": program.schema,
+            "output": output,
+            "sha256": program.digest()?,
+            "source_program_sha256": program.source_program_sha256,
+            "source_resource_sha256": program.source_resource_sha256,
             "coverage": program.coverage,
         }))?
     );
@@ -1883,6 +1915,7 @@ fn print_usage() {
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
             "  route-planner extract-binary-range-evidence --dol main.dol --virtual-address ADDRESS --size BYTES --output EVIDENCE.json",
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
+            "  route-planner extract-demo-actor-program --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json --output PROGRAM.json",
             "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",
             "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",

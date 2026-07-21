@@ -2680,6 +2680,29 @@ sequence.
         `NO_TELOP` gate, three reader records, and one dynamic savewarp
         transition. Keep actor execution as an explicit live component field,
         so corruption cannot silently count as either execution or suppression.
+  - [x] Decode raw JStudio data sent to exact `d_actN` generic actors instead of
+        discarding every type-`0x80` paragraph as semantically reserved. The
+        standalone `demo-actor-program/v1` artifact implements the retail
+        status-51 packed-word decoder and distinguishes persistent event-bit,
+        temporary event-bit, and other operations. Exact `demo07_01.stb` has
+        three generic actor streams, 14 raw writes, 25 packed commands, and no
+        persistent or temporary event-bit write; it therefore does not set
+        M_012 through `daDemo00_c`.
+  - [x] Source-audit static room-actor reconstruction after demo-archive failure.
+        The room loader continues into `dStage_dt_c_roomReLoader`, but each
+        placement separately allocates an actor append record and process-create
+        request; either allocation can fail. Those failures are not checked by
+        the room-data loop, so a missing `Savmem` execution is mechanically
+        possible without preventing the room from finishing initialization.
+        Archive allocation failure alone does not prove this happened because
+        archive and actor-request allocations use distinct backing heaps.
+  - [ ] Capture the `Savmem` placement's append allocation, process request,
+        create/execute result, and M_012/M_014/NO_TELOP values on the witnessed
+        corruption setup. Until then, do not select actor-allocation failure as
+        the explanation merely because source proves it is possible.
+  - [ ] Join decoded generic-actor event-bit effects into ordered cutscene state
+        operations, while retaining actor creation/execution as a separate
+        runtime precondition rather than treating authored commands as executed.
 - [ ] Vary the incoming return place across a witnessed actor-corruption trace;
       the GZ2E01 room-loader call is already proven to preserve it generically,
       but the complete failure suffix is not yet bounded.
