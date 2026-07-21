@@ -1468,8 +1468,16 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Implement save/load/title/runtime-file operations.
 - [ ] Implement writer/gate/reader evaluation and last-writer provenance.
 - [ ] Generate the upper-bound authorization graph.
+  - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
+        per-transition upper-bound assessment; unknown raw bits, absent values,
+        unsupported equivalence scopes, and disallowed evidence remain unknown.
+  - [ ] Materialize and traverse the authorization graph from evaluated
+        snapshots.
 - [ ] Keep extracted destinations non-executable until their activation contracts
       are discharged.
+  - [x] Classify hard-guard failure, unresolved requirements, and outstanding
+        physical obligations separately; modeled feasibility cannot treat an
+        outstanding obligation as executable.
 - [ ] Mark candidates whose activation physics remain unknown.
 
 Deliverable: the intentionally permissive logic graph with honest uncertainty.
@@ -1499,6 +1507,10 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 - [ ] Import authored obstructions without mutating build facts.
 - [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
 - [ ] Classify candidates as feasible, obstructed, or unknown.
+  - [x] Implement the loss-aware per-snapshot classification primitive, including
+        a distinct inapplicable scope and hard-guard-blocked result.
+  - [ ] Evaluate authored obstruction/resolver catalogs and obligation details to
+        derive discharged-obligation sets rather than accepting them as input.
 - [ ] Expose upper-bound versus modeled-feasible graph diffs.
 
 Deliverable: flag-permitted nonsense is visible but no longer reported as a
