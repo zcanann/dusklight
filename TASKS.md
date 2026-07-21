@@ -313,8 +313,23 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     learner copy. A neutral 30-tick F_SP103 boot retained 130/130 actors and one
     enabled scene-exit box identically in both populations. This supplies state only:
     no trigger is selected, approached or activated, and no action, reward or
-    desired outcome is encoded. Collision-backed exits and inactive authored
-    trigger placements remain part of the open parent audit.
+    desired outcome is encoded. Collision-backed exits and profile-specific
+    volume/guard interpretation for inactive authored trigger placements remain
+    part of the open parent audit.
+  - [x] Carry the complete immutable authored-placement population into the
+    world-bound learner artifact instead of exposing only active processes and
+    nearby collision. Geometry view v3 stores every ACT*/SCO*/TRES placement
+    and player spawn once per stage, including content-derived stable identity,
+    stage/room and layer scope, categorical actor token and placement kind,
+    parameters, absolute transform, set ID and the ordinary loader's semantic
+    scale. Every observation now preserves its signed layer so a learner can
+    resolve applicability without duplicating placements per tick. Construction
+    is bound to the authenticated inventory/world context, preserves empty
+    worlds explicitly, sorts and rejects duplicate identities, and rejects
+    nonfinite or inconsistent placement semantics. Raw DZS/DZR bytes, proximity
+    selection, active-state guesses, targets, rewards and actions are excluded.
+    Profile-specific parameter decoding and proven active-process-to-placement
+    joins remain open.
   - [x] Retain the complete dynamic collision set processed by the immediately
     preceding collision pass without calling collision code: registration
     identity, owning actor, attack/target/correction enable and hit state, hit
@@ -682,6 +697,13 @@ human-authored successful setup.
     A live 125-step Ordon shard produced 250 fully covered pre/post observations
     and 8,000 bounded probes in view `8e46dfc0...c3c7013`, bound to native shard
     `a849e3b9...1b014` and F_SP103 inventory `370675af...01e7f`.
+  - [x] Retain complete authored placement semantics in that same immutable
+    world reference. Geometry view v3 includes active and inactive placements
+    once per stage while per-boundary records carry only the dynamic stage,
+    room, layer and player frame. Synthetic complete-population, canonical
+    round-trip, missing-world/room and surface-graph composition tests pass;
+    live retail artifact sizing and typed inactive-trigger interpretation remain
+    part of the open environment audit.
   - [x] Bind the actor type/profile catalog and complete required static-world
     set directly to episode/shard identity, including multi-stage trajectories.
     Native shard v2 separates the authenticated game-data SHA-256, immutable
