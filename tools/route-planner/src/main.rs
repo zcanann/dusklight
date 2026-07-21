@@ -4,6 +4,10 @@ use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_import::{
     CutsceneWrapperSourceIdentity, CutsceneWrapperTopology,
 };
+use dusklight_route_planner::cutscene_runtime::{
+    CutscenePackageRuntimeProfile, bundled_gz2e01_cutscene_runtime_profile,
+    resolve_cutscene_package,
+};
 use dusklight_route_planner::evaluation::EvidencePolicy;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::fact_pack::{
@@ -15,7 +19,8 @@ use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::jstudio_import::parse_jstudio_stb;
 use dusklight_route_planner::jstudio_semantics::{
-    JstudioAdaptorProfile, bundled_gz2e01_adaptor_profile, resolve_jstudio_stb_semantics,
+    JstudioAdaptorProfile, JstudioSemanticProgram, bundled_gz2e01_adaptor_profile,
+    resolve_jstudio_stb_semantics,
 };
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::message_flow::{MessageFlowImportProfile, MessageFlowProgramSet};
@@ -81,6 +86,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
         Some("resolve-jstudio-stb") => resolve_jstudio_stb(&args[1..]),
+        Some("resolve-cutscene-package") => resolve_cutscene_package_command(&args[1..]),
         Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
@@ -814,6 +820,37 @@ fn resolve_jstudio_stb(args: &[String]) -> Result<(), Box<dyn Error>> {
             "source_program_sha256": program.source_program_sha256,
             "profile_sha256": program.profile_sha256,
             "coverage": program.coverage,
+        }))?
+    );
+    Ok(())
+}
+
+fn resolve_cutscene_package_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let topology_path = required_path(args, "--topology")?;
+    let semantics_path = required_path(args, "--semantics")?;
+    let output = required_path(args, "--output")?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let topology = CutsceneWrapperTopology::decode_canonical(&fs::read(topology_path)?)?;
+    let semantics = JstudioSemanticProgram::decode_canonical(&fs::read(semantics_path)?)?;
+    let profile = match option(args, "--profile") {
+        Some(profile_path) => {
+            CutscenePackageRuntimeProfile::decode_canonical(&fs::read(profile_path)?)?
+        }
+        None => bundled_gz2e01_cutscene_runtime_profile()?,
+    };
+    let package = resolve_cutscene_package(&content, &topology, &semantics, &profile)?;
+    write_file(&output, &package.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": package.schema,
+            "output": output,
+            "sha256": package.digest()?,
+            "event_name": package.event_name,
+            "demo_archive_name": package.demo_archive_name,
+            "stb_file": package.stb_file,
+            "coverage": package.coverage,
         }))?
     );
     Ok(())
@@ -1687,6 +1724,7 @@ fn print_usage() {
             "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",
             "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",
+            "  route-planner resolve-cutscene-package --content-identity CONTENT.json --topology WRAPPER.json --semantics SEMANTICS.json [--profile PROFILE.json] --output PACKAGE.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",

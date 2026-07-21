@@ -630,7 +630,6 @@ fn resolve_adaptor(
     use JstudioAdaptorHandler as Handler;
     let result = match handler {
         Handler::ActorShape | Handler::ActorAnimation => match operation_code {
-            0x18 if !content.is_empty() => Some((Behavior::DirectName, byte_payload(content))),
             0x19 if content.len() == 4 => Some((
                 Behavior::DirectUnsigned32,
                 JstudioSemanticPayload::Unsigned32 {
@@ -946,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_profile_resolves_direct_actor_resource_id() {
+    fn exact_profile_resolves_direct_actor_id_write() {
         let content = content();
         let profile = profile(&content);
         let program = resolve_jstudio_stb_semantics(
@@ -997,6 +996,25 @@ mod tests {
             program.validate().unwrap_err().field(),
             "jstudio_semantic_program.records.payload"
         );
+    }
+
+    #[test]
+    fn actor_id_setter_rejects_unsupported_direct_name_operation() {
+        let content = content();
+        let mut bytes = stb();
+        bytes[58..60].copy_from_slice(&((57u16 << 5) | 0x18).to_be_bytes());
+        let program = resolve_jstudio_stb_semantics(
+            &content,
+            &profile(&content),
+            Digest([1; 32]),
+            "fixture.stb",
+            &bytes,
+        )
+        .unwrap();
+        assert!(matches!(
+            program.records[0].resolution,
+            JstudioSemanticResolution::Unresolved { .. }
+        ));
     }
 
     #[test]

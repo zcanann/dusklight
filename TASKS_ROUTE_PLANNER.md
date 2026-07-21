@@ -2603,11 +2603,17 @@ sequence.
   - [x] Add exact-content JStudio adaptor profiles and a separate semantic
         resolver. The GZ2E01 profile resolves all 695 object-specific paragraphs
         through 29 audited selector rules while retaining 122 reserved controls;
-        it types actor resource requests and the three demo-message IDs without
-        implying actor execution, message completion, or scene change.
+        it types actor shape/animation ID writes and the three demo-message IDs
+        without implying actor execution, message completion, or scene change.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.
+  - [x] Resolve the exact GZ2E01 all-STB-lookups-missing branch: archive request
+        rejection clears the demo name, negative sync continues room init, STB
+        lookup falls through demo/room/stage archives, parse returns before the
+        demo-mode write, the exact PLAY cut has no EventFlag write, and mode zero
+        completes PACKAGE. Keep the corruption producer, final outer exit, and
+        other return-place writers unresolved.
 - [ ] Model actor corruption as the producer of the failed-load/exceptional-flow
       predicate, not as a direct Castle Town warp.
 - [ ] Verify whether any writer other than the proven room-loader no-op can run

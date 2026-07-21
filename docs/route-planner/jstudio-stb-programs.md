@@ -98,8 +98,7 @@ against its structural size and SHA-256. A friendly integer, float word, name,
 behavior, or handler cannot be changed independently of the source bytes.
 
 The three `JMSG` records call `dMsgObject_setDemoMessage` with IDs 1632, 1633,
-and 1634. Actor shape and animation records are now typed resource-ID requests,
-which exposes the dependency on the selected demo archive. Turning those
-requests into live actor creation, resource-load results, story writes, or scene
+and 1634. Actor shape and animation records are now typed raw ID writes. Turning
+those IDs into live actor behavior, resource lookups/results, story writes, or scene
 changes requires the actor/event lifecycle layer and evidence for the executed
 cutscene path.

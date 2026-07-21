@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twenty-eight operations:
+The planner CLI currently owns thirty-two operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -98,6 +98,9 @@ The planner CLI currently owns twenty-eight operations:
 - `resolve-jstudio-stb` applies an exact-content adaptor profile to those
   paragraphs, decoding proven variable/adaptor payload contracts and retaining
   unsupported dispatches as unresolved records.
+- `resolve-cutscene-package` joins an exact wrapper and nominal STB semantics to
+  a build-scoped archive/PACKAGE runtime profile without promoting an unknown
+  corruption producer or outer event exit.
 - `extract-cutscene-wrapper` joins one named REVT/LBNK/SCLS event to its exact
   `event_list.dat` staff/cut/parameter graph. Its coverage record keeps JStudio
   phases, exceptional load flow, and return-place writers unresolved until a

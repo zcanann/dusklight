@@ -57,7 +57,7 @@ adaptor profile resolves all 695 object-specific paragraph occurrences through
 29 selector rules while retaining 122 reserved controls. Its canonical semantic
 artifact SHA-256 is
 `a560e4f30d55403a68ab65e533e08bcd0c84d8164c1dc3de557c21c230890da5`.
-This types actor shape/animation resource requests, camera/particle/sound
+This types actor shape/animation ID writes, camera/particle/sound
 behavior, and demo-message IDs without proving which operations execute on the
 corruption path or promoting any of them to gameplay writes.
 
@@ -78,8 +78,8 @@ the selected four bytes have SHA-256
 `f332ea5b5437103cbb6f1508679da89eec9288ad775c96c439a17fccabe3de8e`.
 This proves that the call made after `roomInit` in `d_s_room.cpp` preserves
 *every* incoming return-place value on this build. It is not a Castle-Town
-special case. It does not, by itself, exclude a different writer inside the
-undecoded JStudio program or the glitch's earlier setup.
+special case. It does not, by itself, exclude a different writer on a partially
+executed JStudio path or in the glitch's earlier setup.
 
 ## Source-backed control flow
 
@@ -113,6 +113,14 @@ paths, but that is not yet evidence that the observed actor-corruption setup is
 a whole-archive/STB-missing failure. The exact corrupted actor/resource, last
 executed JStudio operation, skip flags, and final event-manager dispatch remain
 unwitnessed.
+
+The planner now seals that source-backed subset as
+`resolved-cutscene-package/v1`. The exact artifact SHA-256 is
+`2c99cd9c90795dd71c94529bc99b7478a32701446245cfc83610c81ed1162905`.
+It proves the ordered demo/room/stage fallback, zero executed STB paragraphs,
+absence of an exact PLAY-cut EventFlag parameter, and the mode-zero PACKAGE
+completion guard. Its coverage keeps the actor-corruption producer, final outer
+event exit, and other return-place writers unresolved.
 
 The failure must therefore still be modeled as a resource/actor failure
 predicate with an unknown exceptional suffix, never as a direct warp to
@@ -162,6 +170,12 @@ route-planner resolve-jstudio-stb \
   --resource demo07_02.stb \
   --content-identity gz2e01-content.json \
   --output gz2e01-demo07_02-semantics.json
+
+route-planner resolve-cutscene-package \
+  --content-identity gz2e01-content.json \
+  --topology r-sp301-demo07_02-wrapper.json \
+  --semantics gz2e01-demo07_02-semantics.json \
+  --output gz2e01-demo07_02-package.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,
