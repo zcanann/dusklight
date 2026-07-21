@@ -19,7 +19,8 @@ use huntctl::fqi::{
 };
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::multitask_set_encoder::{
-    CompleteSetMultiTaskEncoder, NativeMultiTaskActorCorpus, fit_shuffled_auxiliary_control,
+    CompleteSetMultiTaskEncoder, NativeEncoderChannelFamily, NativeEncoderFeatureSpec,
+    NativeMultiTaskActorCorpus, fit_shuffled_auxiliary_control,
 };
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
@@ -865,7 +866,16 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 serde_json::from_slice(&fs::read(&dataset_path)?)?;
             let shard = NativeEpisodeShard::read(&input)?;
             let source_native_shard_sha256 = shard.content_sha256;
-            let corpus = NativeMultiTaskActorCorpus::build(&dataset, &shard)?;
+            let excluded = repeated_option(learn_args, "--exclude-family")
+                .into_iter()
+                .map(|name| {
+                    NativeEncoderChannelFamily::parse(&name)
+                        .ok_or_else(|| format!("unknown native encoder channel family: {name}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let feature_spec = NativeEncoderFeatureSpec::excluding(excluded)?;
+            let corpus =
+                NativeMultiTaskActorCorpus::build_with_spec(&dataset, &shard, feature_spec)?;
             drop(shard);
             let defaults = TrainableSetConfig::default();
             let config = TrainableSetConfig {
@@ -919,10 +929,11 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 config,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v1",
+                "schema": "dusklight-native-multitask-encoder-artifact/v2",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,
+                "feature_spec": corpus.feature_spec,
                 "test_dataset_sha256": corpus.test_dataset_sha256,
                 "report": report,
                 "test_evaluation": test_evaluation,

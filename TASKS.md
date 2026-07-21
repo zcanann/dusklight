@@ -1134,6 +1134,27 @@ and geometry set sizes without schema changes.
   rare-event recall and controlled channel-family ablations. Reject a broad
   encoder that loses to the smaller view under equal data and simulator budget,
   while preserving the canonical raw evidence for a different encoder.
+  - [x] Make the direct native input a declarative, schema-bound projection
+    over 19 named core/set channel families, including actor population as a
+    separate structural family so an action-only control cannot leak actor
+    count. Omitted families remove columns rather than zeroing them, and the
+    broad view now includes typed native trigger-volume state. Report held-out
+    confusion counts, recall, specificity, F1, balanced accuracy and clamped
+    Brier score for contact, procedure, mode and actor-disappearance events
+    against the training-mean classifier. On equal two-epoch / 23,000-step
+    Ordon runs, full/core-only/actor-only/previous-input-only views reached
+    62.18% / 52.65% / 42.27% / 32.53% test improvement, respectively, and all
+    four independently shuffled controls were negative (`51c31ca9...37c93`,
+    `63cf7954...f779d`, `7f669190...2586f`, `d7915ae0...3a5d4`). This proves
+    useful held-out signal from both core and actor channels, but does not close
+    the parent: there is no learned attention/gating stability report yet, and
+    the diagnostic exposed target-conditioning debt. At eight epochs the full
+    view reached 74.74% aggregate test improvement and 13/30 contact recall
+    with one false positive, but still missed all 15 actor disappearances
+    (`0592979d...fd2a5`). Forward transition heads currently lack the causing
+    action, while nominal inverse-action heads lack the post-state, so the next
+    encoder revision must distinguish action-conditioned dynamics from
+    behavior cloning before feature promotion.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
