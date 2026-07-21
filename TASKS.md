@@ -1,15 +1,26 @@
-# Active task: build a learning system, then prove it on Ordon
+# Active task: build the information boundary a serious learner needs
 
-The immediate objective is not another procedural route search:
+The work is ordered deliberately:
 
-> Build an integrated learning loop that retains complete experience, learns
-> which state and actions predict future success, and uses that knowledge to
-> discover and optimize input sequences. Prove it first on the Link-control to
-> Ordon Springs segment.
+1. collect broad, structured, read-only game state without choosing a desired
+   behavior;
+2. prove that collection is complete where promised, temporally useful across
+   neutral world samples, deterministic, and phase-correct;
+3. build an integrated learning loop that retains complete experience and
+   learns which state and actions predict future success;
+4. only then evaluate discovery and optimization on Ordon and withheld
+   narrow-basin outcomes.
 
-The 125-tick tape is a demonstration and baseline, not the route definition.
-The framework must support both learning from that demonstration and attempting
-the same goal without demonstration-relative features.
+Skybook and other glitch catalogs inform which generic information or action
+authority may be missing. They are not attempts for a human, scripted probe, or
+hard-coded controller to perform. During the information audit, no named glitch
+is an active target and no published setup is executed. Triggering an outcome is
+learner work after the boundary exists.
+
+The 125-tick Ordon tape is a later demonstration and baseline, not the route
+definition or the current collection target. The eventual framework must
+support both learning from that demonstration and attempting the same goal
+without demonstration-relative features.
 
 ## Invariants
 
@@ -175,6 +186,13 @@ checkpoint, reward corridor, or frame sequence. Researchers stop at specifying
 what information and authority a learner would need; discovering how to use
 them is learner work. A published procedure must never be translated into a
 probe, demonstration, curriculum, option, reward term or preferred action.
+
+**Section 0 execution rule:** work here must produce either a reusable,
+subsystem-level observation/action capability or corpus-level coverage evidence.
+It must not launch a named-case attempt. Neutral probes vary ordinary controller
+dimensions only to establish whether authentic fields are present and change;
+they are not allowed to encode a destination, intermediate setup, preferred
+relationship, coordinate corridor, or success sequence.
 
 ### 0A. Survey every bootable world entry
 
