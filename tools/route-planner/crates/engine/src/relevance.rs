@@ -6,6 +6,7 @@
 
 use crate::PlannerContractError;
 use crate::logic::{FactCatalog, PredicateExpression, ValueReference};
+use crate::route_book::RouteActionRef;
 use crate::state::{ComponentBinding, ComponentKind};
 use crate::transition::{MechanicsCatalog, ObligationDetail, StateOperation};
 use serde::Serialize;
@@ -96,12 +97,29 @@ impl BackwardRelevance {
         mechanics: &MechanicsCatalog,
         goal: &PredicateExpression,
     ) -> Result<Self, PlannerContractError> {
+        Self::analyze_with_roots(facts, mechanics, goal, &[], &[])
+    }
+
+    pub fn analyze_with_roots(
+        facts: &FactCatalog,
+        mechanics: &MechanicsCatalog,
+        goal: &PredicateExpression,
+        predicate_roots: &[PredicateExpression],
+        action_roots: &[RouteActionRef],
+    ) -> Result<Self, PlannerContractError> {
         facts.validate()?;
         mechanics.validate()?;
         goal.validate()?;
 
         let mut analysis = RelevanceBuilder::default();
         analysis.add_predicate(goal);
+        for predicate in predicate_roots {
+            predicate.validate()?;
+            analysis.add_predicate(predicate);
+        }
+        for action in action_roots {
+            analysis.add_action_root(mechanics, action)?;
+        }
         loop {
             let before = analysis.cardinality();
             analysis.expand_facts(facts);
@@ -151,6 +169,81 @@ struct RelevanceBuilder {
 }
 
 impl RelevanceBuilder {
+    fn add_action_root(
+        &mut self,
+        mechanics: &MechanicsCatalog,
+        action: &RouteActionRef,
+    ) -> Result<(), PlannerContractError> {
+        let known = match action {
+            RouteActionRef::Transition { transition_id } => {
+                self.transitions.insert(transition_id.clone());
+                mechanics
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.id == *transition_id)
+            }
+            RouteActionRef::Technique { technique_id } => {
+                self.techniques.insert(technique_id.clone());
+                mechanics
+                    .techniques
+                    .iter()
+                    .any(|technique| technique.id == *technique_id)
+            }
+            RouteActionRef::Writer { writer_id } => {
+                self.writers.insert(writer_id.clone());
+                mechanics
+                    .writers
+                    .iter()
+                    .any(|writer| writer.id == *writer_id)
+            }
+            RouteActionRef::Resolver { resolver_id } => {
+                self.resolvers.insert(resolver_id.clone());
+                let Some(resolver) = mechanics
+                    .resolvers
+                    .iter()
+                    .find(|resolver| resolver.id == *resolver_id)
+                else {
+                    return Err(PlannerContractError::new(
+                        "backward_relevance.action_roots",
+                        format!("references unknown resolver {resolver_id}"),
+                    ));
+                };
+                if let Some(obstruction) = mechanics
+                    .obstructions
+                    .iter()
+                    .find(|obstruction| obstruction.id == resolver.obstruction_id)
+                {
+                    self.obstructions.insert(obstruction.id.clone());
+                    self.transitions
+                        .insert(obstruction.blocked_action_id.clone());
+                }
+                true
+            }
+            RouteActionRef::Microtrace { microtrace_id } => {
+                self.microtraces.insert(microtrace_id.clone());
+                if let Some(microtrace) = mechanics
+                    .microtraces
+                    .iter()
+                    .find(|microtrace| microtrace.id == *microtrace_id)
+                {
+                    self.add_predicate(&microtrace.precondition);
+                    self.add_predicate(&microtrace.postcondition);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if known {
+            Ok(())
+        } else {
+            Err(PlannerContractError::new(
+                "backward_relevance.action_roots",
+                format!("references unknown action {action:?}"),
+            ))
+        }
+    }
+
     fn cardinality(&self) -> usize {
         self.dependencies.len()
             + self.expanded_facts.len()

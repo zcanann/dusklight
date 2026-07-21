@@ -1891,8 +1891,9 @@ Deliverable: researchers can extend the model without editing core code.
         modeled versus upper-bound feasibility.
   - [x] Add backward relevance pruning for catalog-goal solves. Unrelated
         actions are not explored, and the result retains the relevance proof.
-        Route-book solves deliberately disable pruning until directives can be
-        added as independent backward roots.
+        Required route predicates, pinned actions, and every action plus
+        pre/postcondition in a required/selected method are independent roots,
+        so route-book solves use the same pruning without losing authored work.
   - [ ] Add the remaining route/path constraints before treating this as the
         production solver.
 - [x] Support OR producers, AND requirements, and ordered writer/gate/read setups.

@@ -629,11 +629,28 @@ impl<'a> ForwardSolver<'a> {
             .route_book
             .map(|book| compile_route_policy(book, &start_evaluator, self.options.evidence_policy))
             .transpose()?;
-        let backward_relevance = BackwardRelevance::analyze(self.facts, self.mechanics, goal)?;
-        // Route books can require actions and predicates that do not write the
-        // goal itself. Until those directives become additional backward roots,
-        // retain the complete action set for route-book solves.
-        let backward_pruning_applied = route_policy.is_none();
+        let mut backward_predicate_roots = Vec::new();
+        let mut backward_action_roots = BTreeSet::new();
+        if let Some(policy) = &route_policy {
+            backward_predicate_roots.extend(policy.required_predicates.iter().cloned());
+            backward_action_roots.extend(policy.required_actions.iter().cloned());
+            for sequence in &policy.required_sequences {
+                for step in &sequence.steps {
+                    backward_action_roots.insert(step.action.clone());
+                    backward_predicate_roots.extend(step.precondition.iter().cloned());
+                    backward_predicate_roots.extend(step.postcondition.iter().cloned());
+                }
+            }
+        }
+        let backward_action_roots = backward_action_roots.into_iter().collect::<Vec<_>>();
+        let backward_relevance = BackwardRelevance::analyze_with_roots(
+            self.facts,
+            self.mechanics,
+            goal,
+            &backward_predicate_roots,
+            &backward_action_roots,
+        )?;
+        let backward_pruning_applied = true;
         let search_evidence_policy = route_policy
             .as_ref()
             .map_or(self.options.evidence_policy, |policy| {
@@ -3518,7 +3535,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.status, SearchStatus::Reached);
-        assert!(!result.backward_pruning_applied);
+        assert!(result.backward_pruning_applied);
         assert_eq!(
             result
                 .steps
@@ -3526,6 +3543,91 @@ mod tests {
                 .map(|step| step.action_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["transition.a-to-d", "transition.d-to-b"]
+        );
+    }
+
+    #[test]
+    fn route_book_required_actions_are_backward_roots_without_retaining_noise() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            Vec::new(),
+        )]);
+        mechanics.goals = vec![goal("goal.b", "STAGE_B")];
+        mechanics.techniques = vec![
+            Technique {
+                id: "technique.noise".into(),
+                label: "Irrelevant noise".into(),
+                scope: scope(&snapshot),
+                prerequisites: PredicateExpression::True,
+                operations: vec![StateOperation::SetGate {
+                    gate_id: "gate.noise".into(),
+                }],
+                discharged_obligation_ids: Vec::new(),
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: BTreeMap::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            Technique {
+                id: "technique.required".into(),
+                label: "Required route action".into(),
+                scope: scope(&snapshot),
+                prerequisites: PredicateExpression::True,
+                operations: vec![StateOperation::SetGate {
+                    gate_id: "gate.required".into(),
+                }],
+                discharged_obligation_ids: Vec::new(),
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: BTreeMap::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+        let facts = facts();
+        let book = route_book(
+            &snapshot,
+            vec![RouteDirective {
+                id: "directive.pin-required-technique".into(),
+                scope: scope(&snapshot),
+                directive: RouteDirectiveKind::PinAction {
+                    action: RouteActionRef::Technique {
+                        technique_id: "technique.required".into(),
+                    },
+                },
+            }],
+        );
+        let result = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(snapshot).unwrap(),
+            &stage_is("STAGE_B"),
+        )
+        .unwrap();
+
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert!(result.backward_pruning_applied);
+        assert_eq!(
+            result.backward_relevance.technique_ids,
+            vec!["technique.required"]
+        );
+        assert_eq!(result.steps.len(), 2);
+        assert!(
+            result
+                .steps
+                .iter()
+                .any(|step| step.action_id == "technique.required")
         );
     }
 

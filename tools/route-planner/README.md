@@ -57,8 +57,9 @@ The planner CLI currently owns twelve operations:
   Catalog-goal solves first expand backward from the goal through all typed
   producers and requirements, then restrict forward exploration to that causal
   slice. The solve report retains the full relevance frontier and whether
-  pruning was enabled; route-book solves currently keep the complete action set
-  until route directives become additional backward roots.
+  pruning was enabled. Required route predicates, pinned actions, and required
+  method steps with their pre/postconditions become additional roots, so route
+  authoring remains enforceable without retaining unrelated mechanics.
   Physical obligations can derive required/excluded box, sphere, or cylinder
   membership; loaded-actor state; directed region connectivity; plane sidedness;
   player rotation, action, and control; and evidence-scoped temporal microtraces.
