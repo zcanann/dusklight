@@ -3,19 +3,20 @@
 use crate::artifact::Digest;
 use crate::identity::{ContextSelector, ExactContext, RuntimeConfiguration};
 use crate::logic::{
-    ComparisonOperator, ContextScope, FACT_CATALOG_SCHEMA, FactCatalog, PredicateExpression,
-    RuleEvidence, TruthStatus, ValueReference,
+    ComparisonOperator, ContextScope, EvidenceKind, FACT_CATALOG_SCHEMA, FactCatalog,
+    PredicateExpression, RuleEvidence, TruthStatus, ValueReference,
 };
 use crate::message_flow::{
     CompiledMessageFlowProgram, MessageCleanupEdge, MessageEventContinuation, MessageEventContract,
     MessageFlowImportProfile, MessageFlowProgram, MessageFlowProgramSet,
+    MessageItemOwnershipBinding,
 };
 use crate::orig_discovery::ExtractedOrigBundle;
 use crate::state::StateValue;
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, FeasibilityObligation,
-    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ReaderRule, StateOperation, TransitionKind,
-    UnknownRequirement,
+    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, ReaderRule,
+    StateOperation, TransitionKind, UnknownRequirement,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
@@ -26,9 +27,9 @@ pub const MESSAGE_FLOW_RESOURCE_OVERLAY_SET_SCHEMA: &str =
 pub const COMPILED_MESSAGE_FLOW_SET_SCHEMA: &str =
     "dusklight.route-planner.compiled-message-flow-set/v5";
 pub const MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-entry-contract-set/v3";
+    "dusklight.route-planner.message-flow-entry-contract-set/v4";
 pub const COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-entry-set/v3";
+    "dusklight.route-planner.compiled-message-flow-entry-set/v4";
 const MAX_RESOURCE_OVERLAYS: usize = 256;
 const MAX_ENTRY_CONTRACTS: usize = 65_536;
 const BUNDLED_GZ2E01_ENGLISH_LANAYRU_ENTRY_CONTRACTS: &[u8] =
@@ -167,6 +168,7 @@ pub struct CompiledMessageFlowEntrySet {
     pub source_contracts: MessageFlowEntryContractSet,
     pub exact_context: ExactContext,
     pub resolved_entries: Vec<ResolvedMessageFlowEntry>,
+    pub resolved_generic_item_grants: Vec<ResolvedGenericItemGrant>,
     pub mechanics: MechanicsCatalog,
 }
 
@@ -177,6 +179,19 @@ pub struct ResolvedMessageFlowEntry {
     pub flow_component_id: String,
     pub node_id: String,
     pub node_index: u16,
+}
+
+/// Exact item backing selected for the shared `execItemGet(mGtItm)` consumer.
+/// Presentation callers remain independent producers of the recent-item field;
+/// this record merely seals the generic consumer used by all of them.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedGenericItemGrant {
+    pub item_id: u16,
+    pub label: String,
+    pub recent_item_source: ComponentFieldTarget,
+    pub ownership: MessageItemOwnershipBinding,
+    pub evidence: RuleEvidence,
 }
 
 pub fn bundled_gz2e01_english_lanayru_entry_contracts()
@@ -403,12 +418,20 @@ impl MessageFlowEntryContractSet {
                 node_index: source_label.node_index,
             });
         }
-        let mechanics = compile_entry_mechanics(self, &compiled.exact_context, &resolved_entries)?;
+        let resolved_generic_item_grants =
+            resolve_generic_item_grants(self, compiled, &resolved_entries)?;
+        let mechanics = compile_entry_mechanics(
+            self,
+            &compiled.exact_context,
+            &resolved_entries,
+            &resolved_generic_item_grants,
+        )?;
         let result = CompiledMessageFlowEntrySet {
             schema: COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA.into(),
             source_contracts: self.clone(),
             exact_context: compiled.exact_context.clone(),
             resolved_entries,
+            resolved_generic_item_grants,
             mechanics,
         };
         result.validate()?;
@@ -455,10 +478,54 @@ impl CompiledMessageFlowEntrySet {
             )?;
             validate_stable_id("compiled_message_flow_entry_set.node_id", &resolved.node_id)?;
         }
+        let mut prior_item = None;
+        for grant in &self.resolved_generic_item_grants {
+            if prior_item.is_some_and(|item_id| item_id >= grant.item_id) {
+                return Err(PlannerContractError::new(
+                    "compiled_message_flow_entry_set.resolved_generic_item_grants",
+                    "must be unique and sorted by item ID",
+                ));
+            }
+            prior_item = Some(grant.item_id);
+            grant.validate()?;
+            if !self
+                .source_contracts
+                .presentation_requests
+                .iter()
+                .any(|request| {
+                    request.item_id == grant.item_id
+                        && request.recent_item_target == grant.recent_item_source
+                })
+            {
+                return Err(PlannerContractError::new(
+                    "compiled_message_flow_entry_set.resolved_generic_item_grants",
+                    "must correspond to a presentation request with the same item and recent-item field",
+                ));
+            }
+        }
+        let requested_items = self
+            .source_contracts
+            .presentation_requests
+            .iter()
+            .map(|request| request.item_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        if requested_items.len() != self.resolved_generic_item_grants.len()
+            || !requested_items.iter().all(|item_id| {
+                self.resolved_generic_item_grants
+                    .iter()
+                    .any(|grant| grant.item_id == *item_id)
+            })
+        {
+            return Err(PlannerContractError::new(
+                "compiled_message_flow_entry_set.resolved_generic_item_grants",
+                "must resolve every distinct requested item exactly once",
+            ));
+        }
         let expected = compile_entry_mechanics(
             &self.source_contracts,
             &self.exact_context,
             &self.resolved_entries,
+            &self.resolved_generic_item_grants,
         )?;
         if self.mechanics != expected {
             return Err(PlannerContractError::new(
@@ -513,18 +580,98 @@ impl CompiledMessageFlowEntrySet {
     }
 }
 
+fn resolve_generic_item_grants(
+    contracts: &MessageFlowEntryContractSet,
+    compiled: &CompiledMessageFlowSet,
+    resolved_entries: &[ResolvedMessageFlowEntry],
+) -> Result<Vec<ResolvedGenericItemGrant>, PlannerContractError> {
+    let mut grants = std::collections::BTreeMap::<u16, ResolvedGenericItemGrant>::new();
+    for request in &contracts.presentation_requests {
+        let (entry, _) = contracts
+            .entries
+            .iter()
+            .zip(resolved_entries)
+            .find(|(entry, _)| entry.id == request.source_entry_id)
+            .expect("contract-set validation requires the source entry");
+        let mut ownership = None::<MessageItemOwnershipBinding>;
+        let mut records = std::collections::BTreeMap::new();
+        for resource in &compiled.resources {
+            if let Some(candidate) = resource
+                .source_program
+                .bindings
+                .item_ownership
+                .iter()
+                .find(|candidate| candidate.item_id == request.item_id)
+            {
+                if ownership
+                    .as_ref()
+                    .is_some_and(|existing| existing != candidate)
+                {
+                    return Err(PlannerContractError::new(
+                        "message_presentation_request.item_id",
+                        "has inconsistent ownership backing across selected message resources",
+                    ));
+                }
+                ownership = Some(candidate.clone());
+                for record in &resource.source_program.evidence.records {
+                    if record.kind == EvidenceKind::SourceAudited {
+                        records.entry(record.id.clone()).or_insert(record.clone());
+                    }
+                }
+            }
+        }
+        let ownership = ownership.ok_or_else(|| {
+            PlannerContractError::new(
+                "message_presentation_request.item_id",
+                "has no exact item-ownership binding in the selected message-flow set",
+            )
+        })?;
+        for record in &entry.evidence.records {
+            if record.kind == EvidenceKind::SourceAudited {
+                records.entry(record.id.clone()).or_insert(record.clone());
+            }
+        }
+        let evidence = RuleEvidence {
+            truth: TruthStatus::Established,
+            records: records.into_values().collect(),
+        };
+        evidence.validate("resolved_generic_item_grant.evidence")?;
+        let grant = ResolvedGenericItemGrant {
+            item_id: request.item_id,
+            label: ownership.label.clone(),
+            recent_item_source: request.recent_item_target.clone(),
+            ownership,
+            evidence,
+        };
+        grant.validate()?;
+        if let Some(existing) = grants.insert(request.item_id, grant.clone())
+            && existing != grant
+        {
+            return Err(PlannerContractError::new(
+                "message_flow_entry_contract_set.presentation_requests",
+                "requests for the same item must use one recent-item source and ownership backing",
+            ));
+        }
+    }
+    Ok(grants.into_values().collect())
+}
+
 fn compile_entry_mechanics(
     contracts: &MessageFlowEntryContractSet,
     exact_context: &ExactContext,
     resolved_entries: &[ResolvedMessageFlowEntry],
+    resolved_generic_item_grants: &[ResolvedGenericItemGrant],
 ) -> Result<MechanicsCatalog, PlannerContractError> {
     let scope = ContextScope {
         selectors: vec![ContextSelector::Exact {
             context: exact_context.clone(),
         }],
     };
-    let mut transitions =
-        Vec::with_capacity(contracts.entries.len() + contracts.presentation_requests.len());
+    let mut transitions = Vec::with_capacity(
+        contracts.entries.len()
+            + contracts.presentation_requests.len()
+            + resolved_generic_item_grants.len(),
+    );
     let mut obligations = Vec::new();
     let mut readers = Vec::new();
     for (entry, resolved) in contracts.entries.iter().zip(resolved_entries) {
@@ -643,6 +790,66 @@ fn compile_entry_mechanics(
             interpretation_fact_id: None,
             evidence: entry.evidence.clone(),
         }));
+    }
+    for grant in resolved_generic_item_grants {
+        let item_token = format!("item-{:04x}", grant.item_id);
+        let obligation_id =
+            format!("obligation.generic-get-item.{item_token}.presentation-actor-execution");
+        obligations.push(FeasibilityObligation {
+            id: obligation_id.clone(),
+            label: format!(
+                "Presentation actor for {} executes its grant path",
+                grant.label
+            ),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            detail: ObligationDetail::Unresolved {
+                research_question: format!(
+                    "Prove that the presentation item actor for item 0x{:02x} exists, reaches its grant frame, and does not suppress execItemGet",
+                    grant.item_id
+                ),
+            },
+            evidence: grant.evidence.clone(),
+        });
+        let transition_id = format!("transition.generic-get-item.{item_token}");
+        let recent_item_source = ValueReference::ComponentField {
+            component_id: grant.recent_item_source.component_id.clone(),
+            field: grant.recent_item_source.field.clone(),
+        };
+        transitions.push(CandidateTransition {
+            id: transition_id.clone(),
+            label: format!("Grant {} through generic get-item", grant.label),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::ItemAcquisition,
+            approach_id: format!("approach.generic-get-item.{item_token}"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::Compare {
+                    left: recent_item_source.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Unsigned(grant.item_id.into()),
+                    },
+                },
+                physical_obligation_ids: vec![obligation_id],
+                effects: vec![StateOperation::WriteBoundRaw {
+                    component_kind: grant.ownership.component_kind.clone(),
+                    binding: grant.ownership.binding.clone(),
+                    byte_offset: grant.ownership.byte_offset,
+                    mask: vec![grant.ownership.mask],
+                    value: vec![grant.ownership.mask],
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: grant.evidence.clone(),
+        });
+        readers.push(ReaderRule {
+            id: format!("reader.generic-get-item.{item_token}.recent-item"),
+            scope: scope.clone(),
+            source: recent_item_source,
+            consuming_transition_id: transition_id,
+            interpretation_fact_id: None,
+            evidence: grant.evidence.clone(),
+        });
     }
     transitions.sort_by(|left, right| left.id.cmp(&right.id));
     obligations.sort_by(|left, right| left.id.cmp(&right.id));
@@ -820,6 +1027,54 @@ impl MessagePresentationRequestContract {
                 error.detail(),
             )
         })
+    }
+}
+
+impl ResolvedGenericItemGrant {
+    fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.item_id != self.ownership.item_id {
+            return Err(PlannerContractError::new(
+                "resolved_generic_item_grant.item_id",
+                "must equal the resolved ownership binding's item ID",
+            ));
+        }
+        validate_label("resolved_generic_item_grant.label", &self.label)?;
+        if self.label != self.ownership.label {
+            return Err(PlannerContractError::new(
+                "resolved_generic_item_grant.label",
+                "must equal the resolved ownership binding's label",
+            ));
+        }
+        self.ownership.validate()?;
+        StateOperation::CopyValue {
+            source: ComponentFieldTarget {
+                component_id: "validation-source".into(),
+                field: "item-id".into(),
+            },
+            target: self.recent_item_source.clone(),
+        }
+        .validate()
+        .map_err(|error| {
+            PlannerContractError::new(
+                "resolved_generic_item_grant.recent_item_source",
+                error.detail(),
+            )
+        })?;
+        self.evidence
+            .validate("resolved_generic_item_grant.evidence")?;
+        if self.evidence.truth == TruthStatus::Unknown
+            || !self
+                .evidence
+                .records
+                .iter()
+                .any(|record| record.kind == EvidenceKind::SourceAudited)
+        {
+            return Err(PlannerContractError::new(
+                "resolved_generic_item_grant.evidence",
+                "must contain non-unknown source-audited evidence",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -1608,7 +1863,7 @@ mod tests {
         ExtractedActorPlacement, ExtractedMessageFlow, ExtractedStageData,
         ExtractedStageInformation, MessageFlowLabel, MessageFlowNode,
     };
-    use crate::state::StateValue;
+    use crate::state::{ComponentBindingReference, ComponentKind, StateValue};
     use crate::transition::{ComponentFieldTarget, UnknownRequirement};
     use serde::Serialize;
 
@@ -1669,7 +1924,14 @@ mod tests {
             bindings: MessageFlowBindings {
                 temporary_flags: None,
                 persistent_flags: None,
-                item_ownership: Vec::new(),
+                item_ownership: vec![MessageItemOwnershipBinding {
+                    item_id: 7,
+                    label: "Fixture item owned".into(),
+                    component_kind: ComponentKind::Inventory,
+                    binding: ComponentBindingReference::ActiveRuntimeFile,
+                    byte_offset: 0,
+                    mask: 0x80,
+                }],
                 switch_stores: Vec::new(),
             },
             event_contracts: Vec::new(),
@@ -1867,6 +2129,12 @@ mod tests {
                     kind: EvidenceKind::Extracted,
                     source_sha256: Some(Digest([34; 32])),
                     note: "Exact STAG message-group resource.".into(),
+                },
+                EvidenceRecord {
+                    id: "evidence.entry.presentation-caller".into(),
+                    kind: EvidenceKind::SourceAudited,
+                    source_sha256: Some(Digest([35; 32])),
+                    note: "Source-audited presentation caller and generic item dispatch.".into(),
                 },
             ],
         }
@@ -2079,9 +2347,17 @@ mod tests {
                 .unwrap(),
             artifact
         );
-        assert_eq!(artifact.mechanics.transitions.len(), 2);
-        assert_eq!(artifact.mechanics.readers.len(), 3);
-        let transition = &artifact.mechanics.transitions[0];
+        assert_eq!(artifact.resolved_generic_item_grants.len(), 1);
+        assert_eq!(artifact.resolved_generic_item_grants[0].item_id, 7);
+        assert_eq!(artifact.mechanics.transitions.len(), 3);
+        assert_eq!(artifact.mechanics.obligations.len(), 1);
+        assert_eq!(artifact.mechanics.readers.len(), 4);
+        let transition = artifact
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.id.contains("message-entry"))
+            .unwrap();
         assert_eq!(transition.activation.unknown_requirements.len(), 1);
         assert!(transition.activation.effects.iter().any(|effect| matches!(
             effect,
@@ -2101,6 +2377,23 @@ mod tests {
                     && source.field == "item_id"
                     && target.component_id == "event-recent-item"
         ));
+        let grant = artifact
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.id.contains("generic-get-item"))
+            .unwrap();
+        assert_eq!(grant.activation.physical_obligation_ids.len(), 1);
+        assert!(matches!(
+            grant.activation.effects.as_slice(),
+            [StateOperation::WriteBoundRaw {
+                component_kind: ComponentKind::Inventory,
+                binding: ComponentBindingReference::ActiveRuntimeFile,
+                byte_offset: 0,
+                mask,
+                value,
+            }] if mask == &[0x80] && value == &[0x80]
+        ));
         assert!(transition.activation.effects.iter().any(|effect| matches!(
             effect,
             StateOperation::AdvanceFlow { flow_component_id, node_id }
@@ -2109,7 +2402,7 @@ mod tests {
 
         let mut base = empty_mechanics();
         artifact.merge_into(&mut base).unwrap();
-        assert_eq!(base.transitions.len(), 2);
+        assert_eq!(base.transitions.len(), 3);
         let before = base.clone();
         assert!(artifact.merge_into(&mut base).is_err());
         assert_eq!(base, before);

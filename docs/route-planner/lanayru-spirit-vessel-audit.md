@@ -159,12 +159,20 @@ post-presentation latch, its next wait orders a speak event; the follow-up flow
 now takes the item-present branch, sets `F_0615`, idempotently reasserts item
 `0xa3`, and sets save-switch 105. Those are ordered effects, not one milestone.
 
-The exact v3 entry pack now compiles the first actor-consumer step as well. It
+The exact v4 entry pack compiles the first actor-consumer step as well. It
 requires the same Seirei speaker plus event 1/item `0xa3`, then copies the item
 ID into session-owned `event-recent-item.get_item_no`. That write occurs before
-the presentation helper can fail. Item-actor execution, the actor's latch/event
-change, and generic grant remain later transitions rather than being inferred
-from the request.
+the presentation helper can fail.
+
+The pack also resolves item `0xa3` back through the import profile to the
+runtime-file `player-light-drop` byte 4/mask `0x04` backing and emits the shared
+generic get-item consumer. Its only hard state guard is
+`event-recent-item.get_item_no == 0xa3`; successful presentation-actor execution
+is a separately attached actor-state obligation. Thus the edge can consume a
+recent item written by another file or actor, but it remains blocked until the
+item actor is proven to exist, reach `execItemGet`, and avoid its no-grant path.
+The Seirei latch/event change remains a later actor transition rather than being
+inferred from either the request or the generic grant.
 
 ## Backing stores and writers
 

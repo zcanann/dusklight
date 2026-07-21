@@ -1415,7 +1415,7 @@ impl MessageRawStoreBinding {
 }
 
 impl MessageItemOwnershipBinding {
-    fn validate(&self) -> Result<(), PlannerContractError> {
+    pub(crate) fn validate(&self) -> Result<(), PlannerContractError> {
         if self.item_id > u16::from(u8::MAX) {
             return Err(PlannerContractError::new(
                 "message_flow_program.bindings.item_ownership.item_id",

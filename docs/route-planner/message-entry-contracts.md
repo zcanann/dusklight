@@ -7,7 +7,7 @@ separate, exact-content join.
 
 ## Source contract
 
-A `message-flow-entry-contract-set/v3` pins both the schema and digest of one
+A `message-flow-entry-contract-set/v4` pins both the schema and digest of one
 `compiled-message-flow-set/v5`. Each entry then names:
 
 - the exact message group, message-resource digest, and flow ID;
@@ -27,12 +27,21 @@ evidence that talking to it is feasible. Interaction volumes, attention
 selection, forced cutscene triggers, player control, timing, and other
 unaudited conditions remain obligations or unknown requirements.
 
-The v3 source set can also bind a presentation request to one actor-backed
+The v4 source set can also bind a presentation request to one actor-backed
 entry. The compiled request reads the resolved flow component's `event_id`,
 `item_id`, and exact `speaker_instance_id`, then copies `item_id` into the named
 recent-item field. This represents the helper call's guaranteed `mGtItm` write;
 it does not claim that presentation-actor creation succeeded or that the item
 was granted.
+
+For each requested item, compilation resolves the ownership backing from the
+pinned message-flow import profile and emits one shared generic get-item edge.
+That edge reads only the session recent-item field and writes the resolved raw
+ownership bit. It automatically carries a separate actor-state obligation for
+the presentation actor to exist, reach its grant frame, and avoid the no-grant
+path. Consequently an alternate producer such as Auru duplication can feed the
+same consumer without inheriting the Lanayru spirit's speaker guard, while a
+mere `mGtItm` write still cannot award the item by itself.
 
 ## Compilation
 
@@ -48,8 +57,9 @@ bundle and the selected compiled message-flow set. Compilation fails when:
 - an obligation is not scoped to the exact selected runtime context.
 
 The output is a canonical
-`compiled-message-flow-entry-set/v3`. It embeds the source contracts, resolved
-flow component/node/index records, and deterministically reproduced mechanics.
+`compiled-message-flow-entry-set/v4`. It embeds the source contracts, resolved
+flow component/node/index records, resolved generic item backings, and
+deterministically reproduced mechanics.
 It therefore remains verifiable after the user's `orig/` directory is removed.
 Tampering with the mechanics without changing the embedded source derivation is
 rejected.
