@@ -38,6 +38,10 @@ use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
     GeometryObservationStatus, NativeEpisodeGeometryView, NativeGeometryViewConfiguration,
 };
+use huntctl::native_surface_graph_view::{
+    NativeEpisodeSurfaceGraphView, NativeSurfaceGraphViewConfiguration,
+    SurfaceGraphObservationStatus,
+};
 use huntctl::observation_view::{MOVEMENT_STATE_V2_ID, movement_state_v2_spec};
 use huntctl::offline_rl::{
     ExploratoryExtractConfig, MOVEMENT_CATEGORICAL_FEATURES_V1, extract_exploratory_from_bytes,
@@ -1042,6 +1046,103 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "room_unavailable": room_unavailable,
                     "probes": view.observations.iter()
                         .map(|observation| observation.probes.len()).sum::<usize>(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("surface-graph-view") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let inventory_paths = repeated_option(learn_args, "--world-inventory");
+            if inventory_paths.is_empty() || inventory_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn surface-graph-view requires 1..={MAX_LEARN_INPUT_CORPORA} --world-inventory INVENTORY.json"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "surface graph view output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let defaults = NativeSurfaceGraphViewConfiguration::default();
+            let configuration = NativeSurfaceGraphViewConfiguration {
+                maximum_hops: option(learn_args, "--maximum-hops")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.maximum_hops),
+                maximum_nodes: usize_option(learn_args, "--node-limit", defaults.maximum_nodes)?,
+            };
+            let geometry = NativeEpisodeGeometryView::decode_canonical(&fs::read(&input)?)?;
+            let inventories = inventory_paths
+                .iter()
+                .map(|path| WorldInventory::read_canonical(Path::new(path)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let view =
+                NativeEpisodeSurfaceGraphView::build(&geometry, &inventories, configuration)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeSurfaceGraphView)?;
+            let present = view
+                .observations
+                .iter()
+                .filter(|observation| observation.status == SurfaceGraphObservationStatus::Present)
+                .count();
+            let no_surface_seed = view
+                .observations
+                .iter()
+                .filter(|observation| {
+                    observation.status == SurfaceGraphObservationStatus::NoSurfaceSeed
+                })
+                .count();
+            let player_absent = view
+                .observations
+                .iter()
+                .filter(|observation| {
+                    observation.status == SurfaceGraphObservationStatus::PlayerAbsent
+                })
+                .count();
+            let room_unavailable =
+                view.observations.len() - present - no_surface_seed - player_absent;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_geometry_view_sha256": view.native_geometry_view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "worlds": view.worlds,
+                    "configuration": view.configuration,
+                    "observations": view.observations.len(),
+                    "present": present,
+                    "no_surface_seed": no_surface_seed,
+                    "player_absent": player_absent,
+                    "room_unavailable": room_unavailable,
+                    "reachable_nodes": view.observations.iter()
+                        .filter_map(|observation| observation.neighborhood.as_ref())
+                        .map(|report| report.reachable_within_hops).sum::<usize>(),
+                    "returned_nodes": view.observations.iter()
+                        .filter_map(|observation| observation.neighborhood.as_ref())
+                        .map(|report| report.returned_nodes).sum::<usize>(),
+                    "truncated_neighborhoods": view.observations.iter()
+                        .filter_map(|observation| observation.neighborhood.as_ref())
+                        .filter(|report| report.truncated).count(),
                 }))?
             );
             Ok(())

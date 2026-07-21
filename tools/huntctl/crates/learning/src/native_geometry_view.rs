@@ -441,6 +441,10 @@ impl Error for NativeGeometryViewError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_surface_graph_view::{
+        NativeEpisodeSurfaceGraphView, NativeSurfaceGraphViewConfiguration,
+        SurfaceGraphObservationStatus,
+    };
     use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
     use dusklight_world::world_geometry::{
         CollisionCode, CollisionPlane, KclAuthoredPrism, KclInventoryPrism, KclReconstruction,
@@ -574,6 +578,43 @@ mod tests {
         }
     }
 
+    fn connected_inventory_for(observation: &NativeLearningObservation) -> WorldInventory {
+        let mut inventory = inventory_for(observation);
+        let first = inventory.collisions[0].clone();
+        let (plane, triangle) = match first.prism.reconstruction {
+            KclReconstruction::Reconstructed { plane, triangle } => (plane, triangle),
+            KclReconstruction::Degenerate { .. } => unreachable!(),
+        };
+        let stable_prefix = first
+            .prism
+            .authored
+            .stable_id
+            .rsplit_once("/prism/")
+            .unwrap()
+            .0
+            .to_owned();
+        let mut authored = first.prism.authored;
+        authored.stable_id = format!("{stable_prefix}/prism/2");
+        authored.prism_index = 2;
+        let third = Vec3 {
+            x: (triangle[0].x + triangle[1].x) * 0.5,
+            y: triangle[0].y,
+            z: triangle[0].z - 200.0,
+        };
+        inventory.collisions.push(CollisionInventoryRecord {
+            room: observation.room,
+            prism: KclInventoryPrism {
+                authored,
+                reconstruction: KclReconstruction::Reconstructed {
+                    plane,
+                    triangle: [triangle[0], triangle[1], third],
+                },
+            },
+        });
+        inventory.sources[1].addressable_prisms = 2;
+        inventory
+    }
+
     #[test]
     fn native_episode_joins_to_static_world_and_round_trips_canonically() {
         let shard = shard();
@@ -632,5 +673,63 @@ mod tests {
             observation.status == GeometryObservationStatus::RoomUnavailable
                 && observation.probes.is_empty()
         }));
+    }
+
+    #[test]
+    fn geometry_seeds_expand_into_content_bound_surface_neighborhoods() {
+        let shard = shard();
+        let inventory = connected_inventory_for(&shard.episodes[0].steps[0].pre_input);
+        inventory.validate().unwrap();
+        let geometry = NativeEpisodeGeometryView::build(
+            &shard,
+            &[inventory.clone()],
+            NativeGeometryViewConfiguration {
+                maximum_distance: 64.0,
+                surface_limit: 4,
+            },
+        )
+        .unwrap();
+        assert!(
+            geometry
+                .observations
+                .iter()
+                .all(|observation| observation.probes.len() == 1)
+        );
+
+        let topology = NativeEpisodeSurfaceGraphView::build(
+            &geometry,
+            &[inventory],
+            NativeSurfaceGraphViewConfiguration {
+                maximum_hops: 1,
+                maximum_nodes: 8,
+            },
+        )
+        .unwrap();
+        assert_eq!(topology.worlds.len(), 1);
+        assert_eq!(topology.worlds[0].node_count, 2);
+        assert_eq!(topology.worlds[0].edge_count, 1);
+        assert!(topology.observations.iter().all(|observation| {
+            observation.status == SurfaceGraphObservationStatus::Present
+                && observation.seed_collision_ids.len() == 1
+                && observation.neighborhood.as_ref().is_some_and(|report| {
+                    report.reachable_within_hops == 2
+                        && report.returned_nodes == 2
+                        && report.induced_edge_indices.len() == 1
+                        && !report.truncated
+                })
+        }));
+        let bytes = topology.canonical_bytes().unwrap();
+        assert_eq!(
+            NativeEpisodeSurfaceGraphView::decode_canonical(&bytes).unwrap(),
+            topology
+        );
+
+        let mut tampered = topology;
+        tampered.observations[0]
+            .neighborhood
+            .as_mut()
+            .unwrap()
+            .surface_graph_sha256 = Digest([0x55; 32]);
+        assert!(tampered.validate().is_err());
     }
 }

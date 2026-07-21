@@ -31,6 +31,7 @@ pub enum ContentKind {
     StageBootCatalog,
     NativeActorView,
     NativeGeometryView,
+    NativeSurfaceGraphView,
     NativeCollisionHistory,
     NativeReplayCorpus,
     NativeEpisodeHistory,
@@ -57,6 +58,9 @@ impl ContentKind {
             Self::StageBootCatalog => "application/vnd.dusklight.stage-boot-catalog+json",
             Self::NativeActorView => "application/vnd.dusklight.native-actor-view+json",
             Self::NativeGeometryView => "application/vnd.dusklight.native-geometry-view+json",
+            Self::NativeSurfaceGraphView => {
+                "application/vnd.dusklight.native-surface-graph-view+json"
+            }
             Self::NativeCollisionHistory => {
                 "application/vnd.dusklight.native-collision-history+json"
             }
@@ -527,6 +531,7 @@ mod tests {
             ContentKind::StageBootCatalog,
             ContentKind::NativeActorView,
             ContentKind::NativeGeometryView,
+            ContentKind::NativeSurfaceGraphView,
             ContentKind::NativeCollisionHistory,
             ContentKind::NativeReplayCorpus,
             ContentKind::NativeEpisodeHistory,
