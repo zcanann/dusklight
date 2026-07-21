@@ -977,6 +977,101 @@ bool append_room_load_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_warp_session_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& warp = observation.warpSession;
+    const bool present = warp.status == Status::Present;
+    const bool unavailable = warp.status == Status::Unavailable;
+    const bool selectionPresent = warp.selectionStatus == Status::Present;
+    const bool selectionAbsent = warp.selectionStatus == Status::Absent;
+    const bool returnPresent = warp.returnMarkStatus == Status::Present;
+    const bool returnAbsent = warp.returnMarkStatus == Status::Absent;
+    const bool targetPresent = warp.targetPointStatus == Status::Present;
+    const bool targetAbsent = warp.targetPointStatus == Status::Absent;
+    const bool selectedPresent = warp.selectedPointStatus == Status::Present;
+    const bool selectedAbsent = warp.selectedPointStatus == Status::Absent;
+    const auto canonicalName = [](const auto& name) {
+        const auto terminator = std::ranges::find(name, '\0');
+        return terminator != name.end() &&
+               std::ranges::all_of(terminator, name.end(), [](const char value) {
+                   return value == '\0';
+               });
+    };
+    const auto emptyName = [](const auto& name) {
+        return std::ranges::all_of(name, [](const char value) { return value == '\0'; });
+    };
+    const bool selectionEmpty = emptyName(warp.selectionStage) &&
+                                std::ranges::all_of(warp.selectionPosition,
+                                    [](const float value) { return value == 0.0F; }) &&
+                                warp.selectionAngle == 0 && warp.selectionRoom == -1 &&
+                                warp.selectionParameter == 0 && warp.selectionPlayer == 0;
+    const bool returnEmpty = emptyName(warp.returnStage) &&
+                             std::ranges::all_of(warp.returnPosition,
+                                 [](const float value) { return value == 0.0F; }) &&
+                             warp.returnAngle == 0 && warp.returnRoom == -1 &&
+                             warp.returnAcceptStage == -1;
+    const bool outerEmpty = warp.requestKind == 0 && warp.selectionStatus == Status::NotSampled &&
+                            selectionEmpty && warp.returnMarkStatus == Status::NotSampled &&
+                            returnEmpty && warp.targetPointStatus == Status::NotSampled &&
+                            warp.targetPoint == 0 &&
+                            warp.selectedPointStatus == Status::NotSampled &&
+                            warp.selectedPoint == 0 && !warp.transportMatch;
+    if ((!present && !unavailable) ||
+        (present && (warp.requestKind > 3 || !(selectionPresent || selectionAbsent) ||
+                        !(returnPresent || returnAbsent) || !(targetPresent || targetAbsent) ||
+                        !(selectedPresent || selectedAbsent))) ||
+        (selectionPresent &&
+            (warp.requestKind != 3 || warp.selectionStage[0] == '\0' ||
+                !canonicalName(warp.selectionStage) || warp.selectionRoom < 0 ||
+                warp.selectionRoom >= 64 ||
+                !std::ranges::all_of(warp.selectionPosition,
+                    [](const float value) { return std::isfinite(value); }))) ||
+        (!selectionPresent && !selectionEmpty) ||
+        (returnPresent &&
+            (warp.returnStage[0] == '\0' || !canonicalName(warp.returnStage) ||
+                warp.returnRoom < 0 || warp.returnRoom >= 64 || warp.returnAcceptStage < 0 ||
+                !std::ranges::all_of(warp.returnPosition,
+                    [](const float value) { return std::isfinite(value); }))) ||
+        (!returnPresent && !returnEmpty) || (!targetPresent && warp.targetPoint != 0) ||
+        (!selectedPresent && warp.selectedPoint != 0) ||
+        (warp.transportMatch !=
+            (targetPresent && selectedPresent && warp.targetPoint == warp.selectedPoint)) ||
+        (!present && !outerEmpty))
+    {
+        error = "learning observation has inconsistent warp-session state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(warp.status));
+    append_integer(output, warp.requestKind);
+    append_integer(output, static_cast<std::uint8_t>(warp.selectionStatus));
+    append_integer(output, static_cast<std::uint8_t>(warp.returnMarkStatus));
+    append_integer(output, static_cast<std::uint8_t>(warp.targetPointStatus));
+    append_integer(output, static_cast<std::uint8_t>(warp.selectedPointStatus));
+    append_integer(output, static_cast<std::uint8_t>(warp.transportMatch));
+    append_integer<std::uint8_t>(output, 0);
+    output.insert(output.end(), warp.selectionStage.begin(), warp.selectionStage.end());
+    if (!append_float_array(output, warp.selectionPosition, error))
+        return false;
+    append_integer(output, warp.selectionAngle);
+    append_integer(output, warp.selectionRoom);
+    append_integer(output, warp.selectionParameter);
+    append_integer(output, warp.selectionPlayer);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    output.insert(output.end(), warp.returnStage.begin(), warp.returnStage.end());
+    if (!append_float_array(output, warp.returnPosition, error))
+        return false;
+    append_integer(output, warp.returnAngle);
+    append_integer(output, warp.returnRoom);
+    append_integer(output, warp.returnAcceptStage);
+    append_integer(output, warp.targetPoint);
+    append_integer(output, warp.selectedPoint);
+    append_integer<std::uint16_t>(output, 0);
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1606,7 +1701,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_clock_domain_state(output, observation, error))
         return false;
-    return append_room_load_state(output, observation, error);
+    if (!append_room_load_state(output, observation, error))
+        return false;
+    return append_warp_session_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

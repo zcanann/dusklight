@@ -5,7 +5,7 @@ use crate::stage_survey_artifact::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V24;
+use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V25;
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
@@ -30,7 +30,7 @@ const MAX_STDERR_INSPECTION_BYTES: u64 = 1024 * 1024;
 const DEFAULT_NATIVE_STAGE_READINESS_TICKS: u32 = 30 * 60;
 const EMPTY_CARD_IDENTITY_DOMAIN: &[u8] = b"dusklight-stage-survey-empty-card/v1\0";
 const OBSERVATION_SCHEMA_DOMAIN: &[u8] =
-    b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v4\0";
+    b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v5\0";
 const SURVEY_SETTINGS_DOMAIN: &[u8] = b"dusklight-stage-survey-settings/v1\0";
 const SURVEY_CVARS: [&str; 4] = [
     "game.instantSaves=true",
@@ -1118,7 +1118,7 @@ fn validate_successful_probe(
         || actor_catalog.layer != final_observation.layer
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
-        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V24
+        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V25
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
@@ -1127,7 +1127,7 @@ fn validate_successful_probe(
         || actor_catalog
             .learning_dynamic_collision_population
             .source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V24
+            != LEARNING_OBSERVATION_SCHEMA_V25
         || !actor_catalog.learning_dynamic_collision_population.present
         || actor_catalog
             .learning_dynamic_collision_population
@@ -1143,13 +1143,13 @@ fn validate_successful_probe(
                 .learning_dynamic_collision_population
                 .colliders
                 .len()
-        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V24
+        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V25
         || !actor_catalog.learning_player_resources.present
         || actor_catalog.learning_player_relationships.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V24
+            != LEARNING_OBSERVATION_SCHEMA_V25
         || !actor_catalog.learning_player_relationships.present
         || actor_catalog.learning_player_collision_solver.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V24
+            != LEARNING_OBSERVATION_SCHEMA_V25
         || !actor_catalog.learning_player_collision_solver.present
     {
         return Err("actor_catalog_incomplete");

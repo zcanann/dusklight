@@ -44,6 +44,7 @@ const OBSERVATION_VERSION_V21: u16 = 21;
 const OBSERVATION_VERSION_V22: u16 = 22;
 const OBSERVATION_VERSION_V23: u16 = 23;
 const OBSERVATION_VERSION_V24: u16 = 24;
+const OBSERVATION_VERSION_V25: u16 = 25;
 const ACTION_VERSION: u16 = 2;
 const RNG_SNAPSHOT_VERSION: u32 = 1;
 const RNG_ALGORITHM_VERSION: u32 = 1;
@@ -99,6 +100,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V21: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V22: &str = "dusklight-learning-observation/v22";
 pub const LEARNING_OBSERVATION_SCHEMA_V23: &str = "dusklight-learning-observation/v23";
 pub const LEARNING_OBSERVATION_SCHEMA_V24: &str = "dusklight-learning-observation/v24";
+pub const LEARNING_OBSERVATION_SCHEMA_V25: &str = "dusklight-learning-observation/v25";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -691,6 +693,35 @@ pub struct NativeRoomLoadObservation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NativeWarpSelectionObservation {
+    pub stage: String,
+    pub position: [f32; 3],
+    pub angle: i16,
+    pub room: i8,
+    pub parameter: u8,
+    pub player: u8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeWarpReturnMarkObservation {
+    pub stage: String,
+    pub position: [f32; 3],
+    pub angle: i16,
+    pub room: i8,
+    pub accept_stage: i8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeWarpSessionObservation {
+    pub request_kind: u8,
+    pub selection: Option<NativeWarpSelectionObservation>,
+    pub return_mark: Option<NativeWarpReturnMarkObservation>,
+    pub target_point: Option<u8>,
+    pub selected_point: Option<u8>,
+    pub transport_match: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeLearningObservation {
     pub phase: NativeObservationPhase,
     pub terminal_reason: NativeTerminalReason,
@@ -794,6 +825,8 @@ pub struct NativeLearningObservation {
     pub clock_domains: Option<NativeClockDomainObservation>,
     pub room_load_status: NativeChannelStatus,
     pub room_load: Option<NativeRoomLoadObservation>,
+    pub warp_session_status: NativeChannelStatus,
+    pub warp_session: Option<NativeWarpSessionObservation>,
 }
 
 #[derive(Debug)]
@@ -870,6 +903,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V22
                 | OBSERVATION_VERSION_V23
                 | OBSERVATION_VERSION_V24
+                | OBSERVATION_VERSION_V25
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -1008,6 +1042,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V22 => LEARNING_OBSERVATION_SCHEMA_V22,
         OBSERVATION_VERSION_V23 => LEARNING_OBSERVATION_SCHEMA_V23,
         OBSERVATION_VERSION_V24 => LEARNING_OBSERVATION_SCHEMA_V24,
+        OBSERVATION_VERSION_V25 => LEARNING_OBSERVATION_SCHEMA_V25,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2226,6 +2261,142 @@ fn decode_room_load(
     ))
 }
 
+fn decode_warp_session(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeWarpSessionObservation>), NativeEpisodeShardError> {
+    let status = decode_channel_status(reader)?;
+    let request_kind = reader.u8()?;
+    let selection_status = decode_channel_status(reader)?;
+    let return_status = decode_channel_status(reader)?;
+    let target_status = decode_channel_status(reader)?;
+    let selected_status = decode_channel_status(reader)?;
+    let transport_match = reader.bool()?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero warp-session reserved byte",
+        ));
+    }
+
+    let selection_stage = reader.fixed_name()?;
+    let selection_position = reader.f32x3()?;
+    let selection_angle = reader.i16()?;
+    let selection_room = reader.i8()?;
+    let selection_parameter = reader.u8()?;
+    let selection_player = reader.u8()?;
+    if reader.u8()? != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero warp-selection reserved field",
+        ));
+    }
+
+    let return_stage = reader.fixed_name()?;
+    let return_position = reader.f32x3()?;
+    let return_angle = reader.i16()?;
+    let return_room = reader.i8()?;
+    let return_accept_stage = reader.i8()?;
+    let target_point = reader.u8()?;
+    let selected_point = reader.u8()?;
+    if reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero warp-point reserved field",
+        ));
+    }
+
+    let present = status == NativeChannelStatus::Present;
+    let selection_present = selection_status == NativeChannelStatus::Present;
+    let selection_empty = selection_stage.is_empty()
+        && selection_position == [0.0; 3]
+        && selection_angle == 0
+        && selection_room == -1
+        && selection_parameter == 0
+        && selection_player == 0;
+    let return_present = return_status == NativeChannelStatus::Present;
+    let return_empty = return_stage.is_empty()
+        && return_position == [0.0; 3]
+        && return_angle == 0
+        && return_room == -1
+        && return_accept_stage == -1;
+    let target_present = target_status == NativeChannelStatus::Present;
+    let selected_present = selected_status == NativeChannelStatus::Present;
+    let outer_empty = request_kind == 0
+        && selection_status == NativeChannelStatus::NotSampled
+        && selection_empty
+        && return_status == NativeChannelStatus::NotSampled
+        && return_empty
+        && target_status == NativeChannelStatus::NotSampled
+        && target_point == 0
+        && selected_status == NativeChannelStatus::NotSampled
+        && selected_point == 0
+        && !transport_match;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || (present
+        && (request_kind > 3
+            || !matches!(
+                selection_status,
+                NativeChannelStatus::Present | NativeChannelStatus::Absent
+            )
+            || !matches!(
+                return_status,
+                NativeChannelStatus::Present | NativeChannelStatus::Absent
+            )
+            || !matches!(
+                target_status,
+                NativeChannelStatus::Present | NativeChannelStatus::Absent
+            )
+            || !matches!(
+                selected_status,
+                NativeChannelStatus::Present | NativeChannelStatus::Absent
+            )))
+        || (selection_present
+            && (request_kind != 3
+                || selection_stage.is_empty()
+                || selection_stage.len() >= 8
+                || !(0..64).contains(&selection_room)))
+        || (!selection_present && !selection_empty)
+        || (return_present
+            && (return_stage.is_empty()
+                || return_stage.len() >= 8
+                || !(0..64).contains(&return_room)
+                || return_accept_stage < 0))
+        || (!return_present && !return_empty)
+        || (!target_present && target_point != 0)
+        || (!selected_present && selected_point != 0)
+        || transport_match != (target_present && selected_present && target_point == selected_point)
+        || (!present && !outer_empty)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "warp-session status and payload disagree",
+        ));
+    }
+
+    Ok((
+        status,
+        present.then_some(NativeWarpSessionObservation {
+            request_kind,
+            selection: selection_present.then_some(NativeWarpSelectionObservation {
+                stage: selection_stage,
+                position: selection_position,
+                angle: selection_angle,
+                room: selection_room,
+                parameter: selection_parameter,
+                player: selection_player,
+            }),
+            return_mark: return_present.then_some(NativeWarpReturnMarkObservation {
+                stage: return_stage,
+                position: return_position,
+                angle: return_angle,
+                room: return_room,
+                accept_stage: return_accept_stage,
+            }),
+            target_point: target_present.then_some(target_point),
+            selected_point: selected_present.then_some(selected_point),
+            transport_match,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -3110,7 +3281,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V21
         | OBSERVATION_VERSION_V22
         | OBSERVATION_VERSION_V23
-        | OBSERVATION_VERSION_V24 => {
+        | OBSERVATION_VERSION_V24
+        | OBSERVATION_VERSION_V25 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3968,6 +4140,11 @@ fn decode_observation(
     } else {
         (NativeChannelStatus::NotSampled, None)
     };
+    let (warp_session_status, warp_session) = if observation_version >= OBSERVATION_VERSION_V25 {
+        decode_warp_session(reader)?
+    } else {
+        (NativeChannelStatus::NotSampled, None)
+    };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -4070,6 +4247,8 @@ fn decode_observation(
         clock_domains,
         room_load_status,
         room_load,
+        warp_session_status,
+        warp_session,
     })
 }
 

@@ -121,6 +121,8 @@ public:
     void setWarpStatus(u8 i_status) { mWarpStatus = i_status; }
     u8 getWarpRoomNo() { return mWarpInfo.mRoomNo; }
     u8 getWarpPlayerNo() { return mWarpInfo.mPlayerNo; }
+    s16 getWarpAngle() { return mWarpInfo.mAngle; }
+    u8 getWarpParameter() { return mWarpInfo.unk_0x17; }
     cXyz& getWarpPos() { return mWarpInfo.mPosition; }
     const char* getWarpStageName() { return mWarpInfo.mStageName; }
     void setNowCount(u8 i_count) { mNowCount = i_count; }
@@ -418,6 +420,14 @@ inline u8 dMeter2Info_getWarpRoomNo() {
 
 inline u8 dMeter2Info_getWarpPlayerNo() {
     return g_meter2_info.getWarpPlayerNo();
+}
+
+inline s16 dMeter2Info_getWarpAngle() {
+    return g_meter2_info.getWarpAngle();
+}
+
+inline u8 dMeter2Info_getWarpParameter() {
+    return g_meter2_info.getWarpParameter();
 }
 
 inline cXyz& dMeter2Info_getWarpPos() {

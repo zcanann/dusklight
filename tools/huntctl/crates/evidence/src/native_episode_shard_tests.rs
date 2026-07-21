@@ -97,6 +97,10 @@ fn golden_v24() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v24.dseps")
 }
 
+fn golden_v25() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v25.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -170,6 +174,10 @@ fn mutate_first_v21_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v24_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v24(), mutator)
+}
+
+fn mutate_first_v25_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v25(), mutator)
 }
 
 fn first_v21_process_records_offset(expanded: &[u8]) -> usize {
@@ -1295,6 +1303,113 @@ fn decodes_v24_complete_room_load_state_with_legacy_missingness() {
 }
 
 #[test]
+fn decodes_v25_warp_session_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v25()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V25
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.warp_session_status,
+            NativeChannelStatus::Present
+        );
+        assert_eq!(
+            observation.warp_session.as_ref().unwrap(),
+            &NativeWarpSessionObservation {
+                request_kind: 3,
+                selection: Some(NativeWarpSelectionObservation {
+                    stage: "F_SP104".into(),
+                    position: [100.0, 200.0, -300.0],
+                    angle: 0x1200,
+                    room: 2,
+                    parameter: 4,
+                    player: 1,
+                }),
+                return_mark: Some(NativeWarpReturnMarkObservation {
+                    stage: "D_MN01".into(),
+                    position: [10.0, 20.0, 30.0],
+                    angle: -0x1200,
+                    room: 5,
+                    accept_stage: 3,
+                }),
+                target_point: Some(9),
+                selected_point: Some(6),
+                transport_match: false,
+            }
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v24()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.warp_session_status == NativeChannelStatus::NotSampled
+                        && observation.warp_session.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
+fn rejects_detached_v25_warp_selection_and_false_transport_match() {
+    const WARP_PREFIX: [u8; 16] = [
+        1, 3, 1, 1, 1, 1, 0, 0, b'F', b'_', b'S', b'P', b'1', b'0', b'4', 0,
+    ];
+    let detached_selection = mutate_first_v25_episode(|expanded| {
+        let offset = expanded
+            .windows(WARP_PREFIX.len())
+            .position(|window| window == WARP_PREFIX)
+            .expect("v25 warp-session block");
+        expanded[offset + 2] = NativeChannelStatus::Absent as u8;
+    });
+    let error = NativeEpisodeShard::decode(&detached_selection)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("warp-session status and payload disagree"),
+        "{error}"
+    );
+
+    let false_transport_match = mutate_first_v25_episode(|expanded| {
+        let offset = expanded
+            .windows(WARP_PREFIX.len())
+            .position(|window| window == WARP_PREFIX)
+            .expect("v25 warp-session block");
+        expanded[offset + 6] = 1;
+    });
+    let error = NativeEpisodeShard::decode(&false_transport_match)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("warp-session status and payload disagree"),
+        "{error}"
+    );
+
+    let unterminated_stage = mutate_first_v25_episode(|expanded| {
+        let offset = expanded
+            .windows(WARP_PREFIX.len())
+            .position(|window| window == WARP_PREFIX)
+            .expect("v25 warp-session block");
+        expanded[offset + 15] = b'X';
+    });
+    let error = NativeEpisodeShard::decode(&unterminated_stage)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("warp-session status and payload disagree"),
+        "{error}"
+    );
+}
+
+#[test]
 fn rejects_noncanonical_v24_room_scene_phase() {
     const FIRST_ROOM: [u8; 12] = [
         0x11, 0x03, 0x02, 0x00, 0x03, 0x04, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00,
@@ -1632,6 +1747,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V22
                             | LEARNING_OBSERVATION_SCHEMA_V23
                             | LEARNING_OBSERVATION_SCHEMA_V24
+                            | LEARNING_OBSERVATION_SCHEMA_V25
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1683,6 +1799,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V22
             | LEARNING_OBSERVATION_SCHEMA_V23
             | LEARNING_OBSERVATION_SCHEMA_V24
+            | LEARNING_OBSERVATION_SCHEMA_V25
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

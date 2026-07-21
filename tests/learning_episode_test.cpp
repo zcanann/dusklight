@@ -488,6 +488,26 @@ struct ObservationFixture {
         observation.roomLoad.rooms[0].scenePhaseActive = true;
         observation.roomLoad.rooms[1].statusFlags = 0x0c;
         observation.roomLoad.rooms[1].zone = 1;
+        observation.warpSession.status = MilestoneObservation::ChannelStatus::Present;
+        observation.warpSession.requestKind = 3;
+        observation.warpSession.selectionStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.warpSession.selectionStage = {'F', '_', 'S', 'P', '1', '0', '4', '\0'};
+        observation.warpSession.selectionPosition = {100.0F, 200.0F, -300.0F};
+        observation.warpSession.selectionAngle = 0x1200;
+        observation.warpSession.selectionRoom = 2;
+        observation.warpSession.selectionParameter = 4;
+        observation.warpSession.selectionPlayer = 1;
+        observation.warpSession.returnMarkStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.warpSession.returnStage = {'D', '_', 'M', 'N', '0', '1', '\0', '\0'};
+        observation.warpSession.returnPosition = {10.0F, 20.0F, 30.0F};
+        observation.warpSession.returnAngle = -0x1200;
+        observation.warpSession.returnRoom = 5;
+        observation.warpSession.returnAcceptStage = 3;
+        observation.warpSession.targetPointStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.warpSession.targetPoint = 9;
+        observation.warpSession.selectedPointStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.warpSession.selectedPoint = 6;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -1136,6 +1156,31 @@ void test_room_load_state_fails_closed() {
     REQUIRE(error.find("inconsistent room-load entry") != std::string::npos);
 }
 
+void test_warp_session_state_fails_closed() {
+    ObservationFixture detachedSelection;
+    detachedSelection.observation.warpSession.selectionStatus =
+        MilestoneObservation::ChannelStatus::Absent;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, detachedSelection.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent warp-session") != std::string::npos);
+
+    ObservationFixture falseTransportMatch;
+    falseTransportMatch.observation.warpSession.transportMatch = true;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, falseTransportMatch.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent warp-session") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1242,6 +1287,7 @@ int main(const int argc, char** argv) {
     test_clock_domains_fail_closed();
     test_rng_identity_fails_closed();
     test_room_load_state_fails_closed();
+    test_warp_session_state_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

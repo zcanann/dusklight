@@ -227,8 +227,8 @@ relationship, coordinate corridor, or success sequence.
   9,084-candidate pass replayed 88 interrupted records in 1.92 seconds; merged
   status over 178 records remained 2.25 seconds while eight native workers
   continued producing classifications.
-  The survey's observation identity is now v4 and binds the current v24 native
-  learner schema through the shared Rust evidence constant. This closes a
+  The survey's observation identity v4 bound the then-current v24 native
+  learner schema through the shared Rust evidence constant. This closed a
   fail-closed collector regression where the v21 native writer was rejected by
   stale v20 survey and actor-coverage checks; older evidence remains distinct
   rather than being silently relabeled.
@@ -905,8 +905,8 @@ human-authored successful setup.
       The cross-language fixture `3e599f74...b11f7f` produced four present
       boundaries, 256 rows and sealed view `fa708aa3...46a26d` / blob
       `c0908f65...c461`. Native, evidence, view, CLI, legacy-missingness and
-      resealed-tamper tests pass. Live temporal variation and door/warp queues
-      remain open, so the parent remains incomplete.
+      resealed-tamper tests pass. Live temporal variation and resource-load
+      outcomes remain open, so the parent remains incomplete.
     - [x] Authenticate the already complete two-stream RNG observation instead
       of treating its version fields as ordinary values. The native learning
       writer and Rust shard reader now require snapshot version 1, the exact
@@ -917,8 +917,29 @@ human-authored successful setup.
       identity, and a recompressed mutation of the v24 cross-language fixture
       proves that reader-side snapshot or algorithm drift fails closed. This
       adds no RNG manipulation, objective, action preference or reward. Live
-      temporal variation and door/warp queues remain open, so the parent remains
-      incomplete.
+      temporal variation and resource-load outcomes remain open, so the parent
+      remains incomplete.
+    - [x] Retain generic engine-owned warp-session state and reconcile the
+      supposed door/warp “queues” with the actual subsystems. Learning
+      observation v25 captures the meter request kind, optional portal-map
+      destination, optional saved return mark, target/selected portal IDs and
+      the engine's derived transport-match bit. Selection and return payloads
+      have independent present/absent status, historical v2-v24 shards remain
+      `not_sampled`, and inactive retained storage is not serialized as a valid
+      destination.
+      The v18 event-control graph already retains every priority-ordered door
+      request plus the active door partner; there is no separate generic door
+      queue to infer from actor layouts. Native and Rust reject detached
+      destination payloads, invalid request kinds, false transport matches,
+      noncanonical strings/reserved fields and nonfinite positions. Corpus
+      inspection v16 and temporal coverage report the channel without selecting
+      a destination. Cross-language fixture `1b8a3622...a7f80` passes exact,
+      legacy-missingness and recompressed-tamper tests. Capture calls no menu,
+      event, scene or warp procedure and contains no route, preferred portal,
+      timing, action or reward. Survey observation identity v5 now binds the
+      current v25 schema while existing v4/v24 ledgers remain distinct.
+      Profile-specific door state, resource-load outcomes and live variation
+      remain open, so the parent is incomplete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

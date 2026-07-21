@@ -511,6 +511,35 @@ struct MilestoneObservation {
     };
     RoomLoadState roomLoad;
 
+    // Engine-owned warp request and destination state. The map selection and
+    // saved return mark are distinct destinations with independent
+    // availability; target/select portal IDs retain explicit sentinel-derived
+    // missingness. Observation never opens a menu, selects a portal, changes a
+    // scene, or invokes a warp procedure.
+    struct WarpSessionState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint8_t requestKind = 0;
+        ChannelStatus selectionStatus = ChannelStatus::NotSampled;
+        std::array<char, 8> selectionStage{};
+        std::array<float, 3> selectionPosition{};
+        std::int16_t selectionAngle = 0;
+        std::int8_t selectionRoom = -1;
+        std::uint8_t selectionParameter = 0;
+        std::uint8_t selectionPlayer = 0;
+        ChannelStatus returnMarkStatus = ChannelStatus::NotSampled;
+        std::array<char, 8> returnStage{};
+        std::array<float, 3> returnPosition{};
+        std::int16_t returnAngle = 0;
+        std::int8_t returnRoom = -1;
+        std::int8_t returnAcceptStage = -1;
+        ChannelStatus targetPointStatus = ChannelStatus::NotSampled;
+        std::uint8_t targetPoint = 0;
+        ChannelStatus selectedPointStatus = ChannelStatus::NotSampled;
+        std::uint8_t selectedPoint = 0;
+        bool transportMatch = false;
+    };
+    WarpSessionState warpSession;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

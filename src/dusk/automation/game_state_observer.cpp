@@ -15,6 +15,7 @@
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_demo.h"
+#include "d/d_meter2_info.h"
 #include "d/d_msg_object.h"
 #include "d/d_s_name.h"
 #include "d/d_s_play.h"
@@ -1222,6 +1223,55 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
             room.scenePhase = phase.id;
             room.scenePhaseActive = phase.mpHandlerTable != nullptr;
         }
+    }
+
+    auto& warp = observation.warpSession;
+    using Status = MilestoneObservation::ChannelStatus;
+    warp.status = Status::Present;
+    warp.requestKind = dMeter2Info_getWarpStatus();
+    const std::uint8_t targetPoint = dComIfGp_TargetWarpPt_get();
+    if (targetPoint == 0xff) {
+        warp.targetPointStatus = Status::Absent;
+    } else {
+        warp.targetPointStatus = Status::Present;
+        warp.targetPoint = targetPoint;
+    }
+    const std::uint8_t selectedPoint = dComIfGp_SelectWarpPt_get();
+    if (selectedPoint == 0xff) {
+        warp.selectedPointStatus = Status::Absent;
+    } else {
+        warp.selectedPointStatus = Status::Present;
+        warp.selectedPoint = selectedPoint;
+    }
+    warp.transportMatch = dComIfGp_TransportWarp_check() != 0;
+
+    const char* selectionStage = dMeter2Info_getWarpStageName();
+    if (warp.requestKind == WARP_STATUS_DECIDED_e && selectionStage != nullptr &&
+        selectionStage[0] != '\0')
+    {
+        const cXyz& position = dMeter2Info_getWarpPos();
+        warp.selectionStatus = Status::Present;
+        copyFixedName(warp.selectionStage, selectionStage);
+        warp.selectionPosition = {position.x, position.y, position.z};
+        warp.selectionAngle = dMeter2Info_getWarpAngle();
+        warp.selectionRoom = static_cast<std::int8_t>(dMeter2Info_getWarpRoomNo());
+        warp.selectionParameter = dMeter2Info_getWarpParameter();
+        warp.selectionPlayer = dMeter2Info_getWarpPlayerNo();
+    } else {
+        warp.selectionStatus = Status::Absent;
+    }
+
+    const std::int8_t returnAcceptStage = dComIfGs_getLastWarpAcceptStage();
+    if (returnAcceptStage >= 0) {
+        const cXyz position = dComIfGs_getLastWarpMarkPlayerPos();
+        warp.returnMarkStatus = Status::Present;
+        copyFixedName(warp.returnStage, dComIfGs_getLastWarpMarkStageName());
+        warp.returnPosition = {position.x, position.y, position.z};
+        warp.returnAngle = dComIfGs_getLastWarpMarkPlayerAngleY();
+        warp.returnRoom = static_cast<std::int8_t>(dComIfGs_getLastWarpMarkRoomNo());
+        warp.returnAcceptStage = returnAcceptStage;
+    } else {
+        warp.returnMarkStatus = Status::Absent;
     }
 
     if (player != nullptr) {

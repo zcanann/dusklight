@@ -406,6 +406,15 @@ fn record_transition(
         before.room_load.as_ref(),
         after.room_load.as_ref()
     );
+    record!(
+        "warp_session.status",
+        before.warp_session_status != after.warp_session_status
+    );
+    record_optional!(
+        "warp_session.value",
+        before.warp_session.as_ref(),
+        after.warp_session.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -640,5 +649,22 @@ mod tests {
         let report = inspect_global_temporal_coverage(&[shard]);
         assert_eq!(report.fields["room_load.value"].compared_pairs, 1);
         assert_eq!(report.fields["room_load.value"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_warp_session_changes_without_selecting_a_destination() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v25.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .warp_session
+            .as_mut()
+            .unwrap()
+            .request_kind = 2;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["warp_session.value"].compared_pairs, 2);
+        assert_eq!(report.fields["warp_session.value"].changed_pairs, 1);
     }
 }
