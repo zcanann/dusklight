@@ -11,6 +11,9 @@ use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
+use dusklight_route_planner_runtime::service::{
+    PlannerServiceEnvelope, error_response, handle_envelope,
+};
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
     solve_composed_catalog_goal,
@@ -22,6 +25,7 @@ use sha2::{Digest as _, Sha256};
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -37,6 +41,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compose") => compose(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
         Some("project-graph") => project_graph(&args[1..]),
+        Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("solve") => solve(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
@@ -48,6 +53,28 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn serve_stdio(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if !args.is_empty() {
+        return Err("serve-stdio does not accept arguments".into());
+    }
+    let stdin = io::stdin();
+    let mut stdout = io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<PlannerServiceEnvelope>(&line) {
+            Ok(envelope) => handle_envelope(envelope),
+            Err(error) => error_response(None, "json", error.to_string()),
+        };
+        serde_json::to_writer(&mut stdout, &response)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
+    Ok(())
 }
 
 fn project_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -346,6 +373,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

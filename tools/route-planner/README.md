@@ -13,7 +13,7 @@ planner behavior.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns five artifact operations:
+The planner CLI currently owns six operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog.
@@ -23,3 +23,5 @@ The planner CLI currently owns five artifact operations:
   collapsible predicate regions; it does not use TAS timeline graph schemas.
 - `state-from-snapshot` materializes an executable planner state.
 - `solve` runs bounded causal reachability against planner-owned catalogs.
+- `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
+  lines for a future planner editor or other clients.

@@ -4,6 +4,8 @@
 //! workbench, playback graph, or browser protocol. It consumes the planner
 //! engine's canonical artifacts and returns planner-specific reports.
 
+pub mod service;
+
 use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
@@ -13,25 +15,26 @@ use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SolverOptions};
 use dusklight_route_planner::transition::MechanicsCatalog;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v1";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeFeasibilityMode {
     Modeled,
     UpperBound,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeEvidenceMode {
     EstablishedOnly,
     Research,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeSolveOptions {
     pub max_depth: usize,
     pub max_states: usize,

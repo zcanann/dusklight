@@ -508,6 +508,12 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
+- Planner service schema v1 provides a typed JSON-lines transport owned by the
+  standalone planner runtime. `route-planner serve-stdio` accepts refinement
+  validation, catalog composition, graph projection, and solve requests; every
+  response retains its request ID and returns either a typed payload or a
+  structured field/detail error. It imports no Huntctl CLI, TAS timeline,
+  WorkbenchGraph, playback, or browser-state types.
 
 Primary source anchors:
 
@@ -1646,7 +1652,10 @@ Deliverable: every route and failure is inspectable rather than magical.
         in Huntctl.
   - [x] Add the planner-specific canonical graph projection with typed causal
         relations and ordered, collapsible predicate subgraphs.
-  - [ ] Add the planner-owned server transport and authoritative edit commands.
+  - [x] Add a planner-owned typed stdio server transport for validation,
+        composition, graph projection, and solving.
+  - [ ] Add revision-checked authoritative edit commands and an HTTP/WebSocket
+        adapter if the browser client requires one.
 - [ ] Match the Route Workbench's visual grammar and navigation conventions with
       a side-by-side design inventory of reusable colors, spacing, node anatomy,
       camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.
