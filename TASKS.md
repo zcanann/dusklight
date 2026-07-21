@@ -572,8 +572,8 @@ silent truncation or future leakage, and preserves deterministic cold playback.
     measured exactly 250 policy, simulation, draw and renderer samples plus 500
     observation boundaries per batch. The second batch reported checkpoint
     `reused`; both retained identical candidate payloads, restore identity and
-    episode SHA-256 `25eb7105...ba2a98`. Real policy-inference and GPU timestamp
-    instrumentation remain before the parent item can close.
+    byte-identical authenticated episode shards. Real policy-inference and GPU
+    timestamp instrumentation remain before the parent item can close.
 - [ ] Implement a true no-present render sink: no visible window, presentation,
   shader compilation, or GPU submission during farming while retaining any
   CPU-side work still required for equivalent gameplay.
