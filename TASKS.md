@@ -1171,9 +1171,17 @@ PAD and gameplay sequence as ordinary playback.
   10,790 nodes and 15,265 adjacency edges in `40fc5216...fcc96`; the source
   geometry view is `cce8dd0d...84dcbe` and native shard is
   `054be263...94306`.
-- [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
+- [x] Provide both absolute context and Link-, camera-, surface-, actor- and
   goal-relative features. Generic physics relationships are observations, not
   route rewards.
+  The sealed actor-feature view retains absolute motion plus masked Link-,
+  camera-, parent-actor- and goal-anchor-relative vectors. Dynamic-collision
+  nodes add Link- and collider-owner-relative shapes and typed actor edges;
+  local-geometry probes retain absolute closest points, surface normals,
+  distances and signed plane distances. Missing players, parents, owners,
+  cameras, goals, rooms and legacy channels remain explicitly masked. Focused
+  fixtures prove the relative geometry, ambiguous goal-actor resolution and
+  fail-closed graph joins without adding any reward or route coordinate.
 - [x] Always retain exact raw PAD as the ground-truth action. Native episode
   shards retain both the chosen and actually consumed PAD at every decision,
   validate the consumed value against the post-simulation observation and the
