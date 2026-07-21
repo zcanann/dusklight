@@ -51,6 +51,9 @@ The planner CLI currently owns twelve operations:
   failed searches retain a deterministic closest blocker witness per transition.
   Predicate-shaped physical obligations are recomputed from each propagated
   state, so a state write can unlock a transition without a named route shortcut.
+  Gated writer rules execute as their own searchable action type; transition
+  proofs retain attached reader values, and missing in-scope readers fail
+  unknown instead of being skipped.
   Physical obligations can derive required/excluded box, sphere, or cylinder
   membership; loaded-actor state; directed region connectivity; plane sidedness;
   player rotation, action, and control; and evidence-scoped temporal microtraces.

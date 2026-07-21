@@ -551,7 +551,12 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v11 provides a typed JSON-lines transport owned by the
+- Mechanics-catalog schema v7 makes writer, gate, and reader records executable
+  solver inputs rather than graph-only annotations. Reader proofs retain their
+  exact raw source value and optional friendly interpretation; an unresolved or
+  evidence-disallowed source makes its consuming transition unknown instead of
+  inventing a default.
+- Planner service schema v12 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -604,8 +609,11 @@ The current code shows:
   and technique directives. Required actions are part of search identity, so a
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
-  digest into solve-report schema v4. Unsupported writer/microtrace execution
-  fails closed rather than being silently ignored.
+  digest into solve-report schema v7. Standalone writer rules are now ordinary
+  searchable actions: activation and all bound gates are reevaluated at each
+  state, their typed operation executes transactionally, and reached or blocked
+  proofs retain writer/gate evidence. Microtrace execution outside an exact
+  temporal obligation still fails closed rather than being silently invented.
 - Selected and pinned route-book methods now compile to ordered action
   subsequences; banned methods prune a path when their ordered subsequence is
   completed. Sequence progress participates in search identity, so revisiting
@@ -616,12 +624,15 @@ The current code shows:
   transition, preserving intermediate states instead of treating setup as one
   opaque mutation. Unknown hard method conditions produce `unknown`, and an
   uncertain banned-method match cannot be reported as a known reachable route.
-- Solve-report schema v4 retains active/unknown obstructions, selected
+- Solve-report schema v7 retains active/unknown obstructions, selected
   resolvers/techniques, discharged/outstanding/introduced obligations, and
   semantic state identities on successful steps. Failed searches keep the
   deterministic closest witnessed blocker state for each transition, including
-  guard truth and unknown requirements; portable solve-report schema v3 embeds
-  those per-context proofs.
+  guard truth and unknown requirements. Failed writer actions likewise retain
+  activation, active/unknown gates, state identity, and weakest evidence;
+  successful transition steps retain every in-scope reader's exact source value
+  and interpretation, and missing/disallowed readers fail unknown. Portable
+  solve-report schema v6 embeds those per-context proofs.
 - Predicate-backed feasibility obligations derive satisfied, unsatisfied, or
   unknown status from the exact propagated snapshot and evidence policy. Search
   re-evaluates them after state-producing actions, so an ordinary state write can
@@ -638,7 +649,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v6 includes explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v7 includes explicit cutscene scene-change and resource-
   load-failure transition classes plus masked raw-knownness invalidation. This
   supports partial execution records that preserve confirmed prefix bytes while
   marking only unaudited suffix effects unknown; extracting concrete cutscene
@@ -1702,7 +1713,7 @@ Deliverable: replayable state evidence that can validate transition rules.
         component projection between runtime-file bindings, and location changes.
   - [ ] Model active-runtime lifecycle/backing attachment and concrete normal
         save/load/title sequences as evidenced transition programs.
-- [ ] Implement writer/gate/reader evaluation and last-writer provenance.
+- [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
         friendly interpretations, and append the responsible transition to every
@@ -1711,7 +1722,17 @@ Deliverable: replayable state evidence that can validate transition rules.
         states and expose current-field last writers plus per-gate event history.
         History is part of full state identity and inspection but excluded from
         semantic search dominance; failed atomic batches cannot leak events.
-  - [ ] Execute ordered writer/gate/read programs from imported mechanics.
+  - [x] Execute standalone writer rules as gated solver actions and retain
+        writer/gate evidence plus blocked-writer witnesses in solve reports.
+  - [x] Execute ordered writer/gate/read programs from imported mechanics.
+    Writer records are searchable `writer` actions rather than techniques. Search
+    reevaluates their activation and every blocking gate at each state, applies
+    the typed operation transactionally, and retains blocked-writer witnesses.
+    Reader records remain attached to their consuming transition: their exact
+    source value and optional friendly interpretation appear in the transition
+    proof, while a missing or disallowed in-scope reader makes the transition
+    feasibility unknown. Writer, gate, and reader evidence all contribute to the
+    step's weakest-evidence result.
 - [ ] Generate the upper-bound authorization graph.
   - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
         per-transition upper-bound assessment; unknown raw bits, absent values,
@@ -2114,7 +2135,7 @@ Deliverable: route confidence is mechanically explainable.
       preserve or reset the value.
 - [x] Model file A writing an item ID, file load preserving session state, and file
       B consuming it through generic get-item semantics.
-- [ ] Decompose Auru's normal memo path, pending item actor, `DEFAULT_GETITEM`
+- [x] Decompose Auru's normal memo path, pending item actor, `DEFAULT_GETITEM`
       handoff, and broken path that avoids the memo overwrite.
 - [x] Author the talk-volume/outside-trigger/player-control obligation.
   - The interaction fixture requires Auru's live actor, inclusion in the talk
@@ -2129,8 +2150,17 @@ Deliverable: route confidence is mechanically explainable.
     hypothetical SD refinement. The unchanged `SetBitFromValue` grant reaches
     both Fishing Rod (`0x4a`) and Auru's Memo (`0x90`) goals depending only on
     the session recent-item producer.
-- [ ] Model the optional memo-preservation sidehop/backflip interruption as a
+- [x] Model the optional memo-preservation sidehop/backflip interruption as a
       separate frame-exact microtransition.
+  - A synthetic acceptance fixture now keeps the pending `mPreItemNo` handoff,
+    session `mGtItm`, and generic inventory grant distinct. The established
+    path overwrites `mGtItm` with Auru's Memo before the shared grant; a
+    removable, explicitly hypothetical one-frame interrupt witness preserves
+    the prior item instead. Research mode can use that witness, the default
+    evidence policy cannot silently promote it, and deleting it leaves the
+    temporal obligation in the blocked frontier. The exact retail frame and
+    action still require source/runtime evidence rather than being claimed by
+    this fixture.
 
 #### 11J. Text Displacement to Goron Mines
 

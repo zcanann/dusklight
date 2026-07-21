@@ -3,6 +3,7 @@
 use crate::evaluation::{
     EvaluatedTruth, EvidencePolicy, FeasibilityMode, FeasibilityResolution, FeasibilitySelection,
     PredicateEvaluator, RuleClassification, TransitionAssessment, TransitionClassification,
+    WriterAssessment, WriterClassification,
 };
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
@@ -316,6 +317,7 @@ fn require_searchable_action(
         RouteActionRef::Transition { .. }
             | RouteActionRef::Technique { .. }
             | RouteActionRef::Resolver { .. }
+            | RouteActionRef::Writer { .. }
     ) {
         Ok(())
     } else {
@@ -368,6 +370,7 @@ pub enum SearchStatus {
 pub enum SearchActionKind {
     Transition,
     Technique,
+    Writer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -379,6 +382,9 @@ pub enum EvidenceDependencyKind {
     Obligation,
     Resolver,
     Technique,
+    Writer,
+    Gate,
+    Reader,
     Microtrace,
     UnknownRequirement,
 }
@@ -405,10 +411,20 @@ pub struct SearchStep {
     pub unknown_obligation_ids: Vec<String>,
     pub supporting_microtrace_ids: Vec<String>,
     pub introduced_obligation_ids: Vec<String>,
+    pub reader_results: Vec<ReaderResult>,
+    pub unknown_reader_ids: Vec<String>,
     pub evidence_dependencies: Vec<EvidenceDependency>,
     pub weakest_evidence: Option<TruthStatus>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReaderResult {
+    pub reader_id: String,
+    pub source_value: crate::state::StateValue,
+    pub interpretation: Option<EvaluatedTruth>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -427,6 +443,21 @@ pub struct BlockedTransitionWitness {
     pub unknown_obligation_ids: Vec<String>,
     pub supporting_microtrace_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
+    pub reader_results: Vec<ReaderResult>,
+    pub unknown_reader_ids: Vec<String>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedWriterWitness {
+    pub writer_id: String,
+    pub source_state_sha256: Digest,
+    pub classification: WriterClassification,
+    pub activation: EvaluatedTruth,
+    pub active_gate_ids: Vec<String>,
+    pub unknown_gate_ids: Vec<String>,
     pub evidence_dependencies: Vec<EvidenceDependency>,
     pub weakest_evidence: Option<TruthStatus>,
 }
@@ -443,8 +474,10 @@ pub struct SearchResult {
     pub route_costs: BTreeMap<String, u64>,
     pub minimum_evidence: Option<TruthStatus>,
     pub unknown_transition_ids: Vec<String>,
+    pub unknown_writer_ids: Vec<String>,
     pub execution_error_ids: Vec<String>,
     pub blocked_transition_witnesses: Vec<BlockedTransitionWitness>,
+    pub blocked_writer_witnesses: Vec<BlockedWriterWitness>,
 }
 
 struct SearchNode {
@@ -632,8 +665,10 @@ impl<'a> ForwardSolver<'a> {
         }]);
         let mut visited = BTreeSet::new();
         let mut unknown_transition_ids = BTreeSet::new();
+        let mut unknown_writer_ids = BTreeSet::new();
         let mut execution_error_ids = BTreeSet::new();
         let mut blocked_transition_witnesses = BTreeMap::new();
+        let mut blocked_writer_witnesses = BTreeMap::new();
         let mut saw_unknown_goal = false;
         let mut hit_search_limit = false;
         let mut generated_id = 0_u64;
@@ -728,8 +763,10 @@ impl<'a> ForwardSolver<'a> {
                             .as_ref()
                             .and_then(|policy| policy.minimum_evidence),
                         unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
+                        unknown_writer_ids: unknown_writer_ids.into_iter().collect(),
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                         blocked_transition_witnesses: Vec::new(),
+                        blocked_writer_witnesses: Vec::new(),
                     });
                 }
                 EvaluatedTruth::True => {
@@ -743,10 +780,113 @@ impl<'a> ForwardSolver<'a> {
                 EvaluatedTruth::False => {}
             }
             if node.depth >= self.options.max_depth {
-                if !self.mechanics.transitions.is_empty() || !self.mechanics.techniques.is_empty() {
+                if !self.mechanics.transitions.is_empty()
+                    || !self.mechanics.techniques.is_empty()
+                    || !self.mechanics.writers.is_empty()
+                {
                     hit_search_limit = true;
                 }
                 continue;
+            }
+
+            // Writer records are standalone engine actions. Their activation
+            // and every gate that names them are reevaluated against each
+            // concrete state before the operation is applied.
+            for writer in &self.mechanics.writers {
+                let action = RouteActionRef::Writer {
+                    writer_id: writer.id.clone(),
+                };
+                if route_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.banned_actions.contains(&action))
+                {
+                    continue;
+                }
+                let assessment = evaluator.assess_writer(writer, &self.mechanics.gates);
+                if assessment.classification != WriterClassification::Executable {
+                    if matches!(
+                        assessment.classification,
+                        WriterClassification::ActivationUnknown | WriterClassification::GateUnknown
+                    ) {
+                        unknown_writer_ids.insert(writer.id.clone());
+                    }
+                    if matches!(
+                        assessment.classification,
+                        WriterClassification::ActivationUnknown
+                            | WriterClassification::GateBlocked
+                            | WriterClassification::GateUnknown
+                    ) {
+                        let evidence_dependencies = writer_evidence_dependencies(
+                            self.facts,
+                            self.mechanics,
+                            writer,
+                            &assessment,
+                        );
+                        blocked_writer_witnesses.insert(
+                            writer.id.clone(),
+                            BlockedWriterWitness {
+                                writer_id: writer.id.clone(),
+                                source_state_sha256: state_identity,
+                                classification: assessment.classification,
+                                activation: assessment.activation,
+                                active_gate_ids: assessment.active_gate_ids,
+                                unknown_gate_ids: assessment.unknown_gate_ids,
+                                weakest_evidence: weakest_evidence(&evidence_dependencies),
+                                evidence_dependencies,
+                            },
+                        );
+                    }
+                    continue;
+                }
+                let mut next = node.state.clone();
+                generated_id = generated_id.saturating_add(1);
+                if next
+                    .apply_operations(
+                        &writer.id,
+                        &format!("search-state-{generated_id}"),
+                        std::slice::from_ref(&writer.operation),
+                    )
+                    .is_err()
+                {
+                    execution_error_ids.insert(writer.id.clone());
+                    continue;
+                }
+                let boundary = AppliedActionBoundary {
+                    action,
+                    before: node.state.clone(),
+                    after: next.clone(),
+                };
+                let evidence_dependencies =
+                    writer_evidence_dependencies(self.facts, self.mechanics, writer, &assessment);
+                let weakest_evidence = weakest_evidence(&evidence_dependencies);
+                saw_unknown_goal |= self.enqueue_if_new(
+                    &mut queue,
+                    &visited,
+                    &node,
+                    next,
+                    std::slice::from_ref(&boundary),
+                    route_policy.as_ref(),
+                    generated_id,
+                    SearchStep {
+                        action_kind: SearchActionKind::Writer,
+                        action_id: writer.id.clone(),
+                        selected_resolver_ids: Vec::new(),
+                        selected_technique_ids: Vec::new(),
+                        active_obstruction_ids: Vec::new(),
+                        unknown_obstruction_ids: Vec::new(),
+                        discharged_obligation_ids: Vec::new(),
+                        outstanding_obligation_ids: Vec::new(),
+                        unknown_obligation_ids: Vec::new(),
+                        supporting_microtrace_ids: Vec::new(),
+                        introduced_obligation_ids: Vec::new(),
+                        reader_results: Vec::new(),
+                        unknown_reader_ids: Vec::new(),
+                        evidence_dependencies,
+                        weakest_evidence,
+                        source_state_sha256: state_identity,
+                        result_state_sha256: Digest::ZERO,
+                    },
+                )?;
             }
 
             // Techniques with concrete state operations are also standalone
@@ -810,6 +950,8 @@ impl<'a> ForwardSolver<'a> {
                         unknown_obligation_ids: Vec::new(),
                         supporting_microtrace_ids: Vec::new(),
                         introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
+                        reader_results: Vec::new(),
+                        unknown_reader_ids: Vec::new(),
                         evidence_dependencies,
                         weakest_evidence,
                         source_state_sha256: state_identity,
@@ -925,12 +1067,19 @@ impl<'a> ForwardSolver<'a> {
                                 &resolution.unknown_obligation_ids,
                                 self.options.feasibility_mode,
                             );
+                            let (reader_results, unknown_reader_ids) = assess_transition_readers(
+                                &evaluator,
+                                self.mechanics,
+                                &transition.id,
+                            );
                             let evidence_dependencies = transition_evidence_dependencies(
                                 self.facts,
                                 self.mechanics,
                                 transition,
                                 &resolution,
                                 &preliminary,
+                                &reader_results,
+                                &unknown_reader_ids,
                             );
                             let weakest_evidence = weakest_evidence(&evidence_dependencies);
                             record_blocked_transition_witness(
@@ -971,6 +1120,8 @@ impl<'a> ForwardSolver<'a> {
                                         .cloned()
                                         .collect(),
                                     unknown_requirement_ids: preliminary.unknown_requirement_ids,
+                                    reader_results,
+                                    unknown_reader_ids,
                                     evidence_dependencies,
                                     weakest_evidence,
                                 },
@@ -1076,6 +1227,29 @@ impl<'a> ForwardSolver<'a> {
                             &resolution.unknown_obligation_ids,
                             self.options.feasibility_mode,
                         );
+                        let (reader_results, unknown_reader_ids) = assess_transition_readers(
+                            &post_setup_evaluator,
+                            self.mechanics,
+                            &transition.id,
+                        );
+                        if !unknown_reader_ids.is_empty() {
+                            unknown_transition_ids.insert(transition.id.clone());
+                            let mut witness = blocked_witness(
+                                self.facts,
+                                self.mechanics,
+                                transition,
+                                &next,
+                                &resolution,
+                                &assessment,
+                                (&reader_results, &unknown_reader_ids),
+                            )?;
+                            witness.classification = TransitionClassification::FeasibilityUnknown;
+                            record_blocked_transition_witness(
+                                &mut blocked_transition_witnesses,
+                                witness,
+                            );
+                            continue;
+                        }
                         match assessment.classification {
                             TransitionClassification::Executable => {}
                             TransitionClassification::FeasibilityUnknown => {
@@ -1089,6 +1263,7 @@ impl<'a> ForwardSolver<'a> {
                                         &next,
                                         &resolution,
                                         &assessment,
+                                        (&reader_results, &unknown_reader_ids),
                                     )?,
                                 );
                                 continue;
@@ -1105,6 +1280,7 @@ impl<'a> ForwardSolver<'a> {
                                         &next,
                                         &resolution,
                                         &assessment,
+                                        (&reader_results, &unknown_reader_ids),
                                     )?,
                                 );
                                 continue;
@@ -1135,6 +1311,8 @@ impl<'a> ForwardSolver<'a> {
                             transition,
                             &resolution,
                             &assessment,
+                            &reader_results,
+                            &unknown_reader_ids,
                         );
                         let weakest_evidence = weakest_evidence(&evidence_dependencies);
                         saw_unknown_goal |= self.enqueue_if_new(
@@ -1181,6 +1359,8 @@ impl<'a> ForwardSolver<'a> {
                                     .collect::<BTreeSet<_>>()
                                     .into_iter()
                                     .collect(),
+                                reader_results,
+                                unknown_reader_ids,
                                 evidence_dependencies,
                                 weakest_evidence,
                                 source_state_sha256: state_identity,
@@ -1198,6 +1378,7 @@ impl<'a> ForwardSolver<'a> {
         let unknown = hit_search_limit
             || saw_unknown_goal
             || !unknown_transition_ids.is_empty()
+            || !unknown_writer_ids.is_empty()
             || !execution_error_ids.is_empty();
         Ok(SearchResult {
             status: if unknown {
@@ -1215,8 +1396,10 @@ impl<'a> ForwardSolver<'a> {
                 .as_ref()
                 .and_then(|policy| policy.minimum_evidence),
             unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
+            unknown_writer_ids: unknown_writer_ids.into_iter().collect(),
             execution_error_ids: execution_error_ids.into_iter().collect(),
             blocked_transition_witnesses: blocked_transition_witnesses.into_values().collect(),
+            blocked_writer_witnesses: blocked_writer_witnesses.into_values().collect(),
         })
     }
 
@@ -1432,9 +1615,18 @@ fn blocked_witness(
     source: &PlannerExecutionState,
     resolution: &FeasibilityResolution,
     assessment: &TransitionAssessment,
+    readers: (&[ReaderResult], &[String]),
 ) -> Result<BlockedTransitionWitness, PlannerContractError> {
-    let evidence_dependencies =
-        transition_evidence_dependencies(facts, mechanics, transition, resolution, assessment);
+    let (reader_results, unknown_reader_ids) = readers;
+    let evidence_dependencies = transition_evidence_dependencies(
+        facts,
+        mechanics,
+        transition,
+        resolution,
+        assessment,
+        reader_results,
+        unknown_reader_ids,
+    );
     let weakest_evidence = weakest_evidence(&evidence_dependencies);
     Ok(BlockedTransitionWitness {
         transition_id: transition.id.clone(),
@@ -1458,9 +1650,44 @@ fn blocked_witness(
             .cloned()
             .collect(),
         unknown_requirement_ids: assessment.unknown_requirement_ids.clone(),
+        reader_results: reader_results.to_vec(),
+        unknown_reader_ids: unknown_reader_ids.to_vec(),
         evidence_dependencies,
         weakest_evidence,
     })
+}
+
+fn assess_transition_readers(
+    evaluator: &PredicateEvaluator<'_>,
+    mechanics: &MechanicsCatalog,
+    transition_id: &str,
+) -> (Vec<ReaderResult>, Vec<String>) {
+    let mut results = Vec::new();
+    let mut unknown = Vec::new();
+    for reader in mechanics
+        .readers
+        .iter()
+        .filter(|reader| reader.consuming_transition_id == transition_id)
+    {
+        let assessment = evaluator.assess_reader(reader);
+        if !assessment.scope_applies {
+            continue;
+        }
+        if !assessment.evidence_permitted {
+            unknown.push(reader.id.clone());
+            continue;
+        }
+        let Some(source_value) = assessment.source_value else {
+            unknown.push(reader.id.clone());
+            continue;
+        };
+        results.push(ReaderResult {
+            reader_id: reader.id.clone(),
+            source_value,
+            interpretation: assessment.interpretation,
+        });
+    }
+    (results, unknown)
 }
 
 fn technique_evidence_dependencies(
@@ -1506,12 +1733,70 @@ fn technique_evidence_dependencies(
         .collect()
 }
 
+fn writer_evidence_dependencies(
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    writer: &crate::transition::WriterRule,
+    assessment: &WriterAssessment,
+) -> Vec<EvidenceDependency> {
+    let mut dependencies = BTreeMap::new();
+    insert_evidence(
+        &mut dependencies,
+        EvidenceDependencyKind::Writer,
+        &writer.id,
+        &writer.evidence,
+    );
+    collect_predicate_evidence(
+        &writer.activation,
+        facts,
+        &mut dependencies,
+        &mut BTreeSet::new(),
+    );
+    for gate in mechanics.gates.iter().filter(|gate| {
+        gate.blocked_writer_ids
+            .iter()
+            .any(|writer_id| writer_id == &writer.id)
+    }) {
+        insert_evidence(
+            &mut dependencies,
+            EvidenceDependencyKind::Gate,
+            &gate.id,
+            &gate.evidence,
+        );
+        collect_predicate_evidence(
+            &gate.active_when,
+            facts,
+            &mut dependencies,
+            &mut BTreeSet::new(),
+        );
+    }
+    for gate_id in assessment
+        .active_gate_ids
+        .iter()
+        .chain(&assessment.unknown_gate_ids)
+    {
+        debug_assert!(mechanics.gates.iter().any(|gate| gate.id == *gate_id));
+    }
+    dependencies
+        .into_iter()
+        .map(
+            |((dependency_kind, record_id), evidence)| EvidenceDependency {
+                dependency_kind,
+                record_id,
+                evidence,
+            },
+        )
+        .collect()
+}
+
 fn transition_evidence_dependencies(
     facts: &FactCatalog,
     mechanics: &MechanicsCatalog,
     transition: &CandidateTransition,
     resolution: &FeasibilityResolution,
     assessment: &TransitionAssessment,
+    reader_results: &[ReaderResult],
+    unknown_reader_ids: &[String],
 ) -> Vec<EvidenceDependency> {
     let mut dependencies = BTreeMap::new();
     insert_evidence(
@@ -1638,6 +1923,35 @@ fn transition_evidence_dependencies(
                 &mut dependencies,
                 &mut BTreeSet::new(),
             );
+        }
+    }
+    let reader_ids = reader_results
+        .iter()
+        .map(|result| result.reader_id.as_str())
+        .chain(unknown_reader_ids.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    for reader_id in reader_ids {
+        if let Some(reader) = mechanics
+            .readers
+            .iter()
+            .find(|reader| reader.id == reader_id)
+        {
+            insert_evidence(
+                &mut dependencies,
+                EvidenceDependencyKind::Reader,
+                &reader.id,
+                &reader.evidence,
+            );
+            if let Some(fact_id) = &reader.interpretation_fact_id {
+                collect_predicate_evidence(
+                    &PredicateExpression::Fact {
+                        fact_id: fact_id.clone(),
+                    },
+                    facts,
+                    &mut dependencies,
+                    &mut BTreeSet::new(),
+                );
+            }
         }
     }
     dependencies
@@ -1825,9 +2139,10 @@ mod tests {
     };
     use crate::transition::{
         ActivationContract, ActorReconstructionRule, CandidateTransition, FeasibilityObligation,
-        Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind,
-        Obstruction, ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique,
-        TemporalRequirement, TemporalWindow, TransitionKind, WitnessedMicrotrace,
+        GateRule, Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail,
+        ObligationKind, Obstruction, ObstructionResolver, ReaderRule, ResolutionKind, RouteCost,
+        StateOperation, Technique, TemporalRequirement, TemporalWindow, TransitionKind,
+        WitnessedMicrotrace, WriterRule,
     };
     use std::collections::BTreeMap;
 
@@ -2156,6 +2471,165 @@ mod tests {
             vec!["obligation.gate-open"]
         );
         assert!(result.steps[1].selected_technique_ids.is_empty());
+    }
+
+    #[test]
+    fn writer_actions_execute_only_when_their_gates_are_clear() {
+        let mut start = snapshot();
+        start.environment.components = vec![
+            StateComponent {
+                id: "restart.return-place".into(),
+                component_kind: ComponentKind::Restart,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([(
+                        "stage".into(),
+                        StateValue::Text("ORDON_SPRING".into()),
+                    )]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.held-return-place".into(),
+                    source_sha256: Some(Digest([0x41; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "temporary.event-flags".into(),
+                component_kind: ComponentKind::TemporaryFlags,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("no_telop".into(), StateValue::Boolean(true))]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.fanadi-lock-active".into(),
+                    source_sha256: Some(Digest([0x42; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+        let exact_scope = scope(&start);
+        let mut mechanics = catalog(Vec::new());
+        mechanics.writers = vec![WriterRule {
+            id: "writer.savmem-castle-town".into(),
+            scope: exact_scope.clone(),
+            activation: PredicateExpression::True,
+            operation: StateOperation::Write {
+                target: crate::transition::ComponentFieldTarget {
+                    component_id: "restart.return-place".into(),
+                    field: "stage".into(),
+                },
+                value: StateValue::Text("CASTLE_TOWN".into()),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.gates = vec![GateRule {
+            id: "gate.no-telop".into(),
+            scope: exact_scope.clone(),
+            active_when: PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: "temporary.event-flags".into(),
+                    field: "no_telop".into(),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Boolean(true),
+                },
+            },
+            blocked_writer_ids: vec!["writer.savmem-castle-town".into()],
+            lifetime: SemanticLifetime::RuntimeFile,
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let goal = PredicateExpression::Compare {
+            left: ValueReference::ComponentField {
+                component_id: "restart.return-place".into(),
+                field: "stage".into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text("CASTLE_TOWN".into()),
+            },
+        };
+
+        let blocked = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(PlannerExecutionState::new(start.clone()).unwrap(), &goal)
+            .unwrap();
+        assert_eq!(blocked.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(blocked.blocked_writer_witnesses.len(), 1);
+        assert_eq!(
+            blocked.blocked_writer_witnesses[0].classification,
+            WriterClassification::GateBlocked
+        );
+        assert_eq!(
+            blocked.blocked_writer_witnesses[0].active_gate_ids,
+            vec!["gate.no-telop"]
+        );
+        assert!(
+            blocked.blocked_writer_witnesses[0]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| dependency.dependency_kind == EvidenceDependencyKind::Writer)
+        );
+        assert!(
+            blocked.blocked_writer_witnesses[0]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| dependency.dependency_kind == EvidenceDependencyKind::Gate)
+        );
+
+        mechanics.techniques = vec![Technique {
+            id: "technique.end-fanadi-lock".into(),
+            label: "Clear NO_TELOP at the evidenced end of Fanadi's flow".into(),
+            scope: exact_scope,
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::Write {
+                target: crate::transition::ComponentFieldTarget {
+                    component_id: "temporary.event-flags".into(),
+                    field: "no_telop".into(),
+                },
+                value: StateValue::Boolean(false),
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let reached = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(PlannerExecutionState::new(start).unwrap(), &goal)
+            .unwrap();
+        assert_eq!(reached.status, SearchStatus::Reached);
+        assert_eq!(
+            reached
+                .steps
+                .iter()
+                .map(|step| (step.action_kind, step.action_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (SearchActionKind::Technique, "technique.end-fanadi-lock"),
+                (SearchActionKind::Writer, "writer.savmem-castle-town")
+            ]
+        );
+        assert!(
+            reached.steps[1]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| dependency.dependency_kind == EvidenceDependencyKind::Gate)
+        );
     }
 
     #[test]
@@ -3157,6 +3631,17 @@ mod tests {
                 },
                 evidence: evidence(TruthStatus::Established),
             }];
+            mechanics.readers = vec![ReaderRule {
+                id: "reader.default-get-item-recent-item".into(),
+                scope: exact_scope.clone(),
+                source: ValueReference::ComponentField {
+                    component_id: "event.recent-item".into(),
+                    field: "get_item_no".into(),
+                },
+                consuming_transition_id: "transition.auru-generic-get-item".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            }];
             mechanics.obstructions = vec![Obstruction {
                 id: "obstruction.auru-trigger-overlap".into(),
                 label: "Known Auru activation geometry has no enabled setup".into(),
@@ -3216,6 +3701,45 @@ mod tests {
         assert_eq!(
             hd_result.steps[0].weakest_evidence,
             Some(TruthStatus::Established)
+        );
+        assert_eq!(
+            hd_result.steps[0].reader_results,
+            vec![ReaderResult {
+                reader_id: "reader.default-get-item-recent-item".into(),
+                source_value: StateValue::Unsigned(FISHING_ROD),
+                interpretation: None,
+            }]
+        );
+        assert!(
+            hd_result.steps[0]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| dependency.dependency_kind == EvidenceDependencyKind::Reader)
+        );
+
+        let mut missing_recent_item = setup(0x45, FISHING_ROD);
+        missing_recent_item
+            .environment
+            .components
+            .retain(|component| component.id != "event.recent-item");
+        let mut missing_mechanics = mechanics_for(&missing_recent_item);
+        missing_mechanics.resolvers = vec![resolver(
+            &missing_recent_item,
+            "resolver.hd-external-auru-targeting",
+            TruthStatus::Established,
+        )];
+        let missing =
+            ForwardSolver::new(&facts(), &missing_mechanics, &[], SolverOptions::default())
+                .unwrap()
+                .solve(
+                    PlannerExecutionState::new(missing_recent_item).unwrap(),
+                    &item_goal(FISHING_ROD),
+                )
+                .unwrap();
+        assert_eq!(missing.status, SearchStatus::Unknown);
+        assert_eq!(
+            missing.blocked_transition_witnesses[0].unknown_reader_ids,
+            vec!["reader.default-get-item-recent-item"]
         );
 
         for item_id in [FISHING_ROD, AURUS_MEMO] {
@@ -3300,6 +3824,10 @@ mod tests {
                 "transition.auru-generic-get-item"
             );
             assert_eq!(
+                reached.steps[0].reader_results[0].source_value,
+                StateValue::Unsigned(item_id)
+            );
+            assert_eq!(
                 reached.steps[0].weakest_evidence,
                 Some(TruthStatus::Hypothetical)
             );
@@ -3324,6 +3852,320 @@ mod tests {
                     })
             );
         }
+    }
+
+    #[test]
+    fn auru_memo_overwrite_and_interrupted_grant_are_distinct_temporal_paths() {
+        const FISHING_ROD: u64 = 0x4a;
+        const AURUS_MEMO: u64 = 0x90;
+
+        let mut snapshot = snapshot();
+        snapshot.environment.player.action = "sidehop".into();
+        snapshot.environment.components = vec![
+            StateComponent {
+                id: "event.item-handoff".into(),
+                component_kind: ComponentKind::PendingOperation,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([(
+                        "pre_item_no".into(),
+                        StateValue::Unsigned(AURUS_MEMO),
+                    )]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+                lifetime: SemanticLifetime::Action,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Transition,
+                    source_id: "auru.pending-memo-item".into(),
+                    source_sha256: Some(Digest([6; 32])),
+                    transition_id: Some("auru.pending-memo-item".into()),
+                }],
+            },
+            StateComponent {
+                id: "event.recent-item".into(),
+                component_kind: ComponentKind::Session,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([(
+                        "get_item_no".into(),
+                        StateValue::Unsigned(FISHING_ROD),
+                    )]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Transition,
+                    source_id: "writer.prior-fishing-rod".into(),
+                    source_sha256: Some(Digest([7; 32])),
+                    transition_id: Some("writer.prior-fishing-rod".into()),
+                }],
+            },
+            StateComponent {
+                id: "inventory.active".into(),
+                component_kind: ComponentKind::Inventory,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([(
+                        "owned_item_ids".into(),
+                        StateValue::Bytes(vec![0; 32]),
+                    )]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.empty-inventory".into(),
+                    source_sha256: Some(Digest([8; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+        let scope = scope(&snapshot);
+        let grant_recent_item = StateOperation::SetBitFromValue {
+            source: crate::transition::ComponentFieldTarget {
+                component_id: "event.recent-item".into(),
+                field: "get_item_no".into(),
+            },
+            target: crate::transition::ComponentFieldTarget {
+                component_id: "inventory.active".into(),
+                field: "owned_item_ids".into(),
+            },
+        };
+        let consume_pending = StateOperation::Consume {
+            pending_operation_id: "event.item-handoff".into(),
+        };
+        let interrupted = CandidateTransition {
+            id: "transition.auru-interrupted-default-getitem".into(),
+            label: "Interrupt Auru before memo overwrite and continue DEFAULT_GETITEM".into(),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::MessageAction,
+            approach_id: "approach.auru-dialogue-interrupt".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::True,
+                physical_obligation_ids: vec!["obligation.auru-one-frame-interrupt".into()],
+                effects: vec![grant_recent_item.clone(), consume_pending.clone()],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let normal = CandidateTransition {
+            id: "transition.auru-normal-memo-getitem".into(),
+            label: "Auru overwrites recent item with the memo before DEFAULT_GETITEM".into(),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::MessageAction,
+            approach_id: "approach.auru-normal-dialogue".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::True,
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::Write {
+                        target: crate::transition::ComponentFieldTarget {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        value: StateValue::Unsigned(AURUS_MEMO),
+                    },
+                    grant_recent_item,
+                    consume_pending,
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let timing = crate::transition::TemporalWindow {
+            earliest_frame: 17,
+            latest_frame: 17,
+            required_input: Some("sidehop".into()),
+        };
+        let obligation = FeasibilityObligation {
+            id: "obligation.auru-one-frame-interrupt".into(),
+            label: "Interrupt Auru's memo overwrite on the witnessed frame".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Timing,
+            detail: ObligationDetail::Temporal {
+                requirement: crate::transition::TemporalRequirement {
+                    action_id: "auru.memo-overwrite-dialogue".into(),
+                    window: timing.clone(),
+                },
+                precondition: PredicateExpression::Compare {
+                    left: ValueReference::ComponentField {
+                        component_id: "event.recent-item".into(),
+                        field: "get_item_no".into(),
+                    },
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Unsigned(FISHING_ROD),
+                    },
+                },
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let microtrace = WitnessedMicrotrace {
+            id: "microtrace.auru-sidehop-frame-17".into(),
+            scope,
+            precondition: PredicateExpression::Compare {
+                left: ValueReference::PlayerAction,
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Text("sidehop".into()),
+                },
+            },
+            operations: vec![StateOperation::Interrupt {
+                action_id: "auru.memo-overwrite-dialogue".into(),
+                window: timing.clone(),
+            }],
+            postcondition: PredicateExpression::True,
+            timing,
+            evidence: evidence(TruthStatus::Hypothetical),
+        };
+        let mut mechanics = catalog(vec![interrupted.clone(), normal.clone()]);
+        mechanics.obligations = vec![obligation];
+        mechanics.microtraces = vec![microtrace];
+        let facts = facts();
+        let item_goal = |item_id: u64| {
+            let mut mask = vec![0; 32];
+            mask[item_id as usize / 8] |= 1 << (item_id % 8);
+            PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: "inventory.active".into(),
+                    field: "owned_item_ids".into(),
+                },
+                operator: ComparisonOperator::ContainsBits,
+                right: ValueReference::Literal {
+                    value: StateValue::Bytes(mask),
+                },
+            }
+        };
+        let research = SolverOptions {
+            evidence_policy: EvidencePolicy::RESEARCH,
+            ..SolverOptions::default()
+        };
+
+        let rod = ForwardSolver::new(&facts, &mechanics, &[], research)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &item_goal(FISHING_ROD),
+            )
+            .unwrap();
+        assert_eq!(rod.status, SearchStatus::Reached);
+        assert_eq!(
+            rod.steps[0].action_id,
+            "transition.auru-interrupted-default-getitem"
+        );
+        assert_eq!(
+            rod.steps[0].supporting_microtrace_ids,
+            vec!["microtrace.auru-sidehop-frame-17"]
+        );
+        assert_eq!(
+            rod.steps[0].weakest_evidence,
+            Some(TruthStatus::Hypothetical)
+        );
+
+        let memo = ForwardSolver::new(&facts, &mechanics, &[], research)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &item_goal(AURUS_MEMO),
+            )
+            .unwrap();
+        assert_eq!(memo.status, SearchStatus::Reached);
+        assert_eq!(
+            memo.steps[0].action_id,
+            "transition.auru-normal-memo-getitem"
+        );
+        assert_eq!(
+            memo.steps[0].weakest_evidence,
+            Some(TruthStatus::Established)
+        );
+
+        let mut without_witness = mechanics.clone();
+        without_witness.microtraces.clear();
+        let missing = ForwardSolver::new(&facts, &without_witness, &[], research)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &item_goal(FISHING_ROD),
+            )
+            .unwrap();
+        assert_ne!(missing.status, SearchStatus::Reached);
+        assert!(missing.blocked_transition_witnesses.iter().any(|witness| {
+            witness.transition_id == "transition.auru-interrupted-default-getitem"
+                && witness
+                    .unknown_obligation_ids
+                    .iter()
+                    .chain(&witness.outstanding_obligation_ids)
+                    .any(|id| id == "obligation.auru-one-frame-interrupt")
+        }));
+
+        let established_only =
+            ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default())
+                .unwrap()
+                .solve(
+                    PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                    &item_goal(FISHING_ROD),
+                )
+                .unwrap();
+        assert_ne!(established_only.status, SearchStatus::Reached);
+
+        let mut normal_state = PlannerExecutionState::new(snapshot.clone()).unwrap();
+        normal_state
+            .apply_operations(
+                &normal.id,
+                "snapshot.auru-normal",
+                &normal.activation.effects,
+            )
+            .unwrap();
+        let mut interrupted_state = PlannerExecutionState::new(snapshot).unwrap();
+        interrupted_state
+            .apply_operations(
+                &interrupted.id,
+                "snapshot.auru-interrupted",
+                &interrupted.activation.effects,
+            )
+            .unwrap();
+        let recent_item = |state: &PlannerExecutionState| {
+            let component = state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "event.recent-item")
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &component.payload else {
+                unreachable!()
+            };
+            fields["get_item_no"].clone()
+        };
+        assert_eq!(recent_item(&normal_state), StateValue::Unsigned(AURUS_MEMO));
+        assert_eq!(
+            recent_item(&interrupted_state),
+            StateValue::Unsigned(FISHING_ROD)
+        );
+        assert!(
+            normal_state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "event.item-handoff")
+        );
+        assert!(
+            interrupted_state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "event.item-handoff")
+        );
     }
 
     #[test]
