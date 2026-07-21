@@ -15,11 +15,11 @@ use crate::transition::{
 };
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvaluatedTruth {
     True,
@@ -70,7 +70,7 @@ pub enum FeasibilityMode {
     Modeled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransitionClassification {
     Inapplicable,
@@ -80,7 +80,8 @@ pub enum TransitionClassification {
     Executable,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransitionAssessment {
     pub transition_id: String,
     pub classification: TransitionClassification,

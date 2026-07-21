@@ -1,6 +1,12 @@
 //! Deterministic planner-native graph projections for browser and tooling clients.
 
 use crate::artifact::Digest;
+use crate::evaluation::{
+    EvidencePolicy, FeasibilityMode, FeasibilitySelection, PredicateEvaluator,
+    TransitionAssessment, TransitionClassification,
+};
+use crate::execution::PlannerExecutionState;
+use crate::identity::EquivalenceSet;
 use crate::logic::{ComparisonOperator, FactCatalog, PredicateExpression, ValueReference};
 use crate::refinement::ComposedPlannerCatalog;
 use crate::route_book::{CollapsePolicy, RouteActionRef, RouteBook};
@@ -11,6 +17,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v4";
+pub const PLANNER_FEASIBILITY_DIFF_SCHEMA: &str =
+    "dusklight.route-planner.feasibility-graph-diff/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +31,29 @@ pub struct PlannerGraph {
     pub nodes: Vec<PlannerGraphNode>,
     pub edges: Vec<PlannerGraphEdge>,
     pub regions: Vec<PlannerGraphRegion>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerFeasibilityGraphDiff {
+    pub schema: String,
+    pub execution_state_sha256: Digest,
+    pub snapshot_sha256: Digest,
+    pub fact_catalog_sha256: Digest,
+    pub mechanics_catalog_sha256: Digest,
+    pub transitions: Vec<TransitionFeasibilityDelta>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionFeasibilityDelta {
+    pub transition_id: String,
+    pub upper_bound: TransitionAssessment,
+    pub modeled: TransitionAssessment,
+    pub active_obstruction_ids: Vec<String>,
+    pub unknown_obstruction_ids: Vec<String>,
+    pub discharged_obligation_ids: Vec<String>,
+    pub supporting_microtrace_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -304,6 +335,190 @@ impl PlannerGraph {
             ));
         }
         Ok(graph)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+impl PlannerFeasibilityGraphDiff {
+    pub fn project(
+        state: &PlannerExecutionState,
+        facts: &FactCatalog,
+        mechanics: &MechanicsCatalog,
+        equivalence_sets: &[EquivalenceSet],
+        evidence_policy: EvidencePolicy,
+    ) -> Result<Self, PlannerContractError> {
+        state.validate()?;
+        let snapshot = &state.snapshot;
+        snapshot.validate()?;
+        facts.validate()?;
+        mechanics.validate()?;
+        let evaluator = PredicateEvaluator::new(
+            snapshot,
+            facts,
+            equivalence_sets,
+            &state.gate_states,
+            evidence_policy,
+        )?;
+        let empty = BTreeSet::new();
+        let mut transitions = Vec::new();
+        for transition in &mechanics.transitions {
+            let upper_bound = evaluator.assess_transition(
+                transition,
+                &empty,
+                &empty,
+                FeasibilityMode::UpperBound,
+            );
+            let resolution = evaluator.resolve_feasibility(
+                transition,
+                &mechanics.obligations,
+                &mechanics.obstructions,
+                &mechanics.resolvers,
+                &mechanics.techniques,
+                FeasibilitySelection {
+                    resolver_ids: &empty,
+                    technique_ids: &empty,
+                    already_discharged: &empty,
+                    microtraces: &mechanics.microtraces,
+                },
+            );
+            let mut modeled = evaluator.assess_transition(
+                transition,
+                &resolution.discharged_obligation_ids,
+                &resolution.unknown_obligation_ids,
+                FeasibilityMode::Modeled,
+            );
+            if matches!(
+                modeled.classification,
+                TransitionClassification::Executable | TransitionClassification::Obstructed
+            ) {
+                if !resolution.unknown_obstruction_ids.is_empty() {
+                    modeled.classification = TransitionClassification::FeasibilityUnknown;
+                } else if !resolution.active_obstruction_ids.is_empty() {
+                    modeled.classification = TransitionClassification::Obstructed;
+                }
+            }
+            if upper_bound != modeled
+                || !resolution.active_obstruction_ids.is_empty()
+                || !resolution.unknown_obstruction_ids.is_empty()
+                || !resolution.supporting_microtrace_ids.is_empty()
+            {
+                transitions.push(TransitionFeasibilityDelta {
+                    transition_id: transition.id.clone(),
+                    upper_bound,
+                    modeled,
+                    active_obstruction_ids: resolution.active_obstruction_ids,
+                    unknown_obstruction_ids: resolution.unknown_obstruction_ids,
+                    discharged_obligation_ids: resolution
+                        .discharged_obligation_ids
+                        .into_iter()
+                        .collect(),
+                    supporting_microtrace_ids: resolution
+                        .supporting_microtrace_ids
+                        .into_iter()
+                        .collect(),
+                });
+            }
+        }
+        let diff = Self {
+            schema: PLANNER_FEASIBILITY_DIFF_SCHEMA.into(),
+            execution_state_sha256: state.semantic_digest()?,
+            snapshot_sha256: snapshot.digest()?,
+            fact_catalog_sha256: facts.digest()?,
+            mechanics_catalog_sha256: mechanics.digest()?,
+            transitions,
+        };
+        diff.validate()?;
+        Ok(diff)
+    }
+
+    pub fn project_composed(
+        state: &PlannerExecutionState,
+        catalog: &ComposedPlannerCatalog,
+        equivalence_sets: &[EquivalenceSet],
+        evidence_policy: EvidencePolicy,
+    ) -> Result<Self, PlannerContractError> {
+        catalog.validate()?;
+        Self::project(
+            state,
+            &catalog.facts,
+            &catalog.mechanics,
+            equivalence_sets,
+            evidence_policy,
+        )
+    }
+
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != PLANNER_FEASIBILITY_DIFF_SCHEMA {
+            return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        if self.execution_state_sha256 == Digest::ZERO
+            || self.snapshot_sha256 == Digest::ZERO
+            || self.fact_catalog_sha256 == Digest::ZERO
+            || self.mechanics_catalog_sha256 == Digest::ZERO
+        {
+            return Err(PlannerContractError::new(
+                "feasibility_graph_diff",
+                "contains a zero source digest",
+            ));
+        }
+        let mut previous = None;
+        for transition in &self.transitions {
+            validate_stable_id("transitions.transition_id", &transition.transition_id)?;
+            if previous.is_some_and(|id: &str| id >= transition.transition_id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "transitions",
+                    "must be unique and sorted by transition ID",
+                ));
+            }
+            if transition.upper_bound.transition_id != transition.transition_id
+                || transition.modeled.transition_id != transition.transition_id
+            {
+                return Err(PlannerContractError::new(
+                    "transitions.assessment.transition_id",
+                    "must match the enclosing transition ID",
+                ));
+            }
+            validate_transition_assessment(&transition.upper_bound)?;
+            validate_transition_assessment(&transition.modeled)?;
+            validate_sorted_ids(
+                "transitions.active_obstruction_ids",
+                &transition.active_obstruction_ids,
+            )?;
+            validate_sorted_ids(
+                "transitions.unknown_obstruction_ids",
+                &transition.unknown_obstruction_ids,
+            )?;
+            validate_sorted_ids(
+                "transitions.discharged_obligation_ids",
+                &transition.discharged_obligation_ids,
+            )?;
+            validate_sorted_ids(
+                "transitions.supporting_microtrace_ids",
+                &transition.supporting_microtrace_ids,
+            )?;
+            previous = Some(transition.transition_id.as_str());
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let diff: Self = serde_json::from_slice(bytes)?;
+        diff.validate()?;
+        if diff.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "feasibility_graph_diff",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(diff)
     }
 
     pub fn digest(&self) -> Result<Digest, PlannerContractError> {
@@ -1056,6 +1271,42 @@ fn encode_hex(bytes: &[u8]) -> String {
     output
 }
 
+fn validate_sorted_ids(field: &str, values: &[String]) -> Result<(), PlannerContractError> {
+    let mut previous = None;
+    for value in values {
+        validate_stable_id(field, value)?;
+        if previous.is_some_and(|prior: &str| prior >= value.as_str()) {
+            return Err(PlannerContractError::new(
+                field,
+                "must contain unique sorted IDs",
+            ));
+        }
+        previous = Some(value.as_str());
+    }
+    Ok(())
+}
+
+fn validate_transition_assessment(
+    assessment: &TransitionAssessment,
+) -> Result<(), PlannerContractError> {
+    validate_stable_id(
+        "transition_assessment.transition_id",
+        &assessment.transition_id,
+    )?;
+    validate_sorted_ids(
+        "transition_assessment.outstanding_obligation_ids",
+        &assessment.outstanding_obligation_ids,
+    )?;
+    validate_sorted_ids(
+        "transition_assessment.unknown_obligation_ids",
+        &assessment.unknown_obligation_ids,
+    )?;
+    validate_sorted_ids(
+        "transition_assessment.unknown_requirement_ids",
+        &assessment.unknown_requirement_ids,
+    )
+}
+
 fn validate_graph_id(field: &str, value: &str) -> Result<(), PlannerContractError> {
     if value.is_empty() || value.len() > 1024 {
         return Err(PlannerContractError::new(
@@ -1268,7 +1519,9 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::{ContextSelector, ExactContext};
+    use crate::identity::{
+        ContextSelector, ExactContext, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
+    };
     use crate::logic::{
         ContextScope, DerivedFact, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, RuleEvidence,
         TruthStatus,
@@ -1277,9 +1530,16 @@ mod tests {
         CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep, RouteActionRef,
         RouteBook, RouteBookManifest,
     };
+    use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+    use crate::state::{
+        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
+        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        SpatialConnection, SpatialConnectionStatus,
+    };
     use crate::transition::{
-        FeasibilityObligation, Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail,
-        ObligationKind, RouteCost, StateOperation, Technique, TemporalRequirement, TemporalWindow,
+        ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
+        MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, RouteCost,
+        StateOperation, Technique, TemporalRequirement, TemporalWindow, TransitionKind,
         WitnessedMicrotrace,
     };
 
@@ -1532,6 +1792,171 @@ mod tests {
                 && edge.target_node_id == "obligation/obligation.auru-window"
                 && edge.relation == PlannerGraphRelation::Demonstrates
         }));
+    }
+
+    #[test]
+    fn feasibility_diff_separates_authorized_obstructed_and_unknown_edges() {
+        let mut snapshot = StateSnapshot {
+            schema: STATE_SNAPSHOT_SCHEMA.into(),
+            id: "snapshot.graph-diff".into(),
+            sequence: 1,
+            environment: ExecutionEnvironment {
+                schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+                runtime_configuration: RuntimeConfiguration {
+                    schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+                    content_sha256: Digest([4; 32]),
+                    language: "en".into(),
+                    settings: BTreeMap::new(),
+                },
+                active_runtime_file: RuntimeFile {
+                    id: "file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: Vec::new(),
+                    lifecycle: RuntimeFileLifecycle::Active,
+                },
+                physical_slots: Vec::new(),
+                physical_slot_observations: Vec::new(),
+                location: SceneLocation {
+                    stage: "STAGE_A".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+                player: PlayerState {
+                    form: PlayerForm::Human,
+                    mount: None,
+                    position: [0.0; 3],
+                    rotation: [0; 3],
+                    has_control: Some(true),
+                    action: "idle".into(),
+                },
+                components: Vec::new(),
+                static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
+                spatial_connections: vec![SpatialConnection {
+                    approach_id: "approach.front".into(),
+                    source_region_id: "region.before-wall".into(),
+                    destination_region_id: "region.exit".into(),
+                    status: SpatialConnectionStatus::Blocked,
+                    source_sha256: Digest([5; 32]),
+                }],
+                spatial_planes: Vec::new(),
+                persisted_object_controls: Vec::new(),
+                live_world_objects: Vec::new(),
+            },
+            semantic_observations: Vec::new(),
+        };
+        let exact_scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: snapshot
+                    .environment
+                    .runtime_configuration
+                    .exact_context()
+                    .unwrap(),
+            }],
+        };
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let obligation = FeasibilityObligation {
+            id: "obligation.wall".into(),
+            label: "Reach the exit past the wall".into(),
+            scope: exact_scope.clone(),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Geometry {
+                approach_id: "approach.front".into(),
+                source_region_id: "region.before-wall".into(),
+                destination_region_id: "region.exit".into(),
+            },
+            evidence: evidence(),
+        };
+        let transition = CandidateTransition {
+            id: "transition.exit".into(),
+            label: "Use the exit behind the wall".into(),
+            scope: exact_scope,
+            transition_kind: TransitionKind::EncodedMapExit,
+            approach_id: "approach.front".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::True,
+                physical_obligation_ids: vec![obligation.id.clone()],
+                effects: Vec::new(),
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(),
+        };
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: vec![transition],
+            obligations: vec![obligation],
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: Vec::new(),
+            resolvers: Vec::new(),
+            techniques: Vec::new(),
+            microtraces: Vec::new(),
+            goals: Vec::new(),
+        };
+
+        let blocked_state = PlannerExecutionState::new(snapshot.clone()).unwrap();
+        let blocked = PlannerFeasibilityGraphDiff::project(
+            &blocked_state,
+            &facts,
+            &mechanics,
+            &[],
+            EvidencePolicy::ESTABLISHED_ONLY,
+        )
+        .unwrap();
+        assert_eq!(blocked.transitions.len(), 1);
+        assert_eq!(
+            blocked.transitions[0].upper_bound.classification,
+            TransitionClassification::Executable
+        );
+        assert_eq!(
+            blocked.transitions[0].modeled.classification,
+            TransitionClassification::Obstructed
+        );
+        let canonical = blocked.canonical_bytes().unwrap();
+        assert_eq!(
+            PlannerFeasibilityGraphDiff::decode_canonical(&canonical).unwrap(),
+            blocked
+        );
+        let mut different_gate_state = blocked_state.clone();
+        different_gate_state
+            .gate_states
+            .insert("gate.unrelated".into(), true);
+        let gated = PlannerFeasibilityGraphDiff::project(
+            &different_gate_state,
+            &facts,
+            &mechanics,
+            &[],
+            EvidencePolicy::ESTABLISHED_ONLY,
+        )
+        .unwrap();
+        assert_ne!(gated.execution_state_sha256, blocked.execution_state_sha256);
+
+        snapshot.environment.spatial_connections.clear();
+        let unknown_state = PlannerExecutionState::new(snapshot).unwrap();
+        let unknown = PlannerFeasibilityGraphDiff::project(
+            &unknown_state,
+            &facts,
+            &mechanics,
+            &[],
+            EvidencePolicy::ESTABLISHED_ONLY,
+        )
+        .unwrap();
+        assert_eq!(
+            unknown.transitions[0].modeled.classification,
+            TransitionClassification::FeasibilityUnknown
+        );
+        assert_eq!(
+            unknown.transitions[0].modeled.unknown_obligation_ids,
+            vec!["obligation.wall"]
+        );
     }
 
     #[test]
