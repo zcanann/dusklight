@@ -1456,6 +1456,9 @@ Deliverable: replayable state evidence that can validate transition rules.
       represented by the current world inventories.
 - [ ] Model ordinary item/NPC/event producers.
 - [ ] Implement normal bank commit/load and binding changes.
+  - [x] Execute typed serialize/restore/bind/rebind operations against independent
+        owner stores atomically; concrete normal-boundary policies remain to be
+        extracted and applied.
 - [ ] Derive bound small-key counts and dungeon items from per-stage memory.
 - [ ] Import hard door/actor guards and their state operations where decidable.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
@@ -1466,6 +1469,10 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle.
 - [ ] Implement save/load/title/runtime-file operations.
+  - [x] Add transactional primitives for serialization, restoration, explicit
+        component projection between runtime-file bindings, and location changes.
+  - [ ] Model active-runtime lifecycle/backing attachment and concrete normal
+        save/load/title sequences as evidenced transition programs.
 - [ ] Implement writer/gate/reader evaluation and last-writer provenance.
 - [ ] Generate the upper-bound authorization graph.
   - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
@@ -1485,9 +1492,15 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
 ### Phase 4 — Component transfers and state splices
 
 - [ ] Implement per-component transition policies.
-- [ ] Implement project/preserve/clear/copy/rebind operations.
+- [x] Implement project/preserve/clear/copy/rebind operations.
 - [ ] Prevent accidental preservation of unspecified components.
-- [ ] Support mixed provenance after cross-file operations.
+- [x] Support mixed provenance after cross-file operations.
+  - Typed operation batches are atomic, retain copied provenance, append the
+    responsible transition, and keep serialized owner stores separate from the
+    visible snapshot. Masked raw writes establish only the bits they actually
+    write, while checked relative adjustments model counters such as key use
+    without replacing them with route-specific Booleans. Preservation requests
+    are explicit state consumed by the future boundary-policy executor.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
 - [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.

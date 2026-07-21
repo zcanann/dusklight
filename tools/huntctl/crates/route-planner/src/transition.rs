@@ -28,6 +28,16 @@ pub enum StateOperation {
         target: ComponentFieldTarget,
         value: StateValue,
     },
+    WriteRaw {
+        component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
+        value: Vec<u8>,
+    },
+    Adjust {
+        target: ComponentFieldTarget,
+        delta: i64,
+    },
     ClearComponent {
         selector: ComponentSelector,
     },
@@ -393,6 +403,40 @@ impl StateOperation {
             Self::Write { target, value } => {
                 validate_field_target(target)?;
                 validate_state_value(value)
+            }
+            Self::WriteRaw {
+                component_id,
+                byte_offset: _,
+                mask,
+                value,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                if mask.is_empty()
+                    || mask.len() != value.len()
+                    || mask.len() > crate::state::MAX_COMPONENT_BYTES
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.write_raw",
+                        "mask/value must have equal nonzero bounded lengths",
+                    ));
+                }
+                if mask.iter().all(|byte| *byte == 0) {
+                    return Err(PlannerContractError::new(
+                        "operation.write_raw.mask",
+                        "must select at least one bit",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Adjust { target, delta } => {
+                validate_field_target(target)?;
+                if *delta == 0 {
+                    return Err(PlannerContractError::new(
+                        "operation.adjust.delta",
+                        "must be nonzero",
+                    ));
+                }
+                Ok(())
             }
             Self::ClearComponent { selector } | Self::Preserve { selector } => {
                 validate_component_selector(selector)
