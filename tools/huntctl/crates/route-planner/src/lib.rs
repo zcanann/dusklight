@@ -15,6 +15,7 @@ pub mod logic;
 pub mod native_snapshot;
 pub mod refinement;
 pub mod snapshot;
+pub mod solver;
 pub mod state;
 pub mod transition;
 pub mod world_import;

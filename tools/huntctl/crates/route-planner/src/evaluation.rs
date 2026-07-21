@@ -163,6 +163,13 @@ pub struct FeasibilityResolution {
     pub applicable_technique_ids: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FeasibilitySelection<'a> {
+    pub resolver_ids: &'a BTreeSet<String>,
+    pub technique_ids: &'a BTreeSet<String>,
+    pub already_discharged: &'a BTreeSet<String>,
+}
+
 /// Evaluates facts and guards against one immutable snapshot. Missing values,
 /// unknown raw bits, unsupported equivalence selectors, and disallowed evidence
 /// all stay `Unknown`; none are coerced to false.
@@ -417,17 +424,20 @@ impl<'a> PredicateEvaluator<'a> {
         obstructions: &[Obstruction],
         resolvers: &[ObstructionResolver],
         techniques: &[Technique],
-        already_discharged: &BTreeSet<String>,
+        selection: FeasibilitySelection<'_>,
     ) -> FeasibilityResolution {
         let mut resolution = FeasibilityResolution {
-            discharged_obligation_ids: already_discharged.clone(),
+            discharged_obligation_ids: selection.already_discharged.clone(),
             active_obstruction_ids: Vec::new(),
             unknown_obstruction_ids: Vec::new(),
             applied_resolver_ids: Vec::new(),
             applicable_technique_ids: Vec::new(),
         };
 
-        for technique in techniques {
+        for technique in techniques
+            .iter()
+            .filter(|technique| selection.technique_ids.contains(&technique.id))
+        {
             let assessment = self.assess_technique(technique);
             if assessment.classification == RuleClassification::Active {
                 resolution
@@ -455,6 +465,7 @@ impl<'a> PredicateEvaluator<'a> {
                     let applicable = resolvers
                         .iter()
                         .filter(|resolver| resolver.obstruction_id == obstruction.id)
+                        .filter(|resolver| selection.resolver_ids.contains(&resolver.id))
                         .filter(|resolver| {
                             self.assess_resolver(resolver).classification
                                 == RuleClassification::Active
@@ -1316,7 +1327,11 @@ mod tests {
             &[obstruction.clone()],
             &[],
             &[],
-            &BTreeSet::new(),
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
         );
         assert_eq!(
             unresolved.active_obstruction_ids,
@@ -1333,7 +1348,11 @@ mod tests {
             &[obstruction.clone()],
             &[resolver],
             &[],
-            &BTreeSet::new(),
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::from(["resolver.text-displacement".into()]),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
         );
         assert_eq!(
             resolved.active_obstruction_ids,
@@ -1350,8 +1369,17 @@ mod tests {
         );
 
         obstruction.active_when = fact("missing.obstruction-state");
-        let uncertain =
-            evaluator.resolve_feasibility(&candidate, &[obstruction], &[], &[], &BTreeSet::new());
+        let uncertain = evaluator.resolve_feasibility(
+            &candidate,
+            &[obstruction],
+            &[],
+            &[],
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::new(),
+                already_discharged: &BTreeSet::new(),
+            },
+        );
         assert_eq!(
             uncertain.unknown_obstruction_ids,
             vec!["obstruction.npc-blocker"]
@@ -1382,7 +1410,11 @@ mod tests {
             &[],
             &[],
             &[technique],
-            &BTreeSet::from(["obligation.precise-movement".into()]),
+            FeasibilitySelection {
+                resolver_ids: &BTreeSet::new(),
+                technique_ids: &BTreeSet::from(["technique.epona-oob".into()]),
+                already_discharged: &BTreeSet::from(["obligation.precise-movement".into()]),
+            },
         );
         assert_eq!(
             resolution.applicable_technique_ids,

@@ -8,10 +8,12 @@ use crate::state::{
     StateComponent, StateValue, validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
-use crate::{PlannerContractError, validate_stable_id};
+use crate::{PlannerContractError, canonical_json, validate_stable_id};
+use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct InterruptionRecord {
     pub action_id: String,
     pub window: TemporalWindow,
@@ -35,6 +37,22 @@ pub struct OperationApplication {
     pub source_snapshot_sha256: Digest,
     pub result_snapshot_sha256: Digest,
     pub operation_count: usize,
+}
+
+#[derive(Serialize)]
+struct ExecutionStateIdentity<'a> {
+    snapshot_sha256: Digest,
+    gate_states: &'a BTreeMap<String, bool>,
+    serialized_components: Vec<SerializedOwnerIdentity<'a>>,
+    preserved_component_ids: &'a BTreeSet<String>,
+    scheduled_cleanup_ids: &'a BTreeSet<String>,
+    interruption_log: &'a [InterruptionRecord],
+}
+
+#[derive(Serialize)]
+struct SerializedOwnerIdentity<'a> {
+    owner: &'a SerializationOwner,
+    components: &'a [StateComponent],
 }
 
 impl PlannerExecutionState {
@@ -105,6 +123,43 @@ impl PlannerExecutionState {
             interruption.window.validate()?;
         }
         Ok(())
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        self.validate()?;
+        let identity = ExecutionStateIdentity {
+            snapshot_sha256: self.snapshot.digest()?,
+            gate_states: &self.gate_states,
+            serialized_components: self
+                .serialized_components
+                .iter()
+                .map(|(owner, components)| SerializedOwnerIdentity { owner, components })
+                .collect(),
+            preserved_component_ids: &self.preserved_component_ids,
+            scheduled_cleanup_ids: &self.scheduled_cleanup_ids,
+            interruption_log: &self.interruption_log,
+        };
+        Ok(Digest(Sha256::digest(canonical_json(&identity)?).into()))
+    }
+
+    /// Identity used for search dominance. Snapshot labels, sequence counters,
+    /// transition provenance, and interruption history explain how a state was
+    /// reached but do not make its live game state different.
+    pub fn semantic_digest(&self) -> Result<Digest, PlannerContractError> {
+        self.validate()?;
+        let mut normalized = self.clone();
+        normalized.snapshot.id = "search-state".into();
+        normalized.snapshot.sequence = 0;
+        for component in &mut normalized.snapshot.environment.components {
+            normalize_provenance(component);
+        }
+        for components in normalized.serialized_components.values_mut() {
+            for component in components {
+                normalize_provenance(component);
+            }
+        }
+        normalized.interruption_log.clear();
+        normalized.digest()
     }
 
     pub fn apply_operations(
@@ -693,6 +748,15 @@ fn mark_transition(component: &mut StateComponent, application_id: &str) {
     });
 }
 
+fn normalize_provenance(component: &mut StateComponent) {
+    component.provenance = vec![ComponentProvenance {
+        source_kind: ProvenanceSourceKind::Initialized,
+        source_id: "search.identity".into(),
+        source_sha256: None,
+        transition_id: None,
+    }];
+}
+
 fn no_selector_match(field: &str) -> PlannerContractError {
     PlannerContractError::new(field, "selector did not match any component")
 }
@@ -997,6 +1061,32 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.field(), "operation.clear_component");
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn search_identity_includes_non_snapshot_backing_stores() {
+        let state = PlannerExecutionState::new(snapshot()).unwrap();
+        let mut gated = state.clone();
+        gated.gate_states.insert("gate.no-teleport".into(), true);
+        let mut cleanup = state.clone();
+        cleanup
+            .scheduled_cleanup_ids
+            .insert("cleanup.item-handoff".into());
+        assert_ne!(state.digest().unwrap(), gated.digest().unwrap());
+        assert_ne!(state.digest().unwrap(), cleanup.digest().unwrap());
+
+        let mut history_only = state.clone();
+        history_only.snapshot.id = "snapshot.other-history".into();
+        history_only.snapshot.sequence = 99;
+        mark_transition(
+            &mut history_only.snapshot.environment.components[0],
+            "transition.history-only",
+        );
+        assert_ne!(state.digest().unwrap(), history_only.digest().unwrap());
+        assert_eq!(
+            state.semantic_digest().unwrap(),
+            history_only.semantic_digest().unwrap()
+        );
     }
 
     #[test]

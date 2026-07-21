@@ -1561,13 +1561,22 @@ Deliverable: researchers can extend the model without editing core code.
 
 - [ ] Implement backward relevance expansion from goals.
 - [ ] Combine it with forward stateful feasibility from the start.
+  - [x] Implement bounded forward state search over exact snapshots, typed
+        transition effects, action-local resolver/technique selections, and
+        modeled versus upper-bound feasibility.
+  - [ ] Add backward relevance pruning and the remaining route/path constraints
+        before treating this as the production solver.
 - [ ] Support OR producers, AND requirements, and ordered writer/gate/read setups.
 - [ ] Implement state hashing, dominance, cycles, and continuation-safe merging.
+  - [x] Add semantic search-state hashing that includes backing stores, bindings,
+        gates, preservation, and pending cleanup while excluding snapshot labels
+        and proof-only provenance; use it for cycle/duplicate suppression.
+  - [ ] Add resource dominance and continuation-safe merge proofs.
 - [ ] Support exact content/language, evidence, technique, runtime-file, and path
       constraints; validate portable plans independently over every selected
       context using only appropriately scoped/equivalent rules.
 - [ ] Add multi-objective cost and K-alternative plan search.
-- [ ] Return reachable, unreachable-under-model, or unknown.
+- [x] Return reachable, unreachable-under-model, or unknown.
 - [ ] Report minimal missing obligations/assumptions where practical.
 - [ ] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage.
@@ -1577,6 +1586,10 @@ Deliverable: a headless query API and deterministic fixture suite.
 ### Phase 8 — Proofs and explanations
 
 - [ ] Retain causal proof objects for every result.
+  - [x] Retain the selected transition, resolver/technique choices, and source/
+        result semantic state identities for each reached-path step.
+  - [ ] Retain full guard, obligation, operation, and evidence derivations for
+        reached and failed alternatives.
 - [ ] Explain derived lockouts as failed producer cuts.
 - [ ] Explain obstructions and the resolver chosen for each approach.
 - [ ] Show component transformation and provenance histories.
