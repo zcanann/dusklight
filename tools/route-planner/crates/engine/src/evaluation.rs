@@ -1061,6 +1061,27 @@ impl<'a> PredicateEvaluator<'a> {
                 *mask,
             )
             .map(StateValue::Unsigned),
+            ValueReference::BoundRawBits {
+                component_kind,
+                binding,
+                byte_offset,
+                byte_width,
+                mask,
+            } => {
+                let mut matches = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component.component_kind == *component_kind && component.binding == *binding
+                    });
+                let component = matches.next()?;
+                if matches.next().is_some() {
+                    return None;
+                }
+                raw_bits(component, *byte_offset, *byte_width, *mask).map(StateValue::Unsigned)
+            }
             ValueReference::RuntimeLanguage => Some(StateValue::Text(
                 self.snapshot
                     .environment
@@ -1571,6 +1592,187 @@ mod tests {
             .clone();
         duplicate.id = "dungeon.ambiguous".into();
         snapshot.environment.components.push(duplicate);
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference("goron-mines")),
+            None
+        );
+    }
+
+    #[test]
+    fn bound_raw_values_follow_stage_memory_and_fail_on_unknown_or_ambiguous_bytes() {
+        let mut snapshot = snapshot(0xff);
+        let mut bytes = vec![0_u8; 0x20];
+        bytes[0x1c] = 2;
+        bytes[0x1d] = 0b0100_0111;
+        snapshot.environment.components.push(StateComponent {
+            id: "stage-memory.active".into(),
+            component_kind: ComponentKind::DungeonMemory,
+            payload: ComponentPayload::Raw {
+                bytes,
+                known_mask: vec![0xff; 0x20],
+            },
+            binding: ComponentBinding::Stage {
+                stage: "D_MN05".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: "D_MN05".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.forest-stage-memory".into(),
+                source_sha256: Some(Digest([5; 32])),
+                transition_id: None,
+            }],
+        });
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let stage_value = |stage: &str, byte_offset: u32, mask: u64| ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Stage {
+                stage: stage.into(),
+            },
+            byte_offset,
+            byte_width: 1,
+            mask,
+        };
+        let initial_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            initial_evaluator.resolve_value(&stage_value("D_MN05", 0x1c, 0xff)),
+            Some(StateValue::Unsigned(2))
+        );
+        assert_eq!(
+            initial_evaluator.resolve_value(&stage_value("D_MN05", 0x1d, 1 << 2)),
+            Some(StateValue::Unsigned(1 << 2))
+        );
+        assert_eq!(
+            initial_evaluator.resolve_value(&stage_value("D_MN04", 0x1c, 0xff)),
+            None
+        );
+
+        let stage_memory = snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "stage-memory.active")
+            .unwrap();
+        let ComponentPayload::Raw { known_mask, .. } = &mut stage_memory.payload else {
+            unreachable!()
+        };
+        known_mask[0x1d] = 0xfb;
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&stage_value("D_MN05", 0x1d, 1 << 2)),
+            None
+        );
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&stage_value("D_MN05", 0x1c, 0xff)),
+            Some(StateValue::Unsigned(2))
+        );
+
+        let mut duplicate = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage-memory.active")
+            .unwrap()
+            .clone();
+        duplicate.id = "stage-memory.ambiguous".into();
+        snapshot.environment.components.push(duplicate);
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&stage_value("D_MN05", 0x1c, 0xff)),
+            None
+        );
+    }
+
+    #[test]
+    fn bound_raw_bits_follow_rebinding_and_fail_on_ambiguity() {
+        let mut snapshot = snapshot(0xff);
+        let raw_bank = |id: &str, dungeon: &str| StateComponent {
+            id: id.into(),
+            component_kind: ComponentKind::DungeonMemory,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0b0000_0011],
+                known_mask: vec![0xff],
+            },
+            binding: ComponentBinding::Dungeon {
+                dungeon: dungeon.into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: "D_MN05".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.raw-dungeon-bank".into(),
+                source_sha256: Some(Digest([5; 32])),
+                transition_id: None,
+            }],
+        };
+        snapshot
+            .environment
+            .components
+            .push(raw_bank("dungeon.raw", "forest-temple"));
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let reference = |dungeon: &str| ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Dungeon {
+                dungeon: dungeon.into(),
+            },
+            byte_offset: 0,
+            byte_width: 1,
+            mask: 0x0f,
+        };
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference("forest-temple")),
+            Some(StateValue::Unsigned(3))
+        );
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference("goron-mines")),
+            None
+        );
+
+        snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "dungeon.raw")
+            .unwrap()
+            .binding = ComponentBinding::Dungeon {
+            dungeon: "goron-mines".into(),
+        };
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference("goron-mines")),
+            Some(StateValue::Unsigned(3))
+        );
+
+        snapshot
+            .environment
+            .components
+            .push(raw_bank("dungeon.raw.duplicate", "goron-mines"));
         snapshot
             .environment
             .components

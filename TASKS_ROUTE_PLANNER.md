@@ -526,7 +526,7 @@ The current code shows:
   digest-linked chain. This makes room/stage/save/load/void/title/BiT/BiTE test
   captures comparable without inferring the boundary label from coincidental
   state changes; representative captures for each boundary remain outstanding.
-- Extracted world-facts schema v3 now compiles an exact content identity,
+- Extracted world-facts schema v4 now compiles an exact content identity,
   runtime configuration, authenticated `WorldContext`, and its complete set of
   canonical world inventories into a content-addressed planner payload. The
   planner-owned `route-planner extract-world` command emits both that payload
@@ -540,8 +540,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v10, refinement-stack schema v2, and composed-catalog
-  schema v11 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v11, refinement-stack schema v2, and composed-catalog
+  schema v12 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -555,7 +555,7 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
-- Planner graph schema v5 is an independent, canonical projection of fact and
+- Planner graph schema v6 is an independent, canonical projection of fact and
   mechanics catalogs. It exposes typed fact, goal, transition, obligation,
   obstruction, resolver, technique, writer/gate/reader, reconstruction, and
   microtrace nodes with causal edge kinds. Every nested predicate is projected
@@ -563,14 +563,14 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Mechanics-catalog schema v11 makes writer, gate, and reader records executable
+- Mechanics-catalog schema v12 makes writer, gate, and reader records executable
   solver inputs rather than graph-only annotations. Reader proofs retain their
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
   inventing a default. The same schema distinguishes portal, void/death reload,
   title return, wrong-state respawn, and actor-driven transitions and provides
   typed operations for form, mount, control, and action changes.
-- Planner service schema v17 provides a typed JSON-lines transport owned by the
+- Planner service schema v18 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -600,20 +600,20 @@ The current code shows:
   and divergent history suffixes identify exactly which ordered operations
   separate two execution states.
   The standalone `diff-state` command and service expose the same report.
-- Route-book schema v3 is a validated, exact-context-scoped preference layer over
+- Route-book schema v4 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
   define alternative methods and nested plan regions, request pin/ban/prefer
   behavior, and attach non-semantic annotations. It deliberately has no effects
   or loss fields: every referenced action and predicate must validate against
   the fact/mechanics catalog. `route-planner validate-route-book` and the typed
   service validate books without composing them into mechanics.
-- Planner graph schema v5 can optionally project a route book as distinct plan
+- Planner graph schema v6 can optionally project a route book as distinct plan
   region, method, and reference-step nodes connected to the underlying causal
   actions. Region outcomes and step pre/postconditions remain nested predicate
   graphs. A book's collapse policy is surfaced, but the catalog projection does
   not mark a region collapsed before a solver proof establishes continuation
   equivalence or supplies residual-state differences.
-- Route-book edit-batch schema v3 provides revision-checked authoritative
+- Route-book edit-batch schema v4 provides revision-checked authoritative
   mutations. Each atomic batch names the expected book digest and can update
   goals, constraints, directives, steps, methods, regions, selection/collapse
   policy, and annotations. Rust applies edits to a clone, sorts canonical sets,
@@ -666,7 +666,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v11 includes explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v12 includes explicit cutscene scene-change and resource-
   load-failure transition classes, the reload/warp/actor transition classes above,
   player-state operations, and masked raw-knownness invalidation. This supports
   partial execution records that preserve confirmed prefix bytes while marking
@@ -680,7 +680,7 @@ The current code shows:
 - `CostAtMost` constraints accumulate every executed technique's authored
   `RouteCost` axes, retain the totals in search identity, prune paths exceeding
   the strictest active per-axis maximum, and report the reached route's totals.
-  Transitions and resolvers currently have no cost field in mechanics schema v11,
+  Transitions and resolvers currently have no cost field in mechanics schema v12,
   so no unmodeled cost is invented for them.
 - `EvidenceAtLeast` accepts only `established`, `contested`, or `hypothetical`
   and intersects that threshold with—never relaxes—the runtime evidence mode.
@@ -1741,6 +1741,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         binding atomically. A map transition remains a separate authored effect.
         See `docs/route-planner/backing-store-boundaries.md`.
 - [ ] Derive bound small-key counts and dungeon items from per-stage memory.
+  - [x] Stop projecting dungeon-local keys/items into runtime inventory, retain
+        the raw stage-bank bytes, and resolve validated raw byte/mask references
+        by component kind plus exact current binding. Ambiguous components or
+        unknown selected bits fail unknown; build-specific friendly aliases and
+        imported consumers remain open.
 - [ ] Import hard door/actor guards and their state operations where decidable.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
@@ -2245,11 +2250,13 @@ sequence.
       routes only through backing-store semantics, with hypothesis provenance.
 - [x] Verify an OOB route that avoids the door does not falsely mark the door
       unlocked or consume a key.
-  - Fact-catalog schema v3 adds an unambiguous bound-component field reference:
-    kind plus exact backing binding plus field. The keyed-door fixture uses it
-    for `small_keys` and persisted unlock state, rejects zero-key and wrong-bank
-    states, and fails unknown when more than one component claims the same
-    backing. Two independently identified pickups feed the fungible count; the
+  - Fact-catalog schema v4 adds unambiguous bound structured-field and raw-bit
+    references: component kind plus exact backing binding, followed by either a
+    field or byte range/mask. This lets extracted stage-memory bytes derive the
+    same semantics without a hard-coded live component ID. The keyed-door fixture
+    uses the structured form for `small_keys` and persisted unlock state, rejects
+    zero-key and wrong-bank states, and fails unknown when more than one component
+    claims the same backing. Two independently identified pickups feed the fungible count; the
     door consumes one key and writes persisted unlock and live actor state. A
     hypothetical dungeon-bank rebind enables a different dungeon's door only
     through the changed binding, while the OOB avoidance edge mutates neither

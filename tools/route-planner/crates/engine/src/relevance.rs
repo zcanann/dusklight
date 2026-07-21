@@ -310,6 +310,18 @@ impl RelevanceBuilder {
                 byte_width: *byte_width,
                 mask: *mask,
             },
+            ValueReference::BoundRawBits {
+                component_kind,
+                binding,
+                byte_offset,
+                byte_width,
+                ..
+            } => StateDependency::BoundRawBits {
+                component_kind: component_kind.clone(),
+                binding: binding.clone(),
+                byte_offset: *byte_offset,
+                byte_width: u32::from(*byte_width),
+            },
             ValueReference::RuntimeLanguage => StateDependency::RuntimeLanguage,
             ValueReference::RuntimeSetting { key } => {
                 StateDependency::RuntimeSetting { key: key.clone() }

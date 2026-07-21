@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v3";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v4";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -85,6 +85,13 @@ pub enum ValueReference {
     },
     RawBits {
         component_id: String,
+        byte_offset: u32,
+        byte_width: u8,
+        mask: u64,
+    },
+    BoundRawBits {
+        component_kind: ComponentKind,
+        binding: ComponentBinding,
         byte_offset: u32,
         byte_width: u8,
         mask: u64,
@@ -402,24 +409,18 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             ..
         } => {
             validate_stable_id("value.component_id", component_id)?;
-            if !(1..=8).contains(byte_width) {
-                return Err(PlannerContractError::new(
-                    "value.byte_width",
-                    "must be between 1 and 8",
-                ));
-            }
-            let valid_mask = if *byte_width == 8 {
-                u64::MAX
-            } else {
-                (1_u64 << (u32::from(*byte_width) * 8)) - 1
-            };
-            if *mask == 0 || *mask & !valid_mask != 0 {
-                return Err(PlannerContractError::new(
-                    "value.mask",
-                    "must be nonzero and fit within byte_width",
-                ));
-            }
-            Ok(())
+            validate_raw_value_shape(*byte_width, *mask)
+        }
+        ValueReference::BoundRawBits {
+            component_kind,
+            binding,
+            byte_width,
+            mask,
+            ..
+        } => {
+            validate_component_kind(component_kind)?;
+            validate_binding(binding)?;
+            validate_raw_value_shape(*byte_width, *mask)
         }
         ValueReference::RuntimeSetting { key } => validate_stable_id("value.key", key),
         ValueReference::ActorField { instance_id, field } => {
@@ -443,6 +444,27 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
         | ValueReference::PlayerRotationZ
         | ValueReference::PlayerAction => Ok(()),
     }
+}
+
+fn validate_raw_value_shape(byte_width: u8, mask: u64) -> Result<(), PlannerContractError> {
+    if !(1..=8).contains(&byte_width) {
+        return Err(PlannerContractError::new(
+            "value.byte_width",
+            "must be between 1 and 8",
+        ));
+    }
+    let valid_mask = if byte_width == 8 {
+        u64::MAX
+    } else {
+        (1_u64 << (u32::from(byte_width) * 8)) - 1
+    };
+    if mask == 0 || mask & !valid_mask != 0 {
+        return Err(PlannerContractError::new(
+            "value.mask",
+            "must be nonzero and fit within byte_width",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_literal(value: &StateValue) -> Result<(), PlannerContractError> {
@@ -655,5 +677,22 @@ mod tests {
             },
         };
         assert_eq!(expression.validate().unwrap_err().field(), "value.mask");
+
+        let bound = PredicateExpression::Compare {
+            left: ValueReference::BoundRawBits {
+                component_kind: ComponentKind::DungeonMemory,
+                binding: ComponentBinding::Stage {
+                    stage: "D_MN05".into(),
+                },
+                byte_offset: 0x1c,
+                byte_width: 0,
+                mask: 0xff,
+            },
+            operator: ComparisonOperator::GreaterThan,
+            right: ValueReference::Literal {
+                value: StateValue::Unsigned(0),
+            },
+        };
+        assert_eq!(bound.validate().unwrap_err().field(), "value.byte_width");
     }
 }

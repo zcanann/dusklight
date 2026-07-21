@@ -949,17 +949,6 @@ fn player_resource_fields(
         ),
         ("life", StateValue::Unsigned(value.life.into())),
         ("rupees", StateValue::Unsigned(value.rupees.into())),
-        ("small_keys", StateValue::Unsigned(value.small_keys.into())),
-        ("dungeon_map", StateValue::Boolean(value.dungeon_map)),
-        (
-            "dungeon_compass",
-            StateValue::Boolean(value.dungeon_compass),
-        ),
-        (
-            "dungeon_boss_key",
-            StateValue::Boolean(value.dungeon_boss_key),
-        ),
-        ("dungeon_warp", StateValue::Boolean(value.dungeon_warp)),
         ("inventory", StateValue::Bytes(value.inventory.to_vec())),
         (
             "selected_items",
@@ -1260,6 +1249,71 @@ mod tests {
             snapshot.environment.live_world_objects[0].actor_type,
             "kytag14.return-place-writer"
         );
+    }
+
+    #[test]
+    fn dungeon_resources_remain_in_the_bound_stage_bank_not_runtime_inventory() {
+        let mut observation = observation();
+        observation.stage = "D_MN05".into();
+        observation.player_resources_status = NativeChannelStatus::Present;
+        observation.player_resources = Some(NativePlayerResourcesObservation {
+            small_keys: 3,
+            dungeon_map: true,
+            dungeon_compass: true,
+            dungeon_boss_key: true,
+            dungeon_warp: true,
+            ..Default::default()
+        });
+        let mut stage_memory = vec![0_u8; 0x20];
+        stage_memory[0x1c] = 3;
+        stage_memory[0x1d] = 0b0100_0111;
+        observation.dungeon_flags = Some(stage_memory);
+
+        let snapshot = snapshot_native_observation(&observation, context(1)).unwrap();
+        let inventory = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "inventory-and-resources")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &inventory.payload else {
+            panic!("inventory must be structured");
+        };
+        for local_field in [
+            "small_keys",
+            "dungeon_map",
+            "dungeon_compass",
+            "dungeon_boss_key",
+            "dungeon_warp",
+        ] {
+            assert!(!fields.contains_key(local_field));
+        }
+
+        let dungeon = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.dungeon")
+            .unwrap();
+        assert_eq!(dungeon.component_kind, ComponentKind::DungeonMemory);
+        assert_eq!(
+            dungeon.binding,
+            ComponentBinding::Stage {
+                stage: "D_MN05".into()
+            }
+        );
+        assert_eq!(
+            dungeon.serialization_owner,
+            SerializationOwner::StageBank {
+                runtime_file_id: "runtime.fixture".into(),
+                stage: "D_MN05".into()
+            }
+        );
+        let ComponentPayload::Raw { bytes, .. } = &dungeon.payload else {
+            panic!("stage memory must retain raw bytes");
+        };
+        assert_eq!(bytes[0x1c], 3);
+        assert_eq!(bytes[0x1d], 0b0100_0111);
     }
 
     #[test]
