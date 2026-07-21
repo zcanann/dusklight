@@ -1089,8 +1089,17 @@ PAD and gameplay sequence as ordinary playback.
 
 ## 3. Give learners general state and precise control
 
-- [ ] Derive declarative learner views from the canonical episode envelope.
+- [x] Derive declarative learner views from the canonical episode envelope.
   Models may request or ablate channel families without recollecting episodes.
+  Canonical actor-set, actor-feature, episode-history, local-geometry, dynamic-
+  collision and surface-graph views all bind their source shard and view
+  configuration. The direct native adapter selects a canonical subset of 25
+  named core/set families through `NativeEncoderFeatureSpec`; omitted families
+  remove columns, actor columns require the complete actor-population family,
+  and distinct specifications bind distinct dataset/model identities. Current
+  focused tests prove selectable schemas, exact masks, legacy missingness,
+  canonical round trips, static-world joins and rejection of detached or
+  noncanonical specifications without recollecting gameplay.
 - [ ] Represent actors, contacts and nearby geometry as masked sets or graphs,
   not fixed actor slots whose iteration order becomes accidental meaning.
   - [x] Derive a sealed dynamic-collision graph from the complete native-v8
