@@ -342,6 +342,19 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     presence. A neutral eight-client D_MN01 batch verified all 16/16 entries
     with zero rejected cases in sealed report `1a16c1c4...d9bb274`. The parent
     remains open for timers, loading state and cross-map/form variation.
+  - [x] Audit global channels temporally without flattening unavailable values
+    into constants. Native corpus inspection v7 reconstructs unique episode
+    boundaries and reports comparable, changed and missing transition pairs for
+    stage/loading, event/menu, RNG, player motion/action, camera, collision,
+    scene exit, resources, relationships, flag banks, runtime-file, restart,
+    return-place and event-handoff state, both in aggregate and by source stage.
+    A live v13 shard exposed 18 changing fields over 250 transitions, including
+    RNG on every tick and changes in player action/procedure, scene exit,
+    contacts, collision surfaces/solver and event handoff; roof height was
+    explicitly missing for all 250 pairs (`cf263f13...403e1`). An older v4
+    mixed-outcome shard retained nine historically missing field families. No
+    available native shard crossed a context boundary, so real loading and
+    cross-map evidence remain open; synthetic tests only prove attribution.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
@@ -455,6 +468,28 @@ probe, demonstration, curriculum, option, reward term or preferred action.
 - [ ] Turn discovered gaps into stable universal channels or explicitly typed
   optional extensions. A map- or boss-specific extension must remain masked
   elsewhere and must not reorder or invalidate the cross-map schema.
+- [ ] Use the Telma's Bar text-displacement case as a concrete
+  **learner-readiness audit**, not as a manually authored reproduction:
+  - construct a reproducible source-state fixture through ordinary boot
+    configuration, with the retail progression flags that naturally place
+    post-twilight Telma and Louise in the bar;
+  - verify that generic observations expose every potentially relevant actor,
+    interaction/attention volume, dialogue and event owner/phase, cutscene
+    transition, and the fixed shared text-progression state over time. Add
+    missing facts only as stable typed channels that remain meaningful outside
+    this room; do not expose a precomputed success hint;
+  - verify that the learner can express unrestricted frame-exact PAD and can
+    observe enough history to associate simultaneous or interrupted
+    interactions with later text state;
+  - define a read-only outcome predicate for displaced text progression (and
+    its later one-box-at-a-time observable behavior) without describing which
+    actor to approach first, where to stand, or when to press a button;
+  - after the information boundary passes audit, give a learner only the
+    source state, generic action surface, generic observations and outcome
+    predicate. The known Louise/Telma ordering is withheld from demonstrations,
+    tactics, shaping, curricula and search code. A successful exact PAD tape is
+    evidence that the learner discovered the interaction, not input supplied
+    to it.
 - [x] Produce a learner-readiness matrix linking mechanism requirements to
   captured channels, actions and proof oracles. Do not select a specific
   Skybook glitch as an optimization target until this audit is reviewed. The
@@ -798,10 +833,28 @@ PAD and gameplay sequence as ordinary playback.
 - [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
   goal-relative features. Generic physics relationships are observations, not
   route rewards.
-- [ ] Always retain exact raw PAD as the ground-truth action.
+- [x] Always retain exact raw PAD as the ground-truth action. Native episode
+  shards retain both the chosen and actually consumed PAD at every decision,
+  validate the consumed value against the post-simulation observation and the
+  following boundary, and the observation-parity proof binds those samples to
+  cold playback. The factorized model action contract likewise expands to the
+  exact connected/error-free PAD bytes for every covered frame; its float
+  features are explicitly non-authoritative.
 - [ ] Replace the 16-heading/full-magnitude learned catalog with a factorized
   hybrid action surface covering stick direction and magnitude, sub-stick,
   button edges/holds and duration at frame-precise resolution.
+  - [x] Add a lossless factorized PAD action/feature schema covering all signed
+    main- and camera-stick bytes, four analog channels, sixteen independent
+    button bits and bounded duration. It derives press/release edges relative
+    to the preceding held state, exposes Cartesian and polar stick features,
+    rejects controller transport/error state, and compresses/re-expands raw
+    frame sequences exactly. Native online execution through this schema
+    remains open.
+  - [x] Add a continuous factorized policy head with independent bounded main
+    stick, camera stick, analog, button-logit and duration outputs. Quantization
+    reaches every native byte extreme, zero output is a one-frame neutral PAD,
+    nonfinite/detached rows fail closed, and the head configuration has its own
+    schema identity. Native online execution through the head remains open.
 - [ ] Let a policy invoke bounded stateful tactics through the same native
   episode boundary. Tactics may query read-only world state, but their exact
   consumed PAD and every intermediate transition must be recorded.

@@ -23,6 +23,7 @@ pub mod dyna_mixture;
 pub mod ensemble_q;
 pub mod evaluation_isolation;
 pub mod factorized_actions;
+pub mod factorized_pad_action;
 pub mod fqi;
 pub mod frozen_inference;
 pub mod goal_conditioning;

@@ -240,6 +240,32 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
     assert_eq!(coverage_summary["cells"], 0);
     StageObservationCoverageReport::decode_canonical(&fs::read(coverage_path).unwrap()).unwrap();
 
+    let compaction = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "compact-artifacts", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .output()
+        .unwrap();
+    assert!(
+        compaction.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compaction.stderr)
+    );
+    let compaction: Value = serde_json::from_slice(&compaction.stdout).unwrap();
+    assert_eq!(
+        compaction["schema"],
+        "dusklight-stage-survey-artifact-compaction/v1"
+    );
+    assert_eq!(compaction["ready_cases"], 0);
+    assert_eq!(compaction["verified_artifacts"], 0);
+    assert_eq!(compaction["compacted_artifacts"], 0);
+    assert_eq!(compaction["logical_raw_bytes"], 0);
+    assert_eq!(compaction["stored_bytes"], 0);
+    assert_eq!(compaction["storage_savings_bytes"], 0);
+
     let mismatched_sources = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["survey", "observation-coverage", "--catalog"])
         .arg(&catalog_path)

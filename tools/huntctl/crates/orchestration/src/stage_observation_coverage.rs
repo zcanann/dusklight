@@ -9,6 +9,7 @@ use crate::stage_survey::{
     StageSurveyObservedOrigin, StageSurveyProbeKind, applied_pad_matches_frame,
     stage_survey_case_storage_id, survey_probe_tape,
 };
+use crate::stage_survey_artifact::{compressed_artifact_path, read_survey_artifact};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_trace::trace::{self, DecodedTrace, TraceChannel, TraceChannelStatus, TraceRecord};
 use dusklight_world::stage_boot_catalog::StageBootCatalog;
@@ -889,15 +890,19 @@ fn locate_trace_artifact(
                     .is_some_and(|name| name.starts_with(&prefix))
         })
         .map(|path| path.join("observation.trace"))
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() || compressed_artifact_path(path).is_file())
         .collect::<Vec<PathBuf>>();
     paths.sort();
+    let mut rejected = None;
     for path in paths {
-        let bytes = fs::read(path)
-            .map_err(|error| StageObservationCoverageError::new(error.to_string()))?;
-        if Digest(Sha256::digest(&bytes).into()) == expected_digest {
-            return Ok(Some(bytes));
+        match read_survey_artifact(&path, expected_digest) {
+            Ok(Some(bytes)) => return Ok(Some(bytes)),
+            Ok(None) => {}
+            Err(error) => rejected = Some(error.to_string()),
         }
+    }
+    if let Some(error) = rejected {
+        return Err(StageObservationCoverageError::new(error));
     }
     Ok(None)
 }

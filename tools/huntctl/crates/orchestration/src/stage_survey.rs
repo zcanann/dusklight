@@ -1,5 +1,8 @@
 //! Resumable, content-bound stage boot survey ledger.
 
+use crate::stage_survey_artifact::{
+    compact_survey_artifact, compressed_artifact_path, read_survey_artifact,
+};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
@@ -152,6 +155,19 @@ pub struct StageSurveyAttempt {
     pub observed_final: Option<StageSurveyObservedOrigin>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostic_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageSurveyArtifactCompactionSummary {
+    pub schema: String,
+    pub ledger_sha256: Digest,
+    pub ready_cases: u32,
+    pub verified_artifacts: u32,
+    pub compacted_artifacts: u32,
+    pub logical_raw_bytes: u64,
+    pub stored_bytes: u64,
+    pub storage_savings_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -711,7 +727,19 @@ pub fn execute_stage_survey_attempt(
         attempt_number,
         elapsed,
     ) {
-        Ok(attempt) => Ok(attempt),
+        Ok(attempt) => {
+            let observation_sha256 = attempt.observation_sha256.ok_or_else(|| {
+                StageSurveyError::invalid("ready survey attempt has no observation identity")
+            })?;
+            let actor_catalog_sha256 = attempt.actor_catalog_sha256.ok_or_else(|| {
+                StageSurveyError::invalid("ready survey attempt has no actor identity")
+            })?;
+            compact_survey_artifact(&trace_path, observation_sha256)
+                .map_err(|error| StageSurveyError::invalid(error.to_string()))?;
+            compact_survey_artifact(&actor_catalog_path, actor_catalog_sha256)
+                .map_err(|error| StageSurveyError::invalid(error.to_string()))?;
+            Ok(attempt)
+        }
         Err(diagnostic) => Ok(failed_attempt(
             attempt_number,
             StageSurveyAttemptOutcome::ObservationRejected,
@@ -720,6 +748,130 @@ pub fn execute_stage_survey_attempt(
             diagnostic,
         )),
     }
+}
+
+pub fn compact_stage_survey_artifacts(
+    catalog: &StageBootCatalog,
+    ledger: &StageSurveyLedger,
+    state_root: &Path,
+) -> Result<StageSurveyArtifactCompactionSummary, StageSurveyError> {
+    ledger.validate(catalog)?;
+    let ledger_sha256 = ledger.digest(catalog)?;
+    let mut summary = StageSurveyArtifactCompactionSummary {
+        schema: "dusklight-stage-survey-artifact-compaction/v1".into(),
+        ledger_sha256,
+        ready_cases: 0,
+        verified_artifacts: 0,
+        compacted_artifacts: 0,
+        logical_raw_bytes: 0,
+        stored_bytes: 0,
+        storage_savings_bytes: 0,
+    };
+    for case in &ledger.cases {
+        if case.classification != Some(StageSurveyClassification::Ready) {
+            continue;
+        }
+        let attempt = case.attempts.last().ok_or_else(|| {
+            StageSurveyError::invalid("ready survey case has no retained attempt")
+        })?;
+        let observation_sha256 = attempt.observation_sha256.ok_or_else(|| {
+            StageSurveyError::invalid("ready survey attempt has no observation identity")
+        })?;
+        let actor_catalog_sha256 = attempt.actor_catalog_sha256.ok_or_else(|| {
+            StageSurveyError::invalid("ready survey attempt has no actor identity")
+        })?;
+        let case_root = state_root
+            .join("cases")
+            .join(stage_survey_case_storage_id(&case.candidate_id).to_string());
+        compact_matching_artifacts(
+            &case_root,
+            attempt.number,
+            "observation.trace",
+            observation_sha256,
+            &mut summary,
+        )?;
+        compact_matching_artifacts(
+            &case_root,
+            attempt.number,
+            "actors.json",
+            actor_catalog_sha256,
+            &mut summary,
+        )?;
+        summary.ready_cases = summary
+            .ready_cases
+            .checked_add(1)
+            .ok_or_else(|| StageSurveyError::invalid("ready survey case count overflowed"))?;
+    }
+    summary.storage_savings_bytes = summary
+        .logical_raw_bytes
+        .saturating_sub(summary.stored_bytes);
+    Ok(summary)
+}
+
+fn compact_matching_artifacts(
+    case_root: &Path,
+    attempt_number: u8,
+    file_name: &str,
+    expected_digest: Digest,
+    summary: &mut StageSurveyArtifactCompactionSummary,
+) -> Result<(), StageSurveyError> {
+    let prefix = format!("attempt-{attempt_number:03}-run-");
+    let mut paths = if case_root.is_dir() {
+        fs::read_dir(case_root)
+            .map_err(|error| StageSurveyError::invalid(error.to_string()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with(&prefix))
+            })
+            .map(|path| path.join(file_name))
+            .filter(|path| path.is_file() || compressed_artifact_path(path).is_file())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    paths.sort();
+    let mut matched = false;
+    for path in paths {
+        let Ok(Some(raw)) = read_survey_artifact(&path, expected_digest) else {
+            continue;
+        };
+        matched = true;
+        summary.verified_artifacts = summary
+            .verified_artifacts
+            .checked_add(1)
+            .ok_or_else(|| StageSurveyError::invalid("verified artifact count overflowed"))?;
+        let raw_len = u64::try_from(raw.len())
+            .map_err(|_| StageSurveyError::invalid("survey artifact length overflowed"))?;
+        summary.logical_raw_bytes = summary
+            .logical_raw_bytes
+            .checked_add(raw_len)
+            .ok_or_else(|| StageSurveyError::invalid("logical raw byte count overflowed"))?;
+        if compact_survey_artifact(&path, expected_digest)
+            .map_err(|error| StageSurveyError::invalid(error.to_string()))?
+        {
+            summary.compacted_artifacts = summary
+                .compacted_artifacts
+                .checked_add(1)
+                .ok_or_else(|| StageSurveyError::invalid("compacted artifact count overflowed"))?;
+        }
+        let stored_len = fs::metadata(compressed_artifact_path(&path))
+            .map_err(|error| StageSurveyError::invalid(error.to_string()))?
+            .len();
+        summary.stored_bytes = summary
+            .stored_bytes
+            .checked_add(stored_len)
+            .ok_or_else(|| StageSurveyError::invalid("stored byte count overflowed"))?;
+    }
+    if !matched {
+        return Err(StageSurveyError::invalid(format!(
+            "ledger-bound survey artifact is missing or corrupt: {file_name}"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn survey_probe_tape(
@@ -1182,6 +1334,7 @@ mod tests {
         BootLayerSource, BootLayerSourceKind, BootPointSource, BootPointSourceKind,
         STAGE_BOOT_CATALOG_SCHEMA, StageCatalogStatus, StageInventoryStatus,
     };
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn digest(byte: u8) -> Digest {
         Digest([byte; 32])
@@ -1243,6 +1396,17 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn temporary_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "dusklight-stage-survey-{label}-{}-{nonce}",
+            std::process::id()
+        ))
     }
 
     fn failed(outcome: StageSurveyAttemptOutcome) -> StageSurveyAttempt {
@@ -1345,6 +1509,77 @@ mod tests {
             ledger
         );
         assert_ne!(ledger.digest(&catalog).unwrap(), Digest::ZERO);
+    }
+
+    #[test]
+    fn compaction_preserves_ledger_identity_and_is_repeatable() {
+        let catalog = catalog();
+        let mut ledger = ledger(&catalog, 1);
+        let observation = vec![0x31; 192 * 1024];
+        let actors = vec![0x72; 96 * 1024];
+        let mut attempt = ready();
+        attempt.observation_sha256 = Some(Digest(Sha256::digest(&observation).into()));
+        attempt.actor_catalog_sha256 = Some(Digest(Sha256::digest(&actors).into()));
+        ledger
+            .record_attempt(&catalog, &catalog.candidates[0].id, attempt)
+            .unwrap();
+
+        let root = temporary_root("artifact-compaction");
+        let attempt_number = ledger.cases[0].attempts[0].number;
+        let artifact_root = root
+            .join("cases")
+            .join(stage_survey_case_storage_id(&catalog.candidates[0].id).to_string())
+            .join(format!("attempt-{attempt_number:03}-run-00000"));
+        fs::create_dir_all(&artifact_root).unwrap();
+        let observation_path = artifact_root.join("observation.trace");
+        let actor_path = artifact_root.join("actors.json");
+        fs::write(&observation_path, &observation).unwrap();
+        fs::write(&actor_path, &actors).unwrap();
+
+        let first = compact_stage_survey_artifacts(&catalog, &ledger, &root).unwrap();
+        assert_eq!(
+            first.schema,
+            "dusklight-stage-survey-artifact-compaction/v1"
+        );
+        assert_eq!(first.ledger_sha256, ledger.digest(&catalog).unwrap());
+        assert_eq!(first.ready_cases, 1);
+        assert_eq!(first.verified_artifacts, 2);
+        assert_eq!(first.compacted_artifacts, 2);
+        assert_eq!(
+            first.logical_raw_bytes,
+            u64::try_from(observation.len() + actors.len()).unwrap()
+        );
+        assert!(first.stored_bytes < first.logical_raw_bytes);
+        assert_eq!(
+            first.storage_savings_bytes,
+            first.logical_raw_bytes - first.stored_bytes
+        );
+        assert!(!observation_path.exists());
+        assert!(!actor_path.exists());
+
+        let second = compact_stage_survey_artifacts(&catalog, &ledger, &root).unwrap();
+        assert_eq!(second.compacted_artifacts, 0);
+        assert_eq!(second.verified_artifacts, first.verified_artifacts);
+        assert_eq!(second.logical_raw_bytes, first.logical_raw_bytes);
+        assert_eq!(second.stored_bytes, first.stored_bytes);
+        assert_eq!(second.storage_savings_bytes, first.storage_savings_bytes);
+        assert_eq!(
+            read_survey_artifact(
+                &observation_path,
+                ledger.cases[0].attempts[0].observation_sha256.unwrap()
+            )
+            .unwrap(),
+            Some(observation)
+        );
+        assert_eq!(
+            read_survey_artifact(
+                &actor_path,
+                ledger.cases[0].attempts[0].actor_catalog_sha256.unwrap()
+            )
+            .unwrap(),
+            Some(actors)
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
