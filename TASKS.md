@@ -198,18 +198,6 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     and 58 profiles with zero rejections (`061ed9a4...cb0a`). This proves the
     capture path on the surveyed slice; the parent item remains open until all
     successful catalog entries have equivalent evidence.
-  - [x] Publish field coverage for each complete actor profile globally and per
-    observed stage, retaining only sample counts and distinct-value hashes.
-    Missing and null fields remain distinct from present zeroes; resealed count
-    drift is rejected. A fresh learning-observation v14 contact pass verified
-    four cross-map terminal snapshots with zero rejections (ledger
-    `37946d4d...e9cdf3`): 374 complete actors, 65 profiles and 102
-    stage/profile cells. Its v5 report classifies 6,010 present, 1,373 varying,
-    271 absent and 40 ambiguous stage/profile field paths
-    (`acb3f599...90fe1c`). It also correctly identifies profile 333 as ambiguous
-    because `Obj_Tbi` and `Obj_Uma` share it. These are terminal snapshot
-    statistics, not a tactic or proof of per-tick actor coverage; the full
-    catalog and temporal actor lifecycle audit remain open.
   - [x] Report learner-facing field coverage per actor profile from that same
     independently parity-checked population. Stage actor coverage v5 denies
     unknown learner fields, hashes each typed value, records fixed-vector
@@ -217,15 +205,17 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     without retaining raw values or any desired state. This supersedes v4,
     whose permissive decoder silently omitted v14 velocity, angle, attention,
     event-participation and return-place-writer fields. A current v14 observer
-    sample verified 313 complete actors across three stages, 59 aggregate
-    profiles and 83 stage/profile cells. Forty-three profiles varied in at
-    least one field; attention was non-absent for 14 profiles, event
-    participation for five and guarded return-place-writer state for one. The
-    sealed report is `8725e1e3...5227a` (ledger `0b468521...3bf0d`). A fourth
-    `F_SP103` case was excluded fail-closed as `actor_catalog_incomplete` while
-    crossing a load boundary. This is terminal-boundary coverage over a small
-    sample, not proof of temporal variation or all-stage completeness, so the
-    parent item remains open.
+    contact pass verified 374 complete actors across four terminal stages with
+    zero rejections, 65 aggregate profiles and 102 stage/profile cells. It
+    classifies 6,010 present, 1,373 varying, 271 absent and 40 ambiguous
+    stage/profile field paths; 48 profiles vary in at least one field, attention
+    is non-absent for 16 profiles, event participation for five and guarded
+    return-place-writer state for one. It also identifies profile 333 as
+    ambiguous because `Obj_Tbi` and `Obj_Uma` share it. The sealed report is
+    `acb3f599...90fe1c` (ledger `37946d4d...e9cdf3`). The F_SP103 request's
+    terminal snapshot belongs to F_SP00 after an ordinary load, so this is
+    terminal-boundary coverage over a small sample, not proof of temporal
+    variation or all-stage completeness; the parent item remains open.
 - [ ] Audit universal actor information: stable runtime identity and spawn
   generation, authored placement identity, transform, velocity, scale,
   collision/body information, action/procedure and animation state,
