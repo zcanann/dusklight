@@ -327,7 +327,8 @@ pub fn inspect_state_diff(
         before_execution_history_suffix: before.execution_history
             [execution_history_common_prefix_len..]
             .to_vec(),
-        after_execution_history_suffix: after.execution_history[execution_history_common_prefix_len..]
+        after_execution_history_suffix: after.execution_history
+            [execution_history_common_prefix_len..]
             .to_vec(),
         fact_deltas,
     })
@@ -657,6 +658,9 @@ mod tests {
             diff.after_execution_state_sha256
         );
         assert!(diff.gate_state_deltas.is_empty());
+        assert_eq!(diff.execution_history_common_prefix_len, 2);
+        assert!(diff.before_execution_history_suffix.is_empty());
+        assert!(diff.after_execution_history_suffix.is_empty());
         assert_eq!(diff.fact_deltas[0].before.evaluated, InspectionTruth::True);
         assert_eq!(
             diff.fact_deltas[0].after.evaluated,
@@ -677,6 +681,30 @@ mod tests {
                 .raw_byte_deltas
                 .is_empty()
         );
+
+        let mut progressed = before.clone();
+        progressed
+            .apply_operations(
+                "gate.no-telop.clear",
+                "snapshot.inspect-gate-cleared",
+                &[StateOperation::ClearGate {
+                    gate_id: "gate.no-telop".into(),
+                }],
+            )
+            .unwrap();
+        let progressed_diff = inspect_state_diff(
+            &before,
+            &progressed,
+            BoundaryKind::DialogueInterruption,
+            &facts,
+            &[],
+            RuntimeEvidenceMode::EstablishedOnly,
+        )
+        .unwrap();
+        assert_eq!(progressed_diff.execution_history_common_prefix_len, 2);
+        assert!(progressed_diff.before_execution_history_suffix.is_empty());
+        assert_eq!(progressed_diff.after_execution_history_suffix.len(), 1);
+        assert_eq!(progressed_diff.gate_state_deltas.len(), 1);
 
         assert_eq!(
             diff_gate_states(
