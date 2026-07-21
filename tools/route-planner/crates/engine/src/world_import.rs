@@ -611,22 +611,45 @@ struct ImportedBossDoor {
     obligations: Vec<FeasibilityObligation>,
 }
 
+#[derive(Clone, Copy)]
+enum Gz2e01BossDoorFamily {
+    L1,
+    L5,
+}
+
 fn import_gz2e01_boss_door(
     inventory: &WorldInventory,
     placement: &PlacementRecord,
     scope: &ContextScope,
     inventory_sha256: Digest,
 ) -> Result<Option<ImportedBossDoor>, PlannerContractError> {
-    if placement.kind != PlacementKind::Actor || !is_l1_boss_door_name(&placement.name) {
+    if !matches!(
+        placement.kind,
+        PlacementKind::Actor | PlacementKind::ScaledActor
+    ) {
         return Ok(None);
     }
+    let Some(family) = gz2e01_boss_door_family(&placement.name) else {
+        return Ok(None);
+    };
     let Some(room) = placement.scope.room else {
         return Ok(None);
     };
-    if (inventory.stage == "D_MN08A" && room == 10) || (inventory.stage != "D_MN08A" && room == 50)
-    {
-        return Ok(None);
-    }
+    let write_unlock_switch = match family {
+        Gz2e01BossDoorFamily::L1 => {
+            if (inventory.stage == "D_MN08A" && room == 10)
+                || (inventory.stage != "D_MN08A" && room == 50)
+            {
+                return Ok(None);
+            }
+            true
+        }
+        Gz2e01BossDoorFamily::L5 => match inventory.stage.as_str() {
+            "D_MN11" => true,
+            "D_MN11A" => false,
+            _ => return Ok(None),
+        },
+    };
 
     let exit_index = ((placement.parameters >> 25) & 0x3f) as usize;
     let matching_exits = inventory
@@ -649,8 +672,12 @@ fn import_gz2e01_boss_door(
     let (switch_byte_offset, switch_mask) = memory_switch_raw_location(switch_id);
     let front_room = ((placement.parameters >> 13) & 0x3f) as u8;
     let back_room = ((placement.parameters >> 19) & 0x3f) as u8;
+    let family_token = match family {
+        Gz2e01BossDoorFamily::L1 => "l1",
+        Gz2e01BossDoorFamily::L5 => "l5",
+    };
     let token = stable_token(
-        "world.gz2e01.l1-boss-door",
+        &format!("world.gz2e01.{family_token}-boss-door"),
         &[
             inventory.stage.as_bytes(),
             placement.stable_id.as_bytes(),
@@ -661,7 +688,7 @@ fn import_gz2e01_boss_door(
     let approach_id = format!("approach.{token}");
     let interaction_obligation_id = format!("obligation.interaction.{token}");
     let actor_obligation_id = format!("obligation.actor-state.{token}");
-    let evidence = gz2e01_boss_door_evidence(inventory_sha256, placement, &token);
+    let evidence = gz2e01_boss_door_evidence(family, inventory_sha256, placement, &token);
     let unknown_evidence = RuleEvidence {
         truth: TruthStatus::Unknown,
         records: evidence.records.clone(),
@@ -679,11 +706,48 @@ fn import_gz2e01_boss_door(
             value: StateValue::Unsigned(0x04),
         },
     };
+    let mut hard_guard_terms = vec![
+        source_location_guard(&inventory.stage, room),
+        boss_key_guard,
+    ];
+    if matches!(family, Gz2e01BossDoorFamily::L5) {
+        hard_guard_terms.push(PredicateExpression::Compare {
+            left: ValueReference::PlayerForm,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text("human".into()),
+            },
+        });
+    }
     let destination = SceneLocation {
         stage: exit.destination_stage.clone(),
         room: exit.destination_room,
         layer: exit.destination_layer,
         spawn: exit.destination_point,
+    };
+
+    let mut effects = Vec::new();
+    if write_unlock_switch {
+        effects.push(StateOperation::WriteBoundRaw {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: switch_byte_offset,
+            mask: vec![switch_mask],
+            value: vec![switch_mask],
+        });
+    }
+    effects.push(StateOperation::SetLocation {
+        location: destination.clone(),
+    });
+    let (actor_question, interaction_question) = match family {
+        Gz2e01BossDoorFamily::L1 => (
+            "Confirm the loaded boss-door resources and actor/event phases reach INIT, UNLOCK, collision release, CHG_SCENE, and restart handling without an intervening failure or interruption.",
+            "Derive the actor-local interaction volume and facing test: |x| <= 200, |z| <= 100, wolf attention/current-position constraints, and facing delta <= 0x4000, then connect them to extracted oriented geometry.",
+        ),
+        Gz2e01BossDoorFamily::L5 => (
+            "Confirm the loaded L5 boss-door resources and event phases reach UNLOCK, key deletion when present, collision release, CHG_SCENE, close/end handling, and the restart-room write without an intervening failure or interruption.",
+            "Derive the L5 actor-local usable side and interaction volume: local z must be positive, |x| <= 200, |z| <= 100, and facing delta <= 0x4000, then connect them to extracted oriented geometry.",
+        ),
     };
 
     Ok(Some(ImportedBossDoor {
@@ -707,24 +771,13 @@ fn import_gz2e01_boss_door(
             approach_id,
             activation: ActivationContract {
                 hard_guards: PredicateExpression::All {
-                    terms: vec![source_location_guard(&inventory.stage, room), boss_key_guard],
+                    terms: hard_guard_terms,
                 },
                 physical_obligation_ids: vec![
                     actor_obligation_id.clone(),
                     interaction_obligation_id.clone(),
                 ],
-                effects: vec![
-                    StateOperation::WriteBoundRaw {
-                        component_kind: ComponentKind::DungeonMemory,
-                        binding: ComponentBindingReference::CurrentStage,
-                        byte_offset: switch_byte_offset,
-                        mask: vec![switch_mask],
-                        value: vec![switch_mask],
-                    },
-                    StateOperation::SetLocation {
-                        location: destination,
-                    },
-                ],
+                effects,
                 unknown_requirements: Vec::new(),
             },
             evidence,
@@ -739,7 +792,7 @@ fn import_gz2e01_boss_door(
                 scope: scope.clone(),
                 obligation_kind: ObligationKind::ActorState,
                 detail: ObligationDetail::Unresolved {
-                    research_question: "Confirm the loaded boss-door resources and actor/event phases reach INIT, UNLOCK, collision release, CHG_SCENE, and restart handling without an intervening failure or interruption.".into(),
+                    research_question: actor_question.into(),
                 },
                 evidence: unknown_evidence.clone(),
             },
@@ -749,7 +802,7 @@ fn import_gz2e01_boss_door(
                 scope: scope.clone(),
                 obligation_kind: ObligationKind::Interaction,
                 detail: ObligationDetail::Unresolved {
-                    research_question: "Derive the actor-local interaction volume and facing test: |x| <= 200, |z| <= 100, wolf attention/current-position constraints, and facing delta <= 0x4000, then connect them to extracted oriented geometry.".into(),
+                    research_question: interaction_question.into(),
                 },
                 evidence: unknown_evidence,
             },
@@ -757,11 +810,14 @@ fn import_gz2e01_boss_door(
     }))
 }
 
-fn is_l1_boss_door_name(name: &str) -> bool {
-    matches!(
-        name,
-        "L1Bdoor" | "L2Bdoor" | "L4Bdoor" | "L6Bdoor" | "L7Bdoor" | "L8Bdoor" | "L9Bdoor"
-    )
+fn gz2e01_boss_door_family(name: &str) -> Option<Gz2e01BossDoorFamily> {
+    match name {
+        "L1Bdoor" | "L2Bdoor" | "L4Bdoor" | "L6Bdoor" | "L7Bdoor" | "L8Bdoor" | "L9Bdoor" => {
+            Some(Gz2e01BossDoorFamily::L1)
+        }
+        "L5Bdoor" => Some(Gz2e01BossDoorFamily::L5),
+        _ => None,
+    }
 }
 
 fn memory_switch_raw_location(switch_id: u8) -> (u32, u8) {
@@ -785,20 +841,29 @@ fn is_source_audited_gz2e01(content: &ContentIdentity) -> bool {
 }
 
 fn gz2e01_boss_door_evidence(
+    family: Gz2e01BossDoorFamily,
     inventory_sha256: Digest,
     placement: &PlacementRecord,
     token: &str,
 ) -> RuleEvidence {
+    let (actor_sha256, actor_note) = match family {
+        Gz2e01BossDoorFamily::L1 => (
+            "221c170e034cf90cc43b20dc737bebeb44d6f8b54111d4454024f2fea7069d79",
+            "d_a_door_bossL1.cpp: boss-key/front/area offer guards; unlock switch, event phases, collision release, and scene-change behavior.",
+        ),
+        Gz2e01BossDoorFamily::L5 => (
+            "9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e",
+            "d_a_door_bossL5.cpp: human/boss-key/front/area guards; first-unlock switch, keyhole/event phases, collision release, scene change, and restart behavior.",
+        ),
+    };
     RuleEvidence {
         truth: TruthStatus::Established,
         records: vec![
             EvidenceRecord {
                 id: format!("evidence.source.actor.{token}"),
                 kind: EvidenceKind::SourceAudited,
-                source_sha256: Some(static_digest(
-                    "221c170e034cf90cc43b20dc737bebeb44d6f8b54111d4454024f2fea7069d79",
-                )),
-                note: "d_a_door_bossL1.cpp: boss-key/front/area offer guards; unlock switch, event phases, collision release, and scene-change behavior.".into(),
+                source_sha256: Some(static_digest(actor_sha256)),
+                note: actor_note.into(),
             },
             EvidenceRecord {
                 id: format!("evidence.source.name-map.{token}"),
@@ -806,7 +871,7 @@ fn gz2e01_boss_door_evidence(
                 source_sha256: Some(static_digest(
                     "5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad",
                 )),
-                note: "d_stage.cpp: L1/L2/L4/L6/L7/L8/L9 boss-door names map to fpcNm_L1BOSS_DOOR_e.".into(),
+                note: "d_stage.cpp: boss-door placement names map to their exact actor process families.".into(),
             },
             EvidenceRecord {
                 id: format!("evidence.source.parameters.{token}"),
@@ -1253,7 +1318,7 @@ mod tests {
                 chunk_tag: "ACTR".into(),
                 record_index: 0,
                 layer: None,
-                kind: PlacementKind::Actor,
+                kind: PlacementKind::ScaledActor,
                 name: "L1Bdoor".into(),
                 parameters: 0x0191_8000,
                 position: Vec3 {
@@ -1263,7 +1328,7 @@ mod tests {
                 },
                 angle: [-211, 0, 0x1717],
                 set_id: 0xff,
-                scale_raw: None,
+                scale_raw: Some([10, 10, 10]),
                 raw_hex: "4c3142646f6f72000191800045e39800454e6000c6805c00ff2d0000171700ff0a0a0aff"
                     .into(),
             }],
@@ -1293,6 +1358,62 @@ mod tests {
             collisions: Vec::new(),
             load_triggers: Vec::new(),
         }
+    }
+
+    fn l5_boss_door_inventory(boss_room: bool) -> WorldInventory {
+        let room = if boss_room { 50 } else { 4 };
+        let mut inventory = boss_door_inventory(room);
+        inventory.stage = if boss_room { "D_MN11A" } else { "D_MN11" }.into();
+        let (archive_sha256, resource_sha256, parameters, position, destination) = if boss_room {
+            (
+                static_digest("4acd3b8ce5ac24820364314c1cbec9569bf0faad2d4f0e6688e974616d8c7889"),
+                static_digest("106533086f77371b6abd4cfea2d0d2c14fd88f5ce1a2569bfc8020848d2519a6"),
+                0x0390_8200,
+                Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 2100.0,
+                },
+                ("F_SP114", 1, 2, 11, 1),
+            )
+        } else {
+            (
+                static_digest("6ee1274731222f3abe62c50de686fbae60663ba11e911f79c54fe886e221cd55"),
+                static_digest("cd32b1ac737b8cfe6f92fa35a18ba4e24a5ccbfe8b466ae403b6c269dcbfc5c3"),
+                0x0590_8200,
+                Vec3 {
+                    x: 0.0,
+                    y: 2109.0,
+                    z: -5237.0,
+                },
+                ("D_MN11A", 50, -1, 1, 2),
+            )
+        };
+        inventory.sources[1].archive_sha256 = archive_sha256;
+        inventory.sources[1].stage_data_sha256 = resource_sha256;
+        let placement = &mut inventory.placements[0];
+        placement.stable_id = format!("dzr-sha256:l5-{room}/chunk/Door/record/0");
+        placement.source_sha256 = resource_sha256;
+        placement.chunk_tag = "Door".into();
+        placement.name = "L5Bdoor".into();
+        placement.parameters = parameters;
+        placement.position = position;
+        placement.angle = [-1, 0, -248];
+        placement.raw_hex = if boss_room {
+            "4c3542646f6f720003908200000000000000000045034000ffff0000ff0800ff0a0a0aff"
+        } else {
+            "4c3542646f6f720005908200000000004503d000c5a3a800ffff0000ff0800ff0a0a0aff"
+        }
+        .into();
+        let exit = &mut inventory.exits[0];
+        exit.stable_id = format!("dzr-sha256:l5-{room}/chunk/SCLS/record/{}", destination.4);
+        exit.source_sha256 = resource_sha256;
+        exit.record_index = destination.4;
+        exit.destination_stage = destination.0.into();
+        exit.destination_room = destination.1;
+        exit.destination_layer = destination.2;
+        exit.destination_point = destination.3;
+        inventory
     }
 
     fn world_context(game_data_sha256: Digest, inventory: &WorldInventory) -> WorldContext {
@@ -1442,6 +1563,81 @@ mod tests {
         .unwrap();
         assert!(facts.mechanics.transitions.is_empty());
         assert!(facts.encoded_exits[0].candidate_transition_ids.is_empty());
+    }
+
+    #[test]
+    fn imports_l5_human_guard_and_distinguishes_dungeon_from_boss_room_unlock() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let dungeon_inventory = l5_boss_door_inventory(false);
+        let context = world_context(content.fingerprint.game_data_sha256, &dungeon_inventory);
+        let dungeon = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&dungeon_inventory),
+        )
+        .unwrap();
+        let transition = &dungeon.mechanics.transitions[0];
+        let PredicateExpression::All { terms } = &transition.activation.hard_guards else {
+            panic!("L5 boss door must retain location, boss-key, and form guards")
+        };
+        assert!(terms.iter().any(|term| {
+            matches!(
+                term,
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerForm,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text(form),
+                    },
+                } if form == "human"
+            )
+        }));
+        assert!(matches!(
+            transition.activation.effects.as_slice(),
+            [
+                StateOperation::WriteBoundRaw {
+                    component_kind: ComponentKind::DungeonMemory,
+                    binding: ComponentBindingReference::CurrentStage,
+                    byte_offset: 0x0a,
+                    mask,
+                    value,
+                },
+                StateOperation::SetLocation { location },
+            ] if mask == &[0x01]
+                && value == &[0x01]
+                && location.stage == "D_MN11A"
+                && location.room == 50
+                && location.spawn == 1
+        ));
+        assert!(transition.evidence.records.iter().any(|record| {
+            record.source_sha256
+                == Some(static_digest(
+                    "9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e",
+                ))
+        }));
+
+        let boss_room_inventory = l5_boss_door_inventory(true);
+        let context = world_context(content.fingerprint.game_data_sha256, &boss_room_inventory);
+        let boss_room = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&boss_room_inventory),
+        )
+        .unwrap();
+        assert!(matches!(
+            boss_room.mechanics.transitions[0]
+                .activation
+                .effects
+                .as_slice(),
+            [StateOperation::SetLocation { location }]
+                if location.stage == "F_SP114"
+                    && location.room == 1
+                    && location.layer == 2
+                    && location.spawn == 11
+        ));
     }
 
     #[test]

@@ -1652,8 +1652,13 @@ evidenced overlays over the generated base rather than silent edits to it.
   - [x] Audit the GZ2E01 `fpcNm_L1BOSS_DOOR_e` family, including its actor-name
         aliases, boss-key and usable-side hard guards, parameter decoder,
         interaction bounds, unlock switch, event/collision/scene-change phases,
-        and Forest Temple representative placement. Other door families remain
-        open. See `docs/route-planner/gz2e01-boss-door-audit.md`.
+        and Forest Temple representative placement. See
+        `docs/route-planner/gz2e01-boss-door-audit.md`.
+  - [x] Audit the exact-GZ2E01 `fpcNm_L5BOSS_DOOR_e` family, including its
+        human-form and boss-key guards, positive-local-Z usable side,
+        interaction bounds, stage-type-dependent keyhole/switch behavior, and
+        both retail placements. Other door families remain open. See
+        `docs/route-planner/gz2e01-l5-boss-door-audit.md`.
 - [ ] Inventory static placement, persistent control, and transient instance state
       for representative actor families.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
@@ -1757,6 +1762,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
         non-audited-build, and unmodeled-switch-domain cases remain encoded facts
         without invented transitions.
+  - [x] Import the exact-GZ2E01 L5 boss-door candidates with their additional
+        human-form guard and distinct dungeon-side versus stage-type-3 boss-room
+        unlock effects. Interaction geometry and actor/event/restart phases
+        remain explicit obligations.
 - [ ] Model ordinary item/NPC/event producers.
 - [x] Implement normal bank commit/load and binding changes.
   - [x] Execute typed serialize/restore/bind/rebind operations against independent
@@ -1797,6 +1806,10 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [x] Import the GZ2E01 L1-family boss-key/current-stage guard and memory-switch
         write, while retaining interaction geometry and actor/event/collision
         phases as separate unresolved obligations.
+  - [x] Import the GZ2E01 L5 human-form/boss-key guards and conditional
+        memory-switch write while retaining its usable-side geometry and
+        keyhole/event/collision/restart phases as separate unresolved
+        obligations.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
       language resources where decidable.
