@@ -11,6 +11,9 @@ use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::message_flow::{MessageFlowImportProfile, MessageFlowProgramSet};
+use dusklight_route_planner::message_import::{
+    CompiledMessageFlowSet, MessageFlowResourceOverlaySet,
+};
 use dusklight_route_planner::orig_diff::compare_orig_bundles;
 use dusklight_route_planner::orig_discovery::{
     EXTRACTED_ORIG_BUNDLE_SCHEMA, OrigSupportStatus, SupportedBuildRegistry,
@@ -59,6 +62,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("cache-fact-pack") => cache_fact_pack(&args[1..]),
         Some("compile-cutscene") => compile_cutscene(&args[1..]),
+        Some("compile-message-flows") => compile_message_flows(&args[1..]),
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
@@ -168,6 +172,42 @@ fn construct_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
             "bundle_sha256": set.bundle_sha256,
             "locale_bundle": set.locale_bundle,
             "programs": set.programs.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let bundle_path = required_path(args, "--bundle")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let profile_path = required_path(args, "--profile")?;
+    let output = required_path(args, "--output")?;
+    let bundle = dusklight_route_planner::orig_discovery::ExtractedOrigBundle::decode_canonical(
+        &fs::read(bundle_path)?,
+    )?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let profile = MessageFlowImportProfile::decode_canonical(&fs::read(profile_path)?)?;
+    let overlays = match option(args, "--overlays") {
+        Some(path) => Some(MessageFlowResourceOverlaySet::decode_canonical(&fs::read(
+            path,
+        )?)?),
+        None => None,
+    };
+    let set = CompiledMessageFlowSet::build(&bundle, &runtime, &profile, overlays.as_ref())?;
+    write_file(&output, &set.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": set.schema,
+            "output": output,
+            "sha256": set.digest()?,
+            "program_set_sha256": set.program_set_sha256,
+            "overlay_set_sha256": set.overlay_set_sha256,
+            "locale_bundle": set.locale_bundle,
+            "resources": set.resources.len(),
+            "aliases": set.facts.aliases.len(),
+            "transitions": set.mechanics.transitions.len(),
+            "readers": set.mechanics.readers.len(),
         }))?
     );
     Ok(())
@@ -1219,6 +1259,7 @@ fn print_usage() {
             "Independent TP route planner:",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
             "  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json",
+            "  route-planner compile-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json [--overlays OVERLAYS.json] --output COMPILED.json",
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
             "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",

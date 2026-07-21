@@ -16,6 +16,7 @@ pub mod graph;
 pub mod identity;
 pub mod logic;
 pub mod message_flow;
+pub mod message_import;
 pub mod native_observation;
 pub mod native_snapshot;
 pub mod orig_diff;

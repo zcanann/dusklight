@@ -138,12 +138,30 @@ Those operations depend on source-audited handlers and callers, not on the BMG
 graph alone. Adding them later does not alter the extracted graph or the
 profile's storage semantics.
 
+`MessageFlowResourceOverlaySet` supplies those later contracts without editing
+the generated base. Each overlay is pinned to both the import-profile digest
+and the exact resource digest. A cleanup edge must retain a caller-specific
+condition and established/contested evidence; an unconditional or unknown
+cleanup cannot enter the exact compiled set.
+
+`CompiledMessageFlowSet` compiles every selected resource and deterministically
+merges its aliases, readers, and transitions. Duplicate IDs or invalid
+cross-catalog references fail validation. `merge_into` validates a clone before
+replacing caller catalogs, so a conflict cannot leave a partial merge.
+
 ```text
 route-planner construct-message-flows \
   --bundle extracted-orig.json \
   --runtime-configuration runtime.json \
   --profile message-import-profile.json \
   --output message-programs.json
+
+route-planner compile-message-flows \
+  --bundle extracted-orig.json \
+  --runtime-configuration runtime.json \
+  --profile message-import-profile.json \
+  --overlays audited-resource-overlays.json \
+  --output compiled-message-programs.json
 ```
 
 ## Remaining import work
@@ -157,6 +175,5 @@ but production fact-pack integration still needs to:
 3. audit additional generic item, pending-operation, jump, event-request, and
    cut handoff handlers;
 4. emit central event and Ooccoo cleanup callers from their actual predicates;
-5. merge compiled aliases/mechanics into resolved fact packs with collision
-   diagnostics; and
+5. connect compiled sets to the normal sealed fact-pack production command; and
 6. compare semantic flow differences across builds and languages.

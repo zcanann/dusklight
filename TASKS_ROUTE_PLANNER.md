@@ -1826,10 +1826,15 @@ Deliverable: replayable state evidence that can validate transition rules.
         ambiguous groups, and unbound stores fail closed. The standalone
         `construct-message-flows` command emits a canonical program set. See
         `docs/route-planner/message-flow-programs.md`.
+  - [x] Compile selected program sets into deterministic exact-context fact and
+        mechanics catalogs. Resource/profile-digest-pinned overlays add audited
+        event and cleanup contracts; duplicate IDs and invalid references fail
+        transactionally instead of partially merging. The standalone
+        `compile-message-flows` command emits the compiled set.
   - [ ] Publish audited exact-build import profiles, attach stage/actor entry
         contracts, import additional decidable item/event/jump handlers and real
-        cleanup caller predicates, and merge the results into resolved fact
-        packs with conflict diagnostics.
+        cleanup caller predicates, and connect compiled sets to sealed fact-pack
+        production.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

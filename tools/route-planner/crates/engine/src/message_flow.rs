@@ -417,6 +417,7 @@ fn construct_selected_message_flow_programs(
             context: exact_context,
         }],
     };
+    let profile_token = short_token(profile.digest()?);
     let mut programs = Vec::with_capacity(records.len());
     let mut groups = BTreeSet::new();
     for record in records {
@@ -440,8 +441,8 @@ fn construct_selected_message_flow_programs(
         let program = MessageFlowProgram {
             schema: MESSAGE_FLOW_PROGRAM_SCHEMA.into(),
             id: format!(
-                "message-program.{}.{}.group-{}.{token}",
-                profile.id, locale_bundle, record.message_group
+                "message-program.{profile_token}.{}.group-{}.{token}",
+                locale_bundle, record.message_group
             ),
             label: format!("Message group {} ({})", record.message_group, locale_bundle),
             scope: scope.clone(),
@@ -2402,6 +2403,19 @@ mod tests {
             MessageFlowImportProfile::decode_canonical(&profile.canonical_bytes().unwrap())
                 .unwrap(),
             profile
+        );
+
+        let mut long_id_profile = profile.clone();
+        long_id_profile.id = "a".repeat(128);
+        assert!(
+            construct_selected_message_flow_programs(
+                long_id_profile.content_sha256,
+                &runtime,
+                &long_id_profile,
+                "us",
+                &[&group_zero],
+            )
+            .is_ok()
         );
     }
 
