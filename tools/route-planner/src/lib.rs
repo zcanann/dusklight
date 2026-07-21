@@ -4,6 +4,7 @@
 //! workbench, playback graph, or browser protocol. It consumes the planner
 //! engine's canonical artifacts and returns planner-specific reports.
 
+pub mod inspection;
 pub mod service;
 
 use dusklight_route_planner::PlannerContractError;

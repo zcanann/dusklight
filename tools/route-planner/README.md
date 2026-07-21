@@ -13,12 +13,14 @@ planner behavior.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns six operations:
+The planner CLI currently owns seven operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
+- `inspect-state` exposes every live and serialized component store alongside
+  exact-context friendly aliases and derived fact evaluations.
 - `project-graph` emits a planner-native causal graph with typed relations and
   collapsible predicate regions; it does not use TAS timeline graph schemas.
 - `state-from-snapshot` materializes an executable planner state.

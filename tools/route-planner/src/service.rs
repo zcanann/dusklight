@@ -1,5 +1,6 @@
 //! Typed request/response boundary for planner-owned editor and automation clients.
 
+use crate::inspection::{StateInspection, inspect_state};
 use crate::{RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal};
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
@@ -36,6 +37,13 @@ pub enum PlannerServiceRequest {
         request_id: String,
         catalog: Box<ComposedPlannerCatalog>,
     },
+    InspectState {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -52,12 +60,13 @@ impl PlannerServiceRequest {
             Self::ValidateRefinementPack { request_id, .. }
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
+            | Self::InspectState { request_id, .. }
             | Self::Solve { request_id, .. } => request_id,
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannerServiceResponse {
     pub schema: String,
@@ -65,14 +74,14 @@ pub struct PlannerServiceResponse {
     pub outcome: PlannerServiceOutcome,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlannerServiceOutcome {
     Ok { payload: Box<PlannerServicePayload> },
     Error { field: String, detail: String },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlannerServicePayload {
     RefinementPackValid {
@@ -86,6 +95,9 @@ pub enum PlannerServicePayload {
     Graph {
         graph: Box<PlannerGraph>,
         graph_sha256: Digest,
+    },
+    StateInspection {
+        inspection: Box<StateInspection>,
     },
     SolveReport {
         report: Box<SolveReport>,
@@ -126,6 +138,19 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 })
             })
         }
+        PlannerServiceRequest::InspectState {
+            state,
+            catalog,
+            equivalence_sets,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            inspect_state(&state, &catalog.facts, &equivalence_sets, evidence_mode).map(
+                |inspection| PlannerServicePayload::StateInspection {
+                    inspection: Box::new(inspection),
+                },
+            )
+        }),
         PlannerServiceRequest::Solve {
             state,
             catalog,

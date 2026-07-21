@@ -510,10 +510,17 @@ The current code shows:
   command emits this artifact from either base or composed catalogs.
 - Planner service schema v1 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement
-  validation, catalog composition, graph projection, and solve requests; every
-  response retains its request ID and returns either a typed payload or a
-  structured field/detail error. It imports no Huntctl CLI, TAS timeline,
-  WorkbenchGraph, playback, or browser-state types.
+  validation, catalog composition, graph projection, state inspection, and solve
+  requests; every response retains its request ID and returns either a typed
+  payload or a structured field/detail error. It imports no Huntctl CLI, TAS
+  timeline, WorkbenchGraph, playback, or browser-state types.
+- State-inspection schema v1 preserves the full execution-state document—live
+  components, serialized owner stores, bindings, lifetimes, provenance, gates,
+  cleanup, runtime-file identity, physical slots, location, and player state—
+  while evaluating every friendly alias and derived fact under the selected
+  exact context and evidence policy. `route-planner inspect-state` and the
+  service protocol expose the same projection, so raw inventory/flag bytes and
+  their semantic names remain inspectable together.
 
 Primary source anchors:
 
@@ -1669,6 +1676,10 @@ Deliverable: every route and failure is inspectable rather than magical.
       is demonstrated; visual consistency does not depend on shared graph models.
 - [ ] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
 - [ ] Add inventory/flag/component state inspector with before/after diff.
+  - [x] Add a planner-owned headless state-inspection projection for live and
+        serialized stores, raw/structured payloads, bindings, provenance, and
+        exact-context friendly/derived fact evaluations.
+  - [ ] Add the visual inspector and before/after route-step diff interaction.
 - [ ] Add raw flag catalogue search and friendly aliases.
 - [ ] Add obstruction and requirement inspectors.
 - [ ] Add theorycraft component-transfer and bypass editor.
