@@ -68,6 +68,9 @@ object-specific paragraphs, including actor resource-ID requests, without
 claiming they executed. Remaining Zelda-specific evidence work is to identify
 the actual actor-corruption failure branch and last completed operation, and
 trace any other return/restart writer and affected bit.
-The wrapper topology is deliberately not compiled to executable transitions:
-its two SCLS destinations are authored completion choices, while the behavior
-of a failed resource load is still unresolved.
+The wrapper topology alone is deliberately not executable. The separate exact
+PACKAGE and outer-event resolvers now conditionally compile the all-STB-missing
+path into inspectable PLAY and WAIT steps, followed by normal, skip, and
+scene-change-suppressed branches. No transition produces the missing-STB field
+from actor corruption, so established search still cannot enter this path until
+that producer and the observed runtime flag values are evidenced.

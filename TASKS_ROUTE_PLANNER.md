@@ -2612,8 +2612,8 @@ sequence.
         rejection clears the demo name, negative sync continues room init, STB
         lookup falls through demo/room/stage archives, parse returns before the
         demo-mode write, the exact PLAY cut has no EventFlag write, and mode zero
-        completes PACKAGE. Keep the corruption producer, final outer exit, and
-        other return-place writers unresolved.
+        completes PACKAGE. Keep the corruption producer, actual runtime branch
+        selection, and other return-place writers unresolved.
   - [x] Resolve the exact outer event-manager branch table without selecting a
         branch for the corruption path: prove PACKAGE PLAY -> zero-timer WAIT ->
         event finish flag 5, then emit exact-context candidate transitions where

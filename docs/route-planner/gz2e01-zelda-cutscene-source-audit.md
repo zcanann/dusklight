@@ -97,10 +97,11 @@ ordinary indexed SCLS scene change.
 
 The audited source file SHA-256 values are:
 
-- `d_s_room.cpp`: `a4c15dc8af5b3a3cef220a4ad19152cf0980e8ab15b339b37fd58fb54d567a67`
-- `d_event_manager.cpp`: `3e1a71f724fcb5e401c5fc0806652bb331ac82540206aab9e60bbe63f34a0fab`
-- `d_event_data.cpp`: `2fd7161539fd5d14d7db85e2231ab9313df844ac51c6f3967c2e2d7fc3b7d1fb`
-- `d_event.cpp`: `bd93611e93c57191dce2eecfa205fe08a19e6105ffaa09557bb40f87b85894fc`
+- `d_s_room.cpp`: `15569f9038bb7fb9b956b82b205321c7bebd98ac947c4299739c720b94fe75b4`
+- `d_event_manager.cpp`: `bbe434e385c99add82cc4bd0e57923244ce55835535fbd3392e3c086d1ec2c0d`
+- `d_event_data.cpp`: `d9cf06093454fc60610bb1b550900feab4e8a0f13d485efcfe2961a8145cd6cc`
+- `d_event.cpp`: `663b9f58268a1407827b7de13fc6add512c4eb6b71e1c3dd694df5110dc45eb3`
+- `d_stage.h`: `f83222f27a4a93066bb0df7c4cee6861404c99f33a071d1071e8a7711ee799d5`
 
 ## Conservative boundary
 

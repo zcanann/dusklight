@@ -33,8 +33,9 @@ For the exact GZ2E01 executable:
   and
 - PACKAGE completes PLAY when demo mode is zero.
 
-Once all parallel staff paths finish, the outer event manager has three
-separate outcomes for this REVT record:
+Once the authored event finish condition is satisfied, the outer event manager
+has three separate outcomes for this REVT record. The exact event's finish list
+is `[5, -1, -1]`; it does not require every parallel staff path to finish:
 
 - with scene-change suppression clear and skip inactive, it selects SCLS 1
   (`F_SP116`, Castle Town);
