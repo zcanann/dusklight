@@ -173,7 +173,10 @@ The planner CLI currently owns forty operations:
   evidence policy, equivalence sets, unknown actions, execution failures, and
   any reached-but-unevaluated frontier remain explicit. Upper-bound mode relaxes
   physical obligations and obstructions only; unknown guards, readers,
-  requirements, and disallowed evidence do not become executable.
+  requirements, and disallowed evidence do not become executable. Authorized
+  edges retain outstanding and state-evaluated-unknown obligation IDs, while a
+  separate candidate marker distinguishes explicit unknown requirements,
+  unresolved obligation definitions, and obligations that evaluated unknown.
 - `project-feasibility-diff` evaluates each candidate at one exact executable
   state and emits only edges whose permissive upper-bound and modeled results
   differ, including obstruction, obligation, and microtrace proof details.

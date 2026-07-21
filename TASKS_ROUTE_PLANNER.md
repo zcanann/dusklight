@@ -2099,7 +2099,13 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [x] Classify hard-guard failure, unresolved requirements, and outstanding
         physical obligations separately; modeled feasibility cannot treat an
         outstanding obligation as executable.
-- [ ] Mark candidates whose activation physics remain unknown.
+- [x] Mark candidates whose activation physics remain unknown.
+  - Authorization edges now retain outstanding and evaluated-unknown physical
+    obligation IDs. The graph also emits sorted candidate-level markers that
+    distinguish explicit unknown activation requirements, unresolved obligation
+    definitions, and obligations that evaluated unknown at reached states.
+    Tests cover all three causes while proving that permissive traversal does
+    not erase them or turn an explicit unknown requirement into an edge.
 
 Deliverable: the intentionally permissive logic graph with honest uncertainty.
 

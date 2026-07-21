@@ -5,7 +5,7 @@ use crate::artifact::Digest;
 use crate::evaluation::EvidencePolicy;
 use crate::logic::{FactCatalog, TruthStatus};
 use crate::solver::{SearchActionKind, SearchResult, SearchStep, SolverOptions};
-use crate::transition::MechanicsCatalog;
+use crate::transition::{MechanicsCatalog, ObligationDetail};
 use crate::{canonical_json, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -53,7 +53,21 @@ pub struct AuthorizationEdge {
     pub action_id: String,
     pub selected_resolver_ids: Vec<String>,
     pub selected_technique_ids: Vec<String>,
+    pub outstanding_obligation_ids: Vec<String>,
+    pub unknown_obligation_ids: Vec<String>,
     pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnknownActivationCandidate {
+    pub transition_id: String,
+    /// Requirements explicitly left unknown by the transition contract.
+    pub unknown_requirement_ids: Vec<String>,
+    /// Referenced obligations whose catalog definition is still unresolved.
+    pub unresolved_obligation_ids: Vec<String>,
+    /// Obligations that evaluated as unknown at one or more reached states.
+    pub evaluated_unknown_obligation_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -72,6 +86,7 @@ pub struct AuthorizationGraph {
     pub edges: Vec<AuthorizationEdge>,
     pub evaluated_states: usize,
     pub traversal_complete: bool,
+    pub unknown_activation_candidates: Vec<UnknownActivationCandidate>,
     pub unknown_transition_ids: Vec<String>,
     pub unknown_writer_ids: Vec<String>,
     pub execution_error_ids: Vec<String>,
@@ -90,6 +105,8 @@ impl AuthorizationGraph {
         options: SolverOptions,
         search: &SearchResult,
     ) -> Result<Self, PlannerContractError> {
+        let unknown_activation_candidates =
+            collect_unknown_activation_candidates(mechanics, &recorder, search);
         let mut nodes = recorder.nodes.into_values().collect::<Vec<_>>();
         nodes.sort_by_key(|node| node.state_sha256);
         let mut edges = recorder
@@ -114,6 +131,7 @@ impl AuthorizationGraph {
             traversal_complete: !search.hit_search_limit,
             nodes,
             edges,
+            unknown_activation_candidates,
             unknown_transition_ids: search.unknown_transition_ids.clone(),
             unknown_writer_ids: search.unknown_writer_ids.clone(),
             execution_error_ids: search.execution_error_ids.clone(),
@@ -239,6 +257,11 @@ impl AuthorizationGraph {
             }
             validate_sorted_ids("edges.selected_resolver_ids", &edge.selected_resolver_ids)?;
             validate_sorted_ids("edges.selected_technique_ids", &edge.selected_technique_ids)?;
+            validate_sorted_ids(
+                "edges.outstanding_obligation_ids",
+                &edge.outstanding_obligation_ids,
+            )?;
+            validate_sorted_ids("edges.unknown_obligation_ids", &edge.unknown_obligation_ids)?;
             let key = authorization_edge_key(edge);
             if previous_edge
                 .as_ref()
@@ -250,6 +273,43 @@ impl AuthorizationGraph {
                 ));
             }
             previous_edge = Some(key);
+        }
+        let mut previous_candidate = None;
+        for candidate in &self.unknown_activation_candidates {
+            validate_stable_id(
+                "unknown_activation_candidates.transition_id",
+                &candidate.transition_id,
+            )?;
+            if previous_candidate
+                .is_some_and(|previous: &str| previous >= candidate.transition_id.as_str())
+            {
+                return Err(PlannerContractError::new(
+                    "unknown_activation_candidates",
+                    "must be unique and sorted by transition ID",
+                ));
+            }
+            validate_sorted_ids(
+                "unknown_activation_candidates.unknown_requirement_ids",
+                &candidate.unknown_requirement_ids,
+            )?;
+            validate_sorted_ids(
+                "unknown_activation_candidates.unresolved_obligation_ids",
+                &candidate.unresolved_obligation_ids,
+            )?;
+            validate_sorted_ids(
+                "unknown_activation_candidates.evaluated_unknown_obligation_ids",
+                &candidate.evaluated_unknown_obligation_ids,
+            )?;
+            if candidate.unknown_requirement_ids.is_empty()
+                && candidate.unresolved_obligation_ids.is_empty()
+                && candidate.evaluated_unknown_obligation_ids.is_empty()
+            {
+                return Err(PlannerContractError::new(
+                    "unknown_activation_candidates",
+                    "must identify at least one unknown activation cause",
+                ));
+            }
+            previous_candidate = Some(candidate.transition_id.as_str());
         }
         validate_sorted_ids("unknown_transition_ids", &self.unknown_transition_ids)?;
         validate_sorted_ids("unknown_writer_ids", &self.unknown_writer_ids)?;
@@ -360,6 +420,8 @@ impl AuthorizationRecorder {
             action_id: step.action_id.clone(),
             selected_resolver_ids: step.selected_resolver_ids.clone(),
             selected_technique_ids: step.selected_technique_ids.clone(),
+            outstanding_obligation_ids: step.outstanding_obligation_ids.clone(),
+            unknown_obligation_ids: step.unknown_obligation_ids.clone(),
             weakest_evidence: step.weakest_evidence,
         });
     }
@@ -373,6 +435,8 @@ struct AuthorizationEdgeKey {
     action_id: String,
     selected_resolver_ids: Vec<String>,
     selected_technique_ids: Vec<String>,
+    outstanding_obligation_ids: Vec<String>,
+    unknown_obligation_ids: Vec<String>,
     weakest_evidence: Option<TruthStatus>,
 }
 
@@ -385,6 +449,8 @@ impl From<AuthorizationEdgeKey> for AuthorizationEdge {
             action_id: edge.action_id,
             selected_resolver_ids: edge.selected_resolver_ids,
             selected_technique_ids: edge.selected_technique_ids,
+            outstanding_obligation_ids: edge.outstanding_obligation_ids,
+            unknown_obligation_ids: edge.unknown_obligation_ids,
             weakest_evidence: edge.weakest_evidence,
         }
     }
@@ -398,8 +464,87 @@ fn authorization_edge_key(edge: &AuthorizationEdge) -> AuthorizationEdgeKey {
         action_id: edge.action_id.clone(),
         selected_resolver_ids: edge.selected_resolver_ids.clone(),
         selected_technique_ids: edge.selected_technique_ids.clone(),
+        outstanding_obligation_ids: edge.outstanding_obligation_ids.clone(),
+        unknown_obligation_ids: edge.unknown_obligation_ids.clone(),
         weakest_evidence: edge.weakest_evidence,
     }
+}
+
+#[derive(Default)]
+struct UnknownActivationAccumulator {
+    unknown_requirement_ids: BTreeSet<String>,
+    unresolved_obligation_ids: BTreeSet<String>,
+    evaluated_unknown_obligation_ids: BTreeSet<String>,
+}
+
+fn collect_unknown_activation_candidates(
+    mechanics: &MechanicsCatalog,
+    recorder: &AuthorizationRecorder,
+    search: &SearchResult,
+) -> Vec<UnknownActivationCandidate> {
+    let unresolved_obligations = mechanics
+        .obligations
+        .iter()
+        .filter_map(|obligation| {
+            matches!(obligation.detail, ObligationDetail::Unresolved { .. })
+                .then_some(obligation.id.as_str())
+        })
+        .collect::<BTreeSet<_>>();
+    let mut candidates = BTreeMap::<String, UnknownActivationAccumulator>::new();
+    for transition in &mechanics.transitions {
+        let accumulator = candidates.entry(transition.id.clone()).or_default();
+        accumulator.unknown_requirement_ids.extend(
+            transition
+                .activation
+                .unknown_requirements
+                .iter()
+                .map(|requirement| requirement.id.clone()),
+        );
+        accumulator.unresolved_obligation_ids.extend(
+            transition
+                .activation
+                .physical_obligation_ids
+                .iter()
+                .filter(|id| unresolved_obligations.contains(id.as_str()))
+                .cloned(),
+        );
+    }
+    for edge in &recorder.edges {
+        if edge.action_kind == SearchActionKind::Transition {
+            candidates
+                .entry(edge.action_id.clone())
+                .or_default()
+                .evaluated_unknown_obligation_ids
+                .extend(edge.unknown_obligation_ids.iter().cloned());
+        }
+    }
+    for witness in &search.blocked_transition_witnesses {
+        candidates
+            .entry(witness.transition_id.clone())
+            .or_default()
+            .evaluated_unknown_obligation_ids
+            .extend(witness.unknown_obligation_ids.iter().cloned());
+    }
+    candidates
+        .into_iter()
+        .filter_map(|(transition_id, accumulator)| {
+            (!accumulator.unknown_requirement_ids.is_empty()
+                || !accumulator.unresolved_obligation_ids.is_empty()
+                || !accumulator.evaluated_unknown_obligation_ids.is_empty())
+            .then(|| UnknownActivationCandidate {
+                transition_id,
+                unknown_requirement_ids: accumulator.unknown_requirement_ids.into_iter().collect(),
+                unresolved_obligation_ids: accumulator
+                    .unresolved_obligation_ids
+                    .into_iter()
+                    .collect(),
+                evaluated_unknown_obligation_ids: accumulator
+                    .evaluated_unknown_obligation_ids
+                    .into_iter()
+                    .collect(),
+            })
+        })
+        .collect()
 }
 
 fn validate_sorted_ids(field: &str, ids: &[String]) -> Result<(), PlannerContractError> {

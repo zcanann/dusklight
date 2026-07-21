@@ -2609,7 +2609,7 @@ mod tests {
                 "transition.b-to-c",
                 "STAGE_B",
                 "STAGE_C",
-                Vec::new(),
+                vec!["obligation.state-dependent".into()],
             ),
             transition(
                 &snapshot,
@@ -2619,16 +2619,39 @@ mod tests {
                 Vec::new(),
             ),
         ]);
-        mechanics.obligations = vec![FeasibilityObligation {
-            id: "obligation.unmodeled".into(),
-            label: "Unmodeled physical activation".into(),
-            scope: scope(&snapshot),
-            obligation_kind: ObligationKind::Geometry,
-            detail: ObligationDetail::Unresolved {
-                research_question: "geometry has not been imported".into(),
+        mechanics.obligations = vec![
+            FeasibilityObligation {
+                id: "obligation.state-dependent".into(),
+                label: "State-dependent physical activation".into(),
+                scope: scope(&snapshot),
+                obligation_kind: ObligationKind::Geometry,
+                detail: ObligationDetail::Predicate {
+                    predicate: PredicateExpression::Compare {
+                        left: ValueReference::RawBits {
+                            component_id: "component.missing-physics".into(),
+                            byte_offset: 0,
+                            byte_width: 1,
+                            mask: 1,
+                        },
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Unsigned(1),
+                        },
+                    },
+                },
+                evidence: evidence(TruthStatus::Established),
             },
-            evidence: evidence(TruthStatus::Established),
-        }];
+            FeasibilityObligation {
+                id: "obligation.unmodeled".into(),
+                label: "Unmodeled physical activation".into(),
+                scope: scope(&snapshot),
+                obligation_kind: ObligationKind::Geometry,
+                detail: ObligationDetail::Unresolved {
+                    research_question: "geometry has not been imported".into(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
         mechanics.transitions[2].activation.unknown_requirements = vec![UnknownRequirement {
             id: "requirement.activation-physics".into(),
             description: "activation physics are unknown".into(),
@@ -2651,6 +2674,72 @@ mod tests {
         assert_eq!(graph.nodes.len(), 3);
         assert_eq!(graph.evaluated_states, 3);
         assert_eq!(graph.edges.len(), 2);
+        assert_eq!(
+            graph
+                .edges
+                .iter()
+                .find(|edge| edge.action_id == "transition.b-to-c")
+                .unwrap()
+                .unknown_obligation_ids,
+            vec!["obligation.state-dependent"],
+            "{:#?}",
+            graph.edges
+        );
+        assert_eq!(
+            graph.unknown_activation_candidates.len(),
+            3,
+            "{:#?}",
+            graph.unknown_activation_candidates
+        );
+        let unresolved = graph
+            .unknown_activation_candidates
+            .iter()
+            .find(|candidate| candidate.transition_id == "transition.a-to-b")
+            .unwrap();
+        assert!(unresolved.unknown_requirement_ids.is_empty());
+        assert_eq!(
+            unresolved.unresolved_obligation_ids,
+            vec!["obligation.unmodeled"]
+        );
+        assert_eq!(
+            unresolved.evaluated_unknown_obligation_ids,
+            vec!["obligation.unmodeled"]
+        );
+        let state_dependent = graph
+            .unknown_activation_candidates
+            .iter()
+            .find(|candidate| candidate.transition_id == "transition.b-to-c")
+            .unwrap();
+        assert!(state_dependent.unknown_requirement_ids.is_empty());
+        assert!(state_dependent.unresolved_obligation_ids.is_empty());
+        assert_eq!(
+            state_dependent.evaluated_unknown_obligation_ids,
+            vec!["obligation.state-dependent"]
+        );
+        let explicit_unknown = graph
+            .unknown_activation_candidates
+            .iter()
+            .find(|candidate| candidate.transition_id == "transition.c-to-d-unknown")
+            .unwrap();
+        assert_eq!(
+            explicit_unknown.unknown_requirement_ids,
+            vec!["requirement.activation-physics"]
+        );
+        assert!(explicit_unknown.unresolved_obligation_ids.is_empty());
+        assert!(explicit_unknown.evaluated_unknown_obligation_ids.is_empty());
+        let permissive_edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.action_id == "transition.a-to-b")
+            .unwrap();
+        assert_eq!(
+            permissive_edge.outstanding_obligation_ids,
+            vec!["obligation.unmodeled"]
+        );
+        assert_eq!(
+            permissive_edge.unknown_obligation_ids,
+            vec!["obligation.unmodeled"]
+        );
         assert_eq!(
             graph.unknown_transition_ids,
             vec!["transition.c-to-d-unknown"]

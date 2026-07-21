@@ -1585,6 +1585,7 @@ fn project_authorization_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
             "evaluated_states": graph.evaluated_states,
             "edges": graph.edges.len(),
             "traversal_complete": graph.traversal_complete,
+            "unknown_activation_candidates": graph.unknown_activation_candidates.len(),
             "unknown_transitions": graph.unknown_transition_ids.len(),
             "unknown_writers": graph.unknown_writer_ids.len(),
             "execution_errors": graph.execution_error_ids.len(),
@@ -2175,6 +2176,7 @@ mod tests {
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.evaluated_states, 1);
         assert!(graph.edges.is_empty());
+        assert!(graph.unknown_activation_candidates.is_empty());
         assert_eq!(graph.refinement_stack_sha256, None);
         fs::remove_dir_all(root).unwrap();
     }
