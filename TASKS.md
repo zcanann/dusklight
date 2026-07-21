@@ -833,10 +833,23 @@ PAD and gameplay sequence as ordinary playback.
 - [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
   goal-relative features. Generic physics relationships are observations, not
   route rewards.
-- [ ] Always retain exact raw PAD as the ground-truth action.
+- [x] Always retain exact raw PAD as the ground-truth action. Native episode
+  shards retain both the chosen and actually consumed PAD at every decision,
+  validate the consumed value against the post-simulation observation and the
+  following boundary, and the observation-parity proof binds those samples to
+  cold playback. The factorized model action contract likewise expands to the
+  exact connected/error-free PAD bytes for every covered frame; its float
+  features are explicitly non-authoritative.
 - [ ] Replace the 16-heading/full-magnitude learned catalog with a factorized
   hybrid action surface covering stick direction and magnitude, sub-stick,
   button edges/holds and duration at frame-precise resolution.
+  - [x] Add a lossless factorized PAD action/feature schema covering all signed
+    main- and camera-stick bytes, four analog channels, sixteen independent
+    button bits and bounded duration. It derives press/release edges relative
+    to the preceding held state, exposes Cartesian and polar stick features,
+    rejects controller transport/error state, and compresses/re-expands raw
+    frame sequences exactly. Policy-output parameterization and native online
+    execution through this schema remain open.
 - [ ] Let a policy invoke bounded stateful tactics through the same native
   episode boundary. Tactics may query read-only world state, but their exact
   consumed PAD and every intermediate transition must be recorded.
