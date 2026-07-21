@@ -898,10 +898,15 @@ human-authored successful setup.
       masks, while Rust preserves v2-v23 `not_sampled` missingness and rejects a
       corrupted phase after recompression. Corpus inspection v15 reports the
       channel and temporal coverage detects room/load changes without assigning
-      a destination. Cross-language fixture
-      `3e599f74...b11f7f` and native/evidence fail-closed tests pass. A dedicated
-      room-set learner projection, live temporal variation, door/warp queues
-      and RNG identity remain open, so the parent remains incomplete.
+      a destination. Native room-load view v1 binds the exact shard and exposes
+      the complete table as 64 canonical rows per present boundary, with the
+      outer channel mask and optional scene phase kept outside fabricated
+      values; `learn room-load-view` stores it under a distinct content type.
+      The cross-language fixture `3e599f74...b11f7f` produced four present
+      boundaries, 256 rows and sealed view `fa708aa3...46a26d` / blob
+      `c0908f65...c461`. Native, evidence, view, CLI, legacy-missingness and
+      resealed-tamper tests pass. Live temporal variation, door/warp queues and
+      RNG identity remain open, so the parent remains incomplete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

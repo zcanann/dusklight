@@ -30,6 +30,7 @@ pub enum ContentKind {
     WorldSurfaceGraph,
     StageBootCatalog,
     NativeActorView,
+    NativeRoomLoadView,
     NativeGeometryView,
     NativeSurfaceGraphView,
     NativeCollisionHistory,
@@ -57,6 +58,7 @@ impl ContentKind {
             Self::WorldSurfaceGraph => "application/vnd.dusklight.world-surface-graph+json",
             Self::StageBootCatalog => "application/vnd.dusklight.stage-boot-catalog+json",
             Self::NativeActorView => "application/vnd.dusklight.native-actor-view+json",
+            Self::NativeRoomLoadView => "application/vnd.dusklight.native-room-load-view+json",
             Self::NativeGeometryView => "application/vnd.dusklight.native-geometry-view+json",
             Self::NativeSurfaceGraphView => {
                 "application/vnd.dusklight.native-surface-graph-view+json"
@@ -530,6 +532,7 @@ mod tests {
             ContentKind::WorldSurfaceGraph,
             ContentKind::StageBootCatalog,
             ContentKind::NativeActorView,
+            ContentKind::NativeRoomLoadView,
             ContentKind::NativeGeometryView,
             ContentKind::NativeSurfaceGraphView,
             ContentKind::NativeCollisionHistory,

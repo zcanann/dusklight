@@ -47,6 +47,9 @@ use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
     GeometryObservationStatus, NativeEpisodeGeometryView, NativeGeometryViewConfiguration,
 };
+use huntctl::native_room_load_view::{
+    NativeEpisodeRoomLoadView, RoomLoadSetStatus, RoomSceneSetStatus,
+};
 use huntctl::native_surface_graph_view::{
     NativeEpisodeSurfaceGraphView, NativeSurfaceGraphViewConfiguration,
     SurfaceGraphObservationStatus,
@@ -1347,6 +1350,61 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "truncated_neighborhoods": view.observations.iter()
                         .filter_map(|observation| observation.neighborhood.as_ref())
                         .filter(|report| report.truncated).count(),
+                }))?
+            );
+            Ok(())
+        }
+        Some("room-load-view") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("room-load view output already exists: {}", output.display()).into(),
+                );
+            }
+            let shard = NativeEpisodeShard::read(&input)?;
+            let view = NativeEpisodeRoomLoadView::build(&shard)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeRoomLoadView)?;
+            let present = view
+                .observations
+                .iter()
+                .filter(|observation| observation.status == RoomLoadSetStatus::Present)
+                .count();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "observations": view.observations.len(),
+                    "present": present,
+                    "room_rows": view.observations.iter()
+                        .filter_map(|observation| observation.load.as_ref())
+                        .map(|load| load.rooms.len()).sum::<usize>(),
+                    "active_room_rows": view.observations.iter()
+                        .filter_map(|observation| observation.load.as_ref())
+                        .flat_map(|load| &load.rooms)
+                        .filter(|room| room.status_flags != 0).count(),
+                    "live_room_scenes": view.observations.iter()
+                        .filter_map(|observation| observation.load.as_ref())
+                        .flat_map(|load| &load.rooms)
+                        .filter(|room| room.scene_status == RoomSceneSetStatus::Present).count(),
                 }))?
             );
             Ok(())
