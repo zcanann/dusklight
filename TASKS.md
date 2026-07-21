@@ -104,6 +104,15 @@ the same goal without demonstration-relative features.
   three-circle solver with 50-unit radii, distinct wall heights, realized
   centers, line/cylinder geometry, water mode two and offsets 60/40/10000; its
   sealed single-case report has zero rejections (`63b32d58...c004fe04`).
+- Learning-observation v19 adds read-only process-manager pressure at every
+  boundary: the complete active actor count plus pending creation and deletion
+  queue depths. No queue node, pointer, allocator address, capacity guess or
+  host state crosses the automation boundary. The native writer requires the
+  active count to equal the complete actor population; the Rust reader enforces
+  the same invariant, retains v2-v18 as explicitly not sampled and reports
+  temporal availability/change counts. The checked cross-language fixture
+  carries 257 actors and nonzero synthetic queue depths, and both sides reject
+  detached counts. Live cross-map variation remains unclaimed.
 - Native actor-view v5 now preserves those roles as typed edges to the complete
   actor set, and actor-feature view v2 exposes an independently selectable
   player-relationship family as per-actor role flags. Present-but-empty is
@@ -418,6 +427,15 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     mixed-outcome shard retained nine historically missing field families. No
     available native shard crossed a context boundary, so real loading and
     cross-map evidence remain open; synthetic tests only prove attribution.
+  - [x] Capture process lifecycle pressure without exposing process-manager
+    internals. Observation v19 copies only complete active-actor count and the
+    pending create/delete queue depths through the automation-gated observer,
+    at the same pre/post phases as the rest of the episode. Native and
+    Rust validation bind the active count to the complete actor set, require
+    zero payload for unavailable state and preserve legacy missingness. Corpus
+    inspection and global temporal coverage report status and changes without
+    retaining desired values or assigning reward. Actor-slot capacity,
+    resource-load outcomes, allocation failure and live variation remain open.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
@@ -616,6 +634,9 @@ human-authored successful setup.
   - [x] active gameplay actors as a complete, deterministically ordered
     variable-length set with raw semantic identity fields, transform, velocity
     and type/profile metadata;
+  - [x] read-only process lifecycle pressure as a typed optional global
+    component: active actor population plus pending create/delete queue depths,
+    with exact phase, legacy missingness and no pointer or capacity inference;
   - [x] derive Link-, camera-, and structural parent-relative actor features
     without changing the canonical raw actor set. `learn actor-view` binds the
     exact native shard and pointer-free profile catalog, retains complete actor
@@ -1075,12 +1096,17 @@ and geometry set sizes without schema changes.
     Every row references the complete pre-input and post-simulation states,
     retains exact consumed PAD, and derives player-motion, contact, complete
     actor-lifecycle, action-phase, event/loading and 1/2/4/8-tick terminal
-    targets without flattening the source actor/collider sets. Train,
+    targets without flattening the source actor/collider sets. Dataset v2
+    explicitly masks motion/action targets when player or context identity
+    changes, masks Link-contact labels for non-Link players, and treats a
+    stage/room/layer boundary as loading evidence rather than false mass actor
+    lifecycle or zero-motion supervision. The multitask materializer carries
+    those masks into its target heads. Train,
     validation and test assignment is deterministic per complete episode, not
     per frame. Training the shared encoder and reporting held-out auxiliary
     performance remain open before the parent item can close. `learn
     inspect-auxiliary` reports per-split support before training: the first real
-    Ordon coverage dataset retains 185/42/30 contact changes and 98/21/15
+    prior v1 Ordon coverage dataset retains 185/42/30 contact changes and 98/21/15
     procedure changes across train/validation/test, but zero terminal successes
     in every split. It can teach common dynamics and rare-contact prediction;
     it cannot train or evaluate goal reachability by itself.

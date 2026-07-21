@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_AUXILIARY_DATASET_SCHEMA_V1: &str = "dusklight-native-auxiliary-dataset/v1";
-pub const NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V1: &str = "dusklight-native-auxiliary-example/v1";
+pub const NATIVE_AUXILIARY_DATASET_SCHEMA_V2: &str = "dusklight-native-auxiliary-dataset/v2";
+pub const NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V2: &str = "dusklight-native-auxiliary-example/v2";
 const MAX_AUXILIARY_EXAMPLES: usize = 16_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -142,13 +142,23 @@ pub struct ShortHorizonReachabilityTarget {
     pub within_8_ticks: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuxiliaryComparability {
+    pub same_context: bool,
+    pub same_player: bool,
+    pub link_contacts: bool,
+    pub actor_lifecycle: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeAuxiliaryTargets {
+    pub comparability: AuxiliaryComparability,
     pub inverse_action: AuxiliaryPadTarget,
     pub player_dynamics: Option<PlayerDynamicsTarget>,
     pub contacts: Option<ContactTransitionTarget>,
-    pub actor_lifecycle: ActorLifecycleTarget,
+    pub actor_lifecycle: Option<ActorLifecycleTarget>,
     pub action_phase: Option<ActionPhaseTarget>,
     pub event_loading: EventLoadingTarget,
     pub reachability: ShortHorizonReachabilityTarget,
@@ -185,7 +195,7 @@ impl NativeAuxiliaryExample {
         let step_index_u32 = u32::try_from(step_index)
             .map_err(|_| NativeAuxiliaryDatasetError::new("auxiliary step index overflowed"))?;
         let mut example = Self {
-            schema: NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V1.into(),
+            schema: NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V2.into(),
             example_sha256: Digest::ZERO,
             replay_entry_sha256: entry.entry_sha256,
             shard_sha256: entry.shard_sha256,
@@ -204,7 +214,7 @@ impl NativeAuxiliaryExample {
     }
 
     pub fn validate(&self) -> Result<(), NativeAuxiliaryDatasetError> {
-        if self.schema != NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V1
+        if self.schema != NATIVE_AUXILIARY_EXAMPLE_SCHEMA_V2
             || self.example_sha256 == Digest::ZERO
             || self.replay_entry_sha256 == Digest::ZERO
             || self.shard_sha256 == Digest::ZERO
@@ -227,7 +237,7 @@ impl NativeAuxiliaryExample {
 
     fn digest(&self) -> Result<Digest, NativeAuxiliaryDatasetError> {
         canonical_digest(
-            b"dusklight.native-auxiliary-example/v1\0",
+            b"dusklight.native-auxiliary-example/v2\0",
             &(
                 &self.schema,
                 self.replay_entry_sha256,
@@ -354,7 +364,7 @@ impl NativeAuxiliaryDataset {
         examples.sort_by_key(|example| example.example_sha256);
         let report = report(&examples)?;
         let mut dataset = Self {
-            schema: NATIVE_AUXILIARY_DATASET_SCHEMA_V1.into(),
+            schema: NATIVE_AUXILIARY_DATASET_SCHEMA_V2.into(),
             replay_corpus_sha256: corpus.corpus_sha256,
             observation_schema: corpus.observation_schema.clone(),
             action_schema: corpus.action_schema.clone(),
@@ -370,7 +380,7 @@ impl NativeAuxiliaryDataset {
 
     pub fn validate(&self) -> Result<(), NativeAuxiliaryDatasetError> {
         self.split_config.validate()?;
-        if self.schema != NATIVE_AUXILIARY_DATASET_SCHEMA_V1
+        if self.schema != NATIVE_AUXILIARY_DATASET_SCHEMA_V2
             || self.replay_corpus_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || self.action_schema.is_empty()
@@ -498,7 +508,7 @@ impl NativeAuxiliaryDataset {
 
     fn digest(&self) -> Result<Digest, NativeAuxiliaryDatasetError> {
         canonical_digest(
-            b"dusklight.native-auxiliary-dataset/v1\0",
+            b"dusklight.native-auxiliary-dataset/v2\0",
             &(
                 &self.schema,
                 self.replay_corpus_sha256,
@@ -521,14 +531,14 @@ fn checked_lifecycle_count(
             example
                 .targets
                 .actor_lifecycle
-                .appeared_runtime_generations
-                .len()
+                .as_ref()
+                .map_or(0, |target| target.appeared_runtime_generations.len())
         } else {
             example
                 .targets
                 .actor_lifecycle
-                .disappeared_runtime_generations
-                .len()
+                .as_ref()
+                .map_or(0, |target| target.disappeared_runtime_generations.len())
         };
         total
             .checked_add(count as u64)
@@ -554,35 +564,46 @@ fn targets(
 ) -> Result<NativeAuxiliaryTargets, NativeAuxiliaryDatasetError> {
     let before = &step.pre_input;
     let after = &step.post_simulation;
-    let player_dynamics = (before.player_present
+    let same_context =
+        before.stage == after.stage && before.room == after.room && before.layer == after.layer;
+    let same_player = same_context
+        && before.player_present
         && after.player_present
-        && before.player_process_id == after.player_process_id)
-        .then(|| PlayerDynamicsTarget {
-            position_delta: subtract3(after.player_position, before.player_position),
-            velocity_delta: subtract3(after.player_velocity, before.player_velocity),
-            forward_speed_delta: after.player_forward_speed - before.player_forward_speed,
-        });
-    let contacts =
-        (before.player_present && after.player_present).then_some(ContactTransitionTarget {
-            activated: after.player_contacts & !before.player_contacts,
-            cleared: before.player_contacts & !after.player_contacts,
-            before: before.player_contacts,
-            after: after.player_contacts,
-        });
-    let action_phase =
-        (before.player_present && after.player_present).then_some(ActionPhaseTarget {
-            procedure_before: before.player_procedure,
-            procedure_after: after.player_procedure,
-            mode_flags_activated: after.player_mode_flags & !before.player_mode_flags,
-            mode_flags_cleared: before.player_mode_flags & !after.player_mode_flags,
-            do_status_before: before.player_do_status,
-            do_status_after: after.player_do_status,
-        });
+        && before.player_process_id == after.player_process_id
+        && before.player_actor_name == after.player_actor_name;
+    let link_contacts = same_player && before.player_is_link && after.player_is_link;
+    let player_dynamics = same_player.then(|| PlayerDynamicsTarget {
+        position_delta: subtract3(after.player_position, before.player_position),
+        velocity_delta: subtract3(after.player_velocity, before.player_velocity),
+        forward_speed_delta: after.player_forward_speed - before.player_forward_speed,
+    });
+    let contacts = link_contacts.then_some(ContactTransitionTarget {
+        activated: after.player_contacts & !before.player_contacts,
+        cleared: before.player_contacts & !after.player_contacts,
+        before: before.player_contacts,
+        after: after.player_contacts,
+    });
+    let action_phase = same_player.then_some(ActionPhaseTarget {
+        procedure_before: before.player_procedure,
+        procedure_after: after.player_procedure,
+        mode_flags_activated: after.player_mode_flags & !before.player_mode_flags,
+        mode_flags_cleared: before.player_mode_flags & !after.player_mode_flags,
+        do_status_before: before.player_do_status,
+        do_status_after: after.player_do_status,
+    });
     Ok(NativeAuxiliaryTargets {
+        comparability: AuxiliaryComparability {
+            same_context,
+            same_player,
+            link_contacts,
+            actor_lifecycle: same_context,
+        },
         inverse_action: pad_target(step.consumed_pad)?,
         player_dynamics,
         contacts,
-        actor_lifecycle: actor_lifecycle(before, after)?,
+        actor_lifecycle: same_context
+            .then(|| actor_lifecycle(before, after))
+            .transpose()?,
         action_phase,
         event_loading: EventLoadingTarget {
             event_running_before: before.event_running,
@@ -709,8 +730,9 @@ fn report(
                 example
                     .targets
                     .actor_lifecycle
-                    .appeared_runtime_generations
-                    .len() as u64,
+                    .as_ref()
+                    .map_or(0, |target| target.appeared_runtime_generations.len())
+                    as u64,
             )
             .ok_or_else(|| NativeAuxiliaryDatasetError::new("actor appearance count overflowed"))?;
         actor_disappearances = actor_disappearances
@@ -718,8 +740,9 @@ fn report(
                 example
                     .targets
                     .actor_lifecycle
-                    .disappeared_runtime_generations
-                    .len() as u64,
+                    .as_ref()
+                    .map_or(0, |target| target.disappeared_runtime_generations.len())
+                    as u64,
             )
             .ok_or_else(|| {
                 NativeAuxiliaryDatasetError::new("actor disappearance count overflowed")
@@ -761,26 +784,32 @@ fn report(
 }
 
 fn targets_are_valid(targets: &NativeAuxiliaryTargets) -> bool {
-    targets.player_dynamics.as_ref().is_none_or(|target| {
-        target
-            .position_delta
-            .iter()
-            .chain(&target.velocity_delta)
-            .chain(std::iter::once(&target.forward_speed_delta))
-            .all(|value| value.is_finite())
-    }) && is_sorted_unique(&targets.actor_lifecycle.appeared_runtime_generations)
-        && is_sorted_unique(&targets.actor_lifecycle.disappeared_runtime_generations)
-        && targets
-            .actor_lifecycle
-            .appeared_runtime_generations
-            .iter()
-            .all(|id| {
-                targets
-                    .actor_lifecycle
+    let lifecycle_valid = targets.actor_lifecycle.as_ref().is_none_or(|target| {
+        is_sorted_unique(&target.appeared_runtime_generations)
+            && is_sorted_unique(&target.disappeared_runtime_generations)
+            && target.appeared_runtime_generations.iter().all(|id| {
+                target
                     .disappeared_runtime_generations
                     .binary_search(id)
                     .is_err()
             })
+    });
+    (!targets.comparability.same_player || targets.comparability.same_context)
+        && (!targets.comparability.link_contacts || targets.comparability.same_player)
+        && (targets.player_dynamics.is_some() == targets.comparability.same_player)
+        && (targets.action_phase.is_some() == targets.comparability.same_player)
+        && (targets.contacts.is_some() == targets.comparability.link_contacts)
+        && (targets.actor_lifecycle.is_some() == targets.comparability.actor_lifecycle)
+        && (targets.comparability.actor_lifecycle == targets.comparability.same_context)
+        && targets.player_dynamics.as_ref().is_none_or(|target| {
+            target
+                .position_delta
+                .iter()
+                .chain(&target.velocity_delta)
+                .chain(std::iter::once(&target.forward_speed_delta))
+                .all(|value| value.is_finite())
+        })
+        && lifecycle_valid
         && targets.event_loading.goal_reached_after == targets.reachability.within_1_tick
 }
 
@@ -946,5 +975,48 @@ mod tests {
         dataset.report = report(&dataset.examples).unwrap();
         dataset.dataset_sha256 = dataset.digest().unwrap();
         assert!(dataset.validate().is_err());
+    }
+
+    #[test]
+    fn loading_boundaries_mask_incomparable_player_and_actor_targets() {
+        let mut shard = shard();
+        let episode = &mut shard.episodes[0];
+        let mut step = episode.steps[0].clone();
+        step.post_simulation.room = step.post_simulation.room.wrapping_add(1);
+        let targets = targets(episode, 0, &step).unwrap();
+        assert!(!targets.comparability.same_context);
+        assert!(!targets.comparability.same_player);
+        assert!(!targets.comparability.link_contacts);
+        assert!(!targets.comparability.actor_lifecycle);
+        assert!(targets.player_dynamics.is_none());
+        assert!(targets.contacts.is_none());
+        assert!(targets.action_phase.is_none());
+        assert!(targets.actor_lifecycle.is_none());
+        assert_ne!(
+            targets.event_loading.room_before,
+            targets.event_loading.room_after
+        );
+        assert!(targets_are_valid(&targets));
+    }
+
+    #[test]
+    fn non_link_players_keep_motion_but_not_link_contact_labels() {
+        let mut shard = shard();
+        let episode = &mut shard.episodes[0];
+        let mut step = episode.steps[0].clone();
+        step.pre_input.player_is_link = false;
+        step.post_simulation.player_is_link = false;
+        step.pre_input.player_contacts = 0x1f;
+        step.post_simulation.player_contacts = 0;
+        let targets = targets(episode, 0, &step).unwrap();
+        assert!(targets.comparability.same_context);
+        assert!(targets.comparability.same_player);
+        assert!(!targets.comparability.link_contacts);
+        assert!(targets.comparability.actor_lifecycle);
+        assert!(targets.player_dynamics.is_some());
+        assert!(targets.action_phase.is_some());
+        assert!(targets.actor_lifecycle.is_some());
+        assert!(targets.contacts.is_none());
+        assert!(targets_are_valid(&targets));
     }
 }

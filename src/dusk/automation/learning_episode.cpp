@@ -598,6 +598,30 @@ bool append_event_queue_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_process_lifecycle_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& lifecycle = observation.processLifecycle;
+    const bool present = lifecycle.status == Status::Present;
+    const bool unavailable = lifecycle.status == Status::Unavailable;
+    if ((!present && !unavailable) ||
+        (present && lifecycle.activeActorCount != observation.actors.size()) ||
+        (!present && (lifecycle.activeActorCount != 0 || lifecycle.pendingCreateCount != 0 ||
+                         lifecycle.pendingDeleteCount != 0)))
+    {
+        error = "learning observation has inconsistent process-lifecycle state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(lifecycle.status));
+    append_integer<std::uint8_t>(output, 0);
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, lifecycle.activeActorCount);
+    append_integer(output, lifecycle.pendingCreateCount);
+    append_integer(output, lifecycle.pendingDeleteCount);
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1198,9 +1222,10 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             return false;
     }
     if (!append_planner_runtime_state(output, observation, error) ||
-        !append_message_session_state(output, observation, error))
+        !append_message_session_state(output, observation, error) ||
+        !append_event_queue_state(output, observation, error))
         return false;
-    return append_event_queue_state(output, observation, error);
+    return append_process_lifecycle_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

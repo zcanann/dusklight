@@ -1341,15 +1341,14 @@ fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
         targets[9] = f32::from(action.mode_flags_activated != 0 || action.mode_flags_cleared != 0);
         present[8..10].fill(true);
     }
-    targets[10] = example
-        .targets
-        .actor_lifecycle
-        .disappeared_runtime_generations
-        .len() as f32;
+    if let Some(lifecycle) = &example.targets.actor_lifecycle {
+        targets[10] = lifecycle.disappeared_runtime_generations.len() as f32;
+        present[10] = true;
+    }
     targets[11] = f32::from(example.targets.inverse_action.stick_x);
     targets[12] = f32::from(example.targets.inverse_action.stick_y);
     targets[13] = f32::from(example.targets.inverse_action.buttons & 0x0100 != 0);
-    present[10..].fill(true);
+    present[11..].fill(true);
     (targets, present)
 }
 

@@ -73,6 +73,10 @@ fn golden_v18() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v18.dseps")
 }
 
+fn golden_v19() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v19.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -136,6 +140,10 @@ fn mutate_first_v18_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v18(), mutator)
 }
 
+fn mutate_first_v19_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v19(), mutator)
+}
+
 fn first_v18_event_queue_offset(expanded: &[u8]) -> usize {
     const ACTOR_IDENTITY_SIZE: usize = 25;
     const ACTOR_REFERENCE_SIZE: usize = 4 + ACTOR_IDENTITY_SIZE;
@@ -156,7 +164,6 @@ fn first_v18_event_queue_offset(expanded: &[u8]) -> usize {
         + PARTICIPANT_COUNT * ACTOR_REFERENCE_SIZE;
     reader.offset - encoded_size
 }
-
 fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     let mut shard = source.to_vec();
     let payload_offset = read_u64(&shard, 56) as usize;
@@ -967,6 +974,52 @@ fn decodes_v18_semantic_event_queue_and_pointer_free_participants() {
 }
 
 #[test]
+fn decodes_v19_process_lifecycle_pressure_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v19()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V19
+    );
+    for episode in &shard.episodes {
+        for observation in episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+        {
+            assert_eq!(
+                observation.process_lifecycle_status,
+                NativeChannelStatus::Present
+            );
+            let lifecycle = observation
+                .process_lifecycle
+                .as_ref()
+                .expect("v19 process lifecycle");
+            assert_eq!(
+                lifecycle.active_actor_count,
+                observation.actors.len() as u32
+            );
+            assert_eq!(lifecycle.pending_create_count, 2);
+            assert_eq!(lifecycle.pending_delete_count, 3);
+        }
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v18()).unwrap();
+    assert!(
+        legacy
+            .episodes
+            .iter()
+            .all(|episode| episode.steps.iter().all(|step| {
+                [&step.pre_input, &step.post_simulation]
+                    .into_iter()
+                    .all(|observation| {
+                        observation.process_lifecycle_status == NativeChannelStatus::NotSampled
+                            && observation.process_lifecycle.is_none()
+                    })
+            }))
+    );
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);
@@ -985,6 +1038,24 @@ fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("semantic priority order"), "{error}");
+}
+
+#[test]
+fn rejects_v19_lifecycle_count_detached_from_complete_actor_set() {
+    let shard = mutate_first_v19_episode(|expanded| {
+        let lifecycle = [1, 0, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0];
+        let offset = expanded
+            .windows(lifecycle.len())
+            .position(|candidate| candidate == lifecycle)
+            .expect("v19 process lifecycle");
+        expanded[offset + 4..offset + 8].copy_from_slice(&1_u32.to_le_bytes());
+    });
+    assert!(
+        NativeEpisodeShard::decode(&shard)
+            .unwrap_err()
+            .to_string()
+            .contains("process-lifecycle actor count disagrees")
+    );
 }
 
 #[test]
@@ -1154,6 +1225,11 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V12
                             | LEARNING_OBSERVATION_SCHEMA_V13
                             | LEARNING_OBSERVATION_SCHEMA_V14
+                            | LEARNING_OBSERVATION_SCHEMA_V15
+                            | LEARNING_OBSERVATION_SCHEMA_V16
+                            | LEARNING_OBSERVATION_SCHEMA_V17
+                            | LEARNING_OBSERVATION_SCHEMA_V18
+                            | LEARNING_OBSERVATION_SCHEMA_V19
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1195,6 +1271,11 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V12
             | LEARNING_OBSERVATION_SCHEMA_V13
             | LEARNING_OBSERVATION_SCHEMA_V14
+            | LEARNING_OBSERVATION_SCHEMA_V15
+            | LEARNING_OBSERVATION_SCHEMA_V16
+            | LEARNING_OBSERVATION_SCHEMA_V17
+            | LEARNING_OBSERVATION_SCHEMA_V18
+            | LEARNING_OBSERVATION_SCHEMA_V19
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

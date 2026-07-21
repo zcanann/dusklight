@@ -22,7 +22,7 @@ use huntctl::learning::multitask_set_encoder::{
     CompleteSetMultiTaskEncoder, NativeMultiTaskActorCorpus, fit_shuffled_auxiliary_control,
 };
 use huntctl::learning::native_auxiliary_dataset::{
-    AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V1, NativeAuxiliaryDataset,
+    AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
 };
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
@@ -824,7 +824,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
-                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V1,
+                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V2,
                     "dataset_sha256": dataset.dataset_sha256,
                     "replay_corpus_sha256": dataset.replay_corpus_sha256,
                     "output": output,
@@ -842,7 +842,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
-                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V1,
+                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V2,
                     "dataset_sha256": dataset.dataset_sha256,
                     "replay_corpus_sha256": dataset.replay_corpus_sha256,
                     "report": dataset.report,

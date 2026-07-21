@@ -205,7 +205,7 @@ fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
         serde_json::from_slice(&dataset_output.stdout).unwrap();
     assert_eq!(
         dataset_summary["schema"],
-        "dusklight-native-auxiliary-dataset/v1"
+        "dusklight-native-auxiliary-dataset/v2"
     );
     assert_eq!(dataset_summary["report"]["episodes"], 2);
     assert_eq!(

@@ -361,6 +361,15 @@ fn record_transition(
         before.event_queue.as_ref(),
         after.event_queue.as_ref()
     );
+    record!(
+        "process_lifecycle.status",
+        before.process_lifecycle_status != after.process_lifecycle_status
+    );
+    record_optional!(
+        "process_lifecycle.value",
+        before.process_lifecycle.as_ref(),
+        after.process_lifecycle.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -464,5 +473,33 @@ mod tests {
         let report = inspect_global_temporal_coverage(&[shard]);
         assert_eq!(report.fields["event_queue.value"].compared_pairs, 1);
         assert_eq!(report.fields["event_queue.value"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_lifecycle_pressure_changes_and_legacy_missingness() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v19.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .process_lifecycle
+            .as_mut()
+            .unwrap()
+            .pending_create_count += 1;
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["process_lifecycle.value"].changed_pairs, 1);
+
+        let legacy = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v18.dseps"
+        ))
+        .unwrap();
+        let report = inspect_global_temporal_coverage(&[legacy]);
+        assert_eq!(report.fields["process_lifecycle.value"].compared_pairs, 0);
+        assert_eq!(
+            report.fields["process_lifecycle.value"].missing_pairs,
+            report.transition_count
+        );
     }
 }

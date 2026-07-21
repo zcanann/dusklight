@@ -855,7 +855,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != "dusklight-learning-observation/v18"
+    if learning.source_schema != "dusklight-learning-observation/v19"
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -1112,7 +1112,7 @@ mod tests {
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": "dusklight-learning-observation/v18",
+                "source_schema": "dusklight-learning-observation/v19",
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }
