@@ -143,8 +143,9 @@ published technique. The current highest-leverage gaps are complete collision
 transition coverage, non-Link relationship edges, profile-bound item/actor
 state, remaining transition/loading clocks, and semantic lifecycle outcomes.
 Existing v18 event-queue, v21 semantic pending-process, v22 generic
-event-transition and v23 clock-domain channels are partial evidence for the
-last two rows; their presence does not make those rows complete. V21 records
+event-transition, v23 clock-domain and v24 complete room-load channels are
+partial evidence for the last two rows; their presence does not make those
+rows complete. V21 records
 queue order and typed
 create/delete process state but not slot/resource capacity, resource-load
 results or allocation outcomes.

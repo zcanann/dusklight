@@ -470,6 +470,24 @@ struct ObservationFixture {
         observation.clockDomains.timerMode = 4;
         observation.clockDomains.timerNowMs = 1234;
         observation.clockDomains.timerLimitMs = 5000;
+        observation.roomLoad.status = MilestoneObservation::ChannelStatus::Present;
+        observation.roomLoad.roomRead = 1;
+        observation.roomLoad.stayRoom = 0;
+        observation.roomLoad.oldStayRoom = -1;
+        observation.roomLoad.nextStayRoom = 1;
+        observation.roomLoad.timePass = true;
+        observation.roomLoad.rooms[0].statusFlags = 0x11;
+        observation.roomLoad.rooms[0].draw = true;
+        observation.roomLoad.rooms[0].zoneCount = 2;
+        observation.roomLoad.rooms[0].zone = 0;
+        observation.roomLoad.rooms[0].memoryBlock = 3;
+        observation.roomLoad.rooms[0].region = 4;
+        observation.roomLoad.rooms[0].sceneStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.roomLoad.rooms[0].scenePhase = 3;
+        observation.roomLoad.rooms[0].scenePhaseActive = true;
+        observation.roomLoad.rooms[1].statusFlags = 0x0c;
+        observation.roomLoad.rooms[1].zone = 1;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -1068,6 +1086,31 @@ void test_clock_domains_fail_closed() {
     REQUIRE(error.find("inconsistent clock-domain") != std::string::npos);
 }
 
+void test_room_load_state_fails_closed() {
+    ObservationFixture invalidPhase;
+    invalidPhase.observation.roomLoad.rooms[0].scenePhase = 5;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, invalidPhase.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent room-load entry") != std::string::npos);
+
+    ObservationFixture absentScene;
+    absentScene.observation.roomLoad.rooms[0].sceneStatus =
+        MilestoneObservation::ChannelStatus::Absent;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, absentScene.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent room-load entry") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1172,6 +1215,7 @@ int main(const int argc, char** argv) {
     test_attention_candidates_fail_closed();
     test_event_transition_fails_closed();
     test_clock_domains_fail_closed();
+    test_room_load_state_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

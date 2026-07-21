@@ -93,6 +93,10 @@ fn golden_v23() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v23.dseps")
 }
 
+fn golden_v24() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v24.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -162,6 +166,10 @@ fn mutate_first_v19_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v21_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v21(), mutator)
+}
+
+fn mutate_first_v24_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v24(), mutator)
 }
 
 fn first_v21_process_records_offset(expanded: &[u8]) -> usize {
@@ -1221,6 +1229,93 @@ fn decodes_v23_generic_clock_domains_with_legacy_missingness() {
 }
 
 #[test]
+fn decodes_v24_complete_room_load_state_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v24()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V24
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(observation.room_load_status, NativeChannelStatus::Present);
+        let load = observation.room_load.as_ref().unwrap();
+        assert_eq!(load.room_read, 1);
+        assert_eq!(load.stay_room, 0);
+        assert_eq!(load.old_stay_room, -1);
+        assert_eq!(load.next_stay_room, 1);
+        assert!(!load.no_change_room);
+        assert!(load.time_pass);
+        assert_eq!(load.rooms.len(), 64);
+        assert!(
+            load.rooms
+                .iter()
+                .enumerate()
+                .all(|(index, room)| { room.room == u8::try_from(index).unwrap() })
+        );
+        assert_eq!(
+            load.rooms[0],
+            NativeRoomLoadEntryObservation {
+                room: 0,
+                status_flags: 0x11,
+                draw: true,
+                zone_count: 2,
+                zone: 0,
+                memory_block: 3,
+                region: 4,
+                scene_status: NativeChannelStatus::Present,
+                scene_phase: 3,
+                scene_phase_active: true,
+            }
+        );
+        assert_eq!(load.rooms[1].status_flags, 0x0c);
+        assert_eq!(load.rooms[1].scene_status, NativeChannelStatus::Absent);
+        assert!(load.rooms[2..].iter().all(|room| {
+            room.status_flags == 0
+                && room.scene_status == NativeChannelStatus::Absent
+                && room.zone == -1
+                && room.memory_block == -1
+        }));
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v23()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.room_load_status == NativeChannelStatus::NotSampled
+                        && observation.room_load.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
+fn rejects_noncanonical_v24_room_scene_phase() {
+    const FIRST_ROOM: [u8; 12] = [
+        0x11, 0x03, 0x02, 0x00, 0x03, 0x04, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00,
+    ];
+    let tampered = mutate_first_v24_episode(|expanded| {
+        let offset = expanded
+            .windows(FIRST_ROOM.len())
+            .position(|window| window == FIRST_ROOM)
+            .expect("v24 first room entry");
+        expanded[offset + 8..offset + 12].copy_from_slice(&5_i32.to_le_bytes());
+    });
+    let error = NativeEpisodeShard::decode(&tampered)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("room-load entry status and payload disagree"),
+        "{error}"
+    );
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);
@@ -1488,6 +1583,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V21
                             | LEARNING_OBSERVATION_SCHEMA_V22
                             | LEARNING_OBSERVATION_SCHEMA_V23
+                            | LEARNING_OBSERVATION_SCHEMA_V24
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1538,6 +1634,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V21
             | LEARNING_OBSERVATION_SCHEMA_V22
             | LEARNING_OBSERVATION_SCHEMA_V23
+            | LEARNING_OBSERVATION_SCHEMA_V24
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

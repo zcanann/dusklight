@@ -480,6 +480,37 @@ struct MilestoneObservation {
     };
     ClockDomainState clockDomains;
 
+    // Complete fixed room-control state and the resource-creation phase of
+    // each live room scene. Runtime process IDs and handler pointers are used
+    // only to join the engine-owned tables at capture time and never cross the
+    // observation boundary.
+    struct RoomLoadState {
+        static constexpr std::size_t RoomCount = 64;
+        static constexpr std::int8_t MemoryBlockCount = 19;
+
+        struct Room {
+            std::uint8_t statusFlags = 0;
+            bool draw = false;
+            std::int8_t zoneCount = 0;
+            std::int8_t zone = -1;
+            std::int8_t memoryBlock = -1;
+            std::uint8_t region = 0;
+            ChannelStatus sceneStatus = ChannelStatus::Absent;
+            std::int32_t scenePhase = 0;
+            bool scenePhaseActive = false;
+        };
+
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::int8_t roomRead = -1;
+        std::int8_t stayRoom = -1;
+        std::int8_t oldStayRoom = -1;
+        std::int8_t nextStayRoom = -1;
+        bool noChangeRoom = false;
+        bool timePass = false;
+        std::array<Room, RoomCount> rooms{};
+    };
+    RoomLoadState roomLoad;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

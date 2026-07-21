@@ -904,6 +904,79 @@ bool append_clock_domain_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_room_load_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    using Room = MilestoneObservation::RoomLoadState::Room;
+    const auto& load = observation.roomLoad;
+    const bool present = load.status == Status::Present;
+    const bool unavailable = load.status == Status::Unavailable;
+    const auto validRoom = [](const std::int8_t room) { return room >= -1 && room < 64; };
+    const auto emptyRoom = [](const Room& room) {
+        const Room empty{};
+        return room.statusFlags == empty.statusFlags && room.draw == empty.draw &&
+               room.zoneCount == empty.zoneCount && room.zone == empty.zone &&
+               room.memoryBlock == empty.memoryBlock && room.region == empty.region &&
+               room.sceneStatus == empty.sceneStatus && room.scenePhase == empty.scenePhase &&
+               room.scenePhaseActive == empty.scenePhaseActive;
+    };
+    const bool outerEmpty = load.roomRead == -1 && load.stayRoom == -1 &&
+                            load.oldStayRoom == -1 && load.nextStayRoom == -1 &&
+                            !load.noChangeRoom && !load.timePass &&
+                            std::ranges::all_of(load.rooms, emptyRoom);
+    if ((!present && !unavailable) ||
+        (present && (!validRoom(load.roomRead) || !validRoom(load.stayRoom) ||
+                        !validRoom(load.oldStayRoom) || !validRoom(load.nextStayRoom))) ||
+        (!present && !outerEmpty))
+    {
+        error = "learning observation has inconsistent room-load state";
+        return false;
+    }
+    if (present) {
+        for (const auto& room : load.rooms) {
+            const bool scenePresent = room.sceneStatus == Status::Present;
+            const bool sceneAbsent = room.sceneStatus == Status::Absent;
+            const bool sceneUnavailable = room.sceneStatus == Status::Unavailable;
+            if (!(scenePresent || sceneAbsent || sceneUnavailable) || room.zone < -1 ||
+                room.memoryBlock < -1 ||
+                room.memoryBlock >= MilestoneObservation::RoomLoadState::MemoryBlockCount ||
+                (scenePresent && (room.statusFlags == 0 || room.scenePhase < 0 ||
+                                     room.scenePhase > 4)) ||
+                (!scenePresent && (room.scenePhase != 0 || room.scenePhaseActive)))
+            {
+                error = "learning observation has inconsistent room-load entry";
+                return false;
+            }
+        }
+    }
+
+    std::uint8_t flags = 0;
+    flags |= load.noChangeRoom ? 1u << 0 : 0;
+    flags |= load.timePass ? 1u << 1 : 0;
+    append_integer(output, static_cast<std::uint8_t>(load.status));
+    append_integer(output, flags);
+    append_integer(output, load.roomRead);
+    append_integer(output, load.stayRoom);
+    append_integer(output, load.oldStayRoom);
+    append_integer(output, load.nextStayRoom);
+    append_integer<std::uint16_t>(output, 0);
+    for (const auto& room : load.rooms) {
+        std::uint8_t roomFlags = 0;
+        roomFlags |= room.draw ? 1u << 0 : 0;
+        roomFlags |= room.scenePhaseActive ? 1u << 1 : 0;
+        append_integer(output, room.statusFlags);
+        append_integer(output, roomFlags);
+        append_integer(output, room.zoneCount);
+        append_integer(output, room.zone);
+        append_integer(output, room.memoryBlock);
+        append_integer(output, room.region);
+        append_integer(output, static_cast<std::uint8_t>(room.sceneStatus));
+        append_integer<std::uint8_t>(output, 0);
+        append_integer(output, room.scenePhase);
+    }
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1514,7 +1587,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_event_transition_state(output, observation, error))
         return false;
-    return append_clock_domain_state(output, observation, error);
+    if (!append_clock_domain_state(output, observation, error))
+        return false;
+    return append_room_load_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

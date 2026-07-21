@@ -227,7 +227,7 @@ relationship, coordinate corridor, or success sequence.
   9,084-candidate pass replayed 88 interrupted records in 1.92 seconds; merged
   status over 178 records remained 2.25 seconds while eight native workers
   continued producing classifications.
-  The survey's observation identity is now v4 and binds the current v23 native
+  The survey's observation identity is now v4 and binds the current v24 native
   learner schema through the shared Rust evidence constant. This closes a
   fail-closed collector regression where the v21 native writer was rejected by
   stale v20 survey and actor-coverage checks; older evidence remains distinct
@@ -886,6 +886,22 @@ human-authored successful setup.
       behavior, selected event, target timing, prescribed action, reward or
       reproduction logic. Door/warp/resource-load phases and live temporal
       variation remain open, so the parent is not complete.
+    - [x] Retain the complete fixed room-control table and its resource-loading
+      phase without serializing scene/process IDs, phase-handler pointers or
+      archive objects. Learning observation v24 captures current/read/old/next
+      room IDs, no-change/time-pass gates, and all 64 room slots with status,
+      draw, zone, memory-block and region state. Active status entries are
+      joined transiently to their room scene and retain only the bounded
+      creation-phase index plus whether its handler chain is still active;
+      missing and type-mismatched scenes remain explicit. The native writer
+      rejects invalid room IDs, memory blocks, statuses, phases and payload
+      masks, while Rust preserves v2-v23 `not_sampled` missingness and rejects a
+      corrupted phase after recompression. Corpus inspection v15 reports the
+      channel and temporal coverage detects room/load changes without assigning
+      a destination. Cross-language fixture
+      `3e599f74...b11f7f` and native/evidence fail-closed tests pass. A dedicated
+      room-set learner projection, live temporal variation, door/warp queues
+      and RNG identity remain open, so the parent remains incomplete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

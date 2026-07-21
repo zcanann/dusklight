@@ -11,15 +11,16 @@ use crate::native_dynamic_collider_temporal::{
 };
 use crate::native_episode_shard::{
     LEARNING_OBSERVATION_SCHEMA_V21, LEARNING_OBSERVATION_SCHEMA_V22,
-    LEARNING_OBSERVATION_SCHEMA_V23, NativeActorObservation, NativeChannelStatus, NativeEpisode,
-    NativeEpisodeShard, NativeLearningObservation, NativeRawPad,
+    LEARNING_OBSERVATION_SCHEMA_V23, LEARNING_OBSERVATION_SCHEMA_V24, NativeActorObservation,
+    NativeChannelStatus, NativeEpisode, NativeEpisodeShard, NativeLearningObservation,
+    NativeRawPad,
 };
 use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V14: &str = "dusklight-native-corpus-inspection/v14";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V15: &str = "dusklight-native-corpus-inspection/v15";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -984,6 +985,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             LEARNING_OBSERVATION_SCHEMA_V21
                 | LEARNING_OBSERVATION_SCHEMA_V22
                 | LEARNING_OBSERVATION_SCHEMA_V23
+                | LEARNING_OBSERVATION_SCHEMA_V24
         );
         *observation_schemas
             .entry(shard.metadata.observation_schema.clone())
@@ -1115,6 +1117,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ),
                         ("event_transition", observation.event_transition_status),
                         ("clock_domains", observation.clock_domains_status),
+                        ("room_load", observation.room_load_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -1335,7 +1338,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V14.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V15.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1496,7 +1499,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V14);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V15);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1523,7 +1526,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V14);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V15);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -1659,6 +1662,18 @@ mod tests {
         let report = inspect_native_episode_corpus(&[shard]);
         assert_eq!(
             report.channel_coverage["clock_domains"].present,
+            report.observation_count
+        );
+    }
+
+    #[test]
+    fn audits_v24_room_load_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v24.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report.channel_coverage["room_load"].present,
             report.observation_count
         );
     }

@@ -397,6 +397,15 @@ fn record_transition(
         before.clock_domains.as_ref(),
         after.clock_domains.as_ref()
     );
+    record!(
+        "room_load.status",
+        before.room_load_status != after.room_load_status
+    );
+    record_optional!(
+        "room_load.value",
+        before.room_load.as_ref(),
+        after.room_load.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -611,5 +620,25 @@ mod tests {
         let report = inspect_global_temporal_coverage(&[shard]);
         assert_eq!(report.fields["clock_domains.value"].compared_pairs, 1);
         assert_eq!(report.fields["clock_domains.value"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_room_load_changes_without_encoding_a_destination() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v24.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .room_load
+            .as_mut()
+            .unwrap()
+            .rooms[0]
+            .scene_phase = 4;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["room_load.value"].compared_pairs, 1);
+        assert_eq!(report.fields["room_load.value"].changed_pairs, 1);
     }
 }

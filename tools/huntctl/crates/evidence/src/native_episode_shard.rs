@@ -43,6 +43,7 @@ const OBSERVATION_VERSION_V20: u16 = 20;
 const OBSERVATION_VERSION_V21: u16 = 21;
 const OBSERVATION_VERSION_V22: u16 = 22;
 const OBSERVATION_VERSION_V23: u16 = 23;
+const OBSERVATION_VERSION_V24: u16 = 24;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -95,6 +96,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V20: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V21: &str = "dusklight-learning-observation/v21";
 pub const LEARNING_OBSERVATION_SCHEMA_V22: &str = "dusklight-learning-observation/v22";
 pub const LEARNING_OBSERVATION_SCHEMA_V23: &str = "dusklight-learning-observation/v23";
+pub const LEARNING_OBSERVATION_SCHEMA_V24: &str = "dusklight-learning-observation/v24";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -661,6 +663,31 @@ pub struct NativeClockDomainObservation {
     pub timer_limit_ms: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRoomLoadEntryObservation {
+    pub room: u8,
+    pub status_flags: u8,
+    pub draw: bool,
+    pub zone_count: i8,
+    pub zone: i8,
+    pub memory_block: i8,
+    pub region: u8,
+    pub scene_status: NativeChannelStatus,
+    pub scene_phase: i32,
+    pub scene_phase_active: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRoomLoadObservation {
+    pub room_read: i8,
+    pub stay_room: i8,
+    pub old_stay_room: i8,
+    pub next_stay_room: i8,
+    pub no_change_room: bool,
+    pub time_pass: bool,
+    pub rooms: Vec<NativeRoomLoadEntryObservation>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeLearningObservation {
     pub phase: NativeObservationPhase,
@@ -763,6 +790,8 @@ pub struct NativeLearningObservation {
     pub event_transition: Option<NativeEventTransitionObservation>,
     pub clock_domains_status: NativeChannelStatus,
     pub clock_domains: Option<NativeClockDomainObservation>,
+    pub room_load_status: NativeChannelStatus,
+    pub room_load: Option<NativeRoomLoadObservation>,
 }
 
 #[derive(Debug)]
@@ -838,6 +867,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V21
                 | OBSERVATION_VERSION_V22
                 | OBSERVATION_VERSION_V23
+                | OBSERVATION_VERSION_V24
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -975,6 +1005,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V21 => LEARNING_OBSERVATION_SCHEMA_V21,
         OBSERVATION_VERSION_V22 => LEARNING_OBSERVATION_SCHEMA_V22,
         OBSERVATION_VERSION_V23 => LEARNING_OBSERVATION_SCHEMA_V23,
+        OBSERVATION_VERSION_V24 => LEARNING_OBSERVATION_SCHEMA_V24,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2084,6 +2115,115 @@ fn decode_clock_domains(
     ))
 }
 
+fn decode_room_load(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeRoomLoadObservation>), NativeEpisodeShardError> {
+    const ROOM_COUNT: usize = 64;
+    const MEMORY_BLOCK_COUNT: i8 = 19;
+    let status = decode_channel_status(reader)?;
+    let flags = reader.u8()?;
+    let room_read = reader.i8()?;
+    let stay_room = reader.i8()?;
+    let old_stay_room = reader.i8()?;
+    let next_stay_room = reader.i8()?;
+    if flags & !0x03 != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "noncanonical room-load flags or reserved field",
+        ));
+    }
+
+    let mut rooms = Vec::with_capacity(ROOM_COUNT);
+    for room in 0..ROOM_COUNT {
+        let status_flags = reader.u8()?;
+        let room_flags = reader.u8()?;
+        let zone_count = reader.i8()?;
+        let zone = reader.i8()?;
+        let memory_block = reader.i8()?;
+        let region = reader.u8()?;
+        let scene_status = decode_channel_status(reader)?;
+        if room_flags & !0x03 != 0 || reader.u8()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "noncanonical room-load entry flags or reserved byte",
+            ));
+        }
+        let scene_phase = reader.i32()?;
+        let scene_phase_active = room_flags & (1 << 1) != 0;
+        let scene_present = scene_status == NativeChannelStatus::Present;
+        if !matches!(
+            scene_status,
+            NativeChannelStatus::Present
+                | NativeChannelStatus::Absent
+                | NativeChannelStatus::Unavailable
+        ) || zone < -1
+            || !(-1..MEMORY_BLOCK_COUNT).contains(&memory_block)
+            || (scene_present && (status_flags == 0 || !(0..=4).contains(&scene_phase)))
+            || (!scene_present && (scene_phase != 0 || scene_phase_active))
+        {
+            return Err(NativeEpisodeShardError::new(
+                "room-load entry status and payload disagree",
+            ));
+        }
+        rooms.push(NativeRoomLoadEntryObservation {
+            room: u8::try_from(room).expect("fixed room index fits u8"),
+            status_flags,
+            draw: room_flags & 1 != 0,
+            zone_count,
+            zone,
+            memory_block,
+            region,
+            scene_status,
+            scene_phase,
+            scene_phase_active,
+        });
+    }
+
+    let valid_room = |room: i8| (-1..64).contains(&room);
+    let outer_empty = flags == 0
+        && room_read == -1
+        && stay_room == -1
+        && old_stay_room == -1
+        && next_stay_room == -1
+        && rooms.iter().all(|room| {
+            room.status_flags == 0
+                && !room.draw
+                && room.zone_count == 0
+                && room.zone == -1
+                && room.memory_block == -1
+                && room.region == 0
+                && room.scene_status == NativeChannelStatus::Absent
+                && room.scene_phase == 0
+                && !room.scene_phase_active
+        });
+    let present = status == NativeChannelStatus::Present;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || (present
+        && (!valid_room(room_read)
+            || !valid_room(stay_room)
+            || !valid_room(old_stay_room)
+            || !valid_room(next_stay_room)))
+        || (!present && !outer_empty)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "room-load status and payload disagree",
+        ));
+    }
+
+    Ok((
+        status,
+        present.then_some(NativeRoomLoadObservation {
+            room_read,
+            stay_room,
+            old_stay_room,
+            next_stay_room,
+            no_change_room: flags & 1 != 0,
+            time_pass: flags & (1 << 1) != 0,
+            rooms,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -2967,7 +3107,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V20
         | OBSERVATION_VERSION_V21
         | OBSERVATION_VERSION_V22
-        | OBSERVATION_VERSION_V23 => {
+        | OBSERVATION_VERSION_V23
+        | OBSERVATION_VERSION_V24 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3812,6 +3953,11 @@ fn decode_observation(
     } else {
         (NativeChannelStatus::NotSampled, None)
     };
+    let (room_load_status, room_load) = if observation_version >= OBSERVATION_VERSION_V24 {
+        decode_room_load(reader)?
+    } else {
+        (NativeChannelStatus::NotSampled, None)
+    };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -3912,6 +4058,8 @@ fn decode_observation(
         event_transition,
         clock_domains_status,
         clock_domains,
+        room_load_status,
+        room_load,
     })
 }
 

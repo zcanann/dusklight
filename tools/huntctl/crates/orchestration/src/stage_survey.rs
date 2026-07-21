@@ -5,7 +5,7 @@ use crate::stage_survey_artifact::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V23;
+use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V24;
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
@@ -1118,7 +1118,7 @@ fn validate_successful_probe(
         || actor_catalog.layer != final_observation.layer
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
-        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V23
+        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V24
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
@@ -1127,7 +1127,7 @@ fn validate_successful_probe(
         || actor_catalog
             .learning_dynamic_collision_population
             .source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V23
+            != LEARNING_OBSERVATION_SCHEMA_V24
         || !actor_catalog.learning_dynamic_collision_population.present
         || actor_catalog
             .learning_dynamic_collision_population
@@ -1143,13 +1143,13 @@ fn validate_successful_probe(
                 .learning_dynamic_collision_population
                 .colliders
                 .len()
-        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V23
+        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V24
         || !actor_catalog.learning_player_resources.present
         || actor_catalog.learning_player_relationships.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V23
+            != LEARNING_OBSERVATION_SCHEMA_V24
         || !actor_catalog.learning_player_relationships.present
         || actor_catalog.learning_player_collision_solver.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V23
+            != LEARNING_OBSERVATION_SCHEMA_V24
         || !actor_catalog.learning_player_collision_solver.present
     {
         return Err("actor_catalog_incomplete");

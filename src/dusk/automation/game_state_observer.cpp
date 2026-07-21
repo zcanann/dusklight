@@ -18,6 +18,7 @@
 #include "d/d_msg_object.h"
 #include "d/d_s_name.h"
 #include "d/d_s_play.h"
+#include "d/d_s_room.h"
 #include "dusk/automation/file_select_observer.hpp"
 #include "dusk/automation/menu_state_observer.hpp"
 #include "dusk/automation/name_entry_observer.hpp"
@@ -25,6 +26,7 @@
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
 #include "f_op/f_op_overlap_mng.h"
+#include "f_op/f_op_scene_mng.h"
 #include "f_pc/f_pc_create_req.h"
 #include "f_pc/f_pc_create_tag.h"
 #include "f_pc/f_pc_delete_tag.h"
@@ -1187,6 +1189,39 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         clocks.timerStatus = MilestoneObservation::ChannelStatus::Absent;
     } else {
         clocks.timerStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
+    auto& roomLoad = observation.roomLoad;
+    roomLoad.status = MilestoneObservation::ChannelStatus::Present;
+    roomLoad.roomRead = dStage_roomControl_c::getRoomReadId();
+    roomLoad.stayRoom = dStage_roomControl_c::getStayNo();
+    roomLoad.oldStayRoom = dStage_roomControl_c::mOldStayNo;
+    roomLoad.nextStayRoom = dStage_roomControl_c::getNextStayNo();
+    roomLoad.noChangeRoom = dStage_roomControl_c::mNoChangeRoom != 0;
+    roomLoad.timePass = dStage_roomControl_c::GetTimePass() != 0;
+    for (std::size_t index = 0; index < roomLoad.rooms.size(); ++index) {
+        const auto& source = dStage_roomControl_c::mStatus[index];
+        auto& room = roomLoad.rooms[index];
+        room.statusFlags = source.mFlag;
+        room.draw = source.mDraw;
+        room.zoneCount = source.mZoneCount;
+        room.zone = source.mZoneNo;
+        room.memoryBlock = source.mMemBlockID;
+        room.region = source.mRegionNo;
+        if (source.mFlag == 0)
+            continue;
+        scene_class* scene =
+            fopScnM_SearchByID(dStage_roomControl_c::getStatusProcID(index));
+        if (scene == nullptr) {
+            room.sceneStatus = MilestoneObservation::ChannelStatus::Absent;
+        } else if (fpcM_GetName(scene) != fpcNm_ROOM_SCENE_e) {
+            room.sceneStatus = MilestoneObservation::ChannelStatus::Unavailable;
+        } else {
+            const auto& phase = static_cast<const room_of_scene_class*>(scene)->phase;
+            room.sceneStatus = MilestoneObservation::ChannelStatus::Present;
+            room.scenePhase = phase.id;
+            room.scenePhaseActive = phase.mpHandlerTable != nullptr;
+        }
     }
 
     if (player != nullptr) {

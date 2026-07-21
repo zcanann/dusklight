@@ -10,7 +10,7 @@ use crate::stage_survey::{
 };
 use crate::stage_survey_artifact::{compressed_artifact_path, read_survey_artifact};
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V23;
+use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V24;
 use dusklight_world::stage_boot_catalog::StageBootCatalog;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -856,7 +856,7 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != LEARNING_OBSERVATION_SCHEMA_V23
+    if learning.source_schema != LEARNING_OBSERVATION_SCHEMA_V24
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
@@ -1114,7 +1114,7 @@ mod tests {
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": LEARNING_OBSERVATION_SCHEMA_V23,
+                "source_schema": LEARNING_OBSERVATION_SCHEMA_V24,
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }
