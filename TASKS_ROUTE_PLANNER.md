@@ -2005,7 +2005,12 @@ Deliverable: route confidence is mechanically explainable.
 - [x] Add hypothetical preservation and Temple of Time rebind.
 - [x] Verify raw bytes remain identical while aliases change.
 - [x] Derive downstream effects only from the new interpretation.
-- [ ] Display mixed provenance and hypothesis dependency.
+- [x] Display mixed provenance and hypothesis dependency.
+  - The state projection retains the original extracted/observed provenance plus
+    the transform action, while the solve report names both the active
+    refinement pack and the hypothetical technique step. These are headless
+    planner surfaces; the corresponding visual treatment remains a Phase 9 UI
+    task.
 - [x] Remove overlay and verify base reachability returns unchanged.
 
 #### 11E. Fanadi save-location lock
